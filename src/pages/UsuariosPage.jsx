@@ -69,7 +69,9 @@ function UsuarioForm({ usuario, onSave, onCancel }) {
       </div>
       <div className="d-flex gap-2 justify-content-end">
         <button type="button" onClick={onCancel} className="btn btn-secondary">Cancelar</button>
-        <button type="submit" className="btn btn-primary">Guardar</button>
+        <button type="submit" className="btn btn-primary">
+          {usuario ? "Actualizar" : "Guardar"}
+        </button>
       </div>
     </form>
   );

@@ -3,9 +3,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
 session_start();
 // Mostrar errores para depuración
@@ -56,7 +56,8 @@ switch ($method) {
         // Listar órdenes de laboratorio (por estado o consulta_id)
         $estado = $_GET['estado'] ?? null;
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
-    $sql = 'SELECT o.*, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, m.nombre AS medico_nombre FROM ordenes_laboratorio o LEFT JOIN consultas c ON o.consulta_id = c.id LEFT JOIN pacientes p ON c.paciente_id = p.id LEFT JOIN medicos m ON c.medico_id = m.id WHERE 1=1';
+        
+        $sql = 'SELECT o.*, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, m.nombre AS medico_nombre FROM ordenes_laboratorio o LEFT JOIN consultas c ON o.consulta_id = c.id LEFT JOIN pacientes p ON c.paciente_id = p.id LEFT JOIN medicos m ON c.medico_id = m.id WHERE 1=1';
         $params = [];
         $types = '';
         if ($estado) {
@@ -77,7 +78,29 @@ switch ($method) {
         $res = $stmt->get_result();
         $ordenes = [];
         while ($row = $res->fetch_assoc()) {
-            $row['examenes'] = json_decode($row['examenes'], true);
+            // Decodificar los IDs de exámenes
+            $examenes_ids = json_decode($row['examenes'], true) ?: [];
+            
+            // Obtener detalles completos de los exámenes
+            if (!empty($examenes_ids)) {
+                $placeholders = str_repeat('?,', count($examenes_ids) - 1) . '?';
+                $sql_examenes = "SELECT id, nombre, metodologia as descripcion, condicion_paciente, tiempo_resultado FROM examenes_laboratorio WHERE id IN ($placeholders)";
+                $stmt_examenes = $conn->prepare($sql_examenes);
+                $stmt_examenes->bind_param(str_repeat('i', count($examenes_ids)), ...$examenes_ids);
+                $stmt_examenes->execute();
+                $res_examenes = $stmt_examenes->get_result();
+                
+                $examenes_detalle = [];
+                while ($examen = $res_examenes->fetch_assoc()) {
+                    $examenes_detalle[] = $examen;
+                }
+                $stmt_examenes->close();
+                
+                $row['examenes'] = $examenes_detalle;
+            } else {
+                $row['examenes'] = [];
+            }
+            
             $ordenes[] = $row;
         }
         $stmt->close();

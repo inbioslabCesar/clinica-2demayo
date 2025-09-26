@@ -3,9 +3,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
 session_start();
 // api_historia_clinica.php: Guarda y consulta datos de historia clínica por consulta_id

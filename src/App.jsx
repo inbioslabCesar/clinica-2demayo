@@ -4,6 +4,8 @@ import ReportesPage from "./pages/ReportesPage";
 import ListaConsultasPage from "./pages/ListaConsultasPage";
 import ReportePacientesPage from "./pages/ReportePacientesPage";
 import ReporteFinanzasPage from "./pages/ReporteFinanzasPage";
+import ConfiguracionPage from "./pages/ConfiguracionPage";
+import GestionTarifasPage from "./pages/GestionTarifasPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import MedicamentosList from "./farmacia/MedicamentosList";
 import React, { useState, useEffect } from "react";
@@ -167,6 +169,16 @@ function App() {
                 <Route path="/reporte-finanzas" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <ReporteFinanzasPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/configuracion" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                    <ConfiguracionPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/gestion-tarifas" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                    <GestionTarifasPage />
                   </ProtectedRoute>
                 } />
               </>

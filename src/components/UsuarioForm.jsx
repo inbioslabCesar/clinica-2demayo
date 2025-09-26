@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 const roles = [
   "administrador",
@@ -71,7 +71,9 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
       )}
       {error && <div className="text-red-600 md:col-span-2">{error}</div>}
       <div className="flex gap-2 md:col-span-2">
-        <button type="submit" className="bg-blue-600 text-white rounded px-4 py-2 font-bold" disabled={loading}>Guardar</button>
+        <button type="submit" className="bg-blue-600 text-white rounded px-4 py-2 font-bold" disabled={loading}>
+          {esEdicion ? "Actualizar" : "Guardar"}
+        </button>
         <button type="button" className="bg-gray-300 text-gray-800 rounded px-4 py-2 font-bold" onClick={onCancel}>Cancelar</button>
       </div>
     </form>

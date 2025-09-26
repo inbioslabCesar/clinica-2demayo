@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { BASE_URL } from "../config/config";
 
 export default function SelectorMedicamentosReceta({ receta, setReceta }) {
@@ -147,52 +147,57 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       )}
       <div className="mt-2">
         <h4 className="font-semibold mb-1">Medicamentos seleccionados:</h4>
-        <table className="min-w-full text-xs border rounded">
-          <thead>
-            <tr className="bg-blue-100">
-              <th className="px-2 py-1">Medicamento</th>
-              <th className="px-2 py-1">Dosis</th>
-              <th className="px-2 py-1">Frecuencia</th>
-              <th className="px-2 py-1">Duración</th>
-              <th className="px-2 py-1">Observaciones</th>
-              <th className="px-2 py-1">Quitar</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recetaArray.length > 0 ? (
-              recetaArray.map((m, idx) => (
-                <tr key={m.codigo + idx}>
-                  <td className="border px-2 py-1">
-                    {m.nombre}{" "}
-                    <span className="text-gray-500">({m.codigo})</span>
-                  </td>
-                  <td className="border px-2 py-1">{m.dosis}</td>
-                  <td className="border px-2 py-1">{m.frecuencia}</td>
-                  <td className="border px-2 py-1">{m.duracion}</td>
-                  <td className="border px-2 py-1">{m.observaciones}</td>
-                  <td className="border px-2 py-1 text-center">
-                    <button
-                      type="button"
-                      className="text-red-600 font-bold"
-                      onClick={() => eliminarMedicamento(m.codigo)}
-                    >
-                      X
-                    </button>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border rounded min-w-max">
+            <thead>
+              <tr className="bg-blue-100">
+                <th className="px-2 py-1 whitespace-nowrap">Medicamento</th>
+                <th className="px-2 py-1 whitespace-nowrap">Dosis</th>
+                <th className="px-2 py-1 whitespace-nowrap">Frecuencia</th>
+                <th className="px-2 py-1 whitespace-nowrap">Duración</th>
+                <th className="px-2 py-1 whitespace-nowrap">Observaciones</th>
+                <th className="px-2 py-1 whitespace-nowrap w-16">Quitar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recetaArray.length > 0 ? (
+                recetaArray.map((m, idx) => (
+                  <tr key={m.codigo + idx}>
+                    <td className="border px-2 py-1 max-w-xs">
+                      <div className="truncate" title={`${m.nombre} (${m.codigo})`}>
+                        {m.nombre}{" "}
+                        <span className="text-gray-500">({m.codigo})</span>
+                      </div>
+                    </td>
+                    <td className="border px-2 py-1 whitespace-nowrap">{m.dosis}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap">{m.frecuencia}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap">{m.duracion}</td>
+                    <td className="border px-2 py-1 max-w-xs truncate" title={m.observaciones}>{m.observaciones}</td>
+                    <td className="border px-2 py-1 text-center">
+                      <button
+                        type="button"
+                        className="text-red-600 hover:text-red-800 bg-red-100 hover:bg-red-200 rounded px-2 py-1 text-xs font-medium transition-colors"
+                        onClick={() => eliminarMedicamento(m.codigo)}
+                        title="Eliminar medicamento"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td
+                    className="border px-2 py-1 text-center text-gray-500 italic"
+                    colSpan={6}
+                  >
+                    No hay medicamentos seleccionados
                   </td>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td
-                  className="border px-2 py-1 text-center text-gray-500 italic"
-                  colSpan={6}
-                >
-                  No hay medicamentos seleccionados
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

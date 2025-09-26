@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 
 // Simulación: podrías reemplazar esto por un fetch a tu API de CIE10
 const CIE10_LIST = [
@@ -114,43 +114,50 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
       {diagnosticos.length > 0 && (
         <div className="mt-2">
           <h4 className="font-semibold mb-1">Diagnósticos agregados:</h4>
-          <table className="min-w-full text-xs border rounded">
-            <thead>
-              <tr className="bg-blue-100">
-                <th className="px-2 py-1">Código</th>
-                <th className="px-2 py-1">Nombre</th>
-                <th className="px-2 py-1">Tipo</th>
-                <th className="px-2 py-1">Observaciones</th>
-                <th className="px-2 py-1">Fecha</th>
-                <th className="px-2 py-1">Quitar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {diagnosticos.map((d, idx) => (
-                <tr key={d.codigo + idx}>
-                  <td className="border px-2 py-1">{d.codigo}</td>
-                  <td className="border px-2 py-1">{d.nombre}</td>
-                  <td className="border px-2 py-1">
-                    <select
-                      className="border rounded p-1"
-                      value={d.tipo}
-                      onChange={e => cambiarTipo(d.codigo, e.target.value)}
-                    >
-                      <option value="principal">Principal</option>
-                      <option value="secundario">Secundario</option>
-                    </select>
-                  </td>
-                  <td className="border px-2 py-1">{d.observaciones}</td>
-                  <td className="border px-2 py-1">{d.fecha}</td>
-                  <td className="border px-2 py-1 text-center">
-                    <button type="button" className="text-red-600 font-bold" onClick={() => eliminarDiagnostico(d.codigo)}>
-                      X
-                    </button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border rounded min-w-max">
+              <thead>
+                <tr className="bg-blue-100">
+                  <th className="px-2 py-1 whitespace-nowrap">Código</th>
+                  <th className="px-2 py-1 whitespace-nowrap">Nombre</th>
+                  <th className="px-2 py-1 whitespace-nowrap">Tipo</th>
+                  <th className="px-2 py-1 whitespace-nowrap">Observaciones</th>
+                  <th className="px-2 py-1 whitespace-nowrap">Fecha</th>
+                  <th className="px-2 py-1 whitespace-nowrap w-16">Quitar</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {diagnosticos.map((d, idx) => (
+                  <tr key={d.codigo + idx}>
+                    <td className="border px-2 py-1 font-mono text-xs whitespace-nowrap">{d.codigo}</td>
+                    <td className="border px-2 py-1 max-w-xs truncate" title={d.nombre}>{d.nombre}</td>
+                    <td className="border px-2 py-1">
+                      <select
+                        className="border rounded p-1 text-xs w-full min-w-0"
+                        value={d.tipo}
+                        onChange={e => cambiarTipo(d.codigo, e.target.value)}
+                      >
+                        <option value="principal">Principal</option>
+                        <option value="secundario">Secundario</option>
+                      </select>
+                    </td>
+                    <td className="border px-2 py-1 max-w-xs truncate" title={d.observaciones}>{d.observaciones}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap">{d.fecha}</td>
+                    <td className="border px-2 py-1 text-center">
+                      <button 
+                        type="button" 
+                        className="text-red-600 hover:text-red-800 bg-red-100 hover:bg-red-200 rounded px-2 py-1 text-xs font-medium transition-colors"
+                        onClick={() => eliminarDiagnostico(d.codigo)}
+                        title="Eliminar diagnóstico"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

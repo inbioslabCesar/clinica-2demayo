@@ -5,16 +5,16 @@
 // === CONFIGURACIÓN DE BASE DE DATOS ===
 
 // Para desarrollo local (XAMPP/Laragon)
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'poli2demayo');
-define('DB_USER', 'root');
-define('DB_PASS', '');
+// define('DB_HOST', 'localhost');
+// define('DB_NAME', 'poli2demayo');
+// define('DB_USER', 'root');
+// define('DB_PASS', '');
 
 // Para producción (descomenta y configura)
-// define('DB_HOST', 'tu_servidor_mysql');
-// define('DB_NAME', 'tu_base_de_datos');
-// define('DB_USER', 'tu_usuario');
-// define('DB_PASS', 'tu_contraseña');
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'u330560936_2demayobd');
+define('DB_USER', 'u330560936_2demayo');
+define('DB_PASS', 'Clinica2demayo18-09-25');
 
 // === CONFIGURACIÓN DE CONEXIÓN ===
 $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);

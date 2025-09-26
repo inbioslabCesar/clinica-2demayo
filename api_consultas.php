@@ -4,9 +4,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
 session_start();
 // Mostrar errores para depuración
@@ -17,6 +17,8 @@ error_reporting(E_ALL);
 $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:5175',
+    'http://localhost:5176',
     'https://darkcyan-gnu-615778.hostingersite.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -74,14 +76,26 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
         }
+        
+        // Normalizar formato de hora (agregar segundos si no los tiene)
+        if (strlen($hora) == 5 && substr_count($hora, ':') == 1) {
+            $hora = $hora . ':00';
+        }
         // Verificar que no haya otra consulta en ese horario para el médico
-        $stmt = $conn->prepare('SELECT COUNT(*) as total FROM consultas WHERE medico_id=? AND fecha=? AND hora=? AND estado="pendiente"');
+        $stmt = $conn->prepare('SELECT id, estado FROM consultas WHERE medico_id=? AND fecha=? AND hora=? AND estado NOT IN ("cancelada", "completada")');
         $stmt->bind_param('iss', $medico_id, $fecha, $hora);
         $stmt->execute();
         $res = $stmt->get_result();
-        $row = $res->fetch_assoc();
-        if ($row['total'] > 0) {
-            echo json_encode(['success' => false, 'error' => 'El médico ya tiene una consulta pendiente en ese horario']);
+        $conflicto = $res->fetch_assoc();
+        if ($conflicto) {
+            echo json_encode([
+                'success' => false, 
+                'error' => 'El médico ya tiene una consulta pendiente en ese horario',
+                'detalle' => "Consulta ID {$conflicto['id']} con estado '{$conflicto['estado']}'",
+                'medico_id' => $medico_id,
+                'fecha' => $fecha,
+                'hora' => $hora
+            ]);
             $stmt->close();
             exit;
         }

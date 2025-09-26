@@ -3,9 +3,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
 session_start();
 // api_triaje.php: Guarda y consulta datos de triaje en formato JSON

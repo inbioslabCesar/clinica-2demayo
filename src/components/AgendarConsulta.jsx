@@ -1,15 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
 import DisponibilidadMedicos from "./DisponibilidadMedicos";
+import CobroModuloFinal from "./CobroModuloFinal";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
+
 function AgendarConsulta({ pacienteId }) {
   const [medicos, setMedicos] = useState([]);
   const [medicoId, setMedicoId] = useState("");
-  const [disponibilidad, setDisponibilidad] = useState([]);
+  const [horariosDisponibles, setHorariosDisponibles] = useState([]);
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
   const [msg, setMsg] = useState("");
+  const [consultaCreada, setConsultaCreada] = useState(null);
+  const [mostrarCobro, setMostrarCobro] = useState(false);
+  const [pacienteInfo, setPacienteInfo] = useState(null);
+  const [cargandoHorarios, setCargandoHorarios] = useState(false);
   const MySwal = withReactContent(Swal);
 
   useEffect(() => {
@@ -18,12 +24,43 @@ function AgendarConsulta({ pacienteId }) {
       .then(data => setMedicos(data.medicos || []));
   }, []);
 
+  // Cargar horarios disponibles cuando se selecciona médico y fecha
   useEffect(() => {
-    // Cargar disponibilidad de todos los médicos
-    fetch(BASE_URL + "api_disponibilidad_medicos.php")
-      .then(r => r.json())
-      .then(data => setDisponibilidad(data.disponibilidad || []));
-  }, []);
+    if (medicoId && fecha) {
+      setCargandoHorarios(true);
+      fetch(`${BASE_URL}api_horarios_disponibles.php?medico_id=${medicoId}&fecha=${fecha}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            setHorariosDisponibles(data.horarios_disponibles || []);
+          } else {
+            setHorariosDisponibles([]);
+            console.error('Error:', data.error);
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          setHorariosDisponibles([]);
+        })
+        .finally(() => setCargandoHorarios(false));
+    } else {
+      setHorariosDisponibles([]);
+    }
+  }, [medicoId, fecha]);
+
+  useEffect(() => {
+    // Cargar información del paciente
+    if (pacienteId) {
+      fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.paciente) {
+            setPacienteInfo(data.paciente);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [pacienteId]);
 
   const handleSubmit = async e => {
     e.preventDefault();
@@ -32,66 +69,173 @@ function AgendarConsulta({ pacienteId }) {
       setMsg("Completa todos los campos");
       return;
     }
-    const res = await fetch(BASE_URL + "api_consultas.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paciente_id: pacienteId, medico_id: medicoId, fecha, hora })
-    });
-    const data = await res.json();
-    if (data.success) {
-      setMsg("");
-      MySwal.fire({
-        icon: "success",
-        title: "Consulta agendada",
-        text: "¡La consulta fue agendada exitosamente! El paciente ya tiene su cita registrada.",
-        confirmButtonColor: "#22c55e"
+    
+    try {
+      const res = await fetch(BASE_URL + "api_consultas.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          paciente_id: pacienteId, 
+          medico_id: medicoId, 
+          fecha, 
+          hora,
+          estado: 'programada'
+        })
       });
-    } else {
-      setMsg(data.error || "Error al agendar");
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        // Guardar información de la consulta creada
+        const medicoSeleccionado = medicos.find(m => m.id == medicoId);
+        setConsultaCreada({
+          id: data.consulta_id || data.id,
+          medico_id: medicoId,
+          medico_nombre: medicoSeleccionado?.nombre,
+          medico_especialidad: medicoSeleccionado?.especialidad,
+          fecha,
+          hora,
+          paciente_id: pacienteId
+        });
+        
+        // Mostrar módulo de cobro
+        setMostrarCobro(true);
+        setMsg("");
+      } else {
+        setMsg(data.error || "Error al agendar");
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      setMsg("Error de conexión");
     }
   };
+
+  const manejarCobroCompleto = async (cobroId, _servicio) => {
+    setMostrarCobro(false);
+    
+    MySwal.fire({
+      icon: "success",
+      title: "¡Consulta Agendada y Pagada!",
+      html: `
+        <div class="text-left">
+          <p><strong>Consulta:</strong> ${consultaCreada.medico_nombre}</p>
+          <p><strong>Especialidad:</strong> ${consultaCreada.medico_especialidad}</p>
+          <p><strong>Fecha:</strong> ${consultaCreada.fecha}</p>
+          <p><strong>Hora:</strong> ${consultaCreada.hora}</p>
+          <p><strong>Cobro ID:</strong> ${cobroId}</p>
+        </div>
+      `,
+      confirmButtonColor: "#22c55e",
+      confirmButtonText: "Aceptar"
+    });
+
+    // Resetear formulario
+    setFecha("");
+    setHora("");
+    setMedicoId("");
+    setConsultaCreada(null);
+  };
+
+  const manejarCancelarCobro = () => {
+    setMostrarCobro(false);
+    MySwal.fire({
+      title: 'Cobro Cancelado',
+      text: 'La consulta fue agendada pero no se realizó el cobro. Puede cobrarse posteriormente.',
+      icon: 'info',
+      confirmButtonText: 'Entendido'
+    });
+  };
+
+  // Si se está mostrando el módulo de cobro, renderizarlo
+  if (mostrarCobro && consultaCreada && pacienteInfo) {
+    return (
+      <div className="max-w-2xl mx-auto p-2 md:p-8 w-full">
+        <div className="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
+          <h3 className="font-semibold text-blue-800 mb-2">✅ Consulta Agendada Exitosamente</h3>
+          <div className="text-sm text-blue-600">
+            <p><strong>Médico:</strong> {consultaCreada.medico_nombre} ({consultaCreada.medico_especialidad})</p>
+            <p><strong>Fecha:</strong> {consultaCreada.fecha} - <strong>Hora:</strong> {consultaCreada.hora}</p>
+            <p><strong>Paciente:</strong> {pacienteInfo.nombre} {pacienteInfo.apellido}</p>
+          </div>
+        </div>
+        
+        <CobroModuloFinal
+          paciente={pacienteInfo}
+          servicio={{
+            key: "consulta",
+            label: `Consulta - ${consultaCreada.medico_nombre}`,
+            medico_id: consultaCreada.medico_id,
+            consulta_id: consultaCreada.id
+          }}
+          onCobroCompleto={manejarCobroCompleto}
+          onCancelar={manejarCancelarCobro}
+        />
+      </div>
+    );
+  }
 
   return (
   <div className="max-w-2xl mx-auto p-2 md:p-8 w-full overflow-x-auto">
       <DisponibilidadMedicos />
       <h2 className="text-xl md:text-2xl font-bold mb-4 text-center">Agendar Consulta Médica</h2>
       <form onSubmit={handleSubmit} className="flex flex-col gap-2 md:gap-4 mb-4 bg-white rounded-lg shadow border border-blue-200 p-2 md:p-8 w-full max-w-full text-xs md:text-base">
-        <label className="font-semibold mb-1" htmlFor="fecha-consulta">Fecha de la consulta <span className="text-gray-500">(dd/mm/aaaa)</span></label>
-        <input id="fecha-consulta" type="date" value={fecha} onChange={e => setFecha(e.target.value)} className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg" required />
-        <select
-          value={hora ? `${medicoId}|${hora}` : ""}
+        <label className="font-semibold mb-1" htmlFor="medico-select">Médico</label>
+        <select 
+          id="medico-select"
+          value={medicoId} 
           onChange={e => {
-            const [mid, h] = e.target.value.split("|");
-            setMedicoId(mid);
-            setHora(h);
-          }}
-          className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
+            setMedicoId(e.target.value);
+            setHora(""); // Resetear hora cuando cambia médico
+          }} 
+          className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg" 
           required
         >
-          <option value="">Selecciona médico y horario</option>
-          {disponibilidad
-            .filter(d => !fecha || d.fecha === fecha)
-            .map(d => {
-              const medico = medicos.find(m => m.id == d.medico_id);
-              if (!medico) return null;
-              // Generar opciones de hora entre hora_inicio y hora_fin, cada 30 min
-              const options = [];
-              let [h, m] = d.hora_inicio.split(":").map(Number);
-              const [hFin, mFin] = d.hora_fin.split(":").map(Number);
-              while (h < hFin || (h === hFin && m < mFin)) {
-                const horaStr = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
-                options.push(
-                  <option key={horaStr + d.id + medico.id} value={`${medico.id}|${horaStr}`}>
-                    {medico.nombre} ({medico.especialidad}) - {horaStr}
-                  </option>
-                );
-                m += 30;
-                if (m >= 60) { h++; m = 0; }
-              }
-              return options;
-            })}
+          <option value="">Selecciona un médico</option>
+          {medicos.map(medico => (
+            <option key={medico.id} value={medico.id}>
+              {medico.nombre} - {medico.especialidad}
+            </option>
+          ))}
         </select>
-        <button type="submit" className="bg-green-600 text-white rounded px-4 py-2 md:px-6 md:py-3 font-bold text-base md:text-lg">Agendar</button>
+
+        <label className="font-semibold mb-1" htmlFor="fecha-consulta">Fecha de la consulta</label>
+        <input 
+          id="fecha-consulta" 
+          type="date" 
+          value={fecha} 
+          onChange={e => {
+            setFecha(e.target.value);
+            setHora(""); // Resetear hora cuando cambia fecha
+          }} 
+          className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg" 
+          required 
+        />
+
+        <label className="font-semibold mb-1" htmlFor="hora-select">Horario disponible</label>
+        <select
+          id="hora-select"
+          value={hora}
+          onChange={e => setHora(e.target.value)}
+          className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
+          required
+          disabled={!medicoId || !fecha || cargandoHorarios}
+        >
+          <option value="">
+            {cargandoHorarios ? "Cargando horarios..." : 
+             !medicoId || !fecha ? "Selecciona médico y fecha primero" :
+             horariosDisponibles.length === 0 ? "No hay horarios disponibles" :
+             "Selecciona un horario"}
+          </option>
+          {horariosDisponibles.map(horario => (
+            <option key={`${horario.medico_id}-${horario.hora}`} value={horario.hora}>
+              {horario.hora} - {horario.medico_nombre}
+            </option>
+          ))}
+        </select>
+
+        <button type="submit" className="bg-green-600 text-white rounded px-4 py-2 md:px-6 md:py-3 font-bold text-base md:text-lg">
+          Agendar Consulta
+        </button>
       </form>
   {msg && <div className="mt-2 text-base md:text-lg text-center text-green-700">{msg}</div>}
     </div>

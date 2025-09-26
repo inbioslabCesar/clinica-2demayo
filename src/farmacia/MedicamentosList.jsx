@@ -20,7 +20,7 @@ export default function MedicamentosList() {
   const [editData, setEditData] = useState(null);
   const [busqueda, setBusqueda] = useState("");
   const [pagina, setPagina] = useState(1);
-  const [tamanoPagina, setTamanoPagina] = useState(5);
+  const [tamanoPagina, setTamanoPagina] = useState(3);
   const [showCuarentena, setShowCuarentena] = useState(false);
   const [cuarentenaData, setCuarentenaData] = useState(null);
   const [motivoCuarentena, setMotivoCuarentena] = useState("");
@@ -30,7 +30,9 @@ export default function MedicamentosList() {
     setLoading(true);
     setError(null);
     const apiUrl = `${BASE_URL}api_medicamentos.php`;
-    fetch(apiUrl)
+    fetch(apiUrl, {
+      credentials: "include",
+    })
       .then((res) => {
         if (!res.ok) throw new Error("Error al cargar medicamentos");
         return res.json();
@@ -58,6 +60,7 @@ export default function MedicamentosList() {
     const apiUrl = `${BASE_URL}api_medicamentos.php`;
     return fetch(apiUrl, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
@@ -103,51 +106,6 @@ export default function MedicamentosList() {
       (m) => m.fecha_vencimiento && m.fecha_vencimiento <= filtroVencHasta
     );
   }
-  <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-2 sm:p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 shadow-sm">
-    <div className="flex items-center gap-1 sm:gap-2 text-base font-semibold text-yellow-900 flex-wrap">
-      <span className="inline-block text-yellow-600 mr-1">🗓️</span>
-      <label>Filtrar por vencimiento:</label>
-      <span className="ml-2 text-sm font-normal text-gray-700">Desde</span>
-      <input
-        type="date"
-        value={filtroVencDesde}
-        onChange={(e) => setFiltroVencDesde(e.target.value)}
-        className="border border-yellow-400 rounded px-1 py-1 focus:ring-2 focus:ring-yellow-300 w-20 sm:w-28 md:w-32"
-      />
-      <span className="ml-2 text-sm font-normal text-gray-700">Hasta</span>
-      <input
-        type="date"
-        value={filtroVencHasta}
-        onChange={(e) => setFiltroVencHasta(e.target.value)}
-        className="border border-yellow-400 rounded px-1 py-1 focus:ring-2 focus:ring-yellow-300 w-20 sm:w-28 md:w-32"
-      />
-      <button
-        type="button"
-        onClick={() => {
-          setFiltroVencDesde("");
-          setFiltroVencHasta("");
-        }}
-        className="ml-2 px-2 py-1 rounded bg-yellow-300 text-yellow-900 font-semibold border border-yellow-400 hover:bg-yellow-400 transition text-xs sm:text-sm"
-        title="Limpiar filtros de vencimiento"
-      >
-        Limpiar
-      </button>
-    </div>
-    <div className="flex items-center gap-4 mt-2 sm:mt-0">
-      <label className="flex items-center gap-1 text-sm">
-        <input
-          type="checkbox"
-          checked={filtroCuarentena}
-          onChange={(e) => setFiltroCuarentena(e.target.checked)}
-        />
-        Solo cuarentena
-      </label>
-      <span className="text-xs text-gray-500">
-        Medicamentos en cuarentena deben ser llevados a puntos de acopio
-        autorizados (DIGEMID).
-      </span>
-    </div>
-  </div>;
 
   // Paginación
   const totalPaginas = Math.ceil(medicamentosFiltrados.length / tamanoPagina);
@@ -167,9 +125,14 @@ export default function MedicamentosList() {
 
   return (
     <div className="max-w-4xl mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-6 text-center">
-        Gestión de Medicamentos
-      </h1>
+      <div className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 mb-2">
+          💊 Gestión de Medicamentos
+        </h1>
+        <p className="text-gray-600 text-lg">
+          Sistema integral de inventario farmacéutico
+        </p>
+      </div>
       <div className="flex flex-col sm:flex-row sm:justify-between mb-4 gap-2">
         <input
           type="text"
@@ -183,6 +146,7 @@ export default function MedicamentosList() {
           onChange={handleChangeTamano}
           className="border rounded px-2 py-2 ml-2"
         >
+          <option value={3}>3</option>
           <option value={5}>5</option>
           <option value={10}>10</option>
           <option value={25}>25</option>
@@ -190,9 +154,10 @@ export default function MedicamentosList() {
         <span className="ml-2 text-sm">por página</span>
         <button
           onClick={handleAdd}
-          className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700"
+          className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-6 py-3 rounded-lg shadow-lg hover:from-purple-700 hover:to-blue-700 transform hover:scale-105 transition-all duration-200 font-semibold flex items-center gap-2"
         >
-          + Nuevo Medicamento
+          <span className="text-lg">+</span>
+          Nuevo Medicamento
         </button>
       </div>
 
@@ -254,40 +219,44 @@ export default function MedicamentosList() {
         <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 rounded-lg">
           <table className="min-w-full bg-white border border-gray-200 rounded-lg text-xs sm:text-sm md:text-base">
             <thead>
-              <tr className="bg-purple-100">
-                <th className="py-2 px-3 border-b">Código</th>
-                <th className="py-2 px-3 border-b">Nombre</th>
-                <th className="py-2 px-3 border-b text-center sm:hidden">
-                  Detalle
+              <tr className="bg-gradient-to-r from-purple-600 to-blue-600 text-white">
+                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider">
+                  Código
                 </th>
-                <th className="py-2 px-3 border-b hidden md:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider">
+                  Nombre
+                </th>
+                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider sm:hidden">
+                  Acciones
+                </th>
+                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider hidden md:table-cell">
                   Presentación
                 </th>
-                <th className="py-2 px-3 border-b hidden lg:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider hidden lg:table-cell">
                   Concentración
                 </th>
-                <th className="py-2 px-3 border-b hidden xl:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider hidden xl:table-cell">
                   Laboratorio
                 </th>
-                <th className="py-2 px-3 border-b hidden md:table-cell text-right">
+                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden md:table-cell">
                   Stock
                 </th>
-                <th className="py-2 px-3 border-b hidden sm:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
                   Vencimiento
                 </th>
-                <th className="py-2 px-3 border-b text-right hidden sm:table-cell">
-                  Precio compra (S/)
+                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                  Precio Compra (S/)
                 </th>
-                <th className="py-2 px-3 border-b text-right hidden sm:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
                   Margen (%)
                 </th>
-                <th className="py-2 px-3 border-b text-right hidden sm:table-cell">
-                  Precio venta (S/)
+                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                  Precio Venta (S/)
                 </th>
-                <th className="py-2 px-3 border-b hidden sm:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
                   Estado
                 </th>
-                <th className="py-2 px-3 border-b hidden sm:table-cell">
+                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
                   Acciones
                 </th>
               </tr>
@@ -300,46 +269,56 @@ export default function MedicamentosList() {
                   </td>
                 </tr>
               ) : (
-                medicamentosPaginados.map((m) => {
-                  // Resaltado de vencimiento
+                medicamentosPaginados.map((m, index) => {
+                  // Colores alternados para las filas
+                  let rowClass = index % 2 === 0 ? "bg-white" : "bg-gray-50";
+
+                  // Resaltado de vencimiento (override de colores alternados si es necesario)
                   let vencClass = "";
                   if (m.fecha_vencimiento) {
                     const hoy = new Date();
                     const venc = new Date(m.fecha_vencimiento);
                     const diff = (venc - hoy) / (1000 * 60 * 60 * 24);
-                    if (diff < 0)
-                      vencClass = "bg-red-200 text-red-800 font-bold";
-                    else if (diff < 90)
-                      vencClass = "bg-orange-100 text-orange-800 font-semibold";
+                    if (diff < 0) {
+                      vencClass = "bg-red-100 border-l-4 border-red-500";
+                      rowClass = ""; // Override row colors for urgency
+                    } else if (diff < 90) {
+                      vencClass = "bg-orange-100 border-l-4 border-orange-500";
+                      rowClass = ""; // Override row colors for warning
+                    }
                   }
                   return (
                     <tr
                       key={m.id}
-                      className={"hover:bg-purple-50 " + vencClass}
+                      className={`transition-colors duration-200 hover:bg-purple-100 hover:shadow-sm ${rowClass} ${vencClass}`}
                     >
-                      <td className="py-2 px-3 border-b">{m.codigo}</td>
-                      <td className="py-2 px-3 border-b">{m.nombre}</td>
-                      <td className="py-2 px-3 border-b text-center sm:hidden flex flex-row gap-2 justify-center">
+                      <td className="py-3 px-4 border-b border-gray-200 font-medium text-gray-900">
+                        {m.codigo}
+                      </td>
+                      <td className="py-3 px-4 border-b border-gray-200 font-semibold text-gray-800">
+                        {m.nombre}
+                      </td>
+                      <td className="py-3 px-4 border-b border-gray-200 text-center sm:hidden flex flex-row gap-2 justify-center">
                         <button
                           onClick={() => setDetalleMed(m)}
-                          className="text-blue-700 hover:text-blue-900"
+                          className="p-2 text-blue-600 hover:text-white hover:bg-blue-600 rounded-md transition-all duration-200 transform hover:scale-105"
                           title="Ver detalles"
                         >
-                          <FaInfoCircle size={18} />
+                          <FaInfoCircle size={16} />
                         </button>
                         <button
                           onClick={() => handleEdit(m)}
-                          className="text-blue-600 hover:text-blue-900"
+                          className="p-2 text-indigo-600 hover:text-white hover:bg-indigo-600 rounded-md transition-all duration-200 transform hover:scale-105"
                           title="Editar"
                         >
-                          <FaEdit size={18} />
+                          <FaEdit size={16} />
                         </button>
                         <button
                           onClick={() => setMovimientosMed(m)}
-                          className="text-purple-700 hover:text-purple-900"
+                          className="p-2 text-purple-600 hover:text-white hover:bg-purple-600 rounded-md transition-all duration-200 transform hover:scale-105"
                           title="Historial"
                         >
-                          <FaHistory size={18} />
+                          <FaHistory size={16} />
                         </button>
                         {m.estado !== "cuarentena" && (
                           <button
@@ -348,41 +327,41 @@ export default function MedicamentosList() {
                               setShowCuarentena(true);
                               setMotivoCuarentena("");
                             }}
-                            className="text-yellow-700 hover:text-yellow-900"
+                            className="p-2 text-yellow-600 hover:text-white hover:bg-yellow-600 rounded-md transition-all duration-200 transform hover:scale-105"
                             title="Cuarentena"
                           >
-                            <FaLock size={18} />
+                            <FaLock size={16} />
                           </button>
                         )}
                       </td>
-                      <td className="py-2 px-3 border-b hidden md:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 hidden md:table-cell">
                         {m.presentacion}
                       </td>
-                      <td className="py-2 px-3 border-b hidden lg:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 hidden lg:table-cell">
                         {m.concentracion}
                       </td>
-                      <td className="py-2 px-3 border-b hidden xl:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 hidden xl:table-cell">
                         {m.laboratorio}
                       </td>
-                      <td className="py-2 px-3 border-b text-right hidden md:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 text-right font-medium text-gray-700 hidden md:table-cell">
                         {m.stock}
                       </td>
-                      <td className="py-2 px-3 border-b text-center hidden sm:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 text-center hidden sm:table-cell">
                         {m.fecha_vencimiento
                           ? new Date(m.fecha_vencimiento).toLocaleDateString()
                           : "-"}
                       </td>
-                      <td className="py-2 px-3 border-b text-right hidden sm:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 text-right font-mono text-sm hidden sm:table-cell">
                         {m.precio_compra !== undefined
                           ? Number(m.precio_compra).toFixed(2)
                           : "-"}
                       </td>
-                      <td className="py-2 px-3 border-b text-right hidden sm:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 text-right hidden sm:table-cell">
                         {m.margen_ganancia !== undefined
                           ? Number(m.margen_ganancia).toFixed(1)
                           : "-"}
                       </td>
-                      <td className="py-2 px-3 border-b text-right font-semibold text-green-700 hidden sm:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-green-700 font-mono text-sm hidden sm:table-cell">
                         {m.precio_compra !== undefined &&
                         m.margen_ganancia !== undefined
                           ? (
@@ -395,7 +374,7 @@ export default function MedicamentosList() {
                       </td>
                       <td
                         className={
-                          "py-2 px-3 border-b hidden sm:table-cell " +
+                          "py-3 px-4 border-b border-gray-200 hidden sm:table-cell font-medium text-center " +
                           (m.estado === "cuarentena"
                             ? "bg-yellow-200 text-yellow-900 font-bold"
                             : "")
@@ -403,20 +382,20 @@ export default function MedicamentosList() {
                       >
                         {m.estado === "cuarentena" ? "CUARENTENA" : m.estado}
                       </td>
-                      <td className="py-2 px-3 border-b text-center gap-2 justify-center hidden sm:table-cell">
+                      <td className="py-3 px-4 border-b border-gray-200 text-center gap-2 justify-center hidden sm:table-cell">
                         <button
                           onClick={() => handleEdit(m)}
-                          className="text-blue-600 hover:text-blue-900 mx-1"
+                          className="p-2 text-indigo-600 hover:text-white hover:bg-indigo-600 rounded-md transition-all duration-200 transform hover:scale-105"
                           title="Editar"
                         >
-                          <FaEdit size={18} />
+                          <FaEdit size={16} />
                         </button>
                         <button
                           onClick={() => setMovimientosMed(m)}
-                          className="text-purple-700 hover:text-purple-900 mx-1"
+                          className="p-2 text-purple-600 hover:text-white hover:bg-purple-600 rounded-md transition-all duration-200 transform hover:scale-105"
                           title="Historial"
                         >
-                          <FaHistory size={18} />
+                          <FaHistory size={16} />
                         </button>
                         {m.estado !== "cuarentena" && (
                           <button
@@ -425,10 +404,10 @@ export default function MedicamentosList() {
                               setShowCuarentena(true);
                               setMotivoCuarentena("");
                             }}
-                            className="text-yellow-700 hover:text-yellow-900 mx-1"
+                            className="p-2 text-yellow-600 hover:text-white hover:bg-yellow-600 rounded-md transition-all duration-200 transform hover:scale-105"
                             title="Cuarentena"
                           >
-                            <FaLock size={18} />
+                            <FaLock size={16} />
                           </button>
                         )}
                       </td>
@@ -554,6 +533,7 @@ export default function MedicamentosList() {
                                   };
                                   await fetch(apiUrl, {
                                     method: "POST",
+                                    credentials: "include",
                                     headers: {
                                       "Content-Type": "application/json",
                                     },

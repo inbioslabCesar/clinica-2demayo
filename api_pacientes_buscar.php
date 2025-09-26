@@ -3,15 +3,16 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
 session_start();
 // CORS para localhost y producción
 $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:5175',
     'https://darkcyan-gnu-615778.hostingersite.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';

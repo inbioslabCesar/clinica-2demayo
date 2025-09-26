@@ -1,3 +1,6 @@
 // src/config/config.js
- // Cambia esto según tu dominio real
-export const BASE_URL = "http://localhost/policlinico-2demayo/";
+// URL base para desarrollo con Laragon
+// export const BASE_URL = "http://localhost/clinica-2demayo/";
+
+// URL base para produccion
+export const BASE_URL = "https://darkcyan-gnu-615778.hostingersite.com/";

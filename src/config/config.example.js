@@ -3,10 +3,10 @@
 // Copia este archivo como config.js y configura tu URL base
 
 // Para desarrollo local
-export const BASE_URL = "http://localhost/policlinico-2demayo/";
+// export const BASE_URL = "http://localhost/clinica-2demayo/";
 
 // Para producción (descomenta y configura)
-// export const BASE_URL = "https://tu-dominio.com/";
+export const BASE_URL = "https://darkcyan-gnu-615778.hostingersite.com/";
 
 // Otras configuraciones
 export const APP_NAME = "Clínica 2 de Mayo";

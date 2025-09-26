@@ -1,20 +1,10 @@
 
-import React from "react";
+
 
 export default function FormularioHistoriaClinica({ hc, setHc }) {
   return (
     <>
   <h3 className="text-lg font-semibold mb-2 mt-4">Anamnesis</h3>
-      {/* Motivo de la consulta */}
-      <div className="mb-2">
-        <label className="block font-semibold mb-1">Motivo de la consulta:</label>
-        <textarea
-          className="w-full border rounded p-1"
-          rows={2}
-          value={hc.motivo || ""}
-          onChange={e => setHc(h => ({ ...h, motivo: e.target.value }))}
-        />
-      </div>
       <div className="mb-2 flex flex-col md:flex-row gap-2">
         <div className="flex-1">
           <label className="block font-semibold mb-1">Tiempo de Enfermedad:</label>
