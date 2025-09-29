@@ -1,6 +1,6 @@
 
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import RecepcionModulo from "./RecepcionModulo";
 import { BASE_URL } from "../config/config";
@@ -15,20 +15,8 @@ function Dashboard({ usuario }) {
   });
   const location = useLocation();
 
-  // Función para actualizar la última HC desde RecepcionModulo
-  const actualizarUltimaHC = () => {
-    fetch(BASE_URL + "api_ultima_hc.php")
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) setUltimaHC(data.ultima_hc);
-      });
-    
-    // También actualizar estadísticas cuando se registre un nuevo paciente
-    obtenerEstadisticas();
-  };
-
   // Función para obtener estadísticas reales desde la API
-  const obtenerEstadisticas = async () => {
+  const obtenerEstadisticas = useCallback(async () => {
     try {
       const response = await fetch(BASE_URL + "api_estadisticas_dashboard.php");
       const data = await response.json();
@@ -57,12 +45,24 @@ function Dashboard({ usuario }) {
         totalPacientes: 0
       });
     }
-  };
+  }, []);
+
+  // Función para actualizar la última HC desde RecepcionModulo
+  const actualizarUltimaHC = useCallback(() => {
+    fetch(BASE_URL + "api_ultima_hc.php")
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) setUltimaHC(data.ultima_hc);
+      });
+    
+    // También actualizar estadísticas cuando se registre un nuevo paciente
+    obtenerEstadisticas();
+  }, [obtenerEstadisticas]);
 
   useEffect(() => {
     actualizarUltimaHC();
     obtenerEstadisticas();
-  }, [usuario, location.pathname]);
+  }, [usuario, location.pathname, actualizarUltimaHC, obtenerEstadisticas]);
 
   const formatearFecha = () => {
     return new Intl.DateTimeFormat('es-ES', {

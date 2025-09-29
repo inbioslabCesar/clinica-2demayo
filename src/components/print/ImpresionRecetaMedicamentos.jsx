@@ -1,11 +1,22 @@
-import { BASE_URL } from '../../config/config';
-
 const ImpresionRecetaMedicamentos = ({ 
   paciente, 
   medicamentos,
   medicoInfo,
   configuracionClinica 
 }) => {
+  // Función para obtener la ruta del logo según el entorno
+  const getLogoPath = () => {
+    // Intentar detectar si estamos en producción por el hostname o protocol
+    const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+    
+    if (isProduction) {
+      // En producción (Hostinger), usar ruta absoluta desde la raíz del dominio
+      return `${window.location.protocol}//${window.location.host}/2demayo.svg`;
+    } else {
+      // En desarrollo local, usar la ruta relativa a public
+      return '/2demayo.svg';
+    }
+  };
   const formatearFecha = (fecha) => {
     if (!fecha) return '';
     return new Date(fecha).toLocaleDateString('es-ES', {
@@ -36,22 +47,18 @@ const ImpresionRecetaMedicamentos = ({
         <div className="flex items-center justify-between border-b border-black pb-2 mb-3">
           {/* Logo e información de la clínica - compacto */}
           <div className="flex items-center gap-2">
-            {configuracionClinica?.logo_url && (
-              <img 
-                src={configuracionClinica.logo_url.startsWith('/') || configuracionClinica.logo_url.startsWith('http') 
-                  ? configuracionClinica.logo_url 
-                  : `${BASE_URL}${configuracionClinica.logo_url}`} 
-                alt="Logo" 
-                className="h-10 w-auto"
-              />
-            )}
+            <img 
+              src={getLogoPath()} 
+              alt="Logo Clínica 2 de Mayo" 
+              className="h-10 w-auto"
+            />
             <div>
               <h1 className="text-sm font-bold text-black uppercase leading-tight">
                 {configuracionClinica?.nombre_clinica || 'CLÍNICA 2 DE MAYO'}
               </h1>
-              <p className="text-xs text-black">{configuracionClinica?.direccion}</p>
+              <p className="text-xs text-black">{configuracionClinica?.direccion || 'Dirección de la clínica'}</p>
               <p className="text-xs text-black">
-                Tel: {configuracionClinica?.telefono}
+                Tel: {configuracionClinica?.telefono || '123-456-789'}
               </p>
               {configuracionClinica?.ruc && (
                 <p className="text-xs text-black">RUC: {configuracionClinica.ruc}</p>

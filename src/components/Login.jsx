@@ -12,10 +12,39 @@ function Login({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
+  // Validación de seguridad básica
+  const validateSecurity = () => {
+    // En producción, verificar HTTPS
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+      return {
+        isValid: false,
+        message: "⚠️ Conexión insegura detectada. Se requiere HTTPS para proteger tus credenciales."
+      };
+    }
+
+    // Validar longitud mínima de contraseña
+    if (password.length < 4) {
+      return {
+        isValid: false,
+        message: "La contraseña es demasiado corta"
+      };
+    }
+
+    return { isValid: true };
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
+    
+    // Validar seguridad ANTES de enviar
+    const securityCheck = validateSecurity();
+    if (!securityCheck.isValid) {
+      setError(securityCheck.message);
+      setLoading(false);
+      return;
+    }
     
     const esEmail = usuario.includes("@") && usuario.includes(".");
     try {
@@ -25,7 +54,10 @@ function Login({ onLogin }) {
         try {
           resMedico = await fetch(BASE_URL + "api_login_medico.php", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
             body: JSON.stringify({ email: usuario, password }),
             credentials: "include"
           });
@@ -46,7 +78,10 @@ function Login({ onLogin }) {
         try {
           res = await fetch(BASE_URL + "api_login.php", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
             body: JSON.stringify({ usuario, password }),
             credentials: "include"
           });
@@ -67,7 +102,10 @@ function Login({ onLogin }) {
         try {
           res = await fetch(BASE_URL + "api_login.php", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
             body: JSON.stringify({ usuario, password }),
             credentials: "include"
           });
@@ -87,7 +125,10 @@ function Login({ onLogin }) {
         try {
           resMedico = await fetch(BASE_URL + "api_login_medico.php", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
             body: JSON.stringify({ email: usuario, password }),
             credentials: "include"
           });

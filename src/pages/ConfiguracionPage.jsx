@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
+import { BASE_URL } from '../config/config.js';
 
 function ConfiguracionPage() {
   const [configuracion, setConfiguracion] = useState({
@@ -10,7 +11,14 @@ function ConfiguracionPage() {
     horario_atencion: '',
     logo_url: '',
     website: '',
-    ruc: ''
+    ruc: '',
+    especialidades: '',
+    mision: '',
+    vision: '',
+    valores: '',
+    director_general: '',
+    jefe_enfermeria: '',
+    contacto_emergencias: ''
   });
 
   const [loading, setLoading] = useState(false);
@@ -26,7 +34,7 @@ function ConfiguracionPage() {
       setCargandoDatos(true);
       console.log('🔍 Intentando cargar configuración...');
       
-      const response = await fetch('http://localhost/clinica-2demayo/api_configuracion.php', {
+      const response = await fetch(BASE_URL + 'api_get_configuracion.php', {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -120,7 +128,7 @@ function ConfiguracionPage() {
     try {
       console.log('💾 Intentando guardar configuración...', configuracion);
       
-      const response = await fetch('http://localhost/clinica-2demayo/api_configuracion.php', {
+      const response = await fetch(BASE_URL + 'api_configuracion.php', {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -258,14 +266,27 @@ function ConfiguracionPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Sitio Web (opcional)
+                Director General
               </label>
               <input
-                type="url"
-                value={configuracion.website || ''}
-                onChange={(e) => manejarCambio('website', e.target.value)}
+                type="text"
+                value={configuracion.director_general || ''}
+                onChange={(e) => manejarCambio('director_general', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="https://www.ejemplo.com"
+                placeholder="Dr. Juan Pérez"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Jefe de Enfermería
+              </label>
+              <input
+                type="text"
+                value={configuracion.jefe_enfermeria || ''}
+                onChange={(e) => manejarCambio('jefe_enfermeria', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enf. María González"
               />
             </div>
 
@@ -282,6 +303,45 @@ function ConfiguracionPage() {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Sitio Web (opcional)
+              </label>
+              <input
+                type="url"
+                value={configuracion.website || ''}
+                onChange={(e) => manejarCambio('website', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="https://www.ejemplo.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Contacto de Emergencias
+              </label>
+              <input
+                type="tel"
+                value={configuracion.contacto_emergencias || ''}
+                onChange={(e) => manejarCambio('contacto_emergencias', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Emergencias 24h: +51 987-654-321"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Especialidades
+              </label>
+              <textarea
+                value={configuracion.especialidades || ''}
+                onChange={(e) => manejarCambio('especialidades', e.target.value)}
+                rows="2"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Medicina General, Pediatría, Ginecología, Traumatología..."
+              />
+            </div>
+
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Horario de Atención
@@ -292,6 +352,45 @@ function ConfiguracionPage() {
                 rows="3"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Lunes a Viernes: 7:00 AM - 8:00 PM..."
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Misión Institucional
+              </label>
+              <textarea
+                value={configuracion.mision || ''}
+                onChange={(e) => manejarCambio('mision', e.target.value)}
+                rows="3"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Brindar servicios de salud de calidad..."
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Visión Institucional
+              </label>
+              <textarea
+                value={configuracion.vision || ''}
+                onChange={(e) => manejarCambio('vision', e.target.value)}
+                rows="3"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Ser el centro de salud de referencia..."
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Valores Institucionales
+              </label>
+              <textarea
+                value={configuracion.valores || ''}
+                onChange={(e) => manejarCambio('valores', e.target.value)}
+                rows="3"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Compromiso, Excelencia, Humanización, Integridad..."
               />
             </div>
           </div>

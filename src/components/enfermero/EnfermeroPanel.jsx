@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import { useState } from "react";
 import TriageList from "./TriageList";
 import { Icon } from '@fluentui/react';
 
@@ -18,7 +18,7 @@ function EnfermeroPanel() {
     {
       key: "tratamientos",
       label: "Tratamientos",
-      icon: "MedicalBreathingTreatment",
+      icon: "Health",
       color: "blue",
       description: "Gestión de tratamientos"
     },
@@ -134,7 +134,7 @@ function EnfermeroPanel() {
             <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-6 text-white">
               <div className="flex items-center gap-4">
                 <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-xl backdrop-blur-sm">
-                  <Icon iconName="MedicalBreathingTreatment" className="text-2xl text-white" />
+                  <Icon iconName="Health" className="text-2xl text-white" />
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">Gestión de Tratamientos</h2>
@@ -145,7 +145,7 @@ function EnfermeroPanel() {
             <div className="p-6">
               <div className="text-center py-12">
                 <div className="flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mx-auto mb-4">
-                  <Icon iconName="MedicalBreathingTreatment" className="text-4xl text-blue-600" />
+                  <Icon iconName="Health" className="text-4xl text-blue-600" />
                 </div>
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">Módulo en Desarrollo</h3>
                 <p className="text-gray-600">La gestión de tratamientos estará disponible próximamente</p>

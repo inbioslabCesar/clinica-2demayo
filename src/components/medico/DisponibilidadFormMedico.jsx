@@ -4,21 +4,38 @@ import "react-calendar/dist/Calendar.css";
 import "./DisponibilidadFormMedico.custom.css";
 
 // Formulario para que el médico seleccione fechas y agregue uno o varios bloques de horario por fecha
-function DisponibilidadFormMedico({ onSave }) {
+function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
   const [selectedDates, setSelectedDates] = useState([]); // array de fechas seleccionadas
   const [bloques, setBloques] = useState({}); // { fecha: [{hora_inicio, hora_fin}, ...] }
   // Modal de edición rápida
   const [modalFecha, setModalFecha] = useState(null); // fecha activa para modal, o null
+
+  // Crear conjunto de fechas ya registradas en la base de datos
+  const fechasRegistradas = new Set(bloquesGuardados.map(bloque => bloque.fecha));
 
   // Selección de fechas múltiples
   const toLocalYMD = (date) => {
     const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
     return d.toISOString().slice(0, 10);
   };
+
+  // Función para verificar si una fecha ya pasó
+  const esFechaPasada = (dateString) => {
+    const hoy = new Date();
+    const fechaComparar = new Date(dateString);
+    // Comparar solo las fechas, ignorando la hora
+    hoy.setHours(0, 0, 0, 0);
+    fechaComparar.setHours(0, 0, 0, 0);
+    return fechaComparar < hoy;
+  };
   const handleDateChange = (date) => {
     let dates = Array.isArray(date) ? date : [date];
     // Convertir a string YYYY-MM-DD en zona local
     dates = dates.map(d => toLocalYMD(d));
+    
+    // Filtrar fechas pasadas - no permitir seleccionar fechas que ya pasaron
+    dates = dates.filter(fecha => !esFechaPasada(fecha));
+    
     setSelectedDates(dates);
     // Inicializar bloques para nuevas fechas
     setBloques(prev => {
@@ -33,9 +50,15 @@ function DisponibilidadFormMedico({ onSave }) {
   // Al hacer clic en un día, abrir modal de edición rápida
   const handleDayClick = (value) => {
     const fecha = toLocalYMD(value);
+    
+    // No permitir edición de fechas pasadas para nuevas disponibilidades
+    if (esFechaPasada(fecha) && !fechasRegistradas.has(fecha)) {
+      return; // Salir sin hacer nada si es una fecha pasada sin registros
+    }
+    
     setModalFecha(fecha);
-    // Si la fecha no está en selectedDates, la agregamos
-    if (!selectedDates.includes(fecha)) {
+    // Si la fecha no está en selectedDates y no es una fecha pasada, la agregamos
+    if (!selectedDates.includes(fecha) && !esFechaPasada(fecha)) {
       setSelectedDates(prev => [...prev, fecha]);
       setBloques(prev => ({ ...prev, [fecha]: [{ hora_inicio: "08:00:00", hora_fin: "10:00:00" }] }));
     }
@@ -98,10 +121,44 @@ function DisponibilidadFormMedico({ onSave }) {
             let classes = [];
             if (selectedDates.includes(ymd)) classes.push('selected-multiple');
             if (bloques[ymd] && bloques[ymd].length > 0) classes.push('has-bloques');
+            if (fechasRegistradas.has(ymd)) {
+              if (esFechaPasada(ymd)) {
+                classes.push('fecha-pasada');
+              } else {
+                classes.push('fecha-registrada');
+              }
+            }
             return classes.join(' ');
           }}
           onClickDay={handleDayClick}
         />
+        
+        {/* Leyenda de colores */}
+        <div className="mt-3 p-2 bg-gray-50 rounded text-xs">
+          <div className="font-semibold mb-1 text-gray-700">Leyenda:</div>
+          <div className="flex flex-wrap gap-3">
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 bg-green-100 border-2 border-green-500 rounded flex items-center justify-center">
+                <span className="text-green-500 text-xs font-bold">✓</span>
+              </div>
+              <span>Ya registrado</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 bg-gray-100 border-2 border-gray-400 rounded flex items-center justify-center opacity-70">
+                <span className="text-gray-500 text-xs font-bold">⏰</span>
+              </div>
+              <span>Consulta pasada</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 bg-sky-400 rounded"></div>
+              <span>Seleccionado</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 bg-blue-100 border border-blue-300 rounded"></div>
+              <span>Hoy</span>
+            </div>
+          </div>
+        </div>
       </div>
       {selectedDates.length === 0 && <div className="text-gray-500 text-sm mb-2">Selecciona al menos una fecha en el calendario.</div>}
       {/* Modal de edición rápida de bloques para un día */}

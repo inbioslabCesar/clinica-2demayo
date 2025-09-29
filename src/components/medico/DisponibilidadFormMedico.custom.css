@@ -11,6 +11,7 @@
   font-weight: 500;
   font-size: 1rem;
   padding: 0.5em 0.2em;
+  position: relative;
 }
 .react-calendar__tile--active,
 .react-calendar__tile--rangeStart,
@@ -31,9 +32,8 @@
   background: #38bdf8 !important;
   color: #fff !important;
 }
-.react-calendar__tile.has-bloques {
-  position: relative;
-}
+
+/* Estilos para días con bloques temporales (en edición) */
 .react-calendar__tile.has-bloques::after {
   content: '';
   display: block;
@@ -45,4 +45,47 @@
   bottom: 6px;
   left: 50%;
   transform: translateX(-50%);
+}
+
+/* Estilos para fechas ya registradas en la base de datos */
+.react-calendar__tile.fecha-registrada {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  font-weight: 600;
+  border: 2px solid #22c55e;
+}
+
+.react-calendar__tile.fecha-registrada::before {
+  content: '✓';
+  font-size: 10px;
+  color: #22c55e;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-weight: bold;
+}
+
+/* Estilos para fechas pasadas (consultas ya realizadas) */
+.react-calendar__tile.fecha-pasada {
+  background: #f3f4f6 !important;
+  color: #6b7280 !important;
+  font-weight: 500;
+  border: 2px solid #9ca3af;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.react-calendar__tile.fecha-pasada:hover {
+  background: #f3f4f6 !important;
+  color: #6b7280 !important;
+}
+
+.react-calendar__tile.fecha-pasada::before {
+  content: '⏰';
+  font-size: 10px;
+  color: #6b7280;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-weight: bold;
 }

@@ -10,6 +10,7 @@ session_start();
 $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:5175',
     'https://darkcyan-gnu-615778.hostingersite.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -18,7 +19,7 @@ if (in_array($origin, $allowedOrigins)) {
 }
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
 header('Content-Type: application/json');
 
 // Manejar preflight (OPTIONS)

@@ -1,4 +1,4 @@
-import React from "react";
+
 import MedicoConsultas from "../components/MedicoConsultas";
 
 function MedicoConsultasPage({ usuario }) {

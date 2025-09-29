@@ -1,11 +1,14 @@
 <?php
+// Detectar si estamos en producción (HTTPS) o desarrollo (HTTP)
+$isProduction = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
+
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
+    'secure' => $isProduction, // true en HTTPS, false en HTTP
     'httponly' => true,
-    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
+    'samesite' => 'Lax',
 ]);
 session_start();
 
@@ -13,14 +16,22 @@ session_start();
 $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:5175',
     'https://darkcyan-gnu-615778.hostingersite.com'
 ];
+
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
     header('Access-Control-Allow-Origin: ' . $origin);
+} else {
+    // Si no hay origin (petición directa) o es el mismo dominio, permitir
+    $currentHost = $_SERVER['HTTP_HOST'] ?? '';
+    if ($currentHost && strpos($currentHost, 'hostingersite.com') !== false) {
+        header('Access-Control-Allow-Origin: https://' . $currentHost);
+    }
 }
 header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {

@@ -16,7 +16,7 @@ export default function ExamenesLaboratorioCrudPage() {
   const [form, setForm] = useState({
     nombre: "",
     metodologia: "",
-    valores_referenciales: [],
+    valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
     precio_publico: "",
     precio_convenio: "",
     tipo_tubo: "",
@@ -92,10 +92,14 @@ export default function ExamenesLaboratorioCrudPage() {
 
   const fetchExamenes = async () => {
     setLoading(true);
+    console.log('🔍 Cargando exámenes...', BASE_URL + "api_examenes_laboratorio.php");
     const res = await fetch(BASE_URL + "api_examenes_laboratorio.php", {
       credentials: "include",
     });
     const data = await res.json();
+    console.log('📊 Respuesta completa API:', data);
+    console.log('🔬 Exámenes recibidos:', data.examenes);
+    console.log('📏 Cantidad de exámenes:', data.examenes?.length || 0);
     setExamenes(data.examenes || []);
     setLoading(false);
   };
@@ -139,7 +143,7 @@ export default function ExamenesLaboratorioCrudPage() {
         setForm({
           nombre: "",
           metodologia: "",
-          valores_referenciales: [{ nombre: "", min: "", max: "", unidad: "" }],
+          valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
           precio_publico: "",
           precio_convenio: "",
           tipo_tubo: "",
@@ -179,7 +183,7 @@ export default function ExamenesLaboratorioCrudPage() {
       }
     }
     if (!valores.length)
-      valores = [{ nombre: "", min: "", max: "", unidad: "" }];
+      valores = [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }];
     setForm({
       ...ex,
       valores_referenciales: valores,
@@ -195,7 +199,7 @@ export default function ExamenesLaboratorioCrudPage() {
     setForm({
       nombre: "",
       metodologia: "",
-      valores_referenciales: [{ nombre: "", min: "", max: "", unidad: "" }],
+      valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
       precio_publico: "",
       precio_convenio: "",
       tipo_tubo: "",
@@ -245,6 +249,13 @@ export default function ExamenesLaboratorioCrudPage() {
       ex.nombre.toLowerCase().includes(search.toLowerCase()) ||
       ex.metodologia.toLowerCase().includes(search.toLowerCase())
   );
+  
+  console.log('🔍 Debug cadena:', {
+    'examenes.length': examenes.length,
+    'filtered.length': filtered.length,
+    'search': search,
+    'examenes sample': examenes.slice(0, 2)
+  });
   
   // Calcular estadísticas
   const stats = {
@@ -669,7 +680,7 @@ export default function ExamenesLaboratorioCrudPage() {
                       setForm({
                         nombre: "",
                         metodologia: "",
-                        valores_referenciales: [],
+                        valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
                         precio_publico: "",
                         precio_convenio: "",
                         tipo_tubo: "",

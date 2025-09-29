@@ -8,7 +8,7 @@ import ConfiguracionPage from "./pages/ConfiguracionPage";
 import GestionTarifasPage from "./pages/GestionTarifasPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import MedicamentosList from "./farmacia/MedicamentosList";
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Login from "./components/Login";

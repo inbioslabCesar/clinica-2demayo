@@ -14,14 +14,10 @@ CREATE TABLE usuarios (
 INSERT INTO usuarios (usuario, password, nombre, dni, profesion, rol, activo)
 VALUES (
   'admin',
-  SHA2('admin123', 256),
+  '$2y$10$en4nk8sEugNf0sMfJUvd8uE1wxOCXjKOygiF54ZbUctzRTq2pSnDK', -- bcrypt de '41950361'
   'Administrador General',
   '00000000',
   'Administrador',
   'administrador',
   1
 );
-modificar la contraseña del admin
-UPDATE usuarios
-SET password = SHA2('41950361', 256)
-WHERE usuario = 'admin';

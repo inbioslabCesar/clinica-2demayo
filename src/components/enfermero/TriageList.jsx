@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
 import { BASE_URL } from "../../config/config";
 import TriageForm from "./TriageForm";
@@ -248,11 +248,33 @@ function TriageList() {
                 initialData={triajeData}
                 onGuardar={async (datos) => {
                   setGuardando(true);
-                  await fetch(BASE_URL + "api_triaje.php", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ consulta_id: triajeActual.id, datos })
-                  });
+                  // Enviar datos en formato compatible con API: { consulta_id, datos }
+                  const payload = {
+                    consulta_id: triajeActual.id,
+                    datos: {
+                      ...datos, // Todos los campos del triaje van dentro de 'datos'
+                      paciente_id: triajeActual.paciente_id
+                    }
+                  };
+                  
+                  try {
+                    const response = await fetch(BASE_URL + "api_triaje.php", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify(payload)
+                    });
+                    
+                    const result = await response.json();
+                    if (!result.success) {
+                      console.error('Error al guardar triaje:', result.error);
+                      alert('Error al guardar triaje: ' + (result.error || 'Error desconocido'));
+                    }
+                  } catch (error) {
+                    console.error('Error de red al guardar triaje:', error);
+                    alert('Error de red al guardar triaje');
+                  }
+                  
                   setGuardando(false);
                   setTriajeActual(null);
                   setTriajeData(null);

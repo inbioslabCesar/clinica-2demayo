@@ -411,152 +411,155 @@ export default function MedicamentosList() {
                           </button>
                         )}
                       </td>
-                      {/* Modal de detalles para móvil */}
-                      {detalleMed && (
-                        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-                          <div className="bg-white rounded-lg shadow-lg p-6 max-w-xs w-full relative">
-                            <button
-                              onClick={() => setDetalleMed(null)}
-                              className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-xl"
-                            >
-                              ×
-                            </button>
-                            <h2 className="text-lg font-bold mb-2 text-blue-800">
-                              Detalles del Medicamento
-                            </h2>
-                            <div className="space-y-1 text-sm">
-                              <div>
-                                <b>Código:</b> {detalleMed.codigo}
-                              </div>
-                              <div>
-                                <b>Nombre:</b> {detalleMed.nombre}
-                              </div>
-                              <div>
-                                <b>Presentación:</b> {detalleMed.presentacion}
-                              </div>
-                              <div>
-                                <b>Concentración:</b> {detalleMed.concentracion}
-                              </div>
-                              <div>
-                                <b>Laboratorio:</b> {detalleMed.laboratorio}
-                              </div>
-                              <div>
-                                <b>Stock:</b> {detalleMed.stock}
-                              </div>
-                              <div>
-                                <b>Vencimiento:</b>{" "}
-                                {detalleMed.fecha_vencimiento
-                                  ? new Date(
-                                      detalleMed.fecha_vencimiento
-                                    ).toLocaleDateString()
-                                  : "-"}
-                              </div>
-                              <div>
-                                <b>Precio compra:</b> S/{" "}
-                                {detalleMed.precio_compra !== undefined
-                                  ? Number(detalleMed.precio_compra).toFixed(2)
-                                  : "-"}
-                              </div>
-                              <div>
-                                <b>Margen ganancia:</b>{" "}
-                                {detalleMed.margen_ganancia !== undefined
-                                  ? Number(detalleMed.margen_ganancia).toFixed(
-                                      1
-                                    )
-                                  : "-"}
-                                %
-                              </div>
-                              <div>
-                                <b>Precio venta:</b> S/{" "}
-                                {detalleMed.precio_compra !== undefined &&
-                                detalleMed.margen_ganancia !== undefined
-                                  ? (
-                                      Number(detalleMed.precio_compra) +
-                                      (Number(detalleMed.precio_compra) *
-                                        Number(detalleMed.margen_ganancia)) /
-                                        100
-                                    ).toFixed(2)
-                                  : "-"}
-                              </div>
-                              <div>
-                                <b>Estado:</b> {detalleMed.estado}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      {/* Modal de cuarentena */}
-                      {showCuarentena && (
-                        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-                          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full relative">
-                            <h2 className="text-lg font-bold mb-2 text-yellow-800">
-                              Enviar a cuarentena
-                            </h2>
-                            <p className="mb-2 text-sm">
-                              Medicamento: <b>{cuarentenaData?.nombre}</b> (
-                              {cuarentenaData?.codigo})
-                            </p>
-                            <label className="block mb-2 text-sm">
-                              Motivo de cuarentena{" "}
-                              <span className="text-red-600">*</span>
-                            </label>
-                            <textarea
-                              className="w-full border rounded px-2 py-1 mb-4"
-                              rows={3}
-                              value={motivoCuarentena}
-                              onChange={(e) =>
-                                setMotivoCuarentena(e.target.value)
-                              }
-                              required
-                            />
-                            <div className="flex gap-2 justify-end">
-                              <button
-                                onClick={() => setShowCuarentena(false)}
-                                className="bg-gray-400 text-white px-4 py-2 rounded"
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                className="bg-yellow-600 text-white px-4 py-2 rounded"
-                                disabled={!motivoCuarentena.trim()}
-                                onClick={async () => {
-                                  if (!cuarentenaData) return;
-                                  const apiUrl = `${BASE_URL}api_medicamentos.php`;
-                                  const hoy = new Date()
-                                    .toISOString()
-                                    .slice(0, 10);
-                                  const data = {
-                                    ...cuarentenaData,
-                                    estado: "cuarentena",
-                                    fecha_cuarentena: hoy,
-                                    motivo_cuarentena: motivoCuarentena,
-                                  };
-                                  await fetch(apiUrl, {
-                                    method: "POST",
-                                    credentials: "include",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                    },
-                                    body: JSON.stringify(data),
-                                  });
-                                  setShowCuarentena(false);
-                                  setCuarentenaData(null);
-                                  setMotivoCuarentena("");
-                                  fetchMedicamentos();
-                                }}
-                              >
-                                Confirmar
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </tr>
                   );
                 })
               )}
             </tbody>
           </table>
+
+          {/* Modal de detalles para móvil */}
+          {detalleMed && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg shadow-lg p-6 max-w-xs w-full relative">
+                <button
+                  onClick={() => setDetalleMed(null)}
+                  className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-xl"
+                >
+                  ×
+                </button>
+                <h2 className="text-lg font-bold mb-2 text-blue-800">
+                  Detalles del Medicamento
+                </h2>
+                <div className="space-y-1 text-sm">
+                  <div>
+                    <b>Código:</b> {detalleMed.codigo}
+                  </div>
+                  <div>
+                    <b>Nombre:</b> {detalleMed.nombre}
+                  </div>
+                  <div>
+                    <b>Presentación:</b> {detalleMed.presentacion}
+                  </div>
+                  <div>
+                    <b>Concentración:</b> {detalleMed.concentracion}
+                  </div>
+                  <div>
+                    <b>Laboratorio:</b> {detalleMed.laboratorio}
+                  </div>
+                  <div>
+                    <b>Stock:</b> {detalleMed.stock}
+                  </div>
+                  <div>
+                    <b>Vencimiento:</b>{" "}
+                    {detalleMed.fecha_vencimiento
+                      ? new Date(
+                          detalleMed.fecha_vencimiento
+                        ).toLocaleDateString()
+                      : "-"}
+                  </div>
+                  <div>
+                    <b>Precio compra:</b> S/{" "}
+                    {detalleMed.precio_compra !== undefined
+                      ? Number(detalleMed.precio_compra).toFixed(2)
+                      : "-"}
+                  </div>
+                  <div>
+                    <b>Margen ganancia:</b>{" "}
+                    {detalleMed.margen_ganancia !== undefined
+                      ? Number(detalleMed.margen_ganancia).toFixed(
+                          1
+                        )
+                      : "-"}
+                    %
+                  </div>
+                  <div>
+                    <b>Precio venta:</b> S/{" "}
+                    {detalleMed.precio_compra !== undefined &&
+                    detalleMed.margen_ganancia !== undefined
+                      ? (
+                          Number(detalleMed.precio_compra) +
+                          (Number(detalleMed.precio_compra) *
+                            Number(detalleMed.margen_ganancia)) /
+                            100
+                        ).toFixed(2)
+                      : "-"}
+                  </div>
+                  <div>
+                    <b>Estado:</b> {detalleMed.estado}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal de cuarentena */}
+          {showCuarentena && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full relative">
+                <h2 className="text-lg font-bold mb-2 text-yellow-800">
+                  Enviar a cuarentena
+                </h2>
+                <p className="mb-2 text-sm">
+                  Medicamento: <b>{cuarentenaData?.nombre}</b> (
+                  {cuarentenaData?.codigo})
+                </p>
+                <label className="block mb-2 text-sm">
+                  Motivo de cuarentena{" "}
+                  <span className="text-red-600">*</span>
+                </label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 mb-4"
+                  rows={3}
+                  value={motivoCuarentena}
+                  onChange={(e) =>
+                    setMotivoCuarentena(e.target.value)
+                  }
+                  required
+                />
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setShowCuarentena(false)}
+                    className="bg-gray-400 text-white px-4 py-2 rounded"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    className="bg-yellow-600 text-white px-4 py-2 rounded"
+                    disabled={!motivoCuarentena.trim()}
+                    onClick={async () => {
+                      if (!cuarentenaData) return;
+                      const apiUrl = `${BASE_URL}api_medicamentos.php`;
+                      const hoy = new Date()
+                        .toISOString()
+                        .slice(0, 10);
+                      const data = {
+                        ...cuarentenaData,
+                        estado: "cuarentena",
+                        fecha_cuarentena: hoy,
+                        motivo_cuarentena: motivoCuarentena,
+                      };
+                      await fetch(apiUrl, {
+                        method: "POST",
+                        credentials: "include",
+                        headers: {
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify(data),
+                      });
+                      setShowCuarentena(false);
+                      setCuarentenaData(null);
+                      setMotivoCuarentena("");
+                      fetchMedicamentos();
+                    }}
+                  >
+                    Confirmar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Controles de paginación */}
           <div className="flex justify-between items-center mt-4">
             <div className="text-sm text-gray-600">
