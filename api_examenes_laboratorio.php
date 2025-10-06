@@ -63,6 +63,7 @@ switch ($method) {
         // Crear nuevo examen
         $data = json_decode(file_get_contents('php://input'), true);
         $nombre = $data['nombre'] ?? null;
+        $categoria = $data['categoria'] ?? null;
         $metodologia = $data['metodologia'] ?? null;
         $valores_referenciales = isset($data['valores_referenciales']) ? json_encode($data['valores_referenciales']) : null;
         $precio_publico = $data['precio_publico'] !== "" ? $data['precio_publico'] : null;
@@ -72,10 +73,11 @@ switch ($method) {
         $tiempo_resultado = $data['tiempo_resultado'] ?? null;
         $condicion_paciente = $data['condicion_paciente'] ?? null;
         $preanalitica = $data['preanalitica'] ?? null;
-        $stmt = $conn->prepare("INSERT INTO examenes_laboratorio (nombre, metodologia, valores_referenciales, precio_publico, precio_convenio, tipo_tubo, tipo_frasco, tiempo_resultado, condicion_paciente, preanalitica, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)");
+        $stmt = $conn->prepare("INSERT INTO examenes_laboratorio (nombre, categoria, metodologia, valores_referenciales, precio_publico, precio_convenio, tipo_tubo, tipo_frasco, tiempo_resultado, condicion_paciente, preanalitica, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)");
         $stmt->bind_param(
-            "sssddsssss",
+            "ssssddsssss",
             $nombre,
+            $categoria,
             $metodologia,
             $valores_referenciales,
             $precio_publico,
@@ -93,6 +95,7 @@ switch ($method) {
         // Actualizar examen
         $data = json_decode(file_get_contents('php://input'), true);
         $nombre = $data['nombre'] ?? null;
+        $categoria = $data['categoria'] ?? null;
         $metodologia = $data['metodologia'] ?? null;
         $valores_referenciales = isset($data['valores_referenciales']) ? json_encode($data['valores_referenciales']) : null;
         $precio_publico = $data['precio_publico'] !== "" ? $data['precio_publico'] : null;
@@ -103,10 +106,11 @@ switch ($method) {
         $condicion_paciente = $data['condicion_paciente'] ?? null;
         $preanalitica = $data['preanalitica'] ?? null;
         $id = $data['id'];
-        $stmt = $conn->prepare("UPDATE examenes_laboratorio SET nombre=?, metodologia=?, valores_referenciales=?, precio_publico=?, precio_convenio=?, tipo_tubo=?, tipo_frasco=?, tiempo_resultado=?, condicion_paciente=?, preanalitica=? WHERE id=?");
+        $stmt = $conn->prepare("UPDATE examenes_laboratorio SET nombre=?, categoria=?, metodologia=?, valores_referenciales=?, precio_publico=?, precio_convenio=?, tipo_tubo=?, tipo_frasco=?, tiempo_resultado=?, condicion_paciente=?, preanalitica=? WHERE id=?");
         $stmt->bind_param(
-            "sssddsssssi",
+            "ssssddsssssi",
             $nombre,
+            $categoria,
             $metodologia,
             $valores_referenciales,
             $precio_publico,

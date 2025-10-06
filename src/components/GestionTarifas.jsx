@@ -17,8 +17,6 @@ function GestionTarifas() {
 
   const serviciosTipos = [
     { value: 'consulta', label: 'Consulta Médica' },
-    { value: 'laboratorio', label: 'Laboratorio' },
-    { value: 'farmacia', label: 'Farmacia' },
     { value: 'rayosx', label: 'Rayos X' },
     { value: 'ecografia', label: 'Ecografía' },
     { value: 'ocupacional', label: 'Medicina Ocupacional' }
@@ -318,48 +316,50 @@ function GestionTarifas() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {tarifas.map((tarifa) => (
-                <tr key={tarifa.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 capitalize">
-                    {tarifa.servicio_tipo}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {tarifa.descripcion}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    S/ {parseFloat(tarifa.precio_particular).toFixed(2)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {tarifa.precio_seguro ? `S/ ${parseFloat(tarifa.precio_seguro).toFixed(2)}` : '-'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {tarifa.precio_convenio ? `S/ ${parseFloat(tarifa.precio_convenio).toFixed(2)}` : '-'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      tarifa.activo === 1 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {tarifa.activo === 1 ? 'Activa' : 'Inactiva'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button
-                      onClick={() => handleEdit(tarifa)}
-                      className="text-blue-600 hover:text-blue-900 mr-4"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      onClick={() => handleDelete(tarifa.id)}
-                      className="text-red-600 hover:text-red-900"
-                    >
-                      Desactivar
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {tarifas
+                .filter(tarifa => ['consulta', 'rayosx', 'ecografia', 'ocupacional'].includes(tarifa.servicio_tipo))
+                .map((tarifa) => (
+                  <tr key={tarifa.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 capitalize">
+                      {tarifa.servicio_tipo}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {tarifa.descripcion}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      S/ {parseFloat(tarifa.precio_particular).toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {tarifa.precio_seguro ? `S/ ${parseFloat(tarifa.precio_seguro).toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {tarifa.precio_convenio ? `S/ ${parseFloat(tarifa.precio_convenio).toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        tarifa.activo === 1 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {tarifa.activo === 1 ? 'Activa' : 'Inactiva'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => handleEdit(tarifa)}
+                        className="text-blue-600 hover:text-blue-900 mr-4"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDelete(tarifa.id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        Desactivar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>

@@ -43,10 +43,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $params[] = $valor;
         $types = 's';
     } elseif ($tipo === 'nombre') {
-        $sql = 'SELECT * FROM pacientes WHERE nombre LIKE ? OR apellido LIKE ?';
-        $params[] = "%$valor%";
-        $params[] = "%$valor%";
-        $types = 'ss';
+        // Separar por espacios y buscar cada palabra en nombre y apellido
+        $palabras = preg_split('/\s+/', trim($valor));
+        $where = [];
+        $types = '';
+        foreach ($palabras as $palabra) {
+            $where[] = '(nombre LIKE ? OR apellido LIKE ?)';
+            $params[] = "%$palabra%";
+            $params[] = "%$palabra%";
+            $types .= 'ss';
+        }
+        $sql = 'SELECT * FROM pacientes WHERE ' . implode(' AND ', $where);
     } elseif ($tipo === 'historia') {
         $sql = 'SELECT * FROM pacientes WHERE historia_clinica = ?';
         $params[] = $valor;

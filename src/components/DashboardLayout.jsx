@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import { Icon } from '@fluentui/react';
 import { Link } from "react-router-dom";
 import Footer from "./Footer";
-import { Icon } from '@fluentui/react';
+import React, { useState } from "react";
 import { initializeIcons } from '@fluentui/font-icons-mdl2';
 initializeIcons();
 function Sidebar({ open, onClose, onLogout, usuario }) {
@@ -62,6 +62,8 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
             ) : (usuario?.rol === 'químico' || usuario?.rol === 'quimico') ? (
               <>
                 <Link to="/medicamentos" className="py-2 px-3 rounded-lg text-pink-700 hover:bg-pink-100 font-medium" onClick={onClose}>Medicamentos</Link>
+                <Link to="/farmacia/cotizador" className="py-2 px-3 rounded-lg text-blue-700 hover:bg-blue-100 font-medium" onClick={onClose}>Cotizador Farmacia</Link>
+                <Link to="/farmacia/ventas" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>Ventas de Farmacia</Link>
               </>
             ) : (
               <>

@@ -25,6 +25,12 @@ function ServiciosSelector({ paciente }) {
           pacienteId: paciente.id
         }
       });
+    } else if (servicio.key === "laboratorio") {
+      navigate(`/cotizar-laboratorio/${paciente.id}`);
+    } else if (servicio.key === "farmacia") {
+      navigate(`/cotizar-farmacia/${paciente.id}`);
+    } else if (servicio.key === "rayosx") {
+      navigate(`/cotizar-rayosx/${paciente.id}`);
     } else if (servicio.requiresPayment) {
       setServicioSeleccionado(servicio);
       setMostrarCobro(true);
@@ -87,7 +93,8 @@ function ServiciosSelector({ paciente }) {
     }
   };
 
-  if (mostrarCobro && servicioSeleccionado) {
+  // Evitar mostrar el módulo de cobros para laboratorio
+  if (mostrarCobro && servicioSeleccionado && servicioSeleccionado.key !== "laboratorio") {
     return (
       <CobroModuloFinal
         paciente={paciente}

@@ -77,10 +77,12 @@ $result = $stmt->get_result();
 
 if ($row = $result->fetch_assoc()) {
     if (password_verify($password, $row['password'])) {
-        // Guardar el id del médico en la sesión para mantener autenticación
-        $_SESSION['medico_id'] = $row['id'];
-        unset($row['password']);
-        echo json_encode(['success' => true, 'medico' => $row]);
+    // Guardar el id y datos del médico en la sesión para compatibilidad
+    $_SESSION['medico_id'] = $row['id'];
+    $row['rol'] = 'medico';
+    unset($row['password']);
+    $_SESSION['usuario'] = $row;
+    echo json_encode(['success' => true, 'medico' => $row]);
     } else {
         http_response_code(401);
         echo json_encode(['error' => 'Credenciales incorrectas']);

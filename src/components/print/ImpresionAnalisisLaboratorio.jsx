@@ -117,28 +117,19 @@ const ImpresionAnalisisLaboratorio = ({
                 </div>
                 
                 {orden.examenes && orden.examenes.length > 0 ? (
-                  <div className="space-y-1">
+                  <ul className="list-disc pl-5 text-xs text-black">
                     {orden.examenes.map((examen, examIndex) => (
-                      <div key={examIndex} className="border-l-2 border-blue-500 pl-2">
-                        <h4 className="font-semibold text-black text-xs">{examen.nombre}</h4>
-                        {examen.descripcion && (
-                          <p className="text-xs text-gray-700 italic">{examen.descripcion}</p>
+                      <li key={examIndex}>
+                        <span className="font-semibold">{examen.nombre}</span>
+                        {examen.condicion_paciente && (
+                          <span className="ml-2 bg-yellow-100 px-1 rounded border">⚠️ {examen.condicion_paciente}</span>
                         )}
-                        <div className="flex justify-between text-xs mt-1">
-                          {examen.condicion_paciente && (
-                            <span className="bg-yellow-100 px-1 text-xs rounded border">
-                              ⚠️ {examen.condicion_paciente}
-                            </span>
-                          )}
-                          {examen.tiempo_resultado && (
-                            <span className="bg-blue-100 px-1 text-xs rounded border">
-                              ⏱️ {examen.tiempo_resultado}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                        {examen.tiempo_resultado && (
+                          <span className="ml-2 bg-blue-100 px-1 rounded border">⏱️ {examen.tiempo_resultado}</span>
+                        )}
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 ) : (
                   <p className="text-xs text-black">Sin detalles disponibles</p>
                 )}

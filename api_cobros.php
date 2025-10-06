@@ -168,7 +168,7 @@ switch($method) {
         } else {
             // Todos los cobros (con paginación)
             $page = $_GET['page'] ?? 1;
-            $limit = $_GET['limit'] ?? 20;
+            $limit = $_GET['limit'] ?? 3;
             $offset = ($page - 1) * $limit;
             
             $stmt = $conn->prepare("

@@ -26,14 +26,8 @@ function GestionTarifasPage() {
     { value: 'emergencias', label: 'Emergencias' }
   ];
 
-  // Servicios con CRUDs independientes (solo visualización)
-  const serviciosExternos = [
-    { value: 'laboratorio', label: 'Laboratorio', crud: '/laboratorio-examenes' },
-    { value: 'farmacia', label: 'Farmacia', crud: '/farmacia-medicamentos' }
-  ];
-
-  // Todos los tipos (para mostrar)
-  const todosLosServicios = [...serviciosMedicos, ...serviciosExternos];
+  // Todos los tipos (para mostrar, solo servicios médicos gestionables)
+  const todosLosServicios = [...serviciosMedicos];
 
   const [nuevaTarifa, setNuevaTarifa] = useState({
     servicio_tipo: 'consulta',
@@ -306,8 +300,8 @@ function GestionTarifasPage() {
   };
 
   const tarifasFiltradas = filtroServicio === 'todos' 
-    ? tarifas 
-    : tarifas.filter(t => t.servicio_tipo === filtroServicio);
+  ? tarifas.filter(t => !['laboratorio', 'farmacia'].includes(t.servicio_tipo))
+  : tarifas.filter(t => t.servicio_tipo === filtroServicio && !['laboratorio', 'farmacia'].includes(t.servicio_tipo));
 
   // Cálculos de paginación
   const totalElementos = tarifasFiltradas.length;

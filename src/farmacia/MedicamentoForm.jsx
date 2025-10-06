@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import Swal from "sweetalert2";
 
@@ -9,6 +10,7 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
     concentracion: initialData?.concentracion || "",
     laboratorio: initialData?.laboratorio || "",
     stock: initialData?.stock ?? 0,
+    unidades_por_caja: initialData?.unidades_por_caja ?? 30,
     fecha_vencimiento: initialData?.fecha_vencimiento || "",
     estado: initialData?.estado || "activo",
     precio_compra: initialData?.precio_compra !== undefined && initialData?.precio_compra !== null ? String(initialData.precio_compra) : "",
@@ -20,7 +22,7 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((f) => {
-      if (name === "stock") return { ...f, [name]: Number(value) };
+      if (name === "stock" || name === "unidades_por_caja") return { ...f, [name]: Number(value) };
       return { ...f, [name]: value };
     });
   };
@@ -36,12 +38,17 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
       setError("La fecha de vencimiento es obligatoria");
       return;
     }
+    if (!form.unidades_por_caja || form.unidades_por_caja < 1) {
+      setError("Las unidades por caja deben ser mayor a 0");
+      return;
+    }
     setError("");
-    // Convertir a número antes de guardar
+    // Convertir a nmero antes de guardar
     const formToSave = {
       ...form,
       precio_compra: parseFloat(form.precio_compra) || 0,
       margen_ganancia: parseFloat(form.margen_ganancia) || 0,
+      unidades_por_caja: parseInt(form.unidades_por_caja) || 1,
     };
     if (onSave) {
       const result = await onSave(formToSave);
@@ -82,8 +89,13 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
           <input name="laboratorio" value={form.laboratorio} onChange={handleChange} className="w-full border rounded px-2 py-1" maxLength={100} />
         </div>
         <div>
-          <label className="block font-medium">Stock</label>
+          <label className="block font-medium">Stock (unidades)</label>
           <input name="stock" type="number" min={0} value={form.stock} onChange={handleChange} className="w-full border rounded px-2 py-1" />
+        </div>
+        <div>
+          <label className="block font-medium">Unidades por caja *</label>
+          <input name="unidades_por_caja" type="number" min={1} value={form.unidades_por_caja} onChange={handleChange} className="w-full border rounded px-2 py-1" required />
+          <span className="text-xs text-gray-500">Ejemplo: 30 pastillas por caja, 100 jeringas por caja</span>
         </div>
         <div>
           <label className="block font-medium">Fecha de vencimiento *</label>

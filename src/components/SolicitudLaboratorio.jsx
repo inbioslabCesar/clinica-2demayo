@@ -3,11 +3,27 @@ import { BASE_URL } from "../config/config";
 
 import ExamenesSelector from "./ExamenesSelector";
 
-export default function SolicitudLaboratorio({ consultaId }) {
+export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true }) {
+  // ...existing code...
+  // Calcular total cotización (precio público)
+  // Preparado para usar precio convenio en el futuro
+  // const totalConvenio = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_convenio) || 0), 0);
   const [examenes, setExamenes] = useState([]);
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
+  // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
+  useEffect(() => {
+    fetch(BASE_URL + "api_examenes_laboratorio.php", { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => setExamenesDisponibles(data.examenes || []));
+  }, []);
+
+  // Declarar seleccionados después de los estados
+  const seleccionados = examenesDisponibles.filter(ex => examenes.includes(ex.id));
+  const totalPublico = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_publico) || 0), 0);
+  // Preparado para usar precio convenio en el futuro
+  // const totalConvenio = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_convenio) || 0), 0);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -43,7 +59,7 @@ export default function SolicitudLaboratorio({ consultaId }) {
       .then(data => setExamenesDisponibles(data.examenes || []));
   }, []);
 
-  const seleccionados = examenesDisponibles.filter(ex => examenes.includes(ex.id));
+  // ...existing code...
 
   return (
     <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 border border-emerald-200 rounded-xl p-6 shadow-lg">
@@ -81,7 +97,7 @@ export default function SolicitudLaboratorio({ consultaId }) {
               </svg>
               <span className="font-semibold text-blue-800">📋 Exámenes Seleccionados ({examenes.length})</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="max-h-80 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-3">
               {seleccionados.map(ex => (
                 <div key={ex.id} className="bg-white rounded-lg p-3 border border-blue-100 shadow-sm">
                   <div className="flex items-start gap-3">
@@ -92,6 +108,10 @@ export default function SolicitudLaboratorio({ consultaId }) {
                     </div>
                     <div className="flex-1">
                       <h4 className="font-medium text-blue-900">{ex.nombre}</h4>
+                      {mostrarPrecios && (
+                        <div className="text-sm text-green-700 font-semibold mt-1">Precio público: S/ {parseFloat(ex.precio_publico).toFixed(2)}</div>
+                      )}
+                      {/* Futuro: <div className="text-xs text-blue-700">Precio convenio: S/ {parseFloat(ex.precio_convenio).toFixed(2)}</div> */}
                       {(ex.condicion_paciente || ex.tiempo_resultado) && (
                         <div className="mt-1 space-y-1">
                           {ex.condicion_paciente && (
@@ -117,6 +137,13 @@ export default function SolicitudLaboratorio({ consultaId }) {
                 </div>
               ))}
             </div>
+            {/* Total cotización */}
+            {mostrarPrecios && (
+              <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg text-green-800 font-bold text-lg flex justify-end">
+                Total cotización: S/ {totalPublico.toFixed(2)}
+                {/* Futuro: Total convenio: S/ {totalConvenio.toFixed(2)} */}
+              </div>
+            )}
           </div>
         )}
 

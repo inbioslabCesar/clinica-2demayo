@@ -467,9 +467,7 @@ export default function MedicamentosList() {
                   <div>
                     <b>Margen ganancia:</b>{" "}
                     {detalleMed.margen_ganancia !== undefined
-                      ? Number(detalleMed.margen_ganancia).toFixed(
-                          1
-                        )
+                      ? Number(detalleMed.margen_ganancia).toFixed(1)
                       : "-"}
                     %
                   </div>
@@ -505,16 +503,13 @@ export default function MedicamentosList() {
                   {cuarentenaData?.codigo})
                 </p>
                 <label className="block mb-2 text-sm">
-                  Motivo de cuarentena{" "}
-                  <span className="text-red-600">*</span>
+                  Motivo de cuarentena <span className="text-red-600">*</span>
                 </label>
                 <textarea
                   className="w-full border rounded px-2 py-1 mb-4"
                   rows={3}
                   value={motivoCuarentena}
-                  onChange={(e) =>
-                    setMotivoCuarentena(e.target.value)
-                  }
+                  onChange={(e) => setMotivoCuarentena(e.target.value)}
                   required
                 />
                 <div className="flex gap-2 justify-end">
@@ -530,9 +525,7 @@ export default function MedicamentosList() {
                     onClick={async () => {
                       if (!cuarentenaData) return;
                       const apiUrl = `${BASE_URL}api_medicamentos.php`;
-                      const hoy = new Date()
-                        .toISOString()
-                        .slice(0, 10);
+                      const hoy = new Date().toISOString().slice(0, 10);
                       const data = {
                         ...cuarentenaData,
                         estado: "cuarentena",

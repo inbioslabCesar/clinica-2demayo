@@ -15,6 +15,7 @@ export default function ExamenesLaboratorioCrudPage() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState({
     nombre: "",
+    categoria: "",
     metodologia: "",
     valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
     precio_publico: "",
@@ -186,6 +187,7 @@ export default function ExamenesLaboratorioCrudPage() {
       valores = [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }];
     setForm({
       ...ex,
+      categoria: ex.categoria || "",
       valores_referenciales: valores,
       titulo: ex.titulo || "",
       es_subtitulo: ex.es_subtitulo || false,
@@ -198,6 +200,7 @@ export default function ExamenesLaboratorioCrudPage() {
   const handleNew = () => {
     setForm({
       nombre: "",
+      categoria: "",
       metodologia: "",
       valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
       precio_publico: "",
@@ -244,10 +247,16 @@ export default function ExamenesLaboratorioCrudPage() {
   };
 
   // Filtrar exámenes según búsqueda
+  // Filtro de categoría
+  const [categoriaFilter, setCategoriaFilter] = useState("");
+  // Obtener categorías únicas
+  const categorias = Array.from(new Set(examenes.map(ex => ex.categoria).filter(Boolean)));
+
   const filtered = examenes.filter(
     (ex) =>
-      ex.nombre.toLowerCase().includes(search.toLowerCase()) ||
-      ex.metodologia.toLowerCase().includes(search.toLowerCase())
+      (ex.nombre.toLowerCase().includes(search.toLowerCase()) ||
+      ex.metodologia.toLowerCase().includes(search.toLowerCase())) &&
+      (categoriaFilter === "" || ex.categoria === categoriaFilter)
   );
   
   console.log('🔍 Debug cadena:', {
@@ -359,7 +368,7 @@ export default function ExamenesLaboratorioCrudPage() {
           <div className="flex flex-col lg:flex-row gap-4 justify-between items-center">
             {/* Búsqueda */}
             <div className="flex-1 max-w-md">
-              <div className="relative">
+              <div className="relative mb-2">
                 <input
                   type="text"
                   value={search}
@@ -370,6 +379,18 @@ export default function ExamenesLaboratorioCrudPage() {
                   placeholder="🔍 Buscar por nombre o metodología..."
                   className="w-full px-4 py-3 pl-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
                 />
+              </div>
+              <div className="relative">
+                <select
+                  value={categoriaFilter}
+                  onChange={e => { setCategoriaFilter(e.target.value); setPage(0); }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                >
+                  <option value="">Todas las categorías</option>
+                  {categorias.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -423,7 +444,7 @@ export default function ExamenesLaboratorioCrudPage() {
                 className="space-y-6"
               >
                 {/* Información básica */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Nombre del Examen *
@@ -435,6 +456,18 @@ export default function ExamenesLaboratorioCrudPage() {
                       placeholder="Ej: Hemograma Completo"
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
                       required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Categoría
+                    </label>
+                    <input
+                      name="categoria"
+                      value={form.categoria}
+                      onChange={handleChange}
+                      placeholder="Ej: Hematología, Química Clínica, Serología, etc."
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
                     />
                   </div>
                   <div>
@@ -814,6 +847,7 @@ export default function ExamenesLaboratorioCrudPage() {
                       <tr>
                         <th className="px-4 py-3 text-left text-sm font-medium">Nombre</th>
                         <th className="px-4 py-3 text-left text-sm font-medium hidden md:table-cell">Metodología</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium hidden md:table-cell">Categoría</th>
                         <th className="px-4 py-3 text-left text-sm font-medium hidden lg:table-cell">Tubo/Frasco</th>
                         <th className="px-4 py-3 text-left text-sm font-medium hidden lg:table-cell">Tiempo</th>
                         <th className="px-4 py-3 text-left text-sm font-medium">Precios</th>
@@ -842,6 +876,9 @@ export default function ExamenesLaboratorioCrudPage() {
                           </td>
                           <td className="px-4 py-4 text-sm text-gray-600 hidden md:table-cell">
                             {ex.metodologia}
+                          </td>
+                          <td className="px-4 py-4 text-sm text-gray-600 hidden md:table-cell">
+                            {ex.categoria || <span className="text-gray-400">-</span>}
                           </td>
                           <td className="px-4 py-4 text-sm text-gray-600 hidden lg:table-cell">
                             <div className="space-y-1">
@@ -918,7 +955,12 @@ export default function ExamenesLaboratorioCrudPage() {
                           </p>
                         </div>
                       )}
-                      
+                      {ex.categoria && (
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide">Categoría</p>
+                          <p className="text-sm text-gray-700">{ex.categoria}</p>
+                        </div>
+                      )}
                       {ex.metodologia && (
                         <div>
                           <p className="text-xs text-gray-500 uppercase tracking-wide">Metodología</p>

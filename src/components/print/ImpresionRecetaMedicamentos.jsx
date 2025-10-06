@@ -101,56 +101,33 @@ const ImpresionRecetaMedicamentos = ({
         </div>
       </div>
 
-      {/* Símbolo Rx clásico - más pequeño */}
-      <div className="text-center mb-3">
-        <div className="text-4xl font-bold text-black" style={{ fontFamily: 'serif' }}>
-          ℞
-        </div>
-      </div>
 
-      {/* Lista de medicamentos prescritos - compacto */}
-      <div className="border border-black p-2 mb-3" style={{ minHeight: '120px' }}>
+
+      {/* Lista de medicamentos prescritos - tipo lista compacta */}
+      <div className="border border-black p-2 mb-3" style={{ minHeight: '80px' }}>
         <h3 className="text-sm font-bold text-black mb-2 border-b border-black pb-1">
           💊 MEDICAMENTOS PRESCRITOS
         </h3>
-        
         {medicamentos && medicamentos.length > 0 ? (
-          <div className="space-y-2">
+          <ul className="list-disc pl-5 text-xs text-black space-y-1">
             {medicamentos.map((medicamento, index) => (
-              <div key={index} className="border border-gray-300 p-2 bg-gray-50 rounded">
-                <div className="flex items-start gap-2">
-                  <span className="font-bold text-black text-xs bg-blue-200 px-1 rounded">#{index + 1}</span>
-                  <div className="flex-1 text-xs leading-tight">
-                    <h4 className="font-bold text-black uppercase mb-1">
-                      {medicamento.nombre || 'Medicamento no especificado'}
-                    </h4>
-                    
-                    <div className="grid grid-cols-2 gap-1 text-xs">
-                      <div>
-                        {medicamento.dosis && (
-                          <p className="text-black"><strong>Dosis:</strong> {medicamento.dosis}</p>
-                        )}
-                        {medicamento.frecuencia && (
-                          <p className="text-black"><strong>Frecuencia:</strong> {medicamento.frecuencia}</p>
-                        )}
-                      </div>
-                      <div>
-                        {medicamento.duracion && (
-                          <p className="text-black"><strong>Duración:</strong> {medicamento.duracion}</p>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {medicamento.observaciones && (
-                      <p className="text-xs text-black mt-1 italic">
-                        <strong>Obs:</strong> {medicamento.observaciones}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <li key={index}>
+                <span className="font-semibold uppercase">{medicamento.nombre || 'Medicamento no especificado'}</span>
+                {medicamento.dosis && (
+                  <span className="ml-2"><strong>Dosis:</strong> {medicamento.dosis}</span>
+                )}
+                {medicamento.frecuencia && (
+                  <span className="ml-2"><strong>Frecuencia:</strong> {medicamento.frecuencia}</span>
+                )}
+                {medicamento.duracion && (
+                  <span className="ml-2"><strong>Duración:</strong> {medicamento.duracion}</span>
+                )}
+                {medicamento.observaciones && (
+                  <span className="ml-2 italic"><strong>Obs:</strong> {medicamento.observaciones}</span>
+                )}
+              </li>
             ))}
-          </div>
+          </ul>
         ) : (
           <p className="text-xs text-black italic text-center py-4">
             No se han prescrito medicamentos.

@@ -1,4 +1,8 @@
 <?php
+// Mostrar errores en desarrollo
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
@@ -28,6 +32,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 header('Content-Type: application/json');
+// --- Verificación de sesión ---
+require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];

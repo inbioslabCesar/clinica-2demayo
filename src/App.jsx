@@ -1,16 +1,6 @@
-import LaboratorioPanelPage from "./pages/LaboratorioPanelPage";
-import ResultadosLaboratorioPage from "./pages/ResultadosLaboratorioPage";
-import ReportesPage from "./pages/ReportesPage";
-import ListaConsultasPage from "./pages/ListaConsultasPage";
-import ReportePacientesPage from "./pages/ReportePacientesPage";
-import ReporteFinanzasPage from "./pages/ReporteFinanzasPage";
-import ConfiguracionPage from "./pages/ConfiguracionPage";
-import GestionTarifasPage from "./pages/GestionTarifasPage";
-import ProtectedRoute from "./components/ProtectedRoute";
-import MedicamentosList from "./farmacia/MedicamentosList";
+
 import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-
 import Login from "./components/Login";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./components/Dashboard";
@@ -25,6 +15,21 @@ import HistorialConsultasMedico from "./historia_clinica/HistorialConsultasMedic
 import EnfermeroPanelPage from "./pages/EnfermeroPanelPage";
 import SolicitudLaboratorioPage from "./pages/SolicitudLaboratorioPage";
 import ExamenesLaboratorioCrudPage from "./pages/ExamenesLaboratorioCrudPage";
+import CotizarLaboratorioPage from "./pages/CotizarLaboratorioPage";
+import CotizarRayosXPage from "./pages/CotizarRayosXPage";
+import LaboratorioPanelPage from "./pages/LaboratorioPanelPage";
+import ResultadosLaboratorioPage from "./pages/ResultadosLaboratorioPage";
+import ReportesPage from "./pages/ReportesPage";
+import ListaConsultasPage from "./pages/ListaConsultasPage";
+import ReportePacientesPage from "./pages/ReportePacientesPage";
+import ReporteFinanzasPage from "./pages/ReporteFinanzasPage";
+import ConfiguracionPage from "./pages/ConfiguracionPage";
+import GestionTarifasPage from "./pages/GestionTarifasPage";
+import ProtectedRoute from "./components/ProtectedRoute";
+import MedicamentosList from "./farmacia/MedicamentosList";
+import FarmaciaCotizadorPage from "./pages/FarmaciaCotizadorPage";
+import FarmaciaVentasPage from "./pages/FarmaciaVentasPage";
+import SeleccionarServicioPage from "./pages/SeleccionarServicioPage";
 
 
 function App() {
@@ -135,6 +140,25 @@ function App() {
                 } />
               </>
             )}
+            {(usuario?.rol === 'químico' || usuario?.rol === 'quimico') && (
+              <>
+                <Route path="/medicamentos" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["químico","quimico"]}>
+                    <MedicamentosList />
+                  </ProtectedRoute>
+                } />
+                <Route path="/farmacia/cotizador" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["químico","quimico"]}>
+                    <FarmaciaCotizadorPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/farmacia/ventas" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["químico","quimico"]}>
+                    <FarmaciaVentasPage />
+                  </ProtectedRoute>
+                } />
+              </>
+            )}
             {/* Solo visible para enfermeros */}
             {usuario?.rol === 'enfermero' && (
               <Route path="/panel-enfermero" element={
@@ -181,6 +205,26 @@ function App() {
                     <GestionTarifasPage />
                   </ProtectedRoute>
                 } />
+                <Route path="/cotizar-laboratorio/:pacienteId" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <CotizarLaboratorioPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/cotizar-rayosx/:pacienteId" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <CotizarRayosXPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/cotizar-farmacia/:pacienteId" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <FarmaciaCotizadorPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/seleccionar-servicio" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <SeleccionarServicioPage />
+                  </ProtectedRoute>
+                } />
               </>
             )}
             {/* Solo visible para laboratoristas */}
@@ -200,11 +244,18 @@ function App() {
             )}
             {/* Solo visible para químicos */}
             {(usuario?.rol === 'químico' || usuario?.rol === 'quimico') && (
-              <Route path="/medicamentos" element={
-                <ProtectedRoute usuario={usuario} rolesPermitidos={["químico","quimico"]}>
-                  <MedicamentosList />
-                </ProtectedRoute>
-              } />
+              <>
+                <Route path="/medicamentos" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["químico","quimico"]}>
+                    <MedicamentosList />
+                  </ProtectedRoute>
+                } />
+                <Route path="/farmacia/cotizador" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["químico","quimico"]}>
+                    <FarmaciaCotizadorPage />
+                  </ProtectedRoute>
+                } />
+              </>
             )}
             {/* Puedes agregar más rutas aquí */}
           </Routes>

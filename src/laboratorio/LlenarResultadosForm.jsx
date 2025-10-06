@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from "react";
+import { evaluate } from "mathjs";
 import { BASE_URL } from "../config/config";
 
 function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
@@ -64,11 +65,11 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     const nombres = Object.keys(valoresPorNombre).sort((a, b) => b.length - a.length);
     nombres.forEach(nombre => {
       const val = valoresPorNombre[nombre] || 0;
-      const regex = new RegExp(nombre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+  const regex = new RegExp(nombre.replace(/[.*+?^${}()|[\]\\]/g, '$&'), 'g');
       expr = expr.replace(regex, val === "" ? 0 : val);
     });
     try {
-      const result = eval(expr);
+      const result = evaluate(expr);
       if (typeof result === "number" && !isNaN(result)) {
         return result.toFixed(1);
       }

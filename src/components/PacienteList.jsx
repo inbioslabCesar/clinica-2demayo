@@ -14,8 +14,9 @@ import autoTable from "jspdf-autotable";
 
 function PacienteList() {
   // Ordenamiento de columnas
-  const [sortBy, setSortBy] = useState("historia_clinica");
-  const [sortDir, setSortDir] = useState("asc");
+  // Orden inicial: por id descendente (más reciente primero)
+  const [sortBy, setSortBy] = useState("id");
+  const [sortDir, setSortDir] = useState("desc");
 
   const handleSort = (col) => {
     if (sortBy === col) {
@@ -100,7 +101,7 @@ function PacienteList() {
     if (editData) {
       setPacientes(prev => prev.map(p => p.id === nuevoPaciente.id ? nuevoPaciente : p));
     } else {
-      setPacientes(prev => [...prev, nuevoPaciente]);
+      setPacientes(prev => [nuevoPaciente, ...prev]);
     }
     setModalOpen(false);
     setEditData(null);

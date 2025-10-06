@@ -1,14 +1,20 @@
 
 import { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
+import axios from "axios";
 
 export default function MovimientosModal({ medicamento, usuario, onClose }) {
   const [movimientos, setMovimientos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [form, setForm] = useState({ tipo: "entrada", cantidad: 1, observaciones: "" });
-  // ...existing code...
+  const [form, setForm] = useState({ tipo: "entrada", cantidad: 1, observaciones: "", usuario_id: "" });
   const [enviando, setEnviando] = useState(false);
+  const [medicos, setMedicos] = useState([]);
+  useEffect(() => {
+    axios.get(BASE_URL + "api_medicos.php")
+      .then(res => setMedicos(res.data.medicos || []))
+      .catch(() => setMedicos([]));
+  }, []);
 
   const apiUrl = `${BASE_URL}api_movimientos_medicamento.php`;
 
@@ -16,10 +22,16 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
     setLoading(true);
     setError(null);
     let url = apiUrl + `?medicamento_id=${medicamento.id}`;
-    fetch(url)
-      .then((res) => res.json())
+    fetch(url, { credentials: "include" })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || `Error HTTP: ${res.status}`);
+        }
+        return data;
+      })
       .then(setMovimientos)
-      .catch(setError)
+      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   };
 
@@ -39,17 +51,19 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
     fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({
         medicamento_id: medicamento.id,
         tipo: form.tipo,
         cantidad: form.cantidad,
-        usuario_id: usuario?.id || null,
+  usuario_id: usuario?.id ? Number(usuario.id) : 1, // fallback a 1 si no hay usuario
+  medico_id: form.usuario_id ? Number(form.usuario_id) : null,
         observaciones: form.observaciones,
       }),
     })
       .then((res) => res.json())
       .then(() => {
-        setForm({ tipo: "entrada", cantidad: 1, observaciones: "" });
+        setForm({ tipo: "entrada", cantidad: 1, observaciones: "", usuario_id: "" });
         fetchMovimientos();
       })
       .finally(() => setEnviando(false));
@@ -67,13 +81,19 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
             <option value="salida">Salida</option>
           </select>
           <input name="cantidad" type="number" min={1} value={form.cantidad} onChange={handleChange} className="border rounded px-2 py-1 w-24" required />
+          <select name="usuario_id" value={form.usuario_id} onChange={handleChange} className="border rounded px-2 py-1 w-56" required>
+            <option value="">Selecciona médico responsable</option>
+            {medicos.map(m => (
+              <option key={m.id} value={m.id}>{m.nombre} ({m.email})</option>
+            ))}
+          </select>
           <input name="observaciones" value={form.observaciones} onChange={handleChange} className="border rounded px-2 py-1 flex-1" placeholder="Observaciones" />
           <button type="submit" disabled={enviando} className="bg-blue-600 text-white px-4 py-2 rounded">Registrar</button>
         </form>
         {loading ? (
           <div className="text-center text-gray-500">Cargando movimientos...</div>
         ) : error ? (
-          <div className="text-center text-red-500">Error al cargar movimientos</div>
+          <div className="text-center text-red-500">{error}</div>
         ) : (
           <div className="overflow-x-auto max-h-72">
             <table className="min-w-full bg-white border border-gray-200 rounded-lg text-sm">
@@ -83,24 +103,30 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
                   <th className="py-1 px-2 border-b">Tipo</th>
                   <th className="py-1 px-2 border-b">Cantidad</th>
                   <th className="py-1 px-2 border-b">Usuario</th>
+                  <th className="py-1 px-2 border-b">Médico responsable</th>
                   <th className="py-1 px-2 border-b">Observaciones</th>
                 </tr>
               </thead>
               <tbody>
-                {movimientos.length === 0 ? (
+                {Array.isArray(movimientos) && movimientos.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="text-center py-3 text-gray-400">Sin movimientos registrados</td>
                   </tr>
-                ) : (
+                ) : Array.isArray(movimientos) ? (
                   movimientos.map((mov) => (
                     <tr key={mov.id}>
-                      <td className="py-1 px-2 border-b">{new Date(mov.fecha).toLocaleString()}</td>
-                      <td className="py-1 px-2 border-b">{mov.tipo}</td>
+                      <td className="py-1 px-2 border-b">{new Date(mov.fecha_hora).toLocaleString()}</td>
+                      <td className="py-1 px-2 border-b">{mov.tipo_movimiento}</td>
                       <td className="py-1 px-2 border-b text-right">{mov.cantidad}</td>
                       <td className="py-1 px-2 border-b">{mov.usuario_nombre || mov.usuario_id || "-"}</td>
+                      <td className="py-1 px-2 border-b">{mov.medico_nombre || "-"}</td>
                       <td className="py-1 px-2 border-b">{mov.observaciones}</td>
                     </tr>
                   ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="text-center py-3 text-red-500">Error al cargar movimientos o sesión/rol incorrecto</td>
+                  </tr>
                 )}
               </tbody>
             </table>

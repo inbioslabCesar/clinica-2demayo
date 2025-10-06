@@ -79,7 +79,7 @@ function HistoriaClinicaPage() {
   // Cargar datos de historia clínica editable
   useEffect(() => {
     if (!consultaId) return;
-    fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}`)
+  fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.datos) {
@@ -245,6 +245,7 @@ function HistoriaClinicaPage() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ consulta_id: consultaId, datos }),
+              credentials: "include"
             });
             const data = await res.json();
             setGuardando(false);
