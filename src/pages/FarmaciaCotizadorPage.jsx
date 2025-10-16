@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import CobroModuloFinal from "../components/CobroModuloFinal";
 import { useParams, useNavigate } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteSearch from "../components/PacienteSearch";
@@ -7,6 +8,46 @@ import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage() {
+  // Handler para mostrar el módulo de cobros
+  const handleRegistrarVenta = () => {
+    if (seleccionados.length === 0) {
+      setMensaje("Selecciona al menos un medicamento.");
+      return;
+    }
+    // Construir detalles para el Módulo de Cobros
+    const detalles = seleccionados.map(mid => {
+      const med = medicamentos.find(m => m.id === mid);
+      const tipo = tiposVenta[mid] || "unidad";
+      const cantidad = cantidades[mid] || 1;
+      const unidadesCaja = unidadesPorCaja[mid] || 30;
+      const precioVenta = getPrecioVenta(med);
+      let subtotal = 0;
+      let nombreMed = (med && med.nombre && med.nombre !== "0") ? med.nombre : "Medicamento sin nombre";
+      let descripcion = nombreMed;
+      if (tipo === "caja") {
+        subtotal = precioVenta * unidadesCaja * cantidad;
+        descripcion += " (Caja)";
+      } else {
+        subtotal = precioVenta * cantidad;
+        descripcion += " (Unidad)";
+      }
+      return {
+        servicio_tipo: "farmacia",
+        servicio_id: mid,
+        descripcion,
+        cantidad,
+        precio_unitario: precioVenta,
+        subtotal
+      };
+    });
+    console.log("Detalles enviados al cobro:", detalles);
+    setDetallesCotizacion(detalles);
+    setTotalCotizacion(calcularTotal());
+    setMostrarCobro(true);
+  };
+  const [mostrarCobro, setMostrarCobro] = useState(false);
+  const [detallesCotizacion, setDetallesCotizacion] = useState([]);
+  const [totalCotizacion, setTotalCotizacion] = useState(0);
   const navigate = useNavigate();
   const params = useParams();
   // Estado para mostrar/ocultar el formulario manual
@@ -53,11 +94,13 @@ export default function FarmaciaCotizadorPage() {
         .then((data) => {
           if (data.success && data.paciente) {
             setPacienteDatos({
+              id: data.paciente.id,
               dni: data.paciente.dni,
               nombre:
                 (data.paciente.nombres || data.paciente.nombre || "") +
                 " " +
                 (data.paciente.apellidos || data.paciente.apellido || ""),
+              historia_clinica: data.paciente.historia_clinica || "",
             });
           }
         });
@@ -123,141 +166,9 @@ export default function FarmaciaCotizadorPage() {
   };
 
   const cotizar = () => {
-    if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un medicamento para cotizar.");
-      return;
-    }
-    // Validar paciente
-    let pacientePayload = {};
-    let nombrePaciente = "";
-    if (pacienteId) {
-      pacientePayload = { paciente_id: pacienteId };
-      nombrePaciente = pacienteDatos ? pacienteDatos.nombre : "";
-    } else if (manualDni && manualNombres && manualApellidos) {
-      const nombreCompleto = `${manualNombres.trim()} ${manualApellidos.trim()}`;
-      pacientePayload = {
-        paciente_dni: manualDni,
-        paciente_nombre: nombreCompleto,
-      };
-      nombrePaciente = nombreCompleto;
-    } else {
-      setMensaje("Debes ingresar el DNI, nombres y apellidos del paciente.");
-      return;
-    }
-    // Construir detalles
-    const detalles = seleccionados.map((mid) => {
-      const med = medicamentos.find((m) => m.id === mid);
-      const tipo = tiposVenta[mid] || "unidad";
-      const cantidad = cantidades[mid] || 1;
-      const precioVenta = getPrecioVenta(med);
-      if (tipo === "caja") {
-        return {
-          medicamento_id: mid,
-          descripcion: med?.nombre + " (Caja)" || "",
-          cantidad: cantidad * unidadesPorCaja[mid],
-          precio_unitario: precioVenta,
-          subtotal: precioVenta * unidadesPorCaja[mid] * cantidad,
-          tipo_venta: "caja",
-          cajas: cantidad,
-          unidades_por_caja: unidadesPorCaja[mid],
-        };
-      } else {
-        return {
-          medicamento_id: mid,
-          descripcion: med?.nombre + " (Unidad)" || "",
-          cantidad,
-          precio_unitario: precioVenta,
-          subtotal: precioVenta * cantidad,
-          tipo_venta: "unidad",
-          cajas: 0,
-          unidades_por_caja: unidadesPorCaja[mid],
-        };
-      }
-    });
-    const payload = {
-      ...pacientePayload,
-      usuario_id: usuarioId,
-      total: calcularTotal(),
-      detalles,
-      observaciones: "Cotización de medicamentos",
-    };
-    fetch(`${BASE_URL}api_cotizaciones_farmacia.php`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(payload),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          MySwal.fire({
-            title: "Venta registrada ✅",
-            html: `<div style='font-family:monospace;text-align:left;max-width:320px;'>
-              <h3 style='text-align:center;'>🏥 CLÍNICA 2 DE MAYO</h3>
-              <hr>
-              <p><strong>COMPROBANTE FARMACIA #${
-                data.numero_comprobante
-              }</strong></p>
-              <p>Paciente: ${nombrePaciente}</p>
-              <p>Fecha: ${new Date().toLocaleString("es-PE")}</p>
-              <hr>
-              <p><strong>DETALLE:</strong></p>
-              ${detalles
-                .map(
-                  (d) =>
-                    `<p>${d.descripcion} x${
-                      d.cantidad
-                    } .... S/ ${d.subtotal.toFixed(2)}</p>`
-                )
-                .join("")}
-              <hr>
-              <p><strong>TOTAL: S/ ${calcularTotal().toFixed(2)}</strong></p>
-              <hr>
-              <p style='text-align:center;font-size:12px;'>Gracias por su preferencia<br>Conserve este comprobante</p>
-            </div>`,
-            icon: "success",
-            confirmButtonText: "Imprimir",
-            showCancelButton: true,
-            cancelButtonText: "Cerrar",
-          }).then((result) => {
-            if (result.isConfirmed) {
-              const win = window.open("", "_blank");
-              win.document
-                .write(`<div style='font-family:monospace;text-align:left;max-width:320px;'>
-                <h3 style='text-align:center;'>🏥 CLÍNICA 2 DE MAYO</h3>
-                <hr>
-                <p><strong>COMPROBANTE FARMACIA #${
-                  data.numero_comprobante
-                }</strong></p>
-                <p>Paciente: ${nombrePaciente}</p>
-                <p>Fecha: ${new Date().toLocaleString("es-PE")}</p>
-                <hr>
-                <p><strong>DETALLE:</strong></p>
-                ${detalles
-                  .map(
-                    (d) =>
-                      `<p>${d.descripcion} x${
-                        d.cantidad
-                      } .... S/ ${d.subtotal.toFixed(2)}</p>`
-                  )
-                  .join("")}
-                <hr>
-                <p><strong>TOTAL: S/ ${calcularTotal().toFixed(2)}</strong></p>
-                <hr>
-                <p style='text-align:center;font-size:12px;'>Gracias por su preferencia<br>Conserve este comprobante</p>
-              </div>`);
-              win.document.close();
-              win.print();
-            }
-          });
-          setSeleccionados([]);
-          setCantidades({});
-          setMensaje("");
-        } else {
-          setMensaje("Error al registrar la venta: " + (data.error || ""));
-        }
-      })
-      .catch(() => setMensaje("Error de conexión al registrar la venta."));
+    // El ticket se imprime solo desde el Módulo de Cobros
+    // Aquí solo se puede agregar lógica de cotización si es necesario
+    // Por ahora, esta función queda como stub
   };
 
   return (
@@ -281,30 +192,28 @@ export default function FarmaciaCotizadorPage() {
         </button>
       </div>
       {/* Buscador de paciente */}
-      <div className="mb-4">
+  <div className="mb-4">
         {/* Solo mostrar el buscador de paciente si NO hay pacienteId en la URL (químico) */}
         {!params.pacienteId && (
           <PacienteSearch
             onPacienteEncontrado={(p) => {
-              // pacienteId se toma de la URL, no se actualiza por estado
               setPacienteDatos({
-                dni: p.dni,
-                nombre: (
-                  (p.nombres || p.nombre || "") +
-                  " " +
-                  (p.apellidos || p.apellido || "")
-                ).trim(),
+                id: p.id,
+                dni: p.dni || "",
+                nombre: ((p.nombre || "") + " " + (p.apellido || "")).trim(),
+                historia_clinica: p.historia_clinica || ""
               });
               setManualDni("");
               setManualNombres("");
               setManualApellidos("");
               setBusquedaIntentada(true);
+              setMensaje("");
             }}
             onNoEncontrado={() => {
-              // pacienteId se toma de la URL, no se actualiza por estado
               setPacienteDatos(null);
               setMostrarManual(true);
               setBusquedaIntentada(true);
+              setMensaje("Paciente no encontrado. Verifica el DNI, nombre o historia clínica.");
             }}
             onNuevaBusqueda={() => {
               // pacienteId se toma de la URL, no se actualiza por estado
@@ -315,7 +224,7 @@ export default function FarmaciaCotizadorPage() {
           />
         )}
         {/* Botón y formulario manual solo si NO hay pacienteId en la URL (químico) */}
-        {!params.pacienteId && !pacienteId && !manualDni && !mostrarManual && busquedaIntentada && (
+        {!params.pacienteId && !pacienteId && !manualDni && !mostrarManual && busquedaIntentada && !pacienteDatos && (
           <button
             className="mt-2 px-3 py-1 bg-yellow-100 text-yellow-800 rounded border border-yellow-300 text-sm"
             onClick={() => setMostrarManual(true)}
@@ -480,72 +389,72 @@ export default function FarmaciaCotizadorPage() {
               </div>
             )}
           </div>
-          {/* Columna derecha: resumen de cotización */}
-          <div className="col-span-1 md:sticky md:top-24 md:ml-8">
-            {seleccionados.length > 0 && (
-              <div className="bg-blue-50 rounded-2xl p-6 border border-blue-200 shadow">
-                <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
-                  <span>📝</span>Resumen de Cotización
-                </h4>
-                <div className="max-h-64 overflow-y-auto pr-2">
-                  <ul className="divide-y divide-gray-100 mb-2">
-                    {seleccionados.map((mid) => {
-                      const med = medicamentos.find((m) => m.id === mid);
-                      const tipo = tiposVenta[mid] || "unidad";
-                      const cantidad = cantidades[mid] || 1;
-                      const unidadesCaja = unidadesPorCaja[mid] || 30;
-                      const precioVenta = getPrecioVenta(med);
-                      if (tipo === "caja") {
-                        return (
-                          <li
-                            key={mid}
-                            className="py-2 flex justify-between items-center"
-                          >
-                            <span className="flex items-center gap-1">
-                              <span>📦</span>
-                              {med?.nombre} (Caja)
-                            </span>
-                            <span>
-                              {cantidad} caja(s) x {unidadesCaja} unidades
-                            </span>
-                            <span className="font-bold text-green-700">
-                              S/{" "}
-                              {(precioVenta * unidadesCaja * cantidad).toFixed(
-                                2
-                              )}
-                            </span>
-                          </li>
-                        );
-                      } else {
-                        return (
-                          <li
-                            key={mid}
-                            className="py-2 flex justify-between items-center"
-                          >
-                            <span className="flex items-center gap-1">
-                              <span>💊</span>
-                              {med?.nombre} (Unidad)
-                            </span>
-                            <span>{cantidad} unidad(es)</span>
-                            <span className="font-bold text-green-700">
-                              S/ {(precioVenta * cantidad).toFixed(2)}
-                            </span>
-                          </li>
-                        );
-                      }
-                    })}
-                  </ul>
+          {/* Columna derecha: resumen de cotización y módulo de cobros */}
+          <div className="col-span-1 md:sticky md:top-24 md:ml-8 w-full md:w-96">
+            {seleccionados.length > 0 && !mostrarCobro && (
+              <div className="mb-6">
+                <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
+                <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
+                  {seleccionados.map(mid => {
+                    const med = medicamentos.find(m => m.id === mid);
+                    const tipo = tiposVenta[mid] || "unidad";
+                    const cantidad = cantidades[mid] || 1;
+                    const unidadesCaja = unidadesPorCaja[mid] || 30;
+                    const precioVenta = getPrecioVenta(med);
+                    let subtotal = 0;
+                    let descripcion = med?.nombre || "";
+                    if (tipo === "caja") {
+                      subtotal = precioVenta * unidadesCaja * cantidad;
+                      descripcion += " (Caja)";
+                    } else {
+                      subtotal = precioVenta * cantidad;
+                      descripcion += " (Unidad)";
+                    }
+                    return (
+                      <li key={mid} className="py-2 flex justify-between items-center">
+                        <span className="flex items-center gap-1">
+                          <span>💊</span>
+                          {descripcion}
+                        </span>
+                        <span>{cantidad} {tipo === "caja" ? "caja(s)" : "unidad(es)"}</span>
+                        <span className="font-bold text-green-700">
+                          S/ {subtotal.toFixed(2)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="mt-4 text-lg font-bold text-right">
+                  Total: <span className="text-green-600">S/ {calcularTotal().toFixed(2)}</span>
                 </div>
-                <div className="text-right text-xl font-bold text-blue-800 flex items-center gap-2">
-                  Total: <span>💲</span> S/ {calcularTotal().toFixed(2)}
+                <div className="flex gap-3 mt-4 justify-end">
+                  <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
+                  <button onClick={handleRegistrarVenta} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Registrar Venta</button>
                 </div>
-                <button
-                  onClick={cotizar}
-                  className="mt-6 bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 flex items-center gap-2 text-lg"
-                >
-                  <span>🛒</span>Registrar Venta
-                </button>
               </div>
+            )}
+            {mostrarCobro && (
+              pacienteDatos && pacienteDatos.nombre && pacienteDatos.dni && pacienteDatos.historia_clinica ? (
+                <CobroModuloFinal
+                  paciente={pacienteDatos}
+                  servicio={{ key: "farmacia", label: "Farmacia" }}
+                  detalles={detallesCotizacion}
+                  total={totalCotizacion}
+                  onCobroCompleto={() => {
+                    setMostrarCobro(false);
+                    setSeleccionados([]);
+                    setCantidades({});
+                    setMensaje("Venta procesada correctamente.");
+                  }}
+                  onCancelar={() => setMostrarCobro(false)}
+                />
+              ) : (
+                busquedaIntentada ? (
+                  <div className="p-4 bg-red-100 text-red-700 rounded-lg font-semibold text-center">
+                    Faltan datos completos del paciente (nombre, DNI y historia clínica). Por favor, ingrésalos antes de continuar con el cobro.
+                  </div>
+                ) : null
+              )
             )}
           </div>
         </div>

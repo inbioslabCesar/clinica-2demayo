@@ -2,16 +2,18 @@ import { useState, useEffect, useMemo } from 'react';
 import { BASE_URL } from '../config/config';
 import Swal from 'sweetalert2';
 
-function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
+function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles, total }) {
   const [tarifas, setTarifas] = useState([]);
   const [tipoCobertura, setTipoCobertura] = useState('particular');
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Cargar tarifas al montar el componente
+  // Cargar tarifas solo si no se reciben detalles por props
   useEffect(() => {
-    cargarTarifas();
+    if (!detalles) {
+      cargarTarifas();
+    }
   }, []);
 
   const cargarTarifas = async () => {
@@ -28,56 +30,32 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     }
   };
 
-  // Calcular detalles del cobro usando useMemo
+  // Usar detalles y total recibidos por props si existen
   const detallesCobro = useMemo(() => {
-    if (!servicio || tarifas.length === 0) return [];
-
-    // Buscar tarifa específica del médico primero, luego tarifa general
-    let tarifa = null;
-    
-    if (servicio.medico_id) {
-      // Buscar tarifa específica del médico
-      tarifa = tarifas.find(t => 
-        t.servicio_tipo === servicio.key && 
-        t.medico_id === servicio.medico_id && 
-        t.activo === 1
-      );
+    // Usar siempre los detalles recibidos por props si existen y son válidos
+    if (Array.isArray(detalles) && detalles.length > 0) {
+      return detalles;
     }
-    
-    // Si no hay tarifa específica del médico, buscar tarifa general
-    if (!tarifa) {
-      tarifa = tarifas.find(t => 
-        t.servicio_tipo === servicio.key && 
-        (t.medico_id === null || t.medico_id === undefined) &&
-        t.activo === 1
-      );
-    }
-
-    if (!tarifa) return [];
-
-    let precio = tarifa.precio_particular;
-    if (tipoCobertura === 'seguro' && tarifa.precio_seguro) {
-      precio = tarifa.precio_seguro;
-    } else if (tipoCobertura === 'convenio' && tarifa.precio_convenio) {
-      precio = tarifa.precio_convenio;
-    }
-
-    return [{
-      servicio_tipo: servicio.key,
-      descripcion: servicio.label,
-      cantidad: 1,
-      precio_unitario: parseFloat(precio),
-      subtotal: parseFloat(precio)
-    }];
-  }, [servicio, tarifas, tipoCobertura]);
+    // Si no hay detalles, no generar uno por defecto
+    return [];
+  }, [detalles]);
 
   const calcularTotal = () => {
+    if (typeof total === 'number' && total > 0) {
+      return total;
+    }
     return detallesCobro.reduce((total, detalle) => total + detalle.subtotal, 0);
   };
 
   const procesarCobro = async () => {
+  console.log("Detalles enviados al backend:", detallesCobro);
     if (detallesCobro.length === 0) {
       Swal.fire('Error', 'No hay servicios para cobrar', 'error');
+      return;
+    }
+    // Validar datos completos del paciente
+    if (!paciente || !paciente.nombre || !paciente.dni || !paciente.historia_clinica) {
+      Swal.fire('Error', 'Faltan datos completos del paciente (nombre, DNI o historia clínica)', 'error');
       return;
     }
 
@@ -109,9 +87,30 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       const result = await response.json();
 
       if (result.success) {
+        // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio
+        if (servicio?.key === 'laboratorio' && !servicio?.consulta_id) {
+          const examenesIds = detallesCobro.map(d => d.servicio_id);
+          console.log('Enviando orden laboratorio:', {
+            consulta_id: null,
+            examenes: examenesIds,
+            paciente_id: paciente?.id || null
+          });
+          const ordenResponse = await fetch(`${BASE_URL}api_ordenes_laboratorio.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              consulta_id: null,
+              examenes: examenesIds,
+              paciente_id: paciente?.id || null,
+              cobro_id: result.cobro_id
+            })
+          });
+          const ordenResult = await ordenResponse.json();
+          console.log('Respuesta orden laboratorio:', ordenResult);
+        }
         // Mostrar comprobante
         await mostrarComprobante(result.cobro_id, cobroData);
-        
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
           onCobroCompleto(result.cobro_id, servicio);
@@ -130,13 +129,14 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
   const mostrarComprobante = async (cobroId, datosComprobante) => {
     const fechaHora = new Date().toLocaleString('es-PE');
     
+    const nombreCompleto = paciente.apellido ? `${paciente.nombre} ${paciente.apellido}` : paciente.nombre;
     const comprobante = `
       <div style="text-align: left; font-family: monospace;">
         <h3 style="text-align: center; margin-bottom: 20px;">🏥 CLÍNICA 2 DE MAYO</h3>
         <hr>
         <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
         <p>Fecha: ${fechaHora}</p>
-        <p>Paciente: ${paciente.nombre} ${paciente.apellido}</p>
+        <p>Paciente: ${nombreCompleto}</p>
         <p>DNI: ${paciente.dni}</p>
         <p>H.C.: ${paciente.historia_clinica}</p>
         <hr>
@@ -146,7 +146,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
         ).join('')}
         <hr>
         <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
-        <p>Tipo de pago: ${tipoPago.toUpperCase()}</p>
+  <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
         <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
         <hr>
         <p style="text-align: center; font-size: 12px;">
@@ -178,7 +178,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     return <div>Seleccione un servicio primero</div>;
   }
 
-  const total = calcularTotal();
+  const totalCobro = calcularTotal();
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-lg border border-blue-200">
@@ -186,9 +186,9 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       
       {/* Información del paciente */}
       <div className="bg-gray-50 p-4 rounded mb-4">
-        <h4 className="font-semibold mb-2">Paciente:</h4>
-        <p>{paciente.nombre} {paciente.apellido}</p>
-        <p>DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</p>
+  <h4 className="font-semibold mb-2">Paciente:</h4>
+  <p>{paciente.nombre}</p>
+  <p>DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</p>
       </div>
 
       {/* Tipo de cobertura */}
@@ -218,7 +218,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
           <hr className="my-2" />
           <div className="flex justify-between items-center font-bold text-lg">
             <span>TOTAL:</span>
-            <span className="text-green-600">S/ {total.toFixed(2)}</span>
+            <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
           </div>
         </div>
       </div>
@@ -234,6 +234,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
           <option value="efectivo">Efectivo</option>
           <option value="tarjeta">Tarjeta</option>
           <option value="transferencia">Transferencia</option>
+          <option value="yape">Yape</option>
         </select>
       </div>
 
@@ -252,10 +253,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       <div className="flex gap-4">
         <button 
           onClick={procesarCobro}
-          disabled={loading || total <= 0}
+          disabled={loading || totalCobro <= 0}
           className="flex-1 bg-green-600 text-white py-3 px-6 rounded font-bold text-lg hover:bg-green-700 disabled:bg-gray-400"
         >
-          {loading ? 'Procesando...' : `💳 Cobrar S/ ${total.toFixed(2)}`}
+          {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}
         </button>
         
         <button 

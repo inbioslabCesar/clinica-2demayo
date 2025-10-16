@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import CobroModuloFinal from "../components/CobroModuloFinal";
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
@@ -6,6 +7,10 @@ import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 
 export default function CotizarLaboratorioPage() {
+  const [mostrarCobro, setMostrarCobro] = useState(false);
+  const [detallesCotizacion, setDetallesCotizacion] = useState([]);
+  const [totalCotizacion, setTotalCotizacion] = useState(0);
+  const [cotizacionReady, setCotizacionReady] = useState(false);
   const navigate = useNavigate();
   const MySwal = withReactContent(Swal);
   const { pacienteId } = useParams();
@@ -20,20 +25,25 @@ export default function CotizarLaboratorioPage() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(3);
   const [comprobante, setComprobante] = useState(null);
+  const [paciente, setPaciente] = useState(null);
 
   useEffect(() => {
-    // Cargar exámenes, tarifas y ranking
+    // Cargar exámenes, tarifas, ranking y paciente
     Promise.all([
       fetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include" }).then(res => res.json()),
       fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" }).then(res => res.json()),
-      fetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include" }).then(res => res.json())
-    ]).then(([examenesData, tarifasData, rankingData]) => {
+      fetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include" }).then(res => res.json()),
+      pacienteId ? fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, { credentials: "include" }).then(res => res.json()) : Promise.resolve({ success: false })
+    ]).then(([examenesData, tarifasData, rankingData, pacienteData]) => {
       setExamenes(examenesData.examenes || []);
       setTarifas(tarifasData.tarifas || []);
       setRanking(rankingData.ranking || []);
+      if (pacienteData && pacienteData.success && pacienteData.paciente) {
+        setPaciente(pacienteData.paciente);
+      }
       setLoading(false);
     });
-  }, []);
+  }, [pacienteId]);
 
   const toggleSeleccion = (id) => {
     setSeleccionados(sel =>
@@ -81,91 +91,27 @@ export default function CotizarLaboratorioPage() {
 
   const generarCotizacion = () => {
     if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un examen para cotizar.");
+      setMensaje("Selecciona al menos un examen para cobrar.");
       return;
     }
-    // Construir detalles para el backend
+    // Construir detalles para el Módulo de Cobros
     const detalles = seleccionados.map(exId => {
       const ex = examenes.find(e => e.id === exId);
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === exId && t.activo === 1);
+      let descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
       return {
         servicio_tipo: "laboratorio",
         servicio_id: exId,
-        descripcion: ex?.nombre || "",
+        descripcion,
         cantidad: 1,
         precio_unitario: tarifa ? parseFloat(tarifa.precio_particular) : 0,
         subtotal: tarifa ? parseFloat(tarifa.precio_particular) : 0
       };
     });
-
-    const payload = {
-      paciente_id: pacienteId,
-      usuario_id: 1, // Cambia por el usuario actual si tienes sesión
-      total: calcularTotal(),
-      detalles,
-      observaciones: "Cotización de laboratorio"
-    };
-
-    fetch(`${BASE_URL}api_cotizaciones.php`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(payload)
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          // Obtener datos del paciente para el ticket
-          fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
-            .then(r => r.json())
-            .then(pacData => {
-              const paciente = pacData.paciente || {};
-              const fechaHora = new Date().toLocaleString('es-PE');
-              const comprobanteHTML = `
-                <div style="text-align:left;font-family:monospace;max-width:320px;">
-                  <h3 style="text-align:center;margin-bottom:12px;">🏥 CLÍNICA 2 DE MAYO</h3>
-                  <hr>
-                  <p><strong>COTIZACIÓN #${data.numero_comprobante}</strong></p>
-                  <p>Fecha: ${fechaHora}</p>
-                  <p>Paciente: ${paciente.nombre || ''} ${paciente.apellido || ''}</p>
-                  <p>DNI: ${paciente.dni || ''}</p>
-                  <p>H.C.: ${paciente.historia_clinica || ''}</p>
-                  <hr>
-                  <p><strong>DETALLE:</strong></p>
-                  ${detalles.map(d => `<p>${d.descripcion} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`).join('')}
-                  <hr>
-                  <p><strong>TOTAL: S/ ${calcularTotal().toFixed(2)}</strong></p>
-                  <hr>
-                  <p style="text-align:center;font-size:12px;">Gracias por su preferencia<br>Conserve este comprobante</p>
-                </div>
-              `;
-              MySwal.fire({
-                title: 'Cotización registrada ✅',
-                html: comprobanteHTML,
-                icon: 'success',
-                confirmButtonText: 'Imprimir',
-                showCancelButton: true,
-                cancelButtonText: 'Cerrar'
-              }).then(result => {
-                if (result.isConfirmed) {
-                  const win = window.open('', '_blank');
-                  win.document.write(comprobanteHTML);
-                  win.document.close();
-                  win.print();
-                }
-              });
-            });
-          setComprobante(null);
-          setMensaje("");
-        } else {
-          setComprobante(null);
-          setMensaje("Error al registrar la cotización: " + (data.error || ""));
-        }
-      })
-      .catch(() => {
-        setComprobante(null);
-        setMensaje("Error de conexión al registrar la cotización.");
-      });
+    setDetallesCotizacion(detalles);
+    setTotalCotizacion(detalles.reduce((total, d) => total + d.subtotal, 0));
+    setMostrarCobro(true);
+    setCotizacionReady(false);
   };
 
   return (
@@ -272,7 +218,7 @@ export default function CotizarLaboratorioPage() {
         </div>
         {/* Cotización en tiempo real en columna derecha */}
         <div className="w-full md:w-96 md:sticky md:top-8 h-fit">
-          {seleccionados.length > 0 && (
+          {seleccionados.length > 0 && !mostrarCobro && (
             <div className="mb-6">
               <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
               <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
@@ -300,9 +246,24 @@ export default function CotizarLaboratorioPage() {
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={limpiarSeleccion} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
-                <button onClick={generarCotizacion} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Cotizar</button>
+                <button onClick={generarCotizacion} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Cobrar</button>
               </div>
             </div>
+          )}
+
+          {mostrarCobro && paciente && (
+            <CobroModuloFinal
+              paciente={paciente}
+              servicio={{ key: "laboratorio", label: "Laboratorio" }}
+              detalles={detallesCotizacion}
+              total={totalCotizacion}
+              onCobroCompleto={() => {
+                setMostrarCobro(false);
+                setCotizacionReady(true);
+                setMensaje("Cotización procesada correctamente.");
+              }}
+              onCancelar={() => setMostrarCobro(false)}
+            />
           )}
         </div>
       </div>

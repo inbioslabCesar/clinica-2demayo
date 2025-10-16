@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Spinner from "./Spinner";
 import Swal from 'sweetalert2';
 import PacienteForm from "./PacienteForm";
@@ -13,6 +14,7 @@ import autoTable from "jspdf-autotable";
 // ...existing code...
 
 function PacienteList() {
+  const navigate = useNavigate();
   // Ordenamiento de columnas
   // Orden inicial: por id descendente (más reciente primero)
   const [sortBy, setSortBy] = useState("id");
@@ -410,10 +412,17 @@ function PacienteList() {
                   <td className="border px-2 py-1">{p.edad !== null ? p.edad : '-'} </td>
                   <td className="border px-2 py-1">{p.dni}</td>
                   <td className="border px-2 py-1">{p.tipo_seguro || '-'}</td>
-                  <td className="border px-2 py-1">
-                    <div className="flex gap-2">
-                      <button onClick={() => handleEditar(p)} className="bg-yellow-400 text-white px-2 py-1 rounded text-sm hover:bg-yellow-500">Editar</button>
-                      <button onClick={() => handleEliminar(p)} className="bg-red-500 text-white px-2 py-1 rounded text-sm hover:bg-red-600">Eliminar</button>
+                  <td className="border py-1">
+                    <div className="flex gap-1">
+                      <button onClick={() => handleEditar(p)} className="bg-yellow-400 text-white px-1 py-1 rounded text-xs hover:bg-yellow-500">Editar</button>
+                      <button onClick={() => handleEliminar(p)} className="bg-red-500 text-white px-1 py-1 rounded text-xs hover:bg-red-600">Eliminar</button>
+                      <button
+                        onClick={() => navigate(`/consumo-paciente/${p.id}`)}
+                        className="bg-blue-600 text-white px-1 py-1 rounded text-xs hover:bg-blue-700"
+                        title="Ver consumo total"
+                      >
+                        Consumo
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -449,6 +458,16 @@ function PacienteList() {
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => navigate(`/consumo-paciente/${p.id}`)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full transition-colors"
+                    title="Ver consumo total"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
+                      <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor">C</text>
                     </svg>
                   </button>
                 </div>

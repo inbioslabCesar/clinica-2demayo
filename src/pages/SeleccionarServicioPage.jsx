@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 
@@ -7,6 +8,27 @@ export default function SeleccionarServicioPage() {
   const navigate = useNavigate();
   const [paciente, setPaciente] = useState(null);
   const pacienteId = location.state?.pacienteId;
+
+    const [procedimientos, setProcedimientos] = useState([]);
+
+    useEffect(() => {
+      // Obtener servicios de tarifas activos y filtrar los excluidos
+      fetch(BASE_URL + "api_tarifas.php", { credentials: "include" })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && Array.isArray(data.tarifas)) {
+            const EXCLUIR_SERVICIOS = ["consulta", "laboratorio", "farmacia", "ecografia", "rayosx", "ocupacional"];
+            const proc = data.tarifas.filter(t =>
+              t.activo === 1 && !EXCLUIR_SERVICIOS.includes(t.servicio_tipo)
+            ).map(t => ({
+              key: t.servicio_tipo + "_" + t.id,
+              label: t.descripcion,
+              tarifaId: t.id
+            }));
+            setProcedimientos(proc);
+          }
+        });
+    }, []);
 
   useEffect(() => {
     if (pacienteId) {
@@ -96,11 +118,22 @@ export default function SeleccionarServicioPage() {
                 >🩻 Rayos X <span className="text-yellow-500">💰</span></button>
                 <button
                   className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-50 font-bold"
-                  onClick={() => navigate(`/ecografia`, { state: { pacienteId: paciente.id } })}
+                  onClick={() => navigate(`/cotizar-ecografia/${paciente.id}`)}
                 >🩺 Ecografías <span className="text-yellow-500">💰</span></button>
                 <button
+                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-orange-100 font-bold"
+                  onClick={() => navigate(`/cotizar-procedimientos/${paciente.id}`)}
+                >🛠️ Procedimientos <span className="text-yellow-500">💰</span></button>
+                <button
                   className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-50 font-bold"
-                  onClick={() => navigate(`/medicina-ocupacional`, { state: { pacienteId: paciente.id } })}
+                  onClick={() => {
+                    Swal.fire({
+                      title: "Página en construcción",
+                      text: "La funcionalidad de Medicina Ocupacional estará disponible próximamente.",
+                      icon: "info",
+                      confirmButtonText: "OK"
+                    });
+                  }}
                 >👨‍⚕️ Medicina Ocupacional <span className="text-yellow-500">💰</span></button>
               </div>
               <div className="mt-2 text-xs text-gray-500 flex gap-4 items-center">

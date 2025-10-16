@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from "react";
-import Swal from "sweetalert2";
-import withReactContent from "sweetalert2-react-content";
-import { useParams, useNavigate } from "react-router-dom";
-import { BASE_URL } from "../config/config";
 import CobroModuloFinal from "../components/CobroModuloFinal";
+import { useParams, useNavigate } from "react-router-dom";
+import Swal from "sweetalert2";
+import { BASE_URL } from "../config/config";
 
-export default function CotizarRayosXPage() {
+export default function CotizarEcografiaPage() {
   const [mostrarCobro, setMostrarCobro] = useState(false);
   const [detallesCotizacion, setDetallesCotizacion] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
-  const MySwal = withReactContent(Swal);
   const { pacienteId } = useParams();
   const navigate = useNavigate();
   const [paciente, setPaciente] = useState(null);
@@ -19,18 +17,16 @@ export default function CotizarRayosXPage() {
   const [mensaje, setMensaje] = useState("");
 
   useEffect(() => {
-    // Obtener datos del paciente
     fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
       .then(r => r.json())
       .then(data => {
         if (data.success && data.paciente) setPaciente(data.paciente);
       });
-    // Obtener tarifas de rayos x
     fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
-        const rayosxTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "rayosx");
-        setTarifas(rayosxTarifas);
+        const ecoTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "ecografia");
+        setTarifas(ecoTarifas);
       });
   }, [pacienteId]);
 
@@ -59,17 +55,19 @@ export default function CotizarRayosXPage() {
 
   const cotizar = async () => {
     if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un estudio de Rayos X.");
+      setMensaje("Selecciona al menos una ecografía.");
       return;
     }
     // Construir detalles para el Módulo de Cobros
     const detalles = seleccionados.map(tid => {
       const tarifa = tarifas.find(t => t.id === tid);
       const cantidad = cantidades[tid] || 1;
+      let nombreEco = (tarifa && tarifa.descripcion && tarifa.descripcion !== "0") ? tarifa.descripcion : (tarifa && tarifa.nombre && tarifa.nombre !== "0" ? tarifa.nombre : "Ecografía sin nombre");
+      let descripcion = nombreEco;
       return tarifa ? {
-        servicio_tipo: "rayosx",
+        servicio_tipo: "ecografia",
         servicio_id: tid,
-        descripcion: tarifa.descripcion || tarifa.nombre,
+        descripcion,
         cantidad,
         precio_unitario: tarifa.precio_particular,
         subtotal: tarifa.precio_particular * cantidad
@@ -87,7 +85,7 @@ export default function CotizarRayosXPage() {
         className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
       >← Volver</button>
       <h2 className="text-2xl font-bold text-blue-900 mb-4 flex items-center gap-2">
-        <span role="img" aria-label="rayosx">🩻</span> Cotizador de Rayos X
+        <span role="img" aria-label="eco">📡</span> Cotizador de Ecografías
       </h2>
       {paciente && (
         <div className="mb-4 p-2 bg-blue-50 rounded text-blue-800 text-sm">
@@ -96,9 +94,9 @@ export default function CotizarRayosXPage() {
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="mb-4 max-h-[500px] overflow-y-auto">
-          <div className="font-bold mb-2">Estudios disponibles:</div>
+          <div className="font-bold mb-2">Ecografías disponibles:</div>
           {tarifas.length === 0 ? (
-            <div className="text-gray-500">No hay estudios de Rayos X registrados.</div>
+            <div className="text-gray-500">No hay ecografías registradas.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
               {tarifas.map(tarifa => (
@@ -134,14 +132,13 @@ export default function CotizarRayosXPage() {
             </ul>
           )}
         </div>
-        {/* Columna derecha: resumen de cotización y módulo de cobros */}
-        <div className="w-full md:w-96 md:sticky md:top-8 h-fit">
-          {seleccionados.length > 0 && !mostrarCobro && (
-            <div className="mb-6">
+        {seleccionados.length > 0 && (
+          !mostrarCobro && (
+            <div className="bg-blue-50 rounded-2xl p-6 border border-blue-200 shadow mb-4 max-h-[500px] overflow-y-auto">
               <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
                 <span>📝</span>Resumen de Cotización
               </h4>
-              <ul className="divide-y divide-gray-100 mb-2 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
+              <ul className="divide-y divide-gray-100 mb-2">
                 {seleccionados.map(tid => {
                   const tarifa = tarifas.find(t => t.id === tid);
                   const cantidad = cantidades[tid] || 1;
@@ -154,31 +151,32 @@ export default function CotizarRayosXPage() {
                   ) : null;
                 })}
               </ul>
-              <div className="mt-4 text-lg font-bold text-right">
-                Total: <span className="text-green-600">S/ {calcularTotal().toFixed(2)}</span>
+              <div className="text-right text-xl font-bold text-blue-800 flex items-center gap-2">
+                Total: <span>💲</span> S/ {calcularTotal().toFixed(2)}
               </div>
-              <div className="flex gap-3 mt-4 justify-end">
-                <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
-                <button onClick={cotizar} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Registrar Cotización</button>
-              </div>
+              <button
+                onClick={cotizar}
+                className="mt-6 bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 flex items-center gap-2 text-lg"
+              >
+                <span>🛒</span>Registrar Cotización
+              </button>
             </div>
-          )}
-          {mostrarCobro && (
-            <CobroModuloFinal
-              paciente={paciente}
-              servicio={{ key: "rayosx", label: "Rayos X" }}
-              detalles={detallesCotizacion}
-              total={totalCotizacion}
-              onCobroCompleto={() => {
-                setMostrarCobro(false);
-                setSeleccionados([]);
-                setCantidades({});
-                setMensaje("Cobro procesado correctamente.");
-              }}
-              onCancelar={() => setMostrarCobro(false)}
-            />
-          )}
-        </div>
+          )
+        )}
+
+      {mostrarCobro && paciente && (
+        <CobroModuloFinal
+          paciente={paciente}
+          servicio={{ key: "ecografia", label: "Ecografía" }}
+          detalles={detallesCotizacion}
+          total={totalCotizacion}
+          onCobroCompleto={() => {
+            setMostrarCobro(false);
+            setMensaje("Cotización procesada correctamente.");
+          }}
+          onCancelar={() => setMostrarCobro(false)}
+        />
+      )}
       </div>
       {mensaje && (
         <div className="mt-4 text-center font-semibold text-green-600">

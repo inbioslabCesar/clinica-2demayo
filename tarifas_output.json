@@ -1,0 +1,19 @@
+﻿
+
+StatusCode        : 200
+StatusDescription : OK
+Content           : {60, 63, 112, 104...}
+RawContent        : HTTP/1.1 200 OK
+                    Vary: Origin
+                    Connection: keep-alive
+                    Keep-Alive: timeout=5
+                    Content-Length: 10640
+                    Cache-Control: no-cache
+                    Content-Type: 
+                    Date: Sat, 11 Oct 2025 22:49:23 GMT
+                    ETag: W/"10640-175903...
+Headers           : {[Vary, Origin], [Connection, keep-alive], [Keep-Alive, timeout=5], [Content-Length, 10640]...}
+RawContentLength  : 10640
+
+
+

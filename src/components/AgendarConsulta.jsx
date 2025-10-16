@@ -6,6 +6,8 @@ import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 
 function AgendarConsulta({ pacienteId }) {
+  const [detallesConsulta, setDetallesConsulta] = useState([]);
+const [totalConsulta, setTotalConsulta] = useState(0);
   const [medicos, setMedicos] = useState([]);
   const [medicoId, setMedicoId] = useState("");
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
@@ -17,6 +19,50 @@ function AgendarConsulta({ pacienteId }) {
   const [pacienteInfo, setPacienteInfo] = useState(null);
   const [cargandoHorarios, setCargandoHorarios] = useState(false);
   const MySwal = withReactContent(Swal);
+
+  useEffect(() => {
+    if (mostrarCobro && consultaCreada) {
+      fetch(BASE_URL + "api_tarifas.php", { credentials: "include" })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && Array.isArray(data.tarifas)) {
+            console.log('TARIFAS RECIBIDAS:', data.tarifas);
+            // Buscar tarifa específica del médico (comparar como número)
+            let tarifa = data.tarifas.find(
+              t => t.servicio_tipo === 'consulta' && t.activo === 1 && Number(t.medico_id) === Number(consultaCreada.medico_id)
+            );
+            console.log('Tarifa encontrada para medico_id', consultaCreada.medico_id, ':', tarifa);
+            // Si no existe, buscar tarifa general (medico_id null o vacío)
+            if (!tarifa) {
+              tarifa = data.tarifas.find(
+                t => t.servicio_tipo === 'consulta' && t.activo === 1 && (!t.medico_id || t.medico_id === null)
+              );
+              console.log('Tarifa general usada:', tarifa);
+            }
+            if (tarifa) {
+              const detalle = {
+                servicio_tipo: 'consulta',
+                servicio_id: consultaCreada.id,
+                descripcion: tarifa.descripcion || `Consulta - ${consultaCreada.medico_nombre}`,
+                cantidad: 1,
+                precio_unitario: parseFloat(tarifa.precio_particular) || 0,
+                subtotal: parseFloat(tarifa.precio_particular) || 0
+              };
+              setDetallesConsulta([detalle]);
+              setTotalConsulta(detalle.subtotal);
+              console.log('Detalle de cobro generado:', detalle);
+            } else {
+              setDetallesConsulta([]);
+              setTotalConsulta(0);
+              console.log('No se encontró tarifa para consulta.');
+            }
+          }
+        });
+    } else {
+      setDetallesConsulta([]);
+      setTotalConsulta(0);
+    }
+  }, [mostrarCobro, consultaCreada]);
 
   useEffect(() => {
     fetch(BASE_URL + "api_medicos.php")
@@ -148,31 +194,32 @@ function AgendarConsulta({ pacienteId }) {
 
   // Si se está mostrando el módulo de cobro, renderizarlo
   if (mostrarCobro && consultaCreada && pacienteInfo) {
-    return (
-      <div className="max-w-2xl mx-auto p-2 md:p-8 w-full">
-        <div className="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
-          <h3 className="font-semibold text-blue-800 mb-2">✅ Consulta Agendada Exitosamente</h3>
-          <div className="text-sm text-blue-600">
-            <p><strong>Médico:</strong> {consultaCreada.medico_nombre} ({consultaCreada.medico_especialidad})</p>
-            <p><strong>Fecha:</strong> {consultaCreada.fecha} - <strong>Hora:</strong> {consultaCreada.hora}</p>
-            <p><strong>Paciente:</strong> {pacienteInfo.nombre} {pacienteInfo.apellido}</p>
-          </div>
+  return (
+    <div className="max-w-2xl mx-auto p-2 md:p-8 w-full">
+      <div className="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
+        <h3 className="font-semibold text-blue-800 mb-2">✅ Consulta Agendada Exitosamente</h3>
+        <div className="text-sm text-blue-600">
+          <p><strong>Médico:</strong> {consultaCreada.medico_nombre} ({consultaCreada.medico_especialidad})</p>
+          <p><strong>Fecha:</strong> {consultaCreada.fecha} - <strong>Hora:</strong> {consultaCreada.hora}</p>
+          <p><strong>Paciente:</strong> {pacienteInfo.nombre} {pacienteInfo.apellido}</p>
         </div>
-        
-        <CobroModuloFinal
-          paciente={pacienteInfo}
-          servicio={{
-            key: "consulta",
-            label: `Consulta - ${consultaCreada.medico_nombre}`,
-            medico_id: consultaCreada.medico_id,
-            consulta_id: consultaCreada.id
-          }}
-          onCobroCompleto={manejarCobroCompleto}
-          onCancelar={manejarCancelarCobro}
-        />
       </div>
-    );
-  }
+      <CobroModuloFinal
+        paciente={pacienteInfo}
+        servicio={{
+          key: "consulta",
+          label: `Consulta - ${consultaCreada.medico_nombre}`,
+          medico_id: consultaCreada.medico_id,
+          consulta_id: consultaCreada.id
+        }}
+        detalles={detallesConsulta}
+        total={totalConsulta}
+        onCobroCompleto={manejarCobroCompleto}
+        onCancelar={manejarCancelarCobro}
+      />
+    </div>
+  );
+}
 
   return (
   <div className="max-w-2xl mx-auto p-2 md:p-8 w-full overflow-x-auto">

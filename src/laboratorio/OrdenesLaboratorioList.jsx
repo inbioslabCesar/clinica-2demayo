@@ -297,6 +297,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     <tr>
                       <th className="px-4 py-3 text-left text-sm font-medium">ID</th>
                       <th className="px-4 py-3 text-left text-sm font-medium">Paciente</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium">Tipo de Cotización</th>
                       <th className="px-4 py-3 text-left text-sm font-medium hidden md:table-cell">Médico</th>
                       <th className="px-4 py-3 text-left text-sm font-medium hidden lg:table-cell">Consulta</th>
                       <th className="px-4 py-3 text-left text-sm font-medium hidden lg:table-cell">Fecha</th>
@@ -310,6 +311,17 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">#{orden.id}</td>
                         <td className="px-4 py-3 text-sm text-gray-900">
                           <div className="font-medium">{orden.paciente_nombre} {orden.paciente_apellido}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {orden.consulta_id ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                              Médico
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pink-100 text-pink-800 border border-pink-200">
+                              Particular
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{orden.medico_nombre}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{orden.consulta_id}</td>

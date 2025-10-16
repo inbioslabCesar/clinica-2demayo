@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $params[] = $valor;
         $types = 's';
     } elseif ($tipo === 'nombre') {
-        // Separar por espacios y buscar cada palabra en nombre y apellido
+        // Separar por espacios y buscar cada palabra en nombre o apellido (OR)
         $palabras = preg_split('/\s+/', trim($valor));
         $where = [];
         $types = '';
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $params[] = "%$palabra%";
             $types .= 'ss';
         }
-        $sql = 'SELECT * FROM pacientes WHERE ' . implode(' AND ', $where);
+        $sql = 'SELECT * FROM pacientes WHERE ' . implode(' OR ', $where);
     } elseif ($tipo === 'historia') {
         $sql = 'SELECT * FROM pacientes WHERE historia_clinica = ?';
         $params[] = $valor;
@@ -67,9 +67,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($types) $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $res = $stmt->get_result();
-    $paciente = $res->fetch_assoc();
-    if ($paciente) {
-        echo json_encode(['success' => true, 'paciente' => $paciente]);
+    $pacientes = $res->fetch_all(MYSQLI_ASSOC);
+    if ($pacientes && count($pacientes) > 0) {
+        echo json_encode(['success' => true, 'pacientes' => $pacientes]);
     } else {
         echo json_encode(['success' => false, 'error' => 'Paciente no encontrado']);
     }

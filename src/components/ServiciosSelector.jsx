@@ -4,33 +4,66 @@ import Swal from "sweetalert2";
 import CobroModuloFinal from "./CobroModuloFinal";
 import { BASE_URL } from "../config/config";
 
-const serviciosDisponibles = [
+import { useEffect } from "react";
+
+const serviciosBase = [
   { key: "consulta", label: "Consulta Médica", icon: "👨‍⚕️", requiresPayment: false },
   { key: "laboratorio", label: "Laboratorio", icon: "🔬", requiresPayment: true },
   { key: "farmacia", label: "Farmacia", icon: "💊", requiresPayment: true },
-  { key: "rayosx", label: "Rayos X", icon: "🦴", requiresPayment: true },
-  { key: "ecografia", label: "Ecografía", icon: "📡", requiresPayment: true },
+  { key: "rayosx", label: "Rayos X", icon: "🩻", requiresPayment: true },
+  { key: "ecografia", label: "Ecografía", icon: "🩺", requiresPayment: true },
   { key: "ocupacional", label: "Medicina Ocupacional", icon: "👷‍⚕️", requiresPayment: true }
 ];
+
+const EXCLUIR_SERVICIOS = ["consulta", "laboratorio", "farmacia", "ecografia", "rayosx", "ocupacional"];
 
 function ServiciosSelector({ paciente }) {
   const navigate = useNavigate();
   const [servicioSeleccionado, setServicioSeleccionado] = useState(null);
   const [mostrarCobro, setMostrarCobro] = useState(false);
+  const [procedimientos, setProcedimientos] = useState([]);
+
+  useEffect(() => {
+    // Obtener servicios de tarifas activos y filtrar los excluidos
+    fetch(BASE_URL + "api_tarifas.php", { credentials: "include" })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.tarifas)) {
+          const proc = data.tarifas.filter(t =>
+            t.activo === 1 && !EXCLUIR_SERVICIOS.includes(t.servicio_tipo)
+          ).map(t => ({
+            key: t.servicio_tipo + "_" + t.id,
+            label: t.descripcion,
+            icon: "🛠️",
+            requiresPayment: true,
+            tarifaId: t.id
+          }));
+          setProcedimientos(proc);
+        }
+      });
+  }, []);
 
   const manejarSeleccionServicio = (servicio) => {
     if (servicio.key === "consulta") {
-      navigate("/agendar-consulta", { 
-        state: { 
-          pacienteId: paciente.id
-        }
-      });
+      navigate("/agendar-consulta", { state: { pacienteId: paciente.id } });
     } else if (servicio.key === "laboratorio") {
       navigate(`/cotizar-laboratorio/${paciente.id}`);
     } else if (servicio.key === "farmacia") {
       navigate(`/cotizar-farmacia/${paciente.id}`);
     } else if (servicio.key === "rayosx") {
       navigate(`/cotizar-rayosx/${paciente.id}`);
+    } else if (servicio.key === "ecografia") {
+      navigate(`/cotizar-ecografia/${paciente.id}`);
+    } else if (servicio.key === "ocupacional") {
+      Swal.fire({
+        title: "Página en construcción",
+        text: "La funcionalidad de Medicina Ocupacional estará disponible próximamente.",
+        icon: "info",
+        confirmButtonText: "OK"
+      });
+    } else if (servicio.key === "procedimiento") {
+      // Navegar a la página de cotización de procedimientos (flujo igual que laboratorio)
+      navigate(`/cotizar-procedimientos/${paciente.id}`);
     } else if (servicio.requiresPayment) {
       setServicioSeleccionado(servicio);
       setMostrarCobro(true);
@@ -112,19 +145,53 @@ function ServiciosSelector({ paciente }) {
       </h3>
       
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {serviciosDisponibles.map((servicio) => (
-          <button
-            key={servicio.key}
-            onClick={() => manejarSeleccionServicio(servicio)}
-            className="flex items-center justify-center gap-2 p-4 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors font-medium text-blue-700 hover:text-blue-800"
-          >
-            <span className="text-2xl">{servicio.icon}</span>
-            <span>{servicio.label}</span>
-            {servicio.requiresPayment && (
-              <span className="text-green-600 text-sm">💰</span>
-            )}
-          </button>
-        ))}
+        {serviciosBase.map((servicio) => {
+          if (servicio.key === "ocupacional") {
+            return (
+              <button
+                key={servicio.key}
+                onClick={() => {
+                  Swal.fire({
+                    title: "Página en construcción",
+                    text: "La funcionalidad de Medicina Ocupacional estará disponible próximamente.",
+                    icon: "info",
+                    confirmButtonText: "OK"
+                  });
+                }}
+                className="flex items-center justify-center gap-2 p-4 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors font-medium text-blue-700 hover:text-blue-800"
+              >
+                <span className="text-2xl">{servicio.icon}</span>
+                <span>{servicio.label}</span>
+                {servicio.requiresPayment && (
+                  <span className="text-green-600 text-sm">💰</span>
+                )}
+              </button>
+            );
+          }
+          return (
+            <button
+              key={servicio.key}
+              onClick={() => manejarSeleccionServicio(servicio)}
+              className="flex items-center justify-center gap-2 p-4 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors font-medium text-blue-700 hover:text-blue-800"
+            >
+              <span className="text-2xl">{servicio.icon}</span>
+              <span>{servicio.label}</span>
+              {servicio.requiresPayment && (
+                <span className="text-green-600 text-sm">💰</span>
+              )}
+            </button>
+          );
+        })}
+
+        <button
+          key="procedimientos"
+          onClick={() => manejarSeleccionServicio({ key: "procedimiento", label: "Procedimientos", icon: "🛠️", requiresPayment: true })}
+          className="flex items-center justify-center gap-2 p-4 bg-white border border-orange-300 rounded-lg hover:bg-orange-100 hover:border-orange-400 transition-colors font-medium text-orange-700 hover:text-orange-800"
+        >
+          <span className="text-2xl">🛠️</span>
+          <span>Procedimientos</span>
+          <span className="text-green-600 text-sm">💰</span>
+        </button>
       </div>
       
       <div className="mt-3 text-sm text-gray-600 text-center">

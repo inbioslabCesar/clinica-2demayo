@@ -30,13 +30,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 header('Content-Type: application/json');
 require_once "config.php";
 require_once "auth_check.php";
+// Forzar codificación utf8mb4 en la conexión MySQLi
+if (isset($conn) && method_exists($conn, 'set_charset')) {
+    $conn->set_charset('utf8mb4');
+}
 
 $method = $_SERVER['REQUEST_METHOD'];
 
 switch($method) {
     case 'POST':
-        // Procesar cobro
-        $data = json_decode(file_get_contents('php://input'), true);
+    // Procesar cobro
+    $data = json_decode(file_get_contents('php://input'), true);
+    // DEBUG: Registrar el array completo de detalles recibido
+    // Debug eliminado
         
         // Validar datos requeridos
         if (!isset($data['paciente_id']) || !isset($data['usuario_id']) || 
@@ -65,21 +71,24 @@ switch($method) {
             $cobro_id = $conn->insert_id;
             
             // 2. Insertar detalles del cobro
+            // Guardar todos los detalles como un array JSON en una sola fila
+            $servicio_tipo = $data['detalles'][0]['servicio_tipo'];
+            $servicio_id = $data['detalles'][0]['servicio_id'];
+            $descripcion_json = json_encode($data['detalles']);
+            $cantidad = count($data['detalles']);
+            $precio_unitario = array_sum(array_map(function($d){return $d['precio_unitario'];}, $data['detalles'])) / max(1, $cantidad);
+            $subtotal = array_sum(array_map(function($d){return $d['subtotal'];}, $data['detalles']));
             $stmt_detalle = $conn->prepare("INSERT INTO cobros_detalle (cobro_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            
-            foreach ($data['detalles'] as $detalle) {
-                $servicio_id = $detalle['servicio_id'] ?? null;
-                $stmt_detalle->bind_param("ississd", 
-                    $cobro_id, 
-                    $detalle['servicio_tipo'], 
-                    $servicio_id,
-                    $detalle['descripcion'], 
-                    $detalle['cantidad'], 
-                    $detalle['precio_unitario'], 
-                    $detalle['subtotal']
-                );
-                $stmt_detalle->execute();
-            }
+            $stmt_detalle->bind_param("isisssd", 
+                $cobro_id, 
+                $servicio_tipo, 
+                $servicio_id,
+                $descripcion_json, 
+                $cantidad, 
+                $precio_unitario, 
+                $subtotal
+            );
+            $stmt_detalle->execute();
             
             // 3. Registrar atención si no existe
             $servicio_key = $data['servicio_info']['key'] ?? 'consulta';

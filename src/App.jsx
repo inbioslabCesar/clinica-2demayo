@@ -17,6 +17,7 @@ import SolicitudLaboratorioPage from "./pages/SolicitudLaboratorioPage";
 import ExamenesLaboratorioCrudPage from "./pages/ExamenesLaboratorioCrudPage";
 import CotizarLaboratorioPage from "./pages/CotizarLaboratorioPage";
 import CotizarRayosXPage from "./pages/CotizarRayosXPage";
+import CotizarEcografiaPage from "./pages/CotizarEcografiaPage";
 import LaboratorioPanelPage from "./pages/LaboratorioPanelPage";
 import ResultadosLaboratorioPage from "./pages/ResultadosLaboratorioPage";
 import ReportesPage from "./pages/ReportesPage";
@@ -28,6 +29,8 @@ import GestionTarifasPage from "./pages/GestionTarifasPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import MedicamentosList from "./farmacia/MedicamentosList";
 import FarmaciaCotizadorPage from "./pages/FarmaciaCotizadorPage";
+import CotizarProcedimientosPage from "./pages/CotizarProcedimientosPage";
+import ConsumoPacientePage from "./pages/ConsumoPacientePage";
 import FarmaciaVentasPage from "./pages/FarmaciaVentasPage";
 import SeleccionarServicioPage from "./pages/SeleccionarServicioPage";
 
@@ -215,9 +218,19 @@ function App() {
                     <CotizarRayosXPage />
                   </ProtectedRoute>
                 } />
+                <Route path="/cotizar-ecografia/:pacienteId" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <CotizarEcografiaPage />
+                  </ProtectedRoute>
+                } />
                 <Route path="/cotizar-farmacia/:pacienteId" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <FarmaciaCotizadorPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/cotizar-procedimientos/:pacienteId" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <CotizarProcedimientosPage />
                   </ProtectedRoute>
                 } />
                 <Route path="/seleccionar-servicio" element={
@@ -225,6 +238,11 @@ function App() {
                     <SeleccionarServicioPage />
                   </ProtectedRoute>
                 } />
+                  <Route path="/consumo-paciente/:pacienteId" element={
+                    <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                      <ConsumoPacientePage />
+                    </ProtectedRoute>
+                  } />
               </>
             )}
             {/* Solo visible para laboratoristas */}

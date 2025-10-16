@@ -90,10 +90,12 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     setMsg("");
 
     try {
+      // Usar orden.consulta_id si existe, sino orden.id
+      const consultaId = orden.consulta_id ? orden.consulta_id : orden.id;
       const res = await fetch(BASE_URL + "api_resultados_laboratorio.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consulta_id: orden.consulta_id, tipo_examen: "varios", resultados }),
+        body: JSON.stringify({ consulta_id: consultaId, tipo_examen: "varios", resultados }),
       });
       const data = await res.json();
       

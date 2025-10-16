@@ -62,28 +62,59 @@ switch ($method) {
             exit;
         }
         $json = json_encode($resultados);
-        // Verificar si ya existen resultados para esta consulta
-        $stmt_check = $conn->prepare('SELECT id FROM resultados_laboratorio WHERE consulta_id = ?');
-        $stmt_check->bind_param('i', $consulta_id);
-        $stmt_check->execute();
-        $stmt_check->store_result();
-        if ($stmt_check->num_rows > 0) {
-            // Ya existen resultados, actualizar
-            $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE consulta_id = ?');
-            $stmt_update->bind_param('ssi', $tipo_examen, $json, $consulta_id);
-            $ok = $stmt_update->execute();
-            $stmt_update->close();
-        } else {
-            // No existen, insertar
-            $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (consulta_id, tipo_examen, resultados) VALUES (?, ?, ?)');
-            $stmt->bind_param('iss', $consulta_id, $tipo_examen, $json);
-            $ok = $stmt->execute();
-            $stmt->close();
+        // Verificar si la orden existe y si es directa (sin consulta)
+        $stmt_orden = $conn->prepare('SELECT id, consulta_id FROM ordenes_laboratorio WHERE id = ? OR consulta_id = ?');
+        $stmt_orden->bind_param('ii', $consulta_id, $consulta_id);
+        $stmt_orden->execute();
+        $res_orden = $stmt_orden->get_result();
+        $orden = $res_orden->fetch_assoc();
+        $stmt_orden->close();
+        if (!$orden) {
+            echo json_encode(['success' => false, 'error' => 'Orden de laboratorio no encontrada']);
+            exit;
         }
-        $stmt_check->close();
+        $tieneConsulta = $orden['consulta_id'] ? true : false;
+        // Verificar si ya existen resultados para esta orden
+        if ($tieneConsulta) {
+            // Guardar en consulta_id (flujo tradicional)
+            $stmt_check = $conn->prepare('SELECT id FROM resultados_laboratorio WHERE consulta_id = ?');
+            $stmt_check->bind_param('i', $orden['consulta_id']);
+            $stmt_check->execute();
+            $stmt_check->store_result();
+            if ($stmt_check->num_rows > 0) {
+                $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE consulta_id = ?');
+                $stmt_update->bind_param('ssi', $tipo_examen, $json, $orden['consulta_id']);
+                $ok = $stmt_update->execute();
+                $stmt_update->close();
+            } else {
+                $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (consulta_id, tipo_examen, resultados) VALUES (?, ?, ?)');
+                $stmt->bind_param('iss', $orden['consulta_id'], $tipo_examen, $json);
+                $ok = $stmt->execute();
+                $stmt->close();
+            }
+            $stmt_check->close();
+        } else {
+            // Guardar en orden_id (cotización directa)
+            $stmt_check = $conn->prepare('SELECT id FROM resultados_laboratorio WHERE orden_id = ?');
+            $stmt_check->bind_param('i', $orden['id']);
+            $stmt_check->execute();
+            $stmt_check->store_result();
+            if ($stmt_check->num_rows > 0) {
+                $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE orden_id = ?');
+                $stmt_update->bind_param('ssi', $tipo_examen, $json, $orden['id']);
+                $ok = $stmt_update->execute();
+                $stmt_update->close();
+            } else {
+                $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (orden_id, tipo_examen, resultados) VALUES (?, ?, ?)');
+                $stmt->bind_param('iss', $orden['id'], $tipo_examen, $json);
+                $ok = $stmt->execute();
+                $stmt->close();
+            }
+            $stmt_check->close();
+        }
         // Cambiar estado de la orden a completado
-        $stmt2 = $conn->prepare('UPDATE ordenes_laboratorio SET estado = "completado" WHERE consulta_id = ?');
-        $stmt2->bind_param('i', $consulta_id);
+        $stmt2 = $conn->prepare('UPDATE ordenes_laboratorio SET estado = "completado" WHERE id = ? OR consulta_id = ?');
+        $stmt2->bind_param('ii', $orden['id'], $orden['consulta_id']);
         $stmt2->execute();
         $stmt2->close();
         echo json_encode(['success' => $ok]);
