@@ -1,4 +1,3 @@
-import React from "react";
 import SidebarFarmacia from "../farmacia/SidebarFarmacia";
 
 function QuimicoPanelPage() {

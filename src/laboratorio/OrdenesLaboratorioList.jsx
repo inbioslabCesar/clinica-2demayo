@@ -115,6 +115,10 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     });
   };
 
+  // Nota: la descarga de PDFs desde el panel de laboratorio se ha deshabilitado
+  // porque la generación devolvía datos inconsistentes en algunos casos. Las
+  // descargas deben realizarse desde los módulos de Administración/Recepción.
+
   return (
     <div className="p-6">
       {/* Estadísticas Dashboard */}
@@ -336,13 +340,16 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => onSeleccionarOrden(orden)}
-                            className="inline-flex items-center px-3 py-1.5 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-xs font-medium rounded-lg hover:from-purple-600 hover:to-indigo-600 transition-all transform hover:scale-105 shadow-md"
-                            title={orden.estado === 'completado' ? 'Editar resultado' : 'Llenar resultados'}
-                          >
-                            {orden.estado === 'completado' ? '✏️ Editar' : '📝 Procesar'}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => onSeleccionarOrden(orden)}
+                              className="inline-flex items-center px-3 py-1.5 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-xs font-medium rounded-lg hover:from-purple-600 hover:to-indigo-600 transition-all transform hover:scale-105 shadow-md"
+                              title={orden.estado === 'completado' ? 'Editar resultado' : 'Llenar resultados'}
+                            >
+                              {orden.estado === 'completado' ? '✏️ Editar' : '📝 Procesar'}
+                            </button>
+                            {/* PDF eliminado desde la vista de laboratorio */}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -402,12 +409,15 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-gray-200">
-                    <button
-                      onClick={() => onSeleccionarOrden(orden)}
-                      className="w-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white py-2.5 px-4 rounded-lg hover:from-purple-600 hover:to-indigo-600 transition-all font-medium text-sm shadow-md hover:shadow-lg transform hover:scale-105"
-                    >
-                      {orden.estado === 'completado' ? '✏️ Editar Resultado' : '📝 Procesar Orden'}
-                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => onSeleccionarOrden(orden)}
+                        className="flex-1 bg-gradient-to-r from-purple-500 to-indigo-500 text-white py-2.5 px-4 rounded-lg hover:from-purple-600 hover:to-indigo-600 transition-all font-medium text-sm shadow-md hover:shadow-lg transform hover:scale-105"
+                      >
+                        {orden.estado === 'completado' ? '✏️ Editar Resultado' : '📝 Procesar Orden'}
+                      </button>
+                      {/* Botón de descarga eliminado en panel de laboratorio */}
+                    </div>
                   </div>
                 </div>
               ))}

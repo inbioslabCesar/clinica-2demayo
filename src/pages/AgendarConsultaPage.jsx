@@ -1,5 +1,4 @@
 
-import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import AgendarConsulta from "../components/AgendarConsulta";
 

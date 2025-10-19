@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import CobroModuloFinal from "../components/CobroModuloFinal";
 import { useNavigate } from "react-router-dom";
-import Swal from "sweetalert2";
-import withReactContent from "sweetalert2-react-content";
+// import Swal from "sweetalert2";
+// import withReactContent from "sweetalert2-react-content";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 
@@ -10,9 +10,8 @@ export default function CotizarLaboratorioPage() {
   const [mostrarCobro, setMostrarCobro] = useState(false);
   const [detallesCotizacion, setDetallesCotizacion] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
-  const [cotizacionReady, setCotizacionReady] = useState(false);
+  // const [cotizacionReady, setCotizacionReady] = useState(false);
   const navigate = useNavigate();
-  const MySwal = withReactContent(Swal);
   const { pacienteId } = useParams();
   const [examenes, setExamenes] = useState([]);
   const [ranking, setRanking] = useState([]);
@@ -111,7 +110,6 @@ export default function CotizarLaboratorioPage() {
     setDetallesCotizacion(detalles);
     setTotalCotizacion(detalles.reduce((total, d) => total + d.subtotal, 0));
     setMostrarCobro(true);
-    setCotizacionReady(false);
   };
 
   return (
@@ -259,7 +257,7 @@ export default function CotizarLaboratorioPage() {
               total={totalCotizacion}
               onCobroCompleto={() => {
                 setMostrarCobro(false);
-                setCotizacionReady(true);
+                // setCotizacionReady(true);
                 setMensaje("Cotización procesada correctamente.");
               }}
               onCancelar={() => setMostrarCobro(false)}

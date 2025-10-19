@@ -119,6 +119,33 @@ export default function ExamenesLaboratorioCrudPage() {
     setForm((f) => ({ ...f, valores_referenciales: val }));
   };
 
+  // Normalizar valores_referenciales antes de guardar/enviar
+  const normalizeValoresReferenciales = (raw) => {
+    if (!raw) return [];
+    try {
+      if (typeof raw === 'string') {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) raw = parsed;
+        else return [];
+      }
+    } catch (e) {
+      console.error('Error parsing valores_referenciales:', e);
+      return [];
+    }
+    return raw.map((it, idx) => ({
+      tipo: it.tipo || 'Parámetro',
+      nombre: it.nombre || (it.titulo || '') || `Item ${idx + 1}`,
+      metodologia: it.metodologia || '',
+      unidad: it.unidad || '',
+      referencias: Array.isArray(it.referencias) ? it.referencias : [],
+      formula: it.formula || '',
+      negrita: !!it.negrita,
+      color_texto: it.color_texto || '#000000',
+      color_fondo: it.color_fondo || '#ffffff',
+      orden: typeof it.orden === 'number' ? it.orden : idx + 1
+    }));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setMsg("");
@@ -130,10 +157,13 @@ export default function ExamenesLaboratorioCrudPage() {
         BASE_URL +
         "api_examenes_laboratorio.php" +
         (editId ? `?id=${editId}` : "");
+      // Normalizar valores_referenciales antes de enviar
+      const payload = { ...form, valores_referenciales: normalizeValoresReferenciales(form.valores_referenciales) };
+      if (editId) payload.id = editId;
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editId ? { ...form, id: editId } : form),
+        body: JSON.stringify(payload),
         credentials: "include",
       });
       const data = await res.json();
@@ -169,26 +199,11 @@ export default function ExamenesLaboratorioCrudPage() {
   };
 
   const handleEdit = (ex) => {
-    let valores = [];
-    if (Array.isArray(ex.valores_referenciales)) {
-      valores = ex.valores_referenciales;
-    } else if (
-      typeof ex.valores_referenciales === "string" &&
-      ex.valores_referenciales.trim().length > 0
-    ) {
-      try {
-        const parsed = JSON.parse(ex.valores_referenciales);
-        if (Array.isArray(parsed)) valores = parsed;
-      } catch (err) {
-        console.error("Error al parsear valores_referenciales:", err);
-      }
-    }
-    if (!valores.length)
-      valores = [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }];
+    const valores = normalizeValoresReferenciales(ex.valores_referenciales);
     setForm({
       ...ex,
       categoria: ex.categoria || "",
-      valores_referenciales: valores,
+      valores_referenciales: valores.length ? valores : [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
       titulo: ex.titulo || "",
       es_subtitulo: ex.es_subtitulo || false,
     });

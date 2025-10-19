@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import CobroModuloFinal from "../components/CobroModuloFinal";
 import { useParams, useNavigate } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteSearch from "../components/PacienteSearch";
 import { BASE_URL } from "../config/config";
-import Swal from "sweetalert2";
-import withReactContent from "sweetalert2-react-content";
+// import Swal from "sweetalert2";
+// import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage() {
   // Handler para mostrar el módulo de cobros
@@ -55,7 +55,7 @@ export default function FarmaciaCotizadorPage() {
   // Estado para mostrar/ocultar el formulario manual
   // Estado para saber si se intentó buscar paciente
   const [busquedaIntentada, setBusquedaIntentada] = useState(false);
-  const MySwal = withReactContent(Swal);
+  // const MySwal = withReactContent(Swal);
   const [medicamentos, setMedicamentos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [seleccionados, setSeleccionados] = useState([]);
@@ -69,7 +69,7 @@ export default function FarmaciaCotizadorPage() {
   const [manualDni, setManualDni] = useState("");
   const [manualNombres, setManualNombres] = useState("");
   const [manualApellidos, setManualApellidos] = useState("");
-  const usuarioId = 1; // Cambia por el usuario actual
+  // const usuarioId = 1; // Cambia por el usuario actual
   const [mensaje, setMensaje] = useState("");
 
   useEffect(() => {

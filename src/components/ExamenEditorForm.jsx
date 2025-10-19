@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 // Estructura inicial de un parámetro o subtítulo
 const defaultItem = {
@@ -18,11 +18,42 @@ const defaultItem = {
 import { useEffect } from "react";
 
 export default function ExamenEditorForm({ initialData = [], onChange }) {
-  const [items, setItems] = useState(initialData);
+  // Normalizar initialData: aceptar string JSON o array
+  const normalize = (data) => {
+    let items = [];
+    try {
+      if (!data) return [];
+      if (typeof data === 'string') {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) items = parsed;
+      } else if (Array.isArray(data)) {
+        items = data;
+      }
+    } catch (e) {
+      console.error('Error parsing valores_referenciales:', e);
+      items = [];
+    }
+    // Ensure shape for each item
+    return items.map((it, i) => ({
+      tipo: it.tipo || 'Parámetro',
+      nombre: it.nombre || (it.titulo || '') || `Item ${i + 1}`,
+      metodologia: it.metodologia || '',
+      unidad: it.unidad || '',
+      opciones: Array.isArray(it.opciones) ? it.opciones : [],
+      referencias: Array.isArray(it.referencias) ? it.referencias : [],
+      formula: it.formula || '',
+      negrita: !!it.negrita,
+      color_texto: it.color_texto || '#000000',
+      color_fondo: it.color_fondo || '#ffffff',
+      orden: typeof it.orden === 'number' ? it.orden : i + 1
+    }));
+  };
+
+  const [items, setItems] = useState(() => normalize(initialData));
 
   // Sincronizar items con initialData cuando cambie (por ejemplo, al editar otro examen)
   useEffect(() => {
-    setItems(initialData);
+    setItems(normalize(initialData));
   }, [initialData]);
 
   // Agregar nuevo parámetro o subtítulo

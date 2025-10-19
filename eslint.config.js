@@ -23,8 +23,9 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-      'no-unused-vars': ["warn", { "argsIgnorePattern": "^_" }]
+      // Combine settings: allow unused vars that start with uppercase or underscore patterns,
+      // and ignore unused function args that start with an underscore.
+      'no-unused-vars': ['warn', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }]
     },
   },
 ])

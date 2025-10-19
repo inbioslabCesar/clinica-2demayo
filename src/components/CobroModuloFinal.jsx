@@ -3,6 +3,7 @@ import { BASE_URL } from '../config/config';
 import Swal from 'sweetalert2';
 
 function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles, total }) {
+  // tarifas se cargan solo si no se reciben detalles por props
   const [tarifas, setTarifas] = useState([]);
   const [tipoCobertura, setTipoCobertura] = useState('particular');
   const [tipoPago, setTipoPago] = useState('efectivo');
@@ -14,7 +15,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
     if (!detalles) {
       cargarTarifas();
     }
-  }, []);
+  }, [detalles]);
 
   const cargarTarifas = async () => {
     try {

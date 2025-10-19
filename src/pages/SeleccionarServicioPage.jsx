@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";

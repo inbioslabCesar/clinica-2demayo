@@ -1,7 +1,7 @@
 import { Icon } from '@fluentui/react';
-import { Link } from "react-router-dom";
 import Footer from "./Footer";
-import React, { useState } from "react";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { initializeIcons } from '@fluentui/font-icons-mdl2';
 initializeIcons();
 function Sidebar({ open, onClose, onLogout, usuario }) {
@@ -177,7 +177,7 @@ function Navbar({ usuario, onMenu }) {
 }
 
 
-import { useEffect } from "react";
+// useEffect is already imported above via react import where needed
 
 function DashboardLayout({ usuario, onLogout, children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);

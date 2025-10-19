@@ -8,6 +8,14 @@ session_set_cookie_params([
     'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
 session_start();
+// Helper de logging a archivo para debugging local
+function debug_log_file($msg) {
+    $dir = __DIR__ . '/debug';
+    if (!file_exists($dir)) @mkdir($dir, 0755, true);
+    $file = $dir . '/debug_resultados.log';
+    $line = date('Y-m-d H:i:s') . " " . $msg . "\n";
+    @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
+}
 // api_resultados_laboratorio.php: Guarda resultados de laboratorio
 $allowedOrigins = [
     'http://localhost:5173',
@@ -63,33 +71,48 @@ switch ($method) {
         }
         $json = json_encode($resultados);
         // Verificar si la orden existe y si es directa (sin consulta)
-        $stmt_orden = $conn->prepare('SELECT id, consulta_id FROM ordenes_laboratorio WHERE id = ? OR consulta_id = ?');
-        $stmt_orden->bind_param('ii', $consulta_id, $consulta_id);
+        // Buscar de forma determinista: primero por id (orden.id), si no existe, por consulta_id.
+        $orden = null;
+        $stmt_orden = $conn->prepare('SELECT id, consulta_id FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
+        $stmt_orden->bind_param('i', $consulta_id);
         $stmt_orden->execute();
         $res_orden = $stmt_orden->get_result();
         $orden = $res_orden->fetch_assoc();
         $stmt_orden->close();
+        if (!$orden) {
+            $stmt_orden = $conn->prepare('SELECT id, consulta_id FROM ordenes_laboratorio WHERE consulta_id = ? LIMIT 1');
+            $stmt_orden->bind_param('i', $consulta_id);
+            $stmt_orden->execute();
+            $orden = $stmt_orden->get_result()->fetch_assoc();
+            $stmt_orden->close();
+        }
         if (!$orden) {
             echo json_encode(['success' => false, 'error' => 'Orden de laboratorio no encontrada']);
             exit;
         }
         $tieneConsulta = $orden['consulta_id'] ? true : false;
         // Verificar si ya existen resultados para esta orden
-        if ($tieneConsulta) {
+    if ($tieneConsulta) {
             // Guardar en consulta_id (flujo tradicional)
             $stmt_check = $conn->prepare('SELECT id FROM resultados_laboratorio WHERE consulta_id = ?');
             $stmt_check->bind_param('i', $orden['consulta_id']);
             $stmt_check->execute();
             $stmt_check->store_result();
-            if ($stmt_check->num_rows > 0) {
+                if ($stmt_check->num_rows > 0) {
                 $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE consulta_id = ?');
                 $stmt_update->bind_param('ssi', $tipo_examen, $json, $orden['consulta_id']);
                 $ok = $stmt_update->execute();
+                // Logging temporal
+                if ($ok) debug_log_file('[api_resultados] UPDATE resultados_laboratorio by consulta_id=' . $orden['consulta_id']);
                 $stmt_update->close();
             } else {
                 $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (consulta_id, tipo_examen, resultados) VALUES (?, ?, ?)');
                 $stmt->bind_param('iss', $orden['consulta_id'], $tipo_examen, $json);
                 $ok = $stmt->execute();
+                if ($ok) {
+                    $newId = $conn->insert_id;
+                    debug_log_file('[api_resultados] INSERT resultados_laboratorio id=' . $newId . ' consulta_id=' . $orden['consulta_id']);
+                }
                 $stmt->close();
             }
             $stmt_check->close();
@@ -103,11 +126,16 @@ switch ($method) {
                 $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE orden_id = ?');
                 $stmt_update->bind_param('ssi', $tipo_examen, $json, $orden['id']);
                 $ok = $stmt_update->execute();
+                if ($ok) debug_log_file('[api_resultados] UPDATE resultados_laboratorio by orden_id=' . $orden['id']);
                 $stmt_update->close();
             } else {
                 $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (orden_id, tipo_examen, resultados) VALUES (?, ?, ?)');
                 $stmt->bind_param('iss', $orden['id'], $tipo_examen, $json);
                 $ok = $stmt->execute();
+                if ($ok) {
+                    $newId = $conn->insert_id;
+                    debug_log_file('[api_resultados] INSERT resultados_laboratorio id=' . $newId . ' orden_id=' . $orden['id']);
+                }
                 $stmt->close();
             }
             $stmt_check->close();

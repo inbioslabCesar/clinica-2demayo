@@ -90,12 +90,53 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     setMsg("");
 
     try {
+      // Antes de enviar, evaluar todas las fórmulas y asegurarnos de inyectar sus valores en el objeto `resultados`
+      const resultadosToSend = { ...resultados };
+      // Procesar examenes - puede venir en diferentes formatos (misma lógica que en useEffect)
+      let examenesArray = [];
+      if (typeof orden.examenes === 'string') {
+        try {
+          examenesArray = JSON.parse(orden.examenes);
+        } catch {
+          examenesArray = orden.examenes.split(',').map(s => s.trim()).filter(s => s);
+        }
+      } else if (Array.isArray(orden.examenes)) {
+        examenesArray = orden.examenes;
+      } else if (orden.examenes) {
+        examenesArray = [orden.examenes];
+      }
+
+      // Para cada examen, buscar sus parámetros y calcular fórmulas si las tiene
+      examenesArray.forEach(exId => {
+        const id = typeof exId === 'object' ? exId.id : exId;
+        const exObj = examenesDisponibles.find(e => e.id == id);
+        if (!exObj || !Array.isArray(exObj.valores_referenciales)) return;
+        // construir mapa de valores por nombre para esta iteración (usar los valores ya calculados o ingresados)
+        const valoresPorNombre = {};
+        exObj.valores_referenciales.forEach(param => {
+          if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+            valoresPorNombre[param.nombre] = resultadosToSend[`${id}__${param.nombre}`] || "";
+          }
+        });
+        // evaluar y almacenar fórmulas
+        exObj.valores_referenciales.forEach(param => {
+          if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+            if (param.formula && param.formula.trim() !== "") {
+              const computed = evalFormula(param.formula, valoresPorNombre);
+              // actualizar tanto el mapa local como el objeto a enviar
+              valoresPorNombre[param.nombre] = computed === null || computed === undefined ? "" : computed;
+              resultadosToSend[`${id}__${param.nombre}`] = computed === null || computed === undefined ? "" : computed;
+            }
+          }
+        });
+      });
+
       // Usar orden.consulta_id si existe, sino orden.id
       const consultaId = orden.consulta_id ? orden.consulta_id : orden.id;
       const res = await fetch(BASE_URL + "api_resultados_laboratorio.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consulta_id: consultaId, tipo_examen: "varios", resultados }),
+        body: JSON.stringify({ consulta_id: consultaId, tipo_examen: "varios", resultados: resultadosToSend }),
       });
       const data = await res.json();
       

@@ -23,6 +23,8 @@ function ConfiguracionPage() {
 
   const [loading, setLoading] = useState(false);
   const [cargandoDatos, setCargandoDatos] = useState(true);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoPreview, setLogoPreview] = useState('');
 
   // Cargar configuración al montar el componente
   useEffect(() => {
@@ -49,6 +51,8 @@ function ConfiguracionPage() {
         console.log('📋 Resultado:', result);
         if (result.success) {
           setConfiguracion(result.data);
+          // mostrar preview si hay logo
+          if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
         } else {
           throw new Error(result.error || 'Error al cargar la configuración');
         }
@@ -149,6 +153,8 @@ function ConfiguracionPage() {
             icon: 'success',
             confirmButtonText: 'OK'
           });
+          // actualizar preview si guardamos una ruta relativa
+          if (configuracion.logo_url) setLogoPreview(configuracion.logo_url);
         } else {
           throw new Error(result.error || 'Error al guardar la configuración');
         }
@@ -184,6 +190,54 @@ function ConfiguracionPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFileChange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    // Preview local
+    const url = URL.createObjectURL(f);
+    setLogoPreview(url);
+    // Store file temporarily on the input (we will upload on demand)
+    setConfiguracion(prev => ({ ...prev, _logo_file: f }));
+  };
+
+  const uploadLogo = async () => {
+    const file = configuracion._logo_file;
+    if (!file) {
+      Swal.fire({ title: 'Info', text: 'Seleccione un archivo primero.', icon: 'info' });
+      return;
+    }
+    setUploadingLogo(true);
+    try {
+      const form = new FormData();
+      form.append('logo', file);
+      const resp = await fetch(BASE_URL + 'api_upload_logo.php', {
+        method: 'POST',
+        credentials: 'include',
+        body: form
+      });
+      const j = await resp.json();
+      if (resp.ok && j.success) {
+        // Guardar la ruta en el state para cuando pulse "Guardar Configuración"
+        setConfiguracion(prev => ({ ...prev, logo_url: j.path, _logo_file: null }));
+        // Si la ruta es relativa, convertir a URL pública para preview en dev
+        setLogoPreview(j.path);
+        Swal.fire({ title: 'Listo', text: 'Logo subido correctamente.', icon: 'success' });
+      } else {
+        throw new Error(j.error || 'Error subiendo archivo');
+      }
+    } catch (err) {
+      console.error('Error upload logo', err);
+      Swal.fire({ title: 'Error', text: 'No se pudo subir el logo: ' + err.message, icon: 'error' });
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const clearLogo = () => {
+    setConfiguracion(prev => ({ ...prev, logo_url: '' }));
+    setLogoPreview('');
   };
 
   return (
@@ -292,15 +346,43 @@ function ConfiguracionPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                URL del Logo (opcional)
+                URL del Logo (opcional) / Subir logo
               </label>
               <input
                 type="url"
                 value={configuracion.logo_url || ''}
                 onChange={(e) => manejarCambio('logo_url', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
                 placeholder="https://ejemplo.com/logo.png"
               />
+              <div className="flex items-center gap-2">
+                <input type="file" accept="image/*" onChange={handleFileChange} className="text-sm" />
+                <button
+                  type="button"
+                  onClick={uploadLogo}
+                  disabled={uploadingLogo}
+                  className="bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 disabled:bg-gray-300 text-sm"
+                >
+                  {uploadingLogo ? 'Subiendo...' : 'Subir Logo'}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearLogo}
+                  className="bg-red-100 text-red-700 px-3 py-1 rounded-md hover:bg-red-200 text-sm"
+                >
+                  Eliminar
+                </button>
+              </div>
+              {logoPreview ? (
+                <div className="mt-3">
+                  <div className="text-xs text-gray-600 mb-1">Vista previa:</div>
+                  <img
+                    src={logoPreview.startsWith('http') ? logoPreview : '/' + logoPreview.replace(/^\/+/, '')}
+                    alt="Logo preview"
+                    style={{ maxHeight: 96 }}
+                  />
+                </div>
+              ) : null}
             </div>
 
             <div>
