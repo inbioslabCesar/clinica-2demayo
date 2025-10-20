@@ -27,6 +27,7 @@ function HistoriaClinicaPage() {
   // Estados para datos médicos y configuración
   const [medicoInfo, setMedicoInfo] = useState(null);
   const [configuracionClinica, setConfiguracionClinica] = useState(null);
+  const [firmaMedico, setFirmaMedico] = useState(null);
   
   // Resultados de laboratorio
   const [resultadosLab, setResultadosLab] = useState([]);
@@ -125,14 +126,6 @@ function HistoriaClinicaPage() {
       .catch(() => setTriaje(null));
   }, [consultaId]);
 
-  // Cargar información del médico desde sessionStorage
-  useEffect(() => {
-    const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
-    if (medicoSession) {
-      setMedicoInfo(medicoSession);
-    }
-  }, []);
-
   // Cargar configuración de la clínica
   useEffect(() => {
     fetch(`${BASE_URL}api_get_configuracion.php`, { 
@@ -145,6 +138,19 @@ function HistoriaClinicaPage() {
         }
       })
       .catch(() => setConfiguracionClinica(null));
+  }, []);
+
+  // Cargar información profesional completa del médico desde sessionStorage
+  useEffect(() => {
+    const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
+    
+    if (medicoSession) {
+      setMedicoInfo(medicoSession);
+      setFirmaMedico(medicoSession.firma || null);
+    } else {
+      setMedicoInfo(null);
+      setFirmaMedico(null);
+    }
   }, []);
 
   if (loading) return (
@@ -207,6 +213,50 @@ function HistoriaClinicaPage() {
             </div>
           </div>
         </div>
+
+        {/* Información sobre firma digital */}
+        {medicoInfo && (
+          <div className={`mb-6 p-4 rounded-2xl border ${
+            firmaMedico 
+              ? 'bg-green-50/80 border-green-200 backdrop-blur-sm' 
+              : 'bg-amber-50/80 border-amber-200 backdrop-blur-sm'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                firmaMedico 
+                  ? 'bg-green-500' 
+                  : 'bg-amber-500'
+              }`}>
+                {firmaMedico ? (
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1">
+                <p className={`text-sm font-medium ${
+                  firmaMedico ? 'text-green-800' : 'text-amber-800'
+                }`}>
+                  {firmaMedico ? (
+                    <>✍️ <strong>Firma Digital Activa:</strong> Los documentos impresos incluirán su firma digital.</>
+                  ) : (
+                    <>⚠️ <strong>Sin Firma Digital:</strong> Los documentos impresos tendrán espacio para firma manual.</>
+                  )}
+                </p>
+                <p className={`text-xs mt-1 ${
+                  firmaMedico ? 'text-green-600' : 'text-amber-600'
+                }`}>
+                  Dr(a). {medicoInfo.nombre} {medicoInfo.apellido} - CMP: {medicoInfo.cmp || 'N/A'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Datos básicos del paciente en tarjeta moderna */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 mb-6 border border-white/50">
           <div className="flex items-center gap-3 mb-4">
@@ -365,11 +415,15 @@ function HistoriaClinicaPage() {
                     }
                   }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  title={firmaMedico ? "Imprimir HC con firma digital" : "Imprimir HC (sin firma digital)"}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                   </svg>
                   <span>🖨️ HC</span>
+                  {firmaMedico && (
+                    <span className="text-xs bg-white/20 px-1 rounded">✍️</span>
+                  )}
                 </button>
 
                 {/* Botón de imprimir Análisis de Laboratorio */}
@@ -416,12 +470,46 @@ function HistoriaClinicaPage() {
                   <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2h-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
-                  <span className="text-sm font-medium text-gray-700">Firma Digital</span>
+                  <span className="text-sm font-medium text-gray-700">✍️ Firma Digital</span>
                 </div>
-                <div className="border-t-2 border-gray-300 pt-2 max-w-xs mx-auto">
-                  <div className="text-xs text-gray-500 font-medium">FIRMA Y SELLO MÉDICO</div>
-                  <div className="text-xs text-gray-400 mt-1">Sistema Médico Digitalizado</div>
-                </div>
+                
+                {/* Mostrar firma del médico si está disponible */}
+                {firmaMedico ? (
+                  <div className="flex flex-col items-center gap-3 max-w-xs mx-auto">
+                    <div className="bg-white border-2 border-gray-200 rounded-lg p-3 shadow-sm">
+                      <img 
+                        src={firmaMedico} 
+                        alt="Firma del médico" 
+                        className="max-h-16 max-w-[200px] object-contain"
+                      />
+                    </div>
+                    <div className="border-t-2 border-gray-300 pt-2 w-full">
+                      <div className="text-xs text-gray-600 font-medium">
+                        {medicoInfo?.nombre} {medicoInfo?.apellido}
+                      </div>
+                      {medicoInfo?.especialidad && (
+                        <div className="text-xs text-gray-500">
+                          {medicoInfo.especialidad}
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-500">
+                        C.M.P. {medicoInfo?.cmp || 'N/A'}
+                        {medicoInfo?.rne && ` - R.N.E ${medicoInfo.rne}`}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        Sistema Médico Digitalizado
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border-t-2 border-gray-300 pt-2 max-w-xs mx-auto">
+                    <div className="text-xs text-gray-500 font-medium">FIRMA Y SELLO MÉDICO</div>
+                    <div className="text-xs text-gray-400 mt-1">Sistema Médico Digitalizado</div>
+                    <div className="text-xs text-orange-500 mt-2 italic">
+                      ⚠️ No hay firma registrada
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             
@@ -458,6 +546,8 @@ function HistoriaClinicaPage() {
             triaje={triaje}
             hc={hc}
             diagnosticos={diagnosticos}
+            medicamentos={hc.receta}
+            ordenesLaboratorio={ordenesLab}
             medicoInfo={medicoInfo}
             configuracionClinica={configuracionClinica}
           />

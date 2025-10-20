@@ -13,9 +13,13 @@ const useMedicos = () => {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
     nombre: "",
+    apellido: "",
     especialidad: "",
     email: "",
-    password: ""
+    password: "",
+    cmp: "",
+    rne: "",
+    firma: null
   });
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -25,9 +29,13 @@ const useMedicos = () => {
   const [editForm, setEditForm] = useState({
     id: null,
     nombre: "",
+    apellido: "",
     especialidad: "",
     email: "",
-    password: ""
+    password: "",
+    cmp: "",
+    rne: "",
+    firma: null
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -168,9 +176,13 @@ const useMedicos = () => {
     setShowModal(true);
     setForm({
       nombre: "",
+      apellido: "",
       especialidad: "",
       email: "",
-      password: ""
+      password: "",
+      cmp: "",
+      rne: "",
+      firma: null
     });
     setFormError("");
   };
@@ -179,9 +191,13 @@ const useMedicos = () => {
     setShowModal(false);
     setForm({
       nombre: "",
+      apellido: "",
       especialidad: "",
       email: "",
-      password: ""
+      password: "",
+      cmp: "",
+      rne: "",
+      firma: null
     });
     setFormError("");
   };
@@ -204,9 +220,13 @@ const useMedicos = () => {
     setEditForm({
       id: medico.id,
       nombre: medico.nombre,
+      apellido: medico.apellido || "",
       especialidad: medico.especialidad,
       email: medico.email,
-      password: ""
+      password: "",
+      cmp: medico.cmp || "",
+      rne: medico.rne || "",
+      firma: medico.firma || null
     });
     setEditError("");
   };
@@ -216,9 +236,13 @@ const useMedicos = () => {
     setEditForm({
       id: null,
       nombre: "",
+      apellido: "",
       especialidad: "",
       email: "",
-      password: ""
+      password: "",
+      cmp: "",
+      rne: "",
+      firma: null
     });
     setEditError("");
   };
@@ -253,6 +277,7 @@ const useMedicos = () => {
     const searchTerm = busqueda.toLowerCase();
     return (
       medico.nombre.toLowerCase().includes(searchTerm) ||
+      (medico.apellido && medico.apellido.toLowerCase().includes(searchTerm)) ||
       medico.especialidad.toLowerCase().includes(searchTerm) ||
       medico.email.toLowerCase().includes(searchTerm)
     );

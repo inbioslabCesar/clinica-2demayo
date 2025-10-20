@@ -40,7 +40,6 @@ export default function FarmaciaCotizadorPage() {
         subtotal
       };
     });
-    console.log("Detalles enviados al cobro:", detalles);
     setDetallesCotizacion(detalles);
     setTotalCotizacion(calcularTotal());
     setMostrarCobro(true);

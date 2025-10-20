@@ -49,7 +49,6 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
   };
 
   const procesarCobro = async () => {
-  console.log("Detalles enviados al backend:", detallesCobro);
     if (detallesCobro.length === 0) {
       Swal.fire('Error', 'No hay servicios para cobrar', 'error');
       return;
@@ -91,11 +90,6 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio
         if (servicio?.key === 'laboratorio' && !servicio?.consulta_id) {
           const examenesIds = detallesCobro.map(d => d.servicio_id);
-          console.log('Enviando orden laboratorio:', {
-            consulta_id: null,
-            examenes: examenesIds,
-            paciente_id: paciente?.id || null
-          });
           const ordenResponse = await fetch(`${BASE_URL}api_ordenes_laboratorio.php`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -108,7 +102,6 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
             })
           });
           const ordenResult = await ordenResponse.json();
-          console.log('Respuesta orden laboratorio:', ordenResult);
         }
         // Mostrar comprobante
         await mostrarComprobante(result.cobro_id, cobroData);

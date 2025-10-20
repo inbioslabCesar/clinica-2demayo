@@ -89,7 +89,7 @@ function Dashboard({ usuario }) {
               </div>
               <div>
                 <h1 className="text-3xl sm:text-4xl font-bold drop-shadow-lg">
-                  ¡Bienvenido, {usuario?.nombre || "Usuario"}!
+                  ¡Bienvenido, {usuario?.nombre} {usuario?.apellido || ""}!
                 </h1>
                 <p className="text-lg text-white/90 mt-1">
                   {formatearFecha()}

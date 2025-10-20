@@ -73,13 +73,13 @@ body {
 
 .header {
     text-align: center;
-    margin-bottom: 15px;
+    margin-bottom: 10px;
     border-bottom: 2px solid #8b5cf6;
-    padding-bottom: 8px;
+    padding-bottom: 6px;
 }
 
 .clinic-title {
-    font-size: 26px;
+    font-size: 24px;
     font-weight: bold;
     color: #5b21b6;
     margin: 0;
@@ -91,64 +91,57 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 12px;
-}
-
-.document-title {
-    font-size: 16px;
-    font-weight: bold;
-    color: #4c1d95;
-    margin: 12px 0;
-    text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    border: 2px solid #8b5cf6;
-    padding: 10px;
-    border-radius: 6px;
-    background: linear-gradient(135deg, #f3f0ff 0%, #e8e3ff 100%);
+    margin-bottom: 8px;
 }
 
 .hc-number {
     text-align: center;
-    margin: 8px 0 15px 0;
-    font-size: 20px;
+    margin: 6px 0 12px 0;
+    font-size: 18px;
     color: #5b21b6;
     background: #f3f0ff;
-    padding: 10px;
+    padding: 8px;
     border-radius: 6px;
     border: 1px solid #8b5cf6;
 }
 
 .patient-info {
-    background: #f8fafc;
-    padding: 20px;
-    border-radius: 6px;
-    border: 1px solid #e5e7eb;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    padding: 18px;
+    border-radius: 10px;
+    border: 2px solid #8b5cf6;
     margin: 15px 0;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
 }
 
 .info-row {
     display: flex;
-    margin-bottom: 18px;
+    margin-bottom: 15px;
     align-items: center;
 }
 
 .info-label {
     font-weight: bold;
-    color: #374151;
-    width: 150px;
+    color: #5b21b6;
+    width: 140px;
     flex-shrink: 0;
-    font-size: 20px;
+    font-size: 19px;
+    font-family: Arial, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .info-value {
-    color: #1f2937;
+    color: #2563eb;
     flex: 1;
-    padding: 10px 15px;
-    background: white;
+    padding: 10px 14px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
     border-radius: 5px;
-    border: 1px solid #e5e7eb;
-    font-size: 18px;
+    border: 2px solid #e2e8f0;
+    font-size: 17px;
+    font-weight: 600;
+    font-family: Arial, sans-serif;
+    box-shadow: 0 2px 4px rgba(139, 92, 246, 0.1);
 }
 </style>
 </head>
@@ -172,8 +165,6 @@ $html .= '
         </div>
     </div>
 
-    <div class="document-title">Historia Clínica del Paciente</div>
-    
     <div class="hc-number">
         <strong>HC N°: ' . h($paciente['historia_clinica'] ?? 'HC' . str_pad($paciente['id'], 4, '0', STR_PAD_LEFT)) . '</strong>
         <span style="margin-left: 30px;">
@@ -220,6 +211,11 @@ $html .= '
         <div class="info-row">
             <div class="info-label">Dirección:</div>
             <div class="info-value">' . h($paciente['direccion']) . '</div>
+        </div>
+        
+        <div class="info-row">
+            <div class="info-label">Procedencia:</div>
+            <div class="info-value">' . h($paciente['procedencia'] ?? 'No especificado') . '</div>
         </div>
     </div>
 </div>

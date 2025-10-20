@@ -26,18 +26,15 @@ const [totalConsulta, setTotalConsulta] = useState(0);
         .then(r => r.json())
         .then(data => {
           if (data.success && Array.isArray(data.tarifas)) {
-            console.log('TARIFAS RECIBIDAS:', data.tarifas);
             // Buscar tarifa específica del médico (comparar como número)
             let tarifa = data.tarifas.find(
               t => t.servicio_tipo === 'consulta' && t.activo === 1 && Number(t.medico_id) === Number(consultaCreada.medico_id)
             );
-            console.log('Tarifa encontrada para medico_id', consultaCreada.medico_id, ':', tarifa);
             // Si no existe, buscar tarifa general (medico_id null o vacío)
             if (!tarifa) {
               tarifa = data.tarifas.find(
                 t => t.servicio_tipo === 'consulta' && t.activo === 1 && (!t.medico_id || t.medico_id === null)
               );
-              console.log('Tarifa general usada:', tarifa);
             }
             if (tarifa) {
               const detalle = {
@@ -50,11 +47,9 @@ const [totalConsulta, setTotalConsulta] = useState(0);
               };
               setDetallesConsulta([detalle]);
               setTotalConsulta(detalle.subtotal);
-              console.log('Detalle de cobro generado:', detalle);
             } else {
               setDetallesConsulta([]);
               setTotalConsulta(0);
-              console.log('No se encontró tarifa para consulta.');
             }
           }
         });
@@ -133,11 +128,13 @@ const [totalConsulta, setTotalConsulta] = useState(0);
       
       if (data.success) {
         // Guardar información de la consulta creada
-        const medicoSeleccionado = medicos.find(m => m.id == medicoId);
+        const medicoSeleccionado = medicos.find(m => String(m.id) === String(medicoId));
+        const nombreCompleto = `${medicoSeleccionado?.nombre} ${medicoSeleccionado?.apellido || ''}`.trim();
+        
         setConsultaCreada({
           id: data.consulta_id || data.id,
           medico_id: medicoId,
-          medico_nombre: medicoSeleccionado?.nombre,
+          medico_nombre: nombreCompleto,
           medico_especialidad: medicoSeleccionado?.especialidad,
           fecha,
           hora,
@@ -240,7 +237,7 @@ const [totalConsulta, setTotalConsulta] = useState(0);
           <option value="">Selecciona un médico</option>
           {medicos.map(medico => (
             <option key={medico.id} value={medico.id}>
-              {medico.nombre} - {medico.especialidad}
+              Dr(a). {medico.nombre} {medico.apellido || ''} - {medico.especialidad}
             </option>
           ))}
         </select>

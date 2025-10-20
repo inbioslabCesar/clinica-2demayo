@@ -12,7 +12,6 @@ const MedicoSearchBar = ({
     const result = exportarExcel(medicos);
     if (result.success) {
       // Mostrar notificación de éxito si se desea
-      console.log(`Exportado exitosamente: ${result.fileName}`);
     } else {
       console.error('Error al exportar:', result.error);
       // Mostrar notificación de error si se desea
@@ -23,7 +22,6 @@ const MedicoSearchBar = ({
     const result = exportarPDF(medicos);
     if (result.success) {
       // Mostrar notificación de éxito si se desea
-      console.log(`Exportado exitosamente: ${result.fileName}`);
     } else {
       console.error('Error al exportar:', result.error);
       // Mostrar notificación de error si se desea

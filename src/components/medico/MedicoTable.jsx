@@ -159,7 +159,7 @@ const MedicoTable = ({
                         {medico.nombre.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <div className="font-semibold text-gray-900">{medico.nombre}</div>
+                        <div className="font-semibold text-gray-900">Dr(a). {medico.nombre} {medico.apellido || ''}</div>
                         <div className="text-sm text-gray-500">ID: {medico.id}</div>
                       </div>
                     </div>
@@ -211,7 +211,7 @@ const MedicoTable = ({
                   {medico.nombre.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900">{medico.nombre}</h3>
+                  <h3 className="font-bold text-gray-900">Dr(a). {medico.nombre} {medico.apellido || ''}</h3>
                   <p className="text-gray-600 text-sm">ID: #{medico.id}</p>
                 </div>
               </div>

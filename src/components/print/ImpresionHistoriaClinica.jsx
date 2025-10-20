@@ -3,9 +3,12 @@ const ImpresionHistoriaClinica = ({
   triaje, 
   hc, 
   diagnosticos,
+  medicamentos,
+  ordenesLaboratorio,
   medicoInfo,
   configuracionClinica 
 }) => {
+
   // Función para obtener la ruta del logo según el entorno
   const getLogoPath = () => {
     // Intentar detectar si estamos en producción por el hostname o protocol
@@ -36,8 +39,32 @@ const ImpresionHistoriaClinica = ({
     });
   };
 
+  // Función para mostrar mensaje cuando no hay datos
+  const SeccionVacia = ({ titulo, mensaje = "No hay información registrada" }) => (
+    <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+      <h3 className="font-semibold text-gray-600 mb-2 border-b border-gray-300">
+        {titulo}
+      </h3>
+      <p className="text-sm text-gray-500 italic text-center p-4">
+        {mensaje}
+      </p>
+    </div>
+  );
+
   return (
     <div className="bg-white p-8 max-w-4xl mx-auto shadow-lg print:shadow-none print:max-w-none">
+      <style jsx>{`
+        @media print {
+          .firma-medico {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          .firma-imagen {
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
+          }
+        }
+      `}</style>
       {/* Encabezado de la clínica */}
       <div className="text-center border-b-2 border-blue-600 pb-4 mb-6">
         <div className="flex items-center justify-center gap-4 mb-2">
@@ -91,8 +118,9 @@ const ImpresionHistoriaClinica = ({
             🩺 INFORMACIÓN MÉDICA
           </h3>
           <div className="space-y-1 text-sm">
-            <p><strong>Médico:</strong> {medicoInfo?.nombre}</p>
+            <p><strong>Médico:</strong> Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}</p>
             <p><strong>CMP:</strong> {medicoInfo?.cmp || 'N/A'}</p>
+            {medicoInfo?.rne && <p><strong>RNE:</strong> {medicoInfo.rne}</p>}
             <p><strong>Especialidad:</strong> {medicoInfo?.especialidad}</p>
             <p><strong>Fecha Consulta:</strong> {formatearFecha(paciente?.fecha_consulta)}</p>
           </div>
@@ -216,19 +244,38 @@ const ImpresionHistoriaClinica = ({
       )}
 
       {/* Diagnósticos */}
-      {diagnosticos && diagnosticos.length > 0 && (
-        <div className="mb-6 p-4 bg-red-50 rounded-lg border border-red-200">
+      {diagnosticos && diagnosticos.length > 0 ? (
+        <div className="mb-6 p-4 bg-red-50 rounded-lg border border-red-200 seccion-diagnosticos">
           <h3 className="font-semibold text-red-800 mb-2 border-b border-red-300">
-            🎯 DIAGNÓSTICOS
+            🎯 DIAGNÓSTICOS CIE-10
           </h3>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {diagnosticos.map((diagnostico, index) => (
-              <div key={index} className="text-sm p-2 bg-white rounded border">
-                <strong>{diagnostico.tipo}:</strong> {diagnostico.codigo} - {diagnostico.descripcion}
+              <div key={index} className="text-sm p-3 bg-white rounded border border-red-100">
+                <div className="flex items-start gap-3">
+                  <span className="inline-block w-6 h-6 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                    {index + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="inline-block px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded">
+                        {diagnostico.tipo || 'Principal'}
+                      </span>
+                      <span className="inline-block px-2 py-1 bg-gray-100 text-gray-800 text-xs font-mono rounded">
+                        {diagnostico.codigo}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-gray-900 leading-relaxed">
+                      {diagnostico.descripcion}
+                    </p>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </div>
+      ) : (
+        <SeccionVacia titulo="🎯 DIAGNÓSTICOS CIE-10" mensaje="No se han registrado diagnósticos para esta consulta" />
       )}
 
       {/* Tratamiento */}
@@ -241,7 +288,108 @@ const ImpresionHistoriaClinica = ({
         </div>
       )}
 
-      {/* Pie de página con firma */}
+      {/* Receta Médica */}
+      {medicamentos && medicamentos.length > 0 ? (
+        <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200 seccion-medicamentos">
+          <h3 className="font-semibold text-green-800 mb-2 border-b border-green-300">
+            💉 RECETA MÉDICA
+          </h3>
+          <div className="space-y-3">
+            {medicamentos.map((medicamento, index) => (
+              <div key={index} className="text-sm p-3 bg-white rounded border border-green-100">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p><strong>Medicamento:</strong> {medicamento.medicamento}</p>
+                    <p><strong>Concentración:</strong> {medicamento.concentracion}</p>
+                    <p><strong>Forma Farmacéutica:</strong> {medicamento.forma_farmaceutica}</p>
+                  </div>
+                  <div>
+                    <p><strong>Dosis:</strong> {medicamento.dosis}</p>
+                    <p><strong>Frecuencia:</strong> {medicamento.frecuencia}</p>
+                    <p><strong>Duración:</strong> {medicamento.duracion}</p>
+                  </div>
+                </div>
+                {medicamento.indicaciones && (
+                  <div className="mt-2 pt-2 border-t border-green-100">
+                    <p><strong>Indicaciones:</strong> {medicamento.indicaciones}</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <SeccionVacia titulo="💉 RECETA MÉDICA" mensaje="No se han prescrito medicamentos para esta consulta" />
+      )}
+
+      {/* Exámenes de Laboratorio Solicitados */}
+      {ordenesLaboratorio && ordenesLaboratorio.length > 0 ? (
+        <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 seccion-laboratorio">
+          <h3 className="font-semibold text-blue-800 mb-2 border-b border-blue-300">
+            🔬 EXÁMENES DE LABORATORIO SOLICITADOS
+          </h3>
+          <div className="space-y-3">
+            {ordenesLaboratorio.map((orden, ordenIndex) => (
+              <div key={ordenIndex} className="p-3 bg-white rounded-lg border border-blue-100">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded">
+                    Orden #{orden.id || ordenIndex + 1}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {formatearFecha(orden.fecha_solicitud)}
+                  </span>
+                </div>
+                
+                {/* Lista de exámenes en esta orden */}
+                {orden.examenes && orden.examenes.length > 0 ? (
+                  <div className="space-y-2">
+                    {orden.examenes.map((examen, examenIndex) => (
+                      <div key={examenIndex} className="flex items-center gap-3 p-2 bg-blue-50 rounded border-l-4 border-blue-300">
+                        <span className="w-5 h-5 bg-blue-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                          {examenIndex + 1}
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-medium text-sm text-gray-900">{examen.nombre}</p>
+                          {examen.descripcion && (
+                            <p className="text-xs text-gray-600 mt-1">{examen.descripcion}</p>
+                          )}
+                          {examen.condicion_paciente && (
+                            <p className="text-xs text-amber-600 mt-1">
+                              <strong>Condición:</strong> {examen.condicion_paciente}
+                            </p>
+                          )}
+                          {examen.tiempo_resultado && (
+                            <p className="text-xs text-green-600 mt-1">
+                              <strong>Tiempo estimado:</strong> {examen.tiempo_resultado}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-xs">
+                          <span className={`px-2 py-1 rounded-full text-xs ${
+                            orden.estado === 'pendiente' 
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : orden.estado === 'completado'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {orden.estado || 'Pendiente'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No hay exámenes específicos registrados</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <SeccionVacia titulo="🔬 EXÁMENES DE LABORATORIO SOLICITADOS" mensaje="No se han solicitado exámenes de laboratorio para esta consulta" />
+      )}
+
+      {/* Pie de página con firma digital */}
       <div className="mt-8 pt-4 border-t-2 border-gray-300">
         <div className="flex justify-between items-end">
           <div className="text-xs text-gray-600">
@@ -249,11 +397,34 @@ const ImpresionHistoriaClinica = ({
             <p>Fecha de impresión: {formatearFecha(new Date())} - {formatearHora(new Date())}</p>
           </div>
           
-          <div className="text-center">
-            <div className="border-t-2 border-gray-400 pt-2 mt-8 min-w-[200px]">
-              <p className="font-semibold text-sm">{medicoInfo?.nombre}</p>
+          <div className="text-center pie-firma">
+            {/* Firma digital del médico */}
+            {medicoInfo?.firma && (
+              <div className="mb-4 firma-digital">
+                <img 
+                  src={medicoInfo.firma} 
+                  alt="Firma digital del médico" 
+                  className="mx-auto border border-gray-300 rounded bg-white p-1 firma-img-hc"
+                />
+              </div>
+            )}
+            
+            <div className="border-t-2 border-gray-400 pt-2 min-w-[200px]">
+              <p className="font-semibold text-sm">
+                Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
+              </p>
               <p className="text-xs text-gray-600">CMP: {medicoInfo?.cmp || 'N/A'}</p>
+              {medicoInfo?.rne && (
+                <p className="text-xs text-gray-600">RNE: {medicoInfo.rne}</p>
+              )}
               <p className="text-xs text-gray-600">{medicoInfo?.especialidad}</p>
+              
+              {/* Mensaje si no hay firma */}
+              {!medicoInfo?.firma && (
+                <div className="mt-2 mb-4 h-16 flex items-center justify-center border border-dashed border-gray-300 text-xs text-gray-400">
+                  [Espacio para firma manual]
+                </div>
+              )}
             </div>
           </div>
         </div>

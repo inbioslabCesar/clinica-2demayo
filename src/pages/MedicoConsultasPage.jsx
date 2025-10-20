@@ -36,7 +36,7 @@ function MedicoConsultasPage({ usuario }) {
               </div>
               <div className="text-left">
                 <h1 className="text-2xl font-bold text-white">Panel Médico</h1>
-                <p className="text-blue-100 text-sm">Dr. {usuario?.nombre || 'Médico'}</p>
+                <p className="text-blue-100 text-sm">Dr(a). {usuario?.nombre} {usuario?.apellido || ''}</p>
               </div>
             </div>
             <h2 className="text-3xl font-bold text-white mb-2">📋 Mis Consultas Programadas</h2>

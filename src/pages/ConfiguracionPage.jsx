@@ -34,7 +34,6 @@ function ConfiguracionPage() {
   const cargarConfiguracion = async () => {
     try {
       setCargandoDatos(true);
-      console.log('🔍 Intentando cargar configuración...');
       
       const response = await fetch(BASE_URL + 'api_get_configuracion.php', {
         method: 'GET',
@@ -44,11 +43,8 @@ function ConfiguracionPage() {
         }
       });
 
-      console.log('📡 Respuesta del servidor:', response.status, response.statusText);
-
       if (response.ok) {
         const result = await response.json();
-        console.log('📋 Resultado:', result);
         if (result.success) {
           setConfiguracion(result.data);
           // mostrar preview si hay logo
@@ -130,8 +126,6 @@ function ConfiguracionPage() {
     setLoading(true);
     
     try {
-      console.log('💾 Intentando guardar configuración...', configuracion);
-      
       const response = await fetch(BASE_URL + 'api_configuracion.php', {
         method: 'POST',
         credentials: 'include',
@@ -141,11 +135,8 @@ function ConfiguracionPage() {
         body: JSON.stringify(configuracion)
       });
 
-      console.log('📡 Respuesta del servidor:', response.status, response.statusText);
-
       if (response.ok) {
         const result = await response.json();
-        console.log('📋 Resultado:', result);
         if (result.success) {
           Swal.fire({
             title: '¡Configuración guardada!',

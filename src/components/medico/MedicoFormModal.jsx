@@ -1,5 +1,7 @@
 
 
+import { useState, useRef } from 'react';
+
 const MedicoFormModal = ({ 
   isOpen, 
   onClose, 
@@ -10,7 +12,58 @@ const MedicoFormModal = ({
   error,
   isSaving 
 }) => {
+  const [previewFirma, setPreviewFirma] = useState(formData.firma || null);
+  const [firmaError, setFirmaError] = useState('');
+  const fileInputRef = useRef(null);
+  
   if (!isOpen) return null;
+
+  const handleFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Validar tipo de archivo
+    if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+      setFirmaError("Solo se permiten archivos PNG, JPG o JPEG");
+      return;
+    }
+
+    // Validar tamaño (máximo 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      setFirmaError("El archivo es demasiado grande. Máximo 2MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      setPreviewFirma(dataUrl);
+      setFirmaError('');
+      // Llamar al onChange del componente padre
+      onChange({
+        target: {
+          name: 'firma',
+          value: dataUrl
+        }
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const eliminarFirma = () => {
+    setPreviewFirma(null);
+    setFirmaError('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    // Llamar al onChange del componente padre
+    onChange({
+      target: {
+        name: 'firma',
+        value: null
+      }
+    });
+  };
 
   const isEditMode = mode === 'edit';
   const title = isEditMode ? 'Editar Médico' : 'Registrar Nuevo Médico';
@@ -69,24 +122,46 @@ const MedicoFormModal = ({
                   <h4 className="text-lg font-semibold text-gray-800">Información Personal</h4>
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    <span className="flex items-center gap-2">
-                      <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                      Nombre Completo *
-                    </span>
-                  </label>
-                  <input
-                    type="text"
-                    name="nombre"
-                    value={formData.nombre}
-                    onChange={onChange}
-                    className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
-                    placeholder="Dr. Juan Pérez"
-                    required
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      <span className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        Nombre *
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      name="nombre"
+                      value={formData.nombre}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder="Juan"
+                      required
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      <span className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        Apellido *
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      name="apellido"
+                      value={formData.apellido || ''}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder="Pérez García"
+                      required
+                    />
+                  </div>
                 </div>
                 
                 <div>
@@ -107,6 +182,59 @@ const MedicoFormModal = ({
                     placeholder="Cardiología"
                     required
                   />
+                </div>
+              </div>
+              
+              {/* Sección: Códigos Profesionales */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a1 1 0 011-1h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h4 className="text-lg font-semibold text-gray-800">Códigos Profesionales</h4>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      <span className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a1 1 0 011-1h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        C.M.P. (Colegio Médico del Perú) *
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      name="cmp"
+                      value={formData.cmp || ''}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder="64201"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Obligatorio para todos los médicos</p>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      <span className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                        R.N.E. (Registro Nacional de Especialidad)
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      name="rne"
+                      value={formData.rne || ''}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder="36922"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Solo para médicos especialistas</p>
+                  </div>
                 </div>
               </div>
               
@@ -165,6 +293,120 @@ const MedicoFormModal = ({
                     <p className="text-xs text-gray-500 mt-1">Mínimo 8 caracteres recomendados</p>
                   )}
                 </div>
+              </div>
+              
+              {/* Sección: Firma Digital */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2h-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  <h4 className="text-lg font-semibold text-gray-800">✍️ Firma Digital</h4>
+                </div>
+                
+                {/* Vista previa de firma */}
+                {previewFirma ? (
+                  <div className="bg-white border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center">
+                    <img 
+                      src={previewFirma} 
+                      alt="Firma digital" 
+                      className="max-h-32 mx-auto object-contain"
+                      style={{ maxWidth: '300px' }}
+                    />
+                    <div className="mt-3 flex justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={eliminarFirma}
+                        className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                      >
+                        🗑️ Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                    <svg className="w-12 h-12 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2h-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    <p className="text-gray-500">No hay firma registrada</p>
+                  </div>
+                )}
+                
+                <div className="space-y-3">
+                  <label className="block text-sm font-semibold text-gray-700">
+                    <span className="flex items-center gap-2">
+                      <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      Subir Firma Digital
+                    </span>
+                  </label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg"
+                    onChange={handleFileSelect}
+                    className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                  />
+                  
+                  {firmaError && (
+                    <div className="text-red-600 text-sm flex items-center gap-2">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {firmaError}
+                    </div>
+                  )}
+                  
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                    <div className="text-sm text-indigo-800">
+                      <p className="font-medium mb-1">📋 Requisitos de la firma:</p>
+                      <ul className="space-y-1 text-indigo-700 text-xs">
+                        <li>• Formato: PNG, JPG o JPEG</li>
+                        <li>• Tamaño máximo: 2MB</li>
+                        <li>• Recomendado: Fondo transparente</li>
+                        <li>• Dimensiones sugeridas: 300x100 píxeles</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Vista previa del resultado final */}
+                {(formData.nombre || formData.apellido || formData.cmp || previewFirma) && (
+                  <div className="bg-blue-50 rounded-xl p-4">
+                    <h5 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      Vista Previa - Así aparecerá en los documentos
+                    </h5>
+                    
+                    <div className="bg-white border-2 border-blue-200 rounded-lg p-3 text-center">
+                      {previewFirma && (
+                        <img 
+                          src={previewFirma} 
+                          alt="Firma" 
+                          className="max-h-12 mx-auto object-contain mb-2"
+                        />
+                      )}
+                      <div className="border-t-2 border-gray-300 pt-2">
+                        <div className="text-sm font-medium text-gray-800">
+                          {formData.nombre} {formData.apellido}
+                        </div>
+                        {formData.especialidad && (
+                          <div className="text-xs text-gray-600">
+                            {formData.especialidad}
+                          </div>
+                        )}
+                        <div className="text-xs text-gray-600">
+                          {formData.cmp && `C.M.P. ${formData.cmp}`}
+                          {formData.rne && ` - R.N.E ${formData.rne}`}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </form>

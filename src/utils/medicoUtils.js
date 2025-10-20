@@ -73,7 +73,7 @@ export const exportarPDF = (medicos) => {
     // Datos de la tabla
     const tableData = medicos.map(medico => ({
       id: medico.id,
-      nombre: medico.nombre,
+      nombre: `${medico.nombre} ${medico.apellido || ''}`.trim(),
       especialidad: medico.especialidad,
       email: medico.email
     }));

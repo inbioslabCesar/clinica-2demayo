@@ -164,7 +164,7 @@ function DisponibilidadMedicos() {
                     const cupos = slots - agendadas.length;
                     return (
                       <tr key={bloque.medico_id + '-' + i} className={cupos > 0 ? "bg-green-50" : "bg-yellow-100"}>
-                        <td className="px-0.5 py-0.5 md:px-2 md:py-1 font-bold" style={{ color: medicoColors[medico.id] || undefined }}>{medico.nombre}</td>
+                        <td className="px-0.5 py-0.5 md:px-2 md:py-1 font-bold" style={{ color: medicoColors[medico.id] || undefined }}>Dr(a). {medico.nombre} {medico.apellido || ''}</td>
                         <td className="px-0.5 py-0.5 md:px-2 md:py-1">{medico.especialidad}</td>
                         <td className="px-0.5 py-0.5 md:px-2 md:py-1">{bloque.hora_inicio} - {bloque.hora_fin} {fechaBloque ? <span className="text-xs text-gray-500 ml-1">({fechaBloque})</span> : null}</td>
                         <td className="px-0.5 py-0.5 md:px-2 md:py-1 font-bold">{cupos > 0 ? cupos : 'Sin cupos'}</td>

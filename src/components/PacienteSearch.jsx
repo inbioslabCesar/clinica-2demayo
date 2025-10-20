@@ -22,7 +22,6 @@ function PacienteSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqueda 
         body: JSON.stringify({ tipo, valor: busqueda })
       });
       const data = await res.json();
-      console.log('Respuesta backend:', data);
       if (data.success && Array.isArray(data.pacientes) && data.pacientes.length > 0) {
         setResultados(data.pacientes);
         setNoEncontrado(false);

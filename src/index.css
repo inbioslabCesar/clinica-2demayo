@@ -14,3 +14,68 @@ html, body, #root {
 	background: #f9fafb;
 }
 
+/* Estilos específicos para impresión */
+@media print {
+	/* Configuración general de impresión */
+	* {
+		-webkit-print-color-adjust: exact !important;
+		print-color-adjust: exact !important;
+		color-adjust: exact !important;
+	}
+	
+	/* Optimización para firmas digitales */
+	.firma-digital {
+		break-inside: avoid;
+		page-break-inside: avoid;
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+	
+	/* Optimización para secciones importantes */
+	.seccion-diagnosticos,
+	.seccion-medicamentos,
+	.seccion-laboratorio {
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+	
+	/* Evitar cortes de página en elementos críticos */
+	.pie-firma {
+		break-inside: avoid;
+		page-break-inside: avoid;
+		margin-top: 20px;
+	}
+	
+	/* Configuración de márgenes para A4 */
+	@page {
+		margin: 15mm 10mm;
+		size: A4;
+	}
+	
+	/* Ocultar elementos no necesarios en impresión */
+	.no-print {
+		display: none !important;
+	}
+	
+	/* Asegurar que las imágenes de firma se impriman con tamaños específicos */
+	img[alt*="firma"], img[alt*="Firma"] {
+		-webkit-print-color-adjust: exact !important;
+		print-color-adjust: exact !important;
+		/* Permitir que los estilos inline controlen el tamaño */
+	}
+
+	/* Clases específicas para distintos documentos */
+	.firma-img-hc {
+		max-width: 200px !important;
+		height: 80px !important;
+		width: auto !important;
+	}
+
+	.firma-img-receta,
+	.firma-img-lab {
+		max-width: 200px !important;
+		height: 80px !important;
+		width: auto !important;
+	}
+}
+

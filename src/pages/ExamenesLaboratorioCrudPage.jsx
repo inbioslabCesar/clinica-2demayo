@@ -93,14 +93,10 @@ export default function ExamenesLaboratorioCrudPage() {
 
   const fetchExamenes = async () => {
     setLoading(true);
-    console.log('🔍 Cargando exámenes...', BASE_URL + "api_examenes_laboratorio.php");
     const res = await fetch(BASE_URL + "api_examenes_laboratorio.php", {
       credentials: "include",
     });
     const data = await res.json();
-    console.log('📊 Respuesta completa API:', data);
-    console.log('🔬 Exámenes recibidos:', data.examenes);
-    console.log('📏 Cantidad de exámenes:', data.examenes?.length || 0);
     setExamenes(data.examenes || []);
     setLoading(false);
   };
@@ -273,13 +269,6 @@ export default function ExamenesLaboratorioCrudPage() {
       ex.metodologia.toLowerCase().includes(search.toLowerCase())) &&
       (categoriaFilter === "" || ex.categoria === categoriaFilter)
   );
-  
-  console.log('🔍 Debug cadena:', {
-    'examenes.length': examenes.length,
-    'filtered.length': filtered.length,
-    'search': search,
-    'examenes sample': examenes.slice(0, 2)
-  });
   
   // Calcular estadísticas
   const stats = {

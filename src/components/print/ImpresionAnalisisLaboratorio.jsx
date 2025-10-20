@@ -68,9 +68,14 @@ const ImpresionAnalisisLaboratorio = ({
 
           {/* Información del médico - compacto */}
           <div className="text-right">
-            <h2 className="text-sm font-bold text-black leading-tight">Dr(a). {medicoInfo?.nombre}</h2>
+            <h2 className="text-sm font-bold text-black leading-tight">
+              Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
+            </h2>
             <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
             <p className="text-xs text-black">CMP: {medicoInfo?.cmp || 'N/A'}</p>
+            {medicoInfo?.rne && (
+              <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
+            )}
           </div>
         </div>
 
@@ -174,9 +179,34 @@ const ImpresionAnalisisLaboratorio = ({
           
           {/* Firma del médico */}
           <div className="text-center">
-            <div className="border-t border-black pt-1 mt-8 min-w-24">
-              <p className="font-bold text-black text-xs">Dr(a). {medicoInfo?.nombre}</p>
+            {/* Firma digital del médico */}
+            {medicoInfo?.firma && (
+              <div className="mb-2">
+                <img 
+                  src={medicoInfo.firma} 
+                  alt="Firma digital del médico" 
+                  className="mx-auto border border-gray-300 rounded bg-white p-1 firma-img-lab"
+                />
+              </div>
+            )}
+            
+            <div className="border-t border-black pt-1 min-w-24">
+              <p className="font-bold text-black text-xs">
+                Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
+              </p>
               <p className="text-xs text-black">CMP: {medicoInfo?.cmp || 'N/A'}</p>
+              {medicoInfo?.rne && (
+                <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
+              )}
+              <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
+              
+              {/* Mensaje si no hay firma */}
+              {!medicoInfo?.firma && (
+                <div className="mt-1 mb-2 h-8 flex items-center justify-center border border-dashed border-gray-400 text-xs text-gray-500">
+                  [Firma Manual]
+                </div>
+              )}
+              
               <p className="text-xs text-black font-bold">FIRMA MÉDICO</p>
             </div>
           </div>

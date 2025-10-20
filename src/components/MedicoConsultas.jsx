@@ -21,7 +21,6 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     fetch(`${BASE_URL}api_consultas.php?medico_id=${medicoId}`, { credentials: "include" })
       .then(r => r.json())
       .then(data => { 
-        console.log("Consultas recibidas:", data.consultas);
         setConsultas(data.consultas || []);
         setLoading(false);
       })

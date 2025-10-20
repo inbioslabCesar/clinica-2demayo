@@ -166,7 +166,7 @@ function Navbar({ usuario, onMenu }) {
         <span className="text-xl font-bold drop-shadow">Clínica 2 de Mayo</span>
       </div>
       <div className="flex items-center gap-4">
-        <span className="font-semibold text-white/90">{usuario?.nombre || "Usuario"}</span>
+        <span className="font-semibold text-white/90">{usuario?.nombre} {usuario?.apellido || ""}</span>
         {/* Botón hamburguesa solo visible en móvil/tablet */}
         <button className="md:hidden ml-2" onClick={onMenu} aria-label="Abrir menú">
           <svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -200,7 +200,12 @@ function DashboardLayout({ usuario, onLogout, children }) {
       <Navbar usuario={usuario} onMenu={() => setSidebarOpen(true)} />
       <div className="flex flex-1 max-w-full">
         {/* Sidebar for navigation (fijo en PC, drawer en móvil/tablet) */}
-        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} onLogout={onLogout} usuario={usuario} />
+        <Sidebar 
+          open={sidebarOpen} 
+          onClose={() => setSidebarOpen(false)} 
+          onLogout={onLogout} 
+          usuario={usuario}
+        />
         <main className="flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto">
           {children}
         </main>

@@ -46,7 +46,7 @@ if ($method === 'GET') {
     try {
         // Obtener disponibilidad del médico para la fecha
         $stmt = $conn->prepare('
-            SELECT dm.*, m.nombre as medico_nombre, m.especialidad 
+            SELECT dm.*, CONCAT(m.nombre, " ", COALESCE(m.apellido, "")) as medico_nombre, m.especialidad 
             FROM disponibilidad_medicos dm 
             INNER JOIN medicos m ON dm.medico_id = m.id
             WHERE dm.medico_id = ? AND dm.fecha = ?

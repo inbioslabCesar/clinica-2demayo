@@ -70,7 +70,7 @@ if (!$email || !$password) {
     exit;
 }
 
-$stmt = $conn->prepare('SELECT id, nombre, especialidad, email, password FROM medicos WHERE email = ? LIMIT 1');
+$stmt = $conn->prepare('SELECT id, nombre, apellido, especialidad, email, password, cmp, rne, firma FROM medicos WHERE email = ? LIMIT 1');
 $stmt->bind_param('s', $email);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -80,7 +80,7 @@ if ($row = $result->fetch_assoc()) {
     // Guardar el id y datos del médico en la sesión para compatibilidad
     $_SESSION['medico_id'] = $row['id'];
     $row['rol'] = 'medico';
-    unset($row['password']);
+    unset($row['password']); // No enviar la contraseña al frontend
     $_SESSION['usuario'] = $row;
     echo json_encode(['success' => true, 'medico' => $row]);
     } else {

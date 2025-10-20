@@ -138,6 +138,16 @@ function PacienteList() {
     });
   };
 
+  const handleDescargarCaratula = (paciente) => {
+    const url = `${BASE_URL}descargar_caratula_paciente.php?paciente_id=${paciente.id}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `caratula_${paciente.historia_clinica}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
 
   // Filtrar por búsqueda y fechas (creado_en)
   let pacientesFiltrados = pacientes.filter(p => {
@@ -423,6 +433,13 @@ function PacienteList() {
                       >
                         Consumo
                       </button>
+                      <button
+                        onClick={() => handleDescargarCaratula(p)}
+                        className="bg-purple-600 text-white px-1 py-1 rounded text-xs hover:bg-purple-700"
+                        title="Descargar carátula"
+                      >
+                        Carátula
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -468,6 +485,15 @@ function PacienteList() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
                       <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor">C</text>
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => handleDescargarCaratula(p)}
+                    className="bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-full transition-colors"
+                    title="Descargar carátula"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   </button>
                 </div>

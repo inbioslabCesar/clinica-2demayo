@@ -21,7 +21,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     })
       .then(res => res.json())
       .then(data => {
-        console.log('Órdenes recibidas:', data);
         if (data.success) setOrdenes(data.ordenes);
         else setError(data.error || "Error al cargar órdenes");
         setLoading(false);
@@ -39,7 +38,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       .then(res => res.json())
       .then(data => {
         setExamenesDisponibles(data.examenes || []);
-        console.log('Exámenes disponibles:', data.examenes);
       });
   }, []);
 
