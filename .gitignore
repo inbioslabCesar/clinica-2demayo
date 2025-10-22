@@ -27,6 +27,19 @@ backup/
 uploads/
 temp/
 
+# Scripts administrativos (NO subir a hosting)
+admin/
+test_*.php
+debug_*.php
+reabrir_caja_*.php
+*_interactivo.php
+diagnostico_*.php
+consultar_*.php
+crear_tabla_*.php
+crear_admin.php
+*_admin.php
+error_caratula.log
+
 # Logs
 logs
 *.log
