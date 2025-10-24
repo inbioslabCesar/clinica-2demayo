@@ -15,8 +15,8 @@ export const SECURITY_CONFIG = {
     // Validar que estamos en un entorno seguro antes de enviar credenciales
     isSecureContext: window.isSecureContext || window.location.hostname === 'localhost',
     
-    // Longitud mínima de contraseña
-    minPasswordLength: 6,
+    // Longitud mínima de contraseña (desactivada)
+    minPasswordLength: 0,
     
     // Tiempo de espera para requests (ms)
     requestTimeout: 10000

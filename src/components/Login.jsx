@@ -1,7 +1,7 @@
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { BASE_URL, SECURITY_CONFIG } from "../config/config";
 import { Icon } from '@fluentui/react';
 
 function Login({ onLogin }) {
@@ -22,11 +22,11 @@ function Login({ onLogin }) {
       };
     }
 
-    // Validar longitud mínima de contraseña
-    if (password.length < 4) {
+    // Validar longitud mínima de contraseña según configuración
+    if (password.length < SECURITY_CONFIG.minPasswordLength) {
       return {
         isValid: false,
-        message: "La contraseña es demasiado corta"
+        message: `La contraseña debe tener al menos ${SECURITY_CONFIG.minPasswordLength} caracteres`
       };
     }
 
