@@ -31,10 +31,7 @@ export default function CierreCajaPage() {
   const [observacionesCierre, setObservacionesCierre] = useState('');
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
-
-  const cargarDatos = async () => {
+    const cargarDatos = async () => {
     try {
       setLoading(true);
 
@@ -85,6 +82,10 @@ export default function CierreCajaPage() {
       setLoading(false);
     }
   };
+  cargarDatos();
+  }, [navigate]);
+
+  
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;

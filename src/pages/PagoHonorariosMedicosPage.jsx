@@ -22,7 +22,7 @@ export default function PagoHonorariosMedicosPage() {
       } else {
         Swal.fire("Error", data.error || "No se pudo cargar honorarios", "error");
       }
-    } catch (err) {
+  } catch {
       Swal.fire("Error", "No se pudo cargar honorarios", "error");
     } finally {
       setLoading(false);
@@ -64,7 +64,7 @@ export default function PagoHonorariosMedicosPage() {
       } else {
         Swal.fire("Error", data.error || "No se pudo registrar el pago", "error");
       }
-    } catch (err) {
+  } catch {
       Swal.fire("Error", "No se pudo registrar el pago", "error");
     } finally {
       setLoading(false);
