@@ -22,14 +22,7 @@ function Login({ onLogin }) {
       };
     }
 
-    // Validar longitud mínima de contraseña
-    if (password.length < 4) {
-      return {
-        isValid: false,
-        message: "La contraseña es demasiado corta"
-      };
-    }
-
+    // Ya no se valida longitud mínima de contraseña
     return { isValid: true };
   };
 

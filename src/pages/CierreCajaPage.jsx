@@ -473,7 +473,7 @@ export default function CierreCajaPage() {
       {ingresosDiarios.length > 0 && (
         <div className="mt-8 bg-white rounded-xl shadow-lg p-6">
           <h2 className="text-xl font-bold text-gray-800 mb-4">Detalle de Ingresos del Día</h2>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" style={{ maxHeight: '340px', overflowY: 'auto' }}>
             <table className="w-full">
               <thead>
                 <tr className="border-b bg-gray-50">

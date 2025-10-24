@@ -8,13 +8,15 @@ import {
   FaPlus
 } from "react-icons/fa";
 import Swal from 'sweetalert2';
+import withReactContent from 'sweetalert2-react-content';
 import Spinner from "../components/Spinner";
 
 export default function NuevoIngresoPage() {
+  const MySwal = withReactContent(Swal);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
-  const [categorias, setCategorias] = useState([]);
+  const [opcionesServicio, setOpcionesServicio] = useState([]);
   const [metodosPago, setMetodosPago] = useState([]);
 
   // Estados del formulario
@@ -34,34 +36,37 @@ export default function NuevoIngresoPage() {
     cargarDatosIniciales();
   }, []);
 
+  useEffect(() => {
+    // Cuando cambia el tipo de ingreso, cargar las opciones de servicio correspondientes
+    if (!formData.tipo_ingreso) {
+      setOpcionesServicio([]);
+      return;
+    }
+    setLoading(true);
+    fetch(`${BASE_URL}api_tarifas.php?servicio_tipo=${formData.tipo_ingreso}`, { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setOpcionesServicio(data.tarifas);
+        } else {
+          setOpcionesServicio([]);
+        }
+      })
+      .catch(() => setOpcionesServicio([]))
+      .finally(() => setLoading(false));
+  }, [formData.tipo_ingreso]);
+
   const cargarDatosIniciales = async () => {
     try {
       setLoading(true);
-
-      // Cargar categorías de ingresos
-      const categoriasResp = await fetch(`${BASE_URL}api_categorias_ingresos.php`, { 
-        credentials: 'include' 
-      });
-      const categoriasData = await categoriasResp.json();
-      
-      if (categoriasData.success) {
-        setCategorias(categoriasData.categorias);
-      }
-
-      // Cargar métodos de pago
-      const metodosResp = await fetch(`${BASE_URL}api_metodos_pago.php`, { 
-        credentials: 'include' 
-      });
+      // Solo cargar métodos de pago
+      const metodosResp = await fetch(`${BASE_URL}api_metodos_pago.php`, { credentials: 'include' });
       const metodosData = await metodosResp.json();
-      
-      console.log('Métodos de pago cargados:', metodosData); // Debug
-      
       if (metodosData.success) {
         setMetodosPago(metodosData.metodos);
       } else {
         console.error('Error cargando métodos de pago:', metodosData.error);
       }
-
     } catch (error) {
       console.error('Error cargando datos:', error);
       Swal.fire('Error', 'Error al cargar los datos iniciales', 'error');
@@ -87,13 +92,8 @@ export default function NuevoIngresoPage() {
     }
   };
 
-  const categoriasDelTipo = categorias.filter(cat => 
-    cat.tipo_ingreso === formData.tipo_ingreso
-  );
-
-  const categoriaSeleccionada = categorias.find(cat => 
-    cat.id === parseInt(formData.categoria_id)
-  );
+  // Opciones de servicio según tipo seleccionado
+  const servicioSeleccionado = opcionesServicio.find(op => op.id === formData.categoria_id);
 
   const guardarIngreso = async () => {
     // Validaciones
@@ -119,8 +119,8 @@ export default function NuevoIngresoPage() {
 
     // Determinar el área
     let area = '';
-    if (formData.categoria_id && categoriaSeleccionada) {
-      area = categoriaSeleccionada.nombre;
+    if (formData.categoria_id && servicioSeleccionado) {
+      area = servicioSeleccionado.descripcion;
     } else if (formData.area_personalizada.trim()) {
       area = formData.area_personalizada.trim();
     } else {
@@ -149,16 +149,33 @@ export default function NuevoIngresoPage() {
       const data = await response.json();
 
       if (data.success) {
-        Swal.fire({
+        MySwal.fire({
           icon: 'success',
           title: '¡Ingreso Registrado!',
-          text: `Ingreso de S/ ${parseFloat(formData.monto).toFixed(2)} registrado correctamente`,
-          confirmButtonText: 'Continuar'
-        }).then(() => {
-          navigate('/contabilidad/ingresos');
+          html: `<div class='text-left'>
+            <p><strong>Monto:</strong> S/ ${parseFloat(formData.monto).toFixed(2)}</p>
+            <p><strong>Área/Servicio:</strong> ${area}</p>
+            <p><strong>Descripción:</strong> ${formData.descripcion}</p>
+            <p><strong>Método de Pago:</strong> ${formData.metodo_pago}</p>
+            <button id='btn-imprimir-ticket' style='margin-top:16px;padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:4px;font-weight:bold;cursor:pointer;'>Imprimir Ticket</button>
+          </div>`,
+          confirmButtonText: 'Continuar',
+          confirmButtonColor: '#2563eb',
+          didOpen: () => {
+            const btn = document.getElementById('btn-imprimir-ticket');
+            if (btn) {
+              btn.onclick = () => {
+                window.open(`${BASE_URL}comprobante_ticket.php?ingreso_id=${data.ingreso_id}`, '_blank', 'width=400,height=600');
+              };
+            }
+          }
+        }).then((result) => {
+          if (result.isConfirmed) {
+            navigate('/contabilidad/ingresos');
+          }
         });
       } else {
-        Swal.fire('Error', data.error || 'Error al registrar ingreso', 'error');
+        MySwal.fire('Error', data.error || 'Error al registrar ingreso', 'error');
       }
 
     } catch (error) {
@@ -195,7 +212,6 @@ export default function NuevoIngresoPage() {
       {/* Formulario */}
       <div className="bg-white rounded-xl shadow-lg p-8">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          
           {/* Tipo de Ingreso */}
           <div className="md:col-span-2">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -219,22 +235,30 @@ export default function NuevoIngresoPage() {
             </select>
           </div>
 
-          {/* Categoría/Área */}
+          {/* Área/Servicio dinámico */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Categoría/Área
+              {formData.tipo_ingreso === 'otros' ? 'Área/Servicio' : 'Seleccionar Servicio'}
             </label>
-            {categoriasDelTipo.length > 0 ? (
+            {formData.tipo_ingreso && formData.tipo_ingreso !== 'otros' ? (
               <select
                 name="categoria_id"
                 value={formData.categoria_id}
-                onChange={handleInputChange}
+                onChange={e => {
+                  handleInputChange(e);
+                  // Autocompletar monto al seleccionar servicio
+                  const seleccionado = opcionesServicio.find(op => op.id === e.target.value);
+                  setFormData(prev => ({
+                    ...prev,
+                    monto: seleccionado ? seleccionado.precio_particular : ''
+                  }));
+                }}
                 className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="">Seleccionar categoría...</option>
-                {categoriasDelTipo.map(categoria => (
-                  <option key={categoria.id} value={categoria.id}>
-                    {categoria.nombre}
+                <option value="">Seleccionar servicio...</option>
+                {opcionesServicio.map(servicio => (
+                  <option key={servicio.id} value={servicio.id}>
+                    {servicio.descripcion}
                   </option>
                 ))}
               </select>
