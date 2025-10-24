@@ -13,7 +13,7 @@ export default function ContabilidadPage() {
           Ingresos
           <span className="text-base font-normal">Registro de ingresos por área y servicio</span>
         </button>
-        <button className="bg-red-500 hover:bg-red-600 text-white rounded-xl p-8 shadow-lg text-2xl font-bold flex flex-col items-center gap-2">
+  <button onClick={() => navigate("/contabilidad/egresos")} className="bg-red-500 hover:bg-red-600 text-white rounded-xl p-8 shadow-lg text-2xl font-bold flex flex-col items-center gap-2">
           <span>💸</span>
           Egresos
           <span className="text-base font-normal">Registro de gastos y egresos operativos</span>

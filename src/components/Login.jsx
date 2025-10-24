@@ -29,7 +29,6 @@ function Login({ onLogin }) {
         message: `La contraseña debe tener al menos ${SECURITY_CONFIG.minPasswordLength} caracteres`
       };
     }
-
     return { isValid: true };
   };
 

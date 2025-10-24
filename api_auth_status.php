@@ -4,32 +4,35 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on',
+    'secure' => false,
     'httponly' => true,
     'samesite' => 'Lax',
 ]);
 session_start();
 
-// CORS headers
+// CORS para localhost, producción y subdominios Hostinger
 $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    'https://clinica2demayo.com'
+    'https://clinica2demayo.com',
+    'https://www.clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+$currentHost = $_SERVER['HTTP_HOST'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
     header('Access-Control-Allow-Origin: ' . $origin);
+} elseif ($currentHost && (strpos($currentHost, 'hostingersite.com') !== false || strpos($currentHost, 'clinica2demayo.com') !== false)) {
+    header('Access-Control-Allow-Origin: https://' . $currentHost);
 }
 header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Content-Type: application/json');
-
+header('Access-Control-Allow-Headers: Content-Type, X-Requested-With, Authorization');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT, DELETE');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
 }
+header('Content-Type: application/json');
 
 try {
     // Verificar si hay usuario autenticado

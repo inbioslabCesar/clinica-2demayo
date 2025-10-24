@@ -41,7 +41,7 @@ switch ($method) {
         // Listar consultas (por médico, paciente o todas)
         $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
         $paciente_id = isset($_GET['paciente_id']) ? intval($_GET['paciente_id']) : null;
-    $sql = 'SELECT consultas.*, pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni, medicos.nombre AS medico_nombre FROM consultas LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id LEFT JOIN medicos ON consultas.medico_id = medicos.id';
+    $sql = 'SELECT consultas.*, pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni, medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido FROM consultas LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id LEFT JOIN medicos ON consultas.medico_id = medicos.id';
         $params = [];
         $types = '';
         if ($medico_id) {

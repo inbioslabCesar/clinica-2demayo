@@ -357,7 +357,7 @@ function TriageList() {
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-2">
                                 <Icon iconName="Health" className="text-lg text-blue-500" />
-                                <span className="text-sm text-gray-700">{c.medico_nombre || '-'}</span>
+                                <span className="text-sm text-gray-700">{c.medico_nombre} {c.medico_apellido || ''}</span>
                               </div>
                             </td>
                             <td className="px-6 py-4">
@@ -450,7 +450,7 @@ function TriageList() {
                             <Icon iconName="Health" className="text-lg text-blue-500" />
                             <div>
                               <div className="text-xs text-gray-500">Médico</div>
-                              <div className="text-sm text-gray-800">{c.medico_nombre || 'N/A'}</div>
+                              <div className="text-sm text-gray-800">{c.medico_nombre} {c.medico_apellido || 'N/A'}</div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">

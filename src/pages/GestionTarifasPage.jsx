@@ -31,13 +31,17 @@ function GestionTarifasPage() {
 
   const [nuevaTarifa, setNuevaTarifa] = useState({
     servicio_tipo: 'consulta',
-    medico_id: '', // NUEVO: ID del médico seleccionado
-    descripcion_base: '', // NUEVO: Descripción base del servicio
-    descripcion: '', // Se genera automáticamente
+    medico_id: '',
+    descripcion_base: '',
+    descripcion: '',
     precio_particular: '',
     precio_seguro: '',
     precio_convenio: '',
-    activo: 1
+    activo: 1,
+    porcentaje_medico: '', // % honorario médico
+    porcentaje_clinica: '', // % honorario clínica
+    monto_medico: '', // monto fijo médico
+    monto_clinica: '' // monto fijo clínica
   });
 
   useEffect(() => {
@@ -144,7 +148,11 @@ function GestionTarifasPage() {
         precio_particular: tarifa.precio_particular,
         precio_seguro: tarifa.precio_seguro || '',
         precio_convenio: tarifa.precio_convenio || '',
-        activo: tarifa.activo
+        activo: tarifa.activo,
+        porcentaje_medico: tarifa.porcentaje_medico || '',
+        porcentaje_clinica: tarifa.porcentaje_clinica || '',
+        monto_medico: tarifa.monto_medico || '',
+        monto_clinica: tarifa.monto_clinica || ''
       });
     } else {
       setTarifaEditando(null);
@@ -156,7 +164,11 @@ function GestionTarifasPage() {
         precio_particular: '',
         precio_seguro: '',
         precio_convenio: '',
-        activo: 1
+        activo: 1,
+        porcentaje_medico: '',
+        porcentaje_clinica: '',
+        monto_medico: '',
+        monto_clinica: ''
       });
     }
     setMostrarModal(true);
@@ -296,9 +308,11 @@ function GestionTarifasPage() {
     }
   };
 
-  const tarifasFiltradas = filtroServicio === 'todos' 
-  ? tarifas.filter(t => !['laboratorio', 'farmacia'].includes(t.servicio_tipo))
-  : tarifas.filter(t => t.servicio_tipo === filtroServicio && !['laboratorio', 'farmacia'].includes(t.servicio_tipo));
+  // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
+  // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
+  const tarifasFiltradas = filtroServicio === 'todos'
+    ? tarifas.filter(t => !['laboratorio', 'farmacia'].includes(t.servicio_tipo))
+    : tarifas.filter(t => t.servicio_tipo === filtroServicio && !['laboratorio', 'farmacia'].includes(t.servicio_tipo));
 
   // Cálculos de paginación
   const totalElementos = tarifasFiltradas.length;
@@ -521,7 +535,10 @@ function GestionTarifasPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {tarifasPaginadas.map((tarifa) => (
-                <tr key={tarifa.id} className="hover:bg-gray-50">
+                <tr
+                  key={tarifa.id}
+                  className={`hover:bg-gray-50 transition-all ${tarifa.activo !== 1 ? 'opacity-60 bg-yellow-50' : ''}`}
+                >
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col sm:flex-row sm:items-center">
                       <div className="flex items-center mb-1 sm:mb-0">
@@ -532,6 +549,12 @@ function GestionTarifasPage() {
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {obtenerLabelServicio(tarifa.servicio_tipo)}
                         </span>
+                        {/* Ícono/aviso si está inactiva */}
+                        {tarifa.activo !== 1 && (
+                          <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-200 text-yellow-900 flex items-center gap-1">
+                            <span role="img" aria-label="inactivo">⚠️</span> Inactiva
+                          </span>
+                        )}
                       </div>
                       {tarifa.fuente && tarifa.fuente !== 'tarifas' && (
                         <span className="ml-0 sm:ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
@@ -641,7 +664,7 @@ function GestionTarifasPage() {
       {/* Modal para crear/editar tarifas */}
       {mostrarModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+          <div className="bg-white rounded-lg p-4 sm:p-6 w-full max-w-md mx-2 sm:mx-4 overflow-y-auto" style={{maxHeight: '95vh'}}>
             <h2 className="text-xl font-bold mb-4">
               {tarifaEditando ? 'Editar Tarifa' : 'Nueva Tarifa'}
             </h2>
@@ -742,6 +765,60 @@ function GestionTarifasPage() {
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">% para Médico</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={nuevaTarifa.porcentaje_medico}
+                    onChange={e => setNuevaTarifa({...nuevaTarifa, porcentaje_medico: e.target.value})}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Ej: 50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">% para Clínica</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={nuevaTarifa.porcentaje_clinica}
+                    onChange={e => setNuevaTarifa({...nuevaTarifa, porcentaje_clinica: e.target.value})}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Ej: 50"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Monto fijo para Médico (S/)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={nuevaTarifa.monto_medico}
+                    onChange={e => setNuevaTarifa({...nuevaTarifa, monto_medico: e.target.value})}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Ej: 50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Monto fijo para Clínica (S/)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={nuevaTarifa.monto_clinica}
+                    onChange={e => setNuevaTarifa({...nuevaTarifa, monto_clinica: e.target.value})}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Ej: 30"
+                  />
+                </div>
+              </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -784,7 +861,7 @@ function GestionTarifasPage() {
               </div>
             </div>
 
-            <div className="flex justify-end space-x-4 mt-6">
+            <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-4 mt-6">
               <button
                 onClick={cerrarModal}
                 className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"

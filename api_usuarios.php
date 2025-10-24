@@ -7,9 +7,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => $isProduction, // true en HTTPS, false en HTTP
+    'secure' => true,
     'httponly' => true,
-    'samesite' => 'Lax',
+    'samesite' => 'None', // Mejor compatibilidad móvil y Chrome
 ]);
 session_start();
 // CORS para localhost y producción

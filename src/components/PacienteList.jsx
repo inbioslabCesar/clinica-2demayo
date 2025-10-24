@@ -111,6 +111,7 @@ function PacienteList() {
         if (data.success) setPacientes(data.pacientes);
         else setError(data.error || "Error al cargar pacientes");
         setLoading(false);
+        setPage(1); // Mostrar la primera página tras crear paciente
       })
       .catch(() => {
         setError("Error de conexión con el servidor");
@@ -179,8 +180,11 @@ function PacienteList() {
     if (fechaHasta && fecha > fechaHasta) return false;
     return true;
   });
-  // Ordenar
+  // Ordenar por id descendente por defecto (el último primero)
   pacientesFiltrados = pacientesFiltrados.sort((a, b) => {
+    if (sortBy === "id") {
+      return sortDir === "asc" ? a.id - b.id : b.id - a.id;
+    }
     let vA = a[sortBy], vB = b[sortBy];
     if (typeof vA === "string") vA = vA.toLowerCase();
     if (typeof vB === "string") vB = vB.toLowerCase();
