@@ -296,9 +296,11 @@ function GestionTarifasPage() {
     }
   };
 
-  const tarifasFiltradas = filtroServicio === 'todos' 
-  ? tarifas.filter(t => !['laboratorio', 'farmacia'].includes(t.servicio_tipo))
-  : tarifas.filter(t => t.servicio_tipo === filtroServicio && !['laboratorio', 'farmacia'].includes(t.servicio_tipo));
+  // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
+  // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
+  const tarifasFiltradas = filtroServicio === 'todos'
+    ? tarifas.filter(t => !['laboratorio', 'farmacia'].includes(t.servicio_tipo))
+    : tarifas.filter(t => t.servicio_tipo === filtroServicio && !['laboratorio', 'farmacia'].includes(t.servicio_tipo));
 
   // Cálculos de paginación
   const totalElementos = tarifasFiltradas.length;
@@ -521,7 +523,10 @@ function GestionTarifasPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {tarifasPaginadas.map((tarifa) => (
-                <tr key={tarifa.id} className="hover:bg-gray-50">
+                <tr
+                  key={tarifa.id}
+                  className={`hover:bg-gray-50 transition-all ${tarifa.activo !== 1 ? 'opacity-60 bg-yellow-50' : ''}`}
+                >
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col sm:flex-row sm:items-center">
                       <div className="flex items-center mb-1 sm:mb-0">
@@ -532,6 +537,12 @@ function GestionTarifasPage() {
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {obtenerLabelServicio(tarifa.servicio_tipo)}
                         </span>
+                        {/* Ícono/aviso si está inactiva */}
+                        {tarifa.activo !== 1 && (
+                          <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-200 text-yellow-900 flex items-center gap-1">
+                            <span role="img" aria-label="inactivo">⚠️</span> Inactiva
+                          </span>
+                        )}
                       </div>
                       {tarifa.fuente && tarifa.fuente !== 'tarifas' && (
                         <span className="ml-0 sm:ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
