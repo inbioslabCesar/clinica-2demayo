@@ -14,7 +14,7 @@ $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -178,15 +178,72 @@ $html .= '<div class="header-top">';
 
 // Logo de la clínica en la izquierda
 $html .= '<div style="display: flex; align-items: center;">';
+
+// Detectar automáticamente la ruta según el entorno
+$isProduction = (
+    (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ||
+    (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'clinica2demayo.com') !== false) ||
+    (isset($_SERVER['SERVER_NAME']) && strpos($_SERVER['SERVER_NAME'], 'clinica2demayo.com') !== false) ||
+    (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false)
+);
+
+// Múltiples rutas posibles para el logo
+$logo_paths = [];
+
+// Si hay configuración en la base de datos, intentar esas rutas primero
 if (!empty($clinica_config['logo_url'])) {
-    $logo_path = __DIR__ . '/' . ltrim($clinica_config['logo_url'], './');
+    $logo_paths[] = __DIR__ . '/' . ltrim($clinica_config['logo_url'], './');
+    $logo_paths[] = ltrim($clinica_config['logo_url'], './');
+}
+
+// Agregar rutas por defecto según el entorno
+if ($isProduction) {
+    // Rutas para producción (Hostinger)
+    $logo_paths[] = 'uploads/logo_1760763858_7b2d4d55a879.png';  // Logo específico de Hostinger
+    $logo_paths[] = '2demayo.svg';                                // Logo SVG en raíz
+    $logo_paths[] = __DIR__ . '/uploads/logo_1760763858_7b2d4d55a879.png';
+    $logo_paths[] = __DIR__ . '/2demayo.svg';
+} else {
+    // Rutas para desarrollo
+    $logo_paths[] = 'public/2demayo.svg';
+    $logo_paths[] = '2demayo.svg';
+    $logo_paths[] = __DIR__ . '/public/2demayo.svg';
+    $logo_paths[] = __DIR__ . '/2demayo.svg';
+}
+
+// Buscar logo en múltiples ubicaciones
+$logo_loaded = false;
+foreach ($logo_paths as $logo_path) {
     if (file_exists($logo_path)) {
         // Convertir imagen a base64 para que funcione en PDF
         $logo_data = base64_encode(file_get_contents($logo_path));
         $logo_ext = pathinfo($logo_path, PATHINFO_EXTENSION);
-        $logo_mime = 'image/' . ($logo_ext === 'jpg' ? 'jpeg' : $logo_ext);
+        
+        // Determinar MIME type correcto
+        if ($logo_ext === 'svg') {
+            $logo_mime = 'image/svg+xml';
+        } elseif ($logo_ext === 'jpg' || $logo_ext === 'jpeg') {
+            $logo_mime = 'image/jpeg';
+        } elseif ($logo_ext === 'png') {
+            $logo_mime = 'image/png';
+        } else {
+            $logo_mime = 'image/' . $logo_ext;
+        }
+        
         $html .= '<img src="data:' . $logo_mime . ';base64,' . $logo_data . '" alt="Logo" class="clinica-logo">';
+        $logo_loaded = true;
+        error_log("Logo de laboratorio cargado desde: " . $logo_path);
+        break;
     }
+}
+
+if (!$logo_loaded) {
+    error_log("Logo de laboratorio no encontrado en ninguna ruta. Directorio actual: " . __DIR__);
+    error_log("Rutas intentadas: " . implode(', ', $logo_paths));
+    error_log("Entorno detectado: " . ($isProduction ? 'Producción' : 'Desarrollo'));
+    error_log("HTTP_HOST: " . ($_SERVER['HTTP_HOST'] ?? 'no definido'));
+    error_log("SERVER_NAME: " . ($_SERVER['SERVER_NAME'] ?? 'no definido'));
+    error_log("HTTPS: " . (isset($_SERVER['HTTPS']) ? $_SERVER['HTTPS'] : 'no definido'));
 }
 $html .= '</div>';
 
@@ -319,14 +376,14 @@ if (empty($examenes_detalle)) {
     foreach ($examenes_detalle as $exId => $ex) {
         // Comenzar directamente con la tabla sin información adicional
         if (!empty($ex['valores_referenciales'])) {
-            // Tabla de resultados como en el modelo INBIOSLAB
+            // Tabla de resultados profesional con estilo mejorado
             $html .= '<table class="results-table" style="margin-top: 25px;">';
-            $html .= '<thead><tr>';
-            $html .= '<th>Parámetro</th>';
-            $html .= '<th>Metodología</th>';
-            $html .= '<th>Resultado</th>';
-            $html .= '<th>Unidades</th>';
-            $html .= '<th>Valores de Referencia</th>';
+            $html .= '<thead><tr style="background: linear-gradient(90deg, #e5e7eb 0%, #d1d5db 100%);">';
+            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Examen / Parámetro</th>';
+            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Metodología</th>';
+            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Resultado</th>';
+            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Unidades</th>';
+            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Valores de Referencia</th>';
             $html .= '</tr></thead><tbody>';
             
             foreach ($ex['valores_referenciales'] as $param) {
@@ -339,7 +396,7 @@ if (empty($examenes_detalle)) {
                     $bgColor = $param['color_fondo'] ?? '#f8f9fa';
                     $textColor = $param['color_texto'] ?? '#000';
                     $fontWeight = $param['negrita'] ? 'bold' : 'normal';
-                    $html .= '<tr class="subtitle-row"><td colspan="5" style="background:' . h($bgColor) . ';color:' . h($textColor) . ';font-weight:' . $fontWeight . ';text-align:left;padding:10px;">' . h($nombre_param) . '</td></tr>';
+                    $html .= '<tr class="subtitle-row" style="border-bottom: 1px solid #e5e7eb;"><td colspan="5" style="background:' . h($bgColor) . ';color:' . h($textColor) . ';font-weight:' . $fontWeight . ';text-align:left;padding:12px 8px;">' . h($nombre_param) . '</td></tr>';
                     continue;
                 }
 
@@ -388,12 +445,12 @@ if (empty($examenes_detalle)) {
                     $cellStyle .= 'font-weight:bold;';
                 }
 
-                $html .= '<tr>';
-                $html .= '<td style="' . $cellStyle . ' font-weight: bold;">' . h($nombre) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' text-align: center;">' . h($metodo) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' text-align: center; font-weight: bold; font-size: 12px;">' . h((string)$valor) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' text-align: center;">' . h($unidad) . '</td>';
-                $html .= '<td style="' . $cellStyle . '">' . $refs . '</td>';
+                $html .= '<tr style="border-bottom: 1px solid #e5e7eb;">';
+                $html .= '<td style="' . $cellStyle . ' padding: 8px; font-weight: bold;">' . h($nombre) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 8px; text-align: center;">' . h($metodo) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 8px; text-align: center; font-weight: bold; font-size: 12px;">' . h((string)$valor) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 8px; text-align: center;">' . h($unidad) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 8px;">' . $refs . '</td>';
                 $html .= '</tr>';
             }
             $html .= '</tbody></table>';

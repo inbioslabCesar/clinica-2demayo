@@ -10,7 +10,6 @@ session_set_cookie_params([
 session_start();
 
 // Mostrar errores para depuración
-ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
@@ -20,7 +19,7 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';

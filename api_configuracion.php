@@ -17,7 +17,7 @@ $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -89,7 +89,14 @@ try {
                     'horario_atencion' => 'Lunes a Viernes: 7:00 AM - 8:00 PM\nSábados: 7:00 AM - 2:00 PM',
                     'logo_url' => null,
                     'website' => null,
-                    'ruc' => null
+                    'ruc' => null,
+                    'especialidades' => null,
+                    'mision' => null,
+                    'vision' => null,
+                    'valores' => null,
+                    'director_general' => null,
+                    'jefe_enfermeria' => null,
+                    'contacto_emergencias' => null
                 ];
             }
             
@@ -130,6 +137,8 @@ try {
                     UPDATE configuracion_clinica 
                     SET nombre_clinica = ?, direccion = ?, telefono = ?, email = ?, 
                         horario_atencion = ?, logo_url = ?, website = ?, ruc = ?,
+                        especialidades = ?, mision = ?, vision = ?, valores = ?,
+                        director_general = ?, jefe_enfermeria = ?, contacto_emergencias = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = (SELECT id FROM (SELECT id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1) AS temp)
                 ");
@@ -142,7 +151,14 @@ try {
                     $input['horario_atencion'] ?? '',
                     $input['logo_url'] ?? null,
                     $input['website'] ?? null,
-                    $input['ruc'] ?? null
+                    $input['ruc'] ?? null,
+                    $input['especialidades'] ?? null,
+                    $input['mision'] ?? null,
+                    $input['vision'] ?? null,
+                    $input['valores'] ?? null,
+                    $input['director_general'] ?? null,
+                    $input['jefe_enfermeria'] ?? null,
+                    $input['contacto_emergencias'] ?? null
                 ]);
                 
                 echo json_encode([
@@ -153,8 +169,9 @@ try {
                 // Insertar nueva configuración
                 $stmt = $pdo->prepare("
                     INSERT INTO configuracion_clinica 
-                    (nombre_clinica, direccion, telefono, email, horario_atencion, logo_url, website, ruc)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (nombre_clinica, direccion, telefono, email, horario_atencion, logo_url, website, ruc,
+                     especialidades, mision, vision, valores, director_general, jefe_enfermeria, contacto_emergencias)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $stmt->execute([
@@ -165,7 +182,14 @@ try {
                     $input['horario_atencion'] ?? '',
                     $input['logo_url'] ?? null,
                     $input['website'] ?? null,
-                    $input['ruc'] ?? null
+                    $input['ruc'] ?? null,
+                    $input['especialidades'] ?? null,
+                    $input['mision'] ?? null,
+                    $input['vision'] ?? null,
+                    $input['valores'] ?? null,
+                    $input['director_general'] ?? null,
+                    $input['jefe_enfermeria'] ?? null,
+                    $input['contacto_emergencias'] ?? null
                 ]);
                 
                 echo json_encode([

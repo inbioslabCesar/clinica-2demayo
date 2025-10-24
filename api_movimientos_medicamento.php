@@ -13,7 +13,7 @@ $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -36,7 +36,7 @@ require_once __DIR__ . '/config.php';
 $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'GET') {
     $medicamento_id = isset($_GET['medicamento_id']) ? intval($_GET['medicamento_id']) : 0;
-    $sql = "SELECT m.*, u.nombre as usuario_nombre, md.nombre as medico_nombre FROM movimientos_medicamento m LEFT JOIN usuarios u ON m.usuario_id = u.id LEFT JOIN medicos md ON m.medico_id = md.id WHERE m.medicamento_id = ? ORDER BY m.fecha_hora DESC";
+    $sql = "SELECT m.*, u.nombre as usuario_nombre, CONCAT(md.nombre, ' ', md.apellido) as medico_nombre FROM movimientos_medicamento m LEFT JOIN usuarios u ON m.usuario_id = u.id LEFT JOIN medicos md ON m.medico_id = md.id WHERE m.medicamento_id = ? ORDER BY m.fecha_hora DESC";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('i', $medicamento_id);
     $stmt->execute();

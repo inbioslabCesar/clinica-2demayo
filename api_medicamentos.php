@@ -14,7 +14,7 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -35,7 +35,6 @@ require_once __DIR__ . '/auth_check.php';
 // --- Lógica principal ---
 require_once "config.php";
 
-ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 $method = $_SERVER['REQUEST_METHOD'];

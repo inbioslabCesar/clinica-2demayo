@@ -14,7 +14,7 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -41,6 +41,32 @@ set_exception_handler(function($e) use ($origin, $allowedOrigins) {
 });
 header('Content-Type: application/json');
 require_once __DIR__ . '/config.php';
+
+// Función para generar el próximo número de historia clínica
+function generarProximaHistoriaClinica($conn) {
+    // Obtener el último número de HC de la base de datos
+    $query = "SELECT historia_clinica FROM pacientes 
+              WHERE historia_clinica LIKE 'HC%' 
+              ORDER BY CAST(SUBSTRING(historia_clinica, 3) AS UNSIGNED) DESC 
+              LIMIT 1";
+    
+    $result = $conn->query($query);
+    
+    if ($result && $result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        $ultimaHC = $row['historia_clinica'];
+        
+        // Extraer el número de la HC (por ejemplo: HC00123 -> 123)
+        $numero = intval(substr($ultimaHC, 2));
+        $proximoNumero = $numero + 1;
+        
+        // Formatear con 5 dígitos con ceros a la izquierda
+        return 'HC' . str_pad($proximoNumero, 5, '0', STR_PAD_LEFT);
+    } else {
+        // Si no hay registros, empezar con HC00001
+        return 'HC00001';
+    }
+}
 
 // Eliminar paciente (DELETE)
 if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
@@ -75,14 +101,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true);
+    
     $id = isset($data['id']) ? intval($data['id']) : 0;
     $dni = $data['dni'] ?? '';
     $nombre = $data['nombre'] ?? '';
     $apellido = $data['apellido'] ?? '';
         $historia = $data['historia_clinica'] ?? '';
-        // Prefijo automático HC si no lo tiene
-        if ($historia && stripos($historia, 'HC') !== 0) {
-            $historia = 'HC' . $historia;
+        
+        // Si no se proporciona historia clínica, generar automáticamente
+        if (empty($historia)) {
+            $historia = generarProximaHistoriaClinica($conn);
+        } else {
+            // Prefijo automático HC si no lo tiene
+            if (stripos($historia, 'HC') !== 0) {
+                $historia = 'HC' . $historia;
+            }
+        }
+        
+        // Validar que la historia clínica no esté duplicada (solo para nuevos pacientes)
+        if ($id == 0) {
+            $stmtCheck = $conn->prepare("SELECT id FROM pacientes WHERE historia_clinica = ?");
+            $stmtCheck->bind_param('s', $historia);
+            $stmtCheck->execute();
+            $resultCheck = $stmtCheck->get_result();
+            
+            if ($resultCheck->num_rows > 0) {
+                // Si está duplicada, generar una nueva automáticamente
+                $historia = generarProximaHistoriaClinica($conn);
+            }
+            $stmtCheck->close();
         }
     $fecha_nacimiento = isset($data['fecha_nacimiento']) && $data['fecha_nacimiento'] !== '' ? $data['fecha_nacimiento'] : null;
     $edad = $data['edad'] ?? null;
@@ -107,17 +154,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['success' => false, 'error' => 'El campo Apellido no debe estar vacío']);
             exit;
         }
-        if (!$historia) {
-            echo json_encode(['success' => false, 'error' => 'El campo Historia Clínica no debe estar vacío']);
-            exit;
-        }
+        // La historia clínica ya no es obligatoria desde el frontend
+        // Se genera automáticamente si está vacía
 
         if ($id > 0) {
             // Actualizar paciente existente
         $stmt = $conn->prepare("UPDATE pacientes SET dni=?, nombre=?, apellido=?, historia_clinica=?, fecha_nacimiento=?, edad=?, edad_unidad=?, procedencia=?, tipo_seguro=?, sexo=?, direccion=?, telefono=?, email=? WHERE id=?");
         $stmt->bind_param('sssssssssssssi', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $id);
             if ($stmt->execute()) {
-                $res = $conn->query("SELECT * FROM pacientes WHERE id = $id");
+                $res = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = $id");
                 $paciente = $res->fetch_assoc();
                 echo json_encode(['success' => true, 'paciente' => $paciente]);
             } else {
@@ -130,7 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param('sssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email);
             if ($stmt->execute()) {
                 $id = $conn->insert_id;
-                $res = $conn->query("SELECT * FROM pacientes WHERE id = $id");
+                $res = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = $id");
                 $paciente = $res->fetch_assoc();
                 echo json_encode(['success' => true, 'paciente' => $paciente]);
             } else {
@@ -146,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Listar un paciente por id (GET ?id=...)
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, creado_en, sexo FROM pacientes WHERE id = ?");
+    $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = ?");
     $stmt->bind_param('i', $id);
     $stmt->execute();
     $res = $stmt->get_result();
@@ -169,7 +214,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
 
 // Listar todos los pacientes (GET)
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $result = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, creado_en FROM pacientes ORDER BY id DESC");
+    $result = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes ORDER BY id DESC");
     $pacientes = [];
     while ($row = $result->fetch_assoc()) {
         // Si edad está en la BD, úsala; si no, calcula desde fecha_nacimiento

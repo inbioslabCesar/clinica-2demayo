@@ -1,8 +1,40 @@
 <?php
-header('Content-Type: application/pdf');
-header('Content-Disposition: attachment; filename="caratula_paciente.pdf"');
+// Configurar headers CORS primero
+$allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174', 
+    'http://localhost:5175',
+    'https://clinica2demayo.com'
+];
 
-require_once 'config.php';
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+}
+
+header('Access-Control-Allow-Credentials: true');
+header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
+header('Access-Control-Allow-Methods: GET, OPTIONS');
+
+// Manejar preflight requests
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+// Configurar manejo de errores pero sin display
+error_reporting(0);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/error_caratula.log');
+
+// Iniciar buffer de salida para capturar cualquier output no deseado
+ob_start();
+
+require_once 'config_pdf.php';
+
+// Log de inicio
+error_log("Inicio de descarga de carátula - Paciente ID: " . ($_GET['paciente_id'] ?? 'No especificado'));
 
 // Función helper para escapar HTML
 function h($str) {
@@ -10,10 +42,15 @@ function h($str) {
 }
 
 if (!isset($_GET['paciente_id'])) {
-    die('ID de paciente requerido');
+    error_log("Error: ID de paciente no proporcionado");
+    ob_end_clean();
+    header('Content-Type: application/json');
+    echo json_encode(['success' => false, 'error' => 'ID de paciente requerido']);
+    exit;
 }
 
 $paciente_id = intval($_GET['paciente_id']);
+error_log("Procesando paciente ID: " . $paciente_id);
 
 // Obtener datos del paciente
 $sql = "SELECT *, DATE(creado_en) as fecha_hc FROM pacientes WHERE id = ? LIMIT 1";
@@ -25,8 +62,14 @@ $paciente = $result->fetch_assoc();
 $stmt->close();
 
 if (!$paciente) {
-    die('Paciente no encontrado');
+    error_log("Error: Paciente no encontrado con ID: " . $paciente_id);
+    ob_end_clean();
+    header('Content-Type: application/json');
+    echo json_encode(['success' => false, 'error' => 'Paciente no encontrado']);
+    exit;
 }
+
+error_log("Paciente encontrado: " . $paciente['nombre'] . " " . $paciente['apellido']);
 
 // Obtener configuración de la clínica
 $config_sql = "SELECT * FROM configuracion_clinica LIMIT 1";
@@ -150,12 +193,38 @@ body {
     <div class="header">
         <div class="logo-section">';
 
-// Cargar logo si existe
-$logo_path = 'public/2demayo.svg';
-if (file_exists($logo_path)) {
-    $logo_content = file_get_contents($logo_path);
-    $logo_base64 = base64_encode($logo_content);
-    $html .= '<img src="data:image/svg+xml;base64,' . $logo_base64 . '" alt="Logo" style="width: 60px; height: 60px; margin-right: 12px;">';
+// Cargar logo si existe - Detectar automáticamente la ruta según el entorno
+$isProduction = (
+    (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ||
+    (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'clinica2demayo.com') !== false) ||
+    (isset($_SERVER['SERVER_NAME']) && strpos($_SERVER['SERVER_NAME'], 'clinica2demayo.com') !== false) ||
+    (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false)
+);
+
+// Rutas según el entorno
+$logo_paths = [
+    $isProduction ? '2demayo.svg' : 'public/2demayo.svg',  // Primera opción según entorno
+    '2demayo.svg',                                          // Fallback para producción
+    'public/2demayo.svg',                                   // Fallback para desarrollo
+    __DIR__ . '/2demayo.svg',                              // Ruta absoluta producción
+    __DIR__ . '/public/2demayo.svg'                        // Ruta absoluta desarrollo
+];
+
+$logo_loaded = false;
+foreach ($logo_paths as $logo_path) {
+    if (file_exists($logo_path)) {
+        $logo_content = file_get_contents($logo_path);
+        $logo_base64 = base64_encode($logo_content);
+        $html .= '<img src="data:image/svg+xml;base64,' . $logo_base64 . '" alt="Logo" style="width: 60px; height: 60px; margin-right: 12px;">';
+        $logo_loaded = true;
+        error_log("Logo cargado desde: " . $logo_path);
+        break;
+    }
+}
+
+if (!$logo_loaded) {
+    error_log("Logo no encontrado en ninguna ruta. Directorio actual: " . __DIR__);
+    error_log("Rutas intentadas: " . implode(', ', $logo_paths));
 }
 
 $html .= '
@@ -223,19 +292,98 @@ $html .= '
 </html>';
 
 // Generar PDF
-require_once 'vendor/autoload.php';
+try {
+    error_log("Intentando cargar autoload.php desde: " . __DIR__ . '/vendor/autoload.php');
+    
+    if (!file_exists(__DIR__ . '/vendor/autoload.php')) {
+        error_log("Error: vendor/autoload.php no encontrado en: " . __DIR__);
+        
+        // Limpiar buffer y devolver HTML como fallback
+        ob_end_clean();
+        header('Content-Type: text/html; charset=utf-8');
+        header('Content-Disposition: attachment; filename="caratula_paciente_' . $paciente['dni'] . '.html"');
+        echo $html;
+        exit;
+    }
+    
+    require_once 'vendor/autoload.php';
+    error_log("Autoload cargado correctamente");
 
-use Dompdf\Dompdf;
-use Dompdf\Options;
+    // Verificar que dompdf esté disponible
+    if (!class_exists('\Dompdf\Dompdf')) {
+        error_log("Error: Clase Dompdf no encontrada");
+        
+        // Fallback a HTML
+        ob_end_clean();
+        header('Content-Type: text/html; charset=utf-8');
+        header('Content-Disposition: attachment; filename="caratula_paciente_' . $paciente['dni'] . '.html"');
+        echo $html;
+        exit;
+    }
 
-$options = new Options();
-$options->set('isRemoteEnabled', true);
-$options->set('isHtml5ParserEnabled', true);
-
-$dompdf = new Dompdf($options);
-$dompdf->loadHtml($html);
-$dompdf->setPaper('A4', 'portrait');
-$dompdf->render();
-
-$dompdf->stream('caratula_paciente_' . $paciente['dni'] . '.pdf', ['Attachment' => true]);
+    $options = new \Dompdf\Options();
+    $options->set('isRemoteEnabled', true);
+    $options->set('isHtml5ParserEnabled', true);
+    $options->set('defaultFont', 'Arial');
+    $options->set('isPhpEnabled', false);
+    $options->set('chroot', realpath(__DIR__));
+    
+    error_log("Iniciando generación de PDF");
+    
+    $dompdf = new \Dompdf\Dompdf($options);
+    $dompdf->loadHtml($html);
+    $dompdf->setPaper('A4', 'portrait');
+    
+    error_log("Renderizando PDF");
+    $dompdf->render();
+    
+    // Limpiar cualquier output buffer antes de enviar PDF
+    ob_end_clean();
+    
+    // Configurar headers para PDF
+    header('Content-Type: application/pdf');
+    header('Content-Length: ' . strlen($dompdf->output()));
+    header('Content-Disposition: attachment; filename="caratula_paciente_' . $paciente['dni'] . '.pdf"');
+    header('Cache-Control: private, max-age=0, must-revalidate');
+    header('Pragma: public');
+    
+    error_log("Enviando PDF: caratula_paciente_" . $paciente['dni'] . ".pdf");
+    
+    // Enviar el contenido del PDF
+    echo $dompdf->output();
+    error_log("PDF enviado correctamente");
+    
+} catch (Exception $e) {
+    error_log("Error en generación de PDF: " . $e->getMessage());
+    error_log("Stack trace: " . $e->getTraceAsString());
+    error_log("Servidor: " . ($_SERVER['HTTP_HOST'] ?? 'unknown'));
+    error_log("Directorio actual: " . __DIR__);
+    error_log("¿Existe vendor/autoload.php?: " . (file_exists(__DIR__ . '/vendor/autoload.php') ? 'SÍ' : 'NO'));
+    
+    // Limpiar buffer y mostrar error
+    ob_end_clean();
+    
+    // En desarrollo, mostrar más detalles del error
+    $isLocal = in_array($_SERVER['HTTP_HOST'] ?? '', ['localhost', '127.0.0.1']) || 
+               strpos($_SERVER['HTTP_HOST'] ?? '', 'localhost:') === 0;
+    
+    if ($isLocal) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => false,
+            'error' => 'Error al generar PDF',
+            'details' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'autoload_exists' => file_exists(__DIR__ . '/vendor/autoload.php'),
+            'current_dir' => __DIR__
+        ]);
+    } else {
+        // En producción, ofrecer fallback HTML
+        error_log("Ofreciendo fallback HTML en producción");
+        header('Content-Type: text/html; charset=utf-8');
+        header('Content-Disposition: attachment; filename="caratula_paciente_' . ($paciente['dni'] ?? 'unknown') . '.html"');
+        echo $html ?? '<h1>Error al generar carátula</h1><p>No se pudo generar el documento PDF.</p>';
+    }
+}
 ?>

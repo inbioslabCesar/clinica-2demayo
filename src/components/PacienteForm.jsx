@@ -38,23 +38,75 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     });
   }, [initialData]);
   const [error, setError] = useState("");
+  // Validación en tiempo real para edad máxima
+  React.useEffect(() => {
+    if (form.edad_unidad === "años" && form.edad && Number(form.edad) > 150) {
+      setError("La edad no puede superar los 150 años.");
+    } else {
+      setError("");
+    }
+  }, [form.edad, form.edad_unidad]);
   const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    if (name === "fecha_nacimiento" && value) {
+      const hoy = new Date();
+      const fechaNac = new Date(value);
+      let edad = "";
+      let unidad = "años";
+      // Calcular diferencia en milisegundos
+      const diffMs = hoy - fechaNac;
+      const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDias < 0) {
+        edad = "";
+      } else if (diffDias < 31) {
+        edad = diffDias;
+        unidad = "días";
+      } else if (diffDias < 365) {
+        // Calcular meses
+        const diffMeses = (hoy.getFullYear() - fechaNac.getFullYear()) * 12 + hoy.getMonth() - fechaNac.getMonth();
+        edad = diffMeses;
+        unidad = "meses";
+      } else {
+        // Calcular años
+        let diffAnios = hoy.getFullYear() - fechaNac.getFullYear();
+        const m = hoy.getMonth() - fechaNac.getMonth();
+        if (m < 0 || (m === 0 && hoy.getDate() < fechaNac.getDate())) {
+          diffAnios--;
+        }
+        edad = diffAnios;
+        unidad = "años";
+      }
+      setForm({ ...form, fecha_nacimiento: value, edad: edad, edad_unidad: unidad });
+    } else {
+      setForm({ ...form, [name]: value });
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError("");
+    let formToSend = { ...form };
+    // Validar longitud del DNI si el usuario lo ingresa
+    if (formToSend.dni && formToSend.dni.trim() !== "") {
+      if (!/^\d{8}$/.test(formToSend.dni)) {
+        setError("El DNI debe tener exactamente 8 dígitos.");
+        setLoading(false);
+        return;
+      }
+    } else {
+      // Genera un DNI provisional de 8 dígitos, por ejemplo: 99990001
+      formToSend.dni = (99990000 + Math.floor(Math.random() * 100)).toString();
+    }
     try {
       const res = await fetch(
         BASE_URL + "api_pacientes.php",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
+          body: JSON.stringify(formToSend),
         }
       );
       const data = await res.json();
@@ -74,7 +126,11 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       <h2 className="text-xl font-bold text-purple-800 mb-4">
         {form.id ? "Editar Paciente" : "Registrar Nuevo Paciente"}
       </h2>
-      
+      {error && (
+        <div className="mb-3 p-2 bg-red-100 text-red-700 rounded text-center font-semibold">
+          {error}
+        </div>
+      )}
       <form
         onSubmit={handleSubmit}
         className="space-y-4 bg-blue-50 p-4 rounded border border-blue-200 max-h-[70vh] overflow-y-auto"
@@ -90,26 +146,24 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
           
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">DNI *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">DNI</label>
               <input
                 name="dni"
                 value={form.dni}
                 onChange={handleChange}
                 placeholder="Documento de identidad"
                 className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
               />
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Historia Clínica *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Historia Clínica <span className="text-xs text-gray-500">(Se genera automáticamente si está vacío)</span></label>
               <input
                 name="historia_clinica"
                 value={form.historia_clinica}
                 onChange={handleChange}
-                placeholder="Número de historia clínica"
+                placeholder="HC##### (opcional - se genera automáticamente)"
                 className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
               />
             </div>
             
@@ -220,18 +274,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
                 className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Seguro</label>
-              <input
-                name="tipo_seguro"
-                value={form.tipo_seguro}
-                onChange={handleChange}
-                placeholder="Ej: SIS, EsSalud, Particular, etc."
-                className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
               <textarea
@@ -241,6 +283,16 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
                 placeholder="Dirección completa del paciente"
                 rows="2"
                 className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Seguro</label>
+              <input
+                name="tipo_seguro"
+                value={form.tipo_seguro}
+                onChange={handleChange}
+                placeholder="Ej: SIS, EsSalud, Particular, etc."
+                className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
           </div>
@@ -281,18 +333,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
             </div>
           </div>
         </div>
-
-        {/* Mensaje de error */}
-        {error && (
-          <div className="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-lg">
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              {error}
-            </div>
-          </div>
-        )}
 
         {/* Botón de envío */}
         <div className="sticky bottom-0 bg-blue-50 p-4 -mx-4 -mb-4 border-t border-blue-200">

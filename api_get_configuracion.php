@@ -15,7 +15,7 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
-    'https://darkcyan-gnu-615778.hostingersite.com'
+    'https://clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -56,7 +56,14 @@ try {
             'horario_atencion' => 'Lunes a Viernes: 7:00 AM - 8:00 PM\nSábados: 7:00 AM - 2:00 PM',
             'logo_url' => null,
             'website' => null,
-            'ruc' => null
+            'ruc' => null,
+            'especialidades' => null,
+            'mision' => null,
+            'vision' => null,
+            'valores' => null,
+            'director_general' => null,
+            'jefe_enfermeria' => null,
+            'contacto_emergencias' => null
         ];
     }
     
