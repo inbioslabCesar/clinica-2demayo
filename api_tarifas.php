@@ -78,6 +78,10 @@ function obtenerTodasLasTarifas($conn) {
             'medico_id' => $hasMedicoId ? $row['medico_id'] : null,
             'medico_nombre' => $hasMedicoId ? $row['medico_nombre'] : null,
             'medico_especialidad' => $hasMedicoId ? $row['medico_especialidad'] : null,
+            'porcentaje_medico' => isset($row['porcentaje_medico']) ? floatval($row['porcentaje_medico']) : null,
+            'porcentaje_clinica' => isset($row['porcentaje_clinica']) ? floatval($row['porcentaje_clinica']) : null,
+            'monto_medico' => isset($row['monto_medico']) ? floatval($row['monto_medico']) : null,
+            'monto_clinica' => isset($row['monto_clinica']) ? floatval($row['monto_clinica']) : null,
             'fuente' => 'tarifas'
         );
     }
@@ -154,12 +158,16 @@ switch($method) {
         // Crear nueva tarifa (solo servicios médicos)
         $data = json_decode(file_get_contents('php://input'), true);
         
-        $servicio_tipo = $data['servicio_tipo'] ?? '';
-        $descripcion = $data['descripcion'] ?? '';
-        $precio_particular = $data['precio_particular'] ?? 0;
-        $precio_seguro = $data['precio_seguro'] ?? null;
-        $precio_convenio = $data['precio_convenio'] ?? null;
-        $medico_id = isset($data['medico_id']) && $data['medico_id'] !== 'general' && $data['medico_id'] !== '' ? intval($data['medico_id']) : null;
+    $servicio_tipo = $data['servicio_tipo'] ?? '';
+    $descripcion = $data['descripcion'] ?? '';
+    $precio_particular = $data['precio_particular'] ?? 0;
+    $precio_seguro = $data['precio_seguro'] ?? null;
+    $precio_convenio = $data['precio_convenio'] ?? null;
+    $medico_id = isset($data['medico_id']) && $data['medico_id'] !== 'general' && $data['medico_id'] !== '' ? intval($data['medico_id']) : null;
+    $porcentaje_medico = isset($data['porcentaje_medico']) ? floatval($data['porcentaje_medico']) : null;
+    $porcentaje_clinica = isset($data['porcentaje_clinica']) ? floatval($data['porcentaje_clinica']) : null;
+    $monto_medico = isset($data['monto_medico']) ? floatval($data['monto_medico']) : null;
+    $monto_clinica = isset($data['monto_clinica']) ? floatval($data['monto_clinica']) : null;
         
         // Validar que no sea farmacia o laboratorio
         if ($servicio_tipo === 'farmacia' || $servicio_tipo === 'laboratorio') {
@@ -172,8 +180,8 @@ switch($method) {
             break;
         }
         
-        $stmt = $conn->prepare("INSERT INTO tarifas (servicio_tipo, descripcion, precio_particular, precio_seguro, precio_convenio, medico_id) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("ssdddi", $servicio_tipo, $descripcion, $precio_particular, $precio_seguro, $precio_convenio, $medico_id);
+    $stmt = $conn->prepare("INSERT INTO tarifas (servicio_tipo, descripcion, precio_particular, precio_seguro, precio_convenio, medico_id, porcentaje_medico, porcentaje_clinica, monto_medico, monto_clinica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("ssdddidddd", $servicio_tipo, $descripcion, $precio_particular, $precio_seguro, $precio_convenio, $medico_id, $porcentaje_medico, $porcentaje_clinica, $monto_medico, $monto_clinica);
         
         if ($stmt->execute()) {
             echo json_encode(['success' => true, 'id' => $conn->insert_id]);
@@ -186,13 +194,17 @@ switch($method) {
         // Actualizar tarifa (solo servicios médicos)
         $data = json_decode(file_get_contents('php://input'), true);
         
-        $id = $data['id'] ?? 0;
-        $descripcion = $data['descripcion'] ?? '';
-        $precio_particular = $data['precio_particular'] ?? 0;
-        $precio_seguro = $data['precio_seguro'] ?? null;
-        $precio_convenio = $data['precio_convenio'] ?? null;
-        $activo = $data['activo'] ?? 1;
-        $medico_id = isset($data['medico_id']) && $data['medico_id'] !== 'general' && $data['medico_id'] !== '' ? intval($data['medico_id']) : null;
+    $id = $data['id'] ?? 0;
+    $descripcion = $data['descripcion'] ?? '';
+    $precio_particular = $data['precio_particular'] ?? 0;
+    $precio_seguro = $data['precio_seguro'] ?? null;
+    $precio_convenio = $data['precio_convenio'] ?? null;
+    $activo = $data['activo'] ?? 1;
+    $medico_id = isset($data['medico_id']) && $data['medico_id'] !== 'general' && $data['medico_id'] !== '' ? intval($data['medico_id']) : null;
+    $porcentaje_medico = isset($data['porcentaje_medico']) ? floatval($data['porcentaje_medico']) : null;
+    $porcentaje_clinica = isset($data['porcentaje_clinica']) ? floatval($data['porcentaje_clinica']) : null;
+    $monto_medico = isset($data['monto_medico']) ? floatval($data['monto_medico']) : null;
+    $monto_clinica = isset($data['monto_clinica']) ? floatval($data['monto_clinica']) : null;
         
         // Validar que el ID no sea de medicamentos o laboratorio (tienen prefijos)
         if (strpos($id, 'med_') === 0 || strpos($id, 'lab_') === 0) {
@@ -205,8 +217,8 @@ switch($method) {
             break;
         }
         
-        $stmt = $conn->prepare("UPDATE tarifas SET descripcion = ?, precio_particular = ?, precio_seguro = ?, precio_convenio = ?, activo = ?, medico_id = ? WHERE id = ?");
-        $stmt->bind_param("sdddiii", $descripcion, $precio_particular, $precio_seguro, $precio_convenio, $activo, $medico_id, $id);
+    $stmt = $conn->prepare("UPDATE tarifas SET descripcion = ?, precio_particular = ?, precio_seguro = ?, precio_convenio = ?, activo = ?, medico_id = ?, porcentaje_medico = ?, porcentaje_clinica = ?, monto_medico = ?, monto_clinica = ? WHERE id = ?");
+    $stmt->bind_param("sdddiiidddi", $descripcion, $precio_particular, $precio_seguro, $precio_convenio, $activo, $medico_id, $porcentaje_medico, $porcentaje_clinica, $monto_medico, $monto_clinica, $id);
         
         if ($stmt->execute()) {
             echo json_encode(['success' => true]);

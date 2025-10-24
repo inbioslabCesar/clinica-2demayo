@@ -1,5 +1,12 @@
 RewriteEngine On
 RewriteBase /
+
+# Permitir acceso a archivos PHP reales
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteCond %{REQUEST_URI} \.php$ [NC]
+RewriteRule ^.*$ - [L]
+
+# Redirigir todo lo demás al index.html para React Router
 RewriteRule ^index\.html$ - [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

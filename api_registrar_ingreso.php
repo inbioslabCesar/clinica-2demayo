@@ -1,18 +1,35 @@
 <?php
-header('Access-Control-Allow-Origin: http://localhost:5173');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization');
-header('Access-Control-Allow-Credentials: true');
-header('Content-Type: application/json');
-
-// Manejar preflight OPTIONS
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    exit(0);
-}
-
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'domain' => '',
+    'secure' => false,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 session_start();
 
-require_once 'config.php';
+// CORS para localhost y producción
+$allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+    'https://clinica2demayo.com',
+    'https://www.clinica2demayo.com'
+];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+}
+header('Access-Control-Allow-Credentials: true');
+header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+header('Content-Type: application/json');
+require_once __DIR__ . '/config.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -119,10 +136,69 @@ try {
                 $updateField = 'total_otros';
                 break;
         }
-        
         $sqlUpdateCaja = "UPDATE cajas SET $updateField = $updateField + ? WHERE id = ?";
         $stmtUpdateCaja = $pdo->prepare($sqlUpdateCaja);
         $stmtUpdateCaja->execute([$monto, $cajaAbierta['id']]);
+
+        // --- Lógica de honorarios médicos ---
+        // Buscar tarifa asociada
+        $sqlTarifa = "SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = ? LIMIT 1";
+        $stmtTarifa = $pdo->prepare($sqlTarifa);
+        $stmtTarifa->execute([trim($input['descripcion']), $input['tipo_ingreso']]);
+        $tarifa = $stmtTarifa->fetch(PDO::FETCH_ASSOC);
+
+        if ($tarifa) {
+            // Determinar tipo de precio
+            $tipo_precio = 'particular';
+            if ($input['metodo_pago'] === 'seguro') {
+                $tipo_precio = 'seguro';
+            } elseif ($input['metodo_pago'] === 'convenio') {
+                $tipo_precio = 'convenio';
+            }
+            $tarifa_total = floatval($tarifa['precio_' . $tipo_precio]);
+
+            // Calcular honorarios
+            $monto_medico = null;
+            $monto_clinica = null;
+            $porcentaje_aplicado_medico = null;
+            $porcentaje_aplicado_clinica = null;
+            if (!empty($tarifa['monto_medico'])) {
+                $monto_medico = floatval($tarifa['monto_medico']);
+                $porcentaje_aplicado_medico = null;
+            } elseif (!empty($tarifa['porcentaje_medico'])) {
+                $monto_medico = round($tarifa_total * floatval($tarifa['porcentaje_medico']) / 100, 2);
+                $porcentaje_aplicado_medico = floatval($tarifa['porcentaje_medico']);
+            }
+            if (!empty($tarifa['monto_clinica'])) {
+                $monto_clinica = floatval($tarifa['monto_clinica']);
+                $porcentaje_aplicado_clinica = null;
+            } elseif (!empty($tarifa['porcentaje_clinica'])) {
+                $monto_clinica = round($tarifa_total * floatval($tarifa['porcentaje_clinica']) / 100, 2);
+                $porcentaje_aplicado_clinica = floatval($tarifa['porcentaje_clinica']);
+            }
+
+            // Insertar movimiento de honorario
+            $sqlHonorario = "INSERT INTO honorarios_medicos_movimientos (
+                consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, especialidad, tarifa_total,
+                monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, created_at
+            ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, NOW())";
+            $stmtHonorario = $pdo->prepare($sqlHonorario);
+            $stmtHonorario->execute([
+                null, // consulta_id (si aplica)
+                $tarifa['medico_id'] ?? null,
+                null, // paciente_id (si aplica)
+                $tarifa['id'],
+                $tipo_precio,
+                $input['tipo_ingreso'],
+                $tarifa['descripcion'],
+                $tarifa_total,
+                $monto_clinica,
+                $monto_medico,
+                $porcentaje_aplicado_clinica,
+                $porcentaje_aplicado_medico,
+                $input['metodo_pago']
+            ]);
+        }
 
         $pdo->commit();
 

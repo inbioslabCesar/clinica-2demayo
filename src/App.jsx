@@ -1,4 +1,6 @@
 import ReabrirCajaPage from "./pages/ReabrirCajaPage";
+import EgresosPage from "./pages/EgresosPage";
+import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
 import CierreCajaPage from "./pages/CierreCajaPage";
 import IngresosDetallePage from "./pages/IngresosDetallePage";
 import NuevoIngresoPage from "./pages/NuevoIngresoPage";
@@ -239,6 +241,11 @@ function App() {
                     <GestionTarifasPage />
                   </ProtectedRoute>
                 } />
+                <Route path="/contabilidad/pago-honorarios-medicos" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <PagoHonorariosMedicosPage />
+                  </ProtectedRoute>
+                } />
                 <Route path="/cotizar-laboratorio/:pacienteId" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <CotizarLaboratorioPage />
@@ -272,6 +279,11 @@ function App() {
                   <Route path="/consumo-paciente/:pacienteId" element={
                     <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                       <ConsumoPacientePage />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/contabilidad/egresos" element={
+                    <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                      <EgresosPage />
                     </ProtectedRoute>
                   } />
               </>
