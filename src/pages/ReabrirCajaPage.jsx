@@ -163,7 +163,8 @@ const ReabrirCajaPage = () => {
                           <td className="px-4 py-3 text-sm">
                             <button
                               onClick={() => confirmarReapertura(caja)}
-                              className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors"
+                              className={`bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors ${caja.fecha !== (new Date().toISOString().slice(0,10)) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              disabled={caja.fecha !== (new Date().toISOString().slice(0,10))}
                             >
                               🔓 Reabrir
                             </button>

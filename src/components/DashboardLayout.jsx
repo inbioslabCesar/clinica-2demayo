@@ -87,10 +87,6 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
                 </Link>
                 
-                <Link to="/" className="py-3 px-4 rounded-lg text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="ViewDashboard" className="text-xl text-purple-600" />
-                  <span>Dashboard</span>
-                </Link>
                 <Link to="/pacientes" className="py-3 px-4 rounded-lg text-cyan-700 hover:bg-gradient-to-r hover:from-cyan-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
                   <Icon iconName="People" className="text-xl text-cyan-600" />
                   <span>Pacientes</span>
@@ -107,7 +103,7 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
                   <Icon iconName="Money" className="text-xl text-amber-600" />
                   <span>Gestión de Tarifas</span>
                 </Link>
-                <Link to="/reportes" className="py-3 px-4 rounded-lg text-violet-700 hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
+                <Link to="/contabilidad" className="py-3 px-4 rounded-lg text-violet-700 hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
                   <Icon iconName="BarChart4" className="text-xl text-violet-600" />
                   <span>Reportes</span>
                 </Link>

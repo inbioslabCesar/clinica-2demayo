@@ -1,3 +1,9 @@
+import ReabrirCajaPage from "./pages/ReabrirCajaPage";
+import CierreCajaPage from "./pages/CierreCajaPage";
+import IngresosDetallePage from "./pages/IngresosDetallePage";
+import NuevoIngresoPage from "./pages/NuevoIngresoPage";
+import IngresosPage from "./pages/IngresosPage";
+import ContabilidadPage from "./pages/ContabilidadPage";
 
 import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -178,11 +184,36 @@ function App() {
                     <MedicosPage />
                   </ProtectedRoute>
                 } />
-                <Route path="/reportes" element={
-                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                    <ReportesPage />
-                  </ProtectedRoute>
-                } />
+                  <Route path="/contabilidad" element={
+                    <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                      <ContabilidadPage />
+                    </ProtectedRoute>
+                  } />
+                    <Route path="/contabilidad/ingresos" element={
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                        <IngresosPage />
+                      </ProtectedRoute>
+                    } />
+                      <Route path="/contabilidad/nuevo-ingreso" element={
+                        <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                          <NuevoIngresoPage />
+                        </ProtectedRoute>
+                      } />
+                        <Route path="/contabilidad/ingresos-detalle" element={
+                          <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                            <IngresosDetallePage />
+                          </ProtectedRoute>
+                        } />
+                          <Route path="/contabilidad/cierre-caja" element={
+                            <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                              <CierreCajaPage />
+                            </ProtectedRoute>
+                          } />
+                            <Route path="/reabrir-caja" element={
+                              <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                                <ReabrirCajaPage />
+                              </ProtectedRoute>
+                            } />
                 <Route path="/lista-consultas" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <ListaConsultasPage />
