@@ -4,6 +4,12 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { initializeIcons } from '@fluentui/font-icons-mdl2';
 initializeIcons();
+import SidebarMedico from "./sidebar/SidebarMedico";
+import SidebarEnfermero from "./sidebar/SidebarEnfermero";
+import SidebarLaboratorista from "./sidebar/SidebarLaboratorista";
+import SidebarQuimico from "./sidebar/SidebarQuimico";
+import SidebarRecepcionista from "./sidebar/SidebarRecepcionista";
+import SidebarAdmin from "./sidebar/SidebarAdmin";
 function Sidebar({ open, onClose, onLogout, usuario }) {
   // Sidebar fijo en PC (md+), drawer en móvil/tablet
   return (
@@ -35,85 +41,22 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
             <div className="w-12 h-0.5 bg-white/30 rounded-full mt-2"></div>
           </div>
           <nav className="flex flex-col gap-3 px-4 flex-1 overflow-y-auto">
-            {usuario?.rol === 'medico' ? (
+            {usuario?.rol === 'medico' && <SidebarMedico onClose={onClose} />}
+            {usuario?.rol === 'enfermero' && <SidebarEnfermero onClose={onClose} />}
+            {usuario?.rol === 'laboratorista' && <SidebarLaboratorista onClose={onClose} />}
+            {(usuario?.rol === 'químico' || usuario?.rol === 'quimico') && <SidebarQuimico onClose={onClose} />}
+            {usuario?.rol === 'recepcionista' && <SidebarRecepcionista onClose={onClose} />}
+            {usuario?.rol === 'administrador' && <SidebarAdmin onClose={onClose} />}
+            {/* Si el rol no coincide, mostrar Dashboard y Pacientes por defecto */}
+            {!['medico','enfermero','laboratorista','químico','quimico','recepcionista','administrador'].includes(usuario?.rol) && (
               <>
-                <Link to="/mis-consultas" className="py-2 px-3 rounded-lg text-indigo-700 hover:bg-indigo-100 font-medium flex items-center gap-2" onClick={onClose}>
-                  <Icon iconName="Contact" className="text-xl" />
-                  Mis Consultas
-                </Link>
-                <Link to="/panel-medico" className="py-2 px-3 rounded-lg text-blue-700 hover:bg-blue-100 font-medium flex items-center gap-2" onClick={onClose}>
-                  <Icon iconName="Calendar" className="text-xl" />
-                  Disponibilidad
-                </Link>
-                <Link to="/historial-consultas" className="py-2 px-3 rounded-lg text-blue-700 hover:bg-blue-100 font-medium flex items-center gap-2" onClick={onClose}>
-                  <Icon iconName="History" className="text-xl" />
-                  Historial de consultas
-                </Link>
-              </>
-            ) : usuario?.rol === 'enfermero' ? (
-              <>
-                <Link to="/panel-enfermero" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>Panel Enfermería</Link>
-              </>
-            ) : usuario?.rol === 'laboratorista' ? (
-              <>
-                <Link to="/panel-laboratorio" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>Panel Laboratorio</Link>
-                <Link to="/examenes-laboratorio" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>Gestión de Exámenes</Link>
-              </>
-            ) : (usuario?.rol === 'químico' || usuario?.rol === 'quimico') ? (
-              <>
-                <Link to="/medicamentos" className="py-2 px-3 rounded-lg text-pink-700 hover:bg-pink-100 font-medium" onClick={onClose}>Medicamentos</Link>
-                <Link to="/farmacia/cotizador" className="py-2 px-3 rounded-lg text-blue-700 hover:bg-blue-100 font-medium" onClick={onClose}>Cotizador Farmacia</Link>
-                <Link to="/farmacia/ventas" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>Ventas de Farmacia</Link>
-              </>
-            ) : (
-              <>
-                <Link 
-                  to="/" 
-                  className="group relative py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-800 text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center gap-3 overflow-hidden" 
-                  onClick={onClose}
-                >
-                  {/* Fondo animado */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                  
-                  {/* Icono */}
-                  <div className="relative z-10 flex items-center justify-center w-8 h-8 bg-white/20 rounded-lg backdrop-blur-sm">
-                    <Icon iconName="ViewDashboard" className="text-xl text-white" />
-                  </div>
-                  
-                  {/* Texto */}
+                <Link to="/" className="group relative py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-800 text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center gap-3 overflow-hidden" onClick={onClose}>
+                  <Icon iconName="ViewDashboard" className="text-xl text-white" />
                   <span className="relative z-10 text-lg">Dashboard</span>
-                  
-                  {/* Efecto de brillo */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
                 </Link>
-                
                 <Link to="/pacientes" className="py-3 px-4 rounded-lg text-cyan-700 hover:bg-gradient-to-r hover:from-cyan-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
                   <Icon iconName="People" className="text-xl text-cyan-600" />
                   <span>Pacientes</span>
-                </Link>
-                <Link to="/usuarios" className="py-3 px-4 rounded-lg text-blue-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="People" className="text-xl text-blue-600" />
-                  <span>Usuarios</span>
-                </Link>
-                <Link to="/medicos" className="py-3 px-4 rounded-lg text-emerald-700 hover:bg-gradient-to-r hover:from-emerald-50 hover:to-green-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="Health" className="text-xl text-emerald-600" />
-                  <span>Médicos</span>
-                </Link>
-                <Link to="/gestion-tarifas" className="py-3 px-4 rounded-lg text-amber-700 hover:bg-gradient-to-r hover:from-amber-50 hover:to-yellow-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="Money" className="text-xl text-amber-600" />
-                  <span>Gestión de Tarifas</span>
-                </Link>
-                <Link to="/contabilidad" className="py-3 px-4 rounded-lg text-violet-700 hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="BarChart4" className="text-xl text-violet-600" />
-                  <span>Reportes</span>
-                </Link>
-                <Link to="/configuracion" className="py-3 px-4 rounded-lg text-gray-700 hover:bg-gradient-to-r hover:from-gray-50 hover:to-slate-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="Settings" className="text-xl text-gray-600" />
-                  <span>Configuración</span>
-                </Link>
-                <Link to="/reabrir-caja" className="py-3 px-4 rounded-lg text-yellow-700 hover:bg-gradient-to-r hover:from-yellow-50 hover:to-yellow-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]" onClick={onClose}>
-                  <Icon iconName="Unlock" className="text-xl text-yellow-600" />
-                  <span>Reabrir Cajas</span>
                 </Link>
               </>
             )}
