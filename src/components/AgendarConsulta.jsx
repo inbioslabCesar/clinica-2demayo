@@ -40,10 +40,13 @@ const [totalConsulta, setTotalConsulta] = useState(0);
               const detalle = {
                 servicio_tipo: 'consulta',
                 servicio_id: consultaCreada.id,
-                descripcion: tarifa.descripcion || `Consulta - ${consultaCreada.medico_nombre}`,
+                descripcion: tarifa.descripcion, // Usar descripción exacta de la tarifa
                 cantidad: 1,
                 precio_unitario: parseFloat(tarifa.precio_particular) || 0,
-                subtotal: parseFloat(tarifa.precio_particular) || 0
+                subtotal: parseFloat(tarifa.precio_particular) || 0,
+                consulta_id: consultaCreada.id,
+                medico_id: consultaCreada.medico_id,
+                paciente_id: consultaCreada.paciente_id
               };
               setDetallesConsulta([detalle]);
               setTotalConsulta(detalle.subtotal);

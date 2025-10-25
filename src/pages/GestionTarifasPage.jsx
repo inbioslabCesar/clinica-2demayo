@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import { BASE_URL } from '../config/config';
-import Swal from 'sweetalert2';
+import { useState, useEffect, useCallback } from "react";
+import { BASE_URL } from "../config/config";
+import Swal from "sweetalert2";
 
 function GestionTarifasPage() {
   const [tarifas, setTarifas] = useState([]);
@@ -8,40 +8,40 @@ function GestionTarifasPage() {
   const [loading, setLoading] = useState(true);
   const [mostrarModal, setMostrarModal] = useState(false);
   const [tarifaEditando, setTarifaEditando] = useState(null);
-  const [filtroServicio, setFiltroServicio] = useState('todos');
-  
+  const [filtroServicio, setFiltroServicio] = useState("todos");
+
   // Estados para paginación
   const [paginaActual, setPaginaActual] = useState(1);
   const [elementosPorPagina, setElementosPorPagina] = useState(5);
 
   // Tipos de servicios médicos (editables en esta interfaz)
   const serviciosMedicos = [
-    { value: 'consulta', label: 'Consultas Médicas' },
-    { value: 'rayosx', label: 'Rayos X' },
-    { value: 'ecografia', label: 'Ecografía' },
-    { value: 'ocupacional', label: 'Medicina Ocupacional' },
-    { value: 'procedimientos', label: 'Procedimientos Médicos' },
-    { value: 'cirugias', label: 'Cirugías Menores' },
-    { value: 'tratamientos', label: 'Tratamientos Especializados' },
-    { value: 'emergencias', label: 'Emergencias' }
+    { value: "consulta", label: "Consultas Médicas" },
+    { value: "rayosx", label: "Rayos X" },
+    { value: "ecografia", label: "Ecografía" },
+    { value: "ocupacional", label: "Medicina Ocupacional" },
+    { value: "procedimientos", label: "Procedimientos Médicos" },
+    { value: "cirugias", label: "Cirugías Menores" },
+    { value: "tratamientos", label: "Tratamientos Especializados" },
+    { value: "emergencias", label: "Emergencias" },
   ];
 
   // Todos los tipos (para mostrar, solo servicios médicos gestionables)
   const todosLosServicios = [...serviciosMedicos];
 
   const [nuevaTarifa, setNuevaTarifa] = useState({
-    servicio_tipo: 'consulta',
-    medico_id: '',
-    descripcion_base: '',
-    descripcion: '',
-    precio_particular: '',
-    precio_seguro: '',
-    precio_convenio: '',
+    servicio_tipo: "consulta",
+    medico_id: "",
+    descripcion_base: "",
+    descripcion: "",
+    precio_particular: "",
+    precio_seguro: "",
+    precio_convenio: "",
     activo: 1,
-    porcentaje_medico: '', // % honorario médico
-    porcentaje_clinica: '', // % honorario clínica
-    monto_medico: '', // monto fijo médico
-    monto_clinica: '' // monto fijo clínica
+    porcentaje_medico: "", // % honorario médico
+    porcentaje_clinica: "", // % honorario clínica
+    monto_medico: "", // monto fijo médico
+    monto_clinica: "", // monto fijo clínica
   });
 
   useEffect(() => {
@@ -53,54 +53,61 @@ function GestionTarifasPage() {
     try {
       const response = await fetch(`${BASE_URL}api_medicos.php`);
       const data = await response.json();
-      
+
       if (data.success) {
         // Normalizar los IDs a números para evitar problemas de comparación
-        const medicosNormalizados = (data.medicos || []).map(medico => ({
+        const medicosNormalizados = (data.medicos || []).map((medico) => ({
           ...medico,
-          id: parseInt(medico.id) // Convertir ID a número
+          id: parseInt(medico.id), // Convertir ID a número
         }));
-        
+
         setMedicos(medicosNormalizados);
       }
     } catch (error) {
-      console.error('Error al cargar médicos:', error);
+      console.error("Error al cargar médicos:", error);
     }
   };
 
   // NUEVO: Generar descripción automáticamente
-  const generarDescripcion = useCallback((medicoId, descripcionBase) => {
-    if (!medicoId || medicoId === 'general' || medicoId === '') {
-      return descripcionBase || 'Consulta General';
-    }
-    
-    // Buscar médico (ahora con IDs normalizados como números)
-    const medico = medicos.find(m => m.id === parseInt(medicoId));
-    
-    if (medico) {
-      const nombreCompleto = medico.nombre;
-      const especialidad = medico.especialidad ? ` - ${medico.especialidad}` : '';
-      return `${nombreCompleto}${especialidad} - ${descripcionBase || 'Consulta'}`;
-    }
-    
-    return descripcionBase || 'Consulta';
-  }, [medicos]);
+  const generarDescripcion = useCallback(
+    (medicoId, descripcionBase) => {
+      if (!medicoId || medicoId === "general" || medicoId === "") {
+        return descripcionBase || "Consulta General";
+      }
+
+      // Buscar médico (ahora con IDs normalizados como números)
+      const medico = medicos.find((m) => m.id === parseInt(medicoId));
+
+      if (medico) {
+        const nombreCompleto = medico.nombre;
+        const especialidad = medico.especialidad
+          ? ` - ${medico.especialidad}`
+          : "";
+        return `${nombreCompleto}${especialidad} - ${
+          descripcionBase || "Consulta"
+        }`;
+      }
+
+      return descripcionBase || "Consulta";
+    },
+    [medicos]
+  );
 
   const cargarTarifas = async () => {
     try {
       setLoading(true);
       const response = await fetch(`${BASE_URL}api_tarifas.php`, {
-        credentials: 'include'
+        credentials: "include",
       });
       const data = await response.json();
       if (data.success) {
         setTarifas(data.tarifas || []);
       } else {
-        console.error('Error al cargar tarifas:', data.error);
+        console.error("Error al cargar tarifas:", data.error);
       }
     } catch (error) {
-      console.error('Error:', error);
-      Swal.fire('Error', 'Error de conexión al cargar tarifas', 'error');
+      console.error("Error:", error);
+      Swal.fire("Error", "Error de conexión al cargar tarifas", "error");
     } finally {
       setLoading(false);
     }
@@ -108,67 +115,75 @@ function GestionTarifasPage() {
 
   const abrirModal = (tarifa = null) => {
     // No permitir editar medicamentos ni exámenes de laboratorio
-    if (tarifa && (tarifa.fuente === 'medicamentos' || tarifa.fuente === 'examenes_laboratorio')) {
+    if (
+      tarifa &&
+      (tarifa.fuente === "medicamentos" ||
+        tarifa.fuente === "examenes_laboratorio")
+    ) {
       Swal.fire({
-        title: 'No Editable',
-        text: tarifa.fuente === 'medicamentos' 
-          ? 'Los precios de medicamentos se gestionan desde el módulo de farmacia.'
-          : 'Los precios de exámenes se gestionan desde el módulo de laboratorio.',
-        icon: 'info',
-        confirmButtonText: 'Entendido'
+        title: "No Editable",
+        text:
+          tarifa.fuente === "medicamentos"
+            ? "Los precios de medicamentos se gestionan desde el módulo de farmacia."
+            : "Los precios de exámenes se gestionan desde el módulo de laboratorio.",
+        icon: "info",
+        confirmButtonText: "Entendido",
       });
       return;
     }
-    
+
     if (tarifa) {
       setTarifaEditando(tarifa);
-      
+
       // Intentar extraer médico y descripción base de la descripción existente
       const descripcionCompleta = tarifa.descripcion;
-      let medicoId = 'general';
+      let medicoId = "general";
       let descripcionBase = descripcionCompleta;
-      
+
       // Buscar si la descripción contiene el nombre de algún médico
-      const medicoEncontrado = medicos.find(m => 
+      const medicoEncontrado = medicos.find((m) =>
         descripcionCompleta.includes(m.nombre)
       );
-      
+
       if (medicoEncontrado) {
         medicoId = medicoEncontrado.id.toString();
         // Extraer la descripción base removiendo el nombre del médico y especialidad
-        const patronMedico = new RegExp(`^${medicoEncontrado.nombre}(\\s*-\\s*${medicoEncontrado.especialidad})?\\s*-\\s*`, 'i');
-        descripcionBase = descripcionCompleta.replace(patronMedico, '').trim();
+        const patronMedico = new RegExp(
+          `^${medicoEncontrado.nombre}(\\s*-\\s*${medicoEncontrado.especialidad})?\\s*-\\s*`,
+          "i"
+        );
+        descripcionBase = descripcionCompleta.replace(patronMedico, "").trim();
       }
-      
+
       setNuevaTarifa({
         servicio_tipo: tarifa.servicio_tipo,
         medico_id: medicoId,
         descripcion_base: descripcionBase,
         descripcion: descripcionCompleta,
         precio_particular: tarifa.precio_particular,
-        precio_seguro: tarifa.precio_seguro || '',
-        precio_convenio: tarifa.precio_convenio || '',
+        precio_seguro: tarifa.precio_seguro || "",
+        precio_convenio: tarifa.precio_convenio || "",
         activo: tarifa.activo,
-        porcentaje_medico: tarifa.porcentaje_medico || '',
-        porcentaje_clinica: tarifa.porcentaje_clinica || '',
-        monto_medico: tarifa.monto_medico || '',
-        monto_clinica: tarifa.monto_clinica || ''
+        porcentaje_medico: tarifa.porcentaje_medico || "",
+        porcentaje_clinica: tarifa.porcentaje_clinica || "",
+        monto_medico: tarifa.monto_medico || "",
+        monto_clinica: tarifa.monto_clinica || "",
       });
     } else {
       setTarifaEditando(null);
       setNuevaTarifa({
-        servicio_tipo: 'consulta',
-        medico_id: 'general',
-        descripcion_base: '',
-        descripcion: '',
-        precio_particular: '',
-        precio_seguro: '',
-        precio_convenio: '',
+        servicio_tipo: "consulta",
+        medico_id: "general",
+        descripcion_base: "",
+        descripcion: "",
+        precio_particular: "",
+        precio_seguro: "",
+        precio_convenio: "",
         activo: 1,
-        porcentaje_medico: '',
-        porcentaje_clinica: '',
-        monto_medico: '',
-        monto_clinica: ''
+        porcentaje_medico: "",
+        porcentaje_clinica: "",
+        monto_medico: "",
+        monto_clinica: "",
       });
     }
     setMostrarModal(true);
@@ -179,34 +194,37 @@ function GestionTarifasPage() {
     setTarifaEditando(null);
     // Reset completo del formulario
     setNuevaTarifa({
-      servicio_tipo: 'consulta',
-      medico_id: 'general',
-      descripcion_base: '',
-      descripcion: '',
-      precio_particular: '',
-      precio_seguro: '',
-      precio_convenio: '',
-      activo: 1
+      servicio_tipo: "consulta",
+      medico_id: "general",
+      descripcion_base: "",
+      descripcion: "",
+      precio_particular: "",
+      precio_seguro: "",
+      precio_convenio: "",
+      activo: 1,
     });
   };
 
   const guardarTarifa = async () => {
     // Validaciones
     if (!nuevaTarifa.descripcion.trim()) {
-      Swal.fire('Error', 'La descripción es obligatoria', 'error');
+      Swal.fire("Error", "La descripción es obligatoria", "error");
       return;
     }
-    if (!nuevaTarifa.precio_particular || parseFloat(nuevaTarifa.precio_particular) <= 0) {
-      Swal.fire('Error', 'El precio particular debe ser mayor a 0', 'error');
+    if (
+      !nuevaTarifa.precio_particular ||
+      parseFloat(nuevaTarifa.precio_particular) <= 0
+    ) {
+      Swal.fire("Error", "El precio particular debe ser mayor a 0", "error");
       return;
     }
 
     try {
-      const url = tarifaEditando 
+      const url = tarifaEditando
         ? `${BASE_URL}api_tarifas.php`
         : `${BASE_URL}api_tarifas.php`;
-      
-      const method = tarifaEditando ? 'PUT' : 'POST';
+
+      const method = tarifaEditando ? "PUT" : "POST";
       const data = tarifaEditando
         ? { ...nuevaTarifa, id: tarifaEditando.id }
         : nuevaTarifa;
@@ -214,75 +232,88 @@ function GestionTarifasPage() {
       const response = await fetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        credentials: 'include',
+        credentials: "include",
         body: JSON.stringify(data),
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
         Swal.fire({
-          title: '¡Éxito!',
-          text: tarifaEditando ? 'Tarifa actualizada correctamente' : 'Tarifa creada correctamente',
-          icon: 'success',
-          confirmButtonText: 'OK'
+          title: "¡Éxito!",
+          text: tarifaEditando
+            ? "Tarifa actualizada correctamente"
+            : "Tarifa creada correctamente",
+          icon: "success",
+          confirmButtonText: "OK",
         });
         cerrarModal();
         cargarTarifas();
       } else {
-        Swal.fire('Error', result.error || 'Error al guardar la tarifa', 'error');
+        Swal.fire(
+          "Error",
+          result.error || "Error al guardar la tarifa",
+          "error"
+        );
       }
     } catch (error) {
-      console.error('Error:', error);
-      Swal.fire('Error', 'Error de conexión', 'error');
+      console.error("Error:", error);
+      Swal.fire("Error", "Error de conexión", "error");
     }
   };
 
   const eliminarTarifa = async (id, descripcion) => {
     // No permitir eliminar medicamentos ni exámenes de laboratorio
-    if (typeof id === 'string' && (id.startsWith('med_') || id.startsWith('lab_'))) {
+    if (
+      typeof id === "string" &&
+      (id.startsWith("med_") || id.startsWith("lab_"))
+    ) {
       Swal.fire({
-        title: 'No Eliminable',
-        text: id.startsWith('med_') 
-          ? 'Los medicamentos se eliminan desde el módulo de farmacia.'
-          : 'Los exámenes se eliminan desde el módulo de laboratorio.',
-        icon: 'info',
-        confirmButtonText: 'Entendido'
+        title: "No Eliminable",
+        text: id.startsWith("med_")
+          ? "Los medicamentos se eliminan desde el módulo de farmacia."
+          : "Los exámenes se eliminan desde el módulo de laboratorio.",
+        icon: "info",
+        confirmButtonText: "Entendido",
       });
       return;
     }
-    
+
     const result = await Swal.fire({
-      title: '¿Estás seguro?',
+      title: "¿Estás seguro?",
       text: `¿Deseas eliminar la tarifa "${descripcion}"?`,
-      icon: 'warning',
+      icon: "warning",
       showCancelButton: true,
-      confirmButtonText: 'Sí, eliminar',
-      cancelButtonText: 'Cancelar',
-      confirmButtonColor: '#d33'
+      confirmButtonText: "Sí, eliminar",
+      cancelButtonText: "Cancelar",
+      confirmButtonColor: "#d33",
     });
 
     if (result.isConfirmed) {
       try {
         const response = await fetch(`${BASE_URL}api_tarifas.php`, {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ id })
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ id }),
         });
 
         const data = await response.json();
         if (data.success) {
-          Swal.fire('¡Eliminado!', 'La tarifa ha sido eliminada', 'success');
+          Swal.fire("¡Eliminado!", "La tarifa ha sido eliminada", "success");
           cargarTarifas();
         } else {
-          Swal.fire('Error', data.error || 'Error al eliminar la tarifa', 'error');
+          Swal.fire(
+            "Error",
+            data.error || "Error al eliminar la tarifa",
+            "error"
+          );
         }
       } catch (error) {
-        console.error('Error:', error);
-        Swal.fire('Error', 'Error de conexión', 'error');
+        console.error("Error:", error);
+        Swal.fire("Error", "Error de conexión", "error");
       }
     }
   };
@@ -290,29 +321,36 @@ function GestionTarifasPage() {
   const cambiarEstado = async (id, nuevoEstado) => {
     try {
       const response = await fetch(`${BASE_URL}api_tarifas.php`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ id, activo: nuevoEstado })
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id, activo: nuevoEstado }),
       });
 
       const data = await response.json();
       if (data.success) {
         cargarTarifas();
       } else {
-        Swal.fire('Error', data.error || 'Error al cambiar estado', 'error');
+        Swal.fire("Error", data.error || "Error al cambiar estado", "error");
       }
     } catch (error) {
-      console.error('Error:', error);
-      Swal.fire('Error', 'Error de conexión', 'error');
+      console.error("Error:", error);
+      Swal.fire("Error", "Error de conexión", "error");
     }
   };
 
   // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
   // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
-  const tarifasFiltradas = filtroServicio === 'todos'
-    ? tarifas.filter(t => !['laboratorio', 'farmacia'].includes(t.servicio_tipo))
-    : tarifas.filter(t => t.servicio_tipo === filtroServicio && !['laboratorio', 'farmacia'].includes(t.servicio_tipo));
+  const tarifasFiltradas =
+    filtroServicio === "todos"
+      ? tarifas.filter(
+          (t) => !["laboratorio", "farmacia"].includes(t.servicio_tipo)
+        )
+      : tarifas.filter(
+          (t) =>
+            t.servicio_tipo === filtroServicio &&
+            !["laboratorio", "farmacia"].includes(t.servicio_tipo)
+        );
 
   // Cálculos de paginación
   const totalElementos = tarifasFiltradas.length;
@@ -338,17 +376,29 @@ function GestionTarifasPage() {
 
   // NUEVO: Regenerar descripción cuando se cargan los médicos
   useEffect(() => {
-    if (medicos.length > 0 && nuevaTarifa.medico_id && nuevaTarifa.descripcion_base) {
-      const descripcionGenerada = generarDescripcion(nuevaTarifa.medico_id, nuevaTarifa.descripcion_base);
-      setNuevaTarifa(prev => ({
+    if (
+      medicos.length > 0 &&
+      nuevaTarifa.medico_id &&
+      nuevaTarifa.descripcion_base
+    ) {
+      const descripcionGenerada = generarDescripcion(
+        nuevaTarifa.medico_id,
+        nuevaTarifa.descripcion_base
+      );
+      setNuevaTarifa((prev) => ({
         ...prev,
-        descripcion: descripcionGenerada
+        descripcion: descripcionGenerada,
       }));
     }
-  }, [medicos, nuevaTarifa.medico_id, nuevaTarifa.descripcion_base, generarDescripcion]);
+  }, [
+    medicos,
+    nuevaTarifa.medico_id,
+    nuevaTarifa.descripcion_base,
+    generarDescripcion,
+  ]);
 
   const obtenerLabelServicio = (tipo) => {
-    const servicio = todosLosServicios.find(t => t.value === tipo);
+    const servicio = todosLosServicios.find((t) => t.value === tipo);
     return servicio ? servicio.label : tipo;
   };
 
@@ -363,7 +413,9 @@ function GestionTarifasPage() {
   return (
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-blue-800">💰 Gestión de Tarifas</h1>
+        <h1 className="text-3xl font-bold text-blue-800">
+          💰 Gestión de Tarifas
+        </h1>
         <button
           onClick={() => abrirModal()}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
@@ -371,23 +423,28 @@ function GestionTarifasPage() {
           ➕ Nueva Tarifa
         </button>
       </div>
-      
+
       {/* Filtros */}
       <div className="bg-white p-4 rounded-lg shadow mb-6">
         <div className="flex items-center gap-4">
-          <label className="font-medium text-gray-700">Filtrar por servicio:</label>
+          <label className="font-medium text-gray-700">
+            Filtrar por servicio:
+          </label>
           <select
             value={filtroServicio}
             onChange={(e) => setFiltroServicio(e.target.value)}
             className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="todos">Todos los servicios</option>
-            {todosLosServicios.map(tipo => (
-              <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
+            {todosLosServicios.map((tipo) => (
+              <option key={tipo.value} value={tipo.value}>
+                {tipo.label}
+              </option>
             ))}
           </select>
           <span className="text-gray-600">
-            ({totalElementos} tarifa{totalElementos !== 1 ? 's' : ''} - Página {paginaActual} de {totalPaginas})
+            ({totalElementos} tarifa{totalElementos !== 1 ? "s" : ""} - Página{" "}
+            {paginaActual} de {totalPaginas})
           </span>
         </div>
       </div>
@@ -396,10 +453,14 @@ function GestionTarifasPage() {
       <div className="bg-white p-4 rounded-lg shadow mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
           <div className="flex items-center gap-4">
-            <label className="font-medium text-gray-700 text-sm sm:text-base">Elementos por página:</label>
+            <label className="font-medium text-gray-700 text-sm sm:text-base">
+              Elementos por página:
+            </label>
             <select
               value={elementosPorPagina}
-              onChange={(e) => cambiarElementosPorPagina(parseInt(e.target.value))}
+              onChange={(e) =>
+                cambiarElementosPorPagina(parseInt(e.target.value))
+              }
               className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value={5}>5</option>
@@ -407,7 +468,7 @@ function GestionTarifasPage() {
               <option value={25}>25</option>
             </select>
           </div>
-          
+
           {totalPaginas > 1 && (
             <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
               <button
@@ -426,7 +487,7 @@ function GestionTarifasPage() {
                 <span className="hidden sm:inline">Anterior</span>
                 <span className="sm:hidden">❮</span>
               </button>
-              
+
               {/* Números de página */}
               <div className="hidden sm:flex items-center gap-2">
                 {Array.from({ length: Math.min(5, totalPaginas) }, (_, i) => {
@@ -435,18 +496,21 @@ function GestionTarifasPage() {
                     pageNumber = i + 1;
                   } else {
                     // Lógica para mostrar 5 páginas centradas en la actual
-                    const start = Math.max(1, Math.min(paginaActual - 2, totalPaginas - 4));
+                    const start = Math.max(
+                      1,
+                      Math.min(paginaActual - 2, totalPaginas - 4)
+                    );
                     pageNumber = start + i;
                   }
-                  
+
                   return (
                     <button
                       key={pageNumber}
                       onClick={() => cambiarPagina(pageNumber)}
                       className={`px-3 py-1 text-sm border rounded ${
                         paginaActual === pageNumber
-                          ? 'bg-blue-500 text-white'
-                          : 'hover:bg-gray-100'
+                          ? "bg-blue-500 text-white"
+                          : "hover:bg-gray-100"
                       }`}
                     >
                       {pageNumber}
@@ -454,7 +518,7 @@ function GestionTarifasPage() {
                   );
                 })}
               </div>
-              
+
               {/* Números de página para móvil (solo 3) */}
               <div className="flex sm:hidden items-center gap-1">
                 {Array.from({ length: Math.min(3, totalPaginas) }, (_, i) => {
@@ -463,18 +527,21 @@ function GestionTarifasPage() {
                     pageNumber = i + 1;
                   } else {
                     // Lógica para mostrar 3 páginas centradas en la actual
-                    const start = Math.max(1, Math.min(paginaActual - 1, totalPaginas - 2));
+                    const start = Math.max(
+                      1,
+                      Math.min(paginaActual - 1, totalPaginas - 2)
+                    );
                     pageNumber = start + i;
                   }
-                  
+
                   return (
                     <button
                       key={`mobile-${pageNumber}`}
                       onClick={() => cambiarPagina(pageNumber)}
                       className={`px-2 py-1 text-xs border rounded ${
                         paginaActual === pageNumber
-                          ? 'bg-blue-500 text-white'
-                          : 'hover:bg-gray-100'
+                          ? "bg-blue-500 text-white"
+                          : "hover:bg-gray-100"
                       }`}
                     >
                       {pageNumber}
@@ -482,7 +549,7 @@ function GestionTarifasPage() {
                   );
                 })}
               </div>
-              
+
               <button
                 onClick={() => cambiarPagina(paginaActual + 1)}
                 disabled={paginaActual === totalPaginas}
@@ -537,14 +604,19 @@ function GestionTarifasPage() {
               {tarifasPaginadas.map((tarifa) => (
                 <tr
                   key={tarifa.id}
-                  className={`hover:bg-gray-50 transition-all ${tarifa.activo !== 1 ? 'opacity-60 bg-yellow-50' : ''}`}
+                  className={`hover:bg-gray-50 transition-all ${
+                    tarifa.activo !== 1 ? "opacity-60 bg-yellow-50" : ""
+                  }`}
                 >
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col sm:flex-row sm:items-center">
                       <div className="flex items-center mb-1 sm:mb-0">
                         <span className="text-lg mr-2">
-                          {tarifa.fuente === 'medicamentos' ? '💊' : 
-                           tarifa.fuente === 'examenes_laboratorio' ? '🔬' : '🏥'}
+                          {tarifa.fuente === "medicamentos"
+                            ? "💊"
+                            : tarifa.fuente === "examenes_laboratorio"
+                            ? "🔬"
+                            : "🏥"}
                         </span>
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {obtenerLabelServicio(tarifa.servicio_tipo)}
@@ -552,13 +624,18 @@ function GestionTarifasPage() {
                         {/* Ícono/aviso si está inactiva */}
                         {tarifa.activo !== 1 && (
                           <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-200 text-yellow-900 flex items-center gap-1">
-                            <span role="img" aria-label="inactivo">⚠️</span> Inactiva
+                            <span role="img" aria-label="inactivo">
+                              ⚠️
+                            </span>{" "}
+                            Inactiva
                           </span>
                         )}
                       </div>
-                      {tarifa.fuente && tarifa.fuente !== 'tarifas' && (
+                      {tarifa.fuente && tarifa.fuente !== "tarifas" && (
                         <span className="ml-0 sm:ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
-                          {tarifa.fuente === 'medicamentos' ? 'Desde Farmacia' : 'Desde Laboratorio'}
+                          {tarifa.fuente === "medicamentos"
+                            ? "Desde Farmacia"
+                            : "Desde Laboratorio"}
                         </span>
                       )}
                       {/* Mostrar descripción en móvil */}
@@ -568,36 +645,52 @@ function GestionTarifasPage() {
                     </div>
                   </td>
                   <td className="hidden sm:table-cell px-6 py-4">
-                    <div className="text-sm font-medium text-gray-900">{tarifa.descripcion}</div>
+                    <div className="text-sm font-medium text-gray-900">
+                      {tarifa.descripcion}
+                    </div>
                   </td>
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    <div className="font-medium">S/ {parseFloat(tarifa.precio_particular).toFixed(2)}</div>
+                    <div className="font-medium">
+                      S/ {parseFloat(tarifa.precio_particular).toFixed(2)}
+                    </div>
                     {/* Mostrar otros precios en móvil cuando existen */}
                     <div className="block lg:hidden text-xs text-gray-500 mt-1">
                       {tarifa.precio_seguro && (
-                        <div>Seguro: S/ {parseFloat(tarifa.precio_seguro).toFixed(2)}</div>
+                        <div>
+                          Seguro: S/{" "}
+                          {parseFloat(tarifa.precio_seguro).toFixed(2)}
+                        </div>
                       )}
                       {tarifa.precio_convenio && (
-                        <div>Convenio: S/ {parseFloat(tarifa.precio_convenio).toFixed(2)}</div>
+                        <div>
+                          Convenio: S/{" "}
+                          {parseFloat(tarifa.precio_convenio).toFixed(2)}
+                        </div>
                       )}
                     </div>
                   </td>
                   <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {tarifa.precio_seguro ? `S/ ${parseFloat(tarifa.precio_seguro).toFixed(2)}` : '-'}
+                    {tarifa.precio_seguro
+                      ? `S/ ${parseFloat(tarifa.precio_seguro).toFixed(2)}`
+                      : "-"}
                   </td>
                   <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {tarifa.precio_convenio ? `S/ ${parseFloat(tarifa.precio_convenio).toFixed(2)}` : '-'}
+                    {tarifa.precio_convenio
+                      ? `S/ ${parseFloat(tarifa.precio_convenio).toFixed(2)}`
+                      : "-"}
                   </td>
                   <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap">
                     <button
-                      onClick={() => cambiarEstado(tarifa.id, tarifa.activo === 1 ? 0 : 1)}
+                      onClick={() =>
+                        cambiarEstado(tarifa.id, tarifa.activo === 1 ? 0 : 1)
+                      }
                       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        tarifa.activo === 1 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
+                        tarifa.activo === 1
+                          ? "bg-green-100 text-green-800"
+                          : "bg-red-100 text-red-800"
                       }`}
                     >
-                      {tarifa.activo === 1 ? '✓ Activo' : '✗ Inactivo'}
+                      {tarifa.activo === 1 ? "✓ Activo" : "✗ Inactivo"}
                     </button>
                   </td>
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -605,30 +698,43 @@ function GestionTarifasPage() {
                       {/* Mostrar estado en móvil */}
                       <div className="block md:hidden mb-2">
                         <button
-                          onClick={() => cambiarEstado(tarifa.id, tarifa.activo === 1 ? 0 : 1)}
+                          onClick={() =>
+                            cambiarEstado(
+                              tarifa.id,
+                              tarifa.activo === 1 ? 0 : 1
+                            )
+                          }
                           className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                            tarifa.activo === 1 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-red-100 text-red-800'
+                            tarifa.activo === 1
+                              ? "bg-green-100 text-green-800"
+                              : "bg-red-100 text-red-800"
                           }`}
                         >
-                          {tarifa.activo === 1 ? '✓ Activo' : '✗ Inactivo'}
+                          {tarifa.activo === 1 ? "✓ Activo" : "✗ Inactivo"}
                         </button>
                       </div>
-                      
-                      {tarifa.fuente === 'medicamentos' ? (
+
+                      {tarifa.fuente === "medicamentos" ? (
                         <button
-                          onClick={() => window.open('/farmacia-medicamentos', '_blank')}
+                          onClick={() =>
+                            window.open("/farmacia-medicamentos", "_blank")
+                          }
                           className="text-blue-600 hover:text-blue-900 px-2 sm:px-3 py-1 bg-blue-100 rounded text-xs sm:text-sm"
                         >
-                          🏥 <span className="hidden sm:inline">Gestionar en</span> Farmacia
+                          🏥{" "}
+                          <span className="hidden sm:inline">Gestionar en</span>{" "}
+                          Farmacia
                         </button>
-                      ) : tarifa.fuente === 'examenes_laboratorio' ? (
+                      ) : tarifa.fuente === "examenes_laboratorio" ? (
                         <button
-                          onClick={() => window.open('/laboratorio-examenes', '_blank')}
+                          onClick={() =>
+                            window.open("/laboratorio-examenes", "_blank")
+                          }
                           className="text-green-600 hover:text-green-900 px-2 sm:px-3 py-1 bg-green-100 rounded text-xs sm:text-sm"
                         >
-                          🧪 <span className="hidden sm:inline">Gestionar en</span> Lab
+                          🧪{" "}
+                          <span className="hidden sm:inline">Gestionar en</span>{" "}
+                          Lab
                         </button>
                       ) : (
                         <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2">
@@ -639,7 +745,9 @@ function GestionTarifasPage() {
                             ✏️ Editar
                           </button>
                           <button
-                            onClick={() => eliminarTarifa(tarifa.id, tarifa.descripcion)}
+                            onClick={() =>
+                              eliminarTarifa(tarifa.id, tarifa.descripcion)
+                            }
                             className="text-red-600 hover:text-red-900 px-2 py-1 bg-red-100 rounded text-xs sm:text-sm"
                           >
                             🗑️ Eliminar
@@ -664,9 +772,12 @@ function GestionTarifasPage() {
       {/* Modal para crear/editar tarifas */}
       {mostrarModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white rounded-lg p-4 sm:p-6 w-full max-w-md mx-2 sm:mx-4 overflow-y-auto" style={{maxHeight: '95vh'}}>
+          <div
+            className="bg-white rounded-lg p-4 sm:p-6 w-full max-w-md mx-2 sm:mx-4 overflow-y-auto"
+            style={{ maxHeight: "95vh" }}
+          >
             <h2 className="text-xl font-bold mb-4">
-              {tarifaEditando ? 'Editar Tarifa' : 'Nueva Tarifa'}
+              {tarifaEditando ? "Editar Tarifa" : "Nueva Tarifa"}
             </h2>
 
             <div className="space-y-4">
@@ -676,11 +787,18 @@ function GestionTarifasPage() {
                 </label>
                 <select
                   value={nuevaTarifa.servicio_tipo}
-                  onChange={(e) => setNuevaTarifa({...nuevaTarifa, servicio_tipo: e.target.value})}
+                  onChange={(e) =>
+                    setNuevaTarifa({
+                      ...nuevaTarifa,
+                      servicio_tipo: e.target.value,
+                    })
+                  }
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {serviciosMedicos.map(tipo => (
-                    <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
+                  {serviciosMedicos.map((tipo) => (
+                    <option key={tipo.value} value={tipo.value}>
+                      {tipo.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -688,26 +806,35 @@ function GestionTarifasPage() {
               {/* NUEVO: Selector de Médico */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Médico * {medicos.length === 0 && <span className="text-gray-400">(Cargando...)</span>}
+                  Médico *{" "}
+                  {medicos.length === 0 && (
+                    <span className="text-gray-400">(Cargando...)</span>
+                  )}
                 </label>
                 <select
                   value={nuevaTarifa.medico_id}
                   onChange={(e) => {
                     const medicoId = e.target.value;
-                    const descripcionGenerada = generarDescripcion(medicoId, nuevaTarifa.descripcion_base);
+                    const descripcionGenerada = generarDescripcion(
+                      medicoId,
+                      nuevaTarifa.descripcion_base
+                    );
                     setNuevaTarifa({
-                      ...nuevaTarifa, 
+                      ...nuevaTarifa,
                       medico_id: medicoId,
-                      descripcion: descripcionGenerada
+                      descripcion: descripcionGenerada,
                     });
                   }}
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   disabled={medicos.length === 0}
                 >
-                  <option value="general">Tarifa General (Todos los médicos)</option>
-                  {medicos.map(medico => (
+                  <option value="general">
+                    Tarifa General (Todos los médicos)
+                  </option>
+                  {medicos.map((medico) => (
                     <option key={medico.id} value={medico.id}>
-                      Dr(a). {medico.nombre} {medico.apellido || ''} - {medico.especialidad || 'General'}
+                      Dr(a). {medico.nombre} {medico.apellido || ""} -{" "}
+                      {medico.especialidad || "General"}
                     </option>
                   ))}
                 </select>
@@ -727,11 +854,14 @@ function GestionTarifasPage() {
                   value={nuevaTarifa.descripcion_base}
                   onChange={(e) => {
                     const descripcionBase = e.target.value;
-                    const descripcionGenerada = generarDescripcion(nuevaTarifa.medico_id, descripcionBase);
+                    const descripcionGenerada = generarDescripcion(
+                      nuevaTarifa.medico_id,
+                      descripcionBase
+                    );
                     setNuevaTarifa({
-                      ...nuevaTarifa, 
+                      ...nuevaTarifa,
                       descripcion_base: descripcionBase,
-                      descripcion: descripcionGenerada
+                      descripcion: descripcionGenerada,
                     });
                   }}
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -761,33 +891,52 @@ function GestionTarifasPage() {
                   step="0.01"
                   min="0"
                   value={nuevaTarifa.precio_particular}
-                  onChange={(e) => setNuevaTarifa({...nuevaTarifa, precio_particular: e.target.value})}
+                  onChange={(e) =>
+                    setNuevaTarifa({
+                      ...nuevaTarifa,
+                      precio_particular: e.target.value,
+                    })
+                  }
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">% para Médico</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    % para Médico
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     min="0"
                     max="100"
                     value={nuevaTarifa.porcentaje_medico}
-                    onChange={e => setNuevaTarifa({...nuevaTarifa, porcentaje_medico: e.target.value})}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        porcentaje_medico: e.target.value,
+                      })
+                    }
                     className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Ej: 50"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">% para Clínica</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    % para Clínica
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     min="0"
                     max="100"
                     value={nuevaTarifa.porcentaje_clinica}
-                    onChange={e => setNuevaTarifa({...nuevaTarifa, porcentaje_clinica: e.target.value})}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        porcentaje_clinica: e.target.value,
+                      })
+                    }
                     className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Ej: 50"
                   />
@@ -795,25 +944,39 @@ function GestionTarifasPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Monto fijo para Médico (S/)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Monto fijo para Médico (S/)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     min="0"
                     value={nuevaTarifa.monto_medico}
-                    onChange={e => setNuevaTarifa({...nuevaTarifa, monto_medico: e.target.value})}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        monto_medico: e.target.value,
+                      })
+                    }
                     className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Ej: 50"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Monto fijo para Clínica (S/)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Monto fijo para Clínica (S/)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     min="0"
                     value={nuevaTarifa.monto_clinica}
-                    onChange={e => setNuevaTarifa({...nuevaTarifa, monto_clinica: e.target.value})}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        monto_clinica: e.target.value,
+                      })
+                    }
                     className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Ej: 30"
                   />
@@ -829,7 +992,12 @@ function GestionTarifasPage() {
                   step="0.01"
                   min="0"
                   value={nuevaTarifa.precio_seguro}
-                  onChange={(e) => setNuevaTarifa({...nuevaTarifa, precio_seguro: e.target.value})}
+                  onChange={(e) =>
+                    setNuevaTarifa({
+                      ...nuevaTarifa,
+                      precio_seguro: e.target.value,
+                    })
+                  }
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -843,7 +1011,12 @@ function GestionTarifasPage() {
                   step="0.01"
                   min="0"
                   value={nuevaTarifa.precio_convenio}
-                  onChange={(e) => setNuevaTarifa({...nuevaTarifa, precio_convenio: e.target.value})}
+                  onChange={(e) =>
+                    setNuevaTarifa({
+                      ...nuevaTarifa,
+                      precio_convenio: e.target.value,
+                    })
+                  }
                   className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -853,7 +1026,12 @@ function GestionTarifasPage() {
                   <input
                     type="checkbox"
                     checked={nuevaTarifa.activo === 1}
-                    onChange={(e) => setNuevaTarifa({...nuevaTarifa, activo: e.target.checked ? 1 : 0})}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        activo: e.target.checked ? 1 : 0,
+                      })
+                    }
                     className="mr-2"
                   />
                   <span className="text-sm text-gray-700">Activo</span>
@@ -872,7 +1050,7 @@ function GestionTarifasPage() {
                 onClick={guardarTarifa}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >
-                {tarifaEditando ? 'Actualizar' : 'Crear'}
+                {tarifaEditando ? "Actualizar" : "Crear"}
               </button>
             </div>
           </div>

@@ -164,18 +164,26 @@ try {
             $porcentaje_aplicado_clinica = null;
             if (!empty($tarifa['monto_medico'])) {
                 $monto_medico = floatval($tarifa['monto_medico']);
-                $porcentaje_aplicado_medico = null;
+                $porcentaje_aplicado_medico = 0;
             } elseif (!empty($tarifa['porcentaje_medico'])) {
                 $monto_medico = round($tarifa_total * floatval($tarifa['porcentaje_medico']) / 100, 2);
                 $porcentaje_aplicado_medico = floatval($tarifa['porcentaje_medico']);
+            } else {
+                $porcentaje_aplicado_medico = 0;
             }
             if (!empty($tarifa['monto_clinica'])) {
                 $monto_clinica = floatval($tarifa['monto_clinica']);
-                $porcentaje_aplicado_clinica = null;
+                $porcentaje_aplicado_clinica = 0;
             } elseif (!empty($tarifa['porcentaje_clinica'])) {
                 $monto_clinica = round($tarifa_total * floatval($tarifa['porcentaje_clinica']) / 100, 2);
                 $porcentaje_aplicado_clinica = floatval($tarifa['porcentaje_clinica']);
+            } else {
+                $porcentaje_aplicado_clinica = 0;
             }
+
+            // Usar consulta_id y paciente_id si están presentes en el input
+            $consulta_id = isset($input['consulta_id']) ? $input['consulta_id'] : null;
+            $paciente_id = isset($input['paciente_id']) ? $input['paciente_id'] : null;
 
             // Insertar movimiento de honorario
             $sqlHonorario = "INSERT INTO honorarios_medicos_movimientos (
@@ -184,9 +192,9 @@ try {
             ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, NOW())";
             $stmtHonorario = $pdo->prepare($sqlHonorario);
             $stmtHonorario->execute([
-                null, // consulta_id (si aplica)
+                $consulta_id,
                 $tarifa['medico_id'] ?? null,
-                null, // paciente_id (si aplica)
+                $paciente_id,
                 $tarifa['id'],
                 $tipo_precio,
                 $input['tipo_ingreso'],

@@ -117,10 +117,12 @@ export default function NuevoIngresoPage() {
       return;
     }
 
-    // Determinar el área
+    // Determinar el área y descripción exacta
     let area = '';
+    let descripcion = formData.descripcion.trim();
     if (formData.categoria_id && servicioSeleccionado) {
       area = servicioSeleccionado.descripcion;
+      descripcion = servicioSeleccionado.descripcion; // Usar descripción exacta de la tarifa
     } else if (formData.area_personalizada.trim()) {
       area = formData.area_personalizada.trim();
     } else {
@@ -130,20 +132,31 @@ export default function NuevoIngresoPage() {
     try {
       setGuardando(true);
 
+      const payload = {
+        tipo_ingreso: formData.tipo_ingreso,
+        area: area,
+        descripcion: descripcion,
+        monto: parseFloat(formData.monto),
+        metodo_pago: formData.metodo_pago,
+        referencia: formData.referencia.trim(),
+        paciente_nombre: formData.paciente_nombre.trim(),
+        observaciones: formData.observaciones.trim()
+      };
+      // Agregar consulta_id, medico_id y paciente_id si existen en formData
+      if (formData.consulta_id) {
+        payload.consulta_id = formData.consulta_id;
+      }
+      if (formData.medico_id) {
+        payload.medico_id = formData.medico_id;
+      }
+      if (formData.paciente_id) {
+        payload.paciente_id = formData.paciente_id;
+      }
       const response = await fetch(`${BASE_URL}api_registrar_ingreso.php`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          tipo_ingreso: formData.tipo_ingreso,
-          area: area,
-          descripcion: formData.descripcion.trim(),
-          monto: parseFloat(formData.monto),
-          metodo_pago: formData.metodo_pago,
-          referencia: formData.referencia.trim(),
-          paciente_nombre: formData.paciente_nombre.trim(),
-          observaciones: formData.observaciones.trim()
-        })
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();

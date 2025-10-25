@@ -271,6 +271,77 @@ switch($method) {
             }
             
             // 4. Registrar atención si el paciente está registrado
+            // 5. Registrar movimiento de honorarios médicos si es consulta
+            if ($servicio_key === 'consulta' && isset($data['detalles'][0])) {
+                // Buscar tarifa asociada
+                $detalleConsulta = $data['detalles'][0];
+                $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = 'consulta' LIMIT 1");
+                $stmt_tarifa->bind_param("s", $detalleConsulta['descripcion']);
+                $stmt_tarifa->execute();
+                $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                if ($tarifa) {
+                    // Determinar tipo de precio
+                    $tipo_precio = 'particular';
+                    if ($metodo_pago === 'seguro') {
+                        $tipo_precio = 'seguro';
+                    } elseif ($metodo_pago === 'convenio') {
+                        $tipo_precio = 'convenio';
+                    }
+                    $tarifa_total = floatval($tarifa['precio_' . $tipo_precio]);
+
+                    // Calcular honorarios
+                    $monto_medico = null;
+                    $monto_clinica = null;
+                    $porcentaje_aplicado_medico = null;
+                    $porcentaje_aplicado_clinica = null;
+                    if (!empty($tarifa['monto_medico'])) {
+                        $monto_medico = floatval($tarifa['monto_medico']);
+                        $porcentaje_aplicado_medico = 0;
+                    } elseif (!empty($tarifa['porcentaje_medico'])) {
+                        $monto_medico = round($tarifa_total * floatval($tarifa['porcentaje_medico']) / 100, 2);
+                        $porcentaje_aplicado_medico = floatval($tarifa['porcentaje_medico']);
+                    } else {
+                        $porcentaje_aplicado_medico = 0;
+                    }
+                    if (!empty($tarifa['monto_clinica'])) {
+                        $monto_clinica = floatval($tarifa['monto_clinica']);
+                        $porcentaje_aplicado_clinica = 0;
+                    } elseif (!empty($tarifa['porcentaje_clinica'])) {
+                        $monto_clinica = round($tarifa_total * floatval($tarifa['porcentaje_clinica']) / 100, 2);
+                        $porcentaje_aplicado_clinica = floatval($tarifa['porcentaje_clinica']);
+                    } else {
+                        $porcentaje_aplicado_clinica = 0;
+                    }
+
+                    // Usar consulta_id y paciente_id si están presentes en el detalle
+                    $consulta_id = isset($detalleConsulta['consulta_id']) ? $detalleConsulta['consulta_id'] : null;
+                    $paciente_id = isset($detalleConsulta['paciente_id']) ? $detalleConsulta['paciente_id'] : null;
+                    $medico_id = isset($detalleConsulta['medico_id']) ? $detalleConsulta['medico_id'] : ($tarifa['medico_id'] ?? null);
+
+                    // Insertar movimiento de honorario
+                    $stmt_honorario = $conn->prepare("INSERT INTO honorarios_medicos_movimientos (
+                        consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, especialidad, tarifa_total,
+                        monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, created_at
+                    ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, NOW())");
+                    $stmt_honorario->bind_param(
+                        "iiiisssddddds",
+                        $consulta_id,
+                        $medico_id,
+                        $paciente_id,
+                        $tarifa['id'],
+                        $tipo_precio,
+                        $servicio_key,
+                        $tarifa['descripcion'],
+                        $tarifa_total,
+                        $monto_clinica,
+                        $monto_medico,
+                        $porcentaje_aplicado_clinica,
+                        $porcentaje_aplicado_medico,
+                        $metodo_pago
+                    );
+                    $stmt_honorario->execute();
+                }
+            }
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
                 $stmt_atencion = $conn->prepare("INSERT INTO atenciones (paciente_id, usuario_id, servicio, estado) VALUES (?, ?, ?, 'pendiente')");
                 $stmt_atencion->bind_param("iis", 

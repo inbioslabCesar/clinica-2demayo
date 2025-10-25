@@ -14,6 +14,7 @@ import Swal from 'sweetalert2';
 import Spinner from "../components/Spinner";
 
 export default function CierreCajaPage() {
+  const [honorariosPagados, setHonorariosPagados] = useState(0);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [procesando, setProcesando] = useState(false);
@@ -60,9 +61,15 @@ export default function CierreCajaPage() {
         credentials: 'include' 
       });
       const resumenData = await resumenResp.json();
-
       if (resumenData.success) {
         setResumenIngresos(resumenData.resumen);
+      }
+
+      // Cargar honorarios médicos pagados
+      const honorariosResp = await fetch(`${BASE_URL}api_honorarios_pagados_caja.php?caja_id=${cajaData.caja.id}`, { credentials: 'include' });
+      const honorariosData = await honorariosResp.json();
+      if (honorariosData.success) {
+        setHonorariosPagados(honorariosData.total_honorarios);
       }
 
       // Cargar detalles de ingresos diarios
@@ -70,7 +77,6 @@ export default function CierreCajaPage() {
         credentials: 'include' 
       });
       const ingresosData = await ingresosResp.json();
-
       if (ingresosData.success) {
         setIngresosDiarios(ingresosData.ingresos || []);
       }
@@ -99,11 +105,12 @@ export default function CierreCajaPage() {
     if (!resumenIngresos) return {};
 
     const diferencias = {};
-    const efectivoSistema = parseFloat(resumenIngresos.total_efectivo || 0);
+    // Descontar honorarios pagados del efectivo del sistema
+    const efectivoSistema = Math.max(0, parseFloat(resumenIngresos.total_efectivo || 0) - honorariosPagados);
     const tarjetasSistema = parseFloat(resumenIngresos.total_tarjetas || 0);
     const transferenciasSistema = parseFloat(resumenIngresos.total_transferencias || 0);
     const otrosSistema = parseFloat(resumenIngresos.total_otros || 0);
-    
+
     diferencias.efectivo = parseFloat(montosCierre.efectivo_contado || 0) - efectivoSistema;
     diferencias.tarjetas = parseFloat(montosCierre.tarjetas_contado || 0) - tarjetasSistema;
     diferencias.transferencias = parseFloat(montosCierre.transferencias_contado || 0) - transferenciasSistema;
@@ -270,7 +277,7 @@ export default function CierreCajaPage() {
                   <span className="font-semibold">Efectivo</span>
                 </div>
                 <span className="font-bold text-green-700">
-                  S/ {parseFloat(resumenIngresos.total_efectivo || 0).toFixed(2)}
+                  S/ {Math.max(0, parseFloat(resumenIngresos.total_efectivo || 0) - honorariosPagados).toFixed(2)}
                 </span>
               </div>
 
@@ -304,11 +311,22 @@ export default function CierreCajaPage() {
                 </span>
               </div>
 
+              <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-red-700">Honorarios Médicos Pagados</span>
+                </div>
+                <span className="font-bold text-red-700">
+                  - S/ {honorariosPagados.toFixed(2)}
+                </span>
+              </div>
+
               <div className="border-t pt-4">
                 <div className="flex justify-between items-center text-lg font-bold">
                   <span>Total del Sistema:</span>
                   <span className="text-blue-600">
-                    S/ {parseFloat(resumenIngresos.total_dia || 0).toFixed(2)}
+                    S/ {(
+                      Math.max(0, parseFloat(resumenIngresos.total_dia || 0) - honorariosPagados)
+                    ).toFixed(2)}
                   </span>
                 </div>
               </div>
