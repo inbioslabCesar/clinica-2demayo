@@ -36,7 +36,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
     // Ensure shape for each item
     return items.map((it, i) => ({
       tipo: it.tipo || 'Parámetro',
-      nombre: it.nombre || (it.titulo || '') || `Item ${i + 1}`,
+      nombre: typeof it.nombre === 'string' ? it.nombre : (it.titulo || ''),
       metodologia: it.metodologia || '',
       unidad: it.unidad || '',
       opciones: Array.isArray(it.opciones) ? it.opciones : [],
@@ -60,7 +60,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
   const addItem = tipo => {
     setItems([
       ...items,
-      { ...defaultItem, tipo, nombre: tipo === "Parámetro" ? "Nuevo parámetro" : "Nuevo subtítulo", orden: items.length + 1 }
+      { ...defaultItem, tipo, nombre: "", orden: items.length + 1 }
     ]);
   };
 

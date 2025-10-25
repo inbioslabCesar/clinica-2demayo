@@ -46,6 +46,14 @@ export default function SidebarAdmin({ onClose }) {
         <span>Gestión de Tarifas</span>
       </Link>
       <Link
+        to="/contabilidad"
+        className="py-3 px-4 rounded-lg text-violet-700 hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="BarChart4" className="text-xl text-violet-600" />
+        <span>Reportes</span>
+      </Link>
+      <Link
         to="/configuracion"
         className="py-3 px-4 rounded-lg text-gray-700 hover:bg-gradient-to-r hover:from-gray-50 hover:to-slate-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
         onClick={onClose}
