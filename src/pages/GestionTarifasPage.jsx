@@ -773,7 +773,7 @@ function GestionTarifasPage() {
       {mostrarModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
           <div
-            className="bg-white rounded-lg p-4 sm:p-6 w-full max-w-md mx-2 sm:mx-4 overflow-y-auto"
+            className="bg-white rounded-lg p-4 sm:p-10 w-full max-w-3xl mx-2 sm:mx-4 overflow-y-auto"
             style={{ maxHeight: "95vh" }}
           >
             <h2 className="text-xl font-bold mb-4">
@@ -983,42 +983,43 @@ function GestionTarifasPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Precio Seguro (S/) - Opcional
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={nuevaTarifa.precio_seguro}
-                  onChange={(e) =>
-                    setNuevaTarifa({
-                      ...nuevaTarifa,
-                      precio_seguro: e.target.value,
-                    })
-                  }
-                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Precio Convenio (S/) - Opcional
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={nuevaTarifa.precio_convenio}
-                  onChange={(e) =>
-                    setNuevaTarifa({
-                      ...nuevaTarifa,
-                      precio_convenio: e.target.value,
-                    })
-                  }
-                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Precio Seguro (S/) - Opcional
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={nuevaTarifa.precio_seguro}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        precio_seguro: e.target.value,
+                      })
+                    }
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Precio Convenio (S/) - Opcional
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={nuevaTarifa.precio_convenio}
+                    onChange={(e) =>
+                      setNuevaTarifa({
+                        ...nuevaTarifa,
+                        precio_convenio: e.target.value,
+                      })
+                    }
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div>

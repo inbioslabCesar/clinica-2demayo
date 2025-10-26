@@ -237,120 +237,120 @@ export default function DashboardCajaAbierta({
         </div>
       </div>
 
-      {/* Ingresos por Área */}
-      {ingresosPorArea.length > 0 && (
+      {/* Secciones en dos columnas */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Ingresos por Área */}
+        {ingresosPorArea.length > 0 && (
+          <div className="bg-white rounded-xl shadow-lg p-6 h-96 dashboard-scroll-section">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <FaChartLine className="text-blue-600" />
+                Ingresos por Área del Día
+              </h3>
+              <span className="text-sm text-gray-500">
+                {ingresosPorArea.length} áreas activas
+              </span>
+            </div>
+            <div className="overflow-y-auto h-72 pr-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {ingresosPorArea.map((area, index) => (
+                  <div
+                    key={index}
+                    className="bg-gray-50 rounded-lg p-4 border hover:shadow-md transition-all"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${obtenerColorTipo(
+                          area.tipo_ingreso
+                        )}`}
+                      >
+                        {area.tipo_ingreso.toUpperCase()}
+                      </span>
+                      <span className="text-lg font-bold text-gray-800">
+                        {formatearMonto(area.total_monto)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-1">{area.area}</p>
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <FaUsers />
+                        {area.cantidad_transacciones} trans.
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Últimas Transacciones */}
         <div className="bg-white rounded-xl shadow-lg p-6 h-96 dashboard-scroll-section">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <FaChartLine className="text-blue-600" />
-              Ingresos por Área del Día
+              <FaHistory className="text-purple-600" />
+              Últimas Transacciones
             </h3>
-            <span className="text-sm text-gray-500">
-              {ingresosPorArea.length} áreas activas
-            </span>
+            <button
+              onClick={() => navigate("/contabilidad/ingresos-detalle")}
+              className="text-purple-600 hover:text-purple-800 font-semibold text-sm"
+            >
+              Ver todas →
+            </button>
           </div>
-
-          <div className="overflow-y-auto h-72 pr-2">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {ingresosPorArea.map((area, index) => (
-                <div
-                  key={index}
-                  className="bg-gray-50 rounded-lg p-4 border hover:shadow-md transition-all"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-semibold ${obtenerColorTipo(
-                        area.tipo_ingreso
-                      )}`}
-                    >
-                      {area.tipo_ingreso.toUpperCase()}
-                    </span>
-                    <span className="text-lg font-bold text-gray-800">
-                      {formatearMonto(area.total_monto)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-600 mb-1">{area.area}</p>
-                  <div className="flex items-center gap-4 text-xs text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <FaUsers />
-                      {area.cantidad_transacciones} trans.
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Últimas Transacciones */}
-      <div className="bg-white rounded-xl shadow-lg p-6 h-96 dashboard-scroll-section">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <FaHistory className="text-purple-600" />
-            Últimas Transacciones
-          </h3>
-          <button
-            onClick={() => navigate("/contabilidad/ingresos-detalle")}
-            className="text-purple-600 hover:text-purple-800 font-semibold text-sm"
-          >
-            Ver todas →
-          </button>
-        </div>
-
-        {ultimasTransacciones.length > 0 ? (
-          <div className="overflow-y-auto h-72 pr-2">
-            <div className="space-y-3">
-              {ultimasTransacciones.map((transaccion, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-all"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">
-                      {obtenerIconoMetodoPago(transaccion.metodo_pago)}
-                    </span>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-semibold ${obtenerColorTipo(
-                            transaccion.tipo_ingreso
-                          )}`}
-                        >
-                          {transaccion.tipo_ingreso}
-                        </span>
-                        <span className="text-sm text-gray-600">
-                          {transaccion.area}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-800 mt-1">
-                        {transaccion.descripcion}
-                      </p>
-                      {transaccion.paciente_nombre && (
-                        <p className="text-xs text-gray-500">
-                          Paciente: {transaccion.paciente_nombre}
+          {ultimasTransacciones.length > 0 ? (
+            <div className="overflow-y-auto h-72 pr-2">
+              <div className="space-y-3">
+                {ultimasTransacciones.map((transaccion, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-all"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">
+                        {obtenerIconoMetodoPago(transaccion.metodo_pago)}
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${obtenerColorTipo(
+                              transaccion.tipo_ingreso
+                            )}`}
+                          >
+                            {transaccion.tipo_ingreso}
+                          </span>
+                          <span className="text-sm text-gray-600">
+                            {transaccion.area}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-800 mt-1">
+                          {transaccion.descripcion}
                         </p>
-                      )}
+                        {transaccion.paciente_nombre && (
+                          <p className="text-xs text-gray-500">
+                            Paciente: {transaccion.paciente_nombre}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-green-600">
+                        {formatearMonto(transaccion.monto)}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatearTiempo(transaccion.hora)}
+                      </p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold text-green-600">
-                      {formatearMonto(transaccion.monto)}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {formatearTiempo(transaccion.hora)}
-                    </p>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            <FaHistory className="text-4xl mx-auto mb-2 opacity-50" />
-            <p>No hay transacciones registradas hoy</p>
-          </div>
-        )}
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <FaHistory className="text-4xl mx-auto mb-2 opacity-50" />
+              <p>No hay transacciones registradas hoy</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Acciones Rápidas */}

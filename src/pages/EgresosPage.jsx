@@ -54,7 +54,7 @@ export default function EgresosPage() {
     setLoading(false);
   };
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className="w-full max-w-[1600px] mx-auto p-6">
       <h1 className="text-3xl font-bold mb-8 text-red-700">Egresos</h1>
       <div className="bg-white rounded-xl shadow-lg p-6 mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
         <div>
