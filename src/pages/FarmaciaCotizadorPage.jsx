@@ -14,6 +14,11 @@ export default function FarmaciaCotizadorPage() {
       setMensaje("Selecciona al menos un medicamento.");
       return;
     }
+    // Validar paciente seleccionado
+    if (!pacienteDatos || !pacienteDatos.nombre || !pacienteDatos.dni || !pacienteDatos.historia_clinica) {
+      setMensaje("Debes seleccionar o crear un paciente antes de registrar la venta.");
+      return;
+    }
     // Construir detalles para el Módulo de Cobros
     const detalles = seleccionados.map(mid => {
       const med = medicamentos.find(m => m.id === mid);
@@ -171,24 +176,28 @@ export default function FarmaciaCotizadorPage() {
   };
 
   return (
-  <div className="max-w-6xl mx-auto p-6 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
+  <div className="w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-24 2xl:px-40 py-6 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-3xl font-bold text-blue-900 flex items-center gap-2">
           <span role="img" aria-label="medicamentos">💊</span>
           Cotizador de Medicamentos
         </h2>
-        <button
-          className="bg-blue-100 text-blue-800 px-4 py-2 rounded font-semibold border border-blue-300 hover:bg-blue-200 transition"
-          onClick={() => {
-            if (pacienteId) {
-              navigate("/seleccionar-servicio", { state: { pacienteId } });
-            } else {
-              navigate("/seleccionar-servicio");
-            }
-          }}
-        >
-          ← Volver a Servicios
-        </button>
+        {/* Mostrar el botón solo si hay pacienteId en la URL, si no, mostrar botón para ir al panel principal del químico */}
+        {pacienteId ? (
+          <button
+            className="bg-blue-100 text-blue-800 px-4 py-2 rounded font-semibold border border-blue-300 hover:bg-blue-200 transition"
+            onClick={() => navigate("/seleccionar-servicio", { state: { pacienteId } })}
+          >
+            ← Volver a Servicios
+          </button>
+        ) : (
+          <button
+            className="bg-purple-100 text-purple-800 px-4 py-2 rounded font-semibold border border-purple-300 hover:bg-purple-200 transition"
+            onClick={() => navigate("/medicamentos")}
+          >
+            ← Ir a Lista de Medicamentos
+          </button>
+        )}
       </div>
       {/* Buscador de paciente */}
   <div className="mb-4">
@@ -389,7 +398,7 @@ export default function FarmaciaCotizadorPage() {
             )}
           </div>
           {/* Columna derecha: resumen de cotización y módulo de cobros */}
-          <div className="col-span-1 md:sticky md:top-24 md:ml-8 w-full md:w-96">
+          <div className="col-span-1 md:sticky md:top-24 md:ml-8 w-full md:w-[28rem] lg:w-[32rem] xl:w-[36rem]">
             {seleccionados.length > 0 && !mostrarCobro && (
               <div className="mb-6">
                 <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>

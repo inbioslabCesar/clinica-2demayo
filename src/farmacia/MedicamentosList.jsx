@@ -7,8 +7,10 @@ import MedicamentoForm from "./MedicamentoForm";
 import { useEffect, useState } from "react";
 
 import { BASE_URL } from "../config/config";
+import useUsuarioLogueado from "../hooks/useUsuarioLogueado";
 
 export default function MedicamentosList() {
+  const usuarioLogueado = useUsuarioLogueado();
   const [detalleMed, setDetalleMed] = useState(null);
   const [filtroVencDesde, setFiltroVencDesde] = useState("");
   const [filtroVencHasta, setFiltroVencHasta] = useState("");
@@ -124,7 +126,7 @@ export default function MedicamentosList() {
   };
 
   return (
-  <div className="max-w-full mx-auto px-2 sm:px-12 md:px-24 lg:px-40 xl:px-64 py-10">
+  <div className="w-full mx-auto px-0 sm:px-4 md:px-8 lg:px-16 xl:px-32 2xl:px-0 py-10">
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 mb-2">
           💊 
@@ -218,7 +220,7 @@ export default function MedicamentosList() {
       )}
       {!loading && !error && (
         <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 rounded-lg">
-          <table className="min-w-full bg-white border border-gray-200 rounded-lg text-xs sm:text-sm md:text-base">
+          <table className="w-full bg-white border border-gray-200 rounded-lg text-xs sm:text-sm md:text-base">
             <thead>
               <tr className="bg-gradient-to-r from-purple-600 to-blue-600 text-white">
                 <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider">
@@ -596,7 +598,7 @@ export default function MedicamentosList() {
       )}
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg p-0 max-w-lg w-full relative">
+          <div className="bg-white rounded-2xl shadow-2xl p-0 max-w-5xl w-[95vw] flex items-center justify-center">
             <MedicamentoForm
               initialData={editData}
               onSave={handleSave}
@@ -606,14 +608,18 @@ export default function MedicamentosList() {
         </div>
       )}
       {movimientosMed && (
-        <MovimientosModal
-          medicamento={movimientosMed}
-          usuario={null}
-          onClose={() => {
-            setMovimientosMed(null);
-            fetchMedicamentos();
-          }}
-        />
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl p-0 max-w-5xl w-[95vw] flex items-center justify-center">
+            <MovimientosModal
+              medicamento={movimientosMed}
+              usuario={usuarioLogueado}
+              onClose={() => {
+                setMovimientosMed(null);
+                fetchMedicamentos();
+              }}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

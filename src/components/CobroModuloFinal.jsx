@@ -188,7 +188,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
   const totalCobro = calcularTotal();
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-lg border border-blue-200">
+  <div className="bg-white p-8 lg:p-20 rounded-2xl shadow-2xl border border-blue-200 max-w-full w-full mx-auto">
       <h3 className="text-xl font-bold mb-4 text-blue-800">💰 Módulo de Cobros</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Columna izquierda */}
@@ -257,17 +257,17 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
             </select>
           </div>
           {/* Botones de acción */}
-          <div className="flex gap-4 mt-6">
+          <div className="flex gap-3 mt-6">
             <button 
               onClick={procesarCobro}
               disabled={loading || totalCobro <= 0}
-              className="flex-1 bg-green-600 text-white py-3 px-6 rounded font-bold text-lg hover:bg-green-700 disabled:bg-gray-400"
+              className="flex-1 bg-green-600 text-white py-2 px-4 rounded font-bold text-base hover:bg-green-700 disabled:bg-gray-400"
             >
               {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}
             </button>
             <button 
               onClick={onCancelar}
-              className="bg-gray-500 text-white py-3 px-6 rounded font-bold hover:bg-gray-600"
+              className="bg-gray-500 text-white py-2 px-4 rounded font-bold text-base hover:bg-gray-600"
             >
               Cancelar
             </button>

@@ -76,8 +76,8 @@ switch ($method) {
         $data = json_decode(file_get_contents('php://input'), true);
         if (isset($data['id'])) {
             // Actualizar
-            $stmt = $conn->prepare("UPDATE medicamentos SET codigo=?, nombre=?, presentacion=?, concentracion=?, laboratorio=?, stock=?, fecha_vencimiento=?, estado=?, precio_compra=?, margen_ganancia=? WHERE id=?");
-            $stmt->bind_param("ssssssssddi", $data['codigo'], $data['nombre'], $data['presentacion'], $data['concentracion'], $data['laboratorio'], $data['stock'], $data['fecha_vencimiento'], $data['estado'], $data['precio_compra'], $data['margen_ganancia'], $data['id']);
+            $stmt = $conn->prepare("UPDATE medicamentos SET codigo=?, nombre=?, presentacion=?, concentracion=?, laboratorio=?, stock=?, unidades_por_caja=?, fecha_vencimiento=?, estado=?, precio_compra=?, margen_ganancia=? WHERE id=?");
+            $stmt->bind_param("ssssssissddi", $data['codigo'], $data['nombre'], $data['presentacion'], $data['concentracion'], $data['laboratorio'], $data['stock'], $data['unidades_por_caja'], $data['fecha_vencimiento'], $data['estado'], $data['precio_compra'], $data['margen_ganancia'], $data['id']);
             $ok = $stmt->execute();
             echo json_encode(["success" => $ok]);
         } else {
@@ -93,8 +93,8 @@ switch ($method) {
             }
             $stmt_check->close();
             // Crear
-            $stmt = $conn->prepare("INSERT INTO medicamentos (codigo, nombre, presentacion, concentracion, laboratorio, stock, fecha_vencimiento, estado, precio_compra, margen_ganancia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("ssssssssdd", $data['codigo'], $data['nombre'], $data['presentacion'], $data['concentracion'], $data['laboratorio'], $data['stock'], $data['fecha_vencimiento'], $data['estado'], $data['precio_compra'], $data['margen_ganancia']);
+            $stmt = $conn->prepare("INSERT INTO medicamentos (codigo, nombre, presentacion, concentracion, laboratorio, stock, unidades_por_caja, fecha_vencimiento, estado, precio_compra, margen_ganancia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssssssissdd", $data['codigo'], $data['nombre'], $data['presentacion'], $data['concentracion'], $data['laboratorio'], $data['stock'], $data['unidades_por_caja'], $data['fecha_vencimiento'], $data['estado'], $data['precio_compra'], $data['margen_ganancia']);
             $ok = $stmt->execute();
             echo json_encode(["success" => $ok, "id" => $conn->insert_id]);
         }

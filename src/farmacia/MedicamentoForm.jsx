@@ -3,8 +3,13 @@ import { useState } from "react";
 import Swal from "sweetalert2";
 
 export default function MedicamentoForm({ initialData, onSave, onCancel }) {
+  function generarCodigoAutomatico() {
+    // Genera un código tipo MED + 5 dígitos aleatorios
+    return "MED" + Math.floor(10000 + Math.random() * 90000);
+  }
+
   const [form, setForm] = useState({
-    codigo: initialData?.codigo || "",
+    codigo: initialData?.codigo || (!initialData ? generarCodigoAutomatico() : ""),
     nombre: initialData?.nombre || "",
     presentacion: initialData?.presentacion || "",
     concentracion: initialData?.concentracion || "",
@@ -68,14 +73,22 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
     <form onSubmit={handleSubmit} className="p-10 bg-white rounded-2xl shadow-2xl w-[95vw] max-w-5xl mx-auto">
       <h2 className="text-lg font-bold mb-4 text-center">{initialData ? "Editar Medicamento" : "Nuevo Medicamento"}</h2>
       {error && <div className="text-red-500 text-center mb-2">{error}</div>}
-      <div className="grid grid-cols-1 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <label className="block font-medium">Código *</label>
           <input name="codigo" value={form.codigo} onChange={handleChange} className="w-full border rounded px-2 py-1" maxLength={30} required />
         </div>
         <div>
           <label className="block font-medium">Nombre *</label>
-          <input name="nombre" value={form.nombre} onChange={handleChange} className="w-full border rounded px-2 py-1" maxLength={100} required />
+          <input
+            name="nombre"
+            value={form.nombre}
+            onChange={handleChange}
+            className="w-full border rounded px-2 py-1"
+            maxLength={100}
+            required
+            autoFocus
+          />
         </div>
         <div>
           <label className="block font-medium">Presentación</label>
@@ -95,7 +108,7 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
         </div>
         <div>
           <label className="block font-medium">Unidades por caja *</label>
-          <input name="unidades_por_caja" type="number" min={1} value={form.unidades_por_caja} onChange={handleChange} className="w-full border rounded px-2 py-1" required />
+          <input name="unidades_por_caja" type="number" min={1} value={form.unidades_por_caja !== undefined && form.unidades_por_caja !== null ? form.unidades_por_caja : ''} onChange={handleChange} className="w-full border rounded px-2 py-1" required />
           <span className="text-xs text-gray-500">Ejemplo: 30 pastillas por caja, 100 jeringas por caja</span>
         </div>
         <div>
