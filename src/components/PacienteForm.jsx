@@ -112,6 +112,24 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     setLoading(true);
     setError("");
     let formToSend = { ...form };
+    // Convertir a mayúsculas los campos de texto relevantes
+    const camposMayuscula = [
+      "nombre",
+      "apellido",
+      "historia_clinica",
+      "procedencia",
+      "direccion",
+      "tipo_seguro"
+    ];
+    camposMayuscula.forEach((campo) => {
+      if (formToSend[campo]) {
+        formToSend[campo] = formToSend[campo].toUpperCase();
+      }
+    });
+    // El email se mantiene en minúscula
+    if (formToSend.email) {
+      formToSend.email = formToSend.email.trim();
+    }
     // Validar según tipo de documento
     if (formToSend.tipo_documento === "dni") {
       if (!/^\d{8}$/.test(formToSend.dni)) {
