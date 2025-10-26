@@ -1,3 +1,72 @@
+# Clínica 2 de Mayo - Sistema de Gestión
+
+## Descripción
+Sistema web para la gestión clínica: pacientes, usuarios, médicos, farmacia, caja, reportes y más. Desarrollado en React (frontend) y PHP/MySQL (backend).
+
+## Características principales
+- Registro y edición de pacientes con paginación eficiente
+- Gestión de usuarios y médicos
+- Módulo de farmacia y cotización
+- Control de caja y reportes
+- Exportación a Excel/PDF
+- Interfaz moderna y responsiva
+
+## Paginación eficiente (React + PHP)
+### Backend (PHP)
+- Los endpoints que devuelven listas grandes aceptan parámetros `page` y `limit`.
+- Ejemplo:
+  ```php
+  $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+  $limit = isset($_GET['limit']) ? max(1, intval($_GET['limit'])) : 20;
+  $offset = ($page - 1) * $limit;
+  $stmt = $conn->prepare("SELECT ... FROM tabla ORDER BY id DESC LIMIT ? OFFSET ?");
+  $stmt->bind_param('ii', $limit, $offset);
+  // ...fetch rows...
+  echo json_encode([
+    'success' => true,
+    'items' => $rows,
+    'total' => $total,
+    'page' => $page,
+    'limit' => $limit,
+    'totalPages' => ceil($total / $limit)
+  ]);
+  ```
+
+### Frontend (React)
+- Usa estados para `page`, `rowsPerPage`, `totalRows`, `totalPages`, y la lista de items.
+- En el `useEffect`, pide los datos paginados al backend:
+  ```js
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${BASE_URL}api_endpoint.php?page=${page}&limit=${rowsPerPage}`)
+      .then(res => res.json())
+      .then(data => {
+        setItems(data.items);
+        setTotalRows(data.total);
+        setTotalPages(data.totalPages);
+        setLoading(false);
+      });
+  }, [page, rowsPerPage]);
+  ```
+- Al agregar/editar/eliminar, recarga la página actual usando los mismos parámetros.
+- Muestra controles de paginación y el número de registros.
+
+## Instalación
+1. Clona el repositorio
+2. Instala dependencias con `npm install` y configura el backend PHP/MySQL
+3. Ejecuta el frontend con `npm run dev`
+
+## Estructura de carpetas
+- `src/components/` - Componentes React
+- `src/pages/` - Páginas principales
+- `api_*.php` - Endpoints PHP
+- `public/` - Archivos estáticos
+
+## Créditos
+Desarrollado por inbioslabCesar y colaboradores.
+
+## Licencia
+MIT
 # 🏥 Clínica 2 de Mayo - Sistema de Gestión Hospitalaria
 
 Sistema integral de gestión hospitalaria desarrollado con React + PHP + MySQL para la administración completa de una clínica médica.
