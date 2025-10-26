@@ -124,10 +124,11 @@ export default function MedicamentosList() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4">
+  <div className="max-w-full mx-auto px-2 sm:px-12 md:px-24 lg:px-40 xl:px-64 py-10">
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 mb-2">
-          💊 Gestión de Medicamentos
+          💊 
+          
         </h1>
         <p className="text-gray-600 text-lg">
           Sistema integral de inventario farmacéutico

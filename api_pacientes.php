@@ -219,16 +219,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $limit = isset($_GET['limit']) ? max(1, intval($_GET['limit'])) : 20;
     $offset = ($page - 1) * $limit;
 
-    // Obtener el total de pacientes
-    $resTotal = $conn->query("SELECT COUNT(*) as total FROM pacientes");
-    $rowTotal = $resTotal->fetch_assoc();
-    $total = intval($rowTotal['total']);
+    // Filtro de búsqueda
+    $busqueda = isset($_GET['busqueda']) ? trim($_GET['busqueda']) : '';
+    $where = '';
+    $params = [];
+    $types = '';
+    if ($busqueda !== '') {
+        $where = "WHERE nombre LIKE ? OR apellido LIKE ? OR dni LIKE ? OR historia_clinica LIKE ? OR CONCAT(nombre, ' ', apellido) LIKE ?";
+        $busquedaLike = "%$busqueda%";
+        $params = [$busquedaLike, $busquedaLike, $busquedaLike, $busquedaLike, $busquedaLike];
+        $types = 'sssss';
+    }
 
-    // Obtener solo los pacientes de la página actual
-    $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
-    $stmt->bind_param('ii', $limit, $offset);
-    $stmt->execute();
-    $result = $stmt->get_result();
+    // Obtener el total de pacientes filtrados
+    if ($where) {
+        $sqlTotal = "SELECT COUNT(*) as total FROM pacientes $where";
+        $stmtTotal = $conn->prepare($sqlTotal);
+        $stmtTotal->bind_param($types, ...$params);
+        $stmtTotal->execute();
+        $resTotal = $stmtTotal->get_result();
+        $rowTotal = $resTotal->fetch_assoc();
+        $total = intval($rowTotal['total']);
+        $stmtTotal->close();
+    } else {
+        $resTotal = $conn->query("SELECT COUNT(*) as total FROM pacientes");
+        $rowTotal = $resTotal->fetch_assoc();
+        $total = intval($rowTotal['total']);
+    }
+
+    // Obtener solo los pacientes de la página actual filtrados
+    if ($where) {
+        $sql = "SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes $where ORDER BY id DESC LIMIT ? OFFSET ?";
+        $stmt = $conn->prepare($sql);
+        $params[] = $limit;
+        $params[] = $offset;
+        $types .= 'ii';
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+    } else {
+        $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
+        $stmt->bind_param('ii', $limit, $offset);
+        $stmt->execute();
+        $result = $stmt->get_result();
+    }
     $pacientes = [];
     while ($row = $result->fetch_assoc()) {
         // Si edad está en la BD, úsala; si no, calcula desde fecha_nacimiento

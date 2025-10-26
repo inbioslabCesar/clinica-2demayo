@@ -52,7 +52,12 @@ function PacienteList() {
   // Consumir paginación del backend
   useEffect(() => {
     setLoading(true);
-    fetch(`${BASE_URL}api_pacientes.php?page=${page}&limit=${rowsPerPage}`)
+    const params = new URLSearchParams({
+      page,
+      limit: rowsPerPage,
+      busqueda: busqueda.trim()
+    });
+    fetch(`${BASE_URL}api_pacientes.php?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
         if (data.success) {
@@ -68,7 +73,7 @@ function PacienteList() {
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-  }, [page, rowsPerPage]);
+  }, [page, rowsPerPage, busqueda]);
 
   const handleAgregar = () => {
     setEditData({

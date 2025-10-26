@@ -64,7 +64,8 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow max-w-lg mx-auto">
+  <div className="flex justify-center items-center w-full h-full">
+    <form onSubmit={handleSubmit} className="p-10 bg-white rounded-2xl shadow-2xl w-[95vw] max-w-5xl mx-auto">
       <h2 className="text-lg font-bold mb-4 text-center">{initialData ? "Editar Medicamento" : "Nuevo Medicamento"}</h2>
       {error && <div className="text-red-500 text-center mb-2">{error}</div>}
       <div className="grid grid-cols-1 gap-3">
@@ -126,5 +127,6 @@ export default function MedicamentoForm({ initialData, onSave, onCancel }) {
         <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded">Guardar</button>
       </div>
     </form>
+    </div>
   );
 }
