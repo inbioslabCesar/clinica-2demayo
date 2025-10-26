@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import DisponibilidadMedicos from "./DisponibilidadMedicos";
 import FormularioAgendarConsulta from "./FormularioAgendarConsulta";
@@ -14,6 +15,7 @@ import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 
 function AgendarConsulta({ pacienteId }) {
+  const navigate = useNavigate();
   const [tipoConsulta, setTipoConsulta] = useState("programada");
   const [detallesConsulta, setDetallesConsulta] = useState([]);
   const [totalConsulta, setTotalConsulta] = useState(0);
@@ -230,12 +232,9 @@ function AgendarConsulta({ pacienteId }) {
   return (
     <div className="w-full flex flex-col items-center py-8 px-2 md:px-0 bg-gradient-to-br from-gray-50 to-blue-50 min-h-[80vh]">
       <button
-        type="button"
-        onClick={() => window.history.back()}
-        className="self-end mb-4 px-6 py-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 text-white font-bold shadow hover:scale-105 hover:from-purple-600 hover:to-blue-600 transition-all duration-200 flex items-center gap-2"
-        style={{ minWidth: 120 }}
+        onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
+        className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 self-end mb-4"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         Volver
       </button>
       <div className="w-full max-w-[2100px] flex flex-col md:flex-row gap-16 items-start justify-center">

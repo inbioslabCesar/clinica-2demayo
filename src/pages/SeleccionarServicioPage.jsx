@@ -49,9 +49,9 @@ export default function SeleccionarServicioPage() {
   // Al seleccionar uno, navega a la página correspondiente y pasa el pacienteId
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-4xl mx-auto">
-        <div className="bg-gradient-to-r from-purple-600 to-blue-400 rounded-t-xl p-4 mb-0">
+    <div className="min-h-screen bg-gray-50 p-6 md:p-12 lg:p-16 xl:p-20">
+      <div className="max-w-[1800px] mx-auto">
+        <div className="bg-gradient-to-r from-purple-600 to-blue-400 rounded-t-xl p-8 mb-0">
           <h2 className="text-xl font-bold text-white flex items-center gap-2"><span>🗂️</span> Atención en Recepción</h2>
           <p className="text-white text-sm">Gestión de pacientes y servicios</p>
         </div>
