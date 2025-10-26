@@ -11,8 +11,16 @@ import {
 import Swal from 'sweetalert2';
 import Spinner from "../components/Spinner";
 import DashboardCajaAbierta from "../components/DashboardCajaAbierta";
+import EgresosDiariosForm from "../components/EgresosDiariosForm";
+import EgresosDiariosList from "../components/EgresosDiariosList";
 
 export default function IngresosPage() {
+  // Egresos diarios (demo: estado local, luego se conecta a backend)
+  const [egresosDiarios, setEgresosDiarios] = useState([]);
+
+  const handleAddEgreso = (egreso) => {
+    setEgresosDiarios(prev => [...prev, egreso]);
+  };
   const [loading, setLoading] = useState(true);
   const [cajaActual, setCajaActual] = useState(null);
   const [usuario, setUsuario] = useState(null);
@@ -32,13 +40,10 @@ export default function IngresosPage() {
   const cargarDatos = async () => {
     try {
       setLoading(true);
-      
       // Obtener usuario actual
       const usuarioResp = await fetch(`${BASE_URL}api_auth_status.php`, { credentials: 'include' });
       const usuarioData = await usuarioResp.json();
-      
       if (!usuarioData.success || !usuarioData.authenticated) {
-        // Si no está autenticado, redirigir al login
         Swal.fire({
           icon: 'warning',
           title: 'Sesión expirada',
@@ -49,16 +54,13 @@ export default function IngresosPage() {
         });
         return;
       }
-      
       setUsuario(usuarioData);
 
       // Verificar estado de caja actual
       const cajaResp = await fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' });
       const cajaData = await cajaResp.json();
-      
       if (cajaData.success) {
         setCajaActual(cajaData.caja);
-        
         // Si hay caja abierta, obtener resumen
         if (cajaData.caja) {
           const resumenResp = await fetch(`${BASE_URL}api_resumen_ingresos.php`, { credentials: 'include' });
@@ -66,10 +68,20 @@ export default function IngresosPage() {
           if (resumenData.success) {
             setResumenHoy(resumenData.resumen);
           }
+          // Obtener egresos diarios desde el backend
+          const egresosResp = await fetch(`${BASE_URL}api_egresos.php`, { credentials: 'include' });
+          const egresosData = await egresosResp.json();
+          if (egresosData.success) {
+            setEgresosDiarios(egresosData.egresos || []);
+          } else {
+            setEgresosDiarios([]);
+          }
+        } else {
+          setEgresosDiarios([]);
         }
       } else {
-        // Manejar errores de caja (puede ser normal si no hay caja abierta)
         console.log('Estado de caja:', cajaData.error);
+        setEgresosDiarios([]);
       }
     } catch (error) {
       console.error('Error cargando datos:', error);
@@ -79,8 +91,9 @@ export default function IngresosPage() {
         text: 'No se pudo conectar con el servidor. Verifique su conexión.',
         confirmButtonText: 'Reintentar'
       }).then(() => {
-        cargarDatos(); // Reintentar
+        cargarDatos();
       });
+      setEgresosDiarios([]);
     } finally {
       setLoading(false);
     }
@@ -131,7 +144,7 @@ export default function IngresosPage() {
   if (loading) return <Spinner />;
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+  <div className="max-w-7xl mx-auto p-6">
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between">
@@ -177,12 +190,16 @@ export default function IngresosPage() {
           </button>
         </div>
       ) : (
-        /* Estado: Caja Abierta - Dashboard */
-        <DashboardCajaAbierta 
-          cajaActual={cajaActual}
-          resumenHoy={resumenHoy}
-          onActualizar={cargarDatos}
-        />
+        <>
+          {/* Estado: Caja Abierta - Dashboard */}
+          <DashboardCajaAbierta 
+            cajaActual={cajaActual}
+            resumenHoy={resumenHoy}
+            onActualizar={cargarDatos}
+            egresosDiarios={egresosDiarios}
+            
+          />
+        </>
       )}
 
       {/* Modal de Apertura de Caja */}

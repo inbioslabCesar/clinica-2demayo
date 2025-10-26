@@ -273,37 +273,46 @@ function obtenerTodosMovimientos($conn) {
     
     try {
         $sql = "SELECT h.*, m.nombre as medico_nombre, m.apellido as medico_apellido,
-                       p.nombre as paciente_nombre, p.apellido as paciente_apellido, p.dni,
-                       t.descripcion as tarifa_descripcion
-                FROM honorarios_medicos_movimientos h
-                INNER JOIN medicos m ON h.medico_id = m.id
-                LEFT JOIN pacientes p ON h.paciente_id = p.id
-                LEFT JOIN tarifas t ON h.tarifa_id = t.id
-                WHERE h.fecha BETWEEN ? AND ?";
-        
+                   p.nombre as paciente_nombre, p.apellido as paciente_apellido, p.dni,
+                   t.descripcion as tarifa_descripcion,
+                   c.tipo_consulta
+            FROM honorarios_medicos_movimientos h
+            INNER JOIN medicos m ON h.medico_id = m.id
+            LEFT JOIN pacientes p ON h.paciente_id = p.id
+            LEFT JOIN tarifas t ON h.tarifa_id = t.id
+            LEFT JOIN consultas c ON h.consulta_id = c.id
+            WHERE h.fecha BETWEEN ? AND ?";
+
         $params = [$fecha_desde, $fecha_hasta];
         $types = 'ss';
-        
+
         if ($estado_pago) {
             $sql .= " AND h.estado_pago_medico = ?";
             $params[] = $estado_pago;
             $types .= 's';
         }
-        
+
+        if (isset($_GET['tipo_consulta']) && $_GET['tipo_consulta'] !== '') {
+            // Comparación case-insensitive y manejar NULL en c.tipo_consulta
+            $sql .= " AND LOWER(COALESCE(c.tipo_consulta, '')) = LOWER(?)";
+            $params[] = $_GET['tipo_consulta'];
+            $types .= 's';
+        }
+
         $sql .= " ORDER BY h.fecha DESC, h.hora DESC";
-        
+
         $stmt = $conn->prepare($sql);
         $stmt->bind_param($types, ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
-        
+
         $movimientos = [];
         while ($row = $result->fetch_assoc()) {
             $movimientos[] = $row;
         }
-        
+
         echo json_encode(['success' => true, 'movimientos' => $movimientos]);
-        
+
     } catch (Exception $e) {
         echo json_encode(['success' => false, 'error' => 'Error al obtener movimientos: ' . $e->getMessage()]);
     }

@@ -15,13 +15,18 @@ import Spinner from "../components/Spinner";
 
 export default function CierreCajaPage() {
   const [honorariosPagados, setHonorariosPagados] = useState(0);
+  useEffect(() => {
+    console.log('Honorarios Médicos Pagados:', honorariosPagados);
+  }, [honorariosPagados]);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [procesando, setProcesando] = useState(false);
   const [cajaActual, setCajaActual] = useState(null);
   const [resumenIngresos, setResumenIngresos] = useState(null);
   const [ingresosDiarios, setIngresosDiarios] = useState([]);
-  
+  // Paginación para la tabla de ingresos diarios
+  const [pageSize, setPageSize] = useState(3);
+  const [currentPage, setCurrentPage] = useState(1);
   // Estados para el formulario de cierre
   const [montosCierre, setMontosCierre] = useState({
     efectivo_contado: '',
@@ -30,6 +35,11 @@ export default function CierreCajaPage() {
     otros_contado: ''
   });
   const [observacionesCierre, setObservacionesCierre] = useState('');
+  // Egresos diarios reales desde backend
+  const [egresosDiarios, setEgresosDiarios] = useState([]);
+  const totalEgresosDiarios = Array.isArray(egresosDiarios)
+    ? egresosDiarios.reduce((acc, e) => acc + parseFloat(e.monto), 0)
+    : 0;
 
   useEffect(() => {
     const cargarDatos = async () => {
@@ -79,6 +89,13 @@ export default function CierreCajaPage() {
       const ingresosData = await ingresosResp.json();
       if (ingresosData.success) {
         setIngresosDiarios(ingresosData.ingresos || []);
+      }
+
+      // Cargar egresos diarios reales
+      const egresosResp = await fetch(`${BASE_URL}api_egresos.php?caja_id=${cajaData.caja.id}`, { credentials: 'include' });
+      const egresosData = await egresosResp.json();
+      if (egresosData.success) {
+        setEgresosDiarios(egresosData.egresos || []);
       }
 
     } catch (error) {
@@ -258,6 +275,13 @@ export default function CierreCajaPage() {
               <p className="text-blue-700">S/ {parseFloat(cajaActual.monto_apertura || 0).toFixed(2)}</p>
             </div>
           </div>
+          {/* Monto total del día antes de descontar honorarios */}
+          {resumenIngresos && (
+            <div className="mt-4 p-5 bg-yellow-100 border-2 border-yellow-400 rounded-xl flex flex-col items-center justify-center shadow-lg">
+              <span className="font-bold text-yellow-900 text-xl mb-2 tracking-wide">Monto Total del Día</span>
+              <span className="text-4xl font-extrabold text-yellow-700 drop-shadow-lg">S/ {parseFloat(resumenIngresos.total_dia || 0).toFixed(2)}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -277,7 +301,7 @@ export default function CierreCajaPage() {
                   <span className="font-semibold">Efectivo</span>
                 </div>
                 <span className="font-bold text-green-700">
-                  S/ {Math.max(0, parseFloat(resumenIngresos.total_efectivo || 0) - honorariosPagados).toFixed(2)}
+                  S/ {parseFloat(resumenIngresos.total_efectivo || 0).toFixed(2)}
                 </span>
               </div>
 
@@ -320,14 +344,34 @@ export default function CierreCajaPage() {
                 </span>
               </div>
 
+              {/* Card de egresos diarios */}
+              <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-red-700">Egresos Diarios</span>
+                </div>
+                <span className="font-bold text-red-700">
+                  - S/ {totalEgresosDiarios.toFixed(2)}
+                </span>
+              </div>
+
               <div className="border-t pt-4">
-                <div className="flex justify-between items-center text-lg font-bold">
-                  <span>Total del Sistema:</span>
-                  <span className="text-blue-600">
-                    S/ {(
-                      Math.max(0, parseFloat(resumenIngresos.total_dia || 0) - honorariosPagados)
-                    ).toFixed(2)}
-                  </span>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-center text-lg font-bold">
+                    <span>Total del Sistema:</span>
+                    <span className="text-blue-600">
+                      S/ {(
+                        Math.max(0, parseFloat(resumenIngresos.total_dia || 0) - honorariosPagados - totalEgresosDiarios)
+                      ).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-lg font-bold mt-4 p-3 bg-blue-50 rounded-lg shadow">
+                    <span>Saldo esperado en caja física al cierre:</span>
+                    <span className="text-blue-900 text-2xl font-extrabold">
+                      S/ {(
+                        parseFloat(cajaActual?.monto_apertura || 0) + Math.max(0, parseFloat(resumenIngresos.total_dia || 0) - honorariosPagados - totalEgresosDiarios)
+                      ).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -488,10 +532,27 @@ export default function CierreCajaPage() {
         </div>
       </div>
 
-      {/* Detalle de ingresos */}
+      {/* Detalle de ingresos con paginación */}
       {ingresosDiarios.length > 0 && (
         <div className="mt-8 bg-white rounded-xl shadow-lg p-6">
           <h2 className="text-xl font-bold text-gray-800 mb-4">Detalle de Ingresos del Día</h2>
+          {/* Selector de tamaño de página */}
+          <div className="mb-4 flex items-center gap-3">
+            <label className="font-semibold text-gray-700">Filas por página:</label>
+            <select
+              value={pageSize}
+              onChange={e => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="border rounded px-2 py-1"
+            >
+              <option value={3}>3</option>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+            </select>
+          </div>
+          {/* Tabla paginada */}
           <div className="overflow-x-auto" style={{ maxHeight: '340px', overflowY: 'auto' }}>
             <table className="w-full">
               <thead>
@@ -505,25 +566,46 @@ export default function CierreCajaPage() {
                 </tr>
               </thead>
               <tbody>
-                {ingresosDiarios.map((ingreso, index) => (
-                  <tr key={index} className="border-b hover:bg-gray-50">
-                    <td className="p-3">
-                      {new Date(ingreso.fecha_hora).toLocaleTimeString('es-PE', { 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })}
-                    </td>
-                    <td className="p-3 capitalize">{ingreso.tipo_ingreso}</td>
-                    <td className="p-3">{ingreso.area}</td>
-                    <td className="p-3">{ingreso.descripcion}</td>
-                    <td className="p-3 capitalize">{ingreso.metodo_pago}</td>
-                    <td className="p-3 text-right font-semibold">
-                      S/ {parseFloat(ingreso.monto).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
+                {ingresosDiarios
+                  .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                  .map((ingreso, index) => (
+                    <tr key={index} className="border-b hover:bg-gray-50">
+                      <td className="p-3">
+                        {new Date(ingreso.fecha_hora).toLocaleTimeString('es-PE', { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                      </td>
+                      <td className="p-3 capitalize">{ingreso.tipo_ingreso}</td>
+                      <td className="p-3">{ingreso.area}</td>
+                      <td className="p-3">{ingreso.descripcion}</td>
+                      <td className="p-3 capitalize">{ingreso.metodo_pago}</td>
+                      <td className="p-3 text-right font-semibold">
+                        S/ {parseFloat(ingreso.monto).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
+          </div>
+          {/* Controles de paginación */}
+          <div className="mt-4 flex justify-between items-center">
+            <span className="text-sm text-gray-600">
+              Mostrando {Math.min(pageSize, ingresosDiarios.length - (currentPage - 1) * pageSize)} de {ingresosDiarios.length} ingresos
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(currentPage - 1)}
+              >Anterior</button>
+              <span className="text-sm">Página {currentPage} de {Math.ceil(ingresosDiarios.length / pageSize)}</span>
+              <button
+                className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50"
+                disabled={currentPage === Math.ceil(ingresosDiarios.length / pageSize)}
+                onClick={() => setCurrentPage(currentPage + 1)}
+              >Siguiente</button>
+            </div>
           </div>
         </div>
       )}

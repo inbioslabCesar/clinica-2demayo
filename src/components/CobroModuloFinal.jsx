@@ -122,8 +122,18 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
 
   const mostrarComprobante = async (cobroId, datosComprobante) => {
     const fechaHora = new Date().toLocaleString('es-PE');
-    
     const nombreCompleto = paciente.apellido ? `${paciente.nombre} ${paciente.apellido}` : paciente.nombre;
+    // Obtener datos de consulta si existen
+    const consulta = datosComprobante.servicio_info || {};
+    const tipoConsulta = consulta.tipo_consulta || '';
+    // Prioridad: hora en servicio_info, si no existe buscar en detalles
+    let horaConsulta = consulta.hora || '';
+    if (!horaConsulta && Array.isArray(datosComprobante.detalles) && datosComprobante.detalles.length > 0) {
+      // Buscar hora en el primer detalle si existe
+      horaConsulta = datosComprobante.detalles[0].hora || '';
+    }
+    // Simular número de orden si es programada (puedes reemplazar por el real)
+    const numeroOrden = tipoConsulta === 'programada' ? (consulta.numero_orden || 'N/A') : '';
     const comprobante = `
       <div style="text-align: left; font-family: monospace;">
         <h3 style="text-align: center; margin-bottom: 20px;">🏥 CLÍNICA 2 DE MAYO</h3>
@@ -133,6 +143,9 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         <p>Paciente: ${nombreCompleto}</p>
         <p>DNI: ${paciente.dni}</p>
         <p>H.C.: ${paciente.historia_clinica}</p>
+        <p>Tipo de consulta: ${tipoConsulta === 'programada' ? 'Programada' : 'Espontánea'}</p>
+        <p>Hora de consulta: ${horaConsulta}</p>
+        ${tipoConsulta === 'programada' ? `<p>N° Orden de llegada: ${numeroOrden}</p>` : ''}
         <hr>
         <p><strong>DETALLE:</strong></p>
         ${datosComprobante.detalles.map(d => 
@@ -140,7 +153,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         ).join('')}
         <hr>
         <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
-  <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
+        <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
         <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
         <hr>
         <p style="text-align: center; font-size: 12px;">

@@ -99,12 +99,13 @@ switch ($method) {
             exit;
         }
         $stmt->close();
-        $stmt = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora) VALUES (?, ?, ?, ?)');
-        $stmt->bind_param('iiss', $paciente_id, $medico_id, $fecha, $hora);
-        $ok = $stmt->execute();
-        echo json_encode(['success' => $ok, 'id' => $ok ? $stmt->insert_id : null]);
-        $stmt->close();
-        break;
+    $tipo_consulta = $data['tipo_consulta'] ?? 'programada';
+    $stmt = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta) VALUES (?, ?, ?, ?, ?)');
+    $stmt->bind_param('iisss', $paciente_id, $medico_id, $fecha, $hora, $tipo_consulta);
+    $ok = $stmt->execute();
+    echo json_encode(['success' => $ok, 'id' => $ok ? $stmt->insert_id : null]);
+    $stmt->close();
+    break;
     case 'PUT':
         // Actualizar estado de consulta
         $data = json_decode(file_get_contents('php://input'), true);
