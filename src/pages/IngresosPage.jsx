@@ -144,7 +144,7 @@ export default function IngresosPage() {
   if (loading) return <Spinner />;
 
   return (
-  <div className="max-w-7xl mx-auto p-6">
+  <div className="max-w-[1600px] mx-auto p-8">
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between">

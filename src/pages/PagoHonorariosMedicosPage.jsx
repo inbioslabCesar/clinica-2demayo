@@ -6,7 +6,7 @@ export default function PagoHonorariosMedicosPage() {
   const [honorarios, setHonorarios] = useState([]);
   // Paginación
   const [paginaActual, setPaginaActual] = useState(1);
-  const [porPagina, setPorPagina] = useState(5);
+  const [porPagina, setPorPagina] = useState(3);
   const honorariosPaginados = honorarios.slice((paginaActual - 1) * porPagina, paginaActual * porPagina);
   const totalPaginas = Math.ceil(honorarios.length / porPagina);
   const handleSelect = (id) => {
@@ -129,7 +129,7 @@ export default function PagoHonorariosMedicosPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
+  <div className="max-w-7xl mx-auto p-6">
       <h1 className="text-2xl font-bold mb-6 text-purple-800">
         Pago de Honorarios Médicos
       </h1>
@@ -179,7 +179,7 @@ export default function PagoHonorariosMedicosPage() {
           </select>
         </div>
       </div>
-      <div className="bg-white rounded-lg shadow p-4">
+      <div className="bg-white rounded-lg shadow p-4 overflow-x-auto">
         {/* Selector de cantidad por página */}
         <div className="mb-4 flex items-center gap-2">
           <label className="font-semibold">Mostrar:</label>
@@ -198,93 +198,148 @@ export default function PagoHonorariosMedicosPage() {
           </div>
         ) : (
           <>
-            <table className="w-full">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th></th>
-                  <th>Médico</th>
-                  <th>Servicio</th>
-                  <th>Especialidad</th>
-                  <th>Monto</th>
-                  <th>Fecha</th>
-                  <th>Tipo Consulta</th>
-                  <th>Estado</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
+            {/* Vista tipo cards en móvil, tabla en desktop */}
+            <div className="block md:hidden">
+              <div className="space-y-4">
                 {honorariosPaginados.map((h) => (
-                  <tr key={h.id} className="border-b">
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(h.id)}
-                        onChange={() => handleSelect(h.id)}
-                        disabled={h.estado_pago_medico !== "pendiente"}
-                      />
-                    </td>
-                    <td>{h.medico_nombre || h.medico_id}</td>
-                    <td>{h.tipo_servicio}</td>
-                    <td>{h.especialidad}</td>
-                    <td className="font-bold text-green-700">
-                      S/ {parseFloat(h.monto_medico).toFixed(2)}
-                    </td>
-                    <td>{h.fecha}</td>
-                    <td>
-                      <span
-                        className={
-                          h.tipo_consulta === "espontanea"
-                            ? "bg-blue-100 text-blue-800 px-2 py-1 rounded"
-                            : "bg-gray-100 text-gray-800 px-2 py-1 rounded"
-                        }
-                      >
-                        {h.tipo_consulta === "espontanea"
-                          ? "Espontánea"
-                          : "Programada"}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          h.estado_pago_medico === "pendiente"
-                            ? "bg-yellow-100 text-yellow-800 px-2 py-1 rounded"
-                            : h.estado_pago_medico === "pagado"
-                            ? "bg-green-100 text-green-800 px-2 py-1 rounded"
-                            : h.estado_pago_medico === "cancelado"
-                            ? "bg-red-100 text-red-800 px-2 py-1 rounded"
-                            : "bg-gray-100 text-gray-800 px-2 py-1 rounded"
-                        }
-                      >
-                        {h.estado_pago_medico}
-                      </span>
-                    </td>
-                    <td>
-                      {h.estado_pago_medico === "pendiente" && (
-                        <button
-                          className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-sm"
-                          onClick={() => handleCancelarHonorario(h.id)}
-                        >
-                          Cancelar
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <div key={h.id} className="rounded-xl shadow-lg border border-purple-100 bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50 p-4 flex flex-col gap-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-bold text-purple-800 text-lg">{h.medico_nombre || h.medico_id}</span>
+                      <span className="font-bold text-green-700 text-xl">S/ {parseFloat(h.monto_medico).toFixed(2)}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-sm">
+                      <span className="bg-gray-100 px-2 py-1 rounded">{h.tipo_servicio}</span>
+                      <span className="bg-gray-100 px-2 py-1 rounded">{h.especialidad}</span>
+                      <span className={h.tipo_consulta === "espontanea" ? "bg-blue-100 text-blue-800 px-2 py-1 rounded" : "bg-gray-100 text-gray-800 px-2 py-1 rounded"}>{h.tipo_consulta === "espontanea" ? "Espontánea" : "Programada"}</span>
+                      <span className={h.estado_pago_medico === "pendiente" ? "bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-bold" : h.estado_pago_medico === "pagado" ? "bg-green-100 text-green-800 px-2 py-1 rounded font-bold" : h.estado_pago_medico === "cancelado" ? "bg-red-100 text-red-800 px-2 py-1 rounded font-bold" : "bg-gray-100 text-gray-800 px-2 py-1 rounded font-bold"}>{h.estado_pago_medico}</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-gray-600 text-xs">{h.fecha}</span>
+                      <div className="flex gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(h.id)}
+                          onChange={() => handleSelect(h.id)}
+                          disabled={h.estado_pago_medico !== "pendiente"}
+                        />
+                        {h.estado_pago_medico === "pendiente" && (
+                          <button
+                            className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-xs shadow"
+                            onClick={() => handleCancelarHonorario(h.id)}
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-            {/* Paginación */}
-            <div className="flex justify-center items-center gap-2 mt-4">
-              <button
-                className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                disabled={paginaActual === 1}
-                onClick={() => setPaginaActual(paginaActual - 1)}
-              >Anterior</button>
-              <span>Página {paginaActual} de {totalPaginas}</span>
-              <button
-                className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                disabled={paginaActual === totalPaginas}
-                onClick={() => setPaginaActual(paginaActual + 1)}
-              >Siguiente</button>
+              </div>
+              {/* Paginación móvil */}
+              <div className="flex justify-center items-center gap-2 mt-4">
+                <button
+                  className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                  disabled={paginaActual === 1}
+                  onClick={() => setPaginaActual(paginaActual - 1)}
+                >Anterior</button>
+                <span>Página {paginaActual} de {totalPaginas}</span>
+                <button
+                  className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                  disabled={paginaActual === totalPaginas}
+                  onClick={() => setPaginaActual(paginaActual + 1)}
+                >Siguiente</button>
+              </div>
+            </div>
+            {/* Vista tabla en desktop */}
+            <div className="hidden md:block">
+              <table className="min-w-[900px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gradient-to-r from-purple-100 via-blue-100 to-pink-100 text-purple-900">
+                    <th className="py-3 px-2 text-left"></th>
+                    <th className="py-3 px-2 text-left">Médico</th>
+                    <th className="py-3 px-2 text-left">Servicio</th>
+                    <th className="py-3 px-2 text-left">Especialidad</th>
+                    <th className="py-3 px-2 text-left">Monto</th>
+                    <th className="py-3 px-2 text-left">Fecha</th>
+                    <th className="py-3 px-2 text-left">Tipo Consulta</th>
+                    <th className="py-3 px-2 text-left">Estado</th>
+                    <th className="py-3 px-2 text-left">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {honorariosPaginados.map((h) => (
+                    <tr key={h.id} className="border-b hover:bg-purple-50 transition">
+                      <td className="py-2 px-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(h.id)}
+                          onChange={() => handleSelect(h.id)}
+                          disabled={h.estado_pago_medico !== "pendiente"}
+                        />
+                      </td>
+                      <td className="py-2 px-2 font-semibold text-purple-900">{h.medico_nombre || h.medico_id}</td>
+                      <td className="py-2 px-2">{h.tipo_servicio}</td>
+                      <td className="py-2 px-2">{h.especialidad}</td>
+                      <td className="py-2 px-2 font-bold text-green-700 text-lg">
+                        S/ {parseFloat(h.monto_medico).toFixed(2)}
+                      </td>
+                      <td className="py-2 px-2">{h.fecha}</td>
+                      <td className="py-2 px-2">
+                        <span
+                          className={
+                            h.tipo_consulta === "espontanea"
+                              ? "bg-blue-100 text-blue-800 px-2 py-1 rounded shadow"
+                              : "bg-gray-100 text-gray-800 px-2 py-1 rounded shadow"
+                          }
+                        >
+                          {h.tipo_consulta === "espontanea"
+                            ? "Espontánea"
+                            : "Programada"}
+                        </span>
+                      </td>
+                      <td className="py-2 px-2">
+                        <span
+                          className={
+                            h.estado_pago_medico === "pendiente"
+                              ? "bg-yellow-100 text-yellow-800 px-2 py-1 rounded shadow font-bold"
+                              : h.estado_pago_medico === "pagado"
+                              ? "bg-green-100 text-green-800 px-2 py-1 rounded shadow font-bold"
+                              : h.estado_pago_medico === "cancelado"
+                              ? "bg-red-100 text-red-800 px-2 py-1 rounded shadow font-bold"
+                              : "bg-gray-100 text-gray-800 px-2 py-1 rounded shadow font-bold"
+                          }
+                        >
+                          {h.estado_pago_medico}
+                        </span>
+                      </td>
+                      <td className="py-2 px-2">
+                        {h.estado_pago_medico === "pendiente" && (
+                          <button
+                            className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm shadow"
+                            onClick={() => handleCancelarHonorario(h.id)}
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* Paginación desktop */}
+              <div className="flex justify-center items-center gap-2 mt-4">
+                <button
+                  className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                  disabled={paginaActual === 1}
+                  onClick={() => setPaginaActual(paginaActual - 1)}
+                >Anterior</button>
+                <span>Página {paginaActual} de {totalPaginas}</span>
+                <button
+                  className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                  disabled={paginaActual === totalPaginas}
+                  onClick={() => setPaginaActual(paginaActual + 1)}
+                >Siguiente</button>
+              </div>
             </div>
           </>
         )}

@@ -190,88 +190,89 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
   return (
     <div className="bg-white p-6 rounded-lg shadow-lg border border-blue-200">
       <h3 className="text-xl font-bold mb-4 text-blue-800">💰 Módulo de Cobros</h3>
-      
-      {/* Información del paciente */}
-      <div className="bg-gray-50 p-4 rounded mb-4">
-  <h4 className="font-semibold mb-2">Paciente:</h4>
-  <p>{paciente.nombre}</p>
-  <p>DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</p>
-      </div>
-
-      {/* Tipo de cobertura */}
-      <div className="mb-4">
-        <label className="block font-semibold mb-2">Tipo de Cobertura:</label>
-        <select 
-          value={tipoCobertura} 
-          onChange={(e) => setTipoCobertura(e.target.value)}
-          className="w-full border rounded px-3 py-2"
-        >
-          <option value="particular">Particular</option>
-          <option value="seguro">Seguro</option>
-          <option value="convenio">Convenio</option>
-        </select>
-      </div>
-
-      {/* Detalle del servicio */}
-      <div className="mb-4">
-        <h4 className="font-semibold mb-2">Detalle del Servicio:</h4>
-        <div className="bg-blue-50 p-4 rounded">
-          {detallesCobro.map((detalle, index) => (
-            <div key={index} className="flex justify-between items-center">
-              <span>{detalle.descripcion}</span>
-              <span className="font-bold">S/ {detalle.subtotal.toFixed(2)}</span>
-            </div>
-          ))}
-          <hr className="my-2" />
-          <div className="flex justify-between items-center font-bold text-lg">
-            <span>TOTAL:</span>
-            <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Columna izquierda */}
+        <div>
+          {/* Información del paciente */}
+          <div className="bg-gray-50 p-4 rounded mb-4">
+            <h4 className="font-semibold mb-2">Paciente:</h4>
+            <p>{paciente.nombre}</p>
+            <p>DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</p>
+          </div>
+          {/* Tipo de cobertura */}
+          <div className="mb-4">
+            <label className="block font-semibold mb-2">Tipo de Cobertura:</label>
+            <select 
+              value={tipoCobertura} 
+              onChange={(e) => setTipoCobertura(e.target.value)}
+              className="w-full border rounded px-3 py-2"
+            >
+              <option value="particular">Particular</option>
+              <option value="seguro">Seguro</option>
+              <option value="convenio">Convenio</option>
+            </select>
+          </div>
+          {/* Observaciones */}
+          <div className="mb-6">
+            <label className="block font-semibold mb-2">Observaciones:</label>
+            <textarea 
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              className="w-full border rounded px-3 py-2 h-20"
+              placeholder="Observaciones adicionales (opcional)"
+            />
           </div>
         </div>
-      </div>
-
-      {/* Método de pago */}
-      <div className="mb-4">
-        <label className="block font-semibold mb-2">Método de Pago:</label>
-        <select 
-          value={tipoPago} 
-          onChange={(e) => setTipoPago(e.target.value)}
-          className="w-full border rounded px-3 py-2"
-        >
-          <option value="efectivo">Efectivo</option>
-          <option value="tarjeta">Tarjeta</option>
-          <option value="transferencia">Transferencia</option>
-          <option value="yape">Yape</option>
-        </select>
-      </div>
-
-      {/* Observaciones */}
-      <div className="mb-6">
-        <label className="block font-semibold mb-2">Observaciones:</label>
-        <textarea 
-          value={observaciones}
-          onChange={(e) => setObservaciones(e.target.value)}
-          className="w-full border rounded px-3 py-2 h-20"
-          placeholder="Observaciones adicionales (opcional)"
-        />
-      </div>
-
-      {/* Botones de acción */}
-      <div className="flex gap-4">
-        <button 
-          onClick={procesarCobro}
-          disabled={loading || totalCobro <= 0}
-          className="flex-1 bg-green-600 text-white py-3 px-6 rounded font-bold text-lg hover:bg-green-700 disabled:bg-gray-400"
-        >
-          {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}
-        </button>
-        
-        <button 
-          onClick={onCancelar}
-          className="bg-gray-500 text-white py-3 px-6 rounded font-bold hover:bg-gray-600"
-        >
-          Cancelar
-        </button>
+        {/* Columna derecha */}
+        <div>
+          {/* Detalle del servicio */}
+          <div className="mb-4">
+            <h4 className="font-semibold mb-2">Detalle del Servicio:</h4>
+            <div className="bg-blue-50 p-4 rounded">
+              {detallesCobro.map((detalle, index) => (
+                <div key={index} className="flex justify-between items-center">
+                  <span>{detalle.descripcion}</span>
+                  <span className="font-bold">S/ {detalle.subtotal.toFixed(2)}</span>
+                </div>
+              ))}
+              <hr className="my-2" />
+              <div className="flex justify-between items-center font-bold text-lg">
+                <span>TOTAL:</span>
+                <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+          {/* Método de pago */}
+          <div className="mb-4">
+            <label className="block font-semibold mb-2">Método de Pago:</label>
+            <select 
+              value={tipoPago} 
+              onChange={(e) => setTipoPago(e.target.value)}
+              className="w-full border rounded px-3 py-2"
+            >
+              <option value="efectivo">Efectivo</option>
+              <option value="tarjeta">Tarjeta</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="yape">Yape</option>
+            </select>
+          </div>
+          {/* Botones de acción */}
+          <div className="flex gap-4 mt-6">
+            <button 
+              onClick={procesarCobro}
+              disabled={loading || totalCobro <= 0}
+              className="flex-1 bg-green-600 text-white py-3 px-6 rounded font-bold text-lg hover:bg-green-700 disabled:bg-gray-400"
+            >
+              {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}
+            </button>
+            <button 
+              onClick={onCancelar}
+              className="bg-gray-500 text-white py-3 px-6 rounded font-bold hover:bg-gray-600"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

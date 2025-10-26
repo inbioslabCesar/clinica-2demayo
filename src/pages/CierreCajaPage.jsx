@@ -240,7 +240,7 @@ export default function CierreCajaPage() {
   const diferencias = calcularDiferencias();
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
+  <div className="max-w-[1600px] mx-auto p-8">
       {/* Header */}
       <div className="mb-8">
         <button 
@@ -287,7 +287,7 @@ export default function CierreCajaPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Resumen del sistema */}
-        <div className="bg-white rounded-xl shadow-lg p-6">
+  <div className="bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
             <FaCalculator />
             Resumen del Sistema
@@ -379,7 +379,7 @@ export default function CierreCajaPage() {
         </div>
 
         {/* Formulario de cierre */}
-        <div className="bg-white rounded-xl shadow-lg p-6">
+  <div className="bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6">Conteo Real</h2>
 
           <div className="space-y-4">
@@ -534,7 +534,7 @@ export default function CierreCajaPage() {
 
       {/* Detalle de ingresos con paginación */}
       {ingresosDiarios.length > 0 && (
-        <div className="mt-8 bg-white rounded-xl shadow-lg p-6">
+  <div className="mt-8 bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-bold text-gray-800 mb-4">Detalle de Ingresos del Día</h2>
           {/* Selector de tamaño de página */}
           <div className="mb-4 flex items-center gap-3">

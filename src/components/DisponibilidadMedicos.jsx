@@ -89,56 +89,60 @@ function DisponibilidadMedicos() {
   const bloquesPagina = bloquesFiltrados;
 
   return (
-    <div className="mb-6">
-      <h3 className="font-bold text-lg mb-2 text-center">Disponibilidad de Médicos</h3>
-      <div className="flex flex-col md:flex-row gap-4 mb-4 items-start">
-        <Calendar
-          onChange={setSelectedDate}
-          value={selectedDate}
-          className="border rounded shadow !text-base w-full max-w-xs md:!text-base md:w-[350px] md:h-[350px] !h-[320px] md:!h-[350px]"
-          tileContent={({ date, view }) => {
-            if (view !== 'month') return null;
-            const bloques = getBloquesParaFecha(date);
-            if (!bloques.length) return null;
-            // Obtener médicos únicos para ese día
-            const medicosUnicos = [...new Set(bloques.map(b => b.medico_id))];
-            return (
-              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 2 }}>
-                {medicosUnicos.map((medicoId, i) => (
-                  <span key={medicoId}
-                    style={{
-                      display: 'inline-block',
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: medicoColors[medicoId] || '#888',
-                      marginLeft: i > 0 ? 2 : 0
-                    }}
-                  />
-                ))}
-              </div>
-            );
-          }}
-        />
-        <div className="flex-1 w-full">
-          <div className="flex justify-end mb-2">
+    <div className="mb-6 w-full">
+      <h3 className="font-extrabold text-xl mb-4 text-center text-blue-700 tracking-tight">Disponibilidad de Médicos</h3>
+      <div className="flex flex-col md:flex-row gap-8 mb-4 items-start justify-center w-full">
+        {/* Calendario estilizado */}
+        <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl shadow-lg border border-blue-200 p-4 flex flex-col items-center w-full max-w-[320px] md:max-w-lg">
+          <Calendar
+            onChange={setSelectedDate}
+            value={selectedDate}
+            className="border rounded-xl shadow text-base md:text-lg w-[280px] h-[340px] md:w-[360px] md:h-[420px] bg-white"
+            tileContent={({ date, view }) => {
+              if (view !== 'month') return null;
+              const bloques = getBloquesParaFecha(date);
+              if (!bloques.length) return null;
+              // Obtener médicos únicos para ese día
+              const medicosUnicos = [...new Set(bloques.map(b => b.medico_id))];
+              return (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 2 }}>
+                  {medicosUnicos.map((medicoId, i) => (
+                    <span key={medicoId}
+                      style={{
+                        display: 'inline-block',
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: medicoColors[medicoId] || '#888',
+                        marginLeft: i > 0 ? 2 : 0
+                      }}
+                    />
+                  ))}
+                </div>
+              );
+            }}
+          />
+        </div>
+        {/* Tabla y búsqueda estilizadas */}
+        <div className="flex-1 w-full max-w-lg">
+          <div className="flex justify-end mb-3">
             <input
               type="text"
               placeholder="Buscar por nombre o especialidad..."
               value={busqueda}
               onChange={e => { setBusqueda(e.target.value); setPage(1); }}
-              className="border rounded px-3 py-1"
+              className="border-2 border-blue-200 rounded-full px-4 py-2 shadow focus:ring-2 focus:ring-blue-300 w-full max-w-xs text-base"
             />
           </div>
-          {loading ? <div>Cargando...</div> : (
-            <div className="overflow-x-auto" style={{ maxHeight: 260, minHeight: 80 }}>
-              <table className="min-w-full text-[11px] md:text-sm border">
-                <thead className="bg-gray-100">
+          {loading ? <div className="text-center text-blue-600 font-semibold">Cargando...</div> : (
+            <div className="overflow-x-auto bg-white rounded-xl shadow border border-gray-200" style={{ maxHeight: 260, minHeight: 80 }}>
+              <table className="min-w-full text-[12px] md:text-base border-separate border-spacing-y-1">
+                <thead className="bg-blue-50">
                   <tr>
-                    <th className="px-1 py-0.5 md:px-2 md:py-1">Médico</th>
-                    <th className="px-1 py-0.5 md:px-2 md:py-1">Especialidad</th>
-                    <th className="px-1 py-0.5 md:px-2 md:py-1">Horario</th>
-                    <th className="px-1 py-0.5 md:px-2 md:py-1">Cupos libres</th>
+                    <th className="px-2 py-2 text-blue-700 font-bold rounded-tl-xl">Médico</th>
+                    <th className="px-2 py-2 text-blue-700 font-bold">Especialidad</th>
+                    <th className="px-2 py-2 text-blue-700 font-bold">Horario</th>
+                    <th className="px-2 py-2 text-blue-700 font-bold rounded-tr-xl">Cupos libres</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -164,10 +168,10 @@ function DisponibilidadMedicos() {
                     const cupos = slots - agendadas.length;
                     return (
                       <tr key={bloque.medico_id + '-' + i} className={cupos > 0 ? "bg-green-50" : "bg-yellow-100"}>
-                        <td className="px-0.5 py-0.5 md:px-2 md:py-1 font-bold" style={{ color: medicoColors[medico.id] || undefined }}>Dr(a). {medico.nombre} {medico.apellido || ''}</td>
-                        <td className="px-0.5 py-0.5 md:px-2 md:py-1">{medico.especialidad}</td>
-                        <td className="px-0.5 py-0.5 md:px-2 md:py-1">{bloque.hora_inicio} - {bloque.hora_fin} {fechaBloque ? <span className="text-xs text-gray-500 ml-1">({fechaBloque})</span> : null}</td>
-                        <td className="px-0.5 py-0.5 md:px-2 md:py-1 font-bold">{cupos > 0 ? cupos : 'Sin cupos'}</td>
+                        <td className="px-2 py-2 font-bold rounded-l-xl" style={{ color: medicoColors[medico.id] || undefined }}>Dr(a). {medico.nombre} {medico.apellido || ''}</td>
+                        <td className="px-2 py-2">{medico.especialidad}</td>
+                        <td className="px-2 py-2">{bloque.hora_inicio} - {bloque.hora_fin} {fechaBloque ? <span className="text-xs text-gray-500 ml-1">({fechaBloque})</span> : null}</td>
+                        <td className="px-2 py-2 font-bold rounded-r-xl">{cupos > 0 ? cupos : <span className="text-red-600">Sin cupos</span>}</td>
                       </tr>
                     );
                   })}

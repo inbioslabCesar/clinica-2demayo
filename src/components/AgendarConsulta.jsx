@@ -3,13 +3,20 @@ import { BASE_URL } from "../config/config";
 import DisponibilidadMedicos from "./DisponibilidadMedicos";
 import FormularioAgendarConsulta from "./FormularioAgendarConsulta";
 import ResumenConsultaAgendada from "./ResumenConsultaAgendada";
+import {
+  FaCalendarAlt,
+  FaUserMd,
+  FaClipboardList,
+  FaUser,
+  FaRegClock,
+} from "react-icons/fa";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 
 function AgendarConsulta({ pacienteId }) {
-  const [tipoConsulta, setTipoConsulta] = useState('programada');
+  const [tipoConsulta, setTipoConsulta] = useState("programada");
   const [detallesConsulta, setDetallesConsulta] = useState([]);
-const [totalConsulta, setTotalConsulta] = useState(0);
+  const [totalConsulta, setTotalConsulta] = useState(0);
   const [medicos, setMedicos] = useState([]);
   const [medicoId, setMedicoId] = useState("");
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
@@ -25,22 +32,28 @@ const [totalConsulta, setTotalConsulta] = useState(0);
   useEffect(() => {
     if (mostrarCobro && consultaCreada) {
       fetch(BASE_URL + "api_tarifas.php", { credentials: "include" })
-        .then(r => r.json())
-        .then(data => {
+        .then((r) => r.json())
+        .then((data) => {
           if (data.success && Array.isArray(data.tarifas)) {
             // Buscar tarifa específica del médico (comparar como número)
             let tarifa = data.tarifas.find(
-              t => t.servicio_tipo === 'consulta' && t.activo === 1 && Number(t.medico_id) === Number(consultaCreada.medico_id)
+              (t) =>
+                t.servicio_tipo === "consulta" &&
+                t.activo === 1 &&
+                Number(t.medico_id) === Number(consultaCreada.medico_id)
             );
             // Si no existe, buscar tarifa general (medico_id null o vacío)
             if (!tarifa) {
               tarifa = data.tarifas.find(
-                t => t.servicio_tipo === 'consulta' && t.activo === 1 && (!t.medico_id || t.medico_id === null)
+                (t) =>
+                  t.servicio_tipo === "consulta" &&
+                  t.activo === 1 &&
+                  (!t.medico_id || t.medico_id === null)
               );
             }
             if (tarifa) {
               const detalle = {
-                servicio_tipo: 'consulta',
+                servicio_tipo: "consulta",
                 servicio_id: consultaCreada.id,
                 descripcion: tarifa.descripcion, // Usar descripción exacta de la tarifa
                 cantidad: 1,
@@ -48,7 +61,7 @@ const [totalConsulta, setTotalConsulta] = useState(0);
                 subtotal: parseFloat(tarifa.precio_particular) || 0,
                 consulta_id: consultaCreada.id,
                 medico_id: consultaCreada.medico_id,
-                paciente_id: consultaCreada.paciente_id
+                paciente_id: consultaCreada.paciente_id,
               };
               setDetallesConsulta([detalle]);
               setTotalConsulta(detalle.subtotal);
@@ -66,26 +79,28 @@ const [totalConsulta, setTotalConsulta] = useState(0);
 
   useEffect(() => {
     fetch(BASE_URL + "api_medicos.php")
-      .then(r => r.json())
-      .then(data => setMedicos(data.medicos || []));
+      .then((r) => r.json())
+      .then((data) => setMedicos(data.medicos || []));
   }, []);
 
   // Cargar horarios disponibles cuando se selecciona médico y fecha
   useEffect(() => {
     if (medicoId && fecha) {
       setCargandoHorarios(true);
-      fetch(`${BASE_URL}api_horarios_disponibles.php?medico_id=${medicoId}&fecha=${fecha}`)
-        .then(r => r.json())
-        .then(data => {
+      fetch(
+        `${BASE_URL}api_horarios_disponibles.php?medico_id=${medicoId}&fecha=${fecha}`
+      )
+        .then((r) => r.json())
+        .then((data) => {
           if (data.success) {
             setHorariosDisponibles(data.horarios_disponibles || []);
           } else {
             setHorariosDisponibles([]);
-            console.error('Error:', data.error);
+            console.error("Error:", data.error);
           }
         })
-        .catch(error => {
-          console.error('Error:', error);
+        .catch((error) => {
+          console.error("Error:", error);
           setHorariosDisponibles([]);
         })
         .finally(() => setCargandoHorarios(false));
@@ -98,8 +113,8 @@ const [totalConsulta, setTotalConsulta] = useState(0);
     // Cargar información del paciente
     if (pacienteId) {
       fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
-        .then(r => r.json())
-        .then(data => {
+        .then((r) => r.json())
+        .then((data) => {
           if (data.success && data.paciente) {
             setPacienteInfo(data.paciente);
           }
@@ -108,33 +123,37 @@ const [totalConsulta, setTotalConsulta] = useState(0);
     }
   }, [pacienteId]);
 
-  const handleSubmit = async e => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setMsg("");
     if (!pacienteId || !medicoId || !fecha || !hora) {
       setMsg("Completa todos los campos");
       return;
     }
-    
+
     try {
       const res = await fetch(BASE_URL + "api_consultas.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          paciente_id: pacienteId, 
-          medico_id: medicoId, 
-          fecha, 
+        body: JSON.stringify({
+          paciente_id: pacienteId,
+          medico_id: medicoId,
+          fecha,
           hora,
           tipo_consulta: tipoConsulta,
-        })
+        }),
       });
-      
+
       const data = await res.json();
-      
+
       if (data.success) {
         // Guardar información de la consulta creada
-        const medicoSeleccionado = medicos.find(m => String(m.id) === String(medicoId));
-        const nombreCompleto = `${medicoSeleccionado?.nombre} ${medicoSeleccionado?.apellido || ''}`.trim();
+        const medicoSeleccionado = medicos.find(
+          (m) => String(m.id) === String(medicoId)
+        );
+        const nombreCompleto = `${medicoSeleccionado?.nombre} ${
+          medicoSeleccionado?.apellido || ""
+        }`.trim();
         setConsultaCreada({
           id: data.consulta_id || data.id,
           medico_id: medicoId,
@@ -143,9 +162,9 @@ const [totalConsulta, setTotalConsulta] = useState(0);
           medico_especialidad: medicoSeleccionado?.especialidad,
           fecha,
           hora,
-          paciente_id: pacienteId
+          paciente_id: pacienteId,
         });
-        
+
         // Mostrar módulo de cobro
         setMostrarCobro(true);
         setMsg("");
@@ -153,14 +172,14 @@ const [totalConsulta, setTotalConsulta] = useState(0);
         setMsg(data.error || "Error al agendar");
       }
     } catch (error) {
-      console.error('Error:', error);
+      console.error("Error:", error);
       setMsg("Error de conexión");
     }
   };
 
   const manejarCobroCompleto = async (cobroId, _servicio) => {
     setMostrarCobro(false);
-    
+
     MySwal.fire({
       icon: "success",
       title: "¡Consulta Agendada y Pagada!",
@@ -174,7 +193,7 @@ const [totalConsulta, setTotalConsulta] = useState(0);
         </div>
       `,
       confirmButtonColor: "#22c55e",
-      confirmButtonText: "Aceptar"
+      confirmButtonText: "Aceptar",
     });
 
     // Resetear formulario
@@ -187,10 +206,10 @@ const [totalConsulta, setTotalConsulta] = useState(0);
   const manejarCancelarCobro = () => {
     setMostrarCobro(false);
     MySwal.fire({
-      title: 'Cobro Cancelado',
-      text: 'La consulta fue agendada pero no se realizó el cobro. Puede cobrarse posteriormente.',
-      icon: 'info',
-      confirmButtonText: 'Entendido'
+      title: "Cobro Cancelado",
+      text: "La consulta fue agendada pero no se realizó el cobro. Puede cobrarse posteriormente.",
+      icon: "info",
+      confirmButtonText: "Entendido",
     });
   };
 
@@ -209,24 +228,48 @@ const [totalConsulta, setTotalConsulta] = useState(0);
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-2 md:p-8 w-full overflow-x-auto">
-      <DisponibilidadMedicos />
-      <h2 className="text-xl md:text-2xl font-bold mb-4 text-center">Agendar Consulta Médica</h2>
-      <FormularioAgendarConsulta
-        tipoConsulta={tipoConsulta}
-        setTipoConsulta={setTipoConsulta}
-        medicos={medicos}
-        medicoId={medicoId}
-        setMedicoId={setMedicoId}
-        fecha={fecha}
-        setFecha={setFecha}
-        hora={hora}
-        setHora={setHora}
-        horariosDisponibles={horariosDisponibles}
-        cargandoHorarios={cargandoHorarios}
-        handleSubmit={handleSubmit}
-        msg={msg}
-      />
+    <div className="w-full flex flex-col items-center py-8 px-2 md:px-0 bg-gradient-to-br from-gray-50 to-blue-50 min-h-[80vh]">
+      <button
+        type="button"
+        onClick={() => window.history.back()}
+        className="self-end mb-4 px-6 py-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 text-white font-bold shadow hover:scale-105 hover:from-purple-600 hover:to-blue-600 transition-all duration-200 flex items-center gap-2"
+        style={{ minWidth: 120 }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+        Volver
+      </button>
+      <div className="w-full max-w-[2100px] flex flex-col md:flex-row gap-16 items-start justify-center">
+        {/* Tarjeta disponibilidad */}
+        <div className="w-full md:w-[1100px] flex flex-col items-center md:items-start">
+          <div className="bg-white rounded-2xl shadow-xl border border-blue-200 p-12 w-full max-w-5xl transition-all">
+            <div className="flex items-center gap-2 mb-4">
+              <FaUserMd className="text-2xl text-blue-600" />
+              <h3 className="text-xl font-bold text-blue-700">
+                Disponibilidad de Médicos
+              </h3>
+            </div>
+            <DisponibilidadMedicos />
+          </div>
+        </div>
+        {/* Tarjeta formulario alineada a la derecha */}
+        <div className="w-full md:w-[700px] flex flex-col items-center md:items-start">
+          <FormularioAgendarConsulta
+            tipoConsulta={tipoConsulta}
+            setTipoConsulta={setTipoConsulta}
+            medicos={medicos}
+            medicoId={medicoId}
+            setMedicoId={setMedicoId}
+            fecha={fecha}
+            setFecha={setFecha}
+            hora={hora}
+            setHora={setHora}
+            horariosDisponibles={horariosDisponibles}
+            cargandoHorarios={cargandoHorarios}
+            handleSubmit={handleSubmit}
+            msg={msg}
+          />
+        </div>
+      </div>
     </div>
   );
 }

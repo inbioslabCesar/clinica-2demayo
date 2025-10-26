@@ -5,6 +5,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
   const [form, setForm] = useState({
     id: initialData.id || undefined,
     dni: initialData.dni || "",
+    tipo_documento: initialData.tipo_documento || "dni", // nuevo campo
     nombre: initialData.nombre || "",
     apellido: initialData.apellido || "",
     historia_clinica: initialData.historia_clinica || "",
@@ -23,6 +24,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     setForm({
       id: initialData.id || undefined,
       dni: initialData.dni || "",
+      tipo_documento: initialData.tipo_documento || "dni",
       nombre: initialData.nombre || "",
       apellido: initialData.apellido || "",
       historia_clinica: initialData.historia_clinica || "",
@@ -50,6 +52,19 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === "tipo_documento") {
+      // Si cambia el tipo de documento y es "sin_documento", limpiar el campo dni
+      setForm({
+        ...form,
+        tipo_documento: value,
+        dni: value === "sin_documento" ? "" : form.dni,
+      });
+      return;
+    }
+    if (name === "dni" && form.tipo_documento === "sin_documento") {
+      // No permitir edición manual si es sin documento
+      return;
+    }
     if (name === "fecha_nacimiento" && value) {
       const hoy = new Date();
       const fechaNac = new Date(value);
@@ -97,14 +112,20 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     setLoading(true);
     setError("");
     let formToSend = { ...form };
-    // Validar longitud del DNI si el usuario lo ingresa
-    if (formToSend.dni && formToSend.dni.trim() !== "") {
+    // Validar según tipo de documento
+    if (formToSend.tipo_documento === "dni") {
       if (!/^\d{8}$/.test(formToSend.dni)) {
         setError("El DNI debe tener exactamente 8 dígitos.");
         setLoading(false);
         return;
       }
-    } else {
+    } else if (formToSend.tipo_documento === "carnet_extranjeria") {
+      if (!/^\d{12}$/.test(formToSend.dni)) {
+        setError("El Carnet de extranjería debe tener exactamente 12 dígitos.");
+        setLoading(false);
+        return;
+      }
+    } else if (formToSend.tipo_documento === "sin_documento") {
       // Genera un DNI provisional de 8 dígitos, por ejemplo: 99990001
       formToSend.dni = (99990000 + Math.floor(Math.random() * 100)).toString();
     }
@@ -138,7 +159,23 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-purple-800 mb-4">
+      <h2
+        className="text-2xl font-extrabold mb-6 flex items-center gap-3 justify-center bg-gradient-to-r from-purple-700 via-pink-500 to-blue-500 text-white rounded-xl shadow-lg py-4 px-6 animate__animated animate__fadeInDown"
+        style={{ boxShadow: '0 4px 16px rgba(80,0,120,0.12)' }}
+      >
+        <svg
+          className="w-8 h-8 text-white drop-shadow"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 7v4m0 4h.01"
+          />
+        </svg>
         {form.id ? "Editar Paciente" : "Registrar Nuevo Paciente"}
       </h2>
       {error && (
@@ -172,14 +209,39 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                DNI
+                Tipo de documento
+              </label>
+              <select
+                name="tipo_documento"
+                value={form.tipo_documento}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="dni">DNI</option>
+                <option value="carnet_extranjeria">Carnet de extranjería</option>
+                <option value="sin_documento">Sin documento</option>
+              </select>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {form.tipo_documento === "dni"
+                  ? "DNI"
+                  : form.tipo_documento === "carnet_extranjeria"
+                  ? "Carnet de extranjería"
+                  : "DNI Provisional"}
               </label>
               <input
                 name="dni"
                 value={form.dni}
                 onChange={handleChange}
-                placeholder="Documento de identidad"
+                placeholder={
+                  form.tipo_documento === "dni"
+                    ? "Documento de identidad (8 dígitos)"
+                    : form.tipo_documento === "carnet_extranjeria"
+                    ? "Carnet de extranjería (12 dígitos)"
+                    : "Se genera automáticamente"
+                }
                 className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoFocus
+                disabled={form.tipo_documento === "sin_documento"}
               />
             </div>
 
@@ -290,12 +352,14 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
                   placeholder="Edad"
                   type="number"
                   className="flex-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={!!form.fecha_nacimiento}
                 />
                 <select
                   name="edad_unidad"
                   value={form.edad_unidad}
                   onChange={handleChange}
                   className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={!!form.fecha_nacimiento}
                 >
                   <option value="días">Días</option>
                   <option value="meses">Meses</option>
