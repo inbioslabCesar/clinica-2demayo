@@ -41,25 +41,34 @@ function PacienteList() {
   // Paginación
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [page, setPage] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   // Filtro de fechas
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
   // Buscador dinámico
   const [busqueda, setBusqueda] = useState("");
 
+  // Consumir paginación del backend
   useEffect(() => {
-    fetch(BASE_URL + "api_pacientes.php")
+    setLoading(true);
+    fetch(`${BASE_URL}api_pacientes.php?page=${page}&limit=${rowsPerPage}`)
       .then(res => res.json())
       .then(data => {
-        if (data.success) setPacientes(data.pacientes);
-        else setError(data.error || "Error al cargar pacientes");
+        if (data.success) {
+          setPacientes(data.pacientes);
+          setTotalRows(data.total || 0);
+          setTotalPages(data.totalPages || 1);
+        } else {
+          setError(data.error || "Error al cargar pacientes");
+        }
         setLoading(false);
       })
       .catch(() => {
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-  }, []);
+  }, [page, rowsPerPage]);
 
   const handleAgregar = () => {
     setEditData({
@@ -103,22 +112,26 @@ function PacienteList() {
 
 
   const handleRegistroExitoso = () => {
-    // Recargar la lista completa desde el backend
+    setModalOpen(false);
+    setEditData(null);
+    setPage(1); // Volver a la primera página tras crear paciente
     setLoading(true);
-    fetch(BASE_URL + "api_pacientes.php")
+    fetch(`${BASE_URL}api_pacientes.php?page=1&limit=${rowsPerPage}`)
       .then(res => res.json())
       .then(data => {
-        if (data.success) setPacientes(data.pacientes);
-        else setError(data.error || "Error al cargar pacientes");
+        if (data.success) {
+          setPacientes(data.pacientes);
+          setTotalRows(data.total || 0);
+          setTotalPages(data.totalPages || 1);
+        } else {
+          setError(data.error || "Error al cargar pacientes");
+        }
         setLoading(false);
-        setPage(1); // Mostrar la primera página tras crear paciente
       })
       .catch(() => {
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-    setModalOpen(false);
-    setEditData(null);
   };
 
   const handleEliminar = (paciente) => {
@@ -139,8 +152,25 @@ function PacienteList() {
           .then(res => res.json())
           .then(data => {
             if (data.success) {
-              setPacientes(prev => prev.filter(p => p.id !== paciente.id));
               Swal.fire('Eliminado', 'Paciente eliminado correctamente', 'success');
+              // Recargar la página actual
+              setLoading(true);
+              fetch(`${BASE_URL}api_pacientes.php?page=${page}&limit=${rowsPerPage}`)
+                .then(res => res.json())
+                .then(data => {
+                  if (data.success) {
+                    setPacientes(data.pacientes);
+                    setTotalRows(data.total || 0);
+                    setTotalPages(data.totalPages || 1);
+                  } else {
+                    setError(data.error || "Error al cargar pacientes");
+                  }
+                  setLoading(false);
+                })
+                .catch(() => {
+                  setError("Error de conexión con el servidor");
+                  setLoading(false);
+                });
             } else {
               Swal.fire('Error', data.error || 'Error al eliminar paciente', 'error');
             }
@@ -162,48 +192,12 @@ function PacienteList() {
 
 
   // Filtrar por búsqueda y fechas (creado_en)
-  let pacientesFiltrados = pacientes.filter(p => {
-    // Filtro de búsqueda (historia_clinica, nombre, apellido, dni)
-    const texto = busqueda.trim().toLowerCase();
-    if (texto) {
-      const match = (p.historia_clinica && p.historia_clinica.toLowerCase().includes(texto)) ||
-                   (p.nombre && p.nombre.toLowerCase().includes(texto)) ||
-                   (p.apellido && p.apellido.toLowerCase().includes(texto)) ||
-                   (p.dni && p.dni.toLowerCase().includes(texto));
-      if (!match) return false;
-    }
-    // Filtro de fechas
-    if (!fechaDesde && !fechaHasta) return true;
-    if (!p.creado_en) return false;
-    const fecha = p.creado_en.split(" ")[0];
-    if (fechaDesde && fecha < fechaDesde) return false;
-    if (fechaHasta && fecha > fechaHasta) return false;
-    return true;
-  });
-  // Ordenar por id descendente por defecto (el último primero)
-  pacientesFiltrados = pacientesFiltrados.sort((a, b) => {
-    if (sortBy === "id") {
-      return sortDir === "asc" ? a.id - b.id : b.id - a.id;
-    }
-    let vA = a[sortBy], vB = b[sortBy];
-    if (typeof vA === "string") vA = vA.toLowerCase();
-    if (typeof vB === "string") vB = vB.toLowerCase();
-    if (vA === undefined || vA === null) return 1;
-    if (vB === undefined || vB === null) return -1;
-    if (vA < vB) return sortDir === "asc" ? -1 : 1;
-    if (vA > vB) return sortDir === "asc" ? 1 : -1;
-    return 0;
-  });
-  // Calcular paginación
-  const totalRows = pacientesFiltrados.length;
-  const totalPages = Math.ceil(totalRows / rowsPerPage);
-  const startIdx = (page - 1) * rowsPerPage;
-  const endIdx = startIdx + rowsPerPage;
-  const pacientesPagina = pacientesFiltrados.slice(startIdx, endIdx);
+  // Los pacientes ya vienen paginados del backend
+  const pacientesPagina = pacientes;
 
   // Exportar a Excel
   const exportarExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(pacientesFiltrados);
+    const ws = XLSX.utils.json_to_sheet(pacientes);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Pacientes");
     const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
@@ -224,7 +218,7 @@ function PacienteList() {
     ];
     autoTable(doc, {
       columns,
-      body: pacientesFiltrados,
+      body: pacientes,
       startY: 18,
       styles: { fontSize: 9 },
       headStyles: { fillColor: [59, 130, 246] }
@@ -309,7 +303,7 @@ function PacienteList() {
           {/* Controles de paginación mejorados */}
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-6 pt-4 border-t border-gray-200">
             <div className="text-sm text-gray-600 order-2 sm:order-1">
-              Mostrando {pacientesPagina.length} de {pacientesFiltrados.length} registros
+              Mostrando {pacientesPagina.length} de {totalRows} registros
             </div>
             <div className="flex items-center gap-2 order-1 sm:order-2">
               <button

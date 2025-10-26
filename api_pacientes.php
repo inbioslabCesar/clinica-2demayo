@@ -214,7 +214,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
 
 // Listar todos los pacientes (GET)
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $result = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes ORDER BY id DESC");
+    // Paginación: page y limit por GET
+    $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+    $limit = isset($_GET['limit']) ? max(1, intval($_GET['limit'])) : 20;
+    $offset = ($page - 1) * $limit;
+
+    // Obtener el total de pacientes
+    $resTotal = $conn->query("SELECT COUNT(*) as total FROM pacientes");
+    $rowTotal = $resTotal->fetch_assoc();
+    $total = intval($rowTotal['total']);
+
+    // Obtener solo los pacientes de la página actual
+    $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
+    $stmt->bind_param('ii', $limit, $offset);
+    $stmt->execute();
+    $result = $stmt->get_result();
     $pacientes = [];
     while ($row = $result->fetch_assoc()) {
         // Si edad está en la BD, úsala; si no, calcula desde fecha_nacimiento
@@ -230,7 +244,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pacientes[] = $row;
     }
-    echo json_encode(['success' => true, 'pacientes' => $pacientes]);
+    $stmt->close();
+    echo json_encode([
+        'success' => true,
+        'pacientes' => $pacientes,
+        'total' => $total,
+        'page' => $page,
+        'limit' => $limit,
+        'totalPages' => ceil($total / $limit)
+    ]);
     exit;
 }
 
