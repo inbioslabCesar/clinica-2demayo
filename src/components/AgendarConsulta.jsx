@@ -261,6 +261,7 @@ const [totalConsulta, setTotalConsulta] = useState(0);
           onChange={e => setFecha(e.target.value)}
           className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
           required
+          min={new Date().toISOString().split('T')[0]}
         />
 
         {tipoConsulta === 'programada' ? (
