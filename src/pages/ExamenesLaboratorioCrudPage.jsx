@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
+import ExamenesStatsBar from "../components/examenes/ExamenesStatsBar";
+import ExamenesFilterBar from "../components/examenes/ExamenesFilterBar";
+import ExamenesTable from "../components/examenes/ExamenesTable";
+import ExamenesCards from "../components/examenes/ExamenesCards";
+import ExamenModal from "../components/examenes/ExamenModal";
 import Modal from "../components/Modal";
 import ExamenEditorForm from "../components/ExamenEditorForm";
 import jsPDF from "jspdf";
@@ -304,55 +309,7 @@ export default function ExamenesLaboratorioCrudPage() {
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Estadísticas Dashboard */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl p-4 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-purple-100 text-sm">Total Exámenes</p>
-                <p className="text-2xl font-bold">{stats.total}</p>
-              </div>
-              <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-xl">
-                🧪
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl p-4 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-100 text-sm">Con Parámetros</p>
-                <p className="text-2xl font-bold">{stats.conParametros}</p>
-              </div>
-              <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-xl">
-                📊
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-r from-emerald-500 to-green-500 rounded-xl p-4 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-emerald-100 text-sm">Precio Promedio</p>
-                <p className="text-2xl font-bold">S/ {stats.precioPromedio}</p>
-              </div>
-              <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-xl">
-                💰
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl p-4 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-amber-100 text-sm">Metodologías</p>
-                <p className="text-2xl font-bold">{stats.metodologias}</p>
-              </div>
-              <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-xl">
-                🔬
-              </div>
-            </div>
-          </div>
-        </div>
+          <ExamenesStatsBar stats={stats} />
 
         {/* Mensaje de estado */}
         {msg && (
@@ -368,381 +325,32 @@ export default function ExamenesLaboratorioCrudPage() {
         )}
 
         {/* Controles principales */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 mb-6">
-          <div className="flex flex-col lg:flex-row gap-4 justify-between items-center">
-            {/* Búsqueda */}
-            <div className="flex-1 max-w-md">
-              <div className="relative mb-2">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setPage(0);
-                  }}
-                  placeholder="🔍 Buscar por nombre o metodología..."
-                  className="w-full px-4 py-3 pl-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                />
-              </div>
-              <div className="relative">
-                <select
-                  value={categoriaFilter}
-                  onChange={e => { setCategoriaFilter(e.target.value); setPage(0); }}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                >
-                  <option value="">Todas las categorías</option>
-                  {categorias.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Botones de acción */}
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleExportPDF}
-                className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-md"
-              >
-                📄 PDF
-              </button>
-              <button
-                onClick={handleExportExcel}
-                className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-md"
-              >
-                📊 Excel
-              </button>
-              <button
-                onClick={handleNew}
-                className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg transform hover:scale-105"
-              >
-                ➕ Nuevo Examen
-              </button>
-            </div>
-          </div>
-        </div>
+          <ExamenesFilterBar
+            search={search}
+            setSearch={val => { setSearch(val); setPage(0); }}
+            categoriaFilter={categoriaFilter}
+            setCategoriaFilter={val => { setCategoriaFilter(val); setPage(0); }}
+            categorias={categorias}
+            onExportPDF={handleExportPDF}
+            onExportExcel={handleExportExcel}
+            onNew={handleNew}
+          />
         {/* Modal modernizado */}
-        <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-            {/* Header del modal */}
-            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center">
-                  {editId ? "✏️" : "➕"}
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold">
-                    {editId ? "Editar Examen" : "Nuevo Examen"}
-                  </h3>
-                  <p className="text-purple-100">
-                    {editId ? "Modifique los datos del examen" : "Complete la información del nuevo examen"}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Contenido del modal */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-              <form
-                onSubmit={handleSubmit}
-                className="space-y-6"
-              >
-                {/* Información básica */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Nombre del Examen *
-                    </label>
-                    <input
-                      name="nombre"
-                      value={form.nombre}
-                      onChange={handleChange}
-                      placeholder="Ej: Hemograma Completo"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Categoría
-                    </label>
-                    <input
-                      name="categoria"
-                      value={form.categoria}
-                      onChange={handleChange}
-                      placeholder="Ej: Hematología, Química Clínica, Serología, etc."
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Metodología
-                    </label>
-                    <input
-                      name="metodologia"
-                      value={form.metodologia}
-                      onChange={handleChange}
-                      placeholder="Ej: Citometría de flujo"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                </div>
-
-                {/* Parámetros y valores de referencia */}
-                <div className="bg-gray-50 rounded-xl p-4">
-                  <label className="block text-sm font-semibold text-gray-700 mb-3">
-                    🧪 Parámetros y Valores de Referencia
-                  </label>
-                  <ExamenEditorForm
-                    initialData={form.valores_referenciales}
-                    onChange={handleValoresReferencialesChange}
-                  />
-                </div>
-
-                {/* Previsualización */}
-                <div className="bg-blue-50 rounded-xl p-4">
-                  <label className="block text-sm font-semibold text-gray-700 mb-3">
-                    👁️ Previsualización del Formato de Resultados
-                  </label>
-                  <div className="bg-white border rounded-lg p-4 overflow-auto max-h-80">
-                    <table className="min-w-full text-xs">
-                      <thead>
-                        <tr className="bg-gradient-to-r from-purple-100 to-indigo-100">
-                          <th className="p-2 text-left font-semibold">Examen / Parámetro</th>
-                          <th className="p-2 text-left font-semibold">Metodología</th>
-                          <th className="p-2 text-left font-semibold">Resultado</th>
-                          <th className="p-2 text-left font-semibold">Unidades</th>
-                          <th className="p-2 text-left font-semibold">Valores de Referencia</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Array.isArray(form.valores_referenciales) &&
-                        form.valores_referenciales.length > 0 ? (
-                          form.valores_referenciales
-                            .sort((a, b) => (a.orden || 0) - (b.orden || 0))
-                            .map((item, idx) =>
-                              item.tipo === "Subtítulo" ? (
-                                <tr key={idx}>
-                                  <td
-                                    colSpan={5}
-                                    className={`py-2 px-2 ${
-                                      item.negrita ? "font-bold" : "font-semibold"
-                                    }`}
-                                    style={{
-                                      background: item.color_fondo,
-                                      color: item.color_texto,
-                                      fontWeight: item.negrita ? "bold" : "normal",
-                                    }}
-                                  >
-                                    {item.nombre}
-                                  </td>
-                                </tr>
-                              ) : (
-                                <tr key={idx} className="hover:bg-gray-50">
-                                  <td
-                                    className="py-2 px-2"
-                                    style={{
-                                      background: item.color_fondo,
-                                      color: item.color_texto,
-                                      fontWeight: item.negrita ? "bold" : "normal",
-                                    }}
-                                  >
-                                    {item.nombre}
-                                  </td>
-                                  <td className="py-2 px-2 text-center">
-                                    {item.metodologia || ""}
-                                  </td>
-                                  <td className="py-2 px-2 text-center text-gray-400">
-                                    [Resultado]
-                                  </td>
-                                  <td className="py-2 px-2 text-center">
-                                    {item.unidad || ""}
-                                  </td>
-                                  <td className="py-2 px-2 text-center">
-                                    {item.referencias &&
-                                    item.referencias.length > 0 ? (
-                                      <ul className="list-none p-0 m-0">
-                                        {item.referencias.map((ref, rIdx) => (
-                                          <li key={rIdx}>
-                                            <span className="text-gray-700">
-                                              {ref.valor || ""}
-                                              {(ref.valor_min || ref.valor_max) && (
-                                                <>
-                                                  {" "}
-                                                  (
-                                                  {ref.valor_min
-                                                    ? ref.valor_min
-                                                    : "-"}{" "}
-                                                  -{" "}
-                                                  {ref.valor_max
-                                                    ? ref.valor_max
-                                                    : "-"}
-                                                  )
-                                                </>
-                                              )}
-                                            </span>
-                                            {ref.desc && (
-                                              <span className="text-gray-500 ml-1">
-                                                ({ref.desc})
-                                              </span>
-                                            )}
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    ) : (
-                                      <span className="text-gray-400">-</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              )
-                            )
-                        ) : (
-                          <tr>
-                            <td colSpan={5} className="text-center text-gray-400 py-4">
-                              Sin parámetros definidos
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Información adicional */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      💰 Precio Público (S/)
-                    </label>
-                    <input
-                      name="precio_publico"
-                      value={form.precio_publico}
-                      onChange={handleChange}
-                      placeholder="0.00"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      🏥 Precio Convenio (S/)
-                    </label>
-                    <input
-                      name="precio_convenio"
-                      value={form.precio_convenio}
-                      onChange={handleChange}
-                      placeholder="0.00"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      🧪 Tipo de Tubo
-                    </label>
-                    <input
-                      name="tipo_tubo"
-                      value={form.tipo_tubo}
-                      onChange={handleChange}
-                      placeholder="Ej: Tubo con EDTA"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      🧪 Tipo de Frasco
-                    </label>
-                    <input
-                      name="tipo_frasco"
-                      value={form.tipo_frasco}
-                      onChange={handleChange}
-                      placeholder="Ej: Frasco estéril"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      ⏱️ Tiempo de Resultado
-                    </label>
-                    <input
-                      name="tiempo_resultado"
-                      value={form.tiempo_resultado}
-                      onChange={handleChange}
-                      placeholder="Ej: 2-4 horas"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      👤 Condición del Paciente
-                    </label>
-                    <input
-                      name="condicion_paciente"
-                      value={form.condicion_paciente}
-                      onChange={handleChange}
-                      placeholder="Ej: Ayuno 12h"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      📋 Preanalítica
-                    </label>
-                    <input
-                      name="preanalitica"
-                      value={form.preanalitica}
-                      onChange={handleChange}
-                      placeholder="Condiciones especiales"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                </div>
-
-                {/* Botones de acción */}
-                <div className="flex flex-col sm:flex-row gap-4 justify-end pt-6 border-t border-gray-200">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditId(null);
-                      setForm({
-                        nombre: "",
-                        metodologia: "",
-                        valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
-                        precio_publico: "",
-                        precio_convenio: "",
-                        tipo_tubo: "",
-                        tipo_frasco: "",
-                        tiempo_resultado: "",
-                        condicion_paciente: "",
-                        preanalitica: "",
-                      });
-                      setModalOpen(false);
-                    }}
-                    className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium border border-gray-300"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105"
-                  >
-                    {editId ? "💾 Actualizar Examen" : "✨ Crear Examen"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </Modal>
+          <ExamenModal
+            open={modalOpen}
+            onClose={() => setModalOpen(false)}
+            form={form}
+            setForm={setForm}
+            editId={editId}
+            setEditId={setEditId}
+            msg={msg}
+            setMsg={setMsg}
+            msgType={msgType}
+            setMsgType={setMsgType}
+            handleSubmit={handleSubmit}
+            handleChange={handleChange}
+            handleValoresReferencialesChange={handleValoresReferencialesChange}
+          />
         {/* Controles de vista y paginación */}
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-4">
           <div className="flex items-center gap-2">
@@ -817,213 +425,52 @@ export default function ExamenesLaboratorioCrudPage() {
         </div>
 
         {/* Contenido principal */}
-        {loading ? (
-          <div className="flex items-center justify-center p-12">
-            <div className="flex items-center gap-3 text-purple-600">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-              <span className="text-lg">Cargando exámenes de laboratorio...</span>
+          {loading ? (
+            <div className="flex items-center justify-center p-12">
+              <div className="flex items-center gap-3 text-purple-600">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                <span className="text-lg">Cargando exámenes de laboratorio...</span>
+              </div>
             </div>
-          </div>
-        ) : examenes.length === 0 ? (
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-12 text-center">
-            <div className="text-6xl mb-4">🔬</div>
-            <p className="text-gray-600 text-lg mb-4">No hay exámenes registrados</p>
-            <button
-              onClick={handleNew}
-              className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg transform hover:scale-105"
-            >
-              ➕ Crear Primer Examen
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-8 text-center">
-            <div className="text-6xl mb-4">🔍</div>
-            <p className="text-gray-600 text-lg">No se encontraron exámenes con los filtros aplicados</p>
-          </div>
-        ) : (
-          <>
-            {/* Vista de tabla */}
-            {viewMode === 'table' && (
-              <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gradient-to-r from-purple-500 to-indigo-500 text-white">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Nombre</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium hidden md:table-cell">Metodología</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium hidden md:table-cell">Categoría</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium hidden lg:table-cell">Tubo/Frasco</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium hidden lg:table-cell">Tiempo</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Precios</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginated.map((ex) => (
-                        <tr key={ex.id} className="border-b border-gray-100 hover:bg-purple-50/50 transition-colors">
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 text-sm">
-                                🧪
-                              </div>
-                              <div>
-                                {ex.titulo && (
-                                  <div className={`text-sm ${
-                                    ex.es_subtitulo ? "font-bold text-gray-900" : "font-semibold text-gray-700"
-                                  }`}>
-                                    {ex.titulo}
-                                  </div>
-                                )}
-                                <div className="font-medium text-gray-900">{ex.nombre}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600 hidden md:table-cell">
-                            {ex.metodologia}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600 hidden md:table-cell">
-                            {ex.categoria || <span className="text-gray-400">-</span>}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600 hidden lg:table-cell">
-                            <div className="space-y-1">
-                              {ex.tipo_tubo && <div>📍 {ex.tipo_tubo}</div>}
-                              {ex.tipo_frasco && <div>🧪 {ex.tipo_frasco}</div>}
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600 hidden lg:table-cell">
-                            <div className="space-y-1">
-                              {ex.tiempo_resultado && <div>⏱️ {ex.tiempo_resultado}</div>}
-                              {ex.condicion_paciente && <div>👤 {ex.condicion_paciente}</div>}
-                            </div>
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="space-y-1">
-                              <div className="text-sm">
-                                <span className="text-gray-600">Público:</span> 
-                                <span className="font-semibold text-green-600 ml-1">S/ {ex.precio_publico}</span>
-                              </div>
-                              <div className="text-sm">
-                                <span className="text-gray-600">Convenio:</span>
-                                <span className="font-semibold text-blue-600 ml-1">S/ {ex.precio_convenio}</span>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleEdit(ex)}
-                                className="px-3 py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors text-sm font-medium shadow-md"
-                              >
-                                ✏️ Editar
-                              </button>
-                              <button
-                                onClick={() => handleDelete(ex.id)}
-                                className="px-3 py-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-medium shadow-md"
-                              >
-                                🗑️ Eliminar
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Vista de tarjetas */}
-            {viewMode === 'cards' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {paginated.map((ex) => (
-                  <div key={ex.id} className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 hover:shadow-xl transition-all transform hover:scale-105">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
-                          🧪
-                        </div>
-                        <div className="text-lg font-bold text-gray-900 line-clamp-1">
-                          {ex.nombre}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      {ex.titulo && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Título</p>
-                          <p className={`text-sm ${
-                            ex.es_subtitulo ? "font-bold text-gray-900" : "font-semibold text-gray-700"
-                          }`}>
-                            {ex.titulo}
-                          </p>
-                        </div>
-                      )}
-                      {ex.categoria && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Categoría</p>
-                          <p className="text-sm text-gray-700">{ex.categoria}</p>
-                        </div>
-                      )}
-                      {ex.metodologia && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Metodología</p>
-                          <p className="text-sm text-gray-700">{ex.metodologia}</p>
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Precio Público</p>
-                          <p className="text-lg font-bold text-green-600">S/ {ex.precio_publico}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Precio Convenio</p>
-                          <p className="text-lg font-bold text-blue-600">S/ {ex.precio_convenio}</p>
-                        </div>
-                      </div>
-
-                      {(ex.tipo_tubo || ex.tipo_frasco) && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Muestras</p>
-                          <div className="space-y-1">
-                            {ex.tipo_tubo && <p className="text-sm text-gray-700">📍 {ex.tipo_tubo}</p>}
-                            {ex.tipo_frasco && <p className="text-sm text-gray-700">🧪 {ex.tipo_frasco}</p>}
-                          </div>
-                        </div>
-                      )}
-
-                      {(ex.tiempo_resultado || ex.condicion_paciente) && (
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wide">Información</p>
-                          <div className="space-y-1">
-                            {ex.tiempo_resultado && <p className="text-sm text-gray-700">⏱️ {ex.tiempo_resultado}</p>}
-                            {ex.condicion_paciente && <p className="text-sm text-gray-700">👤 {ex.condicion_paciente}</p>}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-gray-200 flex gap-3">
-                      <button
-                        onClick={() => handleEdit(ex)}
-                        className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white py-2.5 px-4 rounded-lg hover:from-amber-600 hover:to-orange-600 transition-all font-medium text-sm shadow-md"
-                      >
-                        ✏️ Editar
-                      </button>
-                      <button
-                        onClick={() => handleDelete(ex.id)}
-                        className="flex-1 bg-gradient-to-r from-red-500 to-pink-500 text-white py-2.5 px-4 rounded-lg hover:from-red-600 hover:to-pink-600 transition-all font-medium text-sm shadow-md"
-                      >
-                        🗑️ Eliminar
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+          ) : examenes.length === 0 ? (
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-12 text-center">
+              <div className="text-6xl mb-4">🔬</div>
+              <p className="text-gray-600 text-lg mb-4">No hay exámenes registrados</p>
+              <button
+                onClick={handleNew}
+                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg transform hover:scale-105"
+              >
+                ➕ Crear Primer Examen
+              </button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-8 text-center">
+              <div className="text-6xl mb-4">🔍</div>
+              <p className="text-gray-600 text-lg">No se encontraron exámenes con los filtros aplicados</p>
+            </div>
+          ) : (
+            <>
+              {viewMode === 'table' ? (
+                <ExamenesTable
+                  paginated={paginated}
+                  handleEdit={handleEdit}
+                  handleDelete={handleDelete}
+                  page={page}
+                  setPage={setPage}
+                  totalPages={totalPages}
+                  rowsPerPage={rowsPerPage}
+                  setRowsPerPage={setRowsPerPage}
+                  filteredLength={filtered.length}
+                />
+              ) : (
+                <ExamenesCards
+                  paginated={paginated}
+                  handleEdit={handleEdit}
+                  handleDelete={handleDelete}
+                />
+              )}
+            </>
+          )}
       </div>
     </div>
   );
