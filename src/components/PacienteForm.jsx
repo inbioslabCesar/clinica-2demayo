@@ -176,7 +176,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
   };
 
   return (
-    <div>
+  <div className="w-full max-w-full mx-auto">
       <h2
         className="text-2xl font-extrabold mb-6 flex items-center gap-3 justify-center bg-gradient-to-r from-purple-700 via-pink-500 to-blue-500 text-white rounded-xl shadow-lg py-4 px-6 animate__animated animate__fadeInDown"
         style={{ boxShadow: '0 4px 16px rgba(80,0,120,0.12)' }}
@@ -203,7 +203,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       )}
       <form
         onSubmit={handleSubmit}
-        className="space-y-4 bg-blue-50 p-4 rounded border border-blue-200 max-h-[70vh] overflow-y-auto"
+        className="space-y-4 bg-blue-50 p-4 rounded border border-blue-200 max-h-[80vh] overflow-y-auto w-full max-w-full mx-auto"
       >
         {/* Sección: Información Básica */}
         <div className="bg-white rounded-lg p-4 border border-blue-300">
