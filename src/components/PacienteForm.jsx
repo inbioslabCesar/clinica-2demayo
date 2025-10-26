@@ -1,12 +1,15 @@
 
 import React, { useState } from "react";
 import { BASE_URL } from "../config/config";
+import Swal from "sweetalert2";
+import withReactContent from "sweetalert2-react-content";
 import DatosBasicos from "./paciente/DatosBasicos";
 import DatosEdad from "./paciente/DatosEdad";
 import DatosAdicionales from "./paciente/DatosAdicionales";
 import DatosContacto from "./paciente/DatosContacto";
 
 function PacienteForm({ initialData = {}, onRegistroExitoso }) {
+  const MySwal = withReactContent(Swal);
   const [form, setForm] = useState({
     id: initialData.id || undefined,
     dni: initialData.dni || "",
@@ -162,6 +165,13 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       const data = await res.json();
       if (data.success && data.paciente) {
         onRegistroExitoso(data.paciente);
+        // Mostrar mensaje de confirmación con el número de HC generado
+        MySwal.fire({
+          icon: "success",
+          title: "Paciente registrado",
+          html: `<b>Historia Clínica:</b> ${data.paciente.historia_clinica || '-'}`,
+          confirmButtonText: "Aceptar"
+        });
       } else {
         setError(
           data.error ||
