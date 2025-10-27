@@ -29,7 +29,7 @@ export default function DashboardCajaAbierta({
 
   // Depuración: mostrar egresosDiarios cada vez que cambie
   useEffect(() => {
-    console.log('egresosDiarios en DashboardCajaAbierta:', egresosDiarios);
+  // console.log eliminado
   }, [egresosDiarios]);
 
   useEffect(() => {

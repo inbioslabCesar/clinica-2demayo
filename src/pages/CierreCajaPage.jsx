@@ -16,7 +16,7 @@ import Spinner from "../components/Spinner";
 export default function CierreCajaPage() {
   const [honorariosPagados, setHonorariosPagados] = useState(0);
   useEffect(() => {
-    console.log('Honorarios Médicos Pagados:', honorariosPagados);
+    // console.log eliminado
   }, [honorariosPagados]);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);

@@ -90,7 +90,7 @@ export default function IngresosPage() {
           setHonorariosPagados(0);
         }
       } else {
-        console.log('Estado de caja:', cajaData.error);
+  // console.log eliminado
         setEgresosDiarios([]);
         setHonorariosPagados(0);
       }

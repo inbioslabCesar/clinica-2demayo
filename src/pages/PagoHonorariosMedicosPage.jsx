@@ -59,10 +59,10 @@ export default function PagoHonorariosMedicosPage() {
       if (tipoConsultaFiltro) {
         url += `&tipo_consulta=${tipoConsultaFiltro}`;
       }
-      console.debug("Fetching honorarios URL:", url);
+  // console.debug eliminado
       const resp = await fetch(url, { credentials: "include" });
       const data = await resp.json();
-      console.debug("Honorarios response:", data);
+  // console.debug eliminado
       if (data.success) {
         setHonorarios(data.movimientos || []);
       } else {

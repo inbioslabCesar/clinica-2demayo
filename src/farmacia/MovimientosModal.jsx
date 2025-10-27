@@ -4,7 +4,7 @@ import axios from "axios";
 
 export default function MovimientosModal({ medicamento, usuario, onClose }) {
   // Debug: Verificar el usuario recibido
-  console.log('Usuario logueado en MovimientosModal:', usuario);
+  // console.log eliminado
   const [movimientos, setMovimientos] = useState([]);
   const [pagina, setPagina] = useState(1);
   const [tamanoPagina, setTamanoPagina] = useState(3);
