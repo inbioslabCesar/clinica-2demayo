@@ -18,6 +18,7 @@ export default function DashboardCajaAbierta({
   resumenHoy,
   onActualizar,
   egresosDiarios = [],
+  honorariosPagados = 0,
 }) {
   
   const navigate = useNavigate();
@@ -155,7 +156,7 @@ export default function DashboardCajaAbierta({
       </div>
 
       {/* Resumen Financiero - Cards Grandes */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-green-500 transform hover:scale-105 transition-all">
           <div className="flex items-center justify-between">
             <div>
@@ -233,6 +234,22 @@ export default function DashboardCajaAbierta({
               <p className="text-red-500 text-sm mt-1">🧾 Pagos y salidas</p>
             </div>
             <div className="text-5xl text-red-500 opacity-20">🧾</div>
+          </div>
+        </div>
+
+        {/* Card de honorarios médicos pagados */}
+        <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-red-700 transform hover:scale-105 transition-all">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-600 text-sm font-medium uppercase tracking-wide">
+                Honorarios Médicos Pagados
+              </p>
+              <p className="text-3xl font-bold text-red-700 mt-2">
+                - S/ {parseFloat(honorariosPagados).toFixed(2)}
+              </p>
+              <p className="text-red-700 text-sm mt-1">👨‍⚕️ Pagos a médicos</p>
+            </div>
+            <div className="text-5xl text-red-700 opacity-20">👨‍⚕️</div>
           </div>
         </div>
       </div>

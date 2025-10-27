@@ -52,6 +52,7 @@ try {
 
     $usuario_id = $_SESSION['usuario']['id'];
     $fecha_hoy = date('Y-m-d');
+    error_log("[DEBUG] api_caja_estado.php - fecha_hoy: $fecha_hoy, usuario_id: $usuario_id");
 
     // Buscar caja abierta para el usuario en el día actual
     $stmt = $pdo->prepare("
@@ -75,6 +76,7 @@ try {
     
     $stmt->execute([$fecha_hoy, $usuario_id]);
     $caja = $stmt->fetch(PDO::FETCH_ASSOC);
+    error_log("[DEBUG] api_caja_estado.php - resultado consulta caja: " . json_encode($caja));
 
     if ($caja) {
         // Formatear hora de apertura

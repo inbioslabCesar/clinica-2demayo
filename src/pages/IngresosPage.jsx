@@ -25,6 +25,7 @@ export default function IngresosPage() {
   const [cajaActual, setCajaActual] = useState(null);
   const [usuario, setUsuario] = useState(null);
   const [resumenHoy, setResumenHoy] = useState(null);
+  const [honorariosPagados, setHonorariosPagados] = useState(0);
   const navigate = useNavigate();
 
   // Estados para apertura de caja
@@ -41,7 +42,7 @@ export default function IngresosPage() {
     try {
       setLoading(true);
       // Obtener usuario actual
-      const usuarioResp = await fetch(`${BASE_URL}api_auth_status.php`, { credentials: 'include' });
+      const usuarioResp = await fetch('/api_auth_status.php', { credentials: 'include' });
       const usuarioData = await usuarioResp.json();
       if (!usuarioData.success || !usuarioData.authenticated) {
         Swal.fire({
@@ -57,31 +58,41 @@ export default function IngresosPage() {
       setUsuario(usuarioData);
 
       // Verificar estado de caja actual
-      const cajaResp = await fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' });
+      const cajaResp = await fetch('/api_caja_estado.php', { credentials: 'include' });
       const cajaData = await cajaResp.json();
       if (cajaData.success) {
         setCajaActual(cajaData.caja);
         // Si hay caja abierta, obtener resumen
         if (cajaData.caja) {
-          const resumenResp = await fetch(`${BASE_URL}api_resumen_ingresos.php`, { credentials: 'include' });
+          const resumenResp = await fetch('/api_resumen_ingresos.php', { credentials: 'include' });
           const resumenData = await resumenResp.json();
           if (resumenData.success) {
             setResumenHoy(resumenData.resumen);
           }
           // Obtener egresos diarios desde el backend
-          const egresosResp = await fetch(`${BASE_URL}api_egresos.php`, { credentials: 'include' });
+          const egresosResp = await fetch('/api_egresos.php', { credentials: 'include' });
           const egresosData = await egresosResp.json();
           if (egresosData.success) {
             setEgresosDiarios(egresosData.egresos || []);
           } else {
             setEgresosDiarios([]);
           }
+          // Obtener honorarios médicos pagados
+          const honorariosResp = await fetch(`/api_honorarios_pagados_caja.php?caja_id=${cajaData.caja.id}`, { credentials: 'include' });
+          const honorariosData = await honorariosResp.json();
+          if (honorariosData.success) {
+            setHonorariosPagados(honorariosData.total_honorarios);
+          } else {
+            setHonorariosPagados(0);
+          }
         } else {
           setEgresosDiarios([]);
+          setHonorariosPagados(0);
         }
       } else {
         console.log('Estado de caja:', cajaData.error);
         setEgresosDiarios([]);
+        setHonorariosPagados(0);
       }
     } catch (error) {
       console.error('Error cargando datos:', error);
@@ -94,6 +105,7 @@ export default function IngresosPage() {
         cargarDatos();
       });
       setEgresosDiarios([]);
+      setHonorariosPagados(0);
     } finally {
       setLoading(false);
     }
@@ -108,7 +120,7 @@ export default function IngresosPage() {
     try {
       setLoadingApertura(true);
       
-      const response = await fetch(`${BASE_URL}api_caja_abrir.php`, {
+  const response = await fetch('/api_caja_abrir.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -197,7 +209,7 @@ export default function IngresosPage() {
             resumenHoy={resumenHoy}
             onActualizar={cargarDatos}
             egresosDiarios={egresosDiarios}
-            
+            honorariosPagados={honorariosPagados}
           />
         </>
       )}
