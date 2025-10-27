@@ -46,8 +46,8 @@ switch ($method) {
             exit;
         }
         $json = json_encode($examenes);
-    $paciente_id = $data['paciente_id'] ?? null;
-    $cobro_id = isset($data['cobro_id']) && is_numeric($data['cobro_id']) ? intval($data['cobro_id']) : null;
+        $paciente_id = $data['paciente_id'] ?? null;
+        $cobro_id = isset($data['cobro_id']) && is_numeric($data['cobro_id']) ? intval($data['cobro_id']) : null;
         try {
             if ($consulta_id !== null) {
                 // Orden generada desde consulta médica, no requiere cobro_id
@@ -80,11 +80,12 @@ switch ($method) {
         // Listar órdenes de laboratorio (por estado o consulta_id)
         $estado = $_GET['estado'] ?? null;
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
-        
-                $sql = 'SELECT o.*, 
+
+        $sql = 'SELECT o.*, 
                     IFNULL(p2.nombre, p.nombre) AS paciente_nombre, 
                     IFNULL(p2.apellido, p.apellido) AS paciente_apellido, 
-                    m.nombre AS medico_nombre 
+                    m.nombre AS medico_nombre, 
+                    m.apellido AS medico_apellido 
                 FROM ordenes_laboratorio o 
                 LEFT JOIN consultas c ON o.consulta_id = c.id 
                 LEFT JOIN pacientes p ON c.paciente_id = p.id 
@@ -113,7 +114,7 @@ switch ($method) {
         while ($row = $res->fetch_assoc()) {
             // Decodificar los IDs de exámenes
             $examenes_ids = json_decode($row['examenes'], true) ?: [];
-            
+
             // Obtener detalles completos de los exámenes
             if (!empty($examenes_ids)) {
                 $placeholders = str_repeat('?,', count($examenes_ids) - 1) . '?';
@@ -122,18 +123,18 @@ switch ($method) {
                 $stmt_examenes->bind_param(str_repeat('i', count($examenes_ids)), ...$examenes_ids);
                 $stmt_examenes->execute();
                 $res_examenes = $stmt_examenes->get_result();
-                
+
                 $examenes_detalle = [];
                 while ($examen = $res_examenes->fetch_assoc()) {
                     $examenes_detalle[] = $examen;
                 }
                 $stmt_examenes->close();
-                
+
                 $row['examenes'] = $examenes_detalle;
             } else {
                 $row['examenes'] = [];
             }
-            
+
             $ordenes[] = $row;
         }
         $stmt->close();

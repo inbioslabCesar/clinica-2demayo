@@ -119,22 +119,22 @@ export default function CierreCajaPage() {
   };
 
   const calcularDiferencias = () => {
-    if (!resumenIngresos) return {};
+  if (!resumenIngresos) return {};
 
-    const diferencias = {};
-    // Descontar honorarios pagados del efectivo del sistema
-    const efectivoSistema = Math.max(0, parseFloat(resumenIngresos.total_efectivo || 0) - honorariosPagados);
-    const tarjetasSistema = parseFloat(resumenIngresos.total_tarjetas || 0);
-    const transferenciasSistema = parseFloat(resumenIngresos.total_transferencias || 0);
-    const otrosSistema = parseFloat(resumenIngresos.total_otros || 0);
+  const diferencias = {};
+  // Descontar honorarios pagados y egresos diarios del efectivo del sistema
+  const efectivoSistema = Math.max(0, parseFloat(resumenIngresos.total_efectivo || 0) - honorariosPagados - totalEgresosDiarios);
+  const tarjetasSistema = parseFloat(resumenIngresos.total_tarjetas || 0);
+  const transferenciasSistema = parseFloat(resumenIngresos.total_transferencias || 0);
+  const otrosSistema = parseFloat(resumenIngresos.total_otros || 0);
 
-    diferencias.efectivo = parseFloat(montosCierre.efectivo_contado || 0) - efectivoSistema;
-    diferencias.tarjetas = parseFloat(montosCierre.tarjetas_contado || 0) - tarjetasSistema;
-    diferencias.transferencias = parseFloat(montosCierre.transferencias_contado || 0) - transferenciasSistema;
-    diferencias.otros = parseFloat(montosCierre.otros_contado || 0) - otrosSistema;
-    diferencias.total = diferencias.efectivo + diferencias.tarjetas + diferencias.transferencias + diferencias.otros;
+  diferencias.efectivo = parseFloat(montosCierre.efectivo_contado || 0) - efectivoSistema;
+  diferencias.tarjetas = parseFloat(montosCierre.tarjetas_contado || 0) - tarjetasSistema;
+  diferencias.transferencias = parseFloat(montosCierre.transferencias_contado || 0) - transferenciasSistema;
+  diferencias.otros = parseFloat(montosCierre.otros_contado || 0) - otrosSistema;
+  diferencias.total = diferencias.efectivo + diferencias.tarjetas + diferencias.transferencias + diferencias.otros;
 
-    return diferencias;
+  return diferencias;
   };
 
   const procesarCierre = async () => {
@@ -287,7 +287,7 @@ export default function CierreCajaPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Resumen del sistema */}
-  <div className="bg-white rounded-2xl shadow-2xl p-8">
+        <div className="bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
             <FaCalculator />
             Resumen del Sistema

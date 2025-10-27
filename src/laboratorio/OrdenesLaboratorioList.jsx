@@ -325,7 +325,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{orden.medico_nombre}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{orden.medico_nombre} {orden.medico_apellido}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{orden.consulta_id}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{formatFecha(orden.fecha)}</td>
                         <td className="px-4 py-3">
@@ -386,7 +386,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     
                     <div>
                       <p className="text-xs text-gray-500 uppercase tracking-wide">Médico</p>
-                      <p className="text-sm text-gray-700">{orden.medico_nombre || 'N/A'}</p>
+                      <p className="text-sm text-gray-700">{orden.medico_nombre} {orden.medico_apellido || ''}</p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

@@ -225,8 +225,9 @@ function GestionTarifasPage() {
         : `${BASE_URL}api_tarifas.php`;
 
       const method = tarifaEditando ? "PUT" : "POST";
+      // Asegurar que servicio_tipo nunca sea null ni undefined
       const data = tarifaEditando
-        ? { ...nuevaTarifa, id: tarifaEditando.id }
+        ? { ...nuevaTarifa, id: tarifaEditando.id, servicio_tipo: nuevaTarifa.servicio_tipo || tarifaEditando.servicio_tipo }
         : nuevaTarifa;
 
       const response = await fetch(url, {

@@ -159,6 +159,17 @@ switch($method) {
         $data = json_decode(file_get_contents('php://input'), true);
         
     $servicio_tipo = $data['servicio_tipo'] ?? '';
+    // Si servicio_tipo es vacío o null, obtener el actual de la BD
+    if (empty($servicio_tipo)) {
+        $stmt_actual = $conn->prepare("SELECT servicio_tipo FROM tarifas WHERE id = ? LIMIT 1");
+        $stmt_actual->bind_param("i", $id);
+        $stmt_actual->execute();
+        $res_actual = $stmt_actual->get_result();
+        if ($row_actual = $res_actual->fetch_assoc()) {
+            $servicio_tipo = $row_actual['servicio_tipo'];
+        }
+        $stmt_actual->close();
+    }
     $descripcion = $data['descripcion'] ?? '';
     $precio_particular = $data['precio_particular'] ?? 0;
     $precio_seguro = $data['precio_seguro'] ?? null;
@@ -195,6 +206,18 @@ switch($method) {
         $data = json_decode(file_get_contents('php://input'), true);
         
     $id = $data['id'] ?? 0;
+    $servicio_tipo = $data['servicio_tipo'] ?? '';
+    // Si servicio_tipo es vacío o null, obtener el actual de la BD
+    if (empty($servicio_tipo)) {
+        $stmt_actual = $conn->prepare("SELECT servicio_tipo FROM tarifas WHERE id = ? LIMIT 1");
+        $stmt_actual->bind_param("i", $id);
+        $stmt_actual->execute();
+        $res_actual = $stmt_actual->get_result();
+        if ($row_actual = $res_actual->fetch_assoc()) {
+            $servicio_tipo = $row_actual['servicio_tipo'];
+        }
+        $stmt_actual->close();
+    }
     $descripcion = $data['descripcion'] ?? '';
     $precio_particular = $data['precio_particular'] ?? 0;
     $precio_seguro = $data['precio_seguro'] ?? null;
@@ -217,8 +240,8 @@ switch($method) {
             break;
         }
         
-    $stmt = $conn->prepare("UPDATE tarifas SET descripcion = ?, precio_particular = ?, precio_seguro = ?, precio_convenio = ?, activo = ?, medico_id = ?, porcentaje_medico = ?, porcentaje_clinica = ?, monto_medico = ?, monto_clinica = ? WHERE id = ?");
-    $stmt->bind_param("sdddiiidddi", $descripcion, $precio_particular, $precio_seguro, $precio_convenio, $activo, $medico_id, $porcentaje_medico, $porcentaje_clinica, $monto_medico, $monto_clinica, $id);
+    $stmt = $conn->prepare("UPDATE tarifas SET servicio_tipo = ?, descripcion = ?, precio_particular = ?, precio_seguro = ?, precio_convenio = ?, activo = ?, medico_id = ?, porcentaje_medico = ?, porcentaje_clinica = ?, monto_medico = ?, monto_clinica = ? WHERE id = ?");
+    $stmt->bind_param("ssdddiiidddi", $servicio_tipo, $descripcion, $precio_particular, $precio_seguro, $precio_convenio, $activo, $medico_id, $porcentaje_medico, $porcentaje_clinica, $monto_medico, $monto_clinica, $id);
         
         if ($stmt->execute()) {
             echo json_encode(['success' => true]);
