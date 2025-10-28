@@ -91,6 +91,12 @@ function Login({ onLogin }) {
         }
         if (res.ok && data.success) {
           sessionStorage.setItem('usuario', JSON.stringify(data.usuario));
+          // Guardar el rol explícitamente para uso global
+          if (data.usuario.rol) {
+            sessionStorage.setItem('user_role', data.usuario.rol);
+          } else {
+            sessionStorage.setItem('user_role', 'recepcionista');
+          }
           onLogin && onLogin(data.usuario);
           navigate("/");
           return;
@@ -115,6 +121,12 @@ function Login({ onLogin }) {
         }
         if (res.ok && data.success) {
           sessionStorage.setItem('usuario', JSON.stringify(data.usuario));
+          // Guardar el rol explícitamente para uso global
+          if (data.usuario.rol) {
+            sessionStorage.setItem('user_role', data.usuario.rol);
+          } else {
+            sessionStorage.setItem('user_role', 'recepcionista');
+          }
           onLogin && onLogin(data.usuario);
           navigate("/");
           return;

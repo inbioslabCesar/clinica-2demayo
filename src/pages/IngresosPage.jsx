@@ -60,8 +60,10 @@ export default function IngresosPage() {
       // Verificar estado de caja actual
       const cajaResp = await fetch('/api_caja_estado.php', { credentials: 'include' });
       const cajaData = await cajaResp.json();
+      console.log('[cargarDatos] Respuesta de api_caja_estado.php:', cajaData);
       if (cajaData.success) {
         setCajaActual(cajaData.caja);
+        console.log('[cargarDatos] Valor de cajaActual:', cajaData.caja);
         // Si hay caja abierta, obtener resumen
         if (cajaData.caja) {
           const resumenResp = await fetch('/api_resumen_ingresos.php', { credentials: 'include' });
@@ -137,6 +139,7 @@ export default function IngresosPage() {
         setModalApertura(false);
         setMontoApertura("");
         setObservacionesApertura("");
+        console.log('[abrirCaja] Caja abierta, recargando datos...');
         cargarDatos(); // Recargar datos
       } else {
         Swal.fire('Error', data.error || 'Error al abrir caja', 'error');

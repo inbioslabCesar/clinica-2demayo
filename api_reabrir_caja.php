@@ -136,13 +136,12 @@ try {
 
         // Reabrir la caja
         $sqlReabrir = "UPDATE cajas SET 
-            estado = 'abierta',
+            estado = 'cerrada',
             hora_cierre = NULL,
             observaciones_cierre = NULL,
             monto_cierre = NULL,
             diferencia = NULL
             WHERE id = ?";
-        
         $stmtReabrir = $pdo->prepare($sqlReabrir);
         $stmtReabrir->execute([$caja_id]);
 

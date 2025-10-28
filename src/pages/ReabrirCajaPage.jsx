@@ -91,6 +91,9 @@ const ReabrirCajaPage = () => {
     );
   }
 
+  // Obtener el rol del usuario (ajusta según tu implementación real)
+  const userRole = sessionStorage.getItem('user_role') || localStorage.getItem('user_role') || 'recepcionista';
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="w-full max-w-[1600px] mx-auto">
@@ -104,11 +107,15 @@ const ReabrirCajaPage = () => {
                 </svg>
                 Reabrir Cajas Cerradas
               </h1>
-              <p className="text-gray-600 mt-1">Función exclusiva para administradores</p>
+                <p className="text-gray-600 mt-1">
+                  {userRole === 'administrador'
+                    ? 'Función exclusiva para administradores'
+                    : 'No tienes permisos para reabrir cajas'}
+                </p>
             </div>
-            <div className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-medium">
-              🔐 Solo Administradores
-            </div>
+              <div className={`px-3 py-1 rounded-full text-sm font-medium ${userRole === 'administrador' ? 'bg-red-100 text-red-800' : 'bg-gray-200 text-gray-500'}`}>
+                {userRole === 'administrador' ? '🔐 Solo Administradores' : '🔒 Acceso restringido'}
+              </div>
           </div>
         </div>
 
@@ -163,8 +170,8 @@ const ReabrirCajaPage = () => {
                           <td className="px-4 py-3 text-sm">
                             <button
                               onClick={() => confirmarReapertura(caja)}
-                              className={`bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors ${caja.fecha !== (new Date().toISOString().slice(0,10)) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              disabled={caja.fecha !== (new Date().toISOString().slice(0,10))}
+                              className={`bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors ${userRole !== 'administrador' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              disabled={userRole !== 'administrador'}
                             >
                               🔓 Reabrir
                             </button>
