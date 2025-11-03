@@ -56,36 +56,26 @@ try {
         exit;
     }
 
+
     $usuario_id = $_SESSION['usuario']['id'];
     $fecha_hoy = date('Y-m-d');
     $hora_actual = date('H:i:s');
-
-    // Obtener datos del POST
     $input = json_decode(file_get_contents('php://input'), true);
     $monto_apertura = floatval($input['monto_apertura'] ?? 0);
     $observaciones = trim($input['observaciones'] ?? '');
+    $turno = isset($input['turno']) ? trim($input['turno']) : '';
 
     // Validaciones
     if ($monto_apertura < 0) {
         echo json_encode(['success' => false, 'error' => 'El monto de apertura no puede ser negativo']);
         exit;
     }
-
-    // Verificar si ya hay una caja abierta para este usuario hoy
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*) as count 
-        FROM cajas 
-        WHERE fecha = ? AND usuario_id = ? AND estado != 'cerrada'
-    ");
-    $stmt->execute([$fecha_hoy, $usuario_id]);
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if ($result['count'] > 0) {
-        echo json_encode(['success' => false, 'error' => 'Ya existe una caja abierta para este usuario en la fecha actual']);
+    if ($turno === '') {
+        echo json_encode(['success' => false, 'error' => 'Debe especificar el turno']);
         exit;
     }
 
-    // Crear nueva caja
+    // Crear nueva caja (sin restricción por fecha ni hora)
     $stmt = $pdo->prepare("
         INSERT INTO cajas (
             fecha, 
@@ -94,11 +84,12 @@ try {
             monto_apertura, 
             hora_apertura, 
             observaciones_apertura,
+            turno,
             total_efectivo,
             total_tarjetas,
             total_transferencias,
             total_otros
-        ) VALUES (?, ?, 'abierta', ?, ?, ?, 0.00, 0.00, 0.00, 0.00)
+        ) VALUES (?, ?, 'abierta', ?, ?, ?, ?, 0.00, 0.00, 0.00, 0.00)
     ");
 
     $stmt->execute([
@@ -106,7 +97,8 @@ try {
         $usuario_id,
         $monto_apertura,
         $hora_actual,
-        $observaciones
+        $observaciones,
+        $turno
     ]);
 
     $caja_id = $pdo->lastInsertId();

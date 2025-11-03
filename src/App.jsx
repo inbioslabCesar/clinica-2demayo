@@ -1,10 +1,10 @@
-import ReabrirCajaPage from "./pages/ReabrirCajaPage";
-import EgresosPage from "./pages/EgresosPage";
-import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
-import CierreCajaPage from "./pages/CierreCajaPage";
-import IngresosDetallePage from "./pages/IngresosDetallePage";
-import NuevoIngresoPage from "./pages/NuevoIngresoPage";
-import IngresosPage from "./pages/IngresosPage";
+// import ReabrirCajaPage from "./pages/ReabrirCajaPage";
+// import EgresosPage from "./pages/EgresosPage";
+// import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
+// import CierreCajaPage from "./pages/CierreCajaPage";
+// import IngresosDetallePage from "./pages/IngresosDetallePage";
+// import NuevoIngresoPage from "./pages/NuevoIngresoPage";
+// import IngresosPage from "./pages/IngresosPage";
 import ContabilidadPage from "./pages/ContabilidadPage";
 
 import { useState, useEffect } from "react";
@@ -186,36 +186,12 @@ function App() {
                     <MedicosPage />
                   </ProtectedRoute>
                 } />
-                  <Route path="/contabilidad" element={
+                  {<Route path="/contabilidad" element={
                     <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                       <ContabilidadPage />
                     </ProtectedRoute>
-                  } />
-                    <Route path="/contabilidad/ingresos" element={
-                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                        <IngresosPage />
-                      </ProtectedRoute>
-                    } />
-                      <Route path="/contabilidad/nuevo-ingreso" element={
-                        <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                          <NuevoIngresoPage />
-                        </ProtectedRoute>
-                      } />
-                        <Route path="/contabilidad/ingresos-detalle" element={
-                          <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                            <IngresosDetallePage />
-                          </ProtectedRoute>
-                        } />
-                          <Route path="/contabilidad/cierre-caja" element={
-                            <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                              <CierreCajaPage />
-                            </ProtectedRoute>
-                          } />
-                            <Route path="/reabrir-caja" element={
-                              <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
-                                <ReabrirCajaPage />
-                              </ProtectedRoute>
-                            } />
+                  } /> }
+                 
                 <Route path="/lista-consultas" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <ListaConsultasPage />
@@ -243,7 +219,7 @@ function App() {
                 } />
                 <Route path="/contabilidad/pago-honorarios-medicos" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                    <PagoHonorariosMedicosPage />
+                    {/* <PagoHonorariosMedicosPage /> */}
                   </ProtectedRoute>
                 } />
                 <Route path="/cotizar-laboratorio/:pacienteId" element={
@@ -283,7 +259,7 @@ function App() {
                   } />
                   <Route path="/contabilidad/egresos" element={
                     <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                      <EgresosPage />
+                      {/* <EgresosPage /> */}
                     </ProtectedRoute>
                   } />
               </>

@@ -156,9 +156,9 @@ switch($method) {
                     'efectivo' => 'efectivo',
                     'tarjeta' => 'tarjeta',
                     'transferencia' => 'transferencia',
-                    'yape' => 'transferencia',    // yape -> transferencia (aparece en DIGITAL)
-                    'plin' => 'transferencia',    // plin -> transferencia (aparece en DIGITAL)
-                    'seguro' => 'otros'           // seguro -> otros
+                    'yape' => 'yape',
+                    'plin' => 'plin',
+                    'seguro' => 'otros'
                 ];
                 
                 $metodo_pago = $metodo_pago_map[$data['tipo_pago']] ?? 'otros';
@@ -183,16 +183,17 @@ switch($method) {
                     referencia_tabla, 
                     paciente_id,
                     paciente_nombre, 
-                    usuario_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    usuario_id,
+                    turno
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 
                 // Preparar todas las variables para bind_param (evitar problemas con NULL)
                 $paciente_id_param = $data['paciente_id'];
                 $usuario_id_param = $data['usuario_id'];
                 $total_param = $data['total'];
                 $referencia_tabla_param = 'cobros';
-                
-                $stmt_ingreso->bind_param("isssdsisisi", 
+                $turno_param = $caja_abierta['turno'] ?? 'manana';
+                $stmt_ingreso->bind_param("isssdsisisis", 
                     $caja_id,
                     $tipo_ingreso,
                     $area_servicio,
@@ -203,7 +204,8 @@ switch($method) {
                     $referencia_tabla_param,
                     $paciente_id_param,
                     $nombre_paciente,
-                    $usuario_id_param
+                    $usuario_id_param,
+                    $turno_param
                 );
                 
                 if ($stmt_ingreso->execute()) {
@@ -279,6 +281,18 @@ switch($method) {
                 $stmt_tarifa->bind_param("s", $detalleConsulta['descripcion']);
                 $stmt_tarifa->execute();
                 $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                // Definir $metodo_pago si no existe en este scope
+                if (!isset($metodo_pago)) {
+                    $metodo_pago_map = [
+                        'efectivo' => 'efectivo',
+                        'tarjeta' => 'tarjeta',
+                        'transferencia' => 'transferencia',
+                        'yape' => 'yape',
+                        'plin' => 'plin',
+                        'seguro' => 'otros'
+                    ];
+                    $metodo_pago = $metodo_pago_map[$data['tipo_pago']] ?? 'otros';
+                }
                 if ($tarifa) {
                     // Determinar tipo de precio
                     $tipo_precio = 'particular';
