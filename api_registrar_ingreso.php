@@ -45,14 +45,14 @@ try {
         exit;
     }
 
-    // Verificar que hay una caja abierta
-    $sqlCaja = "SELECT id FROM cajas WHERE estado = 'abierta' ORDER BY created_at DESC LIMIT 1";
+    // Verificar que el usuario actual tiene una caja abierta
+    $sqlCaja = "SELECT id FROM cajas WHERE estado = 'abierta' AND usuario_id = ? ORDER BY created_at DESC LIMIT 1";
     $stmtCaja = $pdo->prepare($sqlCaja);
-    $stmtCaja->execute();
+    $stmtCaja->execute([$_SESSION['usuario']['id']]);
     $cajaAbierta = $stmtCaja->fetch(PDO::FETCH_ASSOC);
 
     if (!$cajaAbierta) {
-        echo json_encode(['success' => false, 'error' => 'No hay caja abierta para registrar ingresos']);
+        echo json_encode(['success' => false, 'error' => 'No tienes una caja abierta para registrar ingresos']);
         exit;
     }
 
