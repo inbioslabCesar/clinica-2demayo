@@ -85,6 +85,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       });
 
       const result = await response.json();
+      console.log('Respuesta api_cobros.php:', result);
 
       if (result.success) {
         // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio
@@ -254,6 +255,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
               <option value="tarjeta">Tarjeta</option>
               <option value="transferencia">Transferencia</option>
               <option value="yape">Yape</option>
+              <option value="plin">Plin</option>
             </select>
           </div>
           {/* Botones de acción */}
