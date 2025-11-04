@@ -66,6 +66,13 @@ export default function CajaAdminDashboard() {
             Cerrar Caja
           </button>
         )}
+        {/* Botón para ir a egresos */}
+        <button
+          className="bg-orange-500 text-white px-6 py-2 rounded shadow hover:bg-orange-600"
+          onClick={() => window.location.href = "/contabilidad/egresos"}
+        >
+          Ir a Egresos
+        </button>
       </div>
 
       <Modal open={showModal} onClose={() => setShowModal(false)}>

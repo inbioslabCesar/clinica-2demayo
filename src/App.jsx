@@ -1,5 +1,6 @@
 // import ReabrirCajaPage from "./pages/ReabrirCajaPage";
-// import EgresosPage from "./pages/EgresosPage";
+import EgresosPage from "./pages/EgresosPage";
+import LiquidacionHonorariosPage from "./pages/LiquidacionHonorariosPage";
 // import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
 // import CierreCajaPage from "./pages/CierreCajaPage";
 // import IngresosDetallePage from "./pages/IngresosDetallePage";
@@ -218,9 +219,9 @@ function App() {
                     <GestionTarifasPage />
                   </ProtectedRoute>
                 } />
-                <Route path="/contabilidad/pago-honorarios-medicos" element={
+                <Route path="/contabilidad/liquidacion-honorarios" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                    {/* <PagoHonorariosMedicosPage /> */}
+                    <LiquidacionHonorariosPage />
                   </ProtectedRoute>
                 } />
                 <Route path="/cotizar-laboratorio/:pacienteId" element={
@@ -260,7 +261,7 @@ function App() {
                   } />
                   <Route path="/contabilidad/egresos" element={
                     <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
-                      {/* <EgresosPage /> */}
+                      <EgresosPage />
                     </ProtectedRoute>
                   } />
                 <Route path="/contabilidad/cerrar-caja" element={

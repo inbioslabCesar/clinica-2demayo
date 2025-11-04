@@ -38,8 +38,8 @@ export default function EgresosPage() {
           categoria: egreso.categoria,
           concepto: egreso.concepto,
           monto: egreso.monto,
-          observaciones: egreso.observaciones
-        })
+          observaciones: egreso.observaciones,
+        }),
       });
       const data = await resp.json();
       if (data.success) {
@@ -56,40 +56,19 @@ export default function EgresosPage() {
   return (
     <div className="w-full max-w-[1600px] mx-auto p-6">
       <h1 className="text-3xl font-bold mb-8 text-red-700">Egresos</h1>
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-        <div>
-          <p className="mb-4 text-gray-700 text-lg">Registro y gestión de egresos operativos, administrativos y pagos de honorarios médicos.</p>
-          <button
-            onClick={() => navigate("/contabilidad/pago-honorarios-medicos")}
-            className="px-6 py-3 bg-gradient-to-r from-purple-500 to-purple-700 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-800 shadow-md"
-          >
-            Pago de Honorarios Médicos
-          </button>
-        </div>
-      </div>
-      {/* Card de egresos con formulario y tabla */}
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-8 flex flex-col md:flex-row gap-8">
-        <div className="md:w-1/2">
-          <h2 className="text-xl font-bold text-red-600 mb-4">Registrar Egreso Operativo</h2>
-          <EgresosDiariosForm onAddEgreso={handleAddEgreso} />
-        </div>
-        <div className="md:w-1/2">
-          <h2 className="text-xl font-bold text-gray-700 mb-4">Listado de Egresos del Día</h2>
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-gray-50 shadow-inner" style={{maxHeight: '400px'}}>
-            {loading ? (
-              <div className="text-center py-8 text-gray-500">Cargando egresos...</div>
-            ) : (
-              <>
-                <EgresosDiariosList egresos={egresosDiarios} />
-                {egresosDiarios.length > 0 && (
-                  <div className="mt-4 text-right font-bold text-red-700">
-                    Total egresos: S/ {egresosDiarios.reduce((acc, e) => acc + parseFloat(e.monto), 0).toFixed(2)}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+      <div className="flex flex-col md:flex-row gap-4 mb-8">
+        <button
+          className="bg-green-600 text-white px-6 py-3 rounded shadow hover:bg-green-700 font-semibold text-lg"
+          onClick={() => navigate("/contabilidad/liquidacion-honorarios")}
+        >
+          Liquidación de Honorarios Médicos
+        </button>
+        <button
+          className="bg-blue-600 text-white px-6 py-3 rounded shadow hover:bg-blue-700 font-semibold text-lg"
+          onClick={() => navigate("/contabilidad/registrar-egreso")}
+        >
+          Registrar Otro Egreso
+        </button>
       </div>
     </div>
   );
