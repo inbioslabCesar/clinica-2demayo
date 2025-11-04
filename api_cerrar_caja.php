@@ -1,0 +1,80 @@
+<?php
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'domain' => '',
+    'secure' => false,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
+session_start();
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+header('Content-Type: application/json');
+header('Access-Control-Allow-Credentials: true');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+require_once __DIR__ . '/db.php';
+
+date_default_timezone_set('America/Lima');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo json_encode(['success' => false, 'error' => 'Método no permitido']);
+    exit;
+}
+
+if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
+    echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
+    exit;
+}
+
+$usuario = $_SESSION['usuario'];
+$usuario_id = $usuario['id'];
+$fecha = date('Y-m-d');
+
+// Leer datos enviados
+$input = json_decode(file_get_contents('php://input'), true);
+$monto_contado = isset($input['monto_contado']) ? floatval($input['monto_contado']) : null;
+if ($monto_contado === null) {
+    echo json_encode(['success' => false, 'error' => 'Monto contado no recibido']);
+    exit;
+}
+
+// Buscar la caja abierta del usuario actual
+$stmt = $pdo->prepare('SELECT id, monto_apertura FROM cajas WHERE usuario_id = ? AND DATE(fecha) = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+$stmt->execute([$usuario_id, $fecha]);
+$caja = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$caja) {
+    echo json_encode(['success' => false, 'error' => 'No hay caja abierta para cerrar']);
+    exit;
+}
+$caja_id = $caja['id'];
+
+// Calcular el total registrado en efectivo
+$stmt = $pdo->prepare('SELECT SUM(monto) as total_efectivo FROM ingresos_diarios WHERE caja_id = ? AND metodo_pago = "efectivo"');
+$stmt->execute([$caja_id]);
+$total_efectivo = $stmt->fetchColumn();
+if ($total_efectivo === false || $total_efectivo === null) {
+    $total_efectivo = 0;
+}
+
+$diferencia = $monto_contado - floatval($total_efectivo);
+
+// Actualizar la caja: estado cerrada, guardar monto contado y diferencia
+$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW() WHERE id = ?');
+$stmt->execute([$monto_contado, $diferencia, $caja_id]);
+
+// Opcional: registrar log de cierre
+// $stmtLog = $pdo->prepare('INSERT INTO log_cierres_caja (caja_id, usuario_id, fecha, monto_contado, diferencia) VALUES (?, ?, NOW(), ?, ?)');
+// $stmtLog->execute([$caja_id, $usuario_id, $monto_contado, $diferencia]);
+
+echo json_encode([
+    'success' => true,
+    'mensaje' => 'Caja cerrada correctamente',
+    'diferencia' => $diferencia
+]);
+?>

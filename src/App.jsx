@@ -6,6 +6,7 @@
 // import NuevoIngresoPage from "./pages/NuevoIngresoPage";
 // import IngresosPage from "./pages/IngresosPage";
 import ContabilidadPage from "./pages/ContabilidadPage";
+import CerrarCajaView from "./components/CerrarCajaView";
 
 import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -262,6 +263,11 @@ function App() {
                       {/* <EgresosPage /> */}
                     </ProtectedRoute>
                   } />
+                <Route path="/contabilidad/cerrar-caja" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <CerrarCajaView />
+                  </ProtectedRoute>
+                } />
               </>
             )}
             {/* Solo visible para laboratoristas */}

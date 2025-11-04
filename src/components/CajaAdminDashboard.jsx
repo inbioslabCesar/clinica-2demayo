@@ -49,16 +49,24 @@ export default function CajaAdminDashboard() {
 
   return (
     <div className="max-w-7xl mx-auto p-8 bg-white rounded-xl shadow-lg">
-      {!cajaAbierta && usuario && (
-        <div className="mb-8 flex justify-center">
+      <div className="mb-8 flex justify-center gap-4">
+        {!cajaAbierta && usuario && (
           <button
             className="bg-blue-600 text-white px-6 py-2 rounded shadow hover:bg-blue-700"
             onClick={() => setShowModal(true)}
           >
             Abrir Caja
           </button>
-        </div>
-      )}
+        )}
+        {cajaAbierta && usuario && (
+          <button
+            className="bg-red-600 text-white px-6 py-2 rounded shadow hover:bg-red-700"
+            onClick={() => window.location.href = "/contabilidad/cerrar-caja"}
+          >
+            Cerrar Caja
+          </button>
+        )}
+      </div>
 
       <Modal open={showModal} onClose={() => setShowModal(false)}>
         <div className="p-4">

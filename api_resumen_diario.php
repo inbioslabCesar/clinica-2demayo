@@ -67,13 +67,12 @@ $monto_apertura = 0;
     $stmt->execute([$fecha, $usuario['id']]);
     $ingresos_por_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Consultar el monto de apertura de la caja del usuario actual
-    $stmt = $pdo->prepare('SELECT monto_apertura FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+    // Consultar el monto de apertura y estado de la caja del usuario actual
+    $stmt = $pdo->prepare('SELECT monto_apertura, estado FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? ORDER BY hora_apertura ASC LIMIT 1');
     $stmt->execute([$fecha, $usuario['id']]);
-    $monto_apertura = $stmt->fetchColumn();
-    if ($monto_apertura === false || $monto_apertura === null) {
-        $monto_apertura = 0;
-    }
+    $caja_row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $monto_apertura = ($caja_row && isset($caja_row['monto_apertura'])) ? $caja_row['monto_apertura'] : 0;
+    $caja_abierta = ($caja_row && isset($caja_row['estado']) && $caja_row['estado'] === 'abierta') ? true : false;
 
     $cajas_resumen = [];
     if ($usuario['rol'] === 'administrador') {
@@ -115,6 +114,7 @@ echo json_encode([
     'por_servicio' => $ingresos_por_servicio,
     'por_area' => $ingresos_por_area,
     'por_pago' => $ingresos_por_pago,
-    'cajas_resumen' => $cajas_resumen
+    'cajas_resumen' => $cajas_resumen,
+    'caja_abierta' => $caja_abierta
 ]);
 ?>
