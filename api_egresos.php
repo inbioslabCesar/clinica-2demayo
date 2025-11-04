@@ -5,9 +5,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false,
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax',
 ]);
 session_start();
 $allowedOrigins = [
@@ -39,7 +39,7 @@ set_exception_handler(function($e) use ($origin, $allowedOrigins) {
     exit();
 });
 header('Content-Type: application/json');
-require_once "db.php";
+require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 

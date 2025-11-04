@@ -3,13 +3,11 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => false,
+    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
     'httponly' => true,
-    'samesite' => 'Lax',
+    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
 ]);
-session_start();
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+session_start(); // Asegurando que session_start se llame después de la configuración de cookies
 // CORS para localhost y producción
 $allowedOrigins = [
     'http://localhost:5173',
@@ -30,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
-require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/config.php';
 
 date_default_timezone_set('America/Lima');
 

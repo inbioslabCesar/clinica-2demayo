@@ -1,12 +1,11 @@
-
 <?php
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Para desarrollo local
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => 'Lax', // Mejor compatibilidad en localhost
 ]);
 session_start();
 
@@ -34,13 +33,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 header('Content-Type: application/json');
 
-require_once "db.php";
+require_once __DIR__ . '/config.php';
 
 $data = json_decode(file_get_contents('php://input'), true);
 $id = isset($data['id']) ? intval($data['id']) : 0;
 
-if (!$id) {
-    echo json_encode(["success" => false, "error" => "ID inválido"]);
+// Chequeo de sesión y usuario
+if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
+    echo json_encode([
+        "success" => false,
+        "error" => "Usuario no autenticado o sesión perdida",
+        "session" => $_SESSION
+    ]);
     exit;
 }
 
@@ -62,7 +66,10 @@ if ($conn->query($sql)) {
     $monto = floatval($honorario['monto_medico']);
     $turno = $conn->real_escape_string($honorario['turno']);
     $metodo_pago = $conn->real_escape_string($honorario['metodo_pago_medico']);
-    $usuario_id = isset($_SESSION['usuario_id']) ? intval($_SESSION['usuario_id']) : 0;
+    $usuario_id = isset($_SESSION['usuario']['id']) ? intval($_SESSION['usuario']['id']) : 0;
+    // Log temporal para depuración
+    error_log('usuario_id: ' . $usuario_id);
+    error_log('usuario en sesión: ' . print_r($_SESSION['usuario'], true));
     $fecha = date('Y-m-d');
     $descripcion = "Liquidación honorario médico ID $id";
     $estado = "pagado";
@@ -75,5 +82,10 @@ if ($conn->query($sql)) {
 
     echo json_encode(["success" => true]);
 } else {
-    echo json_encode(["success" => false, "error" => $conn->error]);
+    echo json_encode([
+        "success" => false,
+        "error" => $conn->error,
+        "usuario_id" => $usuario_id,
+        "usuario_sesion" => isset($_SESSION['usuario']) ? $_SESSION['usuario'] : null
+    ]);
 }

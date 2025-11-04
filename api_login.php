@@ -5,9 +5,9 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => false, // Para desarrollo local
     'httponly' => true,
-    'samesite' => 'None', // Mejor compatibilidad móvil y Chrome
+    'samesite' => 'Lax', // Mejor compatibilidad en localhost
 ]);
 session_start();
 

@@ -9,12 +9,10 @@ export default defineConfig({
   server: {
     proxy: {
       // Redirige todas las llamadas a /api_*.php al backend PHP en Laragon
-      '/api_': {
+  '/api_': {
         target: 'http://localhost/clinica-2demayo',
         changeOrigin: true,
         secure: false,
-        // Opcional: reescribe la ruta si es necesario
-        // rewrite: path => path.replace(/^\/api_/, '/api_')
       }
     }
   },
