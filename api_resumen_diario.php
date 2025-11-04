@@ -77,16 +77,16 @@ $monto_apertura = 0;
 
     $cajas_resumen = [];
     if ($usuario['rol'] === 'administrador') {
-        // Listado de cajas del día con monto de apertura y cobrado por cada recepcionista
+        // Listado de cajas del día con monto de apertura, rol y cobrado por cada recepcionista
         $stmt = $pdo->prepare('
-            SELECT c.id, c.usuario_id, u.nombre as usuario_nombre, c.turno, c.estado,
+            SELECT c.id, c.usuario_id, u.nombre as usuario_nombre, u.rol as usuario_rol, c.turno, c.estado,
                 c.monto_apertura,
                 SUM(i.monto) as total_caja
             FROM cajas c
             LEFT JOIN usuarios u ON c.usuario_id = u.id
             LEFT JOIN ingresos_diarios i ON i.caja_id = c.id
             WHERE DATE(c.fecha) = ?
-            GROUP BY c.id, c.usuario_id, c.turno, c.estado, u.nombre, c.monto_apertura
+            GROUP BY c.id, c.usuario_id, c.turno, c.estado, u.nombre, u.rol, c.monto_apertura
             ORDER BY c.turno ASC, c.estado DESC
         ');
         $stmt->execute([$fecha]);
