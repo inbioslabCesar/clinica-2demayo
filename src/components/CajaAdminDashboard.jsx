@@ -342,15 +342,6 @@ export default function CajaAdminDashboard() {
                   </div>
                 ));
               } else {
-                // Si hay cajas pero ninguna con rol recepcionista, mostrar debug
-                if (resumen.cajas_resumen && resumen.cajas_resumen.length > 0) {
-                  return (
-                    <div className="text-red-500">
-                      No hay cajas de recepcionista.<br />
-                      <span className="text-xs">Debug: <pre>{JSON.stringify(resumen.cajas_resumen, null, 2)}</pre></span>
-                    </div>
-                  );
-                }
                 return <div className="text-gray-500">No hay cajas registradas hoy</div>;
               }
             })()}
