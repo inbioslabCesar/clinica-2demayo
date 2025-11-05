@@ -9,10 +9,13 @@ function LiquidacionHonorariosPage() {
   const [medicoId, setMedicoId] = useState("");
   const [estado, setEstado] = useState("pendiente");
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(3);
 
   useEffect(() => {
     cargarMedicos();
     cargarHonorarios();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const cargarMedicos = async () => {
@@ -34,6 +37,8 @@ function LiquidacionHonorariosPage() {
       if (medicoId) params.push(`medico_id=${medicoId}`);
       if (turno) params.push(`turno=${turno}`);
       if (estado) params.push(`estado=${estado}`);
+      params.push(`page=${page}`);
+      params.push(`limit=${rowsPerPage}`);
       const query = params.length ? `?${params.join("&")}` : "";
       const response = await fetch(`${BASE_URL}api_honorarios_pendientes.php${query}`);
       const data = await response.json();
@@ -101,45 +106,77 @@ function LiquidacionHonorariosPage() {
           <option value="pendiente">Pendiente</option>
           <option value="pagado">Pagado</option>
         </select>
-        <button onClick={cargarHonorarios} className="bg-blue-600 text-white px-4 py-2 rounded">Filtrar</button>
+        <button onClick={() => { setPage(1); cargarHonorarios(); }} className="bg-blue-600 text-white px-4 py-2 rounded">Filtrar</button>
+        <label className="ml-4">Filas por página:</label>
+        <select value={rowsPerPage} onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1); }} className="border rounded px-3 py-2">
+          <option value={3}>3</option>
+          <option value={5}>5</option>
+          <option value={10}>10</option>
+        </select>
       </div>
       {loading ? (
         <div className="text-center py-8">Cargando honorarios...</div>
       ) : (
-        <table className="w-full bg-white rounded shadow">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-2">Médico</th>
-              <th className="px-4 py-2">Servicio</th>
-              <th className="px-4 py-2">Paciente</th>
-              <th className="px-4 py-2">Fecha</th>
-              <th className="px-4 py-2">Turno</th>
-              <th className="px-4 py-2">Monto Médico</th>
-              <th className="px-4 py-2">Estado</th>
-              <th className="px-4 py-2">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {honorarios.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-8 text-gray-500">No hay honorarios {estado === "pendiente" ? "pendientes" : "pagados"}</td></tr>
-            ) : honorarios.map(h => (
-              <tr key={h.id}>
-                <td className="px-4 py-2">{h.medico_nombre} {h.medico_apellido}</td>
-                <td className="px-4 py-2">{h.tipo_servicio}</td>
-                <td className="px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
-                <td className="px-4 py-2">{h.fecha}</td>
-                <td className="px-4 py-2">{h.turno}</td>
-                <td className="px-4 py-2">S/ {parseFloat(h.monto_medico).toFixed(2)}</td>
-                <td className="px-4 py-2">{h.estado_pago_medico}</td>
-                <td className="px-4 py-2">
-                  {h.estado_pago_medico === "pendiente" && (
-                    <button onClick={() => liquidarHonorario(h.id)} className="bg-green-600 text-white px-3 py-1 rounded">Liquidar</button>
-                  )}
-                </td>
+        <>
+          <table className="w-full bg-white rounded shadow">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-2">Médico</th>
+                <th className="px-4 py-2">Servicio</th>
+                <th className="px-4 py-2">Paciente</th>
+                <th className="px-4 py-2">Fecha</th>
+                <th className="px-4 py-2">Turno</th>
+                <th className="px-4 py-2">Monto Médico</th>
+                <th className="px-4 py-2">Estado</th>
+                <th className="px-4 py-2">Cobrado por</th>
+                <th className="px-4 py-2">Liquidado por</th>
+                <th className="px-4 py-2">Fecha Liquidación</th>
+                <th className="px-4 py-2">Acciones</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {honorarios.length === 0 ? (
+                <tr><td colSpan={11} className="text-center py-8 text-gray-500">No hay honorarios {estado === "pendiente" ? "pendientes" : "pagados"}</td></tr>
+              ) : honorarios.slice((page - 1) * rowsPerPage, page * rowsPerPage).map(h => (
+                <tr key={h.id}>
+                  <td className="px-4 py-2">{h.medico_nombre} {h.medico_apellido}</td>
+                  <td className="px-4 py-2">{h.tipo_servicio}</td>
+                  <td className="px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
+                  <td className="px-4 py-2">{h.fecha}</td>
+                  <td className="px-4 py-2">{h.turno}</td>
+                  <td className="px-4 py-2">S/ {parseFloat(h.monto_medico).toFixed(2)}</td>
+                  <td className="px-4 py-2">{h.estado_pago_medico}</td>
+                  <td className="px-4 py-2">
+                    {h.cobrado_por_nombre ? (
+                      <span>{h.cobrado_por_nombre} <span className="text-xs text-gray-500">({h.cobrado_por_rol})</span></span>
+                    ) : <span className="text-gray-400">-</span>}
+                  </td>
+                  <td className="px-4 py-2">
+                    {h.estado_pago_medico === "pagado" && h.liquidado_por_nombre ? (
+                      <span>{h.liquidado_por_nombre} <span className="text-xs text-gray-500">({h.liquidado_por_rol})</span></span>
+                    ) : <span className="text-gray-400">-</span>}
+                  </td>
+                  <td className="px-4 py-2">
+                    {h.estado_pago_medico === "pagado" && h.fecha_liquidacion ? (
+                      <span>{h.fecha_liquidacion}</span>
+                    ) : <span className="text-gray-400">-</span>}
+                  </td>
+                  <td className="px-4 py-2">
+                    {h.estado_pago_medico === "pendiente" && (
+                      <button onClick={() => liquidarHonorario(h.id)} className="bg-green-600 text-white px-3 py-1 rounded">Liquidar</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Paginación */}
+          <div className="flex justify-end items-center mt-4 gap-2">
+            <button disabled={page === 1} onClick={() => { setPage(page - 1); cargarHonorarios(); }} className="px-3 py-1 rounded bg-gray-200">Anterior</button>
+            <span>Página {page}</span>
+            <button disabled={page * rowsPerPage >= honorarios.length} onClick={() => { setPage(page + 1); cargarHonorarios(); }} className="px-3 py-1 rounded bg-gray-200">Siguiente</button>
+          </div>
+        </>
       )}
     </div>
   );
