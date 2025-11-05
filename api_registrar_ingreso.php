@@ -1,4 +1,5 @@
 <?php
+file_put_contents(__DIR__.'/debug_registro_ingreso_inicio.log', date('Y-m-d H:i:s') . " - Endpoint ejecutado\n", FILE_APPEND);
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
@@ -148,6 +149,10 @@ try {
         $tarifa = $stmtTarifa->fetch(PDO::FETCH_ASSOC);
 
         if ($tarifa) {
+            // DEBUG: Verificar valor de cajaAbierta
+            var_dump($cajaAbierta);
+            file_put_contents(__DIR__.'/debug/debug_cajaAbierta.log', print_r($cajaAbierta, true));
+            file_put_contents(__DIR__.'/debug_cajaAbierta_root.log', print_r($cajaAbierta, true));
             // Determinar tipo de precio
             $tipo_precio = 'particular';
             if ($input['metodo_pago'] === 'seguro') {
@@ -188,8 +193,8 @@ try {
             // Insertar movimiento de honorario
             $sqlHonorario = "INSERT INTO honorarios_medicos_movimientos (
                 consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, especialidad, tarifa_total,
-                monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, created_at
-            ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, NOW())";
+                monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, caja_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, NOW())";
             $stmtHonorario = $pdo->prepare($sqlHonorario);
             $stmtHonorario->execute([
                 $consulta_id,
@@ -204,7 +209,8 @@ try {
                 $monto_medico,
                 $porcentaje_aplicado_clinica,
                 $porcentaje_aplicado_medico,
-                $input['metodo_pago']
+                $input['metodo_pago'],
+                $cajaAbierta['id']
             ]);
         }
 
