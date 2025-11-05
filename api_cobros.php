@@ -335,25 +335,32 @@ switch($method) {
                     // Insertar movimiento de honorario
                     $stmt_honorario = $conn->prepare("INSERT INTO honorarios_medicos_movimientos (
                         consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, especialidad, tarifa_total,
-                        monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, created_at
-                    ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, NOW())");
+                        monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, created_at, cobro_id
+                    ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, NOW(), ?)");
                     $stmt_honorario->bind_param(
-                        "iiiisssddddds",
-                        $consulta_id,
-                        $medico_id,
-                        $paciente_id,
-                        $tarifa['id'],
-                        $tipo_precio,
-                        $servicio_key,
-                        $tarifa['descripcion'],
-                        $tarifa_total,
-                        $monto_clinica,
-                        $monto_medico,
-                        $porcentaje_aplicado_clinica,
-                        $porcentaje_aplicado_medico,
-                        $metodo_pago
+                        "iiiisssdddddsi",
+                        $consulta_id,         // i
+                        $medico_id,           // i
+                        $paciente_id,         // i
+                        $tarifa['id'],        // i
+                        $tipo_precio,         // s
+                        $servicio_key,        // s
+                        $tarifa['descripcion'],// s
+                        $tarifa_total,        // d
+                        $monto_clinica,       // d
+                        $monto_medico,        // d
+                        $porcentaje_aplicado_clinica, // d
+                        $porcentaje_aplicado_medico,  // d
+                        $metodo_pago,         // s
+                        $cobro_id             // i
                     );
                     $stmt_honorario->execute();
+                    // Obtener el id del movimiento de honorario recién creado
+                    $honorario_id = $conn->insert_id;
+                    // Actualizar ingresos_diarios con el honorario_movimiento_id usando el cobro_id
+                    $stmt_update_ingreso = $conn->prepare("UPDATE ingresos_diarios SET honorario_movimiento_id = ? WHERE referencia_id = ? AND referencia_tabla = 'cobros'");
+                    $stmt_update_ingreso->bind_param("ii", $honorario_id, $cobro_id);
+                    $stmt_update_ingreso->execute();
                 }
             }
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {

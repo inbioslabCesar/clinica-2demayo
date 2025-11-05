@@ -53,10 +53,18 @@ if ($turno) {
 }
 
 
-$sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medico_apellido, h.tipo_servicio, h.paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, h.fecha, h.turno, h.monto_medico, h.estado_pago_medico
+
+
+$sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medico_apellido, h.tipo_servicio, h.paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, h.fecha, h.turno, h.monto_medico, h.estado_pago_medico,
+    e.usuario_id AS liquidado_por_id, u.nombre AS liquidado_por_nombre, u.rol AS liquidado_por_rol, e.created_at AS fecha_liquidacion,
+    i.usuario_id AS cobrado_por_id, uc.nombre AS cobrado_por_nombre, uc.rol AS cobrado_por_rol
     FROM honorarios_medicos_movimientos h
     LEFT JOIN medicos m ON h.medico_id = m.id
     LEFT JOIN pacientes p ON h.paciente_id = p.id
+    LEFT JOIN egresos e ON e.honorario_movimiento_id = h.id AND e.tipo_egreso = 'honorario_medico'
+    LEFT JOIN usuarios u ON e.usuario_id = u.id
+    LEFT JOIN ingresos_diarios i ON i.honorario_movimiento_id = h.id
+    LEFT JOIN usuarios uc ON i.usuario_id = uc.id
     $where
     ORDER BY h.fecha DESC, h.turno";
 

@@ -49,6 +49,11 @@ $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
 $monto_apertura = 0;
 
 // Mostrar solo el resumen de la caja del usuario actual (admin o recepcionista)
+// Calcular egreso de honorarios médicos
+$stmt = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE DATE(created_at) = ? AND usuario_id = ? AND tipo_egreso = "honorario_medico"');
+$stmt->execute([$fecha, $usuario['id']]);
+$egreso_honorarios = $stmt->fetchColumn();
+$egreso_honorarios = $egreso_honorarios ? floatval($egreso_honorarios) : 0.0;
     $stmt = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE DATE(fecha_hora) = ? AND usuario_id = ?');
     $stmt->execute([$fecha, $usuario['id']]);
     $total = $stmt->fetchColumn();
@@ -112,6 +117,7 @@ echo json_encode([
     'por_servicio' => $ingresos_por_servicio,
     'por_area' => $ingresos_por_area,
     'por_pago' => $ingresos_por_pago,
+    'egreso_honorarios' => $egreso_honorarios,
     'cajas_resumen' => $cajas_resumen,
     'caja_abierta' => $caja_abierta
 ]);
