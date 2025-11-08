@@ -127,6 +127,18 @@ export default function CajaAdminDashboard() {
                   Pagos de honorarios médicos
                 </div>
               </div>
+              {/* Egreso laboratorio de referencia */}
+              <div className="rounded-xl shadow bg-white border-t-4 border-blue-400 p-4 flex flex-col items-start gap-2">
+                <div className="flex items-center gap-2">
+                  <svg width="32" height="32" fill="none" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4" fill="#3b82f6"/><rect x="8" y="8" width="8" height="8" rx="2" fill="#fff"/></svg>
+                  <span className="font-bold text-blue-700 text-md">EGRESO LAB. REFERENCIA</span>
+                </div>
+                <div className="text-3xl font-extrabold text-blue-600">S/ {resumen.egreso_lab_ref ? resumen.egreso_lab_ref.toFixed(2) : "0.00"}</div>
+                <div className="text-xs text-blue-600 flex items-center gap-1">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2" fill="#3b82f6"/></svg>
+                  Pagos a laboratorios de referencia
+                </div>
+              </div>
             </div>
             {/* ...existing code... (Cards modernas para tipo de ingreso y servicio) */}
             {/* Cards modernas para tipo de ingreso */}

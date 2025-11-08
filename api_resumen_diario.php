@@ -50,10 +50,17 @@ $monto_apertura = 0;
 
 // Mostrar solo el resumen de la caja del usuario actual (admin o recepcionista)
 // Calcular egreso de honorarios médicos
+// Egreso honorarios médicos
 $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE DATE(created_at) = ? AND usuario_id = ? AND tipo_egreso = "honorario_medico"');
 $stmt->execute([$fecha, $usuario['id']]);
 $egreso_honorarios = $stmt->fetchColumn();
 $egreso_honorarios = $egreso_honorarios ? floatval($egreso_honorarios) : 0.0;
+
+// Egreso laboratorio de referencia (pagados)
+$stmt = $pdo->prepare('SELECT SUM(monto) as egreso_lab_ref FROM laboratorio_referencia_movimientos WHERE DATE(fecha) = ? AND estado = "pagado"');
+$stmt->execute([$fecha]);
+$egreso_lab_ref = $stmt->fetchColumn();
+$egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
     $stmt = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE DATE(fecha_hora) = ? AND usuario_id = ?');
     $stmt->execute([$fecha, $usuario['id']]);
     $total = $stmt->fetchColumn();
@@ -146,6 +153,7 @@ echo json_encode([
     'por_area' => $ingresos_por_area,
     'por_pago' => $ingresos_por_pago,
     'egreso_honorarios' => $egreso_honorarios,
+    'egreso_lab_ref' => $egreso_lab_ref,
     'cajas_resumen' => $cajas_resumen,
     'caja_abierta' => $caja_abierta
 ]);
