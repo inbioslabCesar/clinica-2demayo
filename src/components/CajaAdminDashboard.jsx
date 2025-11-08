@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import AperturaCajaForm from "./AperturaCajaForm";
 import Modal from "./Modal";
@@ -137,6 +136,30 @@ export default function CajaAdminDashboard() {
                 <div className="text-xs text-blue-600 flex items-center gap-1">
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2" fill="#3b82f6"/></svg>
                   Pagos a laboratorios de referencia
+                </div>
+              </div>
+              {/* Egreso operativo (otros egresos) */}
+              <div className="rounded-xl shadow bg-white border-t-4 border-gray-400 p-4 flex flex-col items-start gap-2">
+                <div className="flex items-center gap-2">
+                  <svg width="32" height="32" fill="none" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4" fill="#6b7280"/><rect x="8" y="8" width="8" height="8" rx="2" fill="#fff"/></svg>
+                  <span className="font-bold text-gray-700 text-md">EGRESO OPERATIVO</span>
+                </div>
+                <div className="text-3xl font-extrabold text-gray-600">S/ {resumen.egreso_operativo ? resumen.egreso_operativo.toFixed(2) : "0.00"}</div>
+                <div className="text-xs text-gray-600 flex items-center gap-1">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2" fill="#6b7280"/></svg>
+                  Otros egresos operativos registrados
+                </div>
+              </div>
+              {/* Ganancia del día */}
+              <div className="rounded-xl shadow bg-white border-t-4 border-green-400 p-4 flex flex-col items-start gap-2">
+                <div className="flex items-center gap-2">
+                  <svg width="32" height="32" fill="none" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4" fill="#22c55e"/><rect x="8" y="8" width="8" height="8" rx="2" fill="#fff"/></svg>
+                  <span className="font-bold text-green-700 text-md">GANANCIA DEL DÍA</span>
+                </div>
+                <div className="text-3xl font-extrabold text-green-600">S/ {resumen.ganancia_dia ? resumen.ganancia_dia.toFixed(2) : "0.00"}</div>
+                <div className="text-xs text-green-600 flex items-center gap-1">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2" fill="#22c55e"/></svg>
+                  Ingreso total menos todos los egresos
                 </div>
               </div>
             </div>
@@ -291,6 +314,15 @@ export default function CajaAdminDashboard() {
                             </span>
                             <span className="text-red-700 font-semibold">
                               Egreso honorarios médicos: S/ {parseFloat(caja.egreso_honorarios || 0).toFixed(2)}
+                            </span>
+                            <span className="text-blue-700 font-semibold">
+                              Egreso lab. referencia: S/ {parseFloat(caja.egreso_lab_ref || 0).toFixed(2)}
+                            </span>
+                            <span className="text-gray-700 font-semibold">
+                              Egreso operativo: S/ {parseFloat(caja.egreso_operativo || 0).toFixed(2)}
+                            </span>
+                            <span className="text-green-700 font-semibold">
+                              Ganancia: S/ {parseFloat(caja.ganancia_dia || 0).toFixed(2)}
                             </span>
                           </div>
                           <div>
