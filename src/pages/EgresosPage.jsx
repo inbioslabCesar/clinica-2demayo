@@ -1,58 +1,13 @@
 import React from "react";
 import { useState, useEffect } from "react";
 import EgresosDiariosForm from "../components/EgresosDiariosForm";
-import EgresosDiariosList from "../components/EgresosDiariosList";
+import EgresosList from "../components/EgresosList";
+import RegistrarEgresoPage from "./RegistrarEgresoPage";
 import { useNavigate } from "react-router-dom";
 
 export default function EgresosPage() {
   const navigate = useNavigate();
-  const [egresosDiarios, setEgresosDiarios] = useState([]);
-  const [loading, setLoading] = useState(false);
 
-  // Cargar egresos desde backend
-  useEffect(() => {
-    const fetchEgresos = async () => {
-      setLoading(true);
-      try {
-        const resp = await fetch("/api_egresos.php");
-        const data = await resp.json();
-        if (data.success) setEgresosDiarios(data.egresos || []);
-      } catch (e) {
-        setEgresosDiarios([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchEgresos();
-  }, []);
-
-  // Registrar egreso en backend
-  const handleAddEgreso = async (egreso) => {
-    setLoading(true);
-    try {
-      const resp = await fetch("/api_egresos.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tipo: egreso.tipo,
-          categoria: egreso.categoria,
-          concepto: egreso.concepto,
-          monto: egreso.monto,
-          observaciones: egreso.observaciones,
-        }),
-      });
-      const data = await resp.json();
-      if (data.success) {
-        // Recargar egresos
-        const resp2 = await fetch("/api_egresos.php");
-        const data2 = await resp2.json();
-        if (data2.success) setEgresosDiarios(data2.egresos || []);
-      }
-    } catch (e) {
-      console.error("Error registrando egreso:", e);
-    }
-    setLoading(false);
-  };
   return (
     <div className="w-full max-w-[1600px] mx-auto p-6">
       <h1 className="text-3xl font-bold mb-8 text-red-700">Egresos</h1>
@@ -68,6 +23,12 @@ export default function EgresosPage() {
           onClick={() => navigate("/contabilidad/registrar-egreso")}
         >
           Registrar Otro Egreso
+        </button>
+        <button
+          className="bg-purple-600 text-white px-6 py-3 rounded shadow hover:bg-purple-700 font-semibold text-lg"
+          onClick={() => navigate("/contabilidad/liquidacion-laboratorio-referencia")}
+        >
+          Liquidación Laboratorio de Referencia
         </button>
       </div>
     </div>

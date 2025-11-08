@@ -1,6 +1,8 @@
 // import ReabrirCajaPage from "./pages/ReabrirCajaPage";
 import EgresosPage from "./pages/EgresosPage";
+import RegistrarEgresoPage from "./pages/RegistrarEgresoPage";
 import LiquidacionHonorariosPage from "./pages/LiquidacionHonorariosPage";
+import LiquidacionLaboratorioReferenciaPage from "./pages/LiquidacionLaboratorioReferenciaPage";
 // import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
 // import CierreCajaPage from "./pages/CierreCajaPage";
 // import IngresosDetallePage from "./pages/IngresosDetallePage";
@@ -224,6 +226,11 @@ function App() {
                     <LiquidacionHonorariosPage />
                   </ProtectedRoute>
                 } />
+                <Route path="/contabilidad/liquidacion-laboratorio-referencia" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <LiquidacionLaboratorioReferenciaPage />
+                  </ProtectedRoute>
+                } />
                 <Route path="/cotizar-laboratorio/:pacienteId" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <CotizarLaboratorioPage />
@@ -264,6 +271,11 @@ function App() {
                       <EgresosPage />
                     </ProtectedRoute>
                   } />
+          <Route path="/contabilidad/registrar-egreso" element={
+            <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+              <RegistrarEgresoPage />
+            </ProtectedRoute>
+          } />
                 <Route path="/contabilidad/cerrar-caja" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <CerrarCajaView />

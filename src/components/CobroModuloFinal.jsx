@@ -3,7 +3,29 @@ import { BASE_URL } from '../config/config';
 import Swal from 'sweetalert2';
 
 function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles, total }) {
-  // tarifas se cargan solo si no se reciben detalles por props
+  // Hook para verificar si el usuario tiene caja abierta
+  const [cajaActual, setCajaActual] = useState(null);
+  const [cajaLoading, setCajaLoading] = useState(true);
+  useEffect(() => {
+    const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
+    fetch(`${BASE_URL}api_caja_actual.php`, { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.caja && data.caja.usuario_id === usuario.id) {
+          setCajaActual(data.caja);
+        } else {
+          setCajaActual(null);
+        }
+        setCajaLoading(false);
+      })
+      .catch(() => {
+        setCajaActual(null);
+        setCajaLoading(false);
+      });
+  }, []);
+  // Solo permitir servicios médicos (consulta, laboratorio, farmacia, etc.)
+  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia'];
+  const esServicioMedico = servicio && serviciosPermitidos.includes(servicio.key);
   const [tarifas, setTarifas] = useState([]);
   const [tipoCobertura, setTipoCobertura] = useState('particular');
   const [tipoPago, setTipoPago] = useState('efectivo');
@@ -49,6 +71,14 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
   };
 
   const procesarCobro = async () => {
+    if (cajaLoading) {
+      Swal.fire('Espere', 'Verificando caja abierta...', 'info');
+      return;
+    }
+    if (!cajaActual) {
+      Swal.fire('Error', 'No tienes una caja abierta. Abre tu caja antes de cobrar.', 'error');
+      return;
+    }
     if (detallesCobro.length === 0) {
       Swal.fire('Error', 'No hay servicios para cobrar', 'error');
       return;
@@ -184,6 +214,14 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
 
   if (!servicio) {
     return <div>Seleccione un servicio primero</div>;
+  }
+  if (!esServicioMedico) {
+    return (
+      <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-6 rounded">
+        <h3 className="text-lg font-bold mb-2">⚠️ Solo se pueden procesar cobros de servicios médicos</h3>
+        <p>Este módulo no permite cobrar egresos operativos ni otros tipos de egresos. Por favor, utilice el formulario de egresos operativos para registrar gastos administrativos, compras, pagos de servicios, etc.</p>
+      </div>
+    );
   }
 
   const totalCobro = calcularTotal();

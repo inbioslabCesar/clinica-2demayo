@@ -9,6 +9,8 @@ import { BASE_URL } from "../config/config";
 export default function CotizarLaboratorioPage() {
   const [mostrarCobro, setMostrarCobro] = useState(false);
   const [detallesCotizacion, setDetallesCotizacion] = useState([]);
+  // Estado para configuración de derivación por examen
+  const [derivaciones, setDerivaciones] = useState({}); // { [examenId]: { derivado: bool, tipo: 'monto'|'porcentaje', valor: number, laboratorio: string } }
   const [totalCotizacion, setTotalCotizacion] = useState(0);
   // const [cotizacionReady, setCotizacionReady] = useState(false);
   const navigate = useNavigate();
@@ -93,18 +95,23 @@ export default function CotizarLaboratorioPage() {
       setMensaje("Selecciona al menos un examen para cobrar.");
       return;
     }
-    // Construir detalles para el Módulo de Cobros
+    // Construir detalles para el Módulo de Cobros, incluyendo derivación
     const detalles = seleccionados.map(exId => {
       const ex = examenes.find(e => e.id === exId);
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === exId && t.activo === 1);
       let descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
+      const derivacion = derivaciones[exId] || { derivado: false };
       return {
         servicio_tipo: "laboratorio",
         servicio_id: exId,
         descripcion,
         cantidad: 1,
         precio_unitario: tarifa ? parseFloat(tarifa.precio_particular) : 0,
-        subtotal: tarifa ? parseFloat(tarifa.precio_particular) : 0
+        subtotal: tarifa ? parseFloat(tarifa.precio_particular) : 0,
+        derivado: derivacion.derivado || false,
+        tipo_derivacion: derivacion.tipo || '',
+        valor_derivacion: derivacion.valor || 0,
+        laboratorio_referencia: derivacion.laboratorio || ''
       };
     });
     setDetallesCotizacion(detalles);
@@ -191,21 +198,114 @@ export default function CotizarLaboratorioPage() {
                 <ul className="divide-y divide-gray-100">
                   {paginated.map(ex => {
                     const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === ex.id && t.activo === 1);
+                    const isSelected = seleccionados.includes(ex.id);
+                    const derivacion = derivaciones[ex.id] || { derivado: false, tipo: '', valor: '', laboratorio: '' };
                     return (
-                      <li key={ex.id} className="flex items-center px-4 py-3 hover:bg-blue-50 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={seleccionados.includes(ex.id)}
-                          onChange={() => toggleSeleccion(ex.id)}
-                          className="mr-3 accent-blue-600 w-5 h-5"
-                        />
-                        <div className="flex-1">
-                          <div className="font-semibold text-gray-800">{ex.nombre}</div>
-                          {ex.categoria && (
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-1 inline-block">{ex.categoria}</span>
-                          )}
+                      <li key={ex.id} className="flex flex-col px-4 py-3 hover:bg-blue-50 transition-colors border-b">
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSeleccion(ex.id)}
+                            className="mr-3 accent-blue-600 w-5 h-5"
+                          />
+                          <div className="flex-1">
+                            <div className="font-semibold text-gray-800">{ex.nombre}</div>
+                            {ex.categoria && (
+                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-1 inline-block">{ex.categoria}</span>
+                            )}
+                          </div>
+                          <div className="font-bold text-green-700 text-lg">S/ {tarifa ? tarifa.precio_particular : "-"}</div>
                         </div>
-                        <div className="font-bold text-green-700 text-lg">S/ {tarifa ? tarifa.precio_particular : "-"}</div>
+                        {/* Configuración de derivación solo si está seleccionado */}
+                        {isSelected && (
+                          <div className="mt-2 bg-gray-50 p-3 rounded flex flex-col gap-2">
+                            <label className="font-semibold text-sm mb-1">¿Se deriva a laboratorio externo?</label>
+                            <select
+                              value={derivacion.derivado ? 'si' : 'no'}
+                              onChange={e => setDerivaciones(prev => ({
+                                ...prev,
+                                [ex.id]: {
+                                  ...prev[ex.id],
+                                  derivado: e.target.value === 'si'
+                                }
+                              }))}
+                              className="border rounded px-2 py-1 w-32"
+                            >
+                              <option value="no">No</option>
+                              <option value="si">Sí</option>
+                            </select>
+                            {derivacion.derivado && (
+                              <div className="flex flex-col gap-2">
+                                <label className="font-semibold text-sm">Laboratorio de referencia</label>
+                                <input
+                                  type="text"
+                                  value={derivacion.laboratorio || ""}
+                                  onChange={e => setDerivaciones(prev => ({
+                                    ...prev,
+                                    [ex.id]: {
+                                      ...prev[ex.id],
+                                      laboratorio: e.target.value
+                                    }
+                                  }))}
+                                  className="border rounded px-2 py-1"
+                                  placeholder="Nombre del laboratorio"
+                                />
+                                <label className="font-semibold text-sm">¿Monto fijo o porcentaje?</label>
+                                <select
+                                  value={derivacion.tipo || ""}
+                                  onChange={e => setDerivaciones(prev => ({
+                                    ...prev,
+                                    [ex.id]: {
+                                      ...prev[ex.id],
+                                      tipo: e.target.value
+                                    }
+                                  }))}
+                                  className="border rounded px-2 py-1 w-32"
+                                >
+                                  <option value="">Seleccionar</option>
+                                  <option value="monto">Monto fijo</option>
+                                  <option value="porcentaje">Porcentaje</option>
+                                </select>
+                                {derivacion.tipo === 'monto' && (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={derivacion.valor !== undefined ? derivacion.valor : ""}
+                                    onChange={e => setDerivaciones(prev => ({
+                                      ...prev,
+                                      [ex.id]: {
+                                        ...prev[ex.id],
+                                        valor: e.target.value
+                                      }
+                                    }))}
+                                    className="border rounded px-2 py-1"
+                                    placeholder="Monto S/"
+                                  />
+                                )}
+                                {derivacion.tipo === 'porcentaje' && (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    value={derivacion.valor !== undefined ? derivacion.valor : ""}
+                                    onChange={e => setDerivaciones(prev => ({
+                                      ...prev,
+                                      [ex.id]: {
+                                        ...prev[ex.id],
+                                        valor: e.target.value
+                                      }
+                                    }))}
+                                    className="border rounded px-2 py-1"
+                                    placeholder="Porcentaje %"
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </li>
                     );
                   })}

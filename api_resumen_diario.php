@@ -105,13 +105,36 @@ $egreso_honorarios = $egreso_honorarios ? floatval($egreso_honorarios) : 0.0;
             $stmtServ = $pdo->prepare('SELECT tipo_ingreso, SUM(monto) as total_servicio FROM ingresos_diarios WHERE caja_id = ? GROUP BY tipo_ingreso');
             $stmtServ->execute([$caja['id']]);
             $caja['por_servicio'] = $stmtServ->fetchAll(PDO::FETCH_ASSOC);
-                // Egreso honorarios médicos por caja
-                $stmtEgreso = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
-                $stmtEgreso->execute([$caja['id']]);
-                $egresoCaja = $stmtEgreso->fetchColumn();
-                $caja['egreso_honorarios'] = $egresoCaja ? floatval($egresoCaja) : 0.0;
+            // Egreso honorarios médicos por caja
+            $stmtEgreso = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
+            $stmtEgreso->execute([$caja['id']]);
+            $egresoCaja = $stmtEgreso->fetchColumn();
+            $caja['egreso_honorarios'] = $egresoCaja ? floatval($egresoCaja) : 0.0;
         }
         unset($caja);
+
+        // Resumen principal solo de la caja del usuario actual (admin)
+        $stmtCajaAdmin = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? LIMIT 1');
+        $stmtCajaAdmin->execute([$fecha, $usuario['id']]);
+        $cajaAdminRow = $stmtCajaAdmin->fetch(PDO::FETCH_ASSOC);
+        $cajaAdminId = $cajaAdminRow ? $cajaAdminRow['id'] : null;
+        if ($cajaAdminId) {
+            // Ingresos por tipo de pago solo de la caja admin
+            $stmtPagoAdmin = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
+            $stmtPagoAdmin->execute([$cajaAdminId]);
+            $ingresos_por_pago = $stmtPagoAdmin->fetchAll(PDO::FETCH_ASSOC);
+
+            // Ingresos por tipo de servicio solo de la caja admin
+            $stmtServAdmin = $pdo->prepare('SELECT tipo_ingreso, SUM(monto) as total_servicio FROM ingresos_diarios WHERE caja_id = ? GROUP BY tipo_ingreso');
+            $stmtServAdmin->execute([$cajaAdminId]);
+            $ingresos_por_servicio = $stmtServAdmin->fetchAll(PDO::FETCH_ASSOC);
+
+            // Total solo de la caja admin
+            $stmtTotalAdmin = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE caja_id = ?');
+            $stmtTotalAdmin->execute([$cajaAdminId]);
+            $total = $stmtTotalAdmin->fetchColumn();
+            $total = $total ? floatval($total) : 0.0;
+        }
     }
 
 echo json_encode([

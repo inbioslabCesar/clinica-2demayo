@@ -121,24 +121,48 @@ switch($method) {
                 $subtotal
             );
             $stmt_detalle->execute();
+
+            // Registrar movimientos de laboratorio de referencia si corresponde
+            foreach ($data['detalles'] as $detalle) {
+                if (!empty($detalle['derivado']) && $detalle['derivado'] === true) {
+                    // Calcular monto a liquidar
+                    $monto_liquidar = 0;
+                    if ($detalle['tipo_derivacion'] === 'monto') {
+                        $monto_liquidar = floatval($detalle['valor_derivacion']);
+                    } elseif ($detalle['tipo_derivacion'] === 'porcentaje') {
+                        $monto_liquidar = round(floatval($detalle['subtotal']) * floatval($detalle['valor_derivacion']) / 100, 2);
+                    }
+                    // Insertar movimiento en laboratorio_referencia_movimientos
+                    $stmt_lab = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
+                    $lab_nombre = $detalle['laboratorio_referencia'] ?? '';
+                    $lab_tipo = $detalle['tipo_derivacion'] ?? '';
+                    $lab_estado = 'pendiente';
+                    $lab_obs = $detalle['descripcion'] ?? '';
+                    $lab_paciente_id = $data['paciente_id'] ?? null;
+                    $stmt_lab->bind_param("iissssis", $cobro_id, $detalle['servicio_id'], $lab_nombre, $monto_liquidar, $lab_tipo, $lab_estado, $lab_paciente_id, $lab_obs);
+                    $stmt_lab->execute();
+                }
+            }
             
             // ========================================
             // INTEGRACIÓN CON MÓDULO DE INGRESOS
             // ========================================
             
-            // Verificar si hay una caja abierta
-            $stmt_caja = $conn->prepare("SELECT id FROM cajas WHERE estado = 'abierta' ORDER BY created_at DESC LIMIT 1");
+            // Verificar si hay una caja abierta del usuario actual
+            $stmt_caja = $conn->prepare("SELECT id, turno FROM cajas WHERE estado = 'abierta' AND usuario_id = ? ORDER BY created_at DESC LIMIT 1");
+            $usuario_id_param = $data['usuario_id'];
+            $stmt_caja->bind_param("i", $usuario_id_param);
             $stmt_caja->execute();
             $caja_result = $stmt_caja->get_result();
-            
+
             if ($caja_result->num_rows > 0) {
                 $caja_abierta = $caja_result->fetch_assoc();
                 $caja_id = $caja_abierta['id'];
-                
+
                 // Determinar el tipo de ingreso y área según el servicio
                 $servicio_key = $data['servicio_info']['key'] ?? 'otros';
                 $area_servicio = $data['servicio_info']['nombre'] ?? 'Otros servicios';
-                
+
                 // Mapear el tipo de servicio al tipo de ingreso del módulo de caja
                 $tipo_ingreso_map = [
                     'farmacia' => 'farmacia',
@@ -148,9 +172,9 @@ switch($method) {
                     'rayosx' => 'rayosx',
                     'procedimiento' => 'procedimiento'
                 ];
-                
+
                 $tipo_ingreso = $tipo_ingreso_map[$servicio_key] ?? 'otros';
-                
+
                 // Mapear el tipo de pago al método de pago del módulo de caja
                 $metodo_pago_map = [
                     'efectivo' => 'efectivo',
@@ -160,9 +184,9 @@ switch($method) {
                     'plin' => 'plin',
                     'seguro' => 'otros'
                 ];
-                
+
                 $metodo_pago = $metodo_pago_map[$data['tipo_pago']] ?? 'otros';
-                
+
                 // Crear descripción del ingreso
                 $descripcion_ingreso = "Cobro automático - ";
                 if (count($data['detalles']) == 1) {
@@ -170,7 +194,7 @@ switch($method) {
                 } else {
                     $descripcion_ingreso .= count($data['detalles']) . " servicios/productos";
                 }
-                
+
                 // Registrar el ingreso en el módulo de caja
                 $stmt_ingreso = $conn->prepare("INSERT INTO ingresos_diarios (
                     caja_id, 
@@ -186,10 +210,9 @@ switch($method) {
                     usuario_id,
                     turno
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                
+
                 // Preparar todas las variables para bind_param (evitar problemas con NULL)
                 $paciente_id_param = $data['paciente_id'];
-                $usuario_id_param = $data['usuario_id'];
                 $total_param = $data['total'];
                 $referencia_tabla_param = 'cobros';
                 $turno_param = $caja_abierta['turno'] ?? 'manana';
@@ -207,7 +230,7 @@ switch($method) {
                     $usuario_id_param,
                     $turno_param
                 );
-                
+
                 if ($stmt_ingreso->execute()) {
                     // Actualizar timestamp de la caja
                     $stmt_update_caja = $conn->prepare("UPDATE cajas SET updated_at = CURRENT_TIMESTAMP WHERE id = ?");
