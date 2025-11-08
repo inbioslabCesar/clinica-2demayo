@@ -26,7 +26,7 @@ if (isset($_SESSION['usuario'])) {
     $isHonorariosMedicos = strpos($_SERVER['SCRIPT_NAME'], 'api_honorarios_medicos') !== false ||
                           strpos($_SERVER['SCRIPT_NAME'], 'api_movimientos_honorarios.php') !== false;
     
-    $rolesPermitidos = ['administrador', 'quimico', 'laboratorio', 'laboratorista'];
+    $rolesPermitidos = ['administrador', 'quimico', 'laboratorio', 'laboratorista', 'recepcionista'];
     
     // Permitir a recepcionistas hacer cobros/ventas, gestionar ingresos, operaciones básicas de caja y honorarios médicos
     if ($isCobros || $isIngresos || $isCajaBasica || $isHonorariosMedicos) {

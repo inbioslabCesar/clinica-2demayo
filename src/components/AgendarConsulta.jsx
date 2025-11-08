@@ -137,6 +137,7 @@ function AgendarConsulta({ pacienteId }) {
       const res = await fetch(BASE_URL + "api_consultas.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           paciente_id: pacienteId,
           medico_id: medicoId,
