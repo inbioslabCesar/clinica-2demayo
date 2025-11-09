@@ -56,10 +56,20 @@ if ($tmp_operativo !== false && $tmp_operativo !== null) {
 
 // Egreso laboratorio de referencia (pagados)
 
+// Buscar la caja abierta del usuario en el día
+$stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+$stmtCaja->execute([$fecha, $usuario['id']]);
+$cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
+$caja_id_actual = $cajaRow ? $cajaRow['id'] : 0;
+
 $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_lab_ref FROM laboratorio_referencia_movimientos WHERE DATE(fecha) = ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
-$stmt->execute([$fecha, $usuario['caja_id'] ?? 0]);
+$stmt->execute([$fecha, $caja_id_actual]);
 $egreso_lab_ref = $stmt->fetchColumn();
 $egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
+// DEBUG: Obtener los movimientos de laboratorio de referencia sumados
+$stmt = $pdo->prepare('SELECT * FROM laboratorio_referencia_movimientos WHERE DATE(fecha) = ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
+$stmt->execute([$fecha, $caja_id_actual]);
+$debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $stmt = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE DATE(fecha_hora) = ? AND usuario_id = ?');
     $stmt->execute([$fecha, $usuario['id']]);
     $total = $stmt->fetchColumn();
@@ -145,6 +155,7 @@ echo json_encode(array(
     'por_pago' => $ingresos_por_pago,
     'egreso_honorarios' => $egreso_honorarios,
     'egreso_lab_ref' => $egreso_lab_ref,
+    'debug_lab_ref_movs' => $debug_lab_ref_movs,
     'egreso_operativo' => $egreso_operativo,
     'ganancia_dia' => $ganancia_dia,
     'cajas_resumen' => $cajas_resumen,

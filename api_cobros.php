@@ -168,6 +168,9 @@ switch($method) {
             
             // 3. Si es venta de farmacia, actualizar stock y registrar movimientos
             $servicio_key = $data['servicio_info']['key'] ?? 'consulta';
+            // Inicializar variables de paciente para farmacia
+            $dni_paciente = $data['paciente_dni'] ?? '';
+            $hc_paciente = $data['paciente_hc'] ?? '';
             if ($servicio_key === 'farmacia') {
                 foreach ($data['detalles'] as $detalle) {
                     FarmaciaModule::procesarVenta(

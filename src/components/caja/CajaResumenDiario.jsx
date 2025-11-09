@@ -1,7 +1,10 @@
 import React from "react";
 
 export default function CajaResumenDiario({ resumen }) {
-  console.log('caja resyuemn',resumen)
+  console.log('caja resumen', resumen);
+  if (resumen && resumen.debug_lab_ref_movs) {
+    console.log('Movimientos laboratorio referencia sumados:', resumen.debug_lab_ref_movs);
+  }
   if (!resumen) return null;
   return (
     <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-8 shadow mb-8">

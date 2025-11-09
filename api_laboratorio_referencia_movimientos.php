@@ -59,9 +59,11 @@ switch($method) {
             break;
         }
         $stmt = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
-        $stmt->bind_param("iissssis", $data['cobro_id'], $data['examen_id'], $data['laboratorio'], $data['monto'], $data['tipo'], $data['estado'], $data['paciente_id'], $data['observaciones']);
-        $stmt->execute();
-        echo json_encode(['success' => true, 'id' => $conn->insert_id]);
+    $caja_id = $data['caja_id'] ?? null;
+    $stmt = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, caja_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
+    $stmt->bind_param("iissssiiis", $data['cobro_id'], $data['examen_id'], $data['laboratorio'], $data['monto'], $data['tipo'], $data['estado'], $data['paciente_id'], $caja_id, $data['observaciones']);
+    $stmt->execute();
+    echo json_encode(['success' => true, 'id' => $conn->insert_id]);
         break;
     case 'GET':
         // Listar movimientos por laboratorio, estado, fecha, etc.

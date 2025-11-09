@@ -24,7 +24,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       });
   }, []);
   // Solo permitir servicios médicos (consulta, laboratorio, farmacia, etc.)
-  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia'];
+  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia', 'rayosx'];
   const esServicioMedico = servicio && serviciosPermitidos.includes(servicio.key);
   const [tarifas, setTarifas] = useState([]);
   const [tipoCobertura, setTipoCobertura] = useState('particular');
