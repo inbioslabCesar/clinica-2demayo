@@ -41,14 +41,13 @@ try {
 
     // Obtener caja abierta actual
     $sql = "SELECT c.*, u.nombre as usuario_nombre 
-            FROM cajas c 
-            LEFT JOIN usuarios u ON c.usuario_id = u.id 
-            WHERE c.estado = 'abierta' 
-            ORDER BY c.created_at DESC 
-            LIMIT 1";
-    
+        FROM cajas c 
+        LEFT JOIN usuarios u ON c.usuario_id = u.id 
+        WHERE c.estado = 'abierta' AND c.usuario_id = :usuario_id
+        ORDER BY c.created_at DESC 
+        LIMIT 1";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute();
+    $stmt->execute(['usuario_id' => $_SESSION['usuario']['id']]);
     $caja = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($caja) {

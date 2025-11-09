@@ -1,25 +1,35 @@
 <?php
 // CORS para localhost y producción
-$allowedOrigins = array(
+date_default_timezone_set('America/Lima');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'domain' => '',
+    'secure' => true, // Mejor compatibilidad móvil y Chrome
+    'httponly' => true,
+    'samesite' => 'None', // Mejor compatibilidad móvil y Chrome
+]);
+session_start();
+// CORS para localhost y producción
+$allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
     'https://clinica2demayo.com'
-);
+];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
     header('Access-Control-Allow-Origin: ' . $origin);
 }
 header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Methods: GET, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Content-Type: application/json');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
-
+header('Content-Type: application/json');
 require_once __DIR__ . '/config.php';
 
 $usuario = $_SESSION['usuario'];
@@ -74,8 +84,8 @@ $egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
     $caja_abierta = ($caja_row && isset($caja_row['estado']) && $caja_row['estado'] === 'abierta') ? true : false;
 
     $cajas_resumen = array();
-    // Mostrar resumen por caja tanto para administrador como para recepcionista
-    if ($usuario['rol'] === 'administrador' || $usuario['rol'] === 'recepcionista') {
+    // Solo el administrador ve el resumen de todas las cajas, las recepcionistas solo ven su propia caja
+    if ($usuario['rol'] === 'administrador') {
         $stmt = $pdo->prepare('SELECT c.id, c.usuario_id, u.nombre as usuario_nombre, u.rol as usuario_rol, c.turno, c.estado, c.monto_apertura, SUM(i.monto) as total_caja FROM cajas c LEFT JOIN usuarios u ON c.usuario_id = u.id LEFT JOIN ingresos_diarios i ON i.caja_id = c.id WHERE DATE(c.fecha) = ? GROUP BY c.id, c.usuario_id, c.turno, c.estado, u.nombre, u.rol, c.monto_apertura ORDER BY c.turno ASC, c.estado DESC');
         $stmt->execute([$fecha]);
         $cajas_resumen = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -97,6 +107,27 @@ $egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
             // Ganancia por caja
+            $caja['ganancia_dia'] = floatval($caja['total_caja']) - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
+        }
+        unset($caja);
+    } elseif ($usuario['rol'] === 'recepcionista') {
+        // Solo mostrar la caja del usuario actual
+        $stmt = $pdo->prepare('SELECT c.id, c.usuario_id, u.nombre as usuario_nombre, u.rol as usuario_rol, c.turno, c.estado, c.monto_apertura, SUM(i.monto) as total_caja FROM cajas c LEFT JOIN usuarios u ON c.usuario_id = u.id LEFT JOIN ingresos_diarios i ON i.caja_id = c.id WHERE DATE(c.fecha) = ? AND c.usuario_id = ? GROUP BY c.id, c.usuario_id, c.turno, c.estado, u.nombre, u.rol, c.monto_apertura ORDER BY c.turno ASC, c.estado DESC');
+        $stmt->execute([$fecha, $usuario['id']]);
+        $cajas_resumen = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($cajas_resumen as &$caja) {
+            $stmtEgreso = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
+            $stmtEgreso->execute([$caja['id']]);
+            $egresoCaja = $stmtEgreso->fetchColumn();
+            $caja['egreso_honorarios'] = $egresoCaja ? floatval($egresoCaja) : 0.0;
+            $stmtLabRef = $pdo->prepare('SELECT SUM(monto) as egreso_lab_ref FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
+            $stmtLabRef->execute([$caja['id']]);
+            $egresoLabRef = $stmtLabRef->fetchColumn();
+            $caja['egreso_lab_ref'] = $egresoLabRef ? floatval($egresoLabRef) : 0.0;
+            $stmtOperativo = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+            $stmtOperativo->execute([$caja['id']]);
+            $egresoOperativo = $stmtOperativo->fetchColumn();
+            $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
             $caja['ganancia_dia'] = floatval($caja['total_caja']) - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
         }
         unset($caja);

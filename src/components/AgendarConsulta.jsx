@@ -22,7 +22,15 @@ function AgendarConsulta({ pacienteId }) {
   const [medicos, setMedicos] = useState([]);
   const [medicoId, setMedicoId] = useState("");
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
-  const [fecha, setFecha] = useState("");
+  // Inicializar fecha con la fecha actual de Lima
+  const getLimaDate = () => {
+    const limaOffset = -5 * 60;
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const limaDate = new Date(utc + limaOffset * 60000);
+    return limaDate.toISOString().split("T")[0];
+  };
+  const [fecha, setFecha] = useState(getLimaDate());
   const [hora, setHora] = useState("");
   const [msg, setMsg] = useState("");
   const [consultaCreada, setConsultaCreada] = useState(null);
@@ -130,6 +138,23 @@ function AgendarConsulta({ pacienteId }) {
     setMsg("");
     if (!pacienteId || !medicoId || !fecha || !hora) {
       setMsg("Completa todos los campos");
+      return;
+    }
+
+    // Verificar si la caja está abierta antes de registrar la consulta
+    const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
+    let cajaAbierta = null;
+    try {
+      const cajaRes = await fetch(BASE_URL + "api_caja_actual.php", { credentials: "include" });
+      const cajaData = await cajaRes.json();
+      if (cajaData.success && cajaData.caja && cajaData.caja.usuario_id === usuario.id) {
+        cajaAbierta = cajaData.caja;
+      }
+    } catch (err) {
+      cajaAbierta = null;
+    }
+    if (!cajaAbierta) {
+      setMsg("Debes abrir tu caja antes de agendar una consulta.");
       return;
     }
 

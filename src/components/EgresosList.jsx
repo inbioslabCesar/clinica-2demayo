@@ -96,6 +96,7 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
             <th>Hora</th>
             <th>Turno</th>
             <th>Método Pago</th>
+            <th>Usuario</th>
             <th>Acciones</th>
           </tr>
         </thead>
@@ -110,6 +111,7 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
               <td>{e.hora}</td>
               <td>{e.turno}</td>
               <td>{e.metodo_pago}</td>
+              <td>{e.usuario_nombre || '-'}</td>
               <td>
                 <button className="btn btn-sm btn-warning mr-2" onClick={() => onEdit && onEdit(e)}>Editar</button>
                 <button className="btn btn-sm btn-danger" onClick={() => handleDelete(e.id)}>Eliminar</button>

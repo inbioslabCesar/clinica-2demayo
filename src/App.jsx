@@ -9,7 +9,7 @@ import LiquidacionLaboratorioReferenciaPage from "./pages/LiquidacionLaboratorio
 // import NuevoIngresoPage from "./pages/NuevoIngresoPage";
 // import IngresosPage from "./pages/IngresosPage";
 import ContabilidadPage from "./pages/ContabilidadPage";
-import CerrarCajaView from "./components/CerrarCajaView";
+import CerrarCajaView from "./components/caja/CerrarCajaView";
 
 import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";

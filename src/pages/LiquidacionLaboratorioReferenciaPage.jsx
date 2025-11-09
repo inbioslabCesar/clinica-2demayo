@@ -58,7 +58,7 @@ export default function LiquidacionLaboratorioReferenciaPage() {
   const paginated = movimientosFiltrados.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   return (
-    <div className="max-w-5xl mx-auto p-6 bg-white rounded-xl shadow-lg mt-8">
+  <div className="w-full max-w-[1600px] mx-auto p-6 bg-white rounded-xl shadow-lg mt-8">
       <h2 className="text-2xl font-bold text-blue-800 mb-6 flex items-center gap-2">💳 Liquidación Laboratorios de Referencia</h2>
       <div className="mb-4 flex flex-col sm:flex-row gap-4">
         <div>
@@ -120,58 +120,70 @@ export default function LiquidacionLaboratorioReferenciaPage() {
               </select>
             </div>
           </div>
-          <table className="w-full table-auto border-collapse bg-white shadow rounded-lg">
-            <thead>
-              <tr className="bg-blue-50 text-blue-800">
-                <th className="px-4 py-2">Fecha</th>
-                <th className="px-4 py-2">Laboratorio</th>
-                <th className="px-4 py-2">Exámenes</th>
-                <th className="px-4 py-2">Tipo</th>
-                <th className="px-4 py-2">Monto/Porcentaje</th>
-                <th className="px-4 py-2">Estado</th>
-                <th className="px-4 py-2">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginated.map(m => (
-                <tr key={m.id} className="border-b">
-                  <td className="px-4 py-2 text-gray-700">{m.fecha}</td>
-                  <td className="px-4 py-2 text-gray-700">{m.laboratorio}</td>
-                  <td className="px-4 py-2 text-gray-700">
-                    <button
-                      title="Ver detalles"
-                      className="bg-blue-100 text-blue-800 px-2 py-1 rounded flex items-center gap-1 hover:bg-blue-200"
-                      onClick={() => {
-                        let examenes = [];
-                        try {
-                          // Si observaciones es un JSON de array
-                          examenes = JSON.parse(m.observaciones);
-                          if (!Array.isArray(examenes)) examenes = [m.observaciones];
-                        } catch {
-                          // Si es string separado por comas
-                          examenes = m.observaciones.split(',').map(e => e.trim());
-                        }
-                        setModalExamenes(examenes);
-                        setModalMovimiento(m);
-                        setModalOpen(true);
-                      }}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      Detalles
-                    </button>
-                  </td>
-                  <td className="px-4 py-2 text-gray-700">{m.tipo === 'monto' ? 'Monto fijo' : 'Porcentaje'}</td>
-                  <td className="px-4 py-2 text-gray-700">{m.tipo === 'monto' ? `S/ ${parseFloat(m.monto).toFixed(2)}` : `${parseFloat(m.monto).toFixed(2)} %`}</td>
-                  <td className={`px-4 py-2 font-bold ${m.estado === 'pendiente' ? 'text-yellow-600' : 'text-green-700'}`}>{m.estado}</td>
-                  <td className="px-4 py-2">
-                    {m.estado === 'pendiente' && (
-                      <button onClick={() => marcarPagado(m.id)} className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Marcar como pagado</button>
-                    )}
-                  </td>
+          <div className="overflow-x-auto w-full">
+            <table className="min-w-[1500px] w-full table-auto border-collapse bg-white shadow rounded-lg">
+              <thead>
+                <tr className="bg-blue-50 text-blue-800">
+                  <th className="px-4 py-2">Fecha</th>
+                  <th className="px-4 py-2">Laboratorio</th>
+                  <th className="px-4 py-2">Exámenes</th>
+                  <th className="px-4 py-2">Tipo</th>
+                  <th className="px-4 py-2">Monto/Porcentaje</th>
+                  <th className="px-4 py-2">Usuario Cobro</th>
+                  <th className="px-4 py-2">Turno Cobro</th>
+                  <th className="px-4 py-2">Hora Cobro</th>
+                  <th className="px-4 py-2">Usuario Liquidó</th>
+                  <th className="px-4 py-2">Turno Liquidación</th>
+                  <th className="px-4 py-2">Hora Liquidación</th>
+                  <th className="px-4 py-2">Estado</th>
+                  <th className="px-4 py-2">Acción</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {paginated.map(m => (
+                  <tr key={m.id} className="border-b">
+                    <td className="px-4 py-2 text-gray-700">{m.fecha}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.laboratorio}</td>
+                    <td className="px-4 py-2 text-gray-700">
+                      <button
+                        title="Ver detalles"
+                        className="bg-blue-100 text-blue-800 px-2 py-1 rounded flex items-center gap-1 hover:bg-blue-200"
+                        onClick={() => {
+                          let examenes = [];
+                          try {
+                            examenes = JSON.parse(m.observaciones);
+                            if (!Array.isArray(examenes)) examenes = [m.observaciones];
+                          } catch {
+                            examenes = m.observaciones.split(',').map(e => e.trim());
+                          }
+                          setModalExamenes(examenes);
+                          setModalMovimiento(m);
+                          setModalOpen(true);
+                        }}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        Detalles
+                      </button>
+                    </td>
+                    <td className="px-4 py-2 text-gray-700">{m.tipo === 'monto' ? 'Monto fijo' : 'Porcentaje'}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.tipo === 'monto' ? `S/ ${parseFloat(m.monto).toFixed(2)}` : `${parseFloat(m.monto).toFixed(2)} %`}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.cobrado_por || '-'}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.turno_cobro || '-'}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.hora_cobro || '-'}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.liquidado_por || '-'}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.turno_liquidacion || '-'}</td>
+                    <td className="px-4 py-2 text-gray-700">{m.hora_liquidacion || '-'}</td>
+                    <td className={`px-4 py-2 font-bold ${m.estado === 'pendiente' ? 'text-yellow-600' : 'text-green-700'}`}>{m.estado}</td>
+                    <td className="px-4 py-2">
+                      {m.estado === 'pendiente' && (
+                        <button onClick={() => marcarPagado(m.id)} className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Marcar como pagado</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {/* Modal de detalles de exámenes */}
           {modalOpen && (
             <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">

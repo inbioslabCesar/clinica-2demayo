@@ -1,5 +1,5 @@
 import React from "react";
-import CajaAdminDashboard from "../components/CajaAdminDashboard";
+import CajaAdminDashboard from "../components/caja/CajaAdminDashboard";
 
 export default function ContabilidadPage() {
   return (

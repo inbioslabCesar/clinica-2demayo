@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('America/Lima');
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',

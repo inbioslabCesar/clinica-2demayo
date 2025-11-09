@@ -30,6 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 header('Content-Type: application/json');
 require_once "config.php";
 require_once "auth_check.php";
+require_once __DIR__ . '/modules/CobroModule.php';
+require_once __DIR__ . '/modules/LaboratorioModule.php';
+require_once __DIR__ . '/modules/CajaModule.php';
+require_once __DIR__ . '/modules/FarmaciaModule.php';
+require_once __DIR__ . '/modules/HonorarioModule.php';
+
 // Forzar codificación utf8mb4 en la conexión MySQLi
 if (isset($conn) && method_exists($conn, 'set_charset')) {
     $conn->set_charset('utf8mb4');
@@ -61,86 +67,21 @@ switch($method) {
         $conn->begin_transaction();
         
         try {
-            // 1. Obtener información del paciente para los movimientos
-            if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
-                // Paciente registrado en la BD
-                $stmt_paciente = $conn->prepare("SELECT nombre, apellido, dni, historia_clinica FROM pacientes WHERE id = ?");
-                $stmt_paciente->bind_param("i", $data['paciente_id']);
-                $stmt_paciente->execute();
-                $paciente_info = $stmt_paciente->get_result()->fetch_assoc();
-                $nombre_paciente = ($paciente_info['nombre'] ?? '') . ' ' . ($paciente_info['apellido'] ?? '');
-                $dni_paciente = $paciente_info['dni'] ?? '';
-                $hc_paciente = $paciente_info['historia_clinica'] ?? '';
-            } else {
-                // Paciente no registrado - usar datos del request
-                $nombre_paciente = $data['paciente_nombre'] ?? 'Cliente no registrado';
-                $dni_paciente = $data['paciente_dni'] ?? '';
-                $hc_paciente = $data['paciente_historia_clinica'] ?? '';
-            }
+            // 1. Registrar cobro principal y detalles
+            $cobro_id = CobroModule::registrarCobro($conn, $data);
             
-            // 2. Crear cobro principal
-            $observaciones = $data['observaciones'] ?? '';
-            // Para pacientes no registrados, almacenar información en observaciones
-            if (!$data['paciente_id'] || $data['paciente_id'] === 'null') {
-                $observaciones = "Cliente no registrado: $nombre_paciente (DNI: $dni_paciente). " . $observaciones;
-            }
+            // 2. Obtener caja abierta (filtrando por fecha y turno si existen)
+            $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
+            $turno_cobro = $data['turno'] ?? null;
+            $caja_abierta = CajaModule::obtenerCajaAbierta($conn, $data['usuario_id'], $fecha_cobro, $turno_cobro);
+            $caja_id = $caja_abierta['id'] ?? null;
             
-            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, 'pagado', ?)");
-            $paciente_id_param = ($data['paciente_id'] && $data['paciente_id'] !== 'null') ? $data['paciente_id'] : null;
-            $usuario_id_param = $data['usuario_id'];
-            $total_param = $data['total'];
-            $tipo_pago_param = $data['tipo_pago'];
-            
-            $stmt->bind_param("iidss", 
-                $paciente_id_param, 
-                $usuario_id_param, 
-                $total_param, 
-                $tipo_pago_param,
-                $observaciones
-            );
-            $stmt->execute();
-            
-            $cobro_id = $conn->insert_id;
-            
-            // 2. Insertar detalles del cobro
-            // Guardar todos los detalles como un array JSON en una sola fila
-            $servicio_tipo = $data['detalles'][0]['servicio_tipo'];
-            $servicio_id = $data['detalles'][0]['servicio_id'];
-            $descripcion_json = json_encode($data['detalles']);
-            $cantidad = count($data['detalles']);
-            $precio_unitario = array_sum(array_map(function($d){return $d['precio_unitario'];}, $data['detalles'])) / max(1, $cantidad);
-            $subtotal = array_sum(array_map(function($d){return $d['subtotal'];}, $data['detalles']));
-            $stmt_detalle = $conn->prepare("INSERT INTO cobros_detalle (cobro_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt_detalle->bind_param("isisssd", 
-                $cobro_id, 
-                $servicio_tipo, 
-                $servicio_id,
-                $descripcion_json, 
-                $cantidad, 
-                $precio_unitario, 
-                $subtotal
-            );
-            $stmt_detalle->execute();
-
-            // Registrar movimientos de laboratorio de referencia si corresponde
+            // 3. Registrar movimientos de laboratorio de referencia
             foreach ($data['detalles'] as $detalle) {
                 if (!empty($detalle['derivado']) && $detalle['derivado'] === true) {
-                    // Calcular monto a liquidar
-                    $monto_liquidar = 0;
-                    if ($detalle['tipo_derivacion'] === 'monto') {
-                        $monto_liquidar = floatval($detalle['valor_derivacion']);
-                    } elseif ($detalle['tipo_derivacion'] === 'porcentaje') {
-                        $monto_liquidar = round(floatval($detalle['subtotal']) * floatval($detalle['valor_derivacion']) / 100, 2);
-                    }
-                    // Insertar movimiento en laboratorio_referencia_movimientos
-                    $stmt_lab = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
-                    $lab_nombre = $detalle['laboratorio_referencia'] ?? '';
-                    $lab_tipo = $detalle['tipo_derivacion'] ?? '';
-                    $lab_estado = 'pendiente';
-                    $lab_obs = $detalle['descripcion'] ?? '';
-                    $lab_paciente_id = $data['paciente_id'] ?? null;
-                    $stmt_lab->bind_param("iissssis", $cobro_id, $detalle['servicio_id'], $lab_nombre, $monto_liquidar, $lab_tipo, $lab_estado, $lab_paciente_id, $lab_obs);
-                    $stmt_lab->execute();
+                    $usuario_caja = $caja_abierta['usuario_id'] ?? $data['usuario_id'];
+                    $turno_caja = $caja_abierta['turno'] ?? ($data['turno'] ?? null);
+                    LaboratorioModule::registrarMovimientoReferencia($conn, $cobro_id, $detalle, $caja_id, $data['paciente_id'], $usuario_caja, $turno_caja);
                 }
             }
             
@@ -195,48 +136,30 @@ switch($method) {
                     $descripcion_ingreso .= count($data['detalles']) . " servicios/productos";
                 }
 
-                // Registrar el ingreso en el módulo de caja
-                $stmt_ingreso = $conn->prepare("INSERT INTO ingresos_diarios (
-                    caja_id, 
-                    tipo_ingreso, 
-                    area, 
-                    descripcion, 
-                    monto, 
-                    metodo_pago, 
-                    referencia_id, 
-                    referencia_tabla, 
-                    paciente_id,
-                    paciente_nombre, 
-                    usuario_id,
-                    turno
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-
-                // Preparar todas las variables para bind_param (evitar problemas con NULL)
-                $paciente_id_param = $data['paciente_id'];
-                $total_param = $data['total'];
+                // Inicializar variables requeridas para el registro de ingreso
+                $total_param = $data['total'] ?? 0;
                 $referencia_tabla_param = 'cobros';
-                $turno_param = $caja_abierta['turno'] ?? 'manana';
-                $stmt_ingreso->bind_param("isssdsisisis", 
-                    $caja_id,
-                    $tipo_ingreso,
-                    $area_servicio,
-                    $descripcion_ingreso,
-                    $total_param,
-                    $metodo_pago,
-                    $cobro_id,
-                    $referencia_tabla_param,
-                    $paciente_id_param,
-                    $nombre_paciente,
-                    $usuario_id_param,
-                    $turno_param
-                );
+                $paciente_id_param = $data['paciente_id'] ?? null;
+                $nombre_paciente = $data['paciente_nombre'] ?? '';
+                $usuario_id_param = $data['usuario_id'];
+                $turno_param = $caja_abierta['turno'] ?? ($data['turno'] ?? null);
 
-                if ($stmt_ingreso->execute()) {
-                    // Actualizar timestamp de la caja
-                    $stmt_update_caja = $conn->prepare("UPDATE cajas SET updated_at = CURRENT_TIMESTAMP WHERE id = ?");
-                    $stmt_update_caja->bind_param("i", $caja_id);
-                    $stmt_update_caja->execute();
-                }
+                // --- Registro de ingreso en caja ---
+                $params = [
+                    'caja_id' => $caja_id,
+                    'tipo_ingreso' => $tipo_ingreso,
+                    'area_servicio' => $area_servicio,
+                    'descripcion_ingreso' => $descripcion_ingreso,
+                    'total_param' => $total_param,
+                    'metodo_pago' => $metodo_pago,
+                    'cobro_id' => $cobro_id,
+                    'referencia_tabla_param' => $referencia_tabla_param,
+                    'paciente_id_param' => $paciente_id_param,
+                    'nombre_paciente' => $nombre_paciente,
+                    'usuario_id_param' => $usuario_id_param,
+                    'turno_param' => $turno_param
+                ];
+                CajaModule::registrarIngreso($conn, $params);
             }
             
             // ========================================
@@ -247,59 +170,23 @@ switch($method) {
             $servicio_key = $data['servicio_info']['key'] ?? 'consulta';
             if ($servicio_key === 'farmacia') {
                 foreach ($data['detalles'] as $detalle) {
-                    $medicamento_id = $detalle['servicio_id'];
-                    $cantidad_vendida = $detalle['cantidad'];
-                    
-                    // Obtener información del medicamento para el stock y unidades por caja
-                    $stmt_med = $conn->prepare("SELECT stock, unidades_por_caja, nombre FROM medicamentos WHERE id = ?");
-                    $stmt_med->bind_param("i", $medicamento_id);
-                    $stmt_med->execute();
-                    $med_result = $stmt_med->get_result()->fetch_assoc();
-                    
-                    if (!$med_result) {
-                        throw new Exception("Medicamento no encontrado ID: $medicamento_id");
-                    }
-                    
-                    $stock_actual = intval($med_result['stock']);
-                    $unidades_por_caja = intval($med_result['unidades_por_caja']) ?: 1;
-                    $nombre_medicamento = $med_result['nombre'];
-                    
-                    // Determinar si es venta por unidad o caja
-                    $es_caja = strpos($detalle['descripcion'], '(Caja)') !== false;
-                    
-                    if ($es_caja) {
-                        $cantidad_total_unidades = $cantidad_vendida * $unidades_por_caja;
-                        $tipo_movimiento = 'venta_caja';
-                    } else {
-                        $cantidad_total_unidades = $cantidad_vendida;
-                        $tipo_movimiento = 'venta_unidad';
-                    }
-                    
-                    // Verificar stock suficiente
-                    if ($stock_actual < $cantidad_total_unidades) {
-                        throw new Exception("Stock insuficiente para $nombre_medicamento. Disponible: $stock_actual, solicitado: $cantidad_total_unidades");
-                    }
-                    
-                    $nuevo_stock = $stock_actual - $cantidad_total_unidades;
-                    
-                    // Actualizar stock del medicamento
-                    $stmt_stock = $conn->prepare("UPDATE medicamentos SET stock = ? WHERE id = ?");
-                    $stmt_stock->bind_param("ii", $nuevo_stock, $medicamento_id);
-                    $stmt_stock->execute();
-                    
-                    // Registrar movimiento de salida con información del paciente
-                    $observaciones = "Venta - Cobro #$cobro_id - Paciente: $nombre_paciente (DNI: $dni_paciente, HC: $hc_paciente) - " . ($es_caja ? "$cantidad_vendida caja(s)" : "$cantidad_vendida unidad(es)");
-                    $stmt_mov = $conn->prepare("INSERT INTO movimientos_medicamento (medicamento_id, tipo_movimiento, cantidad, observaciones, usuario_id, fecha_hora) VALUES (?, ?, ?, ?, ?, NOW())");
-                    $stmt_mov->bind_param("isisi", $medicamento_id, $tipo_movimiento, $cantidad_total_unidades, $observaciones, $data['usuario_id']);
-                    $stmt_mov->execute();
+                    FarmaciaModule::procesarVenta(
+                        $conn,
+                        $detalle,
+                        $cobro_id,
+                        $nombre_paciente,
+                        $dni_paciente,
+                        $hc_paciente,
+                        $data['usuario_id']
+                    );
                 }
             }
             
             // 4. Registrar atención si el paciente está registrado
             // 5. Registrar movimiento de honorarios médicos si es consulta
             if ($servicio_key === 'consulta' && isset($data['detalles'][0])) {
-                // Buscar tarifa asociada
                 $detalleConsulta = $data['detalles'][0];
+                // Buscar tarifa asociada
                 $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = 'consulta' LIMIT 1");
                 $stmt_tarifa->bind_param("s", $detalleConsulta['descripcion']);
                 $stmt_tarifa->execute();
@@ -538,7 +425,7 @@ switch($method) {
                 $cobro['detalles'] = $detalles;
             }
             
-            // Contar total con los mismos filtros
+            // Contar total with the same filters
             $count_sql = "
                 SELECT COUNT(*) as total 
                 FROM cobros c 

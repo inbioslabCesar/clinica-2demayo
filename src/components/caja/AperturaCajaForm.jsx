@@ -1,7 +1,7 @@
 
 import React, { useState } from "react";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { BASE_URL } from "../../config/config";
 
 const TURNOS = [
   { value: "manana", label: "Mañana" },

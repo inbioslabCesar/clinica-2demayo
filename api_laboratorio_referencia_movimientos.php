@@ -31,8 +31,24 @@ switch($method) {
         $data = json_decode(file_get_contents('php://input'), true);
         // Si la acción es marcar como pagado
         if (isset($data['accion']) && $data['accion'] === 'marcar_pagado' && isset($data['id'])) {
-            $stmt = $conn->prepare("UPDATE laboratorio_referencia_movimientos SET estado = 'pagado' WHERE id = ?");
-            $stmt->bind_param("i", $data['id']);
+            // Registrar quién liquidó y el turno/hora de liquidación
+            $usuario = $_SESSION['usuario'] ?? null;
+            $usuario_id = $usuario['id'] ?? null;
+            $turno_liq = null;
+            $caja_id = null;
+            if ($usuario_id) {
+                $stmtCaja = $conn->prepare("SELECT id, turno FROM cajas WHERE estado = 'abierta' AND usuario_id = ? ORDER BY created_at DESC LIMIT 1");
+                $stmtCaja->bind_param("i", $usuario_id);
+                $stmtCaja->execute();
+                $resCaja = $stmtCaja->get_result();
+                if ($resCaja && $resCaja->num_rows > 0) {
+                    $cajaRow = $resCaja->fetch_assoc();
+                    $turno_liq = $cajaRow['turno'];
+                    $caja_id = $cajaRow['id'];
+                }
+            }
+            $stmt = $conn->prepare("UPDATE laboratorio_referencia_movimientos SET estado = 'pagado', liquidado_por = ?, turno_liquidacion = ?, hora_liquidacion = CURTIME(), caja_id = COALESCE(caja_id, ?) WHERE id = ?");
+            $stmt->bind_param("issi", $usuario_id, $turno_liq, $caja_id, $data['id']);
             $stmt->execute();
             echo json_encode(['success' => true]);
             break;
@@ -51,27 +67,35 @@ switch($method) {
         // Listar movimientos por laboratorio, estado, fecha, etc.
         $laboratorio = $_GET['laboratorio'] ?? null;
         $estado = $_GET['estado'] ?? null;
-        $sql = "SELECT * FROM laboratorio_referencia_movimientos WHERE 1=1";
+    $sql = "SELECT m.*, u.nombre AS nombre_cobrado_por, ul.nombre AS nombre_liquidado_por FROM laboratorio_referencia_movimientos m LEFT JOIN usuarios u ON m.cobrado_por = u.id LEFT JOIN usuarios ul ON m.liquidado_por = ul.id WHERE 1=1";
         $params = [];
         $types = "";
         if ($laboratorio) {
-            $sql .= " AND laboratorio = ?";
+            $sql .= " AND m.laboratorio = ?";
             $params[] = $laboratorio;
             $types .= "s";
         }
         if ($estado) {
-            $sql .= " AND estado = ?";
+            $sql .= " AND m.estado = ?";
             $params[] = $estado;
             $types .= "s";
         }
-        $sql .= " ORDER BY fecha DESC, hora DESC";
+        $sql .= " ORDER BY m.fecha DESC, m.hora DESC";
         $stmt = $conn->prepare($sql);
         if (!empty($params)) {
             $stmt->bind_param($types, ...$params);
         }
         $stmt->execute();
         $result = $stmt->get_result();
-        $movimientos = $result->fetch_all(MYSQLI_ASSOC);
+        $movimientos = [];
+        while ($row = $result->fetch_assoc()) {
+            // Mostrar el nombre del usuario en vez del ID (para cobro y liquidación)
+            $row['cobrado_por'] = $row['nombre_cobrado_por'] ?? $row['cobrado_por'];
+            $row['liquidado_por'] = $row['nombre_liquidado_por'] ?? $row['liquidado_por'] ?? null;
+            unset($row['nombre_cobrado_por']);
+            unset($row['nombre_liquidado_por']);
+            $movimientos[] = $row;
+        }
         echo json_encode(['success' => true, 'movimientos' => $movimientos]);
         break;
     default:

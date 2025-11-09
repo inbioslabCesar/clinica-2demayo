@@ -1,5 +1,6 @@
 
 <?php
+date_default_timezone_set('America/Lima');
 // --- Manejo avanzado de CORS y errores ---
 session_set_cookie_params([
     'lifetime' => 0,
@@ -57,6 +58,7 @@ if ($method === 'POST') {
     $caja_id = empty($input['caja_id']) ? null : $input['caja_id'];
     $observaciones = $input['observaciones'] ?? '';
     $fecha = $input['fecha'] ?? date('Y-m-d');
+    date_default_timezone_set('America/Lima');
     $hora = $input['hora'] ?? date('H:i:s');
 
     $stmt = $pdo->prepare("INSERT INTO egresos (fecha, tipo_egreso, categoria, descripcion, monto, metodo_pago, usuario_id, turno, estado, caja_id, observaciones, hora) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -120,9 +122,9 @@ if ($method === 'PUT') {
 }
 
 if ($method === 'GET') {
-    // Listar egresos por fecha (por defecto, día actual)
+    // Listar egresos por fecha (por defecto, día actual) y mostrar nombre del usuario
     $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
-    $stmt = $pdo->prepare("SELECT * FROM egresos WHERE DATE(created_at) = ? ORDER BY created_at DESC");
+    $stmt = $pdo->prepare("SELECT e.*, u.nombre as usuario_nombre FROM egresos e LEFT JOIN usuarios u ON e.usuario_id = u.id WHERE DATE(e.created_at) = ? ORDER BY e.created_at DESC");
     $stmt->execute([$fecha]);
     $egresos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     echo json_encode(["success" => true, "egresos" => $egresos]);

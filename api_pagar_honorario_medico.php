@@ -46,6 +46,7 @@ if (!isset($data['ids']) || !is_array($data['ids']) || count($data['ids']) === 0
 
 $metodo_pago = $data['metodo_pago'] ?? 'efectivo';
 $observaciones = $data['observaciones'] ?? null;
+date_default_timezone_set('America/Lima');
 $fecha_pago = date('Y-m-d');
 
 try {
