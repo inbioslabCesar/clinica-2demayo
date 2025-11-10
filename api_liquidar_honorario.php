@@ -76,7 +76,8 @@ if ($conn->query($sql)) {
     // Registrar egreso
     $medico_id = intval($honorario['medico_id']);
     $monto = floatval($honorario['monto_medico']);
-    $turno = $conn->real_escape_string($honorario['turno']);
+    // Usar el turno del usuario que está liquidando (si existe) para que la liquidación quede registrada en su caja/turno
+    $turno = isset($_SESSION['usuario']['turno']) ? $conn->real_escape_string($_SESSION['usuario']['turno']) : $conn->real_escape_string($honorario['turno']);
     $metodo_pago = $conn->real_escape_string($honorario['metodo_pago_medico']);
     $fecha = date('Y-m-d');
     $descripcion = "Liquidación honorario médico ID $id";

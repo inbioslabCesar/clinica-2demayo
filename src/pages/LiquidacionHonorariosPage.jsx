@@ -86,33 +86,43 @@ function LiquidacionHonorariosPage() {
   return (
     <div className="container mx-auto p-6">
       <h1 className="text-2xl font-bold mb-4 text-blue-800">Liquidación de Honorarios Médicos</h1>
-      <div className="bg-white p-4 rounded shadow mb-6 flex gap-4 items-center">
-        <label>Médico:</label>
-        <select value={medicoId} onChange={e => setMedicoId(e.target.value)} className="border rounded px-3 py-2">
-          <option value="">Todos</option>
-          {medicos.map(m => (
-            <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-          ))}
-        </select>
-        <label>Turno:</label>
-        <select value={turno} onChange={e => setTurno(e.target.value)} className="border rounded px-3 py-2">
-          <option value="">Todos</option>
-          <option value="mañana">Mañana</option>
-          <option value="tarde">Tarde</option>
-          <option value="noche">Noche</option>
-        </select>
-        <label>Estado:</label>
-        <select value={estado} onChange={e => setEstado(e.target.value)} className="border rounded px-3 py-2">
-          <option value="pendiente">Pendiente</option>
-          <option value="pagado">Pagado</option>
-        </select>
-        <button onClick={() => { setPage(1); cargarHonorarios(); }} className="bg-blue-600 text-white px-4 py-2 rounded">Filtrar</button>
-        <label className="ml-4">Filas por página:</label>
-        <select value={rowsPerPage} onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1); }} className="border rounded px-3 py-2">
-          <option value={3}>3</option>
-          <option value={5}>5</option>
-          <option value={10}>10</option>
-        </select>
+      <div className="bg-white p-3 sm:p-4 rounded shadow mb-6 flex flex-col sm:flex-row gap-2 sm:gap-4 items-stretch sm:items-center">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
+          <div className="flex flex-col">
+            <label className="text-xs sm:text-sm">Médico:</label>
+            <select value={medicoId} onChange={e => setMedicoId(e.target.value)} className="border rounded px-2 py-1 sm:px-3 sm:py-2 text-xs sm:text-sm">
+              <option value="">Todos</option>
+              {medicos.map(m => (
+                <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs sm:text-sm">Turno:</label>
+            <select value={turno} onChange={e => setTurno(e.target.value)} className="border rounded px-2 py-1 sm:px-3 sm:py-2 text-xs sm:text-sm">
+              <option value="">Todos</option>
+              <option value="mañana">Mañana</option>
+              <option value="tarde">Tarde</option>
+              <option value="noche">Noche</option>
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs sm:text-sm">Estado:</label>
+            <select value={estado} onChange={e => setEstado(e.target.value)} className="border rounded px-2 py-1 sm:px-3 sm:py-2 text-xs sm:text-sm">
+              <option value="pendiente">Pendiente</option>
+              <option value="pagado">Pagado</option>
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs sm:text-sm">Filas por página:</label>
+            <select value={rowsPerPage} onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1); }} className="border rounded px-2 py-1 sm:px-3 sm:py-2 text-xs sm:text-sm">
+              <option value={3}>3</option>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+            </select>
+          </div>
+        </div>
+        <button onClick={() => { setPage(1); cargarHonorarios(); }} className="bg-blue-600 text-white px-3 py-1 sm:px-4 sm:py-2 rounded mt-2 sm:mt-0 w-full sm:w-auto">Filtrar</button>
       </div>
       {loading ? (
         <div className="text-center py-8">Cargando honorarios...</div>
@@ -123,14 +133,14 @@ function LiquidacionHonorariosPage() {
               <tr>
                 <th className="px-4 py-2">Médico</th>
                 <th className="px-4 py-2">Servicio</th>
-                <th className="px-4 py-2">Paciente</th>
-                <th className="px-4 py-2">Fecha</th>
-                <th className="px-4 py-2">Turno</th>
-                <th className="px-4 py-2">Monto Médico</th>
+                <th className="hidden sm:table-cell px-4 py-2">Paciente</th>
+                <th className="hidden sm:table-cell px-4 py-2">Fecha</th>
+                <th className="hidden sm:table-cell px-4 py-2">Turno</th>
+                <th className="px-4 py-2">Monto</th>
                 <th className="px-4 py-2">Estado</th>
-                <th className="px-4 py-2">Cobrado por</th>
-                <th className="px-4 py-2">Liquidado por</th>
-                <th className="px-4 py-2">Fecha Liquidación</th>
+                <th className="hidden sm:table-cell px-4 py-2">Cobrado por</th>
+                <th className="hidden sm:table-cell px-4 py-2">Liquidado por</th>
+                <th className="hidden sm:table-cell px-4 py-2">Fecha Liquidación</th>
                 <th className="px-4 py-2">Acciones</th>
               </tr>
             </thead>
@@ -141,22 +151,22 @@ function LiquidacionHonorariosPage() {
                 <tr key={h.id}>
                   <td className="px-4 py-2">{h.medico_nombre} {h.medico_apellido}</td>
                   <td className="px-4 py-2">{h.tipo_servicio}</td>
-                  <td className="px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
-                  <td className="px-4 py-2">{h.fecha}</td>
-                  <td className="px-4 py-2">{h.turno}</td>
+                  <td className="hidden sm:table-cell px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
+                  <td className="hidden sm:table-cell px-4 py-2">{h.fecha}</td>
+                  <td className="hidden sm:table-cell px-4 py-2">{h.turno}</td>
                   <td className="px-4 py-2">S/ {parseFloat(h.monto_medico).toFixed(2)}</td>
                   <td className="px-4 py-2">{h.estado_pago_medico}</td>
-                  <td className="px-4 py-2">
+                  <td className="hidden sm:table-cell px-4 py-2">
                     {h.cobrado_por_nombre ? (
                       <span>{h.cobrado_por_nombre} <span className="text-xs text-gray-500">({h.cobrado_por_rol})</span></span>
                     ) : <span className="text-gray-400">-</span>}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="hidden sm:table-cell px-4 py-2">
                     {h.estado_pago_medico === "pagado" && h.liquidado_por_nombre ? (
                       <span>{h.liquidado_por_nombre} <span className="text-xs text-gray-500">({h.liquidado_por_rol})</span></span>
                     ) : <span className="text-gray-400">-</span>}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="hidden sm:table-cell px-4 py-2">
                     {h.estado_pago_medico === "pagado" && h.fecha_liquidacion ? (
                       <span>{h.fecha_liquidacion}</span>
                     ) : <span className="text-gray-400">-</span>}

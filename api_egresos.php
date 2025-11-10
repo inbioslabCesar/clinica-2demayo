@@ -55,7 +55,17 @@ if ($method === 'POST') {
     $usuario_id = $_SESSION['usuario']['id'] ?? null;
     $turno = $input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana');
     $estado = $input['estado'] ?? 'pagado';
-    $caja_id = empty($input['caja_id']) ? null : $input['caja_id'];
+    // Si no se envía caja_id, buscar la caja abierta del usuario en el día y asignar siempre para egreso operativo
+    $fecha_actual = $input['fecha'] ?? date('Y-m-d');
+    $usuario_id_actual = $_SESSION['usuario']['id'] ?? null;
+    if (empty($input['caja_id']) || $tipo_egreso === 'operativo') {
+        $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+        $stmtCaja->execute([$fecha_actual, $usuario_id_actual]);
+        $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
+        $caja_id = $cajaRow ? $cajaRow['id'] : null;
+    } else {
+        $caja_id = $input['caja_id'];
+    }
     $observaciones = $input['observaciones'] ?? '';
     $fecha = $input['fecha'] ?? date('Y-m-d');
     date_default_timezone_set('America/Lima');

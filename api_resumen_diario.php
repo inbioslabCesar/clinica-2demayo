@@ -116,8 +116,22 @@ $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
             $stmtOperativo->execute([$caja['id']]);
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
+                // DEBUG: Obtener los egresos operativos por caja
+                $stmtDebugOperativo = $pdo->prepare('SELECT * FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+                $stmtDebugOperativo->execute([$caja['id']]);
+                $caja['debug_egresos_operativos'] = $stmtDebugOperativo->fetchAll(PDO::FETCH_ASSOC);
             // Ganancia por caja
             $caja['ganancia_dia'] = floatval($caja['total_caja']) - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
+
+            // Ingresos por tipo de pago por caja
+            $stmtPago = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
+            $stmtPago->execute([$caja['id']]);
+            $caja['por_pago'] = $stmtPago->fetchAll(PDO::FETCH_ASSOC);
+
+            // Ingresos por tipo de servicio por caja
+            $stmtServ = $pdo->prepare('SELECT tipo_ingreso, SUM(monto) as total_servicio FROM ingresos_diarios WHERE caja_id = ? GROUP BY tipo_ingreso');
+            $stmtServ->execute([$caja['id']]);
+            $caja['por_servicio'] = $stmtServ->fetchAll(PDO::FETCH_ASSOC);
         }
         unset($caja);
     } elseif ($usuario['rol'] === 'recepcionista') {

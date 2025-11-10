@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import RegistrarEgresoForm from "../components/egresos/RegistrarEgresoForm";
 import EgresosList from "../components/EgresosList";
 import { useNavigate } from "react-router-dom";
 
@@ -84,10 +85,14 @@ export default function RegistrarEgresoPage() {
   };
 
   return (
-    <div className="w-full max-w-[1600px] mx-auto p-6">
-      <div className="flex justify-center mt-8 mb-4">
+    <div className="w-full max-w-[1600px] mx-auto px-2 sm:px-6 py-4">
+      <h1 className="text-xl sm:text-2xl font-bold text-blue-800 text-center mb-6 flex items-center justify-center gap-2">
+        <span className="inline-block bg-blue-100 text-blue-700 rounded-full p-2 text-2xl">💸</span>
+        Registro y Gestión de Egresos
+      </h1>
+      <div className="flex flex-col sm:flex-row justify-center items-stretch sm:items-center gap-2 sm:gap-4 mt-8 mb-4">
         <button
-          className="bg-blue-600 text-white px-6 py-3 rounded shadow hover:bg-blue-700 font-semibold text-lg"
+          className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 sm:px-6 sm:py-3 rounded shadow hover:bg-blue-700 font-semibold text-base sm:text-lg transition"
           onClick={() => { setShowForm(true); setEditId(null); setForm({
             fecha: new Date().toISOString().slice(0, 10),
             hora: new Date().toLocaleTimeString().slice(0, 5),
@@ -102,54 +107,31 @@ export default function RegistrarEgresoPage() {
             observaciones: "",
           }); }}
         >
-          Registrar Egreso
+          <span className="inline-block mr-2">➕</span> Registrar Egreso
         </button>
       </div>
       {/* Modal para el formulario */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="max-w-lg w-full p-6 bg-white rounded shadow relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-2">
+          <div className="w-full max-w-md sm:max-w-lg bg-white rounded-xl shadow-lg relative p-4 sm:p-8 flex flex-col">
             <button
-              className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-xl font-bold"
+              className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-2xl font-bold focus:outline-none"
               onClick={() => { setShowForm(false); setEditId(null); }}
               title="Cerrar"
+              aria-label="Cerrar"
             >
               ×
             </button>
-            <h2 className="text-xl font-bold mb-4">{editId ? "Editar Egreso" : "Registrar Egreso"}</h2>
-            <form onSubmit={handleSubmit}>
-              <input name="monto" type="number" required placeholder="Monto" value={form.monto} onChange={handleChange} className="input mb-2 w-full" />
-              <input name="descripcion" required placeholder="Descripción" value={form.descripcion} onChange={handleChange} className="input mb-2 w-full" />
-              <select name="categoria" required value={form.categoria} onChange={handleChange} className="input mb-2 w-full">
-                <option value="">Categoría</option>
-                <option value="pasaje">Pasaje</option>
-                <option value="servicios">Pago de servicios</option>
-                <option value="sueldo">Pago de sueldo</option>
-                <option value="otros">Otros</option>
-              </select>
-              <select name="tipo_egreso" required value={form.tipo_egreso} onChange={handleChange} className="input mb-2 w-full">
-                <option value="">Tipo de Egreso</option>
-                <option value="operativo">Operativo</option>
-                <option value="otros">Otros</option>
-              </select>
-              <select name="turno" required value={form.turno} onChange={handleChange} className="input mb-2 w-full">
-                <option value="">Turno</option>
-                <option value="mañana">Mañana</option>
-                <option value="tarde">Tarde</option>
-                <option value="noche">Noche</option>
-              </select>
-              <select name="metodo_pago" required value={form.metodo_pago} onChange={handleChange} className="input mb-2 w-full">
-                <option value="efectivo">Efectivo</option>
-                <option value="transferencia">Transferencia</option>
-                <option value="tarjeta">Tarjeta</option>
-                <option value="yape">Yape</option>
-                <option value="plin">Plin</option>
-              </select>
-              <input name="fecha" type="date" required value={form.fecha} onChange={handleChange} className="input mb-2 w-full" />
-              <input name="hora" type="time" required value={form.hora} onChange={handleChange} className="input mb-2 w-full" />
-              <textarea name="observaciones" placeholder="Observaciones" value={form.observaciones} onChange={handleChange} className="input mb-2 w-full" />
-              <button type="submit" className="btn btn-primary w-full" disabled={loading}>{editId ? "Actualizar" : "Registrar"}</button>
-            </form>
+            <h2 className="text-lg sm:text-2xl font-bold mb-4 text-blue-700 text-center">{editId ? "Editar Egreso" : "Registrar Egreso"}</h2>
+            <div className="flex flex-col gap-2">
+              <RegistrarEgresoForm
+                form={form}
+                onChange={handleChange}
+                onSubmit={handleSubmit}
+                loading={loading}
+                editId={editId}
+              />
+            </div>
           </div>
         </div>
       )}

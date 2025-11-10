@@ -1,5 +1,8 @@
+
 import { useState, useEffect } from "react";
 import { BASE_URL } from "../config/config";
+import LiquidacionLaboratorioReferenciaTable from "../components/laboratorio_referencia/LiquidacionLaboratorioReferenciaTable";
+import LiquidacionLaboratorioReferenciaModal from "../components/laboratorio_referencia/LiquidacionLaboratorioReferenciaModal";
 
 export default function LiquidacionLaboratorioReferenciaPage() {
   const [modalOpen, setModalOpen] = useState(false);
@@ -120,93 +123,28 @@ export default function LiquidacionLaboratorioReferenciaPage() {
               </select>
             </div>
           </div>
-          <div className="overflow-x-auto w-full">
-            <table className="min-w-[1500px] w-full table-auto border-collapse bg-white shadow rounded-lg">
-              <thead>
-                <tr className="bg-blue-50 text-blue-800">
-                  <th className="px-4 py-2">Fecha</th>
-                  <th className="px-4 py-2">Laboratorio</th>
-                  <th className="px-4 py-2">Exámenes</th>
-                  <th className="px-4 py-2">Tipo</th>
-                  <th className="px-4 py-2">Monto/Porcentaje</th>
-                  <th className="px-4 py-2">Usuario Cobro</th>
-                  <th className="px-4 py-2">Turno Cobro</th>
-                  <th className="px-4 py-2">Hora Cobro</th>
-                  <th className="px-4 py-2">Usuario Liquidó</th>
-                  <th className="px-4 py-2">Turno Liquidación</th>
-                  <th className="px-4 py-2">Hora Liquidación</th>
-                  <th className="px-4 py-2">Estado</th>
-                  <th className="px-4 py-2">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginated.map(m => (
-                  <tr key={m.id} className="border-b">
-                    <td className="px-4 py-2 text-gray-700">{m.fecha}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.laboratorio}</td>
-                    <td className="px-4 py-2 text-gray-700">
-                      <button
-                        title="Ver detalles"
-                        className="bg-blue-100 text-blue-800 px-2 py-1 rounded flex items-center gap-1 hover:bg-blue-200"
-                        onClick={() => {
-                          let examenes = [];
-                          try {
-                            examenes = JSON.parse(m.observaciones);
-                            if (!Array.isArray(examenes)) examenes = [m.observaciones];
-                          } catch {
-                            examenes = m.observaciones.split(',').map(e => e.trim());
-                          }
-                          setModalExamenes(examenes);
-                          setModalMovimiento(m);
-                          setModalOpen(true);
-                        }}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        Detalles
-                      </button>
-                    </td>
-                    <td className="px-4 py-2 text-gray-700">{m.tipo === 'monto' ? 'Monto fijo' : 'Porcentaje'}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.tipo === 'monto' ? `S/ ${parseFloat(m.monto).toFixed(2)}` : `${parseFloat(m.monto).toFixed(2)} %`}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.cobrado_por || '-'}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.turno_cobro || '-'}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.hora_cobro || '-'}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.liquidado_por || '-'}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.turno_liquidacion || '-'}</td>
-                    <td className="px-4 py-2 text-gray-700">{m.hora_liquidacion || '-'}</td>
-                    <td className={`px-4 py-2 font-bold ${m.estado === 'pendiente' ? 'text-yellow-600' : 'text-green-700'}`}>{m.estado}</td>
-                    <td className="px-4 py-2">
-                      {m.estado === 'pendiente' && (
-                        <button onClick={() => marcarPagado(m.id)} className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Marcar como pagado</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {/* Modal de detalles de exámenes */}
-          {modalOpen && (
-            <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-              <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full relative">
-                <h3 className="text-xl font-bold text-blue-700 mb-4 flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  Detalle de Exámenes
-                </h3>
-                <ul className="divide-y divide-gray-100 mb-4">
-                  {modalExamenes.map((ex, idx) => (
-                    <li key={idx} className="py-2 text-gray-800 font-medium">{ex}</li>
-                  ))}
-                </ul>
-                <button
-                  onClick={() => setModalOpen(false)}
-                  className="absolute top-2 right-2 bg-gray-200 text-gray-700 rounded-full p-2 hover:bg-gray-300"
-                  title="Cerrar"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-              </div>
-            </div>
-          )}
+          <LiquidacionLaboratorioReferenciaTable
+            movimientos={movimientosFiltrados}
+            paginated={paginated}
+            onVerDetalles={m => {
+              let examenes = [];
+              try {
+                examenes = JSON.parse(m.observaciones);
+                if (!Array.isArray(examenes)) examenes = [m.observaciones];
+              } catch {
+                examenes = m.observaciones.split(',').map(e => e.trim());
+              }
+              setModalExamenes(examenes);
+              setModalMovimiento(m);
+              setModalOpen(true);
+            }}
+            onMarcarPagado={marcarPagado}
+          />
+          <LiquidacionLaboratorioReferenciaModal
+            open={modalOpen}
+            examenes={modalExamenes}
+            onClose={() => setModalOpen(false)}
+          />
         </>
       )}
       {mensaje && (
