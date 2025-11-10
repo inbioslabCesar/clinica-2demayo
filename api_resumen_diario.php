@@ -86,12 +86,20 @@ $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $stmt->execute([$fecha, $usuario['id']]);
     $ingresos_por_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Consultar el monto de apertura y estado de la caja del usuario actual
-    $stmt = $pdo->prepare('SELECT monto_apertura, estado FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? ORDER BY hora_apertura ASC LIMIT 1');
+    // Consultar el monto de apertura, estado y hora de apertura de la caja del usuario actual
+    $stmt = $pdo->prepare('SELECT monto_apertura, estado, hora_apertura FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? ORDER BY hora_apertura ASC LIMIT 1');
     $stmt->execute([$fecha, $usuario['id']]);
     $caja_row = $stmt->fetch(PDO::FETCH_ASSOC);
     $monto_apertura = ($caja_row && isset($caja_row['monto_apertura'])) ? $caja_row['monto_apertura'] : 0;
     $caja_abierta = ($caja_row && isset($caja_row['estado']) && $caja_row['estado'] === 'abierta') ? true : false;
+    // Asegurar que la hora de apertura esté en la zona horaria de Lima
+    $hora_apertura = null;
+    if ($caja_row && isset($caja_row['hora_apertura'])) {
+        // Usar la fecha y hora juntas para asegurar la conversión correcta
+        $fecha_hora = $fecha . ' ' . $caja_row['hora_apertura'];
+        $dt = new DateTime($fecha_hora, new DateTimeZone('America/Lima'));
+        $hora_apertura = $dt->format('g:i A');
+    }
 
     $cajas_resumen = array();
     // Solo el administrador ve el resumen de todas las cajas, las recepcionistas solo ven su propia caja
@@ -162,6 +170,7 @@ $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 echo json_encode(array(
     'success' => true,
     'fecha' => $fecha,
+    'hora_apertura' => $hora_apertura,
     'total' => floatval($total),
     'monto_apertura' => floatval($monto_apertura),
     'por_servicio' => $ingresos_por_servicio,

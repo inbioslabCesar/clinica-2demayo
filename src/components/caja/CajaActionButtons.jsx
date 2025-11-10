@@ -2,10 +2,10 @@ import React from "react";
 
 export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal }) {
   return (
-    <div className="mb-8 flex justify-center gap-4">
+    <div className="mb-6 flex flex-col sm:flex-row justify-center items-center gap-3 sm:gap-4 w-full">
       {!cajaAbierta && usuario && (
         <button
-          className="bg-blue-600 text-white px-6 py-2 rounded shadow hover:bg-blue-700"
+          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-blue-600 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-400"
           onClick={() => setShowModal(true)}
         >
           Abrir Caja
@@ -13,14 +13,14 @@ export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal }
       )}
       {cajaAbierta && usuario && (
         <button
-          className="bg-red-600 text-white px-6 py-2 rounded shadow hover:bg-red-700"
+          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-red-500 via-red-600 to-red-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-red-600 hover:to-red-800 focus:outline-none focus:ring-2 focus:ring-red-400"
           onClick={() => window.location.href = "/contabilidad/cerrar-caja"}
         >
           Cerrar Caja
         </button>
       )}
       <button
-        className="bg-orange-500 text-white px-6 py-2 rounded shadow hover:bg-orange-600"
+        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-orange-400 via-orange-500 to-orange-600 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-orange-500 hover:to-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-400"
         onClick={() => window.location.href = "/contabilidad/egresos"}
       >
         Ir a Egresos

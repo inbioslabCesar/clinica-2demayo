@@ -62,7 +62,31 @@ if ($total_efectivo === false || $total_efectivo === null) {
     $total_efectivo = 0;
 }
 
-$diferencia = $monto_contado - floatval($total_efectivo);
+// Calcular egresos
+$stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
+$stmt->execute([$caja_id]);
+$egreso_honorarios = $stmt->fetchColumn();
+if ($egreso_honorarios === false || $egreso_honorarios === null) {
+    $egreso_honorarios = 0;
+}
+
+$stmt = $pdo->prepare('SELECT SUM(monto) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
+$stmt->execute([$caja_id]);
+$egreso_lab_ref = $stmt->fetchColumn();
+if ($egreso_lab_ref === false || $egreso_lab_ref === null) {
+    $egreso_lab_ref = 0;
+}
+
+$stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+$stmt->execute([$caja_id]);
+$egreso_operativo = $stmt->fetchColumn();
+if ($egreso_operativo === false || $egreso_operativo === null) {
+    $egreso_operativo = 0;
+}
+
+$total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floatval($egreso_operativo);
+$efectivo_esperado = floatval($total_efectivo) - $total_egresos;
+$diferencia = $monto_contado - $efectivo_esperado;
 
 // Actualizar la caja: estado cerrada, guardar monto contado y diferencia
 $stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW() WHERE id = ?');
