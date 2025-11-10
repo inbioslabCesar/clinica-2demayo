@@ -1,6 +1,8 @@
-// import ReabrirCajaPage from "./pages/ReabrirCajaPage";
+import DashboardEstadisticasAdmin from './pages/DashboardEstadisticasAdmin';
+import ReabrirCajaPage from "./components/reabrirCaja/ReabrirCajaPage";
 import EgresosPage from "./pages/EgresosPage";
 import RegistrarEgresoPage from "./pages/RegistrarEgresoPage";
+import HistorialReaperturasPage from './components/reabrirCaja/HistorialReaperturasPage';
 import LiquidacionHonorariosPage from "./pages/LiquidacionHonorariosPage";
 import LiquidacionLaboratorioReferenciaPage from "./pages/LiquidacionLaboratorioReferenciaPage";
 // import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
@@ -185,6 +187,11 @@ function App() {
             {/* Solo visible para administradores y recepcionistas */}
             {(usuario?.rol === 'administrador' || usuario?.rol === 'recepcionista') && (
               <>
+                <Route path="/admin/dashboard-estadisticas" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                    <DashboardEstadisticasAdmin />
+                  </ProtectedRoute>
+                } />
                 <Route path="/medicos" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
                     <MedicosPage />
@@ -281,6 +288,16 @@ function App() {
                     <CerrarCajaView />
                   </ProtectedRoute>
                 } />
+                <Route path="/reabrir-caja" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                    <ReabrirCajaPage />
+                  </ProtectedRoute>
+                } />
+                  <Route path="/historial-reaperturas" element={
+                    <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                      <HistorialReaperturasPage />
+                    </ProtectedRoute>
+                  } />
               </>
             )}
             {/* Solo visible para laboratoristas */}

@@ -3,8 +3,8 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: Oct 26, 2025 at 08:49 AM
--- Server version: 8.4.3
+-- Generation Time: Nov 10, 2025 at 05:30 AM
+-- Server version: 8.0.42
 -- PHP Version: 8.3.16
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -47,6 +47,7 @@ CREATE TABLE `cajas` (
   `id` int NOT NULL,
   `fecha` date NOT NULL,
   `usuario_id` int NOT NULL,
+  `turno` enum('mañana','tarde','noche') COLLATE utf8mb4_general_ci NOT NULL,
   `estado` enum('abierta','en_cierre','cerrada') COLLATE utf8mb4_general_ci DEFAULT 'abierta',
   `monto_apertura` decimal(10,2) NOT NULL DEFAULT '0.00',
   `hora_apertura` time NOT NULL,
@@ -60,7 +61,13 @@ CREATE TABLE `cajas` (
   `total_otros` decimal(10,2) DEFAULT '0.00',
   `diferencia` decimal(10,2) DEFAULT '0.00',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `total_yape` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `total_plin` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `egreso_honorarios` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `egreso_lab_ref` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `egreso_operativo` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `total_egresos` decimal(10,2) NOT NULL DEFAULT '0.00'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -153,11 +160,11 @@ CREATE TABLE `cobros_detalle` (
   `cobro_id` int NOT NULL,
   `servicio_tipo` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
   `servicio_id` int DEFAULT NULL,
-  `descripcion` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+  `descripcion` json DEFAULT NULL,
   `cantidad` int DEFAULT '1',
   `precio_unitario` decimal(10,2) NOT NULL,
   `subtotal` decimal(10,2) NOT NULL
-) ;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -195,20 +202,20 @@ CREATE TABLE `configuracion_clinica` (
 CREATE TABLE `configuracion_honorarios_medicos` (
   `id` int NOT NULL,
   `medico_id` int NOT NULL,
+  `especialidad` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Especialidad espec├¡fica o NULL para general',
+  `tipo_servicio` enum('consulta','procedimiento','cirugia','interconsulta','otros') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'consulta',
   `tarifa_id` int DEFAULT NULL,
-  `especialidad` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `tipo_servicio` enum('consulta','procedimiento','cirugia','interconsulta','otros') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'consulta',
-  `porcentaje_clinica` decimal(5,2) NOT NULL,
-  `porcentaje_medico` decimal(5,2) NOT NULL,
-  `monto_fijo_clinica` decimal(10,2) DEFAULT NULL,
-  `monto_fijo_medico` decimal(10,2) DEFAULT NULL,
+  `porcentaje_clinica` decimal(5,2) NOT NULL COMMENT 'Porcentaje que retiene la cl├¡nica',
+  `porcentaje_medico` decimal(5,2) NOT NULL COMMENT 'Porcentaje que recibe el m├®dico',
+  `monto_fijo_clinica` decimal(10,2) DEFAULT NULL COMMENT 'Alternativa: monto fijo para cl├¡nica',
+  `monto_fijo_medico` decimal(10,2) DEFAULT NULL COMMENT 'Alternativa: monto fijo para m├®dico',
   `activo` tinyint(1) DEFAULT '1',
-  `vigencia_desde` date NOT NULL,
-  `vigencia_hasta` date DEFAULT NULL,
-  `observaciones` text COLLATE utf8mb4_unicode_ci,
+  `vigencia_desde` date NOT NULL DEFAULT (curdate()),
+  `vigencia_hasta` date DEFAULT NULL COMMENT 'NULL = vigencia indefinida',
+  `observaciones` text COLLATE utf8mb4_general_ci,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ;
 
 -- --------------------------------------------------------
 
@@ -223,10 +230,10 @@ CREATE TABLE `consultas` (
   `fecha` date NOT NULL,
   `hora` time NOT NULL,
   `estado` enum('pendiente','completada','cancelada') COLLATE utf8mb4_general_ci DEFAULT 'pendiente',
-  `tipo_consulta` enum('programada','espontanea') COLLATE utf8mb4_general_ci DEFAULT 'programada',
   `clasificacion` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `triaje_realizado` tinyint(1) NOT NULL DEFAULT '0',
-  `cobro_id` int DEFAULT NULL
+  `cobro_id` int DEFAULT NULL,
+  `tipo_consulta` enum('programada','espontanea') COLLATE utf8mb4_general_ci DEFAULT 'programada'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -319,15 +326,24 @@ CREATE TABLE `disponibilidad_medicos` (
 
 CREATE TABLE `egresos` (
   `id` int NOT NULL,
-  `tipo` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `categoria` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `concepto` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `fecha` date NOT NULL,
+  `hora` time DEFAULT NULL,
+  `tipo_egreso` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `categoria` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `descripcion` text COLLATE utf8mb4_general_ci,
   `monto` decimal(10,2) NOT NULL,
-  `responsable` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `observaciones` text COLLATE utf8mb4_unicode_ci,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `metodo_pago` enum('efectivo','transferencia','tarjeta','yape','plin','cheque','deposito') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'efectivo',
+  `usuario_id` int NOT NULL,
+  `turno` enum('mañana','tarde','noche') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'mañana',
+  `estado` enum('pendiente','cancelado','pagado') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pendiente',
+  `medico_id` int DEFAULT NULL,
+  `liquidacion_id` int DEFAULT NULL,
+  `observaciones` text COLLATE utf8mb4_general_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `caja_id` int DEFAULT NULL,
+  `honorario_movimiento_id` int DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -361,9 +377,9 @@ CREATE TABLE `examenes_laboratorio` (
 CREATE TABLE `historia_clinica` (
   `id` int NOT NULL,
   `consulta_id` int NOT NULL,
-  `datos` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `datos` json NOT NULL,
   `fecha_registro` datetime DEFAULT CURRENT_TIMESTAMP
-) ;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -373,28 +389,47 @@ CREATE TABLE `historia_clinica` (
 
 CREATE TABLE `honorarios_medicos_movimientos` (
   `id` int NOT NULL,
-  `consulta_id` int DEFAULT NULL,
-  `cobro_id` int DEFAULT NULL,
+  `consulta_id` int DEFAULT NULL COMMENT 'Referencia a la consulta si aplica',
+  `cobro_id` int DEFAULT NULL COMMENT 'Referencia al cobro/venta',
   `medico_id` int NOT NULL,
-  `paciente_id` int DEFAULT NULL,
+  `turno` enum('mañana','tarde','noche') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'mañana',
   `tarifa_id` int DEFAULT NULL,
-  `tipo_precio` enum('particular','seguro','convenio') COLLATE utf8mb4_unicode_ci DEFAULT 'particular',
+  `tipo_precio` enum('particular','seguro','convenio') COLLATE utf8mb4_general_ci DEFAULT 'particular',
+  `paciente_id` int DEFAULT NULL,
+  `caja_id` int DEFAULT NULL,
   `fecha` date NOT NULL,
   `hora` time NOT NULL,
-  `tipo_servicio` enum('consulta','procedimiento','cirugia','interconsulta','otros') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `especialidad` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tipo_servicio` enum('consulta','procedimiento','cirugia','interconsulta','otros') COLLATE utf8mb4_general_ci NOT NULL,
+  `especialidad` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `tarifa_total` decimal(10,2) NOT NULL,
-  `monto_clinica` decimal(10,2) NOT NULL,
-  `monto_medico` decimal(10,2) NOT NULL,
+  `monto_clinica` decimal(10,2) NOT NULL COMMENT 'Monto que queda para la cl├¡nica',
+  `monto_medico` decimal(10,2) NOT NULL COMMENT 'Monto que se debe al m├®dico',
   `porcentaje_aplicado_clinica` decimal(5,2) NOT NULL,
   `porcentaje_aplicado_medico` decimal(5,2) NOT NULL,
-  `estado_pago_medico` enum('pendiente','pagado','cancelado') COLLATE utf8mb4_unicode_ci DEFAULT 'pendiente',
+  `estado_pago_medico` enum('pendiente','pagado','cancelado') COLLATE utf8mb4_general_ci DEFAULT 'pendiente',
   `fecha_pago_medico` date DEFAULT NULL,
-  `metodo_pago_medico` enum('efectivo','transferencia','cheque','deposito') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `liquidacion_id` int DEFAULT NULL,
-  `observaciones` text COLLATE utf8mb4_unicode_ci,
+  `metodo_pago_medico` enum('efectivo','transferencia','cheque','deposito','tarjeta','yape','plin') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `liquidacion_id` int DEFAULT NULL COMMENT 'ID de la liquidaci├│n cuando se procese',
+  `observaciones` text COLLATE utf8mb4_general_ci,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `ingresos`
+--
+
+CREATE TABLE `ingresos` (
+  `id` int NOT NULL,
+  `caja_id` int NOT NULL,
+  `area` enum('consulta','laboratorio','farmacia','ecografia','rayosx','procedimiento','otros') COLLATE utf8mb4_general_ci NOT NULL,
+  `tipo_pago` enum('efectivo','tarjeta','transferencia','yape','plin','otros') COLLATE utf8mb4_general_ci NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `descripcion` text COLLATE utf8mb4_general_ci,
+  `fecha_hora` datetime NOT NULL,
+  `usuario_id` int NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -415,7 +450,37 @@ CREATE TABLE `ingresos_diarios` (
   `paciente_id` int DEFAULT NULL,
   `paciente_nombre` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `fecha_hora` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `usuario_id` int NOT NULL
+  `usuario_id` int NOT NULL,
+  `turno` enum('mañana','tarde','noche') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'mañana',
+  `honorario_movimiento_id` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `laboratorio_referencia_movimientos`
+--
+
+CREATE TABLE `laboratorio_referencia_movimientos` (
+  `id` int NOT NULL,
+  `cobro_id` int NOT NULL,
+  `examen_id` int NOT NULL,
+  `laboratorio` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `tipo` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `estado` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pendiente',
+  `paciente_id` int DEFAULT NULL,
+  `cobrado_por` int DEFAULT NULL,
+  `liquidado_por` int DEFAULT NULL,
+  `caja_id` int DEFAULT NULL,
+  `fecha` date DEFAULT NULL,
+  `hora` time DEFAULT NULL,
+  `observaciones` text COLLATE utf8mb4_general_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `turno_cobro` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `hora_cobro` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `turno_liquidacion` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `hora_liquidacion` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -427,21 +492,24 @@ CREATE TABLE `ingresos_diarios` (
 CREATE TABLE `liquidaciones_medicos` (
   `id` int NOT NULL,
   `medico_id` int NOT NULL,
-  `periodo_desde` date NOT NULL,
-  `periodo_hasta` date NOT NULL,
-  `total_bruto` decimal(10,2) NOT NULL,
-  `descuentos` decimal(10,2) DEFAULT '0.00',
-  `total_neto` decimal(10,2) NOT NULL,
-  `estado` enum('borrador','aprobada','pagada','cancelada') COLLATE utf8mb4_unicode_ci DEFAULT 'borrador',
-  `fecha_aprobacion` date DEFAULT NULL,
+  `periodo_tipo` enum('semanal','quincenal','mensual') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'mensual',
+  `fecha_inicio` date NOT NULL,
+  `fecha_fin` date NOT NULL,
+  `total_consultas` int NOT NULL DEFAULT '0',
+  `total_ingresos_brutos` decimal(10,2) NOT NULL DEFAULT '0.00' COMMENT 'Total facturado',
+  `total_honorarios_medico` decimal(10,2) NOT NULL DEFAULT '0.00' COMMENT 'Total a pagar al m├®dico',
+  `total_retencion_clinica` decimal(10,2) NOT NULL DEFAULT '0.00' COMMENT 'Total que retiene cl├¡nica',
+  `estado` enum('borrador','generada','pagada','cancelada') COLLATE utf8mb4_general_ci DEFAULT 'borrador',
+  `fecha_generacion` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `fecha_pago` date DEFAULT NULL,
-  `metodo_pago` enum('efectivo','transferencia','cheque','deposito') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `observaciones` text COLLATE utf8mb4_unicode_ci,
-  `usuario_aprobacion` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `usuario_pago` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `metodo_pago` enum('efectivo','transferencia','cheque','deposito') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `referencia_pago` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'N├║mero de transferencia, cheque, etc.',
+  `observaciones` text COLLATE utf8mb4_general_ci,
+  `created_by` int NOT NULL COMMENT 'Usuario que cre├│ la liquidaci├│n',
+  `paid_by` int DEFAULT NULL COMMENT 'Usuario que proces├│ el pago',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -456,8 +524,8 @@ CREATE TABLE `log_reaperturas` (
   `usuario_id` int NOT NULL,
   `usuario_nombre` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `motivo` text COLLATE utf8mb4_general_ci,
-  `datos_cierre_anterior` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin
-) ;
+  `datos_cierre_anterior` json DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -549,10 +617,10 @@ CREATE TABLE `ordenes_laboratorio` (
   `cobro_id` int DEFAULT NULL,
   `consulta_id` int DEFAULT NULL,
   `paciente_id` int DEFAULT NULL,
-  `examenes` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `examenes` json NOT NULL,
   `fecha` datetime DEFAULT CURRENT_TIMESTAMP,
   `estado` varchar(20) COLLATE utf8mb4_general_ci DEFAULT 'pendiente'
-) ;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -589,9 +657,9 @@ CREATE TABLE `resultados_laboratorio` (
   `consulta_id` int DEFAULT NULL,
   `orden_id` int DEFAULT NULL,
   `tipo_examen` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `resultados` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+  `resultados` json DEFAULT NULL,
   `fecha` datetime DEFAULT CURRENT_TIMESTAMP
-) ;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -639,9 +707,9 @@ CREATE TABLE `tarifas` (
 CREATE TABLE `triaje` (
   `id` int NOT NULL,
   `consulta_id` int NOT NULL,
-  `datos` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `datos` json NOT NULL,
   `fecha_registro` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -656,10 +724,62 @@ CREATE TABLE `usuarios` (
   `nombre` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
   `dni` varchar(15) COLLATE utf8mb4_general_ci NOT NULL,
   `profesion` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `rol` enum('administrador','recepcionista','laboratorista','enfermero','quimico') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'recepcionista',
+  `rol` enum('administrador','recepcionista','laboratorista','enfermero','quimico') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'recepcionista',
   `activo` tinyint(1) NOT NULL DEFAULT '1',
   `creado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Stand-in structure for view `vista_honorarios_pendientes`
+-- (See below for the actual view)
+--
+CREATE TABLE `vista_honorarios_pendientes` (
+`medico_id` int
+,`medico_nombre` varchar(201)
+,`especialidad` varchar(100)
+,`consultas_pendientes` bigint
+,`total_pendiente` decimal(32,2)
+,`fecha_mas_antigua` date
+,`fecha_mas_reciente` date
+);
+
+-- --------------------------------------------------------
+
+--
+-- Stand-in structure for view `vista_ingresos_por_area_hoy`
+-- (See below for the actual view)
+--
+CREATE TABLE `vista_ingresos_por_area_hoy` (
+`tipo_ingreso` enum('consulta','laboratorio','farmacia','ecografia','rayosx','procedimiento','otros')
+,`area` varchar(100)
+,`cantidad_transacciones` bigint
+,`total_monto` decimal(32,2)
+,`total_efectivo` decimal(32,2)
+,`total_tarjetas` decimal(32,2)
+,`total_transferencias` decimal(32,2)
+);
+
+-- --------------------------------------------------------
+
+--
+-- Stand-in structure for view `vista_resumen_liquidaciones`
+-- (See below for the actual view)
+--
+CREATE TABLE `vista_resumen_liquidaciones` (
+`id` int
+,`medico_id` int
+,`medico_nombre` varchar(201)
+,`periodo_tipo` enum('semanal','quincenal','mensual')
+,`fecha_inicio` date
+,`fecha_fin` date
+,`total_consultas` int
+,`total_honorarios_medico` decimal(10,2)
+,`estado` enum('borrador','generada','pagada','cancelada')
+,`fecha_pago` date
+,`dias_vencimiento` int
+);
 
 --
 -- Indexes for dumped tables
@@ -741,9 +861,9 @@ ALTER TABLE `configuracion_clinica`
 --
 ALTER TABLE `configuracion_honorarios_medicos`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_medico_servicio` (`medico_id`,`tipo_servicio`),
+  ADD KEY `idx_medico_activo` (`medico_id`,`activo`),
   ADD KEY `idx_vigencia` (`vigencia_desde`,`vigencia_hasta`),
-  ADD KEY `idx_activo` (`activo`);
+  ADD KEY `fk_configuracion_honorarios_tarifa` (`tarifa_id`);
 
 --
 -- Indexes for table `consultas`
@@ -796,7 +916,9 @@ ALTER TABLE `disponibilidad_medicos`
 -- Indexes for table `egresos`
 --
 ALTER TABLE `egresos`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `usuario_id` (`usuario_id`),
+  ADD KEY `medico_id` (`medico_id`);
 
 --
 -- Indexes for table `examenes_laboratorio`
@@ -816,10 +938,19 @@ ALTER TABLE `historia_clinica`
 --
 ALTER TABLE `honorarios_medicos_movimientos`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_movimientos_medico_fecha` (`medico_id`,`fecha`),
-  ADD KEY `idx_movimientos_estado_pago` (`estado_pago_medico`),
-  ADD KEY `idx_movimientos_liquidacion` (`liquidacion_id`),
-  ADD KEY `idx_movimientos_consulta` (`consulta_id`);
+  ADD KEY `paciente_id` (`paciente_id`),
+  ADD KEY `idx_medico_fecha` (`medico_id`,`fecha`),
+  ADD KEY `idx_estado_pago` (`estado_pago_medico`),
+  ADD KEY `idx_liquidacion` (`liquidacion_id`),
+  ADD KEY `fk_honorarios_movimientos_tarifa` (`tarifa_id`);
+
+--
+-- Indexes for table `ingresos`
+--
+ALTER TABLE `ingresos`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `caja_id` (`caja_id`),
+  ADD KEY `usuario_id` (`usuario_id`);
 
 --
 -- Indexes for table `ingresos_diarios`
@@ -834,13 +965,21 @@ ALTER TABLE `ingresos_diarios`
   ADD KEY `usuario_id` (`usuario_id`);
 
 --
+-- Indexes for table `laboratorio_referencia_movimientos`
+--
+ALTER TABLE `laboratorio_referencia_movimientos`
+  ADD PRIMARY KEY (`id`);
+
+--
 -- Indexes for table `liquidaciones_medicos`
 --
 ALTER TABLE `liquidaciones_medicos`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_liquidaciones_medico_periodo` (`medico_id`,`periodo_desde`,`periodo_hasta`),
-  ADD KEY `idx_liquidaciones_estado` (`estado`),
-  ADD KEY `idx_liquidaciones_fechas` (`fecha_aprobacion`,`fecha_pago`);
+  ADD KEY `created_by` (`created_by`),
+  ADD KEY `paid_by` (`paid_by`),
+  ADD KEY `idx_medico_periodo` (`medico_id`,`fecha_inicio`,`fecha_fin`),
+  ADD KEY `idx_estado` (`estado`),
+  ADD KEY `idx_fecha_pago` (`fecha_pago`);
 
 --
 -- Indexes for table `log_reaperturas`
@@ -901,8 +1040,7 @@ ALTER TABLE `pacientes`
   ADD UNIQUE KEY `historia_clinica` (`historia_clinica`),
   ADD KEY `idx_pacientes_dni` (`dni`),
   ADD KEY `idx_pacientes_apellido_nombre` (`apellido`,`nombre`),
-  ADD KEY `idx_pacientes_historia` (`historia_clinica`),
-  ADD KEY `idx_historia_clinica` (`historia_clinica`);
+  ADD KEY `idx_pacientes_historia` (`historia_clinica`);
 
 --
 -- Indexes for table `resultados_laboratorio`
@@ -1059,9 +1197,21 @@ ALTER TABLE `honorarios_medicos_movimientos`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `ingresos`
+--
+ALTER TABLE `ingresos`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `ingresos_diarios`
 --
 ALTER TABLE `ingresos_diarios`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `laboratorio_referencia_movimientos`
+--
+ALTER TABLE `laboratorio_referencia_movimientos`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
@@ -1141,6 +1291,206 @@ ALTER TABLE `triaje`
 --
 ALTER TABLE `usuarios`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+-- --------------------------------------------------------
+
+--
+-- Structure for view `vista_honorarios_pendientes`
+--
+DROP TABLE IF EXISTS `vista_honorarios_pendientes`;
+
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `vista_honorarios_pendientes`  AS SELECT `h`.`medico_id` AS `medico_id`, concat(`m`.`nombre`,' ',`m`.`apellido`) AS `medico_nombre`, `m`.`especialidad` AS `especialidad`, count(0) AS `consultas_pendientes`, sum(`h`.`monto_medico`) AS `total_pendiente`, min(`h`.`fecha`) AS `fecha_mas_antigua`, max(`h`.`fecha`) AS `fecha_mas_reciente` FROM (`honorarios_medicos_movimientos` `h` join `medicos` `m` on((`h`.`medico_id` = `m`.`id`))) WHERE (`h`.`estado_pago_medico` = 'pendiente') GROUP BY `h`.`medico_id`, `m`.`nombre`, `m`.`apellido`, `m`.`especialidad` ;
+
+-- --------------------------------------------------------
+
+--
+-- Structure for view `vista_ingresos_por_area_hoy`
+--
+DROP TABLE IF EXISTS `vista_ingresos_por_area_hoy`;
+
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `vista_ingresos_por_area_hoy`  AS SELECT `i`.`tipo_ingreso` AS `tipo_ingreso`, `i`.`area` AS `area`, count(0) AS `cantidad_transacciones`, sum(`i`.`monto`) AS `total_monto`, sum((case when (`i`.`metodo_pago` = 'efectivo') then `i`.`monto` else 0 end)) AS `total_efectivo`, sum((case when (`i`.`metodo_pago` in ('tarjeta_debito','tarjeta_credito')) then `i`.`monto` else 0 end)) AS `total_tarjetas`, sum((case when (`i`.`metodo_pago` in ('transferencia','yape','plin')) then `i`.`monto` else 0 end)) AS `total_transferencias` FROM (`ingresos_diarios` `i` join `cajas` `c` on((`i`.`caja_id` = `c`.`id`))) WHERE (`c`.`fecha` = curdate()) GROUP BY `i`.`tipo_ingreso`, `i`.`area` ORDER BY `i`.`tipo_ingreso` ASC, `total_monto` DESC ;
+
+-- --------------------------------------------------------
+
+--
+-- Structure for view `vista_resumen_liquidaciones`
+--
+DROP TABLE IF EXISTS `vista_resumen_liquidaciones`;
+
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `vista_resumen_liquidaciones`  AS SELECT `l`.`id` AS `id`, `l`.`medico_id` AS `medico_id`, concat(`m`.`nombre`,' ',`m`.`apellido`) AS `medico_nombre`, `l`.`periodo_tipo` AS `periodo_tipo`, `l`.`fecha_inicio` AS `fecha_inicio`, `l`.`fecha_fin` AS `fecha_fin`, `l`.`total_consultas` AS `total_consultas`, `l`.`total_honorarios_medico` AS `total_honorarios_medico`, `l`.`estado` AS `estado`, `l`.`fecha_pago` AS `fecha_pago`, (to_days(curdate()) - to_days(`l`.`fecha_fin`)) AS `dias_vencimiento` FROM (`liquidaciones_medicos` `l` join `medicos` `m` on((`l`.`medico_id` = `m`.`id`))) ORDER BY `l`.`fecha_fin` DESC ;
+
+--
+-- Constraints for dumped tables
+--
+
+--
+-- Constraints for table `atenciones`
+--
+ALTER TABLE `atenciones`
+  ADD CONSTRAINT `atenciones_ibfk_1` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`),
+  ADD CONSTRAINT `atenciones_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `cajas`
+--
+ALTER TABLE `cajas`
+  ADD CONSTRAINT `cajas_ibfk_1` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `cierre_caja_detalle`
+--
+ALTER TABLE `cierre_caja_detalle`
+  ADD CONSTRAINT `cierre_caja_detalle_ibfk_1` FOREIGN KEY (`caja_id`) REFERENCES `cajas` (`id`),
+  ADD CONSTRAINT `cierre_caja_detalle_ibfk_2` FOREIGN KEY (`usuario_cierre_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `cobros`
+--
+ALTER TABLE `cobros`
+  ADD CONSTRAINT `cobros_ibfk_1` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `cobros_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `cobros_detalle`
+--
+ALTER TABLE `cobros_detalle`
+  ADD CONSTRAINT `cobros_detalle_ibfk_1` FOREIGN KEY (`cobro_id`) REFERENCES `cobros` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `configuracion_honorarios_medicos`
+--
+ALTER TABLE `configuracion_honorarios_medicos`
+  ADD CONSTRAINT `configuracion_honorarios_medicos_ibfk_1` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_configuracion_honorarios_tarifa` FOREIGN KEY (`tarifa_id`) REFERENCES `tarifas` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `consultas`
+--
+ALTER TABLE `consultas`
+  ADD CONSTRAINT `consultas_ibfk_1` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `consultas_ibfk_2` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `consultas_ibfk_3` FOREIGN KEY (`cobro_id`) REFERENCES `cobros` (`id`);
+
+--
+-- Constraints for table `cotizaciones`
+--
+ALTER TABLE `cotizaciones`
+  ADD CONSTRAINT `cotizaciones_ibfk_1` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`),
+  ADD CONSTRAINT `cotizaciones_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `cotizaciones_detalle`
+--
+ALTER TABLE `cotizaciones_detalle`
+  ADD CONSTRAINT `cotizaciones_detalle_ibfk_1` FOREIGN KEY (`cotizacion_id`) REFERENCES `cotizaciones` (`id`);
+
+--
+-- Constraints for table `cotizaciones_farmacia`
+--
+ALTER TABLE `cotizaciones_farmacia`
+  ADD CONSTRAINT `cotizaciones_farmacia_ibfk_1` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`),
+  ADD CONSTRAINT `cotizaciones_farmacia_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `cotizaciones_farmacia_detalle`
+--
+ALTER TABLE `cotizaciones_farmacia_detalle`
+  ADD CONSTRAINT `cotizaciones_farmacia_detalle_ibfk_1` FOREIGN KEY (`cotizacion_id`) REFERENCES `cotizaciones_farmacia` (`id`),
+  ADD CONSTRAINT `cotizaciones_farmacia_detalle_ibfk_2` FOREIGN KEY (`medicamento_id`) REFERENCES `medicamentos` (`id`);
+
+--
+-- Constraints for table `disponibilidad_medicos`
+--
+ALTER TABLE `disponibilidad_medicos`
+  ADD CONSTRAINT `disponibilidad_medicos_ibfk_1` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `egresos`
+--
+ALTER TABLE `egresos`
+  ADD CONSTRAINT `egresos_ibfk_1` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`),
+  ADD CONSTRAINT `egresos_ibfk_2` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`) ON DELETE SET NULL;
+
+--
+-- Constraints for table `historia_clinica`
+--
+ALTER TABLE `historia_clinica`
+  ADD CONSTRAINT `historia_clinica_ibfk_1` FOREIGN KEY (`consulta_id`) REFERENCES `consultas` (`id`);
+
+--
+-- Constraints for table `honorarios_medicos_movimientos`
+--
+ALTER TABLE `honorarios_medicos_movimientos`
+  ADD CONSTRAINT `fk_honorarios_movimientos_tarifa` FOREIGN KEY (`tarifa_id`) REFERENCES `tarifas` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `honorarios_medicos_movimientos_ibfk_1` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `honorarios_medicos_movimientos_ibfk_2` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`) ON DELETE SET NULL;
+
+--
+-- Constraints for table `ingresos`
+--
+ALTER TABLE `ingresos`
+  ADD CONSTRAINT `ingresos_ibfk_1` FOREIGN KEY (`caja_id`) REFERENCES `cajas` (`id`),
+  ADD CONSTRAINT `ingresos_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `ingresos_diarios`
+--
+ALTER TABLE `ingresos_diarios`
+  ADD CONSTRAINT `ingresos_diarios_ibfk_1` FOREIGN KEY (`caja_id`) REFERENCES `cajas` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `ingresos_diarios_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`),
+  ADD CONSTRAINT `ingresos_diarios_ibfk_3` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`);
+
+--
+-- Constraints for table `liquidaciones_medicos`
+--
+ALTER TABLE `liquidaciones_medicos`
+  ADD CONSTRAINT `liquidaciones_medicos_ibfk_1` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `liquidaciones_medicos_ibfk_2` FOREIGN KEY (`created_by`) REFERENCES `usuarios` (`id`),
+  ADD CONSTRAINT `liquidaciones_medicos_ibfk_3` FOREIGN KEY (`paid_by`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `log_reaperturas`
+--
+ALTER TABLE `log_reaperturas`
+  ADD CONSTRAINT `log_reaperturas_ibfk_1` FOREIGN KEY (`caja_id`) REFERENCES `cajas` (`id`),
+  ADD CONSTRAINT `log_reaperturas_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `movimientos_medicamento`
+--
+ALTER TABLE `movimientos_medicamento`
+  ADD CONSTRAINT `movimientos_medicamento_ibfk_1` FOREIGN KEY (`medicamento_id`) REFERENCES `medicamentos` (`id`),
+  ADD CONSTRAINT `movimientos_medicamento_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
+
+--
+-- Constraints for table `ordenes_laboratorio`
+--
+ALTER TABLE `ordenes_laboratorio`
+  ADD CONSTRAINT `ordenes_laboratorio_ibfk_1` FOREIGN KEY (`consulta_id`) REFERENCES `consultas` (`id`);
+
+--
+-- Constraints for table `resultados_laboratorio`
+--
+ALTER TABLE `resultados_laboratorio`
+  ADD CONSTRAINT `resultados_laboratorio_ibfk_1` FOREIGN KEY (`consulta_id`) REFERENCES `consultas` (`id`);
+
+--
+-- Constraints for table `seguros`
+--
+ALTER TABLE `seguros`
+  ADD CONSTRAINT `seguros_ibfk_1` FOREIGN KEY (`paciente_id`) REFERENCES `pacientes` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tarifas`
+--
+ALTER TABLE `tarifas`
+  ADD CONSTRAINT `fk_tarifas_medico` FOREIGN KEY (`medico_id`) REFERENCES `medicos` (`id`);
+
+--
+-- Constraints for table `triaje`
+--
+ALTER TABLE `triaje`
+  ADD CONSTRAINT `triaje_ibfk_1` FOREIGN KEY (`consulta_id`) REFERENCES `consultas` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

@@ -102,6 +102,18 @@ export default function CerrarCajaView() {
     fetchResumen();
   }, []);
 
+  // Calcular ingreso total y ganancia neta solo si resumen existe
+  const ingresoTotalDia = resumen?.por_pago
+    ? resumen.por_pago.reduce((acc, p) => acc + parseFloat(p.total_pago || 0), 0)
+    : 0;
+
+  const gananciaDia = resumen
+    ? ingresoTotalDia
+      - (parseFloat(resumen.egreso_honorarios || 0)
+      + parseFloat(resumen.egreso_lab_ref || 0)
+      + parseFloat(resumen.egreso_operativo || 0))
+    : 0;
+
   const handleCerrarCaja = async () => {
     // Calcular totales por método de pago
     let total_yape = 0;
@@ -188,6 +200,15 @@ export default function CerrarCajaView() {
           <div className="bg-blue-100 rounded-xl px-6 py-3 flex flex-col items-center shadow-lg w-full sm:w-auto">
             <span className="text-xs text-blue-700 font-semibold">Apertura</span>
             <span className="font-bold text-blue-800 text-lg tracking-wide">S/ {resumen.monto_apertura?.toFixed(2)}</span>
+          </div>
+          <div className="bg-yellow-100 rounded-xl px-6 py-3 flex flex-col items-center shadow-lg w-full sm:w-auto">
+            <span className="text-xs text-yellow-700 font-semibold">Ingreso total del día</span>
+            <span className="font-bold text-yellow-800 text-lg tracking-wide">S/ {ingresoTotalDia.toFixed(2)}</span>
+          </div>
+          <div className="bg-green-100 rounded-xl px-6 py-3 flex flex-col items-center shadow-lg w-full sm:w-auto">
+            <span className="text-xs text-green-700 font-semibold">Ganancia del día</span>
+            <span className="font-bold text-green-800 text-lg tracking-wide">S/ {gananciaDia.toFixed(2)}</span>
+            <span className="text-xs text-gray-600 mt-1">(Ingreso total - egresos)</span>
           </div>
         </div>
         <div className="mb-6">

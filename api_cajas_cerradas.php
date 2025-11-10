@@ -73,7 +73,8 @@ try {
         c.monto_cierre,
         c.diferencia,
         c.observaciones_cierre,
-        u.nombre as usuario_cierre
+        u.nombre as usuario_nombre,
+        c.turno
         FROM cajas c
         LEFT JOIN usuarios u ON c.usuario_id = u.id
         WHERE c.estado = 'cerrada'

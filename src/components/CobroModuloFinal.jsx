@@ -115,7 +115,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       });
 
       const result = await response.json();
-      console.log('Respuesta api_cobros.php:', result);
+  // ...
 
       if (result.success) {
         // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio

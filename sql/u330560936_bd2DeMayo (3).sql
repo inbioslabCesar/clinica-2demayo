@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1:3306
--- Tiempo de generación: 31-10-2025 a las 22:44:34
+-- Tiempo de generación: 10-11-2025 a las 05:28:49
 -- Versión del servidor: 11.8.3-MariaDB-log
 -- Versión de PHP: 7.2.34
 
@@ -47,6 +47,7 @@ CREATE TABLE `cajas` (
   `id` int(11) NOT NULL,
   `fecha` date NOT NULL,
   `usuario_id` int(11) NOT NULL,
+  `turno` enum('mañana','tarde','noche') NOT NULL,
   `estado` enum('abierta','en_cierre','cerrada') DEFAULT 'abierta',
   `monto_apertura` decimal(10,2) NOT NULL DEFAULT 0.00,
   `hora_apertura` time NOT NULL,
@@ -60,7 +61,13 @@ CREATE TABLE `cajas` (
   `total_otros` decimal(10,2) DEFAULT 0.00,
   `diferencia` decimal(10,2) DEFAULT 0.00,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `total_yape` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `total_plin` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `egreso_honorarios` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `egreso_lab_ref` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `egreso_operativo` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `total_egresos` decimal(10,2) NOT NULL DEFAULT 0.00
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -331,7 +338,8 @@ CREATE TABLE `egresos` (
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `caja_id` int(11) DEFAULT NULL,
-  `usuario_id` int(11) DEFAULT NULL
+  `usuario_id` int(11) DEFAULT NULL,
+  `metodo_pago` enum('efectivo','transferencia','tarjeta','yape','plin','cheque','deposito') NOT NULL DEFAULT 'efectivo'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -382,6 +390,7 @@ CREATE TABLE `honorarios_medicos_movimientos` (
   `cobro_id` int(11) DEFAULT NULL,
   `medico_id` int(11) NOT NULL,
   `paciente_id` int(11) DEFAULT NULL,
+  `caja_id` int(11) DEFAULT NULL,
   `tarifa_id` int(11) DEFAULT NULL,
   `tipo_precio` enum('particular','seguro','convenio') DEFAULT 'particular',
   `fecha` date NOT NULL,
@@ -395,10 +404,27 @@ CREATE TABLE `honorarios_medicos_movimientos` (
   `porcentaje_aplicado_medico` decimal(5,2) NOT NULL,
   `estado_pago_medico` enum('pendiente','pagado','cancelado') DEFAULT 'pendiente',
   `fecha_pago_medico` date DEFAULT NULL,
-  `metodo_pago_medico` enum('efectivo','transferencia','cheque','deposito') DEFAULT NULL,
+  `metodo_pago_medico` enum('efectivo','transferencia','cheque','deposito','tarjeta','yape','plin') DEFAULT NULL,
   `liquidacion_id` int(11) DEFAULT NULL,
   `observaciones` text DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `ingresos`
+--
+
+CREATE TABLE `ingresos` (
+  `id` int(11) NOT NULL,
+  `caja_id` int(11) NOT NULL,
+  `area` enum('consulta','laboratorio','farmacia','ecografia','rayosx','procedimiento','otros') NOT NULL,
+  `tipo_pago` enum('efectivo','tarjeta','transferencia','yape','plin','otros') NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `descripcion` text DEFAULT NULL,
+  `fecha_hora` datetime NOT NULL,
+  `usuario_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -420,8 +446,37 @@ CREATE TABLE `ingresos_diarios` (
   `paciente_id` int(11) DEFAULT NULL,
   `paciente_nombre` varchar(255) DEFAULT NULL,
   `fecha_hora` timestamp NULL DEFAULT current_timestamp(),
-  `usuario_id` int(11) NOT NULL
+  `usuario_id` int(11) NOT NULL,
+  `honorario_movimiento_id` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `laboratorio_referencia_movimientos`
+--
+
+CREATE TABLE `laboratorio_referencia_movimientos` (
+  `id` int(11) NOT NULL,
+  `cobro_id` int(11) NOT NULL,
+  `examen_id` int(11) NOT NULL,
+  `laboratorio` varchar(100) NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `tipo` varchar(20) NOT NULL,
+  `estado` varchar(20) NOT NULL DEFAULT 'pendiente',
+  `paciente_id` int(11) DEFAULT NULL,
+  `cobrado_por` int(11) DEFAULT NULL,
+  `liquidado_por` int(11) DEFAULT NULL,
+  `caja_id` int(11) DEFAULT NULL,
+  `fecha` date DEFAULT NULL,
+  `hora` time DEFAULT NULL,
+  `observaciones` text DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT current_timestamp(),
+  `turno_cobro` varchar(50) DEFAULT NULL,
+  `hora_cobro` varchar(8) DEFAULT NULL,
+  `turno_liquidacion` varchar(50) DEFAULT NULL,
+  `hora_liquidacion` varchar(8) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -832,6 +887,14 @@ ALTER TABLE `honorarios_medicos_movimientos`
   ADD KEY `idx_movimientos_consulta` (`consulta_id`);
 
 --
+-- Indices de la tabla `ingresos`
+--
+ALTER TABLE `ingresos`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `caja_id` (`caja_id`),
+  ADD KEY `usuario_id` (`usuario_id`);
+
+--
 -- Indices de la tabla `ingresos_diarios`
 --
 ALTER TABLE `ingresos_diarios`
@@ -842,6 +905,12 @@ ALTER TABLE `ingresos_diarios`
   ADD KEY `idx_metodo_pago` (`metodo_pago`),
   ADD KEY `idx_paciente_id` (`paciente_id`),
   ADD KEY `usuario_id` (`usuario_id`);
+
+--
+-- Indices de la tabla `laboratorio_referencia_movimientos`
+--
+ALTER TABLE `laboratorio_referencia_movimientos`
+  ADD PRIMARY KEY (`id`);
 
 --
 -- Indices de la tabla `liquidaciones_medicos`
@@ -1069,9 +1138,21 @@ ALTER TABLE `honorarios_medicos_movimientos`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT de la tabla `ingresos`
+--
+ALTER TABLE `ingresos`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT de la tabla `ingresos_diarios`
 --
 ALTER TABLE `ingresos_diarios`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `laboratorio_referencia_movimientos`
+--
+ALTER TABLE `laboratorio_referencia_movimientos`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -1151,6 +1232,17 @@ ALTER TABLE `triaje`
 --
 ALTER TABLE `usuarios`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- Restricciones para tablas volcadas
+--
+
+--
+-- Filtros para la tabla `ingresos`
+--
+ALTER TABLE `ingresos`
+  ADD CONSTRAINT `ingresos_ibfk_1` FOREIGN KEY (`caja_id`) REFERENCES `cajas` (`id`),
+  ADD CONSTRAINT `ingresos_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`);
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

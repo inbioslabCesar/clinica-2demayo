@@ -100,8 +100,13 @@ $total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floa
 $efectivo_esperado = floatval($total_efectivo) - $total_egresos;
 $diferencia = $monto_contado - $efectivo_esperado;
 
-// Actualizar la caja: estado cerrada, guardar monto contado, diferencia, observaciones, totales por método de pago y totales por tipo de egreso
-$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, total_egresos = ? WHERE id = ?');
+// Calcular ingreso total del día (todos los métodos de pago)
+$ingreso_total_dia = floatval($total_efectivo) + floatval($total_yape) + floatval($total_plin) + floatval($total_tarjetas) + floatval($total_transferencias);
+// Calcular ganancia neta del día
+$ganancia_dia = $ingreso_total_dia - $total_egresos;
+
+// Actualizar la caja: estado cerrada, guardar monto contado, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
+$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, total_egresos = ?, ganancia_dia = ? WHERE id = ?');
 $stmt->execute([
     $monto_contado,
     $diferencia,
@@ -115,6 +120,7 @@ $stmt->execute([
     floatval($egreso_lab_ref),
     floatval($egreso_operativo),
     $total_egresos,
+    $ganancia_dia,
     $caja_id
 ]);
 

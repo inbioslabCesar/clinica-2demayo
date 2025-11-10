@@ -134,9 +134,9 @@ try {
             $datosAnteriores
         ]);
 
-        // Reabrir la caja
+        // Reabrir la caja: cambiar estado a 'abierta'
         $sqlReabrir = "UPDATE cajas SET 
-            estado = 'cerrada',
+            estado = 'abierta',
             hora_cierre = NULL,
             observaciones_cierre = NULL,
             monto_cierre = NULL,
