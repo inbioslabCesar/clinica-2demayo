@@ -1,49 +1,75 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import Swal from "sweetalert2";
 
-// Modal simple para impresión tipo etiquetera
-function EtiquetaModal({ open, onClose, datos }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl p-6 w-[350px] max-w-full text-xs font-mono">
-        <h3 className="text-center font-bold text-lg mb-2">Cierre de Caja</h3>
-        <div className="mb-2 border-b pb-2">
-          <div><b>Usuario:</b> {datos.usuario_nombre}</div>
-          <div><b>Rol:</b> {datos.usuario_rol}</div>
-          <div><b>Fecha:</b> {datos.fecha}</div>
-          <div><b>Apertura:</b> S/ {datos.monto_apertura?.toFixed(2)}</div>
-          <div><b>Hora apertura:</b> {datos.hora_apertura}</div>
-          <div><b>Hora cierre:</b> {datos.hora_cierre || '--:--'}</div>
-        </div>
-        <div className="mb-2">
-          <b>Ingresos por tipo:</b>
-          <ul className="ml-2">
-            {datos.por_pago?.map((p, i) => (
-              <li key={i}>{(p.metodo_pago || p.tipo_pago).toUpperCase()}: S/ {parseFloat(p.total_pago).toFixed(2)}</li>
-            ))}
-          </ul>
-        </div>
-        <div className="mb-2">
-          <b>Egresos:</b>
-          <ul className="ml-2">
-            <li>Honorarios Médicos: S/ {datos.egreso_honorarios?.toFixed(2)}</li>
-            <li>Lab. Referencia: S/ {datos.egreso_lab_ref?.toFixed(2)}</li>
-            <li>Operativo: S/ {datos.egreso_operativo?.toFixed(2)}</li>
-            <li><b>Total egresos:</b> S/ {((datos.egreso_honorarios||0)+(datos.egreso_lab_ref||0)+(datos.egreso_operativo||0)).toFixed(2)}</li>
-          </ul>
-        </div>
-        <div className="mb-2">
-          <b>Ocurrencias:</b>
-          <div className="whitespace-pre-line">{datos.observaciones}</div>
-        </div>
-        <div className="mt-4 flex gap-2">
-          <button className="bg-blue-600 text-white px-4 py-1 rounded font-bold w-full" onClick={()=>window.print()}>Imprimir</button>
-          <button className="bg-gray-300 px-4 py-1 rounded w-full" onClick={onClose}>Cerrar</button>
-        </div>
-      </div>
+// Modal SweetAlert2 para impresión tipo etiquetera
+function mostrarEtiquetaImpresion(datos, totalesBackend = null) {
+  // Usar los totales de métodos de pago del backend si están disponibles
+  const total_efectivo = totalesBackend?.total_efectivo ?? datos.total_efectivo ?? 0;
+  const total_yape = totalesBackend?.total_yape ?? datos.total_yape ?? 0;
+  const total_plin = totalesBackend?.total_plin ?? datos.total_plin ?? 0;
+  const total_tarjetas = totalesBackend?.total_tarjetas ?? datos.total_tarjetas ?? 0;
+  const total_transferencias = totalesBackend?.total_transferencias ?? datos.total_transferencias ?? 0;
+  // Egresos
+  const egreso_honorarios = totalesBackend?.egreso_honorarios ?? datos.egreso_honorarios ?? 0;
+  const egreso_lab_ref = totalesBackend?.egreso_lab_ref ?? datos.egreso_lab_ref ?? 0;
+  const egreso_operativo = totalesBackend?.egreso_operativo ?? datos.egreso_operativo ?? 0;
+  const total_egresos = totalesBackend?.total_egresos ?? (egreso_honorarios + egreso_lab_ref + egreso_operativo);
+  // Lógica para explicación automática de diferencia negativa
+  let explicacionDiferencia = "";
+  const diferencia = (datos.monto_contado !== undefined ? parseFloat(datos.monto_contado) : 0) - total_egresos;
+  if (diferencia < 0) {
+    explicacionDiferencia = "<div style='color:red;font-weight:bold;margin-top:8px;'>No hay efectivo suficiente, egreso cubierto por Yape, Plin, transferencia, o se quedó debiendo tal egreso.</div>";
+  }
+  // Recibo compacto tipo etiquetera
+  const recibo = `
+    <div style="font-family: monospace; font-size: 13px; width: 320px;">
+      <h3 style="text-align:center;margin-bottom:8px;">🧾 Cierre de Caja</h3>
+      <hr>
+      <div><b>Usuario:</b> ${datos.usuario_nombre || "-"}</div>
+      <div><b>Rol:</b> ${datos.usuario_rol || "-"}</div>
+      <div><b>Fecha:</b> ${datos.fecha || "-"}</div>
+      <div><b>Apertura:</b> S/ ${(datos.monto_apertura||0).toFixed(2)}</div>
+      <div><b>Hora apertura:</b> ${datos.hora_apertura || "-"}</div>
+      <div><b>Hora cierre:</b> ${datos.hora_cierre || "-"}</div>
+      <hr>
+      <div><b>Ingresos por tipo:</b></div>
+      <ul style="margin-left:10px;">
+        <li>Efectivo: S/ ${total_efectivo.toFixed(2)}</li>
+        <li>Yape: S/ ${total_yape.toFixed(2)}</li>
+        <li>Plin: S/ ${total_plin.toFixed(2)}</li>
+        <li>Tarjeta: S/ ${total_tarjetas.toFixed(2)}</li>
+        <li>Transferencia: S/ ${total_transferencias.toFixed(2)}</li>
+      </ul>
+      <div><b>Egresos:</b></div>
+      <ul style="margin-left:10px;">
+        <li>Honorarios Médicos: S/ ${egreso_honorarios.toFixed(2)}</li>
+        <li>Lab. Referencia: S/ ${egreso_lab_ref.toFixed(2)}</li>
+        <li>Operativo: S/ ${egreso_operativo.toFixed(2)}</li>
+        <li><b>Total egresos:</b> S/ ${total_egresos.toFixed(2)}</li>
+      </ul>
+      <div><b>Ocurrencias:</b></div>
+      <div style="white-space:pre-line;">${datos.observaciones || ""}</div>
+      ${explicacionDiferencia}
+      <hr>
+      <div style="text-align:center;font-size:12px;margin-top:8px;">Conserve este recibo para archivo</div>
     </div>
-  );
+  `;
+  Swal.fire({
+    title: 'Cierre de Caja Procesado ✅',
+    html: recibo,
+    icon: 'success',
+    confirmButtonText: 'Imprimir Recibo',
+    showCancelButton: true,
+    cancelButtonText: 'Solo Continuar'
+  }).then((result) => {
+    if (result.isConfirmed) {
+      const ventanaImpresion = window.open('', '_blank');
+      ventanaImpresion.document.write(recibo);
+      ventanaImpresion.document.close();
+      ventanaImpresion.print();
+    }
+  });
 }
 
 export default function CerrarCajaView() {
@@ -52,8 +78,6 @@ export default function CerrarCajaView() {
   const [montoContado, setMontoContado] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [showEtiqueta, setShowEtiqueta] = useState(false);
-  const [datosEtiqueta, setDatosEtiqueta] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -79,24 +103,47 @@ export default function CerrarCajaView() {
   }, []);
 
   const handleCerrarCaja = async () => {
+    // Calcular totales por método de pago
+    let total_yape = 0;
+    let total_plin = 0;
+    let total_tarjetas = 0;
+    let total_transferencias = 0;
+    if (resumen?.por_pago?.length) {
+      resumen.por_pago.forEach(p => {
+        const metodo = (p.metodo_pago || p.tipo_pago || '').toLowerCase();
+        if (metodo === 'yape') total_yape = parseFloat(p.total_pago);
+        if (metodo === 'plin') total_plin = parseFloat(p.total_pago);
+        if (metodo === 'tarjeta') total_tarjetas = parseFloat(p.total_pago);
+        if (metodo === 'transferencia') total_transferencias = parseFloat(p.total_pago);
+      });
+    }
     try {
       const resp = await fetch("/api_cerrar_caja.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ monto_contado: montoContado, observaciones })
+        body: JSON.stringify({
+          monto_contado: montoContado,
+          observaciones,
+          total_yape,
+          total_plin,
+          total_tarjetas,
+          total_transferencias
+        })
       });
       const data = await resp.json();
       if (data.success) {
-        // Mostrar modal de impresión tipo etiquetera
-        setDatosEtiqueta({
+        // Mostrar recibo tipo etiquetera con los totales de egresos del backend
+        mostrarEtiquetaImpresion({
           ...resumen,
           observaciones,
+          monto_contado: montoContado,
           hora_cierre: data.hora_cierre || new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
           usuario_nombre: data.usuario_nombre || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).nombre : ''),
           usuario_rol: data.usuario_rol || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).rol : ''),
-        });
-        setShowEtiqueta(true);
+        }, data.totales);
+        // Redirigir después de cerrar el modal
+        setTimeout(() => navigate('/contabilidad'), 500);
       } else {
         alert("Error: " + (data.error || "No se pudo cerrar la caja"));
       }
@@ -234,7 +281,6 @@ export default function CerrarCajaView() {
           Confirmar cierre de caja
         </button>
       </div>
-      <EtiquetaModal open={showEtiqueta} onClose={()=>{setShowEtiqueta(false);navigate('/contabilidad')}} datos={datosEtiqueta || {}} />
     </>
   );
 }

@@ -38,7 +38,9 @@ $fecha = date('Y-m-d');
 
 // Leer datos enviados
 $input = json_decode(file_get_contents('php://input'), true);
+// Leer monto contado y observaciones de cierre
 $monto_contado = isset($input['monto_contado']) ? floatval($input['monto_contado']) : null;
+$observaciones_cierre = isset($input['observaciones']) ? trim($input['observaciones']) : '';
 if ($monto_contado === null) {
     echo json_encode(['success' => false, 'error' => 'Monto contado no recibido']);
     exit;
@@ -54,12 +56,22 @@ if (!$caja) {
 }
 $caja_id = $caja['id'];
 
-// Calcular el total registrado en efectivo
-$stmt = $pdo->prepare('SELECT SUM(monto) as total_efectivo FROM ingresos_diarios WHERE caja_id = ? AND metodo_pago = "efectivo"');
+// Calcular el total registrado en efectivo, yape y plin
+$stmt = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
 $stmt->execute([$caja_id]);
-$total_efectivo = $stmt->fetchColumn();
-if ($total_efectivo === false || $total_efectivo === null) {
-    $total_efectivo = 0;
+$totales_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$total_efectivo = 0;
+$total_yape = 0;
+$total_plin = 0;
+$total_tarjetas = 0;
+$total_transferencias = 0;
+foreach ($totales_pago as $row) {
+    $metodo = strtolower($row['metodo_pago']);
+    if ($metodo === 'efectivo') $total_efectivo = floatval($row['total']);
+    if ($metodo === 'yape') $total_yape = floatval($row['total']);
+    if ($metodo === 'plin') $total_plin = floatval($row['total']);
+    if ($metodo === 'tarjeta') $total_tarjetas = floatval($row['total']);
+    if ($metodo === 'transferencia') $total_transferencias = floatval($row['total']);
 }
 
 // Calcular egresos
@@ -88,9 +100,23 @@ $total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floa
 $efectivo_esperado = floatval($total_efectivo) - $total_egresos;
 $diferencia = $monto_contado - $efectivo_esperado;
 
-// Actualizar la caja: estado cerrada, guardar monto contado y diferencia
-$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW() WHERE id = ?');
-$stmt->execute([$monto_contado, $diferencia, $caja_id]);
+// Actualizar la caja: estado cerrada, guardar monto contado, diferencia, observaciones, totales por método de pago y totales por tipo de egreso
+$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, total_egresos = ? WHERE id = ?');
+$stmt->execute([
+    $monto_contado,
+    $diferencia,
+    $observaciones_cierre,
+    $total_efectivo,
+    $total_yape,
+    $total_plin,
+    $total_tarjetas,
+    $total_transferencias,
+    floatval($egreso_honorarios),
+    floatval($egreso_lab_ref),
+    floatval($egreso_operativo),
+    $total_egresos,
+    $caja_id
+]);
 
 // Opcional: registrar log de cierre
 // $stmtLog = $pdo->prepare('INSERT INTO log_cierres_caja (caja_id, usuario_id, fecha, monto_contado, diferencia) VALUES (?, ?, NOW(), ?, ?)');
@@ -99,6 +125,17 @@ $stmt->execute([$monto_contado, $diferencia, $caja_id]);
 echo json_encode([
     'success' => true,
     'mensaje' => 'Caja cerrada correctamente',
-    'diferencia' => $diferencia
+    'diferencia' => $diferencia,
+    'totales' => [
+        'total_efectivo' => $total_efectivo,
+        'total_yape' => $total_yape,
+        'total_plin' => $total_plin,
+        'total_tarjetas' => $total_tarjetas,
+        'total_transferencias' => $total_transferencias,
+        'egreso_honorarios' => floatval($egreso_honorarios),
+        'egreso_lab_ref' => floatval($egreso_lab_ref),
+        'egreso_operativo' => floatval($egreso_operativo),
+        'total_egresos' => $total_egresos
+    ]
 ]);
 ?>
