@@ -12,6 +12,7 @@ const serviciosBase = [
   { key: "farmacia", label: "Farmacia", icon: "💊", requiresPayment: true },
   { key: "rayosx", label: "Rayos X", icon: "🩻", requiresPayment: true },
   { key: "ecografia", label: "Ecografía", icon: "🩺", requiresPayment: true },
+  { key: "operacion", label: "Operaciones/Cirugías Mayores", icon: "🩼", requiresPayment: true },
   { key: "ocupacional", label: "Medicina Ocupacional", icon: "👷‍⚕️", requiresPayment: true }
 ];
 
@@ -54,6 +55,8 @@ function ServiciosSelector({ paciente }) {
       navigate(`/cotizar-rayosx/${paciente.id}`);
     } else if (servicio.key === "ecografia") {
       navigate(`/cotizar-ecografia/${paciente.id}`);
+    } else if (servicio.key === "operacion") {
+      navigate(`/cotizar-operacion/${paciente.id}`);
     } else if (servicio.key === "ocupacional") {
       Swal.fire({
         title: "Página en construcción",

@@ -1,15 +1,20 @@
+
 <?php
-// CORS para localhost y producción
+// Configuración de zona horaria y cookies
 date_default_timezone_set('America/Lima');
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => true, // Mejor compatibilidad móvil y Chrome
+    'secure' => true,
     'httponly' => true,
-    'samesite' => 'None', // Mejor compatibilidad móvil y Chrome
+    'samesite' => 'None',
 ]);
 session_start();
+
+// Mensaje de depuración: inicio
+error_log('Entrando a api_resumen_diario.php');
+
 // CORS para localhost y producción
 $allowedOrigins = [
     'http://localhost:5173',
@@ -30,42 +35,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 header('Content-Type: application/json');
+
 require_once __DIR__ . '/config.php';
 
+if (!isset($_SESSION['usuario'])) {
+    error_log('No autenticado: sesión no iniciada');
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'No autenticado']);
+    exit();
+}
 $usuario = $_SESSION['usuario'];
+error_log('Usuario: ' . print_r($usuario, true));
 $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
+error_log('Fecha: ' . $fecha);
 
 // Egreso honorarios médicos
 $egreso_honorarios = 0.0;
-$stmt = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE DATE(created_at) = ? AND usuario_id = ? AND tipo_egreso = "honorario_medico"');
-$stmt->execute([$fecha, $usuario['id']]);
-$tmp_honorarios = $stmt->fetchColumn();
-if ($tmp_honorarios !== false && $tmp_honorarios !== null) {
-    $egreso_honorarios = floatval($tmp_honorarios);
-}
+
+try {
+    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE DATE(created_at) = ? AND usuario_id = ? AND tipo_egreso = "honorario_medico"');
+    $stmt->execute([$fecha, $usuario['id']]);
+    $tmp_honorarios = $stmt->fetchColumn();
+    if ($tmp_honorarios !== false && $tmp_honorarios !== null) {
+        $egreso_honorarios = floatval($tmp_honorarios);
+    }
+    error_log('Egreso honorarios: ' . $egreso_honorarios);
 
 // Egreso operativo (otros egresos, excluyendo honorarios médicos)
 
 $egreso_operativo = 0.0;
-$stmt = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE DATE(created_at) = ? AND usuario_id = ? AND tipo_egreso != "honorario_medico"');
-$stmt->execute([$fecha, $usuario['id']]);
-$tmp_operativo = $stmt->fetchColumn();
-if ($tmp_operativo !== false && $tmp_operativo !== null) {
-    $egreso_operativo = floatval($tmp_operativo);
-}
+    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE DATE(created_at) = ? AND usuario_id = ? AND tipo_egreso != "honorario_medico"');
+    $stmt->execute([$fecha, $usuario['id']]);
+    $tmp_operativo = $stmt->fetchColumn();
+    if ($tmp_operativo !== false && $tmp_operativo !== null) {
+        $egreso_operativo = floatval($tmp_operativo);
+    }
+    error_log('Egreso operativo: ' . $egreso_operativo);
 
 // Egreso laboratorio de referencia (pagados)
 
 // Buscar la caja abierta del usuario en el día
-$stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
-$stmtCaja->execute([$fecha, $usuario['id']]);
-$cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
-$caja_id_actual = $cajaRow ? $cajaRow['id'] : 0;
 
-$stmt = $pdo->prepare('SELECT SUM(monto) as egreso_lab_ref FROM laboratorio_referencia_movimientos WHERE DATE(fecha) = ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
-$stmt->execute([$fecha, $caja_id_actual]);
-$egreso_lab_ref = $stmt->fetchColumn();
-$egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
+    $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+    $stmtCaja->execute([$fecha, $usuario['id']]);
+    $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
+    $caja_id_actual = $cajaRow ? $cajaRow['id'] : 0;
+    error_log('Caja actual: ' . $caja_id_actual);
+
+    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_lab_ref FROM laboratorio_referencia_movimientos WHERE DATE(fecha) = ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
+    $stmt->execute([$fecha, $caja_id_actual]);
+    $egreso_lab_ref = $stmt->fetchColumn();
+    $egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
+    error_log('Egreso lab ref: ' . $egreso_lab_ref);
 // DEBUG: Obtener los movimientos de laboratorio de referencia sumados
 $stmt = $pdo->prepare('SELECT * FROM laboratorio_referencia_movimientos WHERE DATE(fecha) = ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
 $stmt->execute([$fecha, $caja_id_actual]);
@@ -167,20 +188,26 @@ $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $ganancia_dia = floatval($total) - ($egreso_honorarios + $egreso_lab_ref + $egreso_operativo);
 
-echo json_encode(array(
-    'success' => true,
-    'fecha' => $fecha,
-    'hora_apertura' => $hora_apertura,
-    'total' => floatval($total),
-    'monto_apertura' => floatval($monto_apertura),
-    'por_servicio' => $ingresos_por_servicio,
-    'por_area' => $ingresos_por_area,
-    'por_pago' => $ingresos_por_pago,
-    'egreso_honorarios' => $egreso_honorarios,
-    'egreso_lab_ref' => $egreso_lab_ref,
-    'debug_lab_ref_movs' => $debug_lab_ref_movs,
-    'egreso_operativo' => $egreso_operativo,
-    'ganancia_dia' => $ganancia_dia,
-    'cajas_resumen' => $cajas_resumen,
-    'caja_abierta' => $caja_abierta
-));
+    echo json_encode(array(
+        'success' => true,
+        'fecha' => $fecha,
+        'hora_apertura' => $hora_apertura,
+        'total' => floatval($total),
+        'monto_apertura' => floatval($monto_apertura),
+        'por_servicio' => $ingresos_por_servicio,
+        'por_area' => $ingresos_por_area,
+        'por_pago' => $ingresos_por_pago,
+        'egreso_honorarios' => $egreso_honorarios,
+        'egreso_lab_ref' => $egreso_lab_ref,
+        'debug_lab_ref_movs' => $debug_lab_ref_movs,
+        'egreso_operativo' => $egreso_operativo,
+        'ganancia_dia' => $ganancia_dia,
+        'cajas_resumen' => $cajas_resumen,
+        'caja_abierta' => $caja_abierta
+    ));
+} catch (Exception $e) {
+    error_log('Error en api_resumen_diario.php: ' . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    exit();
+}

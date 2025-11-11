@@ -30,11 +30,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 header('Content-Type: application/json');
 require_once "config.php";
 require_once "auth_check.php";
-require_once __DIR__ . '/modules/CobroModule.php';
-require_once __DIR__ . '/modules/LaboratorioModule.php';
-require_once __DIR__ . '/modules/CajaModule.php';
-require_once __DIR__ . '/modules/FarmaciaModule.php';
-require_once __DIR__ . '/modules/HonorarioModule.php';
+require_once __DIR__ . '/CobroModule.php';
+require_once __DIR__ . '/LaboratorioModule.php';
+require_once __DIR__ . '/CajaModule.php';
+require_once __DIR__ . '/FarmaciaModule.php';
+require_once __DIR__ . '/HonorarioModule.php';
 
 // Forzar codificación utf8mb4 en la conexión MySQLi
 if (isset($conn) && method_exists($conn, 'set_charset')) {
@@ -187,13 +187,22 @@ switch($method) {
             
             // 4. Registrar atención si el paciente está registrado
             // 5. Registrar movimiento de honorarios médicos si es consulta
-            if ($servicio_key === 'consulta' && isset($data['detalles'][0])) {
-                $detalleConsulta = $data['detalles'][0];
-                // Buscar tarifa asociada
-                $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = 'consulta' LIMIT 1");
-                $stmt_tarifa->bind_param("s", $detalleConsulta['descripcion']);
-                $stmt_tarifa->execute();
-                $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+            // Registrar movimiento de honorarios médicos si es consulta o ecografia
+            if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion']) && isset($data['detalles'][0])) {
+                $detalleServicio = $data['detalles'][0];
+                // Buscar tarifa asociada por ID si existe
+                $tarifa = null;
+                if (isset($detalleServicio['servicio_id']) && $detalleServicio['servicio_id']) {
+                    $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE id = ? LIMIT 1");
+                    $stmt_tarifa->bind_param("i", $detalleServicio['servicio_id']);
+                    $stmt_tarifa->execute();
+                    $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                } else {
+                    $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = ? LIMIT 1");
+                    $stmt_tarifa->bind_param("ss", $detalleServicio['descripcion'], $servicio_key);
+                    $stmt_tarifa->execute();
+                    $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                }
                 // Definir $metodo_pago si no existe en este scope
                 if (!isset($metodo_pago)) {
                     $metodo_pago_map = [
@@ -241,9 +250,10 @@ switch($method) {
                     }
 
                     // Usar consulta_id y paciente_id si están presentes en el detalle
-                    $consulta_id = isset($detalleConsulta['consulta_id']) ? $detalleConsulta['consulta_id'] : null;
-                    $paciente_id = isset($detalleConsulta['paciente_id']) ? $detalleConsulta['paciente_id'] : null;
-                    $medico_id = isset($detalleConsulta['medico_id']) ? $detalleConsulta['medico_id'] : ($tarifa['medico_id'] ?? null);
+                    $consulta_id = isset($detalleServicio['consulta_id']) ? $detalleServicio['consulta_id'] : null;
+                    $paciente_id = isset($detalleServicio['paciente_id']) ? $detalleServicio['paciente_id'] : null;
+                    $medico_id = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : ($tarifa['medico_id'] ?? null);
+                    $especialidad = isset($detalleServicio['especialidad']) ? $detalleServicio['especialidad'] : ($tarifa['especialidad'] ?? null);
 
                     // Insertar movimiento de honorario
                     $stmt_honorario = $conn->prepare("INSERT INTO honorarios_medicos_movimientos (
@@ -258,7 +268,7 @@ switch($method) {
                         $tarifa['id'],        // i
                         $tipo_precio,         // s
                         $servicio_key,        // s
-                        $tarifa['descripcion'],// s
+                        $especialidad,        // s
                         $tarifa_total,        // d
                         $monto_clinica,       // d
                         $monto_medico,        // d
@@ -277,13 +287,24 @@ switch($method) {
                 }
             }
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
-                $stmt_atencion = $conn->prepare("INSERT INTO atenciones (paciente_id, usuario_id, servicio, estado) VALUES (?, ?, ?, 'pendiente')");
-                $stmt_atencion->bind_param("iis", 
-                    $data['paciente_id'], 
-                    $data['usuario_id'], 
-                    $servicio_key
-                );
-                $stmt_atencion->execute();
+                $servicios_validos = [
+                    'consulta', 'laboratorio', 'farmacia', 'rayosx', 'ecografia', 'procedimiento',
+                    'operacion', 'hospitalizacion', 'ocupacional', 'procedimientos',
+                    'cirugias', 'tratamientos', 'emergencias'
+                ];
+                if (in_array($servicio_key, $servicios_validos)) {
+                    $stmt_atencion = $conn->prepare("INSERT INTO atenciones (paciente_id, usuario_id, servicio, estado) VALUES (?, ?, ?, 'pendiente')");
+                    $stmt_atencion->bind_param("iis", 
+                        $data['paciente_id'], 
+                        $data['usuario_id'], 
+                        $servicio_key
+                    );
+                    $stmt_atencion->execute();
+                } else {
+                    echo json_encode(['success' => false, 'error' => "Servicio '$servicio_key' no permitido en atenciones. Actualiza el ENUM o revisa el frontend."]);
+                    $conn->rollback();
+                    exit();
+                }
             }
             
             $conn->commit();

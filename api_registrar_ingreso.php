@@ -142,11 +142,20 @@ try {
         $stmtUpdateCaja->execute([$monto, $cajaAbierta['id']]);
 
         // --- Lógica de honorarios médicos ---
-        // Buscar tarifa asociada
-        $sqlTarifa = "SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = ? LIMIT 1";
-        $stmtTarifa = $pdo->prepare($sqlTarifa);
-        $stmtTarifa->execute([trim($input['descripcion']), $input['tipo_ingreso']]);
-        $tarifa = $stmtTarifa->fetch(PDO::FETCH_ASSOC);
+        // Buscar tarifa asociada por ID si existe en el input
+        $tarifa = null;
+        if (isset($input['servicio_id']) && $input['servicio_id']) {
+            $sqlTarifa = "SELECT * FROM tarifas WHERE id = ? LIMIT 1";
+            $stmtTarifa = $pdo->prepare($sqlTarifa);
+            $stmtTarifa->execute([$input['servicio_id']]);
+            $tarifa = $stmtTarifa->fetch(PDO::FETCH_ASSOC);
+        } else {
+            // Fallback: buscar por descripción y tipo como antes
+            $sqlTarifa = "SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = ? LIMIT 1";
+            $stmtTarifa = $pdo->prepare($sqlTarifa);
+            $stmtTarifa->execute([trim($input['descripcion']), $input['tipo_ingreso']]);
+            $tarifa = $stmtTarifa->fetch(PDO::FETCH_ASSOC);
+        }
 
         if ($tarifa) {
             // DEBUG: Verificar valor de cajaAbierta

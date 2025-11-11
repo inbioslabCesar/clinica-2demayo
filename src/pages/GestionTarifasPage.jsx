@@ -20,14 +20,15 @@ function GestionTarifasPage() {
 
   // Tipos de servicios médicos (editables en esta interfaz)
   const serviciosMedicos = [
-    { value: "consulta", label: "Consultas Médicas" },
-    { value: "rayosx", label: "Rayos X" },
-    { value: "ecografia", label: "Ecografía" },
-    { value: "ocupacional", label: "Medicina Ocupacional" },
-    { value: "procedimientos", label: "Procedimientos Médicos" },
-    { value: "cirugias", label: "Cirugías Menores" },
-    { value: "tratamientos", label: "Tratamientos Especializados" },
-    { value: "emergencias", label: "Emergencias" },
+  { value: "consulta", label: "Consultas Médicas" },
+  { value: "rayosx", label: "Rayos X" },
+  { value: "ecografia", label: "Ecografía" },
+  { value: "operacion", label: "Operaciones/Cirugías Mayores" },
+  { value: "ocupacional", label: "Medicina Ocupacional" },
+  { value: "procedimientos", label: "Procedimientos Médicos" },
+  { value: "cirugias", label: "Cirugías Menores" },
+  { value: "tratamientos", label: "Tratamientos Especializados" },
+  { value: "emergencias", label: "Emergencias" },
   ];
 
   // Todos los tipos (para mostrar, solo servicios médicos gestionables)

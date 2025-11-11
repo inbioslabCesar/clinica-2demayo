@@ -32,6 +32,7 @@ import ExamenesLaboratorioCrudPage from "./pages/ExamenesLaboratorioCrudPage";
 import CotizarLaboratorioPage from "./pages/CotizarLaboratorioPage";
 import CotizarRayosXPage from "./pages/CotizarRayosXPage";
 import CotizarEcografiaPage from "./pages/CotizarEcografiaPage";
+import CotizarOperacionPage from "./pages/CotizarOperacionPage";
 import LaboratorioPanelPage from "./pages/LaboratorioPanelPage";
 import ResultadosLaboratorioPage from "./pages/ResultadosLaboratorioPage";
 import ReportesPage from "./pages/ReportesPage";
@@ -251,6 +252,11 @@ function App() {
                 <Route path="/cotizar-ecografia/:pacienteId" element={
                   <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
                     <CotizarEcografiaPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/cotizar-operacion/:pacienteId" element={
+                  <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador","recepcionista"]}>
+                    <CotizarOperacionPage />
                   </ProtectedRoute>
                 } />
                 <Route path="/cotizar-farmacia/:pacienteId" element={

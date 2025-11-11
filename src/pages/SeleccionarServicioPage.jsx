@@ -125,6 +125,10 @@ export default function SeleccionarServicioPage() {
                   onClick={() => navigate(`/cotizar-procedimientos/${paciente.id}`)}
                 >🛠️ Procedimientos <span className="text-yellow-500">💰</span></button>
                 <button
+                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-100 font-bold"
+                  onClick={() => navigate(`/cotizar-operacion/${paciente.id}`)}
+                >🩼 Operaciones/Cirugías Mayores <span className="text-yellow-500">💰</span></button>
+                <button
                   className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-50 font-bold"
                   onClick={() => {
                     Swal.fire({

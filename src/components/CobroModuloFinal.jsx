@@ -24,7 +24,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       });
   }, []);
   // Solo permitir servicios médicos (consulta, laboratorio, farmacia, etc.)
-  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia', 'rayosx', 'ecografia', 'procedimiento'];
+  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia', 'rayosx', 'ecografia', 'procedimiento','operacion','hospitalizacion'];
   const esServicioMedico = servicio && serviciosPermitidos.includes(servicio.key);
   const [tarifas, setTarifas] = useState([]);
   const [tipoCobertura, setTipoCobertura] = useState('particular');
@@ -165,9 +165,13 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
     }
     // Simular número de orden si es programada (puedes reemplazar por el real)
     const numeroOrden = tipoConsulta === 'programada' ? (consulta.numero_orden || 'N/A') : '';
+    const logoSrc = window.location.hostname === 'localhost' ? '/public/2demayo.svg' : '/logo-clinica.png';
     const comprobante = `
       <div style="text-align: left; font-family: monospace;">
-        <h3 style="text-align: center; margin-bottom: 20px;">🏥 CLÍNICA 2 DE MAYO</h3>
+        <div style="text-align: center; margin-bottom: 0;">
+          <img src='${logoSrc}' alt='Logo Clínica 2 de Mayo' style='height:60px; margin-bottom:4px; display:block; margin-left:auto; margin-right:auto;' />
+          <h3 style="text-align: center; margin-bottom: 20px; margin-top: 4px;">CLÍNICA 2 DE MAYO</h3>
+        </div>
         <hr>
         <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
         <p>Fecha: ${fechaHora}</p>
@@ -179,9 +183,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         ${tipoConsulta === 'programada' ? `<p>N° Orden de llegada: ${numeroOrden}</p>` : ''}
         <hr>
         <p><strong>DETALLE:</strong></p>
-        ${datosComprobante.detalles.map(d => 
-          `<p>${d.descripcion} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`
-        ).join('')}
+        ${datosComprobante.detalles.map(d => {
+          const resumen = d.descripcion.length > 50 ? d.descripcion.slice(0, 47) + '...' : d.descripcion;
+          return `<p>${resumen} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`;
+        }).join('')}
         <hr>
         <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
         <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>

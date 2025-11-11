@@ -4,7 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 
-export default function CotizarEcografiaPage() {
+export default function CotizarOperacionPage() {
   const [mostrarCobro, setMostrarCobro] = useState(false);
   const [detallesCotizacion, setDetallesCotizacion] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
@@ -25,8 +25,8 @@ export default function CotizarEcografiaPage() {
     fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
-        const ecoTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "ecografia");
-        setTarifas(ecoTarifas);
+        const operTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "operacion");
+        setTarifas(operTarifas);
       });
   }, [pacienteId]);
 
@@ -55,17 +55,17 @@ export default function CotizarEcografiaPage() {
 
   const cotizar = async () => {
     if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos una ecografía.");
+      setMensaje("Selecciona al menos una operación/cirugía.");
       return;
     }
     // Construir detalles para el Módulo de Cobros, incluyendo medico_id y especialidad
     const detalles = seleccionados.map(tid => {
       const tarifa = tarifas.find(t => t.id === tid);
       const cantidad = cantidades[tid] || 1;
-      let nombreEco = (tarifa && tarifa.descripcion && tarifa.descripcion !== "0") ? tarifa.descripcion : (tarifa && tarifa.nombre && tarifa.nombre !== "0" ? tarifa.nombre : "Ecografía sin nombre");
-      let descripcion = nombreEco;
+      let nombreOperacion = (tarifa && tarifa.descripcion && tarifa.descripcion !== "0") ? tarifa.descripcion : (tarifa && tarifa.nombre && tarifa.nombre !== "0" ? tarifa.nombre : "Operación sin nombre");
+      let descripcion = nombreOperacion;
       return tarifa ? {
-        servicio_tipo: "ecografia",
+        servicio_tipo: "operacion",
         servicio_id: tid,
         descripcion,
         cantidad,
@@ -87,7 +87,7 @@ export default function CotizarEcografiaPage() {
         className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
       >← Volver</button>
       <h2 className="text-2xl font-bold text-blue-900 mb-4 flex items-center gap-2">
-        <span role="img" aria-label="eco">📡</span> Cotizador de Ecografías
+        <span role="img" aria-label="operacion">🩼</span> Cotizador de Operaciones/Cirugías Mayores
       </h2>
       {paciente && (
         <div className="mb-4 p-2 bg-blue-50 rounded text-blue-800 text-sm">
@@ -96,9 +96,9 @@ export default function CotizarEcografiaPage() {
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="mb-4 max-h-[500px] overflow-y-auto">
-          <div className="font-bold mb-2">Ecografías disponibles:</div>
+          <div className="font-bold mb-2">Operaciones/Cirugías disponibles:</div>
           {tarifas.length === 0 ? (
-            <div className="text-gray-500">No hay ecografías registradas.</div>
+            <div className="text-gray-500">No hay operaciones/cirugías registradas.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
               {tarifas.map(tarifa => (
@@ -169,7 +169,7 @@ export default function CotizarEcografiaPage() {
       {mostrarCobro && paciente && (
         <CobroModuloFinal
           paciente={paciente}
-          servicio={{ key: "ecografia", label: "Ecografía" }}
+          servicio={{ key: "operacion", label: "Operaciones/Cirugías Mayores" }}
           detalles={detallesCotizacion}
           total={totalCotizacion}
           onCobroCompleto={() => {

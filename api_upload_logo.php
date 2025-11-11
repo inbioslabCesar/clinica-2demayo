@@ -3,18 +3,18 @@ session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
     'domain' => '',
-    'secure' => false,
+    'secure' => true, // Mejor compatibilidad móvil y Chrome
     'httponly' => true,
-    'samesite' => 'Lax'
+    'samesite' => 'None', // Mejor compatibilidad móvil y Chrome
 ]);
 session_start();
-
-// CORS — permitir llamadas desde el frontend (ajustar según sea necesario)
+// CORS para localhost y producción
 $allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    'http://localhost:5176'
+    'http://localhost:5176',
+    'https://clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -22,14 +22,11 @@ if (in_array($origin, $allowedOrigins)) {
 }
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Access-Control-Allow-Methods: POST, OPTIONS');
-
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    // Responder preflight
     http_response_code(200);
-    exit;
+    exit();
 }
-
 header('Content-Type: application/json');
 require_once __DIR__ . '/config.php';
 
@@ -77,7 +74,7 @@ if (!isset($allowed[$mime])) {
 $ext = $allowed[$mime];
 
 // Preparar carpeta destino
-$uploadDir = __DIR__ . '/public/uploads';
+$uploadDir = __DIR__ . '/uploads';
 if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
 
 // Nombre seguro
@@ -92,7 +89,7 @@ if (!move_uploaded_file($file['tmp_name'], $dest)) {
 }
 
 // Devolver la ruta relativa que puede guardarse en logo_url
-$relativePath = 'public/uploads/' . $filename;
+$relativePath = 'uploads/' . $filename;
 
 echo json_encode(['success' => true, 'path' => $relativePath]);
 exit;

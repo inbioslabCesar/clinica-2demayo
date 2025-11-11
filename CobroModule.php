@@ -13,9 +13,12 @@ class CobroModule {
         $usuario_id_param = $data['usuario_id'];
         $total_param = $data['total'];
         $tipo_pago_param = $data['tipo_pago'];
+    file_put_contents(__DIR__ . '/debug_cobro.txt', 'CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)' . "\n", FILE_APPEND);
+    file_put_contents(__DIR__ . '/debug_cobro.txt', 'CobroModule: Params: paciente_id=' . $paciente_id_param . ', usuario_id=' . $usuario_id_param . ', total=' . $total_param . ', tipo_pago=' . $tipo_pago_param . ', observaciones=' . $observaciones . "\n", FILE_APPEND);
         $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, 'pagado', ?)");
         $stmt->bind_param("iidss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones);
         $stmt->execute();
+    file_put_contents(__DIR__ . '/debug_cobro.txt', 'CobroModule: SQL ejecutado, insert_id=' . $conn->insert_id . "\n", FILE_APPEND);
         $cobro_id = $conn->insert_id;
         // Insertar detalles del cobro
         $servicio_tipo = $data['detalles'][0]['servicio_tipo'];
