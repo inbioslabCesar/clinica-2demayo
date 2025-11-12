@@ -4,10 +4,10 @@ date_default_timezone_set('America/Lima');
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
-    'domain' => '',
-    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
+    'domain' => '.clinica2demayo.com',
+    'secure' => true,
     'httponly' => true,
-    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
+    'samesite' => 'Lax',
 ]);
 session_start();
 // CORS para localhost y producción

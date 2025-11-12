@@ -133,3 +133,21 @@ CobroModule: SQL ejecutado, insert_id=421
 CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
 CobroModule: Params: paciente_id=32, usuario_id=1, total=1000, tipo_pago=efectivo, observaciones=
 CobroModule: SQL ejecutado, insert_id=422
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=32, usuario_id=1, total=80, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=423
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=32, usuario_id=1, total=15, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=424
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=32, usuario_id=1, total=1.62, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=425
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=32, usuario_id=1, total=80, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=426
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=32, usuario_id=1, total=90, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=427
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=32, usuario_id=1, total=1000, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=428

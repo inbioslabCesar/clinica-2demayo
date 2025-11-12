@@ -4,10 +4,10 @@
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
-    'domain' => '',
-    'secure' => false, // Para desarrollo local
+    'domain' => '.clinica2demayo.com',
+    'secure' => true,
     'httponly' => true,
-    'samesite' => 'Lax', // Mejor compatibilidad en localhost
+    'samesite' => 'Lax',
 ]);
 session_start();
 

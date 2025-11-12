@@ -5,7 +5,7 @@ date_default_timezone_set('America/Lima');
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
-    'domain' => '',
+    'domain' => '.clinica2demayo.com', // Compartir cookie entre www y sin www
     'secure' => true,
     'httponly' => true,
     'samesite' => 'None',
@@ -13,7 +13,20 @@ session_set_cookie_params([
 session_start();
 
 // Mensaje de depuración: inicio
-error_log('Entrando a api_resumen_diario.php');
+// DEBUG: Mostrar estado de sesión y cookie en la respuesta
+if (!isset($_SESSION['usuario'])) {
+    echo json_encode([
+        'success' => false,
+        'error' => 'No autenticado',
+        'debug' => [
+            'PHPSESSID' => $_COOKIE['PHPSESSID'] ?? null,
+            'session_save_path' => ini_get('session.save_path'),
+            'session_id' => session_id(),
+            'session' => $_SESSION
+        ]
+    ]);
+    exit;
+}
 
 // CORS para localhost y producción
 $allowedOrigins = [
@@ -21,7 +34,8 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
-    'https://clinica2demayo.com'
+    'https://clinica2demayo.com',
+    'https://www.clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {

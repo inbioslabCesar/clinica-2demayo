@@ -1,12 +1,11 @@
 <?php
-// API para obtener detalles de ingresos del día
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
-    'domain' => '',
-    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
+    'domain' => '.clinica2demayo.com',
+    'secure' => true,
     'httponly' => true,
-    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
+    'samesite' => 'Lax',
 ]);
 session_start();
 // CORS para localhost y producción
@@ -15,7 +14,8 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
-    'https://clinica2demayo.com'
+    'https://clinica2demayo.com',
+    'https://www.clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
@@ -41,7 +41,7 @@ set_exception_handler(function($e) use ($origin, $allowedOrigins) {
     exit();
 });
 header('Content-Type: application/json');
-require_once 'db.php';
+require_once 'config.php';
 
 try {
     // Verificar autenticación

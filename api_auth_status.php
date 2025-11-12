@@ -3,8 +3,8 @@
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
-    'domain' => '',
-    'secure' => false,
+    'domain' => '.clinica2demayo.com', // Compartir cookie entre www y sin www
+    'secure' => true,
     'httponly' => true,
     'samesite' => 'Lax',
 ]);

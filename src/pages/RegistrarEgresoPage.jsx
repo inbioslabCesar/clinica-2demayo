@@ -35,6 +35,7 @@ export default function RegistrarEgresoPage() {
     const resp = await fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(form),
     });
     const data = await resp.json();

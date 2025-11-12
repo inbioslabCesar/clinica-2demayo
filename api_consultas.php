@@ -18,7 +18,8 @@ $allowedOrigins = [
     'http://localhost:5174',
     'http://localhost:5175',
     'http://localhost:5176',
-    'https://clinica2demayo.com'
+    'https://clinica2demayo.com',
+    'https://www.clinica2demayo.com'
 ];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins)) {
