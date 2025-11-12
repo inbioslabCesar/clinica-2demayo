@@ -8,16 +8,22 @@ $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
 $turno = isset($_GET['turno']) ? $_GET['turno'] : null;
 $estado = isset($_GET['estado']) ? $_GET['estado'] : 'pendiente';
 
+
 $where = "WHERE 1=1";
+$params = [];
 if ($estado === 'pendiente' || $estado === 'pagado') {
-    $where .= " AND estado_pago_medico = '" . $conn->real_escape_string($estado) . "'";
+    $where .= " AND h.estado_pago_medico = :estado";
+    $params[':estado'] = $estado;
 }
 if ($medico_id) {
-    $where .= " AND medico_id = $medico_id";
+    $where .= " AND h.medico_id = :medico_id";
+    $params[':medico_id'] = $medico_id;
 }
 if ($turno) {
-    $where .= " AND turno = '" . $conn->real_escape_string($turno) . "'";
+    $where .= " AND h.turno = :turno";
+    $params[':turno'] = $turno;
 }
+
 
 
 
@@ -35,11 +41,9 @@ $sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medic
     $where
     ORDER BY h.fecha DESC, h.turno";
 
-$result = $conn->query($sql);
-$honorarios = [];
-while ($row = $result->fetch_assoc()) {
-    $honorarios[] = $row;
-}
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$honorarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 echo json_encode([
     "success" => true,

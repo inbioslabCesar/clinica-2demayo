@@ -20,18 +20,17 @@ try {
 
     // Resumen diario, mensual, trimestral y anual usando ganancia_dia con rangos
     $sqlResumen = "SELECT 
-        SUM(CASE WHEN fecha = :hoy THEN ganancia_dia ELSE 0 END) AS gananciaDia,
-        SUM(CASE WHEN fecha >= :inicioMes AND fecha < :inicioMesSiguiente THEN ganancia_dia ELSE 0 END) AS gananciaMes,
-        SUM(CASE WHEN fecha >= :inicioTrimestre AND fecha < :inicioMesSiguiente THEN ganancia_dia ELSE 0 END) AS gananciaTrimestre,
-        SUM(CASE WHEN fecha >= :inicioAnio AND fecha < :inicioMesSiguiente THEN ganancia_dia ELSE 0 END) AS gananciaAnio
+        SUM(CASE WHEN fecha = ? THEN ganancia_dia ELSE 0 END) AS gananciaDia,
+        SUM(CASE WHEN fecha >= ? AND fecha < ? THEN ganancia_dia ELSE 0 END) AS gananciaMes,
+        SUM(CASE WHEN fecha >= ? AND fecha < ? THEN ganancia_dia ELSE 0 END) AS gananciaTrimestre,
+        SUM(CASE WHEN fecha >= ? AND fecha < ? THEN ganancia_dia ELSE 0 END) AS gananciaAnio
     FROM cajas WHERE estado = 'cerrada';";
     $stmtResumen = $pdo->prepare($sqlResumen);
     $stmtResumen->execute([
-        ':hoy' => $hoy,
-        ':inicioMes' => $inicioMes,
-        ':inicioMesSiguiente' => $inicioMesSiguiente,
-        ':inicioTrimestre' => $inicioTrimestre,
-        ':inicioAnio' => $inicioAnio
+        $hoy,
+        $inicioMes, $inicioMesSiguiente,
+        $inicioTrimestre, $inicioMesSiguiente,
+        $inicioAnio, $inicioMesSiguiente
     ]);
     $res = $stmtResumen->fetch(PDO::FETCH_ASSOC);
 

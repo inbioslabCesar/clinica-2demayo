@@ -7,6 +7,8 @@ import Paginacion from "../components/Paginacion";
 import FiltrosTarifas from "../components/FiltrosTarifas";
 
 function GestionTarifasPage() {
+  // Filtro por nombre de médico
+  const [filtroMedico, setFiltroMedico] = useState("");
   const [tarifas, setTarifas] = useState([]);
   const [medicos, setMedicos] = useState([]); // NUEVO: Lista de médicos
   const [loading, setLoading] = useState(true);
@@ -345,18 +347,23 @@ function GestionTarifasPage() {
     }
   };
 
-  // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
-  // Mostrar todas las tarifas (excepto laboratorio/farmacia), incluyendo inactivas
-  const tarifasFiltradas =
-    filtroServicio === "todos"
-      ? tarifas.filter(
-          (t) => !["laboratorio", "farmacia"].includes(t.servicio_tipo)
-        )
-      : tarifas.filter(
-          (t) =>
-            t.servicio_tipo === filtroServicio &&
-            !["laboratorio", "farmacia"].includes(t.servicio_tipo)
-        );
+  // Filtrar tarifas por servicio y nombre de médico
+  let tarifasFiltradas = filtroServicio === "todos"
+    ? tarifas.filter((t) => !["laboratorio", "farmacia"].includes(t.servicio_tipo))
+    : tarifas.filter((t) => t.servicio_tipo === filtroServicio && !["laboratorio", "farmacia"].includes(t.servicio_tipo));
+
+  if (filtroMedico.trim()) {
+    const filtroLower = filtroMedico.trim().toLowerCase();
+    tarifasFiltradas = tarifasFiltradas.filter((t) => {
+      // Buscar el médico por id
+      const medico = medicos.find((m) => m.id === parseInt(t.medico_id));
+      if (medico) {
+        const nombreCompleto = `${medico.nombre} ${medico.apellido}`.toLowerCase();
+        return nombreCompleto.includes(filtroLower);
+      }
+      return false;
+    });
+  }
 
   // Cálculos de paginación
   const totalElementos = tarifasFiltradas.length;
@@ -428,6 +435,7 @@ function GestionTarifasPage() {
           </button>
         </div>
 
+
         <FiltrosTarifas
           filtroServicio={filtroServicio}
           setFiltroServicio={setFiltroServicio}
@@ -435,6 +443,8 @@ function GestionTarifasPage() {
           totalElementos={totalElementos}
           paginaActual={paginaActual}
           totalPaginas={totalPaginas}
+          filtroMedico={filtroMedico}
+          setFiltroMedico={setFiltroMedico}
         />
 
         <Paginacion

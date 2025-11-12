@@ -133,7 +133,7 @@ function LiquidacionHonorariosPage() {
               <tr>
                 <th className="px-4 py-2">Médico</th>
                 <th className="px-4 py-2">Servicio</th>
-                <th className="hidden sm:table-cell px-4 py-2">Paciente</th>
+                <th className="px-4 py-2">Paciente</th>
                 <th className="hidden sm:table-cell px-4 py-2">Fecha</th>
                 <th className="hidden sm:table-cell px-4 py-2">Turno</th>
                 <th className="px-4 py-2">Monto</th>
@@ -151,7 +151,7 @@ function LiquidacionHonorariosPage() {
                 <tr key={h.id}>
                   <td className="px-4 py-2">{h.medico_nombre} {h.medico_apellido}</td>
                   <td className="px-4 py-2">{h.tipo_servicio}</td>
-                  <td className="hidden sm:table-cell px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
+                  <td className="px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
                   <td className="hidden sm:table-cell px-4 py-2">{h.fecha}</td>
                   <td className="hidden sm:table-cell px-4 py-2">{h.turno}</td>
                   <td className="px-4 py-2">S/ {parseFloat(h.monto_medico).toFixed(2)}</td>

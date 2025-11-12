@@ -49,6 +49,9 @@ function FormularioAgendarConsulta({
           {medicos.map((medico) => (
             <option key={medico.id} value={medico.id}>
               {medico.nombre} {medico.apellido}
+              {medico.especialidad && (
+                " " + String.fromCharCode(8212) + " " + medico.especialidad
+              )}
             </option>
           ))}
         </select>

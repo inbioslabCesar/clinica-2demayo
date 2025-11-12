@@ -224,9 +224,9 @@ switch($method) {
                         $porcentaje_aplicado_clinica = 0;
                     }
 
-                    // Usar consulta_id y paciente_id si están presentes en el detalle
+                    // Usar consulta_id y paciente_id si están presentes en el detalle, si no usar el paciente_id principal
                     $consulta_id = isset($detalleServicio['consulta_id']) ? $detalleServicio['consulta_id'] : null;
-                    $paciente_id = isset($detalleServicio['paciente_id']) ? $detalleServicio['paciente_id'] : null;
+                    $paciente_id = isset($detalleServicio['paciente_id']) && $detalleServicio['paciente_id'] ? $detalleServicio['paciente_id'] : ($data['paciente_id'] ?? null);
                     $medico_id = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : ($tarifa['medico_id'] ?? null);
                     $especialidad = isset($detalleServicio['especialidad']) ? $detalleServicio['especialidad'] : ($tarifa['especialidad'] ?? null);
 
