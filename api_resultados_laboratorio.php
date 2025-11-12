@@ -1,41 +1,5 @@
 <?php
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'domain' => '',
-    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
-    'httponly' => true,
-    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
-]);
-session_start();
-// Helper de logging a archivo para debugging local
-function debug_log_file($msg) {
-    $dir = __DIR__ . '/debug';
-    if (!file_exists($dir)) @mkdir($dir, 0755, true);
-    $file = $dir . '/debug_resultados.log';
-    $line = date('Y-m-d H:i:s') . " " . $msg . "\n";
-    @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
-}
-// api_resultados_laboratorio.php: Guarda resultados de laboratorio
-$allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    'https://clinica2demayo.com',
-    'https://www.clinica2demayo.com'
-];
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-}
-header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
-header('Content-Type: application/json');
+require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -103,8 +67,6 @@ switch ($method) {
                 $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE consulta_id = ?');
                 $stmt_update->bind_param('ssi', $tipo_examen, $json, $orden['consulta_id']);
                 $ok = $stmt_update->execute();
-                // Logging temporal
-                if ($ok) debug_log_file('[api_resultados] UPDATE resultados_laboratorio by consulta_id=' . $orden['consulta_id']);
                 $stmt_update->close();
             } else {
                 $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (consulta_id, tipo_examen, resultados) VALUES (?, ?, ?)');
@@ -112,7 +74,6 @@ switch ($method) {
                 $ok = $stmt->execute();
                 if ($ok) {
                     $newId = $conn->insert_id;
-                    debug_log_file('[api_resultados] INSERT resultados_laboratorio id=' . $newId . ' consulta_id=' . $orden['consulta_id']);
                 }
                 $stmt->close();
             }
@@ -127,7 +88,7 @@ switch ($method) {
                 $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ? WHERE orden_id = ?');
                 $stmt_update->bind_param('ssi', $tipo_examen, $json, $orden['id']);
                 $ok = $stmt_update->execute();
-                if ($ok) debug_log_file('[api_resultados] UPDATE resultados_laboratorio by orden_id=' . $orden['id']);
+                // ...existing code...
                 $stmt_update->close();
             } else {
                 $stmt = $conn->prepare('INSERT INTO resultados_laboratorio (orden_id, tipo_examen, resultados) VALUES (?, ?, ?)');
@@ -135,7 +96,6 @@ switch ($method) {
                 $ok = $stmt->execute();
                 if ($ok) {
                     $newId = $conn->insert_id;
-                    debug_log_file('[api_resultados] INSERT resultados_laboratorio id=' . $newId . ' orden_id=' . $orden['id']);
                 }
                 $stmt->close();
             }

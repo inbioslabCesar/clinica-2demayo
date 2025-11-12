@@ -1,34 +1,6 @@
 
 <?php
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'domain' => '.clinica2demayo.com',
-    'secure' => true,
-    'httponly' => true,
-    'samesite' => 'Lax',
-]);
-session_start();
-// CORS para localhost y producción
-$allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    'https://clinica2demayo.com',
-    'https://www.clinica2demayo.com'
-];
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-}
-header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Content-Type: application/json');
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
+require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];

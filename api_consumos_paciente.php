@@ -1,36 +1,8 @@
 <?php
-// Mostrar errores en pantalla para depuración
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-session_set_cookie_params([
-    'samesite' => 'Lax',
-    'secure' => false, // Permitir cookies en http para desarrollo local
-    'httponly' => true,
-    'path' => '/',
-]);
-session_start();
-// Permitir origen local y producción
-$allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    'https://clinica2demayo.com',
-    'https://www.clinica2demayo.com'
-];
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-}
-header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Content-Type: application/json');
+require_once __DIR__ . '/init_api.php';
+// Conexión a la base de datos centralizada
+require_once __DIR__ . '/config.php';
 
-// Manejar preflight (OPTIONS)
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
 // DEBUG: Registrar el contenido de la sesión y el rol detectado
 // Debug eliminado
 
@@ -45,8 +17,6 @@ if (!$usuario || !in_array($rol, ['administrador', 'recepcionista'])) {
     exit;
 }
 
-// Conexión a la base de datos centralizada
-require_once __DIR__ . '/config.php';
 
 
 $paciente_id = isset($_GET['paciente_id']) ? intval($_GET['paciente_id']) : 0;

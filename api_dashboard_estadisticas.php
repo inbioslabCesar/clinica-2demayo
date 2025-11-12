@@ -1,39 +1,6 @@
 
 <?php
-date_default_timezone_set('America/Lima');
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'domain' => '',
-    'secure' => false,
-    'httponly' => true,
-    'samesite' => 'Lax',
-]);
-session_start();
-// Mostrar errores para depuración
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-// CORS para localhost y producción
-$allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    'http://localhost:5176',
-    'https://clinica2demayo.com',
-    'https://www.clinica2demayo.com'
-];
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-}
-header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Content-Type: application/json');
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
+require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
 if (!isset($_SESSION['usuario']) || !in_array($_SESSION['usuario']['rol'], ['administrador', 'recepcionista'])) {
@@ -44,20 +11,42 @@ if (!isset($_SESSION['usuario']) || !in_array($_SESSION['usuario']['rol'], ['adm
 
 try {
 
-    // Resumen diario, mensual, trimestral y anual usando ganancia_dia
-    $sqlResumen = "SELECT 
-        SUM(CASE WHEN DATE(fecha) = CURDATE() THEN ganancia_dia ELSE 0 END) AS gananciaDia,
-        SUM(CASE WHEN MONTH(fecha) = MONTH(CURDATE()) AND YEAR(fecha) = YEAR(CURDATE()) THEN ganancia_dia ELSE 0 END) AS gananciaMes,
-        SUM(CASE WHEN QUARTER(fecha) = QUARTER(CURDATE()) AND YEAR(fecha) = YEAR(CURDATE()) THEN ganancia_dia ELSE 0 END) AS gananciaTrimestre,
-        SUM(CASE WHEN YEAR(fecha) = YEAR(CURDATE()) THEN ganancia_dia ELSE 0 END) AS gananciaAnio
-    FROM cajas WHERE estado = 'cerrada';";
-    $res = $pdo->query($sqlResumen)->fetch(PDO::FETCH_ASSOC);
+    // Rango de fechas para el mes actual
+    $inicioMes = date('Y-m-01');
+    $inicioMesSiguiente = date('Y-m-01', strtotime('+1 month'));
+    $hoy = date('Y-m-d');
+    $inicioTrimestre = date('Y-m-01', strtotime('-2 month'));
+    $inicioAnio = date('Y-01-01');
 
-    // Calcular crecimiento mensual (%) comparando con el mes anterior usando ganancia_dia
+    // Resumen diario, mensual, trimestral y anual usando ganancia_dia con rangos
+    $sqlResumen = "SELECT 
+        SUM(CASE WHEN fecha = :hoy THEN ganancia_dia ELSE 0 END) AS gananciaDia,
+        SUM(CASE WHEN fecha >= :inicioMes AND fecha < :inicioMesSiguiente THEN ganancia_dia ELSE 0 END) AS gananciaMes,
+        SUM(CASE WHEN fecha >= :inicioTrimestre AND fecha < :inicioMesSiguiente THEN ganancia_dia ELSE 0 END) AS gananciaTrimestre,
+        SUM(CASE WHEN fecha >= :inicioAnio AND fecha < :inicioMesSiguiente THEN ganancia_dia ELSE 0 END) AS gananciaAnio
+    FROM cajas WHERE estado = 'cerrada';";
+    $stmtResumen = $pdo->prepare($sqlResumen);
+    $stmtResumen->execute([
+        ':hoy' => $hoy,
+        ':inicioMes' => $inicioMes,
+        ':inicioMesSiguiente' => $inicioMesSiguiente,
+        ':inicioTrimestre' => $inicioTrimestre,
+        ':inicioAnio' => $inicioAnio
+    ]);
+    $res = $stmtResumen->fetch(PDO::FETCH_ASSOC);
+
+    // Calcular crecimiento mensual (%) comparando con el mes anterior usando rangos
+    $inicioMesPrev = date('Y-m-01', strtotime('-1 month'));
+    $inicioMesActual = $inicioMes;
     $sqlPrevMonth = "SELECT SUM(ganancia_dia) AS gananciaMesPrev
         FROM cajas
-        WHERE estado = 'cerrada' AND MONTH(fecha) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(fecha) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
-    $resPrev = $pdo->query($sqlPrevMonth)->fetch(PDO::FETCH_ASSOC);
+        WHERE estado = 'cerrada' AND fecha >= :inicioMesPrev AND fecha < :inicioMesActual";
+    $stmtPrevMonth = $pdo->prepare($sqlPrevMonth);
+    $stmtPrevMonth->execute([
+        ':inicioMesPrev' => $inicioMesPrev,
+        ':inicioMesActual' => $inicioMesActual
+    ]);
+    $resPrev = $stmtPrevMonth->fetch(PDO::FETCH_ASSOC);
     $gananciaMes = floatval($res['gananciaMes'] ?? 0);
     $gananciaPrev = floatval($resPrev['gananciaMesPrev'] ?? 0);
     if ($gananciaPrev > 0) {
@@ -66,17 +55,24 @@ try {
         $crecimiento = null;
     }
 
-    // Pacientes atendidos en el mes actual
+    // Pacientes atendidos en el mes actual usando rangos
     $pacientesMes = 0;
     try {
-        // Preferentemente usar la tabla atenciones si existe
-        $stmtPacientesMes = $pdo->query("SELECT COUNT(DISTINCT paciente_id) as total FROM atenciones WHERE MONTH(fecha) = MONTH(CURDATE()) AND YEAR(fecha) = YEAR(CURDATE())");
+        $stmtPacientesMes = $pdo->prepare("SELECT COUNT(DISTINCT paciente_id) as total FROM atenciones WHERE fecha >= :inicioMes AND fecha < :inicioMesSiguiente");
+        $stmtPacientesMes->execute([
+            ':inicioMes' => $inicioMes,
+            ':inicioMesSiguiente' => $inicioMesSiguiente
+        ]);
         $rowPacientesMes = $stmtPacientesMes->fetch();
         $pacientesMes = $rowPacientesMes ? intval($rowPacientesMes['total']) : 0;
     } catch (PDOException $e) {
         // Si no existe la tabla atenciones, intentar con consultas
         try {
-            $stmtPacientesMes = $pdo->query("SELECT COUNT(DISTINCT paciente_id) as total FROM consultas WHERE MONTH(fecha) = MONTH(CURDATE()) AND YEAR(fecha) = YEAR(CURDATE())");
+            $stmtPacientesMes = $pdo->prepare("SELECT COUNT(DISTINCT paciente_id) as total FROM consultas WHERE fecha >= :inicioMes AND fecha < :inicioMesSiguiente");
+            $stmtPacientesMes->execute([
+                ':inicioMes' => $inicioMes,
+                ':inicioMesSiguiente' => $inicioMesSiguiente
+            ]);
             $rowPacientesMes = $stmtPacientesMes->fetch();
             $pacientesMes = $rowPacientesMes ? intval($rowPacientesMes['total']) : 0;
         } catch (PDOException $e2) {

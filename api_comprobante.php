@@ -1,11 +1,13 @@
 <?php
+require_once __DIR__ . '/init_api.php';
+require_once __DIR__.'/config.php';
+
 // Comprobante de cobro
 if (!isset($_GET['cobro_id']) || !is_numeric($_GET['cobro_id'])) {
     echo '<h2>Cobro no especificado</h2>';
     exit;
 }
 $cobro_id = intval($_GET['cobro_id']);
-require_once __DIR__.'/config.php';
 // Consulta el cobro principal
 $stmt = $pdo->prepare("SELECT c.*, p.nombre, p.apellido, p.dni FROM cobros c JOIN pacientes p ON c.paciente_id = p.id WHERE c.id = ? LIMIT 1");
 $stmt->execute([$cobro_id]);
