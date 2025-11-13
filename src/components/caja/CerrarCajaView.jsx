@@ -23,7 +23,7 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null) {
   }
   // Recibo compacto tipo etiquetera
   const recibo = `
-    <div style="font-family: monospace; font-size: 13px; width: 320px;">
+    <div style="font-family: monospace; font-size: 18px; width: 320px;">
       <h3 style="text-align:center;margin-bottom:8px;">🧾 Cierre de Caja</h3>
       <hr>
       <div><b>Usuario:</b> ${datos.usuario_nombre || "-"}</div>

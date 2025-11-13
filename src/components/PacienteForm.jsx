@@ -190,6 +190,19 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     setLoading(false);
   };
 
+  // Referencia al botón de submit
+  const submitBtnRef = React.useRef(null);
+
+  // Handler para evitar submit con Enter si el foco no está en el botón
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      // Si el foco NO está en el botón de submit, prevenir submit
+      if (document.activeElement !== submitBtnRef.current) {
+        e.preventDefault();
+      }
+    }
+  };
+
   return (
   <div className="w-full max-w-full mx-auto">
       <h2
@@ -218,6 +231,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       )}
       <form
         onSubmit={handleSubmit}
+        onKeyDown={handleKeyDown}
         className="space-y-4 bg-blue-50 p-4 rounded border border-blue-200 max-h-[80vh] overflow-y-auto w-full max-w-full mx-auto"
       >
         {/* Sección: Información Básica */}
@@ -236,6 +250,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         <div className="sticky bottom-0 bg-blue-50 p-4 -mx-4 -mb-4 border-t border-blue-200">
           <button
             type="submit"
+            ref={submitBtnRef}
             className="w-full bg-purple-800 hover:bg-purple-900 text-white rounded-lg px-4 py-3 font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={loading}
           >
