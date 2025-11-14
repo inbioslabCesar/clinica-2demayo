@@ -172,9 +172,16 @@ switch($method) {
                     $stmt_tarifa->bind_param("i", $detalleServicio['servicio_id']);
                     $stmt_tarifa->execute();
                     $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                    // Si no se encontró tarifa por id, buscar por servicio_tipo
+                    if (!$tarifa) {
+                        $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? LIMIT 1");
+                        $stmt_tarifa_tipo->bind_param("s", $servicio_key);
+                        $stmt_tarifa_tipo->execute();
+                        $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                    }
                 } else {
-                    $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE descripcion = ? AND servicio_tipo = ? LIMIT 1");
-                    $stmt_tarifa->bind_param("ss", $detalleServicio['descripcion'], $servicio_key);
+                    $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? LIMIT 1");
+                    $stmt_tarifa->bind_param("s", $servicio_key);
                     $stmt_tarifa->execute();
                     $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
                 }
