@@ -1,8 +1,9 @@
 import React from "react";
 
-function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNuevaTarifa, medicos, serviciosMedicos, generarDescripcion, guardarTarifa }) {
+function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNuevaTarifa, medicos, serviciosMedicos, generarDescripcion: propGenerarDescripcion, guardarTarifa }) {
+  // Ya no se genera ni guarda descripcion final, solo se edita descripcion_base
   if (!mostrar) return null;
-
+  
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
       <div className="bg-white rounded-lg p-4 sm:p-10 w-full max-w-3xl mx-2 sm:mx-4 overflow-y-auto" style={{ maxHeight: "95vh" }}>
@@ -26,8 +27,7 @@ function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNue
               value={nuevaTarifa.medico_id}
               onChange={(e) => {
                 const medicoId = e.target.value;
-                const descripcionGenerada = generarDescripcion(medicoId, nuevaTarifa.descripcion_base);
-                setNuevaTarifa({ ...nuevaTarifa, medico_id: medicoId, descripcion: descripcionGenerada });
+                setNuevaTarifa({ ...nuevaTarifa, medico_id: medicoId });
               }}
               className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={medicos.length === 0}
@@ -44,28 +44,15 @@ function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNue
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción Base *</label>
-            <input
-              type="text"
-              value={nuevaTarifa.descripcion_base}
-              onChange={(e) => {
-                const descripcionBase = e.target.value;
-                const descripcionGenerada = generarDescripcion(nuevaTarifa.medico_id, descripcionBase);
-                setNuevaTarifa({ ...nuevaTarifa, descripcion_base: descripcionBase, descripcion: descripcionGenerada });
-              }}
-              className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Ej: Consulta Especializada, Procedimiento, etc."
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción Final (Se genera automáticamente)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción del Servicio *</label>
             <input
               type="text"
               value={nuevaTarifa.descripcion}
-              readOnly
-              className="w-full border rounded px-3 py-2 bg-gray-100 text-gray-600"
-              placeholder="Se generará automáticamente al seleccionar médico y descripción base"
+              onChange={(e) => setNuevaTarifa({ ...nuevaTarifa, descripcion: e.target.value })}
+              className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Ej: RX de tórax, Ecografía abdominal, Consulta pediátrica, etc."
             />
+            <div className="text-xs text-gray-500 mt-1">Solo ingresa el nombre del servicio, sin nombre ni especialidad del médico.</div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Precio Particular * (S/)</label>
@@ -156,17 +143,7 @@ function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNue
               />
             </div>
           </div>
-          <div>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={nuevaTarifa.activo === 1}
-                onChange={(e) => setNuevaTarifa({ ...nuevaTarifa, activo: e.target.checked ? 1 : 0 })}
-                className="mr-2"
-              />
-              <span className="text-sm text-gray-700">Activo</span>
-            </label>
-          </div>
+          {/* Campo activo eliminado */}
         </div>
         <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-4 mt-6">
           <button

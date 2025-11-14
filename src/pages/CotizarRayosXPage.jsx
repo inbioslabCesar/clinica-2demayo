@@ -14,6 +14,7 @@ export default function CotizarRayosXPage() {
   const navigate = useNavigate();
   const [paciente, setPaciente] = useState(null);
   const [tarifas, setTarifas] = useState([]);
+  const [medicos, setMedicos] = useState([]);
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
   const [mensaje, setMensaje] = useState("");
@@ -31,6 +32,12 @@ export default function CotizarRayosXPage() {
       .then(data => {
         const rayosxTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "rayosx");
         setTarifas(rayosxTarifas);
+      });
+    // Obtener lista de médicos
+    fetch(`${BASE_URL}api_medicos.php`, { credentials: "include" })
+      .then(res => res.json())
+      .then(data => {
+        setMedicos(data.medicos || []);
       });
   }, [pacienteId]);
 
@@ -66,13 +73,19 @@ export default function CotizarRayosXPage() {
     const detalles = seleccionados.map(tid => {
       const tarifa = tarifas.find(t => t.id === tid);
       const cantidad = cantidades[tid] || 1;
+      // Buscar el médico por medico_id
+      let medico = null;
+      if (tarifa && tarifa.medico_id) {
+        medico = medicos.find(m => m.id === tarifa.medico_id);
+      }
       return tarifa ? {
         servicio_tipo: "rayosx",
         servicio_id: tid,
         descripcion: tarifa.descripcion || tarifa.nombre,
         cantidad,
         precio_unitario: tarifa.precio_particular,
-        subtotal: tarifa.precio_particular * cantidad
+        subtotal: tarifa.precio_particular * cantidad,
+        medico_nombre: medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"
       } : null;
     }).filter(Boolean);
     setDetallesCotizacion(detalles);
@@ -101,36 +114,43 @@ export default function CotizarRayosXPage() {
             <div className="text-gray-500">No hay estudios de Rayos X registrados.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {tarifas.map(tarifa => (
-                <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
-                  <div className="flex-1">
-                    <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                    <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
-                  </div>
-                  {seleccionados.includes(tarifa.id) ? (
-                    <>
-                      <input
-                        type="number"
-                        min={1}
-                        value={cantidades[tarifa.id] || 1}
-                        onChange={e => actualizarCantidad(tarifa.id, Math.max(1, Number(e.target.value)))}
-                        className="border rounded-lg px-2 w-16 bg-white"
-                      />
+              {tarifas.map(tarifa => {
+                let medico = null;
+                if (tarifa && tarifa.medico_id) {
+                  medico = medicos.find(m => m.id === tarifa.medico_id);
+                }
+                return (
+                  <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
+                    <div className="flex-1">
+                      <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
+                      <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
+                      <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
+                    </div>
+                    {seleccionados.includes(tarifa.id) ? (
+                      <>
+                        <input
+                          type="number"
+                          min={1}
+                          value={cantidades[tarifa.id] || 1}
+                          onChange={e => actualizarCantidad(tarifa.id, Math.max(1, Number(e.target.value)))}
+                          className="border rounded-lg px-2 w-16 bg-white"
+                        />
+                        <button
+                          onClick={() => quitarSeleccion(tarifa.id)}
+                          className="ml-2 w-10 h-10 flex items-center justify-center rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-xl shadow transition"
+                          aria-label="Quitar"
+                        >✕</button>
+                      </>
+                    ) : (
                       <button
-                        onClick={() => quitarSeleccion(tarifa.id)}
-                        className="ml-2 w-10 h-10 flex items-center justify-center rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-xl shadow transition"
-                        aria-label="Quitar"
-                      >✕</button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => agregarSeleccion(tarifa.id)}
-                      className="w-10 h-10 flex items-center justify-center rounded-full bg-green-100 hover:bg-green-200 text-green-700 text-xl shadow transition"
-                      aria-label="Agregar"
-                    >+</button>
-                  )}
-                </li>
-              ))}
+                        onClick={() => agregarSeleccion(tarifa.id)}
+                        className="w-10 h-10 flex items-center justify-center rounded-full bg-green-100 hover:bg-green-200 text-green-700 text-xl shadow transition"
+                        aria-label="Agregar"
+                      >+</button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -146,10 +166,10 @@ export default function CotizarRayosXPage() {
                   const tarifa = tarifas.find(t => t.id === tid);
                   const cantidad = cantidades[tid] || 1;
                   return tarifa ? (
-                    <li key={tid} className="py-2 flex justify-between items-center">
-                      <span>{tarifa.descripcion || tarifa.nombre}</span>
-                      <span>{cantidad} estudio(s)</span>
-                      <span className="font-bold text-green-700">S/ {(tarifa.precio_particular * cantidad).toFixed(2)}</span>
+                    <li key={tid} className="py-2 flex flex-col md:flex-row justify-between items-center gap-2">
+                      <span className="w-full md:w-1/2">{tarifa.descripcion || tarifa.nombre}</span>
+                      <span className="w-full md:w-1/4">{cantidad} estudio(s)</span>
+                      <span className="font-bold text-green-700 w-full md:w-1/4">S/ {(tarifa.precio_particular * cantidad).toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}

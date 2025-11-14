@@ -110,17 +110,22 @@ switch($method) {
         // Si hay filtro por tipo de servicio
         $tipo = $_GET['servicio_tipo'] ?? $_GET['tipo'] ?? '';
         
+        // Servicios médicos gestionables
+        $serviciosGestionables = [
+            'consulta', 'rayosx', 'ecografia', 'operacion', 'ocupacional',
+            'procedimientos', 'cirugias', 'tratamientos', 'emergencias', 'hospitalizacion'
+        ];
+        $tarifas = obtenerTodasLasTarifas($conn);
         if ($tipo) {
-            // Obtener todas las tarifas y filtrar por tipo
-            $tarifas = obtenerTodasLasTarifas($conn);
-            $tarifasFiltradas = array_filter($tarifas, function($tarifa) use ($tipo) {
-                return $tarifa['servicio_tipo'] === $tipo;
+            $tarifasFiltradas = array_filter($tarifas, function($tarifa) use ($tipo, $serviciosGestionables) {
+                return $tarifa['servicio_tipo'] === $tipo && in_array($tarifa['servicio_tipo'], $serviciosGestionables);
             });
             echo json_encode(['success' => true, 'tarifas' => array_values($tarifasFiltradas)]);
         } else {
-            // Obtener todas las tarifas
-            $tarifas = obtenerTodasLasTarifas($conn);
-            echo json_encode(['success' => true, 'tarifas' => $tarifas]);
+            $tarifasFiltradas = array_filter($tarifas, function($tarifa) use ($serviciosGestionables) {
+                return in_array($tarifa['servicio_tipo'], $serviciosGestionables);
+            });
+            echo json_encode(['success' => true, 'tarifas' => array_values($tarifasFiltradas)]);
         }
         break;
         
@@ -236,7 +241,7 @@ switch($method) {
             break;
         }
         
-        $stmt = $conn->prepare("UPDATE tarifas SET activo = 0 WHERE id = ?");
+        $stmt = $conn->prepare("DELETE FROM tarifas WHERE id = ?");
         $stmt->bind_param("i", $id);
         
         if ($stmt->execute()) {

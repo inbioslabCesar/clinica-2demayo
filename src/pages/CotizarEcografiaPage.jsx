@@ -12,6 +12,7 @@ export default function CotizarEcografiaPage() {
   const navigate = useNavigate();
   const [paciente, setPaciente] = useState(null);
   const [tarifas, setTarifas] = useState([]);
+  const [medicos, setMedicos] = useState([]);
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
   const [mensaje, setMensaje] = useState("");
@@ -27,6 +28,12 @@ export default function CotizarEcografiaPage() {
       .then(data => {
         const ecoTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "ecografia");
         setTarifas(ecoTarifas);
+      });
+    // Obtener lista de médicos
+    fetch(`${BASE_URL}api_medicos.php`, { credentials: "include" })
+      .then(res => res.json())
+      .then(data => {
+        setMedicos(data.medicos || []);
       });
   }, [pacienteId]);
 
@@ -101,36 +108,43 @@ export default function CotizarEcografiaPage() {
             <div className="text-gray-500">No hay ecografías registradas.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {tarifas.map(tarifa => (
-                <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
-                  <div className="flex-1">
-                    <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                    <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
-                  </div>
-                  {seleccionados.includes(tarifa.id) ? (
-                    <>
-                      <input
-                        type="number"
-                        min={1}
-                        value={cantidades[tarifa.id] || 1}
-                        onChange={e => actualizarCantidad(tarifa.id, Math.max(1, Number(e.target.value)))}
-                        className="border rounded-lg px-2 w-16 bg-white"
-                      />
+              {tarifas.map(tarifa => {
+                let medico = null;
+                if (tarifa && tarifa.medico_id) {
+                  medico = medicos.find(m => m.id === tarifa.medico_id);
+                }
+                return (
+                  <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
+                    <div className="flex-1">
+                      <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
+                      <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
+                      <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
+                    </div>
+                    {seleccionados.includes(tarifa.id) ? (
+                      <>
+                        <input
+                          type="number"
+                          min={1}
+                          value={cantidades[tarifa.id] || 1}
+                          onChange={e => actualizarCantidad(tarifa.id, Math.max(1, Number(e.target.value)))}
+                          className="border rounded-lg px-2 w-16 bg-white"
+                        />
+                        <button
+                          onClick={() => quitarSeleccion(tarifa.id)}
+                          className="ml-2 w-10 h-10 flex items-center justify-center rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-xl shadow transition"
+                          aria-label="Quitar"
+                        >✕</button>
+                      </>
+                    ) : (
                       <button
-                        onClick={() => quitarSeleccion(tarifa.id)}
-                        className="ml-2 w-10 h-10 flex items-center justify-center rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-xl shadow transition"
-                        aria-label="Quitar"
-                      >✕</button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => agregarSeleccion(tarifa.id)}
-                      className="w-10 h-10 flex items-center justify-center rounded-full bg-green-100 hover:bg-green-200 text-green-700 text-xl shadow transition"
-                      aria-label="Agregar"
-                    >+</button>
-                  )}
-                </li>
-              ))}
+                        onClick={() => agregarSeleccion(tarifa.id)}
+                        className="w-10 h-10 flex items-center justify-center rounded-full bg-green-100 hover:bg-green-200 text-green-700 text-xl shadow transition"
+                        aria-label="Agregar"
+                      >+</button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

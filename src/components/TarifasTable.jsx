@@ -1,6 +1,6 @@
 import React from "react";
 
-function TarifasTable({ tarifas, obtenerLabelServicio, cambiarEstado, abrirModal, eliminarTarifa }) {
+function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarifa, medicos }) {
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
       <div className="overflow-x-auto">
@@ -8,11 +8,11 @@ function TarifasTable({ tarifas, obtenerLabelServicio, cambiarEstado, abrirModal
           <thead className="bg-gray-50">
             <tr>
               <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Servicio</th>
+              <th className="hidden sm:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Médico</th>
               <th className="hidden sm:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
               <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Particular</th>
               <th className="hidden lg:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Seguro</th>
               <th className="hidden lg:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Convenio</th>
-              <th className="hidden md:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
               <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
@@ -25,13 +25,7 @@ function TarifasTable({ tarifas, obtenerLabelServicio, cambiarEstado, abrirModal
                 <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                   <div className="flex flex-col sm:flex-row sm:items-center">
                     <div className="flex items-center mb-1 sm:mb-0">
-                      <span className="text-lg mr-2">
-                        {tarifa.fuente === "medicamentos"
-                          ? "💊"
-                          : tarifa.fuente === "examenes_laboratorio"
-                          ? "🔬"
-                          : "🏥"}
-                      </span>
+                      <span className="text-lg mr-2">🏥</span>
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         {obtenerLabelServicio(tarifa.servicio_tipo)}
                       </span>
@@ -41,16 +35,27 @@ function TarifasTable({ tarifas, obtenerLabelServicio, cambiarEstado, abrirModal
                         </span>
                       )}
                     </div>
-                    {tarifa.fuente && tarifa.fuente !== "tarifas" && (
-                      <span className="ml-0 sm:ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
-                        {tarifa.fuente === "medicamentos" ? "Desde Farmacia" : "Desde Laboratorio"}
-                      </span>
-                    )}
+                    {/* Eliminado: No mostrar fuente farmacia/laboratorio */}
                     <div className="sm:hidden mt-2 text-sm font-medium text-gray-900">{tarifa.descripcion}</div>
                   </div>
                 </td>
                 <td className="hidden sm:table-cell px-6 py-4">
-                  <div className="text-sm font-medium text-gray-900">{tarifa.descripcion}</div>
+                  <div className="text-sm font-medium text-gray-900">
+                    {(() => {
+                      const medico = medicos && tarifa.medico_id ? medicos.find(m => m.id === parseInt(tarifa.medico_id)) : null;
+                      if (medico) {
+                        const nombreCompleto = [medico.nombre, medico.apellido].filter(Boolean).join(" ").replace(/\s+/g, ' ').trim();
+                        const especialidad = medico.especialidad ? ` - ${medico.especialidad}` : "";
+                        return `Dr(a). ${nombreCompleto}${especialidad}`;
+                      }
+                      return "General";
+                    })()}
+                  </div>
+                </td>
+                <td className="hidden sm:table-cell px-6 py-4">
+                  <div className="text-sm font-medium text-gray-900">
+                    {tarifa.descripcion}
+                  </div>
                 </td>
                 <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                   <div className="font-medium">S/ {parseFloat(tarifa.precio_particular).toFixed(2)}</div>
@@ -69,54 +74,24 @@ function TarifasTable({ tarifas, obtenerLabelServicio, cambiarEstado, abrirModal
                 <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                   {tarifa.precio_convenio ? `S/ ${parseFloat(tarifa.precio_convenio).toFixed(2)}` : "-"}
                 </td>
-                <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap">
-                  <button
-                    onClick={() => cambiarEstado(tarifa.id, tarifa.activo === 1 ? 0 : 1)}
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${tarifa.activo === 1 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}
-                  >
-                    {tarifa.activo === 1 ? "✓ Activo" : "✗ Inactivo"}
-                  </button>
-                </td>
+                {/* Estado eliminado */}
                 <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <div className="flex flex-col sm:flex-row sm:space-x-2 space-y-1 sm:space-y-0">
-                    <div className="block md:hidden mb-2">
+                    {/* Estado eliminado */}
+                    <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2">
                       <button
-                        onClick={() => cambiarEstado(tarifa.id, tarifa.activo === 1 ? 0 : 1)}
-                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${tarifa.activo === 1 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}
+                        onClick={() => abrirModal(tarifa)}
+                        className="text-blue-600 hover:text-blue-900 px-2 py-1 bg-blue-100 rounded text-xs sm:text-sm"
                       >
-                        {tarifa.activo === 1 ? "✓ Activo" : "✗ Inactivo"}
+                        ✏️ Editar
+                      </button>
+                      <button
+                        onClick={() => eliminarTarifa(tarifa.id, tarifa.descripcion)}
+                        className="text-red-600 hover:text-red-900 px-2 py-1 bg-red-100 rounded text-xs sm:text-sm"
+                      >
+                        🗑️ Eliminar
                       </button>
                     </div>
-                    {tarifa.fuente === "medicamentos" ? (
-                      <button
-                        onClick={() => window.open("/farmacia-medicamentos", "_blank")}
-                        className="text-blue-600 hover:text-blue-900 px-2 sm:px-3 py-1 bg-blue-100 rounded text-xs sm:text-sm"
-                      >
-                        🏥 <span className="hidden sm:inline">Gestionar en</span> Farmacia
-                      </button>
-                    ) : tarifa.fuente === "examenes_laboratorio" ? (
-                      <button
-                        onClick={() => window.open("/laboratorio-examenes", "_blank")}
-                        className="text-green-600 hover:text-green-900 px-2 sm:px-3 py-1 bg-green-100 rounded text-xs sm:text-sm"
-                      >
-                        🧪 <span className="hidden sm:inline">Gestionar en</span> Lab
-                      </button>
-                    ) : (
-                      <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2">
-                        <button
-                          onClick={() => abrirModal(tarifa)}
-                          className="text-blue-600 hover:text-blue-900 px-2 py-1 bg-blue-100 rounded text-xs sm:text-sm"
-                        >
-                          ✏️ Editar
-                        </button>
-                        <button
-                          onClick={() => eliminarTarifa(tarifa.id, tarifa.descripcion)}
-                          className="text-red-600 hover:text-red-900 px-2 py-1 bg-red-100 rounded text-xs sm:text-sm"
-                        >
-                          🗑️ Eliminar
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </td>
               </tr>
