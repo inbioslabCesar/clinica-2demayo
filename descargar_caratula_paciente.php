@@ -1,36 +1,5 @@
 <?php
-// Configurar headers CORS primero
-$allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174', 
-    'http://localhost:5175',
-    'https://clinica2demayo.com'
-];
-
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-}
-
-header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-
-// Manejar preflight requests
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
-
-// Configurar manejo de errores pero sin display
-error_reporting(0);
-ini_set('display_errors', 0);
-ini_set('log_errors', 1);
-ini_set('error_log', __DIR__ . '/error_caratula.log');
-
-// Iniciar buffer de salida para capturar cualquier output no deseado
-ob_start();
-
+require_once __DIR__ . '/init_api.php';
 require_once 'config_pdf.php';
 
 // Log de inicio

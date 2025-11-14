@@ -133,15 +133,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Registrar nuevo paciente
         $stmt = $conn->prepare("INSERT INTO pacientes (dni, nombre, apellido, historia_clinica, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, sexo, direccion, telefono, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->bind_param('sssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email);
-            if ($stmt->execute()) {
-                $id = $conn->insert_id;
-                $res = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = $id");
-                $paciente = $res->fetch_assoc();
-                echo json_encode(['success' => true, 'paciente' => $paciente]);
+        if ($stmt->execute()) {
+            $id = $conn->insert_id;
+            $res = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = $id");
+            $paciente = $res->fetch_assoc();
+            echo json_encode(['success' => true, 'paciente' => $paciente]);
+        } else {
+            // Detectar error de DNI duplicado y devolver mensaje en español
+            if (strpos($stmt->error, 'Duplicate entry') !== false && strpos($stmt->error, 'dni') !== false) {
+                echo json_encode(['success' => false, 'error' => 'El DNI ingresado ya está registrado en el sistema.']);
             } else {
                 echo json_encode(['success' => false, 'error' => 'Error al registrar paciente: ' . $stmt->error]);
             }
-            $stmt->close();
+        }
+        $stmt->close();
         }
         exit;
 }

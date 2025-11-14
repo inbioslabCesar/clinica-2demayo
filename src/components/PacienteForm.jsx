@@ -155,6 +155,28 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       // Genera un DNI provisional de 8 dígitos, por ejemplo: 99990001
       formToSend.dni = (99990000 + Math.floor(Math.random() * 100)).toString();
     }
+
+    // Verificación previa: consultar si el DNI ya existe
+    if (formToSend.tipo_documento === "dni" && formToSend.dni) {
+      try {
+        const resDni = await fetch(`${BASE_URL}api_pacientes.php?busqueda=${formToSend.dni}&limit=1`, { credentials: "include" });
+        const dataDni = await resDni.json();
+        if (dataDni.success && Array.isArray(dataDni.pacientes) && dataDni.pacientes.length > 0) {
+          MySwal.fire({
+            icon: "warning",
+            title: "DNI ya registrado",
+            html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
+            confirmButtonText: "Aceptar",
+            showClass: { popup: 'animate__animated animate__fadeInDown' },
+            hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+          });
+          setLoading(false);
+          return;
+        }
+      } catch (err) {
+        // Si la consulta falla, continuar con el registro normal
+      }
+    }
     try {
       const res = await fetch(BASE_URL + "api_pacientes.php", {
         method: "POST",
@@ -162,7 +184,15 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         body: JSON.stringify(formToSend),
         credentials: "include",
       });
-      const data = await res.json();
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (err) {
+        // Si la respuesta no es JSON, mostrar error genérico
+        setError("Error de conexión con el servidor. Intente nuevamente.");
+        setLoading(false);
+        return;
+      }
       if (data.success && data.paciente) {
         onRegistroExitoso(data.paciente);
         // Mostrar mensaje de confirmación con el número de HC generado
@@ -173,14 +203,31 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
           confirmButtonText: "Aceptar"
         });
       } else {
-        setError(
-          data.error ||
-            (form.id
-              ? "Error al actualizar paciente"
-              : "Error al registrar paciente")
-        );
+        // Si el error es por DNI duplicado, mostrar mensaje claro y atractivo
+        if ((data.error && data.error.includes('Duplicate entry') && data.error.includes('dni')) ||
+            (data.error && data.error.toLowerCase().includes('dni') && data.error.toLowerCase().includes('registrado'))) {
+          setError("");
+          MySwal.fire({
+            icon: "warning",
+            title: "DNI ya registrado",
+            html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
+            confirmButtonText: "Aceptar",
+            showClass: { popup: 'animate__animated animate__fadeInDown' },
+            hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+          });
+        } else {
+          setError("");
+          MySwal.fire({
+            icon: "error",
+            title: form.id ? "Error al actualizar paciente" : "Error al registrar paciente",
+            html: `<div style='font-size:1.1em'>${data.error || (form.id ? "Error al actualizar paciente" : "Error al registrar paciente")}</div>`,
+            confirmButtonText: "Aceptar",
+            showClass: { popup: 'animate__animated animate__fadeInDown' },
+            hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+          });
+        }
       }
-    } catch {
+    } catch (err) {
       setError(
         form.id
           ? "Error de conexión al actualizar"

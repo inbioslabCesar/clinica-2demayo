@@ -3,7 +3,7 @@ import { BASE_URL } from "../config/config";
 
 function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   const [viewMode, setViewMode] = useState('table');
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [rowsPerPage, setRowsPerPage] = useState(3);
   const [page, setPage] = useState(0);
   const [ordenes, setOrdenes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -75,7 +75,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     });
   };
 
-  const ordenesFiltradas = filtrarOrdenes(ordenes);
+  // Mostrar el último paciente primero (orden más reciente primero)
+  const ordenesFiltradas = filtrarOrdenes([...ordenes].reverse());
   
   // Calcular estadísticas
   const stats = {
@@ -220,6 +221,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
               onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(0); }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             >
+              <option value={3}>3</option>
               <option value={5}>5</option>
               <option value={10}>10</option>
               <option value={25}>25</option>

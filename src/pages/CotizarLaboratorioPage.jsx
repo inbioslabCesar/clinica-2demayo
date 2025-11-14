@@ -43,6 +43,9 @@ export default function CotizarLaboratorioPage() {
         setPaciente(pacienteData.paciente);
       }
       setLoading(false);
+      // Depuración: mostrar tarifas y examenes en consola
+      console.log('Tarifas:', tarifasData.tarifas);
+      console.log('Examenes:', examenesData.examenes);
     });
   }, [pacienteId]);
 
@@ -55,8 +58,10 @@ export default function CotizarLaboratorioPage() {
 
   const calcularTotal = () => {
     return seleccionados.reduce((total, exId) => {
+      const ex = examenes.find(e => e.id === exId);
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === exId && t.activo === 1);
-      return total + (tarifa ? parseFloat(tarifa.precio_particular) : 0);
+      const precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      return total + precio;
     }, 0);
   };
 
@@ -101,13 +106,15 @@ export default function CotizarLaboratorioPage() {
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === exId && t.activo === 1);
       let descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
       const derivacion = derivaciones[exId] || { derivado: false };
+      // Usar precio_publico si no hay tarifa
+      let precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
       return {
         servicio_tipo: "laboratorio",
         servicio_id: exId,
         descripcion,
         cantidad: 1,
-        precio_unitario: tarifa ? parseFloat(tarifa.precio_particular) : 0,
-        subtotal: tarifa ? parseFloat(tarifa.precio_particular) : 0,
+        precio_unitario: precio,
+        subtotal: precio,
         derivado: derivacion.derivado || false,
         tipo_derivacion: derivacion.tipo || '',
         valor_derivacion: derivacion.valor || 0,
@@ -200,6 +207,9 @@ export default function CotizarLaboratorioPage() {
                     const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === ex.id && t.activo === 1);
                     const isSelected = seleccionados.includes(ex.id);
                     const derivacion = derivaciones[ex.id] || { derivado: false, tipo: '', valor: '', laboratorio: '' };
+                    // Usar precio_publico si no hay tarifa
+                    const precio = tarifa ? tarifa.precio_particular : (ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                    const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                     return (
                       <li key={ex.id} className="flex flex-col px-4 py-3 hover:bg-blue-50 transition-colors border-b">
                         <div className="flex items-center">
@@ -215,7 +225,7 @@ export default function CotizarLaboratorioPage() {
                               <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-1 inline-block">{ex.categoria}</span>
                             )}
                           </div>
-                          <div className="font-bold text-green-700 text-lg">S/ {tarifa ? tarifa.precio_particular : "-"}</div>
+                          <div className="font-bold text-green-700 text-lg">S/ {precioMostrar}</div>
                         </div>
                         {/* Configuración de derivación solo si está seleccionado */}
                         {isSelected && (
@@ -323,6 +333,8 @@ export default function CotizarLaboratorioPage() {
                 {seleccionados.map(exId => {
                   const ex = examenes.find(e => e.id === exId);
                   const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && t.examen_id === exId && t.activo === 1);
+                  const precio = tarifa ? tarifa.precio_particular : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                  const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                   return (
                     <li key={exId} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
@@ -334,7 +346,7 @@ export default function CotizarLaboratorioPage() {
                           <span className="block text-xs text-gray-400">Tiempo: {ex.tiempo_resultado}</span>
                         )}
                       </div>
-                      <div className="font-bold text-green-700 text-right">S/ {tarifa ? tarifa.precio_particular : "-"}</div>
+                      <div className="font-bold text-green-700 text-right">S/ {precioMostrar}</div>
                     </li>
                   );
                 })}

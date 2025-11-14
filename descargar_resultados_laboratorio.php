@@ -1,33 +1,6 @@
 
 <?php
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path' => '/',
-    'domain' => '',
-    'secure' => false, // Cambiado a false para desarrollo local (HTTP)
-    'httponly' => true,
-    'samesite' => 'Lax', // Cambiado de None a Lax para mejor compatibilidad
-]);
-session_start();
-// CORS para localhost y producción
-$allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    'https://clinica2demayo.com'
-];
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowedOrigins)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-}
-header('Access-Control-Allow-Credentials: true');
-header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
-header('Content-Type: application/json');
+require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
 // Obtener configuración de la clínica
@@ -373,51 +346,39 @@ if (empty($examenes_detalle)) {
     $html .= '<div class="exam-title">Resultados</div>';
     $html .= '<pre style="background:#f8f9fa;padding:10px;border:1px solid #ddd;">' . h(json_encode($resultados_map, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</pre>';
 } else {
+    // Crear una sola tabla para todos los exámenes
+    $html .= '<table class="results-table" style="margin-top: 18px;">';
+    $html .= '<thead><tr style="background: linear-gradient(90deg, #e5e7eb 0%, #d1d5db 100%);">';
+    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Examen / Parámetro</th>';
+    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Metodología</th>';
+    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Resultado</th>';
+    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Unidades</th>';
+    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Valores de Referencia</th>';
+    $html .= '</tr></thead><tbody>';
     foreach ($examenes_detalle as $exId => $ex) {
-        // Comenzar directamente con la tabla sin información adicional
         if (!empty($ex['valores_referenciales'])) {
-            // Tabla de resultados profesional con estilo mejorado
-            $html .= '<table class="results-table" style="margin-top: 25px;">';
-            $html .= '<thead><tr style="background: linear-gradient(90deg, #e5e7eb 0%, #d1d5db 100%);">';
-            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Examen / Parámetro</th>';
-            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Metodología</th>';
-            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Resultado</th>';
-            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Unidades</th>';
-            $html .= '<th style="padding: 12px 8px; text-align: left; font-weight: bold; font-size: 11px;">Valores de Referencia</th>';
-            $html .= '</tr></thead><tbody>';
-            
             foreach ($ex['valores_referenciales'] as $param) {
-                // Mostrar subtítulos como filas en la tabla (incluyendo el nombre del examen si está configurado)
                 $tipo = $param['tipo'] ?? 'Parámetro';
                 $nombre_param = $param['nombre'] ?? '';
-                
                 if (strtolower($tipo) !== 'parámetro') {
-                    // Mostrar todos los subtítulos alineados a la izquierda
                     $bgColor = $param['color_fondo'] ?? '#f8f9fa';
                     $textColor = $param['color_texto'] ?? '#000';
                     $fontWeight = $param['negrita'] ? 'bold' : 'normal';
-                    $html .= '<tr class="subtitle-row" style="border-bottom: 1px solid #e5e7eb;"><td colspan="5" style="background:' . h($bgColor) . ';color:' . h($textColor) . ';font-weight:' . $fontWeight . ';text-align:left;padding:12px 8px;">' . h($nombre_param) . '</td></tr>';
+                    $html .= '<tr class="subtitle-row" style="border-bottom: 1px solid #e5e7eb;"><td colspan="5" style="background:' . h($bgColor) . ';color:' . h($textColor) . ';font-weight:' . $fontWeight . ';text-align:left;padding:2px 4px;">' . h($nombre_param) . '</td></tr>';
                     continue;
                 }
-
                 $nombre = $param['nombre'] ?? '';
                 $metodo = $param['metodologia'] ?? '';
                 $unidad = $param['unidad'] ?? '';
-                
-                // Buscar el valor guardado: llave "{exId}__{nombre}"
                 $key = $exId . '__' . $nombre;
                 $valor = isset($resultados_map[$key]) ? $resultados_map[$key] : '';
-
-                // Construir referencias legibles en formato de columna
                 $refs = '';
                 if (!empty($param['referencias']) && is_array($param['referencias'])) {
                     $parts = [];
                     foreach ($param['referencias'] as $r) {
                         if (!empty($r['valor_min']) && !empty($r['valor_max'])) {
-                            // Formato en columna con viñetas: • Hombres 13.5-17.5
                             $desc = '';
                             if (!empty($r['desc'])) {
-                                // Capitalizar primera letra y convertir el resto a minúsculas para mejor legibilidad
                                 $desc = ucfirst(strtolower(trim($r['desc']))) . ' ';
                             }
                             $parts[] = '• ' . $desc . h($r['valor_min']) . '-' . h($r['valor_max']);
@@ -429,11 +390,8 @@ if (empty($examenes_detalle)) {
                             $parts[] = '• ' . $desc . h($r['valor']);
                         }
                     }
-                    // Unir con saltos de línea en lugar de comas
                     $refs = implode('<br>', $parts);
                 }
-
-                // Aplicar estilos de color y negrita
                 $cellStyle = '';
                 if (!empty($param['color_fondo']) && $param['color_fondo'] !== '#ffffff') {
                     $cellStyle .= 'background:' . h($param['color_fondo']) . ';';
@@ -444,29 +402,26 @@ if (empty($examenes_detalle)) {
                 if (!empty($param['negrita'])) {
                     $cellStyle .= 'font-weight:bold;';
                 }
-
                 $html .= '<tr style="border-bottom: 1px solid #e5e7eb;">';
-                $html .= '<td style="' . $cellStyle . ' padding: 8px; font-weight: bold;">' . h($nombre) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 8px; text-align: center;">' . h($metodo) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 8px; text-align: center; font-weight: bold; font-size: 12px;">' . h((string)$valor) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 8px; text-align: center;">' . h($unidad) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 8px;">' . $refs . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; font-weight: bold;">' . h($nombre) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; text-align: center;">' . h($metodo) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; text-align: center; font-weight: bold; font-size: 12px;">' . h((string)$valor) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; text-align: center;">' . h($unidad) . '</td>';
+                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px;">' . $refs . '</td>';
                 $html .= '</tr>';
             }
-            $html .= '</tbody></table>';
         } else {
-            // Examen sin parámetros: intentar mostrar resultado crudo por llave "{exId}" o todo el bloque
             $rawKey = (string)$exId;
             $val = isset($resultados_map[$rawKey]) ? $resultados_map[$rawKey] : null;
             if ($val !== null && $val !== '') {
-                $html .= '<div style="margin-top:15px;padding:10px;background:#f8f9fa;border:1px solid #ddd;border-radius:4px;"><strong>Resultado:</strong><div style="margin-top:5px;">' . nl2br(h((string)$val)) . '</div></div>';
+                $html .= '<tr><td colspan="5" style="padding: 2px 4px;"><strong>Resultado:</strong><div style="margin-top:5px;">' . nl2br(h((string)$val)) . '</div></td></tr>';
             } else {
-                $html .= '<div style="margin-top:15px;padding:10px;background:#fff3cd;border:1px solid #ffeaa7;border-radius:4px;color:#856404;text-align:center;">No hay resultados registrados para este examen.</div>';
+                $html .= '<tr><td colspan="5" style="background:#fff3cd;color:#856404;text-align:center;padding: 2px 4px;">No hay resultados registrados para este examen.</td></tr>';
             }
         }
-
-$html .= '</div>'; // card
     }
+    $html .= '</tbody></table>';
+    $html .= '</div>'; // card
 }
 
 // Footer con firma en esquina inferior derecha
