@@ -1,8 +1,39 @@
 import { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
 import axios from "axios";
+import Swal from "sweetalert2";
 
 export default function MovimientosModal({ medicamento, usuario, onClose }) {
+    // Eliminar movimiento
+    const handleDeleteMovimiento = async (mov) => {
+      const confirm = await Swal.fire({
+        title: "¿Eliminar movimiento?",
+        text: "Esta acción no se puede deshacer.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Sí, eliminar",
+        cancelButtonText: "Cancelar",
+        confirmButtonColor: "#d33",
+      });
+      if (!confirm.isConfirmed) return;
+      try {
+        const res = await fetch(apiUrl, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ id: mov.id })
+        });
+        const result = await res.json();
+        if (result.success) {
+          await Swal.fire("¡Eliminado!", "El movimiento ha sido eliminado correctamente.", "success");
+          fetchMovimientos();
+        } else {
+          await Swal.fire("Error", result.error || "No se pudo eliminar el movimiento.", "error");
+        }
+      } catch {
+        await Swal.fire("Error", "Error de red o servidor", "error");
+      }
+    };
   // Debug: Verificar el usuario recibido
   // console.log eliminado
   const [movimientos, setMovimientos] = useState([]);
@@ -256,8 +287,15 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
                       <td className="py-1 px-2 border-b">
                         {mov.medico_nombre && mov.medico_apellido ? `${mov.medico_nombre} ${mov.medico_apellido}` : mov.medico_nombre || "-"}
                       </td>
-                      <td className="py-1 px-2 border-b">
-                        {mov.observaciones}
+                      <td className="py-1 px-2 border-b flex gap-2 items-center">
+                        <span>{mov.observaciones}</span>
+                        <button
+                          title="Eliminar movimiento"
+                          className="ml-2 px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 text-xs"
+                          onClick={() => handleDeleteMovimiento(mov)}
+                        >
+                          Eliminar
+                        </button>
                       </td>
                     </tr>
                   ))

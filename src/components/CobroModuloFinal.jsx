@@ -113,9 +113,19 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         credentials: 'include',
         body: JSON.stringify(cobroData)
       });
+      // DEBUG: Mostrar datos enviados al backend
+      console.log('Datos enviados a api_cobros.php:', cobroData);
 
       const result = await response.json();
-  // ...
+      // Mostrar error con SweetAlert2 si el backend responde error
+      if (!result.success && result.error) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error en el cobro',
+          text: result.error,
+        });
+        return;
+      }
 
       if (result.success) {
         // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio

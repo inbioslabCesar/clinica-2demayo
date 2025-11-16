@@ -4,6 +4,7 @@ function FormularioAgendarConsulta({
   tipoConsulta,
   setTipoConsulta,
   medicos,
+  tarifas,
   medicoId,
   setMedicoId,
   fecha,
@@ -46,12 +47,9 @@ function FormularioAgendarConsulta({
           required
         >
           <option value="">Selecciona un médico</option>
-          {medicos.map((medico) => (
-            <option key={medico.id} value={medico.id}>
-              {medico.nombre} {medico.apellido}
-              {medico.especialidad && (
-                " " + String.fromCharCode(8212) + " " + medico.especialidad
-              )}
+          {tarifas.map((tarifa) => (
+            <option key={tarifa.medico_id} value={tarifa.medico_id}>
+              Dr(a). {tarifa.medico_nombre} {tarifa.medico_apellido} — {tarifa.descripcion}
             </option>
           ))}
         </select>

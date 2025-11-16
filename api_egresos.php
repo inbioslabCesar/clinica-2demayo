@@ -33,8 +33,11 @@ if ($method === 'POST') {
     date_default_timezone_set('America/Lima');
     $hora = $input['hora'] ?? date('H:i:s');
 
-    $stmt = $pdo->prepare("INSERT INTO egresos (fecha, tipo_egreso, categoria, descripcion, monto, metodo_pago, usuario_id, turno, estado, caja_id, observaciones, hora) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    $ok = $stmt->execute([$fecha, $tipo_egreso, $categoria, $descripcion, $monto, $metodo_pago, $usuario_id, $turno, $estado, $caja_id, $observaciones, $hora]);
+    $tipo = $input['tipo'] ?? 'operativo';
+    $concepto = $input['concepto'] ?? $descripcion;
+    $responsable = isset($_SESSION['usuario']['nombre']) ? $_SESSION['usuario']['nombre'] : '';
+    $stmt = $pdo->prepare("INSERT INTO egresos (fecha, tipo, tipo_egreso, categoria, descripcion, concepto, monto, metodo_pago, usuario_id, turno, estado, caja_id, observaciones, hora, responsable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $ok = $stmt->execute([$fecha, $tipo, $tipo_egreso, $categoria, $descripcion, $concepto, $monto, $metodo_pago, $usuario_id, $turno, $estado, $caja_id, $observaciones, $hora, $responsable]);
     if ($ok) {
         echo json_encode(["success" => true, "id" => $pdo->lastInsertId()]);
     } else {

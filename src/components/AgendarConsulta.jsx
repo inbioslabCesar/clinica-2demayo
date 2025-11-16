@@ -20,6 +20,8 @@ function AgendarConsulta({ pacienteId }) {
   const [detallesConsulta, setDetallesConsulta] = useState([]);
   const [totalConsulta, setTotalConsulta] = useState(0);
   const [medicos, setMedicos] = useState([]);
+  const [medicosConTarifa, setMedicosConTarifa] = useState([]);
+  const [tarifasConsulta, setTarifasConsulta] = useState([]);
   const [medicoId, setMedicoId] = useState("");
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
   // Inicializar fecha con la fecha actual de Lima
@@ -62,19 +64,19 @@ function AgendarConsulta({ pacienteId }) {
               );
             }
             if (tarifa) {
-              const detalle = {
-                servicio_tipo: "consulta",
-                servicio_id: consultaCreada.id,
-                descripcion: tarifa.descripcion, // Usar descripción exacta de la tarifa
-                cantidad: 1,
-                precio_unitario: parseFloat(tarifa.precio_particular) || 0,
-                subtotal: parseFloat(tarifa.precio_particular) || 0,
-                consulta_id: consultaCreada.id,
-                medico_id: consultaCreada.medico_id,
-                paciente_id: consultaCreada.paciente_id,
-              };
-              setDetallesConsulta([detalle]);
-              setTotalConsulta(detalle.subtotal);
+                const detalle = {
+                  servicio_tipo: "consulta",
+                  tarifa_id: tarifa.id, // Enviar el ID de la tarifa seleccionada
+                  descripcion: tarifa.descripcion, // Usar descripción exacta de la tarifa
+                  cantidad: 1,
+                  precio_unitario: parseFloat(tarifa.precio_particular) || 0,
+                  subtotal: parseFloat(tarifa.precio_particular) || 0,
+                  consulta_id: consultaCreada.id,
+                  medico_id: consultaCreada.medico_id,
+                  paciente_id: consultaCreada.paciente_id,
+                };
+                setDetallesConsulta([detalle]);
+                setTotalConsulta(detalle.subtotal);
             } else {
               setDetallesConsulta([]);
               setTotalConsulta(0);
@@ -88,9 +90,19 @@ function AgendarConsulta({ pacienteId }) {
   }, [mostrarCobro, consultaCreada]);
 
   useEffect(() => {
-    fetch(BASE_URL + "api_medicos.php")
-      .then((r) => r.json())
-      .then((data) => setMedicos(data.medicos || []));
+    // Cargar médicos y tarifas, luego filtrar
+    Promise.all([
+      fetch(BASE_URL + "api_medicos.php").then(r => r.json()),
+      fetch(BASE_URL + "api_tarifas.php").then(r => r.json())
+    ]).then(([medicosData, tarifasData]) => {
+      const medicosList = medicosData.medicos || [];
+      setMedicos(medicosList);
+      const tarifasConsultaFiltradas = (tarifasData.tarifas || []).filter(t => t.servicio_tipo === "consulta" && t.activo === 1 && t.medico_id);
+      setTarifasConsulta(tarifasConsultaFiltradas);
+      const idsMedicosConTarifa = tarifasConsultaFiltradas.map(t => String(t.medico_id));
+      const filtrados = medicosList.filter(m => idsMedicosConTarifa.includes(String(m.id)));
+      setMedicosConTarifa(filtrados);
+    });
   }, []);
 
   // Cargar horarios disponibles cuando se selecciona médico y fecha
@@ -281,7 +293,8 @@ function AgendarConsulta({ pacienteId }) {
           <FormularioAgendarConsulta
             tipoConsulta={tipoConsulta}
             setTipoConsulta={setTipoConsulta}
-            medicos={medicos}
+            medicos={medicosConTarifa}
+            tarifas={tarifasConsulta}
             medicoId={medicoId}
             setMedicoId={setMedicoId}
             fecha={fecha}

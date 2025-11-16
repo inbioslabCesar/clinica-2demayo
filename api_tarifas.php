@@ -28,7 +28,7 @@ function obtenerTodasLasTarifas($conn) {
     $hasMedicoId = $checkColumn->num_rows > 0;
     
     if ($hasMedicoId) {
-        $query = "SELECT t.*, m.nombre as medico_nombre, m.especialidad as medico_especialidad 
+        $query = "SELECT t.*, m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad as medico_especialidad 
                   FROM tarifas t 
                   LEFT JOIN medicos m ON t.medico_id = m.id 
                   WHERE t.activo = 1 
@@ -49,6 +49,7 @@ function obtenerTodasLasTarifas($conn) {
             'activo' => intval($row['activo']),
             'medico_id' => $hasMedicoId ? $row['medico_id'] : null,
             'medico_nombre' => $hasMedicoId ? $row['medico_nombre'] : null,
+            'medico_apellido' => $hasMedicoId ? $row['medico_apellido'] : null,
             'medico_especialidad' => $hasMedicoId ? $row['medico_especialidad'] : null,
             'porcentaje_medico' => isset($row['porcentaje_medico']) ? floatval($row['porcentaje_medico']) : null,
             'porcentaje_clinica' => isset($row['porcentaje_clinica']) ? floatval($row['porcentaje_clinica']) : null,

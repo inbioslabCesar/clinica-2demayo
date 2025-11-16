@@ -70,8 +70,8 @@ switch ($method) {
         }
         break;
     case 'DELETE':
-        // Eliminar medicamento
-        parse_str(file_get_contents('php://input'), $data);
+        // Eliminar medicamento (leer JSON body)
+        $data = json_decode(file_get_contents('php://input'), true);
         if (isset($data['id'])) {
             $stmt = $conn->prepare("DELETE FROM medicamentos WHERE id=?");
             $stmt->bind_param("i", $data['id']);

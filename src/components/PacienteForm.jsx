@@ -162,16 +162,20 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         const resDni = await fetch(`${BASE_URL}api_pacientes.php?busqueda=${formToSend.dni}&limit=1`, { credentials: "include" });
         const dataDni = await resDni.json();
         if (dataDni.success && Array.isArray(dataDni.pacientes) && dataDni.pacientes.length > 0) {
-          MySwal.fire({
-            icon: "warning",
-            title: "DNI ya registrado",
-            html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
-            confirmButtonText: "Aceptar",
-            showClass: { popup: 'animate__animated animate__fadeInDown' },
-            hideClass: { popup: 'animate__animated animate__fadeOutUp' }
-          });
-          setLoading(false);
-          return;
+          const pacienteEncontrado = dataDni.pacientes[0];
+          // Si estamos editando y el id coincide, permitir actualizar
+          if (!form.id || pacienteEncontrado.id !== form.id) {
+            MySwal.fire({
+              icon: "warning",
+              title: "DNI ya registrado",
+              html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
+              confirmButtonText: "Aceptar",
+              showClass: { popup: 'animate__animated animate__fadeInDown' },
+              hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+            });
+            setLoading(false);
+            return;
+          }
         }
       } catch (err) {
         // Si la consulta falla, continuar con el registro normal
@@ -198,7 +202,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         // Mostrar mensaje de confirmación con el número de HC generado
         MySwal.fire({
           icon: "success",
-          title: "Paciente registrado",
+          title: form.id ? "Paciente actualizado" : "Paciente registrado",
           html: `<b>Historia Clínica:</b> ${data.paciente.historia_clinica || '-'}`,
           confirmButtonText: "Aceptar"
         });

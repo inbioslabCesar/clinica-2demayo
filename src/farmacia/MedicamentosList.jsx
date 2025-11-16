@@ -1,5 +1,6 @@
 import MovimientosModal from "./MovimientosModal";
 import { FaInfoCircle, FaEdit, FaHistory, FaLock } from "react-icons/fa";
+import { FaTrash } from "react-icons/fa";
 import MedicamentoForm from "./MedicamentoForm";
 // ...hooks de filtro de fecha solo dentro de la función...
 // ...hooks de cuarentena solo dentro de la función...
@@ -8,8 +9,53 @@ import { useEffect, useState } from "react";
 
 import { BASE_URL } from "../config/config";
 import useUsuarioLogueado from "../hooks/useUsuarioLogueado";
+import Swal from "sweetalert2";
 
 export default function MedicamentosList() {
+    const [deleteLoading, setDeleteLoading] = useState(false);
+    const handleDelete = async (med) => {
+      const confirm = await Swal.fire({
+        title: `¿Seguro que deseas eliminar el medicamento "${med.nombre}"?`,
+        text: "Esta acción no se puede deshacer.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Sí, eliminar",
+        cancelButtonText: "Cancelar",
+        confirmButtonColor: "#d33",
+      });
+      if (!confirm.isConfirmed) return;
+      setDeleteLoading(true);
+      const apiUrl = `${BASE_URL}api_medicamentos.php`;
+      try {
+        const res = await fetch(apiUrl, {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: med.id })
+        });
+        const result = await res.json();
+        if (result.success) {
+          await Swal.fire("¡Eliminado!", "El medicamento ha sido eliminado correctamente.", "success");
+          fetchMedicamentos();
+        } else {
+          // Detectar error de clave foránea
+          if (result.error && result.error.includes("foreign key constraint fails")) {
+            await Swal.fire({
+              title: "No se puede eliminar",
+              text: "Este medicamento tiene movimientos registrados. Elimina primero los movimientos asociados antes de borrar el medicamento.",
+              icon: "error",
+              confirmButtonText: "Entendido",
+              confirmButtonColor: "#3085d6"
+            });
+          } else {
+            await Swal.fire("Error", result.error || "Error al eliminar", "error");
+          }
+        }
+      } catch {
+        await Swal.fire("Error", "Error de red o servidor", "error");
+      }
+      setDeleteLoading(false);
+    };
   const usuarioLogueado = useUsuarioLogueado();
   const [detalleMed, setDetalleMed] = useState(null);
   const [filtroVencDesde, setFiltroVencDesde] = useState("");
@@ -413,6 +459,14 @@ export default function MedicamentosList() {
                             <FaLock size={16} />
                           </button>
                         )}
+                        <button
+                          onClick={() => handleDelete(m)}
+                          className="p-2 text-red-600 hover:text-white hover:bg-red-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          title="Eliminar"
+                          disabled={deleteLoading}
+                        >
+                          <FaTrash size={16} />
+                        </button>
                       </td>
                     </tr>
                   );

@@ -43,6 +43,7 @@ function LiquidacionHonorariosPage() {
       const response = await fetch(`${BASE_URL}api_honorarios_pendientes.php${query}`);
       const data = await response.json();
       if (data.success) {
+        console.log("Honorarios recibidos:", data.honorarios);
         setHonorarios(data.honorarios || []);
       }
     } catch (error) {
@@ -132,6 +133,7 @@ function LiquidacionHonorariosPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2">Médico</th>
+                <th className="px-4 py-2">Descripción</th>
                 <th className="px-4 py-2">Servicio</th>
                 <th className="px-4 py-2">Paciente</th>
                 <th className="hidden sm:table-cell px-4 py-2">Fecha</th>
@@ -146,10 +148,11 @@ function LiquidacionHonorariosPage() {
             </thead>
             <tbody>
               {honorarios.length === 0 ? (
-                <tr><td colSpan={11} className="text-center py-8 text-gray-500">No hay honorarios {estado === "pendiente" ? "pendientes" : "pagados"}</td></tr>
+                <tr><td colSpan={12} className="text-center py-8 text-gray-500">No hay honorarios {estado === "pendiente" ? "pendientes" : "pagados"}</td></tr>
               ) : honorarios.slice((page - 1) * rowsPerPage, page * rowsPerPage).map(h => (
                 <tr key={h.id}>
                   <td className="px-4 py-2">{h.medico_nombre} {h.medico_apellido}</td>
+                  <td className="px-4 py-2">{h.descripcion}</td>
                   <td className="px-4 py-2">{h.tipo_servicio}</td>
                   <td className="px-4 py-2">{h.paciente_nombre} {h.paciente_apellido}</td>
                   <td className="hidden sm:table-cell px-4 py-2">{h.fecha}</td>

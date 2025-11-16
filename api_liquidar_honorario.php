@@ -43,16 +43,18 @@ if ($conn->query($sql)) {
     // Registrar egreso
     $medico_id = intval($honorario['medico_id']);
     $monto = floatval($honorario['monto_medico']);
-    // Usar el turno del usuario que está liquidando (si existe) para que la liquidación quede registrada en su caja/turno
     $turno = isset($_SESSION['usuario']['turno']) ? $conn->real_escape_string($_SESSION['usuario']['turno']) : $conn->real_escape_string($honorario['turno']);
     $metodo_pago = $conn->real_escape_string($honorario['metodo_pago_medico']);
     $fecha = date('Y-m-d');
     $descripcion = "Liquidación honorario médico ID $id";
     $estado = "pagado";
     $honorario_movimiento_id = $id;
+    $tipo = 'honorario'; // Nuevo campo tipo para distinguir el egreso
     // Registrar egreso con caja_id si existe
-    $sqlEgreso = "INSERT INTO egresos (fecha, tipo_egreso, categoria, descripcion, monto, metodo_pago, usuario_id, turno, estado, medico_id, honorario_movimiento_id, caja_id) VALUES (
-        '$fecha', 'honorario_medico', 'Honorarios Médicos', '$descripcion', $monto, '$metodo_pago', $usuario_id, '$turno', '$estado', $medico_id, $honorario_movimiento_id, " . ($caja_id ? $caja_id : "NULL") . "
+    $concepto = $descripcion; // Usamos la misma descripción para concepto
+    $responsable = isset($_SESSION['usuario']['nombre']) ? $conn->real_escape_string($_SESSION['usuario']['nombre']) : '';
+    $sqlEgreso = "INSERT INTO egresos (fecha, tipo, tipo_egreso, categoria, descripcion, concepto, monto, metodo_pago, usuario_id, turno, estado, medico_id, honorario_movimiento_id, caja_id, responsable) VALUES (
+        '$fecha', '$tipo', 'honorario_medico', 'Honorarios Médicos', '$descripcion', '$concepto', $monto, '$metodo_pago', $usuario_id, '$turno', '$estado', $medico_id, $honorario_movimiento_id, " . ($caja_id ? $caja_id : "NULL") . ", '$responsable'
     )";
     $conn->query($sqlEgreso);
 
