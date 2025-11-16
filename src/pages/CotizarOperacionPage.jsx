@@ -5,6 +5,8 @@ import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 
 export default function CotizarOperacionPage() {
+    const [medicos, setMedicos] = useState([]);
+  
   const [mostrarCobro, setMostrarCobro] = useState(false);
   const [detallesCotizacion, setDetallesCotizacion] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
@@ -15,6 +17,19 @@ export default function CotizarOperacionPage() {
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
   const [mensaje, setMensaje] = useState("");
+
+    const [busqueda, setBusqueda] = useState("");
+    // Filtrar tarifas por búsqueda (nombre/descripción y médico)
+    const tarifasFiltradas = tarifas.filter(tarifa => {
+      const texto = `${tarifa.descripcion || tarifa.nombre}`.toLowerCase();
+      let medico = null;
+      if (tarifa && tarifa.medico_id) {
+        medico = medicos.find(m => m.id === tarifa.medico_id);
+      }
+      const doctor = medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`.toLowerCase() : "sin doctor";
+      const filtro = busqueda.toLowerCase();
+      return texto.includes(filtro) || doctor.includes(filtro);
+    });
 
   useEffect(() => {
     fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
@@ -27,6 +42,12 @@ export default function CotizarOperacionPage() {
       .then(data => {
         const operTarifas = (data.tarifas || []).filter(t => t.servicio_tipo === "operacion");
         setTarifas(operTarifas);
+      });
+    // Obtener lista de médicos
+    fetch(`${BASE_URL}api_medicos.php`, { credentials: "include" })
+      .then(res => res.json())
+      .then(data => {
+        setMedicos(data.medicos || []);
       });
   }, [pacienteId]);
 
@@ -64,6 +85,14 @@ export default function CotizarOperacionPage() {
       const cantidad = cantidades[tid] || 1;
       let nombreOperacion = (tarifa && tarifa.descripcion && tarifa.descripcion !== "0") ? tarifa.descripcion : (tarifa && tarifa.nombre && tarifa.nombre !== "0" ? tarifa.nombre : "Operación sin nombre");
       let descripcion = nombreOperacion;
+      // Buscar el nombre del médico
+      let medico_nombre = "";
+      if (tarifa && tarifa.medico_id) {
+        const medico = medicos.find(m => m.id === tarifa.medico_id);
+        if (medico) {
+          medico_nombre = `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
+        }
+      }
       return tarifa ? {
         servicio_tipo: "operacion",
         servicio_id: tid,
@@ -72,6 +101,7 @@ export default function CotizarOperacionPage() {
         precio_unitario: tarifa.precio_particular,
         subtotal: tarifa.precio_particular * cantidad,
         medico_id: tarifa.medico_id || "",
+        medico_nombre,
         especialidad: tarifa.especialidad || ""
       } : null;
     }).filter(Boolean);
@@ -96,16 +126,36 @@ export default function CotizarOperacionPage() {
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="mb-4 max-h-[500px] overflow-y-auto">
-          <div className="font-bold mb-2">Operaciones/Cirugías disponibles:</div>
-          {tarifas.length === 0 ? (
+          <div className="font-bold mb-2 flex flex-col gap-2">
+            <span>Operaciones/Cirugías disponibles:</span>
+            <input
+              type="text"
+              placeholder="Buscar operación/cirugía..."
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full max-w-md"
+            />
+          </div>
+          {tarifasFiltradas.length === 0 ? (
             <div className="text-gray-500">No hay operaciones/cirugías registradas.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {tarifas.map(tarifa => (
+              {tarifasFiltradas.map(tarifa => (
                 <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                   <div className="flex-1">
                     <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
                     <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
+                    <div className="text-xs text-blue-700 mt-1">
+                      Doctor: {(() => {
+                        if (tarifa.medico_id) {
+                          const medico = medicos.find(m => m.id === tarifa.medico_id);
+                          if (medico) {
+                            return `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
+                          }
+                        }
+                        return "Sin doctor";
+                      })()}
+                    </div>
                   </div>
                   {seleccionados.includes(tarifa.id) ? (
                     <>

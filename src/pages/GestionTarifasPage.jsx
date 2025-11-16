@@ -65,7 +65,13 @@ function GestionTarifasPage() {
       const medico = medicos.find((m) => m.id === parseInt(t.medico_id));
       if (medico) {
         const nombreCompleto = `${medico.nombre} ${medico.apellido}`.toLowerCase();
-        return nombreCompleto.includes(filtroLower);
+        const nombre = medico.nombre.toLowerCase();
+        const apellido = medico.apellido.toLowerCase();
+        return (
+          nombreCompleto.includes(filtroLower) ||
+          nombre.includes(filtroLower) ||
+          apellido.includes(filtroLower)
+        );
       }
       return false;
     });

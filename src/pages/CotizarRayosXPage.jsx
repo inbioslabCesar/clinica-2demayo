@@ -6,6 +6,7 @@ import { BASE_URL } from "../config/config";
 import CobroModuloFinal from "../components/CobroModuloFinal";
 
 export default function CotizarRayosXPage() {
+  const [busqueda, setBusqueda] = useState("");
   const [mostrarCobro, setMostrarCobro] = useState(false);
   const [detallesCotizacion, setDetallesCotizacion] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
@@ -18,6 +19,20 @@ export default function CotizarRayosXPage() {
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
   const [mensaje, setMensaje] = useState("");
+
+  // Filtrar tarifas por búsqueda
+  const tarifasFiltradas = tarifas.filter(tarifa => {
+    const texto = `${tarifa.descripcion || tarifa.nombre}`.toLowerCase();
+    let medico = null;
+    if (tarifa && tarifa.medico_id) {
+      medico = medicos.find(m => m.id === tarifa.medico_id);
+    }
+    const doctor = medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`.toLowerCase() : "sin doctor";
+    return (
+      texto.includes(busqueda.toLowerCase()) ||
+      doctor.includes(busqueda.toLowerCase())
+    );
+  });
 
   useEffect(() => {
     // Obtener datos del paciente
@@ -109,12 +124,21 @@ export default function CotizarRayosXPage() {
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="mb-4 max-h-[500px] overflow-y-auto">
-          <div className="font-bold mb-2">Estudios disponibles:</div>
+          <div className="font-bold mb-2 flex flex-col gap-2">
+            <span>Estudios disponibles:</span>
+            <input
+              type="text"
+              placeholder="Buscar estudio, descripción o doctor..."
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full max-w-md"
+            />
+          </div>
           {tarifas.length === 0 ? (
             <div className="text-gray-500">No hay estudios de Rayos X registrados.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {tarifas.map(tarifa => {
+              {tarifasFiltradas.map(tarifa => {
                 let medico = null;
                 if (tarifa && tarifa.medico_id) {
                   medico = medicos.find(m => m.id === tarifa.medico_id);

@@ -31,10 +31,10 @@ class CajaModule {
     // --- Registrar un ingreso en ingresos_diarios ---
     public static function registrarIngreso($conn, $params) {
         $stmt_ingreso = $conn->prepare("INSERT INTO ingresos_diarios (
-            caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno, honorario_movimiento_id, cobrado_por, liquidado_por, fecha_liquidacion
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt_ingreso->bind_param(
-            "isssdsisisis",
+            "isssdsisisisiiis",
             $params['caja_id'],
             $params['tipo_ingreso'],
             $params['area_servicio'],
@@ -46,7 +46,11 @@ class CajaModule {
             $params['paciente_id_param'],
             $params['nombre_paciente'],
             $params['usuario_id_param'],
-            $params['turno_param']
+            $params['turno_param'],
+            $params['honorario_movimiento_id'],
+            $params['cobrado_por'],
+            $params['liquidado_por'],
+            $params['fecha_liquidacion']
         );
         return $stmt_ingreso->execute();
     }

@@ -230,6 +230,76 @@ class CobroModule
                 $nombre_paciente = $data['paciente_nombre'] ?? '';
                 $usuario_id_param = $data['usuario_id'];
                 $turno_param = $caja_abierta['turno'] ?? ($data['turno'] ?? null);
+                // Buscar el id del movimiento de honorario si existe
+                $honorario_movimiento_id = null; // Inicializar honorario_movimiento_id
+                $liquidado_por = null;
+                $fecha_liquidacion = null;
+                if (isset($data['detalles']) && is_array($data['detalles'])) {
+                    foreach ($data['detalles'] as $detalle) {
+                        if (isset($detalle['honorario_movimiento_id'])) {
+                            $honorario_movimiento_id = $detalle['honorario_movimiento_id'];
+                        }
+                        if (isset($detalle['liquidado_por'])) {
+                            $liquidado_por = $detalle['liquidado_por'];
+                        }
+                        if (isset($detalle['fecha_liquidacion'])) {
+                            $fecha_liquidacion = $detalle['fecha_liquidacion'];
+                        }
+                    }
+                }
+                // Modificar el registro de honorarios para guardar el id retornado
+                if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion']) && !empty($data['detalles'])) {
+                    foreach ($data['detalles'] as $i => $detalleServicio) {
+                        $tarifa = null;
+                        $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
+                        if ($tarifa_id) {
+                            // Validar existencia del tarifa_id en tarifas
+                            $stmt_check = $conn->prepare("SELECT COUNT(*) as total FROM tarifas WHERE id = ?");
+                            $stmt_check->bind_param("i", $tarifa_id);
+                            $stmt_check->execute();
+                            $total_tarifa = $stmt_check->get_result()->fetch_assoc()['total'];
+                            if ($total_tarifa == 0) {
+                                throw new \Exception('El tarifa_id enviado (' . $tarifa_id . ') no existe en la tabla tarifas. Verifica la selección en el frontend/API.');
+                            }
+                            $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE id = ? AND activo = 1 LIMIT 1");
+                            $stmt_tarifa->bind_param("i", $tarifa_id);
+                            $stmt_tarifa->execute();
+                            $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                            if (!$tarifa) {
+                                throw new \Exception('No se encontró tarifa activa para el servicio seleccionado (id: ' . $tarifa_id . ').');
+                            }
+                        } else {
+                            $medico_id_buscar = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : null;
+                            if ($medico_id_buscar) {
+                                $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND medico_id = ? AND activo = 1 LIMIT 1");
+                                $stmt_tarifa_tipo->bind_param("si", $servicio_key, $medico_id_buscar);
+                                $stmt_tarifa_tipo->execute();
+                                $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                            } else {
+                                $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
+                                $stmt_tarifa_tipo->bind_param("s", $servicio_key);
+                                $stmt_tarifa_tipo->execute();
+                                $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                            }
+                        }
+                        $metodo_pago_map = [
+                            'efectivo' => 'efectivo',
+                            'tarjeta' => 'tarjeta',
+                            'transferencia' => 'transferencia',
+                            'yape' => 'yape',
+                            'plin' => 'plin',
+                            'seguro' => 'otros'
+                        ];
+                        $metodo_pago = $metodo_pago_map[$data['tipo_pago']] ?? 'otros';
+                        if ($tarifa) {
+                            $mov_id = HonorarioModule::registrarMovimiento($conn, $detalleServicio, $tarifa, $servicio_key, $metodo_pago, $cobro_id);
+                            $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
+                            $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
+                        } else {
+                            throw new \Exception('No se encontró tarifa activa para el servicio y médico seleccionado (servicio_tipo: ' . $servicio_key . ', medico_id: ' . ($medico_id_buscar ?? 'N/A') . ').');
+                        }
+                    }
+                }
                 $params = [
                     'caja_id' => $caja_id,
                     'tipo_ingreso' => $tipo_ingreso,
@@ -242,7 +312,11 @@ class CobroModule
                     'paciente_id_param' => $paciente_id_param,
                     'nombre_paciente' => $nombre_paciente,
                     'usuario_id_param' => $usuario_id_param,
-                    'turno_param' => $turno_param
+                    'turno_param' => $turno_param,
+                    'honorario_movimiento_id' => $honorario_movimiento_id,
+                    'cobrado_por' => ($_SESSION['usuario_id'] ?? $usuario_id_param),
+                    'liquidado_por' => $liquidado_por,
+                    'fecha_liquidacion' => $fecha_liquidacion
                 ];
                 CajaModule::registrarIngreso($conn, $params);
             }
@@ -265,57 +339,7 @@ class CobroModule
                 }
             }
 
-            // Honorarios médicos
-            if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion']) && !empty($data['detalles'])) {
-                foreach ($data['detalles'] as $detalleServicio) {
-                    $tarifa = null;
-                    $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
-                    if ($tarifa_id) {
-                        // Validar existencia del tarifa_id en tarifas
-                        $stmt_check = $conn->prepare("SELECT COUNT(*) as total FROM tarifas WHERE id = ?");
-                        $stmt_check->bind_param("i", $tarifa_id);
-                        $stmt_check->execute();
-                        $total_tarifa = $stmt_check->get_result()->fetch_assoc()['total'];
-                        if ($total_tarifa == 0) {
-                            throw new \Exception('El tarifa_id enviado (' . $tarifa_id . ') no existe en la tabla tarifas. Verifica la selección en el frontend/API.');
-                        }
-                        $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE id = ? AND activo = 1 LIMIT 1");
-                        $stmt_tarifa->bind_param("i", $tarifa_id);
-                        $stmt_tarifa->execute();
-                        $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
-                        if (!$tarifa) {
-                            throw new \Exception('No se encontró tarifa activa para el servicio seleccionado (id: ' . $tarifa_id . ').');
-                        }
-                    } else {
-                        $medico_id_buscar = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : null;
-                        if ($medico_id_buscar) {
-                            $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND medico_id = ? AND activo = 1 LIMIT 1");
-                            $stmt_tarifa_tipo->bind_param("si", $servicio_key, $medico_id_buscar);
-                            $stmt_tarifa_tipo->execute();
-                            $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
-                        } else {
-                            $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
-                            $stmt_tarifa_tipo->bind_param("s", $servicio_key);
-                            $stmt_tarifa_tipo->execute();
-                            $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
-                        }
-                    }
-                    $metodo_pago_map = [
-                        'efectivo' => 'efectivo',
-                        'tarjeta' => 'tarjeta',
-                        'transferencia' => 'transferencia',
-                        'yape' => 'yape',
-                        'plin' => 'plin',
-                        'seguro' => 'otros'
-                    ];
-                    $metodo_pago = $metodo_pago_map[$data['tipo_pago']] ?? 'otros';
-                    if ($tarifa) {
-                        HonorarioModule::registrarMovimiento($conn, $detalleServicio, $tarifa, $servicio_key, $metodo_pago, $cobro_id);
-                    } else {
-                        throw new \Exception('No se encontró tarifa activa para el servicio y médico seleccionado (servicio_tipo: ' . $servicio_key . ', medico_id: ' . ($medico_id_buscar ?? 'N/A') . ').');
-                    }
-                }
-            }
+            // ...el bloque de registro de honorarios médicos ya se ejecuta arriba, no repetir aquí...
 
             // Registro de atención
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {

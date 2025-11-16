@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 
 export default function CotizarProcedimientosPage() {
+   
   const { pacienteId } = useParams();
   const navigate = useNavigate();
   const [procedimientos, setProcedimientos] = useState([]);
@@ -14,6 +15,13 @@ export default function CotizarProcedimientosPage() {
   const [totalCotizacion, setTotalCotizacion] = useState(0);
   const [mensaje, setMensaje] = useState("");
   const [paciente, setPaciente] = useState(null);
+
+   const [busqueda, setBusqueda] = useState("");
+    // Filtrar procedimientos por búsqueda
+    const procedimientosFiltrados = procedimientos.filter(proc => {
+      const texto = `${proc.descripcion || proc.nombre}`.toLowerCase();
+      return texto.includes(busqueda.toLowerCase());
+    });
 
   useEffect(() => {
     fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
@@ -102,12 +110,19 @@ export default function CotizarProcedimientosPage() {
         <div className="flex-1">
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Selecciona los procedimientos:</h4>
-            {procedimientos.length === 0 ? (
+            <input
+              type="text"
+              placeholder="Buscar procedimiento..."
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full max-w-md mb-2"
+            />
+            {procedimientosFiltrados.length === 0 ? (
               <div className="text-center text-gray-500">No hay procedimientos para mostrar.</div>
             ) : (
               <div className="bg-white rounded-lg shadow border border-gray-200">
                 <ul className="divide-y divide-gray-100">
-                  {procedimientos.map(proc => (
+                  {procedimientosFiltrados.map(proc => (
                     <li key={proc.id} className="flex items-center px-4 py-3 hover:bg-blue-50 transition-colors">
                       <input
                         type="checkbox"

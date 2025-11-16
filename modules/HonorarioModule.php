@@ -57,6 +57,7 @@ class HonorarioModule {
             $metodo_pago,
             $cobro_id
         );
-        return $stmt_honorario->execute();
+        $stmt_honorario->execute();
+        return $conn->insert_id;
     }
 }
