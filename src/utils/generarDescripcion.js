@@ -6,7 +6,13 @@ export function generarDescripcion(medico, descripcionBase) {
   const especialidad = medico.especialidad ? ` - ${medico.especialidad}` : "";
   // Eliminar nombre/especialidad duplicados en la descripción base
   let base = descripcionBase || "Consulta";
-  const patron = new RegExp(`^(Dr\(a\)\.\s*)?${nombreCompleto}(\s*-\s*${medico.especialidad})?\s*-\s*`, "i");
+  // Usar string normal para evitar escapes innecesarios en template string
+  let patronStr = "^(Dr(a).\\s*)?" + nombreCompleto;
+  if (medico.especialidad) {
+    patronStr += "(\\s*-\\s*" + medico.especialidad + ")?";
+  }
+  patronStr += "\\s*-\\s*";
+  const patron = new RegExp(patronStr, "i");
   base = base.replace(patron, "").trim();
   return `${nombreCompleto}${especialidad} - ${base}`.replace(/ - $/, "");
 }

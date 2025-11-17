@@ -63,24 +63,26 @@ export default function LiquidacionLaboratorioReferenciaPage() {
   return (
   <div className="w-full max-w-[1600px] mx-auto p-6 bg-white rounded-xl shadow-lg mt-8">
       <h2 className="text-2xl font-bold text-blue-800 mb-6 flex items-center gap-2">💳 Liquidación Laboratorios de Referencia</h2>
-      <div className="mb-4 flex flex-col sm:flex-row gap-4">
-        <div>
-          <label className="font-semibold text-gray-700">Filtrar por estado:</label>
-          <select value={estadoFilter} onChange={e => setEstadoFilter(e.target.value)} className="border px-3 py-2 rounded w-40">
-            <option value="">Todos</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="pagado">Pagado</option>
-          </select>
-        </div>
-        <div>
-          <label className="font-semibold text-gray-700">Filtrar por laboratorio:</label>
-          <select value={laboratorioFilter} onChange={e => setLaboratorioFilter(e.target.value)} className="border px-3 py-2 rounded w-40">
-            <option value="">Todos</option>
-            {laboratorios.map(lab => (
-              <option key={lab} value={lab}>{lab}</option>
-            ))}
-          </select>
-        </div>
+      <div className="mb-4">
+        <form className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col bg-blue-50 rounded-lg p-2">
+            <label className="font-semibold text-blue-800 mb-1">Filtrar por estado:</label>
+            <select value={estadoFilter} onChange={e => setEstadoFilter(e.target.value)} className="border rounded px-2 py-2 text-sm focus:outline-blue-400">
+              <option value="">Todos</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="pagado">Pagado</option>
+            </select>
+          </div>
+          <div className="flex flex-col bg-blue-50 rounded-lg p-2">
+            <label className="font-semibold text-blue-800 mb-1">Filtrar por laboratorio:</label>
+            <select value={laboratorioFilter} onChange={e => setLaboratorioFilter(e.target.value)} className="border rounded px-2 py-2 text-sm focus:outline-blue-400">
+              <option value="">Todos</option>
+              {laboratorios.map(lab => (
+                <option key={lab} value={lab}>{lab}</option>
+              ))}
+            </select>
+          </div>
+        </form>
       </div>
       {loading ? (
         <div className="text-center text-gray-500">Cargando movimientos...</div>

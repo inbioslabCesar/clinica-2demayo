@@ -7,6 +7,14 @@ function Paginacion({
   elementosPorPagina,
   cambiarElementosPorPagina,
 }) {
+  // Valor inicial por defecto: 3 filas
+  React.useEffect(() => {
+    if (elementosPorPagina !== 3) {
+      cambiarElementosPorPagina(3);
+    }
+    // Solo en el primer render
+    // eslint-disable-next-line
+  }, []);
   return (
     <div className="bg-white p-4 rounded-lg shadow mb-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
@@ -19,6 +27,7 @@ function Paginacion({
             onChange={(e) => cambiarElementosPorPagina(parseInt(e.target.value))}
             className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           >
+            <option value={3}>3</option>
             <option value={5}>5</option>
             <option value={10}>10</option>
             <option value={25}>25</option>
