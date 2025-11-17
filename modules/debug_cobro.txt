@@ -262,3 +262,6 @@ CobroModule: SQL ejecutado, insert_id=306
 CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
 CobroModule: Params: paciente_id=552, usuario_id=1, total=100, tipo_pago=transferencia, observaciones=
 CobroModule: SQL ejecutado, insert_id=307
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=551, usuario_id=1, total=80, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=308

@@ -1,8 +1,8 @@
 import DashboardEstadisticasAdmin from './pages/DashboardEstadisticasAdmin';
-import ReabrirCajaPage from "./components/reabrirCaja/ReabrirCajaPage";
+import ReabrirCajaPage from "./components/caja/ReabrirCajaPage";
 import EgresosPage from "./pages/EgresosPage";
 import RegistrarEgresoPage from "./pages/RegistrarEgresoPage";
-import HistorialReaperturasPage from './components/reabrirCaja/HistorialReaperturasPage';
+import HistorialReaperturasPage from './components/caja/HistorialReaperturasPage';
 import LiquidacionHonorariosPage from "./pages/LiquidacionHonorariosPage";
 import LiquidacionLaboratorioReferenciaPage from "./pages/LiquidacionLaboratorioReferenciaPage";
 // import PagoHonorariosMedicosPage from "./pages/PagoHonorariosMedicosPage";
