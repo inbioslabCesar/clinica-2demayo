@@ -64,19 +64,21 @@ function AgendarConsulta({ pacienteId }) {
               );
             }
             if (tarifa) {
-                const detalle = {
-                  servicio_tipo: "consulta",
-                  tarifa_id: tarifa.id, // Enviar el ID de la tarifa seleccionada
-                  descripcion: tarifa.descripcion, // Usar descripción exacta de la tarifa
-                  cantidad: 1,
-                  precio_unitario: parseFloat(tarifa.precio_particular) || 0,
-                  subtotal: parseFloat(tarifa.precio_particular) || 0,
-                  consulta_id: consultaCreada.id,
-                  medico_id: consultaCreada.medico_id,
-                  paciente_id: consultaCreada.paciente_id,
-                };
-                setDetallesConsulta([detalle]);
-                setTotalConsulta(detalle.subtotal);
+                  const detalle = {
+                    servicio_tipo: "consulta",
+                    tarifa_id: tarifa.id, // Enviar el ID de la tarifa seleccionada
+                    descripcion: tarifa.descripcion, // Usar descripción exacta de la tarifa
+                    cantidad: 1,
+                    precio_unitario: parseFloat(tarifa.precio_particular) || 0,
+                    subtotal: parseFloat(tarifa.precio_particular) || 0,
+                    consulta_id: consultaCreada.id,
+                    medico_id: consultaCreada.medico_id,
+                    medico_nombre: consultaCreada.medico_nombre,
+                    medico_especialidad: consultaCreada.medico_especialidad,
+                    paciente_id: consultaCreada.paciente_id,
+                  };
+                  setDetallesConsulta([detalle]);
+                  setTotalConsulta(detalle.subtotal);
             } else {
               setDetallesConsulta([]);
               setTotalConsulta(0);

@@ -2,6 +2,8 @@
 // Módulo de Honorarios: lógica para registrar movimiento de honorarios médicos
 class HonorarioModule {
     public static function registrarMovimiento($conn, $detalleConsulta, $tarifa, $servicio_key, $metodo_pago, $cobro_id) {
+            // LOG de depuración para paciente_id
+            error_log('HonorarioModule::registrarMovimiento - paciente_id recibido: ' . var_export($detalleConsulta['paciente_id'] ?? null, true));
         // Determinar tipo de precio
         $tipo_precio = 'particular';
         if ($metodo_pago === 'seguro') {

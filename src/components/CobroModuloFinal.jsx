@@ -178,13 +178,12 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
 
     // Buscar médico en los detalles si existe
     let nombreMedico = '';
-    if (!esConsultaMedica && Array.isArray(datosComprobante.detalles)) {
+    if (Array.isArray(datosComprobante.detalles)) {
       for (const d of datosComprobante.detalles) {
         if (d.medico_nombre) {
           nombreMedico = d.medico_nombre;
           break;
         }
-        // Alternativamente, si el nombre del médico está en otro campo
         if (d.medico) {
           nombreMedico = d.medico;
           break;
@@ -204,10 +203,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         <p>Paciente: ${nombreCompleto}</p>
         <p>DNI: ${paciente.dni}</p>
         <p>H.C.: ${paciente.historia_clinica}</p>
-        ${esConsultaMedica ? `<p>Tipo de consulta: ${tipoConsulta === 'programada' ? 'Programada' : 'Espontánea'}</p>` : ''}
+        ${esConsultaMedica ? `<p>Tipo de consultas: ${tipoConsulta === 'programada' ? 'Programada' : 'Espontánea'}</p>` : ''}
         ${esConsultaMedica ? `<p>Hora de consulta: ${horaConsulta}</p>` : ''}
         ${esConsultaMedica && tipoConsulta === 'programada' ? `<p>N° Orden de llegada: ${numeroOrden}</p>` : ''}
-        ${!esConsultaMedica && nombreMedico ? `<p>Médico: ${nombreMedico}</p>` : ''}
+        ${nombreMedico ? `<p>Médico: ${nombreMedico}</p>` : ''}
         <hr>
         <p><strong>DETALLE:</strong></p>
         ${datosComprobante.detalles.map(d => {

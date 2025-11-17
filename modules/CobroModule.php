@@ -250,6 +250,10 @@ class CobroModule
                 // Modificar el registro de honorarios para guardar el id retornado
                 if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion']) && !empty($data['detalles'])) {
                     foreach ($data['detalles'] as $i => $detalleServicio) {
+                        // Asegurar que cada detalle tenga paciente_id
+                        if (!isset($detalleServicio['paciente_id']) || $detalleServicio['paciente_id'] === null) {
+                            $detalleServicio['paciente_id'] = $data['paciente_id'] ?? null;
+                        }
                         $tarifa = null;
                         $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
                         if ($tarifa_id) {
@@ -295,6 +299,26 @@ class CobroModule
                             $mov_id = HonorarioModule::registrarMovimiento($conn, $detalleServicio, $tarifa, $servicio_key, $metodo_pago, $cobro_id);
                             $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
                             $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
+                            // Registrar ingreso en caja por cada honorario
+                            $params_individual = [
+                                'caja_id' => $caja_id,
+                                'tipo_ingreso' => $tipo_ingreso,
+                                'area_servicio' => $area_servicio,
+                                'descripcion_ingreso' => $detalleServicio['descripcion'] ?? $descripcion_ingreso,
+                                'total_param' => $detalleServicio['subtotal'] ?? $total_param,
+                                'metodo_pago' => $metodo_pago,
+                                'cobro_id' => $cobro_id,
+                                'referencia_tabla_param' => $referencia_tabla_param,
+                                'paciente_id_param' => $detalleServicio['paciente_id'] ?? $paciente_id_param,
+                                'nombre_paciente' => $nombre_paciente,
+                                'usuario_id_param' => $usuario_id_param,
+                                'turno_param' => $turno_param,
+                                'honorario_movimiento_id' => $mov_id,
+                                'cobrado_por' => ($_SESSION['usuario_id'] ?? $usuario_id_param),
+                                'liquidado_por' => $liquidado_por,
+                                'fecha_liquidacion' => $fecha_liquidacion
+                            ];
+                            CajaModule::registrarIngreso($conn, $params_individual);
                         } else {
                             throw new \Exception('No se encontró tarifa activa para el servicio y médico seleccionado (servicio_tipo: ' . $servicio_key . ', medico_id: ' . ($medico_id_buscar ?? 'N/A') . ').');
                         }
