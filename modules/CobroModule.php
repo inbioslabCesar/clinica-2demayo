@@ -170,7 +170,7 @@ class CobroModule
             return ['success' => true, 'message' => 'Estado actualizado'];
         } catch (\Exception $e) {
             $conn->rollback();
-            error_log("Error al actualizar cobro: " . $e->getMessage());
+            // ...eliminado log de depuración...
             return ['success' => false, 'error' => 'Error al actualizar: ' . $e->getMessage()];
         }
     }
@@ -206,7 +206,10 @@ class CobroModule
                     'consulta' => 'consulta',
                     'ecografia' => 'ecografia',
                     'rayosx' => 'rayosx',
-                    'procedimiento' => 'procedimiento'
+                    'procedimiento' => 'procedimiento',
+                    'operacion' => 'operaciones',
+                    'cirugia' => 'operaciones',
+                    'cirugia_mayor' => 'operaciones'
                 ];
                 $tipo_ingreso = $tipo_ingreso_map[$servicio_key] ?? 'otros';
                 $metodo_pago_map = [
@@ -248,42 +251,76 @@ class CobroModule
                     }
                 }
                 // Modificar el registro de honorarios para guardar el id retornado
-                if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion']) && !empty($data['detalles'])) {
+                if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento']) && !empty($data['detalles'])) {
                     foreach ($data['detalles'] as $i => $detalleServicio) {
                         // Asegurar que cada detalle tenga paciente_id
                         if (!isset($detalleServicio['paciente_id']) || $detalleServicio['paciente_id'] === null) {
                             $detalleServicio['paciente_id'] = $data['paciente_id'] ?? null;
                         }
                         $tarifa = null;
-                        $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
-                        if ($tarifa_id) {
-                            // Validar existencia del tarifa_id en tarifas
-                            $stmt_check = $conn->prepare("SELECT COUNT(*) as total FROM tarifas WHERE id = ?");
-                            $stmt_check->bind_param("i", $tarifa_id);
-                            $stmt_check->execute();
-                            $total_tarifa = $stmt_check->get_result()->fetch_assoc()['total'];
-                            if ($total_tarifa == 0) {
-                                throw new \Exception('El tarifa_id enviado (' . $tarifa_id . ') no existe en la tabla tarifas. Verifica la selección en el frontend/API.');
+                        if ($servicio_key === 'laboratorio') {
+                            $examen_id = $detalleServicio['servicio_id'] ?? null;
+                            if ($examen_id) {
+                                $stmt_examen = $conn->prepare("SELECT * FROM examenes_laboratorio WHERE id = ? AND activo = 1 LIMIT 1");
+                                $stmt_examen->bind_param("i", $examen_id);
+                                $stmt_examen->execute();
+                                $tarifa = $stmt_examen->get_result()->fetch_assoc();
+                                if (!$tarifa) {
+                                    throw new \Exception('No se encontró examen activo para el servicio seleccionado (id: ' . $examen_id . ').');
+                                }
+                            } else {
+                                throw new \Exception('No se envió examen_id para laboratorio.');
                             }
-                            $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE id = ? AND activo = 1 LIMIT 1");
-                            $stmt_tarifa->bind_param("i", $tarifa_id);
-                            $stmt_tarifa->execute();
-                            $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
-                            if (!$tarifa) {
-                                throw new \Exception('No se encontró tarifa activa para el servicio seleccionado (id: ' . $tarifa_id . ').');
+                        } else if ($servicio_key === 'farmacia') {
+                            $medicamento_id = $detalleServicio['servicio_id'] ?? null;
+                            if ($medicamento_id) {
+                                $stmt_medicamento = $conn->prepare("SELECT * FROM medicamentos WHERE id = ? AND estado = 'activo' LIMIT 1");
+                                $stmt_medicamento->bind_param("i", $medicamento_id);
+                                $stmt_medicamento->execute();
+                                $tarifa = $stmt_medicamento->get_result()->fetch_assoc();
+                                if (!$tarifa) {
+                                    throw new \Exception('No se encontró medicamento activo para el servicio seleccionado (id: ' . $medicamento_id . ').');
+                                }
+                            } else {
+                                throw new \Exception('No se envió medicamento_id para farmacia.');
                             }
                         } else {
-                            $medico_id_buscar = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : null;
-                            if ($medico_id_buscar) {
-                                $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND medico_id = ? AND activo = 1 LIMIT 1");
-                                $stmt_tarifa_tipo->bind_param("si", $servicio_key, $medico_id_buscar);
-                                $stmt_tarifa_tipo->execute();
-                                $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                            $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
+                            // Logging para depuración de Rayos X
+                            if ($servicio_key === 'rayosx') {
+                                $logFile = __DIR__ . '/debug_rayosx.txt';
+                                $logMsg = date('Y-m-d H:i:s') . " | detalleServicio: " . json_encode($detalleServicio) . "\n";
+                                file_put_contents($logFile, $logMsg, FILE_APPEND);
+                            }
+                            if ($tarifa_id) {
+                                // Validar existencia del tarifa_id en tarifas
+                                $stmt_check = $conn->prepare("SELECT COUNT(*) as total FROM tarifas WHERE id = ?");
+                                $stmt_check->bind_param("i", $tarifa_id);
+                                $stmt_check->execute();
+                                $total_tarifa = $stmt_check->get_result()->fetch_assoc()['total'];
+                                if ($total_tarifa == 0) {
+                                    throw new \Exception('El tarifa_id enviado (' . $tarifa_id . ') no existe en la tabla tarifas. Verifica la selección en el frontend/API.');
+                                }
+                                $stmt_tarifa = $conn->prepare("SELECT * FROM tarifas WHERE id = ? AND activo = 1 LIMIT 1");
+                                $stmt_tarifa->bind_param("i", $tarifa_id);
+                                $stmt_tarifa->execute();
+                                $tarifa = $stmt_tarifa->get_result()->fetch_assoc();
+                                if (!$tarifa) {
+                                    throw new \Exception('No se encontró tarifa activa para el servicio seleccionado (id: ' . $tarifa_id . ').');
+                                }
                             } else {
-                                $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
-                                $stmt_tarifa_tipo->bind_param("s", $servicio_key);
-                                $stmt_tarifa_tipo->execute();
-                                $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                                $medico_id_buscar = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : null;
+                                if ($medico_id_buscar) {
+                                    $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND medico_id = ? AND activo = 1 LIMIT 1");
+                                    $stmt_tarifa_tipo->bind_param("si", $servicio_key, $medico_id_buscar);
+                                    $stmt_tarifa_tipo->execute();
+                                    $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                                } else {
+                                    $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
+                                    $stmt_tarifa_tipo->bind_param("s", $servicio_key);
+                                    $stmt_tarifa_tipo->execute();
+                                    $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                                }
                             }
                         }
                         $metodo_pago_map = [
@@ -324,25 +361,7 @@ class CobroModule
                         }
                     }
                 }
-                $params = [
-                    'caja_id' => $caja_id,
-                    'tipo_ingreso' => $tipo_ingreso,
-                    'area_servicio' => $area_servicio,
-                    'descripcion_ingreso' => $descripcion_ingreso,
-                    'total_param' => $total_param,
-                    'metodo_pago' => $metodo_pago,
-                    'cobro_id' => $cobro_id,
-                    'referencia_tabla_param' => $referencia_tabla_param,
-                    'paciente_id_param' => $paciente_id_param,
-                    'nombre_paciente' => $nombre_paciente,
-                    'usuario_id_param' => $usuario_id_param,
-                    'turno_param' => $turno_param,
-                    'honorario_movimiento_id' => $honorario_movimiento_id,
-                    'cobrado_por' => ($_SESSION['usuario_id'] ?? $usuario_id_param),
-                    'liquidado_por' => $liquidado_por,
-                    'fecha_liquidacion' => $fecha_liquidacion
-                ];
-                CajaModule::registrarIngreso($conn, $params);
+                // Eliminado: registro duplicado de ingreso general para consultas médicas
             }
 
             // Procesos de farmacia

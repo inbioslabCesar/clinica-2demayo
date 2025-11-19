@@ -3,6 +3,46 @@ import { BASE_URL } from "../config/config";
 import Swal from "sweetalert2";
 
 function LiquidacionHonorariosPage() {
+    // Obtener usuario actual desde sessionStorage
+    const usuario = (() => {
+      try {
+        return JSON.parse(sessionStorage.getItem('usuario')) || {};
+      } catch {
+        return {};
+      }
+    })();
+
+    // Acción eliminar honorario
+    const eliminarHonorario = async (honorarioId) => {
+      const result = await Swal.fire({
+        title: "¿Eliminar honorario?",
+        text: "Esta acción eliminará el registro de honorario y no podrá recuperarse.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Sí, eliminar",
+        cancelButtonText: "Cancelar",
+        confirmButtonColor: "#d33",
+      });
+      if (!result.isConfirmed) return;
+      try {
+        const response = await fetch(`${BASE_URL}api_eliminar_honorario.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: honorarioId }),
+          credentials: "include"
+        });
+        const data = await response.json();
+        if (data.success) {
+          Swal.fire("¡Eliminado!", "El honorario ha sido eliminado.", "success");
+          cargarHonorarios();
+        } else {
+          Swal.fire("Error", data.error || "No se pudo eliminar el honorario.", "error");
+        }
+      } catch (error) {
+        console.error("Error al eliminar honorario:", error);
+        Swal.fire("Error", "Error de conexión.", "error");
+      }
+    };
   const [honorarios, setHonorarios] = useState([]);
   const [medicos, setMedicos] = useState([]);
   const [turno, setTurno] = useState("");
@@ -85,7 +125,10 @@ function LiquidacionHonorariosPage() {
   };
 
   // Filtrar duplicados por id
-  const honorariosUnicos = honorarios.filter((h, idx, arr) => arr.findIndex(x => x.id === h.id) === idx);
+  // Filtrar duplicados y solo mostrar consultas médicas y ecografías
+  const honorariosUnicos = honorarios
+    .filter((h, idx, arr) => arr.findIndex(x => x.id === h.id) === idx)
+    .filter(h => h.tipo_servicio === 'consulta' || h.tipo_servicio === 'ecografia');
   return (
       <div className="container mx-auto p-6">
         <h1 className="text-2xl font-bold mb-4 text-blue-800">Liquidación de Honorarios Médicos</h1>
@@ -164,9 +207,13 @@ function LiquidacionHonorariosPage() {
                     <div className="flex gap-2 text-xs text-gray-500">
                       <span>Fecha Liquidación: {h.fecha_liquidacion ? h.fecha_liquidacion.toUpperCase() : "-"}</span>
                     </div>
-                    <div className="mt-2 flex justify-end">
+                    <div className="mt-2 flex justify-end gap-2">
                       {h.estado_pago_medico === "pendiente" && (
                         <button onClick={() => liquidarHonorario(h.id)} className="bg-green-600 text-white px-4 py-1 rounded font-bold">Liquidar</button>
+                      )}
+                      {/* Botón eliminar solo para administrador */}
+                      {usuario.rol === 'administrador' && (
+                        <button onClick={() => eliminarHonorario(h.id)} className="bg-red-600 text-white px-4 py-1 rounded font-bold">Eliminar</button>
                       )}
                     </div>
                   </div>
@@ -220,9 +267,13 @@ function LiquidacionHonorariosPage() {
                           <span>{h.fecha_liquidacion.toUpperCase()}</span>
                         ) : <span className="text-gray-400">-</span>}
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-2 flex gap-2">
                         {h.estado_pago_medico === "pendiente" && (
                           <button onClick={() => liquidarHonorario(h.id)} className="bg-green-600 text-white px-3 py-1 rounded">Liquidar</button>
+                        )}
+                        {/* Botón eliminar solo para administrador */}
+                        {usuario.rol === 'administrador' && (
+                          <button onClick={() => eliminarHonorario(h.id)} className="bg-red-600 text-white px-3 py-1 rounded">Eliminar</button>
                         )}
                       </td>
                     </tr>

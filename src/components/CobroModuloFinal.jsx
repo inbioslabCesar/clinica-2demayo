@@ -113,7 +113,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         credentials: 'include',
         body: JSON.stringify(cobroData)
       });
-      // DEBUG: Mostrar datos enviados al backend
+      // ...eliminado comentario de depuración...
       console.log('Datos enviados a api_cobros.php:', cobroData);
 
       const result = await response.json();
@@ -176,7 +176,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
     // Determinar si el servicio es consulta médica
     const esConsultaMedica = consulta.key === 'consulta';
 
-    // Buscar médico en los detalles si existe
+    // Buscar médico en los detalles si existe, si no usar el del servicio
     let nombreMedico = '';
     if (Array.isArray(datosComprobante.detalles)) {
       for (const d of datosComprobante.detalles) {
@@ -189,6 +189,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
           break;
         }
       }
+    }
+    // Si no se encontró en detalles, usar el del servicio
+    if (!nombreMedico && datosComprobante.servicio_info && datosComprobante.servicio_info.medico_nombre) {
+      nombreMedico = datosComprobante.servicio_info.medico_nombre;
     }
 
     const comprobante = `

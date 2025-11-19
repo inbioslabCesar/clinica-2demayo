@@ -3,7 +3,7 @@
 class HonorarioModule {
     public static function registrarMovimiento($conn, $detalleConsulta, $tarifa, $servicio_key, $metodo_pago, $cobro_id) {
             // LOG de depuración para paciente_id
-            error_log('HonorarioModule::registrarMovimiento - paciente_id recibido: ' . var_export($detalleConsulta['paciente_id'] ?? null, true));
+            // ...eliminado log de depuración...
         // Determinar tipo de precio
         $tipo_precio = 'particular';
         if ($metodo_pago === 'seguro') {
@@ -11,7 +11,21 @@ class HonorarioModule {
         } elseif ($metodo_pago === 'convenio') {
             $tipo_precio = 'convenio';
         }
-        $tarifa_total = floatval($tarifa['precio_' . $tipo_precio]);
+        $precio_key = 'precio_' . $tipo_precio;
+        if (!isset($tarifa[$precio_key])) {
+            return [
+                'success' => false,
+                'error' => 'Error: No se encontró el precio correspondiente en la tarifa (' . $precio_key . ')'
+            ];
+        }
+        $tarifa_total = floatval($tarifa[$precio_key]);
+        // Validar medico_id
+        if (empty($detalleConsulta['medico_id'])) {
+            return [
+                'success' => false,
+                'error' => "Error: El medico_id no puede ser nulo o vacío"
+            ];
+        }
         // Calcular honorarios
         $monto_medico = null;
         $monto_clinica = null;

@@ -34,7 +34,7 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
         await Swal.fire("Error", "Error de red o servidor", "error");
       }
     };
-  // Debug: Verificar el usuario recibido
+            // ...eliminado comentario de depuración...
   // console.log eliminado
   const [movimientos, setMovimientos] = useState([]);
   const [pagina, setPagina] = useState(1);

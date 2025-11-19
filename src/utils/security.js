@@ -81,7 +81,7 @@ export class SecurityUtils {
     }
     
     /**
-     * Log de eventos de seguridad (para debugging)
+    * Log de eventos de seguridad
      */
     static logSecurityEvent(event, details = {}) {
         if (import.meta.env.DEV) {

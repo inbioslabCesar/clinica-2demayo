@@ -30,9 +30,12 @@ class CajaModule {
 
     // --- Registrar un ingreso en ingresos_diarios ---
     public static function registrarIngreso($conn, $params) {
-        $stmt_ingreso = $conn->prepare("INSERT INTO ingresos_diarios (
-            caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno, honorario_movimiento_id, cobrado_por, liquidado_por, fecha_liquidacion
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        // Logging para depuración de ingresos diarios
+            // ...eliminado log de depuración...
+        $sql = "INSERT INTO ingresos_diarios (
+            caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno, honorario_movimiento_id, cobrado_por, liquidado_por, fecha_liquidacion, fecha_hora
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)";
+        $stmt_ingreso = $conn->prepare($sql);
         $stmt_ingreso->bind_param(
             "isssdsisisisiiis",
             $params['caja_id'],
@@ -52,6 +55,8 @@ class CajaModule {
             $params['liquidado_por'],
             $params['fecha_liquidacion']
         );
-        return $stmt_ingreso->execute();
+        $result = $stmt_ingreso->execute();
+            // ...eliminado log de depuración...
+        return $result;
     }
 }
