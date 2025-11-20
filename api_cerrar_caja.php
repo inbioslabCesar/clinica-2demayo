@@ -20,8 +20,9 @@ $fecha = date('Y-m-d');
 
 // Leer datos enviados
 $input = json_decode(file_get_contents('php://input'), true);
-// Leer monto contado y observaciones de cierre
+// Leer monto contado, egreso electrónico y observaciones de cierre
 $monto_contado = isset($input['monto_contado']) ? floatval($input['monto_contado']) : null;
+$egreso_electronico = isset($input['egreso_electronico']) && $input['egreso_electronico'] !== "" && !is_nan($input['egreso_electronico']) ? floatval($input['egreso_electronico']) : 0;
 $observaciones_cierre = isset($input['observaciones']) ? trim($input['observaciones']) : '';
 if ($monto_contado === null) {
     echo json_encode(['success' => false, 'error' => 'Monto contado no recibido']);
@@ -88,7 +89,8 @@ $ingreso_total_dia = floatval($total_efectivo) + floatval($total_yape) + floatva
 $ganancia_dia = $ingreso_total_dia - $total_egresos;
 
 // Actualizar la caja: estado cerrada, guardar monto contado, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
-$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, total_egresos = ?, ganancia_dia = ? WHERE id = ?');
+// Actualizar la caja: estado cerrada, guardar monto contado, egreso electrónico, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
+$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, egreso_electronico = ?, monto_contado = ?, total_egresos = ?, ganancia_dia = ? WHERE id = ?');
 $stmt->execute([
     $monto_contado,
     $diferencia,
@@ -101,6 +103,8 @@ $stmt->execute([
     floatval($egreso_honorarios),
     floatval($egreso_lab_ref),
     floatval($egreso_operativo),
+    $egreso_electronico,
+    $monto_contado,
     $total_egresos,
     $ganancia_dia,
     $caja_id

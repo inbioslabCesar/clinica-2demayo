@@ -14,6 +14,8 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null) {
   const egreso_honorarios = totalesBackend?.egreso_honorarios ?? datos.egreso_honorarios ?? 0;
   const egreso_lab_ref = totalesBackend?.egreso_lab_ref ?? datos.egreso_lab_ref ?? 0;
   const egreso_operativo = totalesBackend?.egreso_operativo ?? datos.egreso_operativo ?? 0;
+  // Nuevo: egresos cubiertos por Yape/Transferencias
+  const egreso_electronico = datos.egreso_electronico !== undefined && datos.egreso_electronico !== "" && !isNaN(parseFloat(datos.egreso_electronico)) ? parseFloat(datos.egreso_electronico) : 0;
   const total_egresos = totalesBackend?.total_egresos ?? (egreso_honorarios + egreso_lab_ref + egreso_operativo);
   // Lógica para explicación automática de diferencia negativa
   let explicacionDiferencia = "";
@@ -46,6 +48,7 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null) {
         <li>Honorarios Médicos: S/ ${egreso_honorarios.toFixed(2)}</li>
         <li>Lab. Referencia: S/ ${egreso_lab_ref.toFixed(2)}</li>
         <li>Operativo: S/ ${egreso_operativo.toFixed(2)}</li>
+        <li style="color:purple;"><b>Egresos cubiertos por Yape/Transferencias:</b> S/ ${egreso_electronico.toFixed(2)}</li>
         <li><b>Total egresos:</b> S/ ${total_egresos.toFixed(2)}</li>
       </ul>
       <div><b>Ocurrencias:</b></div>
@@ -78,6 +81,7 @@ export default function CerrarCajaView() {
   const [montoContado, setMontoContado] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [egresoElectronicoManual, setEgresoElectronicoManual] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -140,7 +144,8 @@ export default function CerrarCajaView() {
           total_yape,
           total_plin,
           total_tarjetas,
-          total_transferencias
+          total_transferencias,
+          egreso_electronico: egresoElectronicoManual
         })
       });
       const data = await resp.json();
@@ -150,6 +155,7 @@ export default function CerrarCajaView() {
           ...resumen,
           observaciones,
           monto_contado: montoContado,
+          egreso_electronico: egresoElectronicoManual,
           hora_cierre: data.hora_cierre || new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
           usuario_nombre: data.usuario_nombre || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).nombre : ''),
           usuario_rol: data.usuario_rol || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).rol : ''),
@@ -168,26 +174,32 @@ export default function CerrarCajaView() {
   if (error) return <div className="p-8 text-center text-red-600">{error}</div>;
   if (!resumen) return null;
 
+
   // Definir variables seguras para evitar ReferenceError
   const efectivoCobrado = (() => {
     const efectivo = resumen?.por_pago?.find(p => (p.metodo_pago || p.tipo_pago)?.toLowerCase() === "efectivo");
     return efectivo ? parseFloat(efectivo.total_pago) : 0;
   })();
 
+  // Calcular egresos cubiertos por Yape/transferencias
+  const egresoCubiertoElectronico = egresoElectronicoManual !== "" && !isNaN(parseFloat(egresoElectronicoManual))
+    ? parseFloat(egresoElectronicoManual)
+    : 0;
+
   // Calcular total egresos
   const totalEgresos = (resumen.egreso_honorarios ? resumen.egreso_honorarios : 0)
     + (resumen.egreso_lab_ref ? resumen.egreso_lab_ref : 0)
     + (resumen.egreso_operativo ? resumen.egreso_operativo : 0);
 
-  // Efectivo esperado final: efectivo cobrado - total egresos
-  const efectivoEsperado = efectivoCobrado - totalEgresos;
+  // Efectivo esperado final: efectivo cobrado - (total egresos - egresoCubiertoElectronico)
+  const efectivoEsperado = efectivoCobrado - (totalEgresos - egresoCubiertoElectronico);
 
   // Diferencia: efectivo contado - efectivo esperado
   const diferencia = parseFloat(montoContado || 0) - efectivoEsperado;
 
   return (
     <>
-      <div className="max-w-2xl mx-auto p-4 sm:p-8 bg-gradient-to-br from-red-50 via-white to-red-100 rounded-2xl shadow-2xl">
+      <div className="max-w-3xl mx-auto p-4 sm:p-8 bg-gradient-to-br from-red-50 via-white to-red-100 rounded-2xl shadow-2xl">
         <h2 className="text-3xl font-extrabold mb-6 text-red-700 flex items-center gap-3 drop-shadow">
           <span className="inline-block bg-red-100 text-red-700 rounded-full p-2 text-3xl">🧾</span>
           Cierre de Caja
@@ -260,7 +272,20 @@ export default function CerrarCajaView() {
             <div className="flex-1 bg-yellow-200 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
               <span className="text-xs text-yellow-700 font-semibold">Efectivo esperado</span>
               <span className="font-bold text-yellow-800 text-3xl">S/ {efectivoEsperado.toFixed(2)}</span>
-              <span className="text-xs text-gray-700 mt-1">(Efectivo cobrado - total egresos)</span>
+              <span className="text-xs text-gray-700 mt-1">(Efectivo cobrado - total egresos + egreso electrónico)</span>
+            </div>
+            <div className="flex-1 bg-purple-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
+              <span className="text-xs text-purple-700 font-semibold">Egresos cubiertos por Yape/Transferencias</span>
+              <input
+                type="number"
+                value={egresoElectronicoManual}
+                onChange={e => setEgresoElectronicoManual(e.target.value)}
+                className="border-2 border-purple-300 rounded-xl px-4 py-2 mt-2 text-xl text-center font-bold w-full max-w-[160px] focus:ring-2 focus:ring-purple-400 bg-white"
+                placeholder="S/ 0.00"
+                min={0}
+                step={0.01}
+              />
+              <span className="text-xs text-gray-700 mt-1">(Descontado del total egreso)</span>
             </div>
             <div className="flex-1 bg-green-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
               <span className="text-xs text-green-700 font-semibold">Efectivo contado</span>

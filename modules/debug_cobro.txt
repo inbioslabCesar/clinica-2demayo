@@ -142,3 +142,18 @@ CobroModule: SQL ejecutado, insert_id=300
 CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
 CobroModule: Params: paciente_id=559, usuario_id=1, total=150, tipo_pago=yape, observaciones=
 CobroModule: SQL ejecutado, insert_id=301
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=559, usuario_id=1, total=50, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=302
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=559, usuario_id=1, total=50, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=303
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=559, usuario_id=1, total=100, tipo_pago=efectivo, observaciones=
+CobroModule: SQL ejecutado, insert_id=304
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=559, usuario_id=1, total=14, tipo_pago=plin, observaciones=
+CobroModule: SQL ejecutado, insert_id=305
+CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)
+CobroModule: Params: paciente_id=559, usuario_id=1, total=150, tipo_pago=tarjeta, observaciones=
+CobroModule: SQL ejecutado, insert_id=306
