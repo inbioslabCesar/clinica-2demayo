@@ -1,3 +1,5 @@
+import { initializeIcons } from '@fluentui/react';
+initializeIcons();
 
 import React from "react";
 import ReactDOM from "react-dom/client";

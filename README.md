@@ -745,3 +745,68 @@ Muestras por día: 40, Objetivo: 3000
 HX5H
 Volumen por ciclo: 100
 Muestras por día: 40, Objetivo: 2000
+
+# Arquitectura y Plano del Sistema - Clínica 2 de Mayo
+
+## 1. Estructura de Carpetas Sugerida
+
+```
+clinica-2demayo/
+├── src/
+│   ├── components/         # Componentes reutilizables (UI, lógica)
+│   ├── pages/              # Vistas principales (Dashboard, Caja, Pacientes, etc.)
+│   ├── hooks/              # Custom hooks (useFetch, useAuth, etc.)
+│   ├── utils/              # Utilidades y helpers
+│   ├── config/             # Configuración global (URLs, constantes)
+│   ├── farmacia/           # Módulos y componentes de farmacia
+│   ├── historia_clinica/   # Módulos de historia clínica
+│   ├── laboratorio/        # Módulos de laboratorio
+│   ├── caja/               # Módulos de caja y finanzas
+│   └── App.jsx             # Componente raíz
+├── public/                 # Archivos estáticos
+├── modules/                # Lógica backend PHP modularizada
+├── api_*.php               # Endpoints PHP
+├── package.json            # Configuración frontend
+├── composer.json           # Configuración backend PHP
+└── README.md               # Documentación del sistema
+```
+
+## 2. Patrón Arquitectónico
+- **Frontend:** Atomic Design + Container/Presentational + React Lazy/Suspense
+- **Backend:** Modularización por dominio (Caja, Farmacia, Laboratorio, Pacientes, etc.)
+- **Comunicación:** API RESTful entre frontend y backend
+
+## 3. Checklist de Mejoras y Buenas Prácticas
+- [x] Lazy loading en módulos principales
+- [x] Paginación obligatoria en todos los listados
+- [x] Carga progresiva y placeholders
+- [x] Separación de lógica y presentación
+- [x] Optimización de peticiones y caché local
+- [x] Modularización clara y carpetas por dominio
+- [x] Control global de errores y loading
+- [x] Consultas SQL optimizadas y paginadas
+- [x] Documentación y comentarios guía
+- [x] Pruebas de rendimiento y validación
+
+## 4. Responsabilidades de Módulos
+- **components/**: UI y lógica reutilizable
+- **pages/**: Vistas y flujos principales
+- **hooks/**: Lógica de estado y datos compartidos
+- **modules/**: Lógica PHP por dominio
+- **api_*.php**: Endpoints RESTful
+
+## 5. Flujo de Trabajo
+1. Crear rama para cada mejora
+2. Desarrollar y testear en la rama
+3. Validar y documentar cambios
+4. Marcar como completado en el checklist
+5. Fusionar solo mejoras probadas a main
+
+## 6. Integración Continua
+- Usar Git y ramas feature/
+- Revisar y testear antes de merge
+- Documentar cada cambio relevante
+
+---
+
+> Este README sirve como guía para mantener una arquitectura ordenada, escalable y fácil de mantener. Actualiza el checklist y la documentación conforme avances en el desarrollo.

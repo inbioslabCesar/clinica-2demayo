@@ -7,9 +7,7 @@ import ExamenesCards from "../components/examenes/ExamenesCards";
 import ExamenModal from "../components/examenes/ExamenModal";
 import Modal from "../components/Modal";
 import ExamenEditorForm from "../components/ExamenEditorForm";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import * as XLSX from "xlsx";
+// Lazy loading de librerías pesadas para exportar
 import { saveAs } from "file-saver";
 
 export default function ExamenesLaboratorioCrudPage() {
@@ -39,9 +37,11 @@ export default function ExamenesLaboratorioCrudPage() {
   const [msgType, setMsgType] = useState("success");
   const [loading, setLoading] = useState(false);
 
-  // Funciones de exportación
-  const handleExportPDF = () => {
+  // Funciones de exportación con lazy loading
+  const handleExportPDF = async () => {
     try {
+      const jsPDF = (await import('jspdf')).default;
+      const autoTable = (await import('jspdf-autotable')).default;
       const doc = new jsPDF();
       doc.text("Exámenes de Laboratorio", 14, 10);
       autoTable(doc, {
@@ -75,7 +75,8 @@ export default function ExamenesLaboratorioCrudPage() {
     }
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(
       filtered.map((ex) => ({
         Nombre: ex.nombre,
@@ -90,6 +91,7 @@ export default function ExamenesLaboratorioCrudPage() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Examenes");
     const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const { saveAs } = await import('file-saver');
     saveAs(
       new Blob([wbout], { type: "application/octet-stream" }),
       "examenes_laboratorio.xlsx"

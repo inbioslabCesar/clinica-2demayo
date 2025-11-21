@@ -164,7 +164,7 @@ function AgendarConsulta({ pacienteId }) {
       if (cajaData.success && cajaData.caja && cajaData.caja.usuario_id === usuario.id) {
         cajaAbierta = cajaData.caja;
       }
-    } catch (err) {
+    } catch {
       cajaAbierta = null;
     }
     if (!cajaAbierta) {

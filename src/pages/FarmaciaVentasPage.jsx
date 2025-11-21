@@ -1,8 +1,6 @@
 
 import { useEffect, useState } from "react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import * as XLSX from "xlsx";
+// Lazy loading de librerías pesadas para exportar
 import { BASE_URL } from "../config/config";
 
 export default function FarmaciaVentasPage() {
@@ -66,8 +64,10 @@ export default function FarmaciaVentasPage() {
       });
   };
 
-  // Exportar a PDF
-  const exportarPDF = () => {
+  // Exportar a PDF con lazy loading
+  const exportarPDF = async () => {
+    const jsPDF = (await import('jspdf')).default;
+    const autoTable = (await import('jspdf-autotable')).default;
     const doc = new jsPDF();
     doc.text("Ventas de Farmacia", 14, 14);
     autoTable(doc, {
@@ -77,8 +77,9 @@ export default function FarmaciaVentasPage() {
     doc.save("ventas_farmacia.pdf");
   };
 
-  // Exportar a Excel
-  const exportarExcel = () => {
+  // Exportar a Excel con lazy loading
+  const exportarExcel = async () => {
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(ventas.map(v => ({
       Fecha: v.fecha,
       Paciente: v.paciente_nombre || "-",

@@ -26,7 +26,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
   // Solo permitir servicios médicos (consulta, laboratorio, farmacia, etc.)
   const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia', 'rayosx', 'ecografia', 'procedimiento','operacion','hospitalizacion'];
   const esServicioMedico = servicio && serviciosPermitidos.includes(servicio.key);
-  const [tarifas, setTarifas] = useState([]);
+  // const [tarifas, setTarifas] = useState([]); // Eliminado: no se usa
   const [tipoCobertura, setTipoCobertura] = useState('particular');
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones, setObservaciones] = useState('');
@@ -44,10 +44,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       const response = await fetch(`${BASE_URL}api_tarifas.php`, {
         credentials: 'include'
       });
-      const data = await response.json();
-      if (data.success) {
-        setTarifas(data.tarifas || []);
-      }
+      await response.json();
+      // if (data.success) {
+      //   setTarifas(data.tarifas || []);
+      // }
     } catch (error) {
       console.error('Error al cargar tarifas:', error);
     }
@@ -142,7 +142,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
               cobro_id: result.cobro_id
             })
           });
-          const ordenResult = await ordenResponse.json();
+          await ordenResponse.json(); // Eliminado: no se usa la variable
         }
         // Mostrar comprobante
         await mostrarComprobante(result.cobro_id, cobroData);

@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
-import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+// Lazy loading de librerías pesadas para exportar
 
 export default function ListaConsultasPage() {
   const [consultas, setConsultas] = useState([]);
+  const [totalRows, setTotalRows] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(3);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -15,59 +14,42 @@ export default function ListaConsultasPage() {
   const [busqueda, setBusqueda] = useState("");
 
   useEffect(() => {
-    fetch(BASE_URL + "api_consultas.php")
+    setLoading(true);
+    setError("");
+    const params = new URLSearchParams({
+      page,
+      limit: rowsPerPage,
+      busqueda: busqueda.trim(),
+      fechaDesde,
+      fechaHasta
+    });
+    fetch(`${BASE_URL}api_consultas.php?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.success) setConsultas(data.consultas);
-        else setError(data.error || "Error al cargar consultas");
+        if (data.success) {
+          setConsultas(data.consultas || []);
+          setTotalRows(data.total || 0);
+        } else {
+          setError(data.error || "Error al cargar consultas");
+        }
         setLoading(false);
       })
       .catch(() => {
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-  }, []);
+  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
   // Filtrar por rango de fecha y búsqueda dinámica
-  const filtrarConsultas = (lista) => {
-    let resultado = lista;
-    if (fechaDesde || fechaHasta) {
-      resultado = resultado.filter((c) => {
-        if (!c.fecha) return false;
-        const fecha = c.fecha.slice(0, 10);
-        if (fechaDesde && fecha < fechaDesde) return false;
-        if (fechaHasta && fecha > fechaHasta) return false;
-        return true;
-      });
-    }
-    if (busqueda.trim() !== "") {
-      const texto = busqueda.trim().toLowerCase();
-      resultado = resultado.filter(
-        (c) =>
-          (c.paciente_nombre &&
-            c.paciente_nombre.toLowerCase().includes(texto)) ||
-          (c.paciente_apellido &&
-            c.paciente_apellido.toLowerCase().includes(texto)) ||
-          (c.medico_nombre && c.medico_nombre.toLowerCase().includes(texto)) ||
-          (c.motivo && c.motivo.toLowerCase().includes(texto)) ||
-          (c.estado && c.estado.toLowerCase().includes(texto)) ||
-          (c.id && c.id.toString().includes(texto))
-      );
-    }
-    return resultado;
-  };
-  const consultasFiltradas = filtrarConsultas(consultas);
-  const totalRows = consultasFiltradas.length;
+  // Los datos ya vienen filtrados y paginados del backend
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
-  const pagedConsultas = consultasFiltradas.slice(
-    (page - 1) * rowsPerPage,
-    page * rowsPerPage
-  );
+  const pagedConsultas = consultas;
 
-  // Exportar a Excel
-  const exportarExcel = () => {
+  // Exportar a Excel con lazy loading
+  const exportarExcel = async () => {
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(
-      consultasFiltradas.map((c) => ({
+      consultas.map((c) => ({
         ID: c.id,
         Fecha: c.fecha?.slice(0, 16).replace("T", " "),
         Paciente: c.paciente_nombre + " " + c.paciente_apellido,
@@ -89,13 +71,15 @@ export default function ListaConsultasPage() {
     document.body.removeChild(link);
   };
 
-  // Exportar a PDF
-  const exportarPDF = () => {
+  // Exportar a PDF con lazy loading
+  const exportarPDF = async () => {
+    const jsPDF = (await import('jspdf')).default;
+    const autoTable = (await import('jspdf-autotable')).default;
     const doc = new jsPDF();
     doc.text("Lista de Consultas", 14, 10);
     autoTable(doc, {
       head: [["ID", "Fecha", "Paciente", "Médico", "Motivo", "Estado"]],
-      body: consultasFiltradas.map((c) => [
+      body: consultas.map((c) => [
         c.id,
         c.fecha?.slice(0, 16).replace("T", " "),
         c.paciente_nombre + " " + c.paciente_apellido,
@@ -195,7 +179,7 @@ export default function ListaConsultasPage() {
               </tr>
             </thead>
             <tbody>
-              {consultasFiltradas.length === 0 ? (
+              {consultas.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="text-center p-4">
                     No hay consultas registradas

@@ -2,8 +2,6 @@ import { Icon } from '@fluentui/react';
 import Footer from "./Footer";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { initializeIcons } from '@fluentui/font-icons-mdl2';
-initializeIcons();
 import SidebarMedico from "./sidebar/SidebarMedico";
 import SidebarEnfermero from "./sidebar/SidebarEnfermero";
 import SidebarLaboratorista from "./sidebar/SidebarLaboratorista";
