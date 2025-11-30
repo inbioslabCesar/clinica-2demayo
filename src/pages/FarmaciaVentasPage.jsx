@@ -42,10 +42,9 @@ export default function FarmaciaVentasPage() {
         setTotalVentas(data.total || 0);
         setLoading(false);
       })
-      .catch(err => {
+      .catch(() => {
         setLoading(false);
-        console.error("Error al cargar ventas:", err);
-        alert("Error al cargar ventas: " + err.message);
+        // Eliminado log y alert de error al cargar ventas
       });
   };
 

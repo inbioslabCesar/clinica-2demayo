@@ -52,8 +52,8 @@ function GestionHonorariosMedicos() {
         cargarMedicos(),
         cargarTarifas()
       ]);
-    } catch (error) {
-      console.error('Error al cargar datos:', error);
+    } catch {
+      // Eliminado log de error al cargar datos
     } finally {
       setLoading(false);
     }
@@ -68,8 +68,8 @@ function GestionHonorariosMedicos() {
       if (data.success) {
         setConfiguraciones(data.configuraciones || []);
       }
-    } catch (error) {
-      console.error('Error al cargar configuraciones:', error);
+    } catch {
+      // Eliminado log de error al cargar configuraciones
     }
   };
 
@@ -82,8 +82,8 @@ function GestionHonorariosMedicos() {
       if (data.success) {
         setMedicos(data.medicos || []);
       }
-    } catch (error) {
-      console.error('Error al cargar médicos:', error);
+    } catch {
+      // Eliminado log de error al cargar médicos
     }
   };
 
@@ -96,8 +96,8 @@ function GestionHonorariosMedicos() {
       if (data.success) {
         setTarifas(data.tarifas || []);
       }
-    } catch (error) {
-      console.error('Error al cargar tarifas:', error);
+    } catch {
+      // Eliminado log de error al cargar tarifas
     }
   };
 

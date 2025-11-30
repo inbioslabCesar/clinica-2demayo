@@ -79,15 +79,6 @@ export class SecurityUtils {
         
         return config;
     }
-    
-    /**
-    * Log de eventos de seguridad
-     */
-    static logSecurityEvent(event, details = {}) {
-        if (import.meta.env.DEV) {
-            console.warn(`[SECURITY] ${event}:`, details);
-        }
-    }
 }
 
 /**
@@ -98,41 +89,25 @@ export function useSecureLogin() {
         // 1. Validar contexto seguro
         const contextCheck = SecurityUtils.validateSecureContext();
         if (!contextCheck.isValid) {
-            SecurityUtils.logSecurityEvent('INSECURE_CONTEXT_BLOCKED', {
-                url: apiUrl,
-                protocol: window.location.protocol
-            });
             throw new Error(contextCheck.message);
         }
         
         // 2. Validar contraseña
         const passwordCheck = SecurityUtils.validatePassword(credentials.password);
         if (!passwordCheck.isValid) {
-            SecurityUtils.logSecurityEvent('WEAK_PASSWORD_BLOCKED', {
-                length: credentials.password?.length
-            });
             throw new Error(passwordCheck.message);
         }
         
         // 3. Realizar login con configuración segura
-        SecurityUtils.logSecurityEvent('SECURE_LOGIN_ATTEMPT', {
-            url: apiUrl,
-            context: contextCheck.context
-        });
+        // ...existing code...
         
         const response = await fetch(apiUrl, SecurityUtils.createSecureFetchConfig(credentials));
         
         if (!response.ok) {
-            SecurityUtils.logSecurityEvent('LOGIN_FAILED', {
-                status: response.status,
-                url: apiUrl
-            });
             throw new Error(`Error de login: ${response.status}`);
         }
         
-        SecurityUtils.logSecurityEvent('LOGIN_SUCCESS', {
-            url: apiUrl
-        });
+        // ...existing code...
         
         return response.json();
     };

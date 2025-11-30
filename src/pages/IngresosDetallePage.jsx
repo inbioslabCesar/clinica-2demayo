@@ -22,8 +22,8 @@ export default function IngresosDetallePage() {
       if (data.success) {
         setIngresos(data.detalle || []);
       }
-    } catch (err) {
-      console.error("Error cargando ingresos:", err);
+    } catch {
+      // Eliminado log de error cargando ingresos
     } finally {
       setLoading(false);
     }

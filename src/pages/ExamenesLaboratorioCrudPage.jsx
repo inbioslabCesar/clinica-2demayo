@@ -5,10 +5,6 @@ import ExamenesFilterBar from "../components/examenes/ExamenesFilterBar";
 import ExamenesTable from "../components/examenes/ExamenesTable";
 import ExamenesCards from "../components/examenes/ExamenesCards";
 import ExamenModal from "../components/examenes/ExamenModal";
-import Modal from "../components/Modal";
-import ExamenEditorForm from "../components/ExamenEditorForm";
-// Lazy loading de librerías pesadas para exportar
-import { saveAs } from "file-saver";
 
 export default function ExamenesLaboratorioCrudPage() {
   const [viewMode, setViewMode] = useState('table');
@@ -69,11 +65,10 @@ export default function ExamenesLaboratorioCrudPage() {
         styles: { fontSize: 8 },
       });
       doc.save("examenes_laboratorio.pdf");
-    } catch (err) {
-      console.error("Error exportando PDF:", err);
-      alert("Error exportando PDF. Revisa la consola para más detalles.");
+    } catch {
+      // Eliminado log y alert de error exportando PDF
     }
-  };
+    }
 
   const handleExportExcel = async () => {
     const XLSX = await import('xlsx');
@@ -131,8 +126,8 @@ export default function ExamenesLaboratorioCrudPage() {
         if (Array.isArray(parsed)) raw = parsed;
         else return [];
       }
-    } catch (e) {
-      console.error('Error parsing valores_referenciales:', e);
+    } catch {
+      // Eliminado log de error parsing valores_referenciales
       return [];
     }
     return raw.map((it, idx) => ({

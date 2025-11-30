@@ -58,8 +58,8 @@ function PagosHonorariosMedicos() {
         cargarMedicos(),
         cargarMovimientos()
       ]);
-    } catch (error) {
-      console.error('Error al cargar datos:', error);
+    } catch {
+      // Eliminado log de error al cargar datos
     } finally {
       setLoading(false);
     }
@@ -74,8 +74,8 @@ function PagosHonorariosMedicos() {
       if (data.success) {
         setMedicos(data.medicos || []);
       }
-    } catch (error) {
-      console.error('Error al cargar médicos:', error);
+    } catch {
+      // Eliminado log de error al cargar médicos
     }
   };
 
@@ -98,8 +98,8 @@ function PagosHonorariosMedicos() {
       if (data.success) {
         setMovimientos(data.movimientos || []);
       }
-    } catch (error) {
-      console.error('Error al cargar movimientos:', error);
+    } catch {
+      // Eliminado log de error al cargar movimientos
     }
   };
 
@@ -148,8 +148,8 @@ function PagosHonorariosMedicos() {
       } else {
         Swal.fire('Error', result.error || 'Error al actualizar el pago', 'error');
       }
-    } catch (error) {
-      console.error('Error:', error);
+    } catch {
+      // Eliminado log de error en producción
       Swal.fire('Error', 'Error de conexión', 'error');
     }
   };
@@ -187,8 +187,8 @@ function PagosHonorariosMedicos() {
         } else {
           Swal.fire('Error', data.error || 'Error al marcar como pagado', 'error');
         }
-      } catch (error) {
-        console.error('Error:', error);
+      } catch {
+        // Eliminado log de error en producción
         Swal.fire('Error', 'Error de conexión', 'error');
       }
     }

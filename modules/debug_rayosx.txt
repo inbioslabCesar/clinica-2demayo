@@ -1,2 +1,0 @@
-2025-11-20 23:08:21 | detalleServicio: {"servicio_tipo":"rayosx","servicio_id":"152","descripcion":"COLUMNA DORSAL F - P -32","cantidad":1,"precio_unitario":100,"subtotal":100,"medico_nombre":"RAUL  TELLO ALVAREZ ","paciente_id":558}
-2025-11-20 23:08:21 | detalleServicio: {"servicio_tipo":"rayosx","servicio_id":"115","descripcion":"RX AGUJEROS OPTICOS-33","cantidad":1,"precio_unitario":70,"subtotal":70,"medico_nombre":"RAUL  TELLO ALVAREZ ","paciente_id":558}

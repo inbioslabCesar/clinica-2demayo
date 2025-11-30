@@ -48,8 +48,8 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       // if (data.success) {
       //   setTarifas(data.tarifas || []);
       // }
-    } catch (error) {
-      console.error('Error al cargar tarifas:', error);
+    } catch {
+      // Eliminado log de error al cargar tarifas
     }
   };
 
@@ -113,8 +113,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         credentials: 'include',
         body: JSON.stringify(cobroData)
       });
-      // ...eliminado comentario de depuración...
-      console.log('Datos enviados a api_cobros.php:', cobroData);
+      // Eliminado log de datos enviados a api_cobros.php
 
       const result = await response.json();
       // Mostrar error con SweetAlert2 si el backend responde error
@@ -154,7 +153,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
       }
     } catch (error) {
-      console.error('Error:', error);
+      // Eliminado log de error en producción
       Swal.fire('Error', 'Error de conexión con el servidor', 'error');
     } finally {
       setLoading(false);

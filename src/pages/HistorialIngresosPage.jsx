@@ -68,8 +68,8 @@ export default function HistorialIngresosPage() {
         setResumenMetodos(data.resumen_metodos);
         setPaginacion(data.paginacion);
       }
-    } catch (error) {
-      console.error('Error cargando historial:', error);
+    } catch {
+      // Eliminado log de error cargando historial
     } finally {
       setLoading(false);
     }

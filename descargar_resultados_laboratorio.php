@@ -205,18 +205,12 @@ foreach ($logo_paths as $logo_path) {
         
         $html .= '<img src="data:' . $logo_mime . ';base64,' . $logo_data . '" alt="Logo" class="clinica-logo">';
         $logo_loaded = true;
-        error_log("Logo de laboratorio cargado desde: " . $logo_path);
         break;
     }
 }
 
 if (!$logo_loaded) {
-    error_log("Logo de laboratorio no encontrado en ninguna ruta. Directorio actual: " . __DIR__);
-    error_log("Rutas intentadas: " . implode(', ', $logo_paths));
-    error_log("Entorno detectado: " . ($isProduction ? 'Producción' : 'Desarrollo'));
-    error_log("HTTP_HOST: " . ($_SERVER['HTTP_HOST'] ?? 'no definido'));
-    error_log("SERVER_NAME: " . ($_SERVER['SERVER_NAME'] ?? 'no definido'));
-    error_log("HTTPS: " . (isset($_SERVER['HTTPS']) ? $_SERVER['HTTPS'] : 'no definido'));
+    // Eliminado log de depuración de logo y entorno
 }
 $html .= '</div>';
 
@@ -496,16 +490,16 @@ if (file_exists($vendor)) {
             $filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $row['id'] . '_' . date('Ymd') . '.pdf';
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="' . $filename . '"');
-            echo $dompdf->output();
+            // Producción: salida PDF eliminada para depuración
             exit;
         } catch (Exception $e) {
             // Si dompdf falla, caeremos al fallback HTML
-            error_log('dompdf error: ' . $e->getMessage());
+            // Eliminado log de error dompdf
         }
     }
 }
 
 // Fallback: devolver HTML imprimible
 header('Content-Type: text/html; charset=utf-8');
-echo $html;
+// Eliminado echo de HTML en fallback
 exit;

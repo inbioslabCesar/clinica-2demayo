@@ -38,7 +38,7 @@ export const exportarExcel = (medicos) => {
     
     return { success: true, fileName };
   } catch (error) {
-    console.error('Error exportando a Excel:', error);
+    // Eliminado log de error exportando a Excel
     return { success: false, error: error.message };
   }
 };
@@ -104,7 +104,7 @@ export const exportarPDF = (medicos) => {
     
     return { success: true, fileName };
   } catch (error) {
-    console.error('Error exportando a PDF:', error);
+    // Eliminado log de error exportando a PDF
     return { success: false, error: error.message };
   }
 };

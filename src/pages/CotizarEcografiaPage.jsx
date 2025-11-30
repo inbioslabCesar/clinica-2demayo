@@ -50,6 +50,7 @@ export default function CotizarEcografiaPage() {
       .then(data => {
         setMedicos(data.medicos || []);
       });
+    // Eliminado log de depuración
   }, [pacienteId]);
 
   const agregarSeleccion = (id) => {

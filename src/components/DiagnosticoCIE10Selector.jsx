@@ -22,11 +22,11 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
         if (data.success) {
           setSugerencias(data.data);
         } else {
-          console.error('Error en la búsqueda:', data.message);
+          // Eliminado log de error en la búsqueda
           setSugerencias([]);
         }
       } catch (error) {
-        console.error('Error al buscar códigos CIE10:', error);
+        // Eliminado log de error al buscar códigos CIE10
         setSugerencias([]);
       } finally {
         setCargando(false);

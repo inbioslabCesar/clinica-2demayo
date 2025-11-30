@@ -43,9 +43,7 @@ export default function CotizarLaboratorioPage() {
         setPaciente(pacienteData.paciente);
       }
       setLoading(false);
-      // Depuración: mostrar tarifas y examenes en consola
-      console.log('Tarifas:', tarifasData.tarifas);
-      console.log('Examenes:', examenesData.examenes);
+      // Eliminado log de depuración de tarifas y examenes
     });
   }, [pacienteId]);
 

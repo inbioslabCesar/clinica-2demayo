@@ -58,12 +58,11 @@ function ConfiguracionPage() {
         throw new Error('🔒 Acceso denegado: ' + (errorResult.error || 'No está autenticado como administrador'));
       } else {
         const errorText = await response.text();
-        console.error('❌ Error del servidor:', errorText);
+        // Eliminado log de error del servidor
         throw new Error(`Error del servidor: ${response.status} - ${errorText}`);
       }
     } catch (error) {
-      console.error('🚨 Error al cargar configuración:', error);
-      
+      // Eliminado log de error al cargar configuración
       // Si es error de autenticación, mostrar mensaje específico
       if (error.message.includes('🔒 Acceso denegado')) {
         Swal.fire({

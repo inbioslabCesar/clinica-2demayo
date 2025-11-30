@@ -3,7 +3,6 @@ import React from "react";
 function FormularioAgendarConsulta({
   tipoConsulta,
   setTipoConsulta,
-  medicos,
   tarifas,
   medicoId,
   setMedicoId,
@@ -47,8 +46,8 @@ function FormularioAgendarConsulta({
           required
         >
           <option value="">Selecciona un médico</option>
-          {tarifas.map((tarifa) => (
-            <option key={tarifa.medico_id} value={tarifa.medico_id}>
+          {tarifas.map((tarifa, idx) => (
+            <option key={`${tarifa.medico_id}-${tarifa.tarifa_id || idx}`} value={tarifa.medico_id}>
               Dr(a). {tarifa.medico_nombre} {tarifa.medico_apellido} — {tarifa.descripcion}
             </option>
           ))}

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { 
-  FaMoneyBillWave, 
   FaArrowLeft, 
   FaSave,
   FaPlus
@@ -65,10 +64,10 @@ export default function NuevoIngresoPage() {
       if (metodosData.success) {
         setMetodosPago(metodosData.metodos);
       } else {
-        console.error('Error cargando métodos de pago:', metodosData.error);
+        // Eliminado log de error cargando métodos de pago
       }
-    } catch (error) {
-      console.error('Error cargando datos:', error);
+    } catch {
+      // Eliminado log de error cargando datos
       Swal.fire('Error', 'Error al cargar los datos iniciales', 'error');
     } finally {
       setLoading(false);
