@@ -1,6 +1,6 @@
 import { useState } from "react";
-import PacienteSearch from "./paciente/PacienteSearch";
-import PacienteResumen from "./paciente/PacienteResumen";
+import PacienteListSearch from "./paciente-list/PacienteListSearch.jsx";
+import PacienteListResumen from "./paciente-list/PacienteListResumen.jsx";
 import ServiciosSelector from "./ServiciosSelector";
 import PacienteForm from "./paciente-list/PacienteListForm";
 
@@ -23,14 +23,14 @@ function RecepcionModulo({ onPacienteRegistrado }) {
 
   return (
     <div className="space-y-6">
-      <PacienteSearch 
+      <PacienteListSearch 
         onPacienteEncontrado={setPaciente}
         onNoEncontrado={() => setShowRegistro(true)}
         onNuevaBusqueda={handleNuevaBusqueda}
       />
       {paciente && (
         <>
-          <PacienteResumen paciente={paciente} />
+          <PacienteListResumen paciente={paciente} />
           <ServiciosSelector paciente={paciente} />
         </>
       )}

@@ -1,6 +1,6 @@
 import React from "react";
 
-function PacienteResumen({ paciente }) {
+function PacienteListResumen({ paciente }) {
   return (
     <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4">
       <div className="font-bold text-blue-800 mb-2">Paciente encontrado:</div>
@@ -44,4 +44,4 @@ function PacienteResumen({ paciente }) {
   );
 }
 
-export default PacienteResumen;
+export default PacienteListResumen;

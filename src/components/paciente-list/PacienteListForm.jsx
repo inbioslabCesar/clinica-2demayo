@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from "react";
 import { BASE_URL } from "../../config/config";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
-import DatosBasicos from "../paciente/DatosBasicos";
-import DatosEdad from "../paciente/DatosEdad";
-import DatosAdicionales from "../paciente/DatosAdicionales";
-import DatosContacto from "../paciente/DatosContacto";
+import DatosBasicos from "./DatosBasicos.jsx";
+import DatosEdad from "./DatosEdad.jsx";
+import DatosAdicionales from "./DatosAdicionales.jsx";
+import DatosContacto from "./DatosContacto.jsx";
 
 function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente }) {
   const MySwal = withReactContent(Swal);
@@ -203,7 +203,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
   };
 
   return (
-    <div className="w-full max-w-full mx-auto">
+    <div className="w-full h-full px-2 sm:px-0">
       <h2
         className="text-2xl font-extrabold mb-6 flex items-center gap-3 justify-center bg-gradient-to-r from-purple-700 via-pink-500 to-blue-500 text-white rounded-xl shadow-lg py-4 px-6 animate__animated animate__fadeInDown"
         style={{ boxShadow: '0 4px 16px rgba(80,0,120,0.12)' }}
@@ -231,17 +231,18 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
       <form
         onSubmit={handleSubmit}
         onKeyDown={handleKeyDown}
-        className="space-y-4 bg-blue-50 p-4 rounded border border-blue-200 max-h-[80vh] overflow-y-auto w-full max-w-full mx-auto"
+        className="flex flex-col space-y-4 bg-blue-50 p-4 rounded border border-blue-200 h-full w-full overflow-y-auto"
+        style={{ minHeight: '60vh', maxHeight: '70vh' }}
       >
         <DatosBasicos form={form} handleChange={handleChange} />
         <DatosEdad form={form} handleChange={handleChange} />
         <DatosAdicionales form={form} handleChange={handleChange} />
         <DatosContacto form={form} handleChange={handleChange} />
-        <div className="sticky bottom-0 bg-blue-50 p-4 -mx-4 -mb-4 border-t border-blue-200">
+        <div className="fixed left-0 right-0 bottom-0 z-10 bg-blue-50 p-4 border-t border-blue-200 w-full sm:static sm:w-auto sm:p-0 sm:border-0">
           <button
             type="submit"
             ref={submitBtnRef}
-            className="w-full bg-purple-800 hover:bg-purple-900 text-white rounded-lg px-4 py-3 font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-purple-800 hover:bg-purple-900 text-white rounded-lg px-4 py-3 font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
             disabled={loading}
           >
             {loading ? (

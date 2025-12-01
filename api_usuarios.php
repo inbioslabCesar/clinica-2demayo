@@ -10,7 +10,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
         while ($row = $result->fetch_assoc()) {
             $usuarios[] = $row;
         }
-        // Eliminado echo de usuarios para producción
+        echo json_encode($usuarios);
         break;
     case 'POST':
         $data = json_decode(file_get_contents('php://input'), true);

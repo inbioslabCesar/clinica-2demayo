@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import CobroModuloFinal from "../components/CobroModuloFinal";
 import { useParams, useNavigate } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
-import { PacienteSearch } from "../components/paciente";
+import PacienteListSearch from "../components/paciente-list/PacienteListSearch.jsx";
 import { BASE_URL } from "../config/config";
 // import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";
@@ -203,7 +203,7 @@ export default function FarmaciaCotizadorPage() {
   <div className="mb-4">
         {/* Solo mostrar el buscador de paciente si NO hay pacienteId en la URL (químico) */}
         {!params.pacienteId && (
-          <PacienteSearch
+          <PacienteListSearch
             onPacienteEncontrado={(p) => {
               setPacienteDatos({
                 id: p.id,

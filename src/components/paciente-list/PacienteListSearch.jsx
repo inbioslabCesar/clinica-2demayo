@@ -3,7 +3,7 @@ import { useState } from "react";
 import { BASE_URL } from "../../config/config";
 
 
-function PacienteSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqueda }) {
+function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqueda }) {
   const [busqueda, setBusqueda] = useState("");
   const [tipo, setTipo] = useState("dni");
 
@@ -112,4 +112,4 @@ function PacienteSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqueda 
   );
 }
 
-export default PacienteSearch;
+export default PacienteListSearch;

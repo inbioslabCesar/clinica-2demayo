@@ -2,14 +2,16 @@
 import { useState, useEffect } from "react";
 import { BASE_URL } from "../../config/config";
 
-export default function usePacientes({ initialBusqueda = "", initialPage = 1, initialRowsPerPage = 5 } = {}) {
+export default function usePacientes({ initialBusqueda = "", initialPage = 1, initialRowsPerPage = 5, initialFechaDesde = "", initialFechaHasta = "" } = {}) {
     // Función para recargar pacientes desde el backend
-    const recargarPacientes = () => {
+    const recargarPacientes = (filtros = {}) => {
       setLoading(true);
       const params = new URLSearchParams({
         page,
         limit: rowsPerPage,
-        busqueda: busqueda.trim()
+        busqueda: busqueda.trim(),
+        fecha_desde: filtros.fechaDesde || fechaDesde,
+        fecha_hasta: filtros.fechaHasta || fechaHasta
       });
       fetch(`${BASE_URL}api_pacientes.php?${params.toString()}`)
         .then(res => res.json())
@@ -36,13 +38,17 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
   const [totalRows, setTotalRows] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [busqueda, setBusqueda] = useState(initialBusqueda);
+  const [fechaDesde, setFechaDesde] = useState(initialFechaDesde);
+  const [fechaHasta, setFechaHasta] = useState(initialFechaHasta);
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({
       page,
       limit: rowsPerPage,
-      busqueda: busqueda.trim()
+      busqueda: busqueda.trim(),
+      fecha_desde: fechaDesde,
+      fecha_hasta: fechaHasta
     });
     fetch(`${BASE_URL}api_pacientes.php?${params.toString()}`)
       .then(res => res.json())
@@ -60,7 +66,7 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-  }, [page, rowsPerPage, busqueda]);
+  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
 
   // Crear o editar paciente
@@ -159,6 +165,10 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
     totalPages,
     busqueda,
     setBusqueda,
+    fechaDesde,
+    setFechaDesde,
+    fechaHasta,
+    setFechaHasta,
     guardarPaciente,
     eliminarPaciente,
     recargarPacientes
