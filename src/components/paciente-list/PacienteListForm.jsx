@@ -1,19 +1,18 @@
-
-import React, { useState } from "react";
-import { BASE_URL } from "../config/config";
+import React, { useState, useRef, useEffect } from "react";
+import { BASE_URL } from "../../config/config";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
-import DatosBasicos from "./paciente/DatosBasicos";
-import DatosEdad from "./paciente/DatosEdad";
-import DatosAdicionales from "./paciente/DatosAdicionales";
-import DatosContacto from "./paciente/DatosContacto";
+import DatosBasicos from "../paciente/DatosBasicos";
+import DatosEdad from "../paciente/DatosEdad";
+import DatosAdicionales from "../paciente/DatosAdicionales";
+import DatosContacto from "../paciente/DatosContacto";
 
-function PacienteForm({ initialData = {}, onRegistroExitoso }) {
+function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente }) {
   const MySwal = withReactContent(Swal);
   const [form, setForm] = useState({
     id: initialData.id || undefined,
     dni: initialData.dni || "",
-    tipo_documento: initialData.tipo_documento || "dni", // nuevo campo
+    tipo_documento: initialData.tipo_documento || "dni",
     nombre: initialData.nombre || "",
     apellido: initialData.apellido || "",
     historia_clinica: initialData.historia_clinica || "",
@@ -28,7 +27,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     email: initialData.email || "",
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     setForm({
       id: initialData.id || undefined,
       dni: initialData.dni || "",
@@ -48,8 +47,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     });
   }, [initialData]);
   const [error, setError] = useState("");
-  // Validación en tiempo real para edad máxima
-  React.useEffect(() => {
+  useEffect(() => {
     if (form.edad_unidad === "años" && form.edad && Number(form.edad) > 150) {
       setError("La edad no puede superar los 150 años.");
     } else {
@@ -61,7 +59,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
   const handleChange = (e) => {
     const { name, value } = e.target;
     if (name === "tipo_documento") {
-      // Si cambia el tipo de documento y es "sin_documento", limpiar el campo dni
       setForm({
         ...form,
         tipo_documento: value,
@@ -70,7 +67,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       return;
     }
     if (name === "dni" && form.tipo_documento === "sin_documento") {
-      // No permitir edición manual si es sin documento
       return;
     }
     if (name === "fecha_nacimiento" && value) {
@@ -78,7 +74,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
       const fechaNac = new Date(value);
       let edad = "";
       let unidad = "años";
-      // Calcular diferencia en milisegundos
       const diffMs = hoy - fechaNac;
       const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       if (diffDias < 0) {
@@ -87,7 +82,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         edad = diffDias;
         unidad = "días";
       } else if (diffDias < 365) {
-        // Calcular meses
         const diffMeses =
           (hoy.getFullYear() - fechaNac.getFullYear()) * 12 +
           hoy.getMonth() -
@@ -95,7 +89,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         edad = diffMeses;
         unidad = "meses";
       } else {
-        // Calcular años
         let diffAnios = hoy.getFullYear() - fechaNac.getFullYear();
         const m = hoy.getMonth() - fechaNac.getMonth();
         if (m < 0 || (m === 0 && hoy.getDate() < fechaNac.getDate())) {
@@ -120,7 +113,6 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
     setLoading(true);
     setError("");
     let formToSend = { ...form };
-    // Convertir a mayúsculas los campos de texto relevantes
     const camposMayuscula = [
       "nombre",
       "apellido",
@@ -134,11 +126,9 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         formToSend[campo] = formToSend[campo].toUpperCase();
       }
     });
-    // El email se mantiene en minúscula
     if (formToSend.email) {
       formToSend.email = formToSend.email.trim();
     }
-    // Validar según tipo de documento
     if (formToSend.tipo_documento === "dni") {
       if (!/^\d{8}$/.test(formToSend.dni)) {
         setError("El DNI debe tener exactamente 8 dígitos.");
@@ -152,20 +142,17 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         return;
       }
     } else if (formToSend.tipo_documento === "sin_documento") {
-      // Genera un DNI provisional de 8 dígitos, por ejemplo: 99990001
       formToSend.dni = (99990000 + Math.floor(Math.random() * 100)).toString();
     }
-
-    // Verificación previa: consultar si el DNI ya existe
+    // Validación de DNI duplicado (opcional, si lo quieres mantener)
     if (formToSend.tipo_documento === "dni" && formToSend.dni) {
       try {
         const resDni = await fetch(`${BASE_URL}api_pacientes.php?busqueda=${formToSend.dni}&limit=1`, { credentials: "include" });
         const dataDni = await resDni.json();
         if (dataDni.success && Array.isArray(dataDni.pacientes) && dataDni.pacientes.length > 0) {
           const pacienteEncontrado = dataDni.pacientes[0];
-          // Si estamos editando y el id coincide, permitir actualizar
           if (!form.id || pacienteEncontrado.id !== form.id) {
-            MySwal.fire({
+            Swal.fire({
               icon: "warning",
               title: "DNI ya registrado",
               html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
@@ -178,76 +165,37 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
           }
         }
       } catch (err) {
-        // Si la consulta falla, continuar con el registro normal
+        // Error al consultar DNI, ignorado intencionalmente
       }
     }
-    try {
-      const res = await fetch(BASE_URL + "api_pacientes.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formToSend),
-        credentials: "include",
-      });
-      let data = null;
-      try {
-        data = await res.json();
-      } catch (err) {
-        // Si la respuesta no es JSON, mostrar error genérico
-        setError("Error de conexión con el servidor. Intente nuevamente.");
-        setLoading(false);
-        return;
-      }
-      if (data.success && data.paciente) {
-        onRegistroExitoso(data.paciente);
-        // Mostrar mensaje de confirmación con el número de HC generado
-        MySwal.fire({
-          icon: "success",
-          title: form.id ? "Paciente actualizado" : "Paciente registrado",
-          html: `<b>Historia Clínica:</b> ${data.paciente.historia_clinica || '-'}`,
-          confirmButtonText: "Aceptar"
-        });
-      } else {
-        // Si el error es por DNI duplicado, mostrar mensaje claro y atractivo
-        if ((data.error && data.error.includes('Duplicate entry') && data.error.includes('dni')) ||
-            (data.error && data.error.toLowerCase().includes('dni') && data.error.toLowerCase().includes('registrado'))) {
-          setError("");
-          MySwal.fire({
-            icon: "warning",
-            title: "DNI ya registrado",
-            html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
-            confirmButtonText: "Aceptar",
-            showClass: { popup: 'animate__animated animate__fadeInDown' },
-            hideClass: { popup: 'animate__animated animate__fadeOutUp' }
-          });
-        } else {
-          setError("");
-          MySwal.fire({
-            icon: "error",
-            title: form.id ? "Error al actualizar paciente" : "Error al registrar paciente",
-            html: `<div style='font-size:1.1em'>${data.error || (form.id ? "Error al actualizar paciente" : "Error al registrar paciente")}</div>`,
-            confirmButtonText: "Aceptar",
-            showClass: { popup: 'animate__animated animate__fadeInDown' },
-            hideClass: { popup: 'animate__animated animate__fadeOutUp' }
-          });
-        }
-      }
-    } catch (err) {
-      setError(
-        form.id
-          ? "Error de conexión al actualizar"
-          : "Error de conexión al registrar"
-      );
-    }
+    // Usar guardarPaciente del hook
+    const result = await guardarPaciente(formToSend);
     setLoading(false);
+    if (result.success) {
+      onRegistroExitoso(result.paciente);
+      Swal.fire({
+        icon: "success",
+        title: form.id ? "Paciente actualizado" : "Paciente registrado",
+        html: `<b>Historia Clínica:</b> ${result.paciente.historia_clinica || '-'}`,
+        confirmButtonText: "Aceptar"
+      });
+    } else {
+      setError(result.error || "Error al guardar paciente");
+      Swal.fire({
+        icon: "error",
+        title: form.id ? "Error al actualizar paciente" : "Error al registrar paciente",
+        html: `<div style='font-size:1.1em'>${result.error || (form.id ? "Error al actualizar paciente" : "Error al registrar paciente")}</div>`,
+        confirmButtonText: "Aceptar",
+        showClass: { popup: 'animate__animated animate__fadeInDown' },
+        hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+      });
+    }
   };
 
-  // Referencia al botón de submit
-  const submitBtnRef = React.useRef(null);
+  const submitBtnRef = useRef(null);
 
-  // Handler para evitar submit con Enter si el foco no está en el botón
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
-      // Si el foco NO está en el botón de submit, prevenir submit
       if (document.activeElement !== submitBtnRef.current) {
         e.preventDefault();
       }
@@ -255,7 +203,7 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
   };
 
   return (
-  <div className="w-full max-w-full mx-auto">
+    <div className="w-full max-w-full mx-auto">
       <h2
         className="text-2xl font-extrabold mb-6 flex items-center gap-3 justify-center bg-gradient-to-r from-purple-700 via-pink-500 to-blue-500 text-white rounded-xl shadow-lg py-4 px-6 animate__animated animate__fadeInDown"
         style={{ boxShadow: '0 4px 16px rgba(80,0,120,0.12)' }}
@@ -285,19 +233,10 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
         onKeyDown={handleKeyDown}
         className="space-y-4 bg-blue-50 p-4 rounded border border-blue-200 max-h-[80vh] overflow-y-auto w-full max-w-full mx-auto"
       >
-        {/* Sección: Información Básica */}
-          <DatosBasicos form={form} handleChange={handleChange} />
-
-        {/* Sección: Datos de Edad */}
-          <DatosEdad form={form} handleChange={handleChange} />
-
-        {/* Sección: Información Adicional */}
-          <DatosAdicionales form={form} handleChange={handleChange} />
-
-        {/* Sección: Contacto */}
-          <DatosContacto form={form} handleChange={handleChange} />
-
-        {/* Botón de envío */}
+        <DatosBasicos form={form} handleChange={handleChange} />
+        <DatosEdad form={form} handleChange={handleChange} />
+        <DatosAdicionales form={form} handleChange={handleChange} />
+        <DatosContacto form={form} handleChange={handleChange} />
         <div className="sticky bottom-0 bg-blue-50 p-4 -mx-4 -mb-4 border-t border-blue-200">
           <button
             type="submit"
@@ -340,4 +279,4 @@ function PacienteForm({ initialData = {}, onRegistroExitoso }) {
   );
 }
 
-export default PacienteForm;
+export default PacienteListForm;

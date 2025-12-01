@@ -1,8 +1,8 @@
 import { useState } from "react";
-import PacienteSearch from "./PacienteSearch";
-import PacienteResumen from "./PacienteResumen";
+import PacienteSearch from "./paciente/PacienteSearch";
+import PacienteResumen from "./paciente/PacienteResumen";
 import ServiciosSelector from "./ServiciosSelector";
-import PacienteForm from "./PacienteForm";
+import PacienteForm from "./paciente-list/PacienteListForm";
 
 
 function RecepcionModulo({ onPacienteRegistrado }) {

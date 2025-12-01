@@ -1,6 +1,6 @@
 import React from "react";
 
-function PacienteTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, sortBy, sortDir, handleSort }) {
+function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, sortBy, sortDir, handleSort, page, setPage, totalPages }) {
   return (
     <div className="hidden lg:block overflow-x-auto w-full">
       <table className="min-w-full text-sm border">
@@ -16,12 +16,12 @@ function PacienteTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, o
           </tr>
         </thead>
         <tbody>
-          {pacientes.map(p => (
+          {(pacientes || []).map(p => (
             <tr key={p.id} className="hover:bg-blue-50">
               <td className="border px-2 py-1">{p.historia_clinica}</td>
               <td className="border px-2 py-1">{p.nombre}</td>
               <td className="border px-2 py-1">{p.apellido}</td>
-              <td className="border px-2 py-1">{p.edad !== null ? p.edad : '-'}</td>
+              <td className="border px-2 py-1">{p.edad !== null ? p.edad : '-'} </td>
               <td className="border px-2 py-1">{p.dni}</td>
               <td className="border px-2 py-1">{p.tipo_seguro || '-'}</td>
               <td className="border py-1">
@@ -36,8 +36,22 @@ function PacienteTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, o
           ))}
         </tbody>
       </table>
+      {/* Paginación solo en desktop */}
+      <div className="flex justify-end items-center gap-2 mt-2 lg:flex">
+        <button
+          onClick={() => setPage(page - 1)}
+          disabled={page === 1}
+          className="px-3 py-1 rounded bg-gray-200 text-gray-700 font-semibold disabled:opacity-50"
+        >Anterior</button>
+        <span className="font-semibold">Página {page} de {totalPages}</span>
+        <button
+          onClick={() => setPage(page + 1)}
+          disabled={page === totalPages}
+          className="px-3 py-1 rounded bg-gray-200 text-gray-700 font-semibold disabled:opacity-50"
+        >Siguiente</button>
+      </div>
     </div>
   );
 }
 
-export default PacienteTable;
+export default PacienteListTable;

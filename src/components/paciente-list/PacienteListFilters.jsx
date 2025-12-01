@@ -1,6 +1,6 @@
 import React from "react";
 
-function PacienteFilters({ busqueda, setBusqueda, fechaDesde, setFechaDesde, fechaHasta, setFechaHasta, rowsPerPage, setRowsPerPage }) {
+function PacienteListFilters({ busqueda, setBusqueda, fechaDesde, setFechaDesde, fechaHasta, setFechaHasta, rowsPerPage, setRowsPerPage }) {
   return (
     <div className="bg-gray-50 rounded-lg p-4 mb-4 space-y-4">
       {/* Buscador */}
@@ -82,4 +82,4 @@ function PacienteFilters({ busqueda, setBusqueda, fechaDesde, setFechaDesde, fec
   );
 }
 
-export default PacienteFilters;
+export default PacienteListFilters;

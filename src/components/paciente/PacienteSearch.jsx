@@ -1,6 +1,6 @@
 
 import { useState } from "react";
-import { BASE_URL } from "../config/config";
+import { BASE_URL } from "../../config/config";
 
 
 function PacienteSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqueda }) {

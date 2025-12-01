@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import CobroModuloFinal from "../components/CobroModuloFinal";
 import { useParams, useNavigate } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
-import PacienteSearch from "../components/PacienteSearch";
+import { PacienteSearch } from "../components/paciente";
 import { BASE_URL } from "../config/config";
 // import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";

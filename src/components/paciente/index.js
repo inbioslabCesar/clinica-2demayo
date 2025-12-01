@@ -1,0 +1,13 @@
+export { default as PacienteForm } from "./PacienteForm";
+export { default as PacienteModal } from "./PacienteModal";
+export { default as PacienteFilters } from "./PacienteFilters";
+export { default as PacienteTable } from "./PacienteTable";
+export { default as PacienteCards } from "./PacienteCards";
+export { default as PacienteSearch } from "./PacienteSearch";
+export { default as PacienteResumen } from "./PacienteResumen";
+export { default as ExportButtons } from "./ExportButtons";
+export { default as DatosBasicos } from "./DatosBasicos";
+export { default as DatosEdad } from "./DatosEdad";
+export { default as DatosAdicionales } from "./DatosAdicionales";
+export { default as DatosContacto } from "./DatosContacto";
+export { default as usePacientes } from "./usePacientes";
