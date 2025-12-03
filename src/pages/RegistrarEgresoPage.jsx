@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import RegistrarEgresoForm from "../components/egresos/RegistrarEgresoForm";
-import EgresosList from "../components/EgresosList";
+import EgresosList from "../components/egresos/EgresosList";
 
 export default function RegistrarEgresoPage() {
   const egresosListRef = useRef();

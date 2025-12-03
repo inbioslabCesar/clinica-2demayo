@@ -1,5 +1,5 @@
 import { useParams, Link } from "react-router-dom";
-import SolicitudLaboratorio from "../components/SolicitudLaboratorio";
+import SolicitudLaboratorio from "../components/examenes/SolicitudLaboratorio";
 
 
 export default function SolicitudLaboratorioPage() {

@@ -1,5 +1,5 @@
 
-import MedicoConsultas from "../components/MedicoConsultas";
+import MedicoConsultas from "../components/medico/MedicoConsultas";
 
 function MedicoConsultasPage({ usuario }) {
   const medicoId = usuario?.id;

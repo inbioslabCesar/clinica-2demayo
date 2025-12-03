@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import AperturaCajaForm from "./AperturaCajaForm";
-import Modal from "../Modal";
+import Modal from "../comunes/Modal";
 import CajaActionButtons from "./CajaActionButtons";
 import CajaResumenDiario from "./CajaResumenDiario";
 import CajaRecepcionistasResumen from "./CajaRecepcionistasResumen";

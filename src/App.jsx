@@ -1,7 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 // Lazy loading para todos los componentes y páginas principales
-const Login = lazy(() => import("./components/Login.jsx"));
+const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
   import("./pages/DashboardEstadisticasAdmin.jsx")
 );
@@ -25,8 +25,8 @@ const ContabilidadPage = lazy(() => import("./pages/ContabilidadPage.jsx"));
 const CerrarCajaView = lazy(() =>
   import("./components/caja/CerrarCajaView.jsx")
 );
-const DashboardLayout = lazy(() => import("./components/DashboardLayout"));
-const Dashboard = lazy(() => import("./components/Dashboard.jsx"));
+const DashboardLayout = lazy(() => import("./components/dashboard/DashboardLayout"));
+const Dashboard = lazy(() => import("./components/dashboard/Dashboard.jsx"));
 const PacientesPage = lazy(() => import("./pages/PacientesPage.jsx"));
 const UsuariosPage = lazy(() => import("./pages/UsuariosPage.jsx"));
 const AgendarConsultaPage = lazy(() =>
@@ -38,7 +38,7 @@ const MedicoConsultasPage = lazy(() =>
 const MedicosPage = lazy(() => import("./pages/MedicosPage.jsx"));
 const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
-  import("./historia_clinica/HistoriaClinicaPage.jsx")
+  import("./pages/HistoriaClinicaPage.jsx")
 );
 const HistorialConsultasMedico = lazy(() =>
   import("./historia_clinica/HistorialConsultasMedico.jsx")
@@ -76,7 +76,7 @@ const ReporteFinanzasPage = lazy(() =>
 );
 const ConfiguracionPage = lazy(() => import("./pages/ConfiguracionPage.jsx"));
 const GestionTarifasPage = lazy(() => import("./pages/GestionTarifasPage.jsx"));
-const ProtectedRoute = lazy(() => import("./components/ProtectedRoute.jsx"));
+const ProtectedRoute = lazy(() => import("./components/comunes/ProtectedRoute.jsx"));
 const MedicamentosList = lazy(() => import("./farmacia/MedicamentosList.jsx"));
 const FarmaciaCotizadorPage = lazy(() => import("./pages/FarmaciaCotizadorPage.jsx"));
 const CotizarProcedimientosPage = lazy(() =>

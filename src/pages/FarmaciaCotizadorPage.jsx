@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import CobroModuloFinal from "../components/CobroModuloFinal";
+import CobroModuloFinal from "../components/cobro/CobroModuloFinal.jsx";
 import { useParams, useNavigate } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteListSearch from "../components/paciente-list/PacienteListSearch.jsx";

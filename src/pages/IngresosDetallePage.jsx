@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
 import { FaArrowLeft, FaSearch } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
-import Spinner from "../components/Spinner";
+import Spinner from "../components/comunes/Spinner";
 
 export default function IngresosDetallePage() {
   const [loading, setLoading] = useState(true);

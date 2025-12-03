@@ -1,4 +1,4 @@
-import UsuarioList from "../components/UsuarioList";
+import UsuarioList from "../components/usuario/UsuarioList";
 
 function UsuariosPage() {
   return (

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import CobroModuloFinal from "../components/CobroModuloFinal";
+import { CobroModuloFinal } from "../components/cobro";
 import { useParams, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 

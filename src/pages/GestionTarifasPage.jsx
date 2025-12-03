@@ -2,10 +2,10 @@
 import React, { useState, useEffect } from "react";
 import { BASE_URL } from "../config/config";
 import Swal from "sweetalert2";
-import TarifasTable from "../components/TarifasTable";
-import TarifaModal from "../components/TarifaModal";
-import Paginacion from "../components/Paginacion";
-import FiltrosTarifas from "../components/FiltrosTarifas";
+import TarifasTable from "../components/tarifas/TarifasTable";
+import TarifaModal from "../components/tarifas/TarifaModal";
+import Paginacion from "../components/comunes/Paginacion";
+import FiltrosTarifas from "../components/tarifas/FiltrosTarifas";
 import { useTarifasMedicos } from "../hooks/useTarifasMedicos";
 import { usePaginacion } from "../hooks/usePaginacion";
 import { useFiltrosTarifas } from "../hooks/useFiltrosTarifas";

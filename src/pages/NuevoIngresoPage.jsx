@@ -8,7 +8,7 @@ import {
 } from "react-icons/fa";
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
-import Spinner from "../components/Spinner";
+import Spinner from "../components/comunes/Spinner";
 
 export default function NuevoIngresoPage() {
   const MySwal = withReactContent(Swal);

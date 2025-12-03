@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
-import Spinner from "../components/Spinner";
+import Spinner from "../components/comunes/Spinner";
 import { FaMoneyBillWave, FaUserCircle, FaClipboardList } from "react-icons/fa";
 import Swal from 'sweetalert2';
 

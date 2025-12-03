@@ -16,7 +16,7 @@ import {
   FaChevronRight,
   FaChartLine
 } from "react-icons/fa";
-import Spinner from "../components/Spinner";
+import Spinner from "../components/comunes/Spinner";
 
 export default function HistorialIngresosPage() {
   const navigate = useNavigate();

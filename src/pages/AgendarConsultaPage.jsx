@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import AgendarConsulta from "../components/AgendarConsulta";
+import { AgendarConsulta } from "../components/paciente";
 
 function AgendarConsultaPage() {
   const location = useLocation();

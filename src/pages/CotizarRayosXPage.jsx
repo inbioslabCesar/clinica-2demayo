@@ -3,7 +3,7 @@ import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 import { useParams, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
-import CobroModuloFinal from "../components/CobroModuloFinal";
+import { CobroModuloFinal } from "../components/cobro";
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
