@@ -313,87 +313,81 @@ if (tipoDescuento === 'porcentaje') {
   const totalCobro = calcularTotal();
 
   return (
-  <div className="bg-white p-8 lg:p-20 rounded-2xl shadow-2xl border border-blue-200 max-w-full w-full mx-auto">
-      <h3 className="text-xl font-bold mb-4 text-blue-800">💰 Módulo de Cobros</h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Columna izquierda */}
-        <div>
-          {/* Información del paciente */}
-          <div className="bg-gray-50 p-4 rounded mb-4">
-            <h4 className="font-semibold mb-2">Paciente:</h4>
-            <p>{paciente.nombre}</p>
-            <p>DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</p>
+    <div className="bg-white p-8 md:p-12 rounded-2xl shadow-2xl border border-blue-200 max-w-2xl lg:max-w-4xl mx-auto mt-8 lg:mt-12">
+      <h3 className="text-2xl font-bold mb-6 text-blue-800 flex items-center gap-2">
+        <span className="text-3xl">💰</span> Módulo de Cobros
+      </h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
+        {/* Columna izquierda: Paciente, cobertura, motivo */}
+        <div className="space-y-6 flex flex-col justify-between h-full">
+          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-sm">
+            <h4 className="font-semibold mb-2 text-gray-700 flex items-center gap-2 text-lg"><span className="text-blue-500">👤</span> Paciente</h4>
+            <div className="text-xl font-bold">{paciente.nombre}</div>
+            <div className="text-base text-gray-600">DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</div>
           </div>
-          {/* Tipo de cobertura */}
-          <div className="mb-4">
+          <div>
             <label className="block font-semibold mb-2">Tipo de Cobertura:</label>
             <select 
               value={tipoCobertura} 
               onChange={(e) => setTipoCobertura(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-300 text-base"
             >
               <option value="particular">Particular</option>
               <option value="seguro">Seguro</option>
               <option value="convenio">Convenio</option>
             </select>
           </div>
-          {/* Motivo del descuento */}
           {descuento > 0 && (
-            <div className="mb-6">
+            <div>
               <label className="block font-semibold mb-2">Motivo del descuento <span className="text-red-500">*</span>:</label>
               <textarea 
                 value={motivo}
                 onChange={e => setMotivo(e.target.value)}
-                className="w-full border rounded px-3 py-2 h-20"
+                className="w-full border rounded-lg px-3 py-2 h-20 focus:ring-2 focus:ring-blue-300 text-base"
                 placeholder="Motivo o justificación del descuento (obligatorio)"
                 required={descuento > 0}
               />
             </div>
           )}
         </div>
-        {/* Columna derecha */}
-        <div>
-          {/* Detalle del servicio */}
-          <div className="mb-4">
-            <h4 className="font-semibold mb-2">Detalle del Servicio:</h4>
-            <div className="bg-blue-50 p-4 rounded">
-              {detallesCobro.map((detalle, index) => {
-                // Si el subtotal es 0 o no existe, usar precio_publico si está disponible
-                let precio = detalle.subtotal;
-                if ((typeof precio !== 'number' || precio <= 0) && typeof detalle.precio_publico === 'number') {
-                  precio = detalle.precio_publico;
-                }
-                // Si sigue siendo 0, mostrar vacío o advertencia
-                return (
-                  <div key={index} className="flex justify-between items-center">
-                    <span>{detalle.descripcion}</span>
-                    <span className="font-bold">S/ {precio > 0 ? precio.toFixed(2) : '—'}</span>
-                  </div>
-                );
-              })}
-              <hr className="my-2" />
-              <div className="flex justify-between items-center font-bold text-lg">
-                <span>TOTAL:</span>
-                <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
-              </div>
+        {/* Columna derecha: Detalle, descuento, pago, acción */}
+        <div className="space-y-6 flex flex-col justify-between h-full">
+          <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100 shadow-sm">
+            <h4 className="font-semibold mb-2 text-blue-700 flex items-center gap-2 text-lg"><span className="text-blue-400">🧾</span> Detalle del Servicio</h4>
+            {detallesCobro.map((detalle, index) => {
+              let precio = detalle.subtotal;
+              if ((typeof precio !== 'number' || precio <= 0) && typeof detalle.precio_publico === 'number') {
+                precio = detalle.precio_publico;
+              }
+              return (
+                <div key={index} className="flex justify-between items-center text-base">
+                  <span>{detalle.descripcion}</span>
+                  <span className="font-bold">S/ {precio > 0 ? precio.toFixed(2) : '—'}</span>
+                </div>
+              );
+            })}
+            <hr className="my-3" />
+            <div className="flex justify-between items-center font-bold text-xl">
+              <span>Total:</span>
+              <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
             </div>
           </div>
-          {/* Descuento */}
-          <CobroDescuento
-            tipoDescuento={tipoDescuento}
-            setTipoDescuento={setTipoDescuento}
-            valorDescuento={valorDescuento}
-            setValorDescuento={setValorDescuento}
-            montoOriginal={detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0)}
-            errorDescuento={errorDescuento}
-          />
-          {/* Método de pago */}
-          <div className="mb-4">
+          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-sm">
+            <CobroDescuento
+              tipoDescuento={tipoDescuento}
+              setTipoDescuento={setTipoDescuento}
+              valorDescuento={valorDescuento}
+              setValorDescuento={setValorDescuento}
+              montoOriginal={detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0)}
+              errorDescuento={errorDescuento}
+            />
+          </div>
+          <div>
             <label className="block font-semibold mb-2">Método de Pago:</label>
             <select 
               value={tipoPago} 
               onChange={(e) => setTipoPago(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-300 text-base"
             >
               <option value="efectivo">Efectivo</option>
               <option value="tarjeta">Tarjeta</option>
@@ -402,18 +396,17 @@ if (tipoDescuento === 'porcentaje') {
               <option value="plin">Plin</option>
             </select>
           </div>
-          {/* Botones de acción */}
-          <div className="flex gap-3 mt-6">
+          <div className="flex flex-col md:flex-row gap-4 mt-4">
             <button 
               onClick={procesarCobro}
               disabled={loading || totalCobro <= 0}
-              className="flex-1 bg-green-600 text-white py-2 px-4 rounded font-bold text-base hover:bg-green-700 disabled:bg-gray-400"
+              className="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg font-bold text-lg hover:bg-green-700 disabled:bg-gray-400 transition-all shadow-md"
             >
               {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}
             </button>
             <button 
               onClick={onCancelar}
-              className="bg-gray-500 text-white py-2 px-4 rounded font-bold text-base hover:bg-gray-600"
+              className="flex-1 bg-gray-500 text-white py-3 px-6 rounded-lg font-bold text-lg hover:bg-gray-600 transition-all shadow-md"
             >
               Cancelar
             </button>

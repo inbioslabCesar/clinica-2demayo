@@ -95,7 +95,7 @@ export default function CotizarProcedimientosPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-8 bg-white rounded-xl shadow-lg mt-8">
+    <div className="max-w-7xl mx-auto p-10 bg-white rounded-xl shadow-lg mt-8">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <span className="text-3xl">🛠️</span>
@@ -107,7 +107,7 @@ export default function CotizarProcedimientosPage() {
         <div className="text-gray-600"><b>ID Paciente:</b> {pacienteId}</div>
       </div>
       <div className="flex flex-col md:flex-row gap-8">
-        <div className="flex-1">
+        <div className="flex-1 md:max-w-xl mx-auto">
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Selecciona los procedimientos:</h4>
             <input
@@ -151,7 +151,7 @@ export default function CotizarProcedimientosPage() {
           </div>
         </div>
         {/* Cotización en tiempo real en columna derecha */}
-        <div className="w-full md:w-96 md:sticky md:top-8 h-fit">
+        <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit">
           {seleccionados.length > 0 && !mostrarCobro && (
             <div className="mb-6">
               <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>

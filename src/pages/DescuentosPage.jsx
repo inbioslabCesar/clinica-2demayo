@@ -69,6 +69,13 @@ export default function DescuentosPage() {
         <div className="flex gap-4 items-center">
           <label className="font-semibold">Filtrar por fecha:</label>
           <input type="date" value={fecha} onChange={e => { setFecha(e.target.value); setPagina(1); }} className="border px-4 py-2 rounded-lg" />
+          {fecha && (
+            <button
+              onClick={() => { setFecha(""); setPagina(1); }}
+              className="ml-2 px-3 py-2 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-semibold"
+              title="Limpiar filtro de fecha"
+            >Limpiar</button>
+          )}
         </div>
         <div className="flex gap-2 items-center">
           <label className="font-semibold">Filas por página:</label>

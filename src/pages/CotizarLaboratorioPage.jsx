@@ -125,23 +125,25 @@ export default function CotizarLaboratorioPage() {
   };
 
   return (
-  <div className="max-w-6xl mx-auto p-4 md:p-8 bg-white rounded-xl shadow-lg mt-8">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
+  <div className="max-w-full mx-auto p-4 md:p-16 bg-white rounded-xl shadow-lg mt-8">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-2">
+        <div className="flex items-center gap-3 mb-2 md:mb-0">
           <span className="text-3xl">🔬</span>
           <h2 className="text-2xl font-bold text-blue-800">Cotización de Laboratorio</h2>
         </div>
-  <button onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver</button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto justify-end items-end">
+          <input
+            type="text"
+            value={busqueda}
+            onChange={e => setBusqueda(e.target.value)}
+            placeholder="Buscar examen..."
+            className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-64"
+          />
+          <button onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver</button>
+        </div>
       </div>
-  <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="text-gray-600"><b>ID Paciente:</b> {pacienteId}</div>
-        <input
-          type="text"
-          value={busqueda}
-          onChange={e => setBusqueda(e.target.value)}
-          placeholder="Buscar examen..."
-          className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-64"
-        />
       </div>
   <div className="mb-4 flex flex-col sm:flex-row gap-2 items-center">
         <label className="font-semibold text-gray-700">Filtrar por categoría:</label>
@@ -157,7 +159,7 @@ export default function CotizarLaboratorioPage() {
         </select>
       </div>
       <div className="flex flex-col md:flex-row gap-8">
-        <div className="flex-1">
+        <div className="flex-1 md:max-w-2xl mx-auto">
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Selecciona los exámenes:</h4>
             <div className="mb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -323,9 +325,9 @@ export default function CotizarLaboratorioPage() {
           </div>
         </div>
         {/* Cotización en tiempo real en columna derecha */}
-        <div className="w-full md:w-96 md:sticky md:top-8 h-fit">
+        <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit flex flex-col items-center">
           {seleccionados.length > 0 && !mostrarCobro && (
-            <div className="mb-6">
+            <div className="mb-6 w-full">
               <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
               <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
                 {seleccionados.map(exId => {
@@ -352,7 +354,7 @@ export default function CotizarLaboratorioPage() {
               <div className="mt-4 text-lg font-bold text-right">
                 Total: <span className="text-green-600">S/ {calcularTotal().toFixed(2)}</span>
               </div>
-              <div className="flex gap-3 mt-4 justify-end">
+              <div className="flex flex-wrap gap-3 mt-4 justify-end">
                 <button onClick={limpiarSeleccion} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
                 <button onClick={generarCotizacion} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Cobrar</button>
               </div>
@@ -360,18 +362,19 @@ export default function CotizarLaboratorioPage() {
           )}
 
           {mostrarCobro && paciente && (
-            <CobroModuloFinal
-              paciente={paciente}
-              servicio={{ key: "laboratorio", label: "Laboratorio" }}
-              detalles={detallesCotizacion}
-              total={totalCotizacion}
-              onCobroCompleto={() => {
-                setMostrarCobro(false);
-                // setCotizacionReady(true);
-                setMensaje("Cotización procesada correctamente.");
-              }}
-              onCancelar={() => setMostrarCobro(false)}
-            />
+            <div className="w-full max-w-xl mx-auto">
+              <CobroModuloFinal
+                paciente={paciente}
+                servicio={{ key: "laboratorio", label: "Laboratorio" }}
+                detalles={detallesCotizacion}
+                total={totalCotizacion}
+                onCobroCompleto={() => {
+                  setMostrarCobro(false);
+                  setMensaje("Cotización procesada correctamente.");
+                }}
+                onCancelar={() => setMostrarCobro(false)}
+              />
+            </div>
           )}
         </div>
       </div>

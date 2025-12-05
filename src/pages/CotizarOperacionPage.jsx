@@ -111,7 +111,7 @@ export default function CotizarOperacionPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-6 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
+    <div className="max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
       <button
         onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
         className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
@@ -125,7 +125,7 @@ export default function CotizarOperacionPage() {
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="mb-4 max-h-[500px] overflow-y-auto">
+        <div className="mb-4 max-h-[500px] overflow-y-auto md:max-w-xl mx-auto">
           <div className="font-bold mb-2 flex flex-col gap-2">
             <span>Operaciones/Cirugías disponibles:</span>
             <input
@@ -217,17 +217,19 @@ export default function CotizarOperacionPage() {
         )}
 
       {mostrarCobro && paciente && (
-        <CobroModuloFinal
-          paciente={paciente}
-          servicio={{ key: "operacion", label: "Operaciones/Cirugías Mayores" }}
-          detalles={detallesCotizacion}
-          total={totalCotizacion}
-          onCobroCompleto={() => {
-            setMostrarCobro(false);
-            setMensaje("Cotización procesada correctamente.");
-          }}
-          onCancelar={() => setMostrarCobro(false)}
-        />
+        <div className="w-full md:max-w-xl mx-auto">
+          <CobroModuloFinal
+            paciente={paciente}
+            servicio={{ key: "operacion", label: "Operaciones/Cirugías Mayores" }}
+            detalles={detallesCotizacion}
+            total={totalCotizacion}
+            onCobroCompleto={() => {
+              setMostrarCobro(false);
+              setMensaje("Cotización procesada correctamente.");
+            }}
+            onCancelar={() => setMostrarCobro(false)}
+          />
+        </div>
       )}
       </div>
       {mensaje && (

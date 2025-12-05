@@ -3,8 +3,12 @@ export default function CobroDescuento({ tipoDescuento, setTipoDescuento, valorD
   return (
     <div className="mb-6">
       <label className="block font-semibold mb-2">Descuento:</label>
-      <div className="flex gap-2 mb-2">
-        <select value={tipoDescuento} onChange={e => setTipoDescuento(e.target.value)} className="border rounded px-3 py-2">
+      <div className="mb-2 flex flex-col gap-2">
+        <select
+          value={tipoDescuento}
+          onChange={e => setTipoDescuento(e.target.value)}
+          className="border rounded px-3 py-2 w-full"
+        >
           <option value="porcentaje">Porcentaje (%)</option>
           <option value="monto">Monto fijo (S/)</option>
         </select>
@@ -14,7 +18,7 @@ export default function CobroDescuento({ tipoDescuento, setTipoDescuento, valorD
           step="any"
           value={valorDescuento}
           onChange={e => setValorDescuento(Number(e.target.value))}
-          className="border rounded px-3 py-2 w-32"
+          className="border rounded px-3 py-2 w-full"
           placeholder={tipoDescuento === 'porcentaje' ? 'Ej: 10' : 'Ej: 20.00'}
         />
       </div>
