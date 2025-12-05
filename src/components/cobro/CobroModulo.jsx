@@ -1,8 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
+import CobroDescuento from './CobroDescuento';
 import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
 
 function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
+    // Estados para descuento
+    const [tipoDescuento, setTipoDescuento] = useState('porcentaje');
+    const [valorDescuento, setValorDescuento] = useState(0);
+    const [errorDescuento, setErrorDescuento] = useState('');
   const [tarifas, setTarifas] = useState([]);
   const [tipoCobertura, setTipoCobertura] = useState('particular');
   const [tipoPago, setTipoPago] = useState('efectivo');
@@ -29,33 +34,34 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
   };
 
   // Calcular detalles del cobro usando useMemo
-  const detallesCobro = useMemo(() => {
-    if (!servicio || tarifas.length === 0) return [];
-
-    const tarifa = tarifas.find(t => 
-      t.servicio_tipo === servicio.key && t.activo === 1
-    );
-
-    if (!tarifa) return [];
-
-    let precio = tarifa.precio_particular;
-    if (tipoCobertura === 'seguro' && tarifa.precio_seguro) {
-      precio = tarifa.precio_seguro;
-    } else if (tipoCobertura === 'convenio' && tarifa.precio_convenio) {
-      precio = tarifa.precio_convenio;
-    }
-
-    return [{
-      servicio_tipo: servicio.key,
-      descripcion: servicio.label,
-      cantidad: 1,
-      precio_unitario: parseFloat(precio),
-      subtotal: parseFloat(precio)
-    }];
-  }, [servicio, tarifas, tipoCobertura]);
+ const detallesCobro = useMemo(() => {
+  if (!servicio || tarifas.length === 0) return [];
+  const tarifa = tarifas.find(t => t.servicio_tipo === servicio.key && t.activo === 1);
+  if (!tarifa) return [];
+  let precio = tarifa.precio_particular;
+  if (tipoCobertura === 'seguro' && tarifa.precio_seguro) {
+    precio = tarifa.precio_seguro;
+  } else if (tipoCobertura === 'convenio' && tarifa.precio_convenio) {
+    precio = tarifa.precio_convenio;
+  }
+  return [{
+    servicio_tipo: servicio.key,
+    descripcion: servicio.label,
+    cantidad: 1,
+    precio_unitario: parseFloat(precio),
+    subtotal: parseFloat(precio)
+  }];
+}, [servicio, tarifas, tipoCobertura]);
 
   const calcularTotal = () => {
-    return detallesCobro.reduce((total, detalle) => total + detalle.subtotal, 0);
+    const montoOriginal = detallesCobro.reduce((total, detalle) => total + detalle.subtotal, 0);
+    let descuento = 0;
+    if (tipoDescuento === 'porcentaje') {
+      descuento = montoOriginal * (valorDescuento / 100);
+    } else {
+      descuento = valorDescuento;
+    }
+    return Math.max(montoOriginal - descuento, 0);
   };
 
   const procesarCobro = async () => {
@@ -63,23 +69,36 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       Swal.fire('Error', 'No hay servicios para cobrar', 'error');
       return;
     }
-
+    // Validar descuento
+    const montoOriginal = detallesCobro.reduce((total, detalle) => total + detalle.subtotal, 0);
+    let descuento = 0;
+    if (tipoDescuento === 'porcentaje') {
+      descuento = montoOriginal * (valorDescuento / 100);
+    } else {
+      descuento = valorDescuento;
+    }
+    if (descuento < 0 || descuento > montoOriginal) {
+      setErrorDescuento('El descuento no puede ser mayor al monto original ni negativo.');
+      return;
+    } else {
+      setErrorDescuento('');
+    }
     setLoading(true);
-
     try {
       // Obtener usuario actual del sessionStorage
       const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
-      
       const cobroData = {
         paciente_id: paciente.id,
         usuario_id: usuario.id,
-        total: calcularTotal(),
-        tipo_pago: tipoPago,
+        total: Math.max(montoOriginal - descuento, 0),
+        monto_original: montoOriginal,
+        monto_descuento: descuento,
+        tipo_descuento: tipoDescuento,
+        valor_descuento: valorDescuento,
         observaciones: observaciones,
         detalles: detallesCobro,
         servicio_info: servicio
       };
-
       const response = await fetch(`${BASE_URL}api_cobros.php`, {
         method: 'POST',
         headers: {
@@ -88,13 +107,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
         credentials: 'include',
         body: JSON.stringify(cobroData)
       });
-
       const result = await response.json();
-
       if (result.success) {
         // Mostrar comprobante
         await mostrarComprobante(result.cobro_id, cobroData);
-        
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
           onCobroCompleto(result.cobro_id, servicio);
@@ -114,30 +130,33 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     const fechaHora = new Date().toLocaleString('es-PE');
     
     const comprobante = `
-      <div style="text-align: left; font-family: monospace;">
-        <h3 style="text-align: center; margin-bottom: 20px;">🏥 CLÍNICA 2 DE MAYO</h3>
-        <hr>
-        <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
-        <p>Fecha: ${fechaHora}</p>
-        <p>Paciente: ${paciente.nombre} ${paciente.apellido}</p>
-        <p>DNI: ${paciente.dni}</p>
-        <p>H.C.: ${paciente.historia_clinica}</p>
-        <hr>
-        <p><strong>DETALLE:</strong></p>
-        ${datosComprobante.detalles.map(d => 
-          `<p>${d.descripcion} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`
-        ).join('')}
-        <hr>
-        <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
-        <p>Tipo de pago: ${tipoPago.toUpperCase()}</p>
-        <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
-        <hr>
-        <p style="text-align: center; font-size: 12px;">
-          Gracias por su preferencia<br>
-          Conserve este comprobante
-        </p>
-      </div>
-    `;
+  <div style="text-align: left; font-family: monospace;">
+    <h3 style="text-align: center; margin-bottom: 20px;">🏥 CLÍNICA 2 DE MAYO</h3>
+    <hr>
+    <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
+    <p>Fecha: ${fechaHora}</p>
+    <p>Paciente: ${paciente.nombre} ${paciente.apellido}</p>
+    <p>DNI: ${paciente.dni}</p>
+    <p>H.C.: ${paciente.historia_clinica}</p>
+    <hr>
+    <p><strong>DETALLE:</strong></p>
+    ${datosComprobante.detalles.map(d => 
+      `<p>${d.descripcion} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`
+    ).join('')}
+    <hr>
+      ${datosComprobante.monto_descuento && datosComprobante.monto_descuento > 0 ? `
+        <p style="color: #d97706;"><strong>DESCUENTO:</strong> -S/ ${datosComprobante.monto_descuento.toFixed(2)} (${datosComprobante.tipo_descuento === 'porcentaje' ? datosComprobante.valor_descuento + '%' : 'Monto fijo'})</p>
+      ` : ''}
+    <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
+    <p>Tipo de pago: ${tipoPago.toUpperCase()}</p>
+    <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
+    <hr>
+    <p style="text-align: center; font-size: 12px;">
+      Gracias por su preferencia<br/>
+      Conserve este comprobante
+    </p>
+  </div>
+`;
 
     await Swal.fire({
       title: 'Cobro Procesado ✅',
@@ -205,6 +224,15 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
           </div>
         </div>
       </div>
+      {/* Descuento */}
+      <CobroDescuento
+        tipoDescuento={tipoDescuento}
+        setTipoDescuento={setTipoDescuento}
+        valorDescuento={valorDescuento}
+        setValorDescuento={setValorDescuento}
+        montoOriginal={detallesCobro.reduce((total, detalle) => total + detalle.subtotal, 0)}
+        errorDescuento={errorDescuento}
+      />
 
       {/* Método de pago */}
       <div className="mb-4">

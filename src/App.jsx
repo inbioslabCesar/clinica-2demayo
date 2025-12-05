@@ -89,6 +89,7 @@ const FarmaciaVentasPage = lazy(() => import("./pages/FarmaciaVentasPage.jsx"));
 const SeleccionarServicioPage = lazy(() =>
   import("./pages/SeleccionarServicioPage.jsx")
 );
+const DescuentosPage = lazy(() => import("./pages/DescuentosPage.jsx"));
 
 function App() {
   const [usuario, setUsuario] = useState(() => {
@@ -577,6 +578,17 @@ function App() {
                         rolesPermitidos={["administrador"]}
                       >
                         <HistorialReaperturasPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/contabilidad/descuentos"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                      >
+                        <DescuentosPage />
                       </ProtectedRoute>
                     }
                   />

@@ -180,6 +180,8 @@ class CobroModule
         try {
             // Registrar cobro principal y detalles
             $cobro_id = self::registrarCobro($conn, $data);
+            // Registrar descuento aplicado si corresponde
+            self::registrarDescuento($conn, $data, $cobro_id);
 
             // Obtener caja abierta y registrar ingreso
             $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
@@ -335,12 +337,20 @@ class CobroModule
                             $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
                             $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
                             // Registrar ingreso en caja por cada honorario
+                            // Aplicar descuento proporcional si existe
+                            $monto_detalle = $detalleServicio['subtotal'] ?? $total_param;
+                            $monto_original = $data['monto_original'] ?? null;
+                            $monto_descuento = $data['monto_descuento'] ?? 0;
+                            if ($monto_original && $monto_descuento > 0 && $monto_original > 0) {
+                                $proporcion = $monto_detalle / $monto_original;
+                                $monto_detalle = $monto_detalle - ($monto_descuento * $proporcion);
+                            }
                             $params_individual = [
                                 'caja_id' => $caja_id,
                                 'tipo_ingreso' => $tipo_ingreso,
                                 'area_servicio' => $area_servicio,
                                 'descripcion_ingreso' => $detalleServicio['descripcion'] ?? $descripcion_ingreso,
-                                'total_param' => $detalleServicio['subtotal'] ?? $total_param,
+                                'total_param' => $monto_detalle,
                                 'metodo_pago' => $metodo_pago,
                                 'cobro_id' => $cobro_id,
                                 'referencia_tabla_param' => $referencia_tabla_param,
@@ -453,5 +463,48 @@ class CobroModule
         $stmt_detalle->bind_param("isisssd", $cobro_id, $servicio_tipo, $servicio_id, $descripcion_json, $cantidad, $precio_unitario, $subtotal);
         $stmt_detalle->execute();
         return $cobro_id;
+    }
+    // --- Registrar descuento aplicado en cobro ---
+    public static function registrarDescuento($conn, $data, $cobro_id) {
+                // DEBUG: Log temporal para depuración de servicio_tipo
+                file_put_contents(__DIR__ . '/debug_descuento_servicio.txt',
+                    'detalles: ' . var_export($data['detalles'], true) . "\n" .
+                    'servicio_tipo: ' . var_export($data['detalles'][0]['servicio_tipo'] ?? null, true) . "\n",
+                    FILE_APPEND
+                );
+        if (!isset($data['monto_descuento']) || $data['monto_descuento'] <= 0) return;
+        $fecha = date('Y-m-d');
+        $hora = date('H:i:s');
+        // Forzar string correcto para servicio (igual que en atenciones)
+        // Usar el mismo valor que en cobros_detalle para máxima consistencia
+        $servicio = $data['detalles'][0]['servicio_tipo'] ?? '';
+        $monto_original = $data['monto_original'] ?? 0;
+        $monto_descuento = $data['monto_descuento'] ?? 0;
+        $monto_final = $data['total'] ?? 0;
+        $motivo = $data['motivo'] ?? '';
+        $usuario_nombre = $data['usuario_nombre'] ?? '';
+        $paciente_nombre = $data['paciente_nombre'] ?? '';
+        $tipo_descuento = $data['tipo_descuento'] ?? '';
+        $valor_descuento = $data['valor_descuento'] ?? 0;
+        $stmt = $conn->prepare("INSERT INTO descuentos_aplicados 
+            (cobro_id, usuario_id, usuario_nombre, paciente_id, paciente_nombre, fecha, hora, servicio, monto_original, tipo_descuento, valor_descuento, monto_descuento, monto_final, motivo) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iissssssdsddds", 
+            $cobro_id, 
+            $data['usuario_id'], 
+            $usuario_nombre,
+            $data['paciente_id'], 
+            $paciente_nombre,
+            $fecha, 
+            $hora, 
+            $servicio, 
+            $monto_original, 
+            $tipo_descuento,
+            $valor_descuento,
+            $monto_descuento, 
+            $monto_final, 
+            $motivo
+        );
+        $stmt->execute();
     }
 }

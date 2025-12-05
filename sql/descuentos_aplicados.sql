@@ -1,0 +1,21 @@
+CREATE TABLE descuentos_aplicados (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cobro_id INT NOT NULL,
+    usuario_id INT NOT NULL,
+    usuario_nombre VARCHAR(100) NOT NULL,
+    paciente_id INT NOT NULL,
+    paciente_nombre VARCHAR(100) NOT NULL,
+    fecha DATE NOT NULL,
+    hora TIME NOT NULL,
+    servicio VARCHAR(50) NOT NULL,
+    monto_original DECIMAL(10,2) NOT NULL,
+    tipo_descuento VARCHAR(20) NOT NULL,
+    valor_descuento DECIMAL(10,2) NOT NULL,
+    monto_descuento DECIMAL(10,2) NOT NULL,
+    monto_final DECIMAL(10,2) NOT NULL,
+    motivo VARCHAR(255) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cobro_id (cobro_id),
+    INDEX idx_usuario_id (usuario_id),
+    INDEX idx_paciente_id (paciente_id)
+);

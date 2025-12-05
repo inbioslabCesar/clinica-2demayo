@@ -1,8 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
+import CobroDescuento from './CobroDescuento';
 import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
 
 function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles, total }) {
+        // ...existing code...
+        const [motivo, setMotivo] = useState('');
+    // Estados para descuento
+    const [tipoDescuento, setTipoDescuento] = useState('porcentaje');
+    const [valorDescuento, setValorDescuento] = useState(0);
+    const [errorDescuento, setErrorDescuento] = useState('');
   // Hook para verificar si el usuario tiene caja abierta
   const [cajaActual, setCajaActual] = useState(null);
   const [cajaLoading, setCajaLoading] = useState(true);
@@ -53,21 +60,31 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
     }
   };
 
-  // Usar detalles y total recibidos por props si existen
+  // Usar detalles y total recibidos por props si existen y son válidos
   const detallesCobro = useMemo(() => {
-    // Usar siempre los detalles recibidos por props si existen y son válidos
     if (Array.isArray(detalles) && detalles.length > 0) {
       return detalles;
     }
-    // Si no hay detalles, no generar uno por defecto
     return [];
   }, [detalles]);
 
+  const montoOriginal = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
+let descuento = 0;
+if (tipoDescuento === 'porcentaje') {
+  descuento = montoOriginal * (valorDescuento / 100);
+} else {
+  descuento = valorDescuento;
+}
+
   const calcularTotal = () => {
-    if (typeof total === 'number' && total > 0) {
-      return total;
+    const montoOriginal = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
+    let descuento = 0;
+    if (tipoDescuento === 'porcentaje') {
+      descuento = montoOriginal * (valorDescuento / 100);
+    } else {
+      descuento = valorDescuento;
     }
-    return detallesCobro.reduce((total, detalle) => total + detalle.subtotal, 0);
+    return Math.max(montoOriginal - descuento, 0);
   };
 
   const procesarCobro = async () => {
@@ -94,17 +111,37 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
     try {
       // Obtener usuario actual del sessionStorage
       const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
-      
+      const montoOriginal = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
+      let descuento = 0;
+      if (tipoDescuento === 'porcentaje') {
+        descuento = montoOriginal * (valorDescuento / 100);
+      } else {
+        descuento = valorDescuento;
+      }
+      if (descuento < 0 || descuento > montoOriginal) {
+        setErrorDescuento('El descuento no puede ser mayor al monto original ni negativo.');
+        setLoading(false);
+        return;
+      } else {
+        setErrorDescuento('');
+      }
       const cobroData = {
         paciente_id: paciente.id,
         usuario_id: usuario.id,
-        total: calcularTotal(),
+        usuario_nombre: usuario.nombre || '',
+        paciente_nombre: paciente.apellido ? `${paciente.nombre} ${paciente.apellido}` : paciente.nombre,
+        total: Math.max(montoOriginal - descuento, 0),
+        monto_original: montoOriginal,
+        monto_descuento: descuento,
+        tipo_descuento: tipoDescuento,
+        valor_descuento: valorDescuento,
         tipo_pago: tipoPago,
         observaciones: observaciones,
         detalles: detallesCobro,
-        servicio_info: servicio
+        servicio: String(servicio.key),
+        servicio_info: { key: String(servicio.key), label: servicio.label },
+        motivo: descuento > 0 ? motivo : ''
       };
-
       const response = await fetch(`${BASE_URL}api_cobros.php`, {
         method: 'POST',
         headers: {
@@ -113,9 +150,15 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
         credentials: 'include',
         body: JSON.stringify(cobroData)
       });
-      // Eliminado log de datos enviados a api_cobros.php
-
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        const text = await response.text();
+        Swal.fire('Error', 'Respuesta inesperada del servidor: ' + text, 'error');
+        setLoading(false);
+        return;
+      }
       // Mostrar error con SweetAlert2 si el backend responde error
       if (!result.success && result.error) {
         Swal.fire({
@@ -223,6 +266,9 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
           return `<p>${resumen} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`;
         }).join('')}
         <hr>
+          ${datosComprobante.monto_descuento && datosComprobante.monto_descuento > 0 ? `
+            <p style="color: #d97706;"><strong>DESCUENTO:</strong> -S/ ${datosComprobante.monto_descuento.toFixed(2)} (${datosComprobante.tipo_descuento === 'porcentaje' ? datosComprobante.valor_descuento + '%' : 'Monto fijo'})</p>
+          ` : ''}
         <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
         <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
         <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
@@ -291,16 +337,19 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
               <option value="convenio">Convenio</option>
             </select>
           </div>
-          {/* Observaciones */}
-          <div className="mb-6">
-            <label className="block font-semibold mb-2">Observaciones:</label>
-            <textarea 
-              value={observaciones}
-              onChange={(e) => setObservaciones(e.target.value)}
-              className="w-full border rounded px-3 py-2 h-20"
-              placeholder="Observaciones adicionales (opcional)"
-            />
-          </div>
+          {/* Motivo del descuento */}
+          {descuento > 0 && (
+            <div className="mb-6">
+              <label className="block font-semibold mb-2">Motivo del descuento <span className="text-red-500">*</span>:</label>
+              <textarea 
+                value={motivo}
+                onChange={e => setMotivo(e.target.value)}
+                className="w-full border rounded px-3 py-2 h-20"
+                placeholder="Motivo o justificación del descuento (obligatorio)"
+                required={descuento > 0}
+              />
+            </div>
+          )}
         </div>
         {/* Columna derecha */}
         <div>
@@ -329,6 +378,15 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
               </div>
             </div>
           </div>
+          {/* Descuento */}
+          <CobroDescuento
+            tipoDescuento={tipoDescuento}
+            setTipoDescuento={setTipoDescuento}
+            valorDescuento={valorDescuento}
+            setValorDescuento={setValorDescuento}
+            montoOriginal={detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0)}
+            errorDescuento={errorDescuento}
+          />
           {/* Método de pago */}
           <div className="mb-4">
             <label className="block font-semibold mb-2">Método de Pago:</label>
