@@ -34,6 +34,13 @@ try {
     $consulta_id = isset($row['consulta_id']) ? intval($row['consulta_id']) : null;
     $cobro_id = isset($row['cobro_id']) ? intval($row['cobro_id']) : null;
 
+    
+// Eliminar descuentos asociados a este cobro
+if ($cobro_id) {
+    $delDesc = $pdo->prepare("DELETE FROM descuentos_aplicados WHERE cobro_id = ?");
+    $delDesc->execute([$cobro_id]);
+}
+
     // Obtener datos ANTES de eliminar el movimiento de ecografía
     $movSel = $pdo->prepare("SELECT paciente_id, fecha, tipo_servicio FROM honorarios_medicos_movimientos WHERE id = ? LIMIT 1");
     $movSel->execute([$id]);
