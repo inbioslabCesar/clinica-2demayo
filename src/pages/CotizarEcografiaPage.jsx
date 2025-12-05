@@ -108,7 +108,6 @@ export default function CotizarEcografiaPage() {
         paciente_id: paciente?.id // <-- AGREGADO
       } : null;
     }).filter(Boolean);
-    console.log('Detalles ecografía enviados:', detalles); // LOG PARA DEPURACIÓN
     setDetallesCotizacion(detalles);
     setTotalCotizacion(calcularTotal());
     setMostrarCobro(true);
