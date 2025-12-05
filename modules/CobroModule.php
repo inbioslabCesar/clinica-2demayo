@@ -467,11 +467,6 @@ class CobroModule
     // --- Registrar descuento aplicado en cobro ---
     public static function registrarDescuento($conn, $data, $cobro_id) {
                 // DEBUG: Log temporal para depuración de servicio_tipo
-                file_put_contents(__DIR__ . '/debug_descuento_servicio.txt',
-                    'detalles: ' . var_export($data['detalles'], true) . "\n" .
-                    'servicio_tipo: ' . var_export($data['detalles'][0]['servicio_tipo'] ?? null, true) . "\n",
-                    FILE_APPEND
-                );
         if (!isset($data['monto_descuento']) || $data['monto_descuento'] <= 0) return;
         $fecha = date('Y-m-d');
         $hora = date('H:i:s');
