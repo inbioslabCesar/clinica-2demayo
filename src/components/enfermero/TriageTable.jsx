@@ -1,6 +1,12 @@
 import { Icon } from '@fluentui/react';
 
 export default function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+  // Ordenar por fecha y hora descendente (último primero)
+  const consultasOrdenadas = [...consultasPagina].sort((a, b) => {
+    const fechaA = new Date(`${a.fecha}T${a.hora}`);
+    const fechaB = new Date(`${b.fecha}T${b.hora}`);
+    return fechaB - fechaA;
+  });
   return (
     <div className="hidden lg:block">
       <table className="w-full">
@@ -15,7 +21,7 @@ export default function TriageTable({ consultasPagina, triajeStatus, onRealizarT
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
-          {consultasPagina.map((c) => (
+          {consultasOrdenadas.map((c) => (
             <tr key={c.id} className="hover:bg-gray-50 transition-colors duration-200">
               <td className="px-6 py-4">
                 <div className="flex items-center gap-2">

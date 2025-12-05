@@ -1,9 +1,15 @@
 import { Icon } from '@fluentui/react';
 
 export default function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+  // Ordenar por fecha y hora descendente (último primero)
+  const consultasOrdenadas = [...consultasPagina].sort((a, b) => {
+    const fechaA = new Date(`${a.fecha}T${a.hora}`);
+    const fechaB = new Date(`${b.fecha}T${b.hora}`);
+    return fechaB - fechaA;
+  });
   return (
     <div className="lg:hidden p-4 space-y-4">
-      {consultasPagina.map((c) => (
+      {consultasOrdenadas.map((c) => (
         <div key={c.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">

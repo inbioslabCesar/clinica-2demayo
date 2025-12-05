@@ -54,6 +54,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     }
   };
 
+
   // Filtrar por búsqueda y fechas
   const consultasFiltradas = consultas.filter(c => {
     // Filtro de búsqueda
@@ -65,13 +66,19 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                    (c.dni && c.dni.toLowerCase().includes(texto));
       if (!match) return false;
     }
-    
     // Filtro de fechas
     if (!fechaDesde && !fechaHasta) return true;
     if (!c.fecha) return false;
     if (fechaDesde && c.fecha < fechaDesde) return false;
     if (fechaHasta && c.fecha > fechaHasta) return false;
     return true;
+  })
+  // Ordenar por fecha y hora descendente (última consulta primero)
+  .sort((a, b) => {
+    // Combinar fecha y hora para comparar
+    const fechaA = a.fecha ? new Date(a.fecha + 'T' + (a.hora || '00:00')) : new Date(0);
+    const fechaB = b.fecha ? new Date(b.fecha + 'T' + (b.hora || '00:00')) : new Date(0);
+    return fechaB - fechaA;
   });
 
   // Calcular datos paginados

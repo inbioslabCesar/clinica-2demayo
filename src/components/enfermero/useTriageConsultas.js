@@ -66,6 +66,13 @@ export default function useTriageConsultas() {
     return true;
   });
 
+  // Ordenar por fecha y hora descendente (lo más reciente primero)
+  consultasFiltradas = [...consultasFiltradas].sort((a, b) => {
+    const fechaA = new Date(`${a.fecha}T${a.hora}`);
+    const fechaB = new Date(`${b.fecha}T${b.hora}`);
+    return fechaB - fechaA;
+  });
+
   // Paginación
   const totalRows = consultasFiltradas.length;
   const totalPages = Math.ceil(totalRows / rowsPerPage);
