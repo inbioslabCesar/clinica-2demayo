@@ -1,7 +1,6 @@
 import React, { useState, useRef } from "react";
 import RegistrarEgresoForm from "../components/egresos/RegistrarEgresoForm";
-import EgresosList from "../components/EgresosList";
-import { useNavigate } from "react-router-dom";
+import EgresosList from "../components/egresos/EgresosList";
 
 export default function RegistrarEgresoPage() {
   const egresosListRef = useRef();
@@ -41,7 +40,7 @@ export default function RegistrarEgresoPage() {
     const data = await resp.json();
     setLoading(false);
     if (data.success) {
-      alert(editId ? "Egreso actualizado correctamente" : "Egreso registrado correctamente");
+      // Eliminado alert de éxito en producción
       setShowForm(false);
       setEditId(null);
       setForm({
@@ -61,7 +60,7 @@ export default function RegistrarEgresoPage() {
         egresosListRef.current.fetchEgresos();
       }
     } else {
-      alert(data.error || "Error al registrar egreso");
+      // Eliminado alert de error en producción
     }
   };
 

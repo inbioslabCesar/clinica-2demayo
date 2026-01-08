@@ -153,7 +153,7 @@ class CobroModule
                                 $stmt_stock_return->bind_param("ii", $nuevo_stock, $medicamento_id);
                                 $stmt_stock_return->execute();
                                 $observaciones = "Devolución - Anulación Cobro #{$data['id']} - Paciente: $nombre_paciente (DNI: $dni_paciente, HC: $hc_paciente) - " . ($es_caja ? "$cantidad_vendida caja(s)" : "$cantidad_vendida unidad(es)");
-                                $usuario_actual = $_SESSION['usuario_id'] ?? 1;
+                                $usuario_actual = $_SESSION['usuario']['id'] ?? 1;
                                 $stmt_mov_return = $conn->prepare("INSERT INTO movimientos_medicamento (medicamento_id, tipo_movimiento, cantidad, observaciones, usuario_id, fecha_hora) VALUES (?, ?, ?, ?, ?, NOW())");
                                 $stmt_mov_return->bind_param("isisi", $medicamento_id, $tipo_movimiento, $cantidad_total_unidades, $observaciones, $usuario_actual);
                                 $stmt_mov_return->execute();
@@ -178,14 +178,21 @@ class CobroModule
     public static function procesarCobro($conn, $data)
     {
         try {
-            // Registrar cobro principal y detalles
-            $cobro_id = self::registrarCobro($conn, $data);
-
-            // Obtener caja abierta y registrar ingreso
+            // Validar que exista una caja abierta antes de cualquier registro
             $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
             $turno_cobro = $data['turno'] ?? null;
             $caja_abierta = CajaModule::obtenerCajaAbierta($conn, $data['usuario_id'], $fecha_cobro, $turno_cobro);
-            $caja_id = $caja_abierta['id'] ?? null;
+            if (!$caja_abierta || empty($caja_abierta['id'])) {
+                throw new \Exception('No hay una caja abierta para tu usuario y fecha/turno actual. Abre tu caja antes de cobrar.');
+            }
+            $caja_id = $caja_abierta['id'];
+
+            // Registrar cobro principal y detalles
+            $cobro_id = self::registrarCobro($conn, $data);
+            // Registrar descuento aplicado si corresponde
+            self::registrarDescuento($conn, $data, $cobro_id);
+
+            // Caja ya validada arriba; usar datos para registrar ingreso
 
             // Registrar movimientos de laboratorio de referencia
             foreach ($data['detalles'] as $detalle) {
@@ -288,9 +295,7 @@ class CobroModule
                             $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
                             // Logging para depuración de Rayos X
                             if ($servicio_key === 'rayosx') {
-                                $logFile = __DIR__ . '/debug_rayosx.txt';
-                                $logMsg = date('Y-m-d H:i:s') . " | detalleServicio: " . json_encode($detalleServicio) . "\n";
-                                file_put_contents($logFile, $logMsg, FILE_APPEND);
+                                // Eliminado log de depuración rayosx
                             }
                             if ($tarifa_id) {
                                 // Validar existencia del tarifa_id en tarifas
@@ -337,12 +342,20 @@ class CobroModule
                             $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
                             $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
                             // Registrar ingreso en caja por cada honorario
+                            // Aplicar descuento proporcional si existe
+                            $monto_detalle = $detalleServicio['subtotal'] ?? $total_param;
+                            $monto_original = $data['monto_original'] ?? null;
+                            $monto_descuento = $data['monto_descuento'] ?? 0;
+                            if ($monto_original && $monto_descuento > 0 && $monto_original > 0) {
+                                $proporcion = $monto_detalle / $monto_original;
+                                $monto_detalle = $monto_detalle - ($monto_descuento * $proporcion);
+                            }
                             $params_individual = [
                                 'caja_id' => $caja_id,
                                 'tipo_ingreso' => $tipo_ingreso,
                                 'area_servicio' => $area_servicio,
                                 'descripcion_ingreso' => $detalleServicio['descripcion'] ?? $descripcion_ingreso,
-                                'total_param' => $detalleServicio['subtotal'] ?? $total_param,
+                                'total_param' => $monto_detalle,
                                 'metodo_pago' => $metodo_pago,
                                 'cobro_id' => $cobro_id,
                                 'referencia_tabla_param' => $referencia_tabla_param,
@@ -351,7 +364,7 @@ class CobroModule
                                 'usuario_id_param' => $usuario_id_param,
                                 'turno_param' => $turno_param,
                                 'honorario_movimiento_id' => $mov_id,
-                                'cobrado_por' => ($_SESSION['usuario_id'] ?? $usuario_id_param),
+                                'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id_param),
                                 'liquidado_por' => $liquidado_por,
                                 'fecha_liquidacion' => $fecha_liquidacion
                             ];
@@ -403,7 +416,6 @@ class CobroModule
             ];
         } catch (\Exception $e) {
             $conn->rollback();
-            error_log("Error en cobro: " . $e->getMessage());
             return ['success' => false, 'error' => 'Error al procesar el cobro: ' . $e->getMessage()];
         }
     }
@@ -437,12 +449,9 @@ class CobroModule
         $usuario_id_param = $data['usuario_id'];
         $total_param = $data['total'];
         $tipo_pago_param = $data['tipo_pago'];
-        file_put_contents(__DIR__ . '/debug_cobro.txt', 'CobroModule: SQL INSERT cobros: INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, "pagado", ?)' . "\n", FILE_APPEND);
-        file_put_contents(__DIR__ . '/debug_cobro.txt', 'CobroModule: Params: paciente_id=' . $paciente_id_param . ', usuario_id=' . $usuario_id_param . ', total=' . $total_param . ', tipo_pago=' . $tipo_pago_param . ', observaciones=' . $observaciones . "\n", FILE_APPEND);
         $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, 'pagado', ?)");
         $stmt->bind_param("iidss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones);
         $stmt->execute();
-        file_put_contents(__DIR__ . '/debug_cobro.txt', 'CobroModule: SQL ejecutado, insert_id=' . $conn->insert_id . "\n", FILE_APPEND);
         $cobro_id = $conn->insert_id;
         // Insertar detalles del cobro
         $servicio_tipo = $data['detalles'][0]['servicio_tipo'];
@@ -459,5 +468,43 @@ class CobroModule
         $stmt_detalle->bind_param("isisssd", $cobro_id, $servicio_tipo, $servicio_id, $descripcion_json, $cantidad, $precio_unitario, $subtotal);
         $stmt_detalle->execute();
         return $cobro_id;
+    }
+    // --- Registrar descuento aplicado en cobro ---
+    public static function registrarDescuento($conn, $data, $cobro_id) {
+                // DEBUG: Log temporal para depuración de servicio_tipo
+        if (!isset($data['monto_descuento']) || $data['monto_descuento'] <= 0) return;
+        $fecha = date('Y-m-d');
+        $hora = date('H:i:s');
+        // Forzar string correcto para servicio (igual que en atenciones)
+        // Usar el mismo valor que en cobros_detalle para máxima consistencia
+        $servicio = $data['detalles'][0]['servicio_tipo'] ?? '';
+        $monto_original = $data['monto_original'] ?? 0;
+        $monto_descuento = $data['monto_descuento'] ?? 0;
+        $monto_final = $data['total'] ?? 0;
+        $motivo = $data['motivo'] ?? '';
+        $usuario_nombre = $data['usuario_nombre'] ?? '';
+        $paciente_nombre = $data['paciente_nombre'] ?? '';
+        $tipo_descuento = $data['tipo_descuento'] ?? '';
+        $valor_descuento = $data['valor_descuento'] ?? 0;
+        $stmt = $conn->prepare("INSERT INTO descuentos_aplicados 
+            (cobro_id, usuario_id, usuario_nombre, paciente_id, paciente_nombre, fecha, hora, servicio, monto_original, tipo_descuento, valor_descuento, monto_descuento, monto_final, motivo) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iissssssdsddds", 
+            $cobro_id, 
+            $data['usuario_id'], 
+            $usuario_nombre,
+            $data['paciente_id'], 
+            $paciente_nombre,
+            $fecha, 
+            $hora, 
+            $servicio, 
+            $monto_original, 
+            $tipo_descuento,
+            $valor_descuento,
+            $monto_descuento, 
+            $monto_final, 
+            $motivo
+        );
+        $stmt->execute();
     }
 }

@@ -48,26 +48,29 @@ switch ($method) {
         if (strlen($hora) == 5 && substr_count($hora, ':') == 1) {
             $hora = $hora . ':00';
         }
-        // Validar que el usuario tiene caja abierta en la fecha de la consulta
-        $usuario_id = $_SESSION['usuario']['id'] ?? null;
-        // Normalizar fecha a Y-m-d
-        $fecha_consulta = date('Y-m-d', strtotime($fecha));
-        $stmtCaja = $conn->prepare('SELECT id FROM cajas WHERE usuario_id = ? AND DATE(fecha) = ? AND TRIM(LOWER(estado)) = "abierta" LIMIT 1');
-        $stmtCaja->bind_param('is', $usuario_id, $fecha_consulta);
-        $stmtCaja->execute();
-        $resCaja = $stmtCaja->get_result();
-        $cajaAbierta = $resCaja->fetch_assoc();
-        $stmtCaja->close();
-        if (!$cajaAbierta) {
-            echo json_encode([
-                'success' => false,
-                'error' => 'No hay caja abierta para el usuario en la fecha seleccionada. Abra una caja antes de agendar la consulta.',
-                'debug' => [
-                    'usuario_id' => $usuario_id,
-                    'fecha_consulta' => $fecha_consulta
-                ]
-            ]);
-            exit;
+        // Solo validar caja abierta para consultas espontáneas
+        $tipo_consulta = $data['tipo_consulta'] ?? 'programada';
+        if ($tipo_consulta === 'espontanea') {
+            $usuario_id = $_SESSION['usuario']['id'] ?? null;
+            // Normalizar fecha a Y-m-d
+            $fecha_consulta = date('Y-m-d', strtotime($fecha));
+            $stmtCaja = $conn->prepare('SELECT id FROM cajas WHERE usuario_id = ? AND DATE(fecha) = ? AND TRIM(LOWER(estado)) = "abierta" LIMIT 1');
+            $stmtCaja->bind_param('is', $usuario_id, $fecha_consulta);
+            $stmtCaja->execute();
+            $resCaja = $stmtCaja->get_result();
+            $cajaAbierta = $resCaja->fetch_assoc();
+            $stmtCaja->close();
+            if (!$cajaAbierta) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'No hay caja abierta para el usuario en la fecha seleccionada. Abra una caja antes de agendar la consulta espontánea.',
+                    'debug' => [
+                        'usuario_id' => $usuario_id,
+                        'fecha_consulta' => $fecha_consulta
+                    ]
+                ]);
+                exit;
+            }
         }
         // Verificar que no haya otra consulta en ese horario para el médico
         $stmt = $conn->prepare('SELECT id, estado FROM consultas WHERE medico_id=? AND fecha=? AND hora=? AND estado NOT IN ("cancelada", "completada")');

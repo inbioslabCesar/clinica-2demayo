@@ -16,7 +16,7 @@ import {
   FaChevronRight,
   FaChartLine
 } from "react-icons/fa";
-import Spinner from "../components/Spinner";
+import Spinner from "../components/comunes/Spinner";
 
 export default function HistorialIngresosPage() {
   const navigate = useNavigate();
@@ -68,8 +68,8 @@ export default function HistorialIngresosPage() {
         setResumenMetodos(data.resumen_metodos);
         setPaginacion(data.paginacion);
       }
-    } catch (error) {
-      console.error('Error cargando historial:', error);
+    } catch {
+      // Eliminado log de error cargando historial
     } finally {
       setLoading(false);
     }

@@ -61,7 +61,7 @@ const useMedicos = () => {
       setError(null);
     } catch (err) {
       setError("Error al cargar médicos");
-      console.error('Error fetching medicos:', err);
+      // Eliminado log de error fetching medicos
     } finally {
       setLoading(false);
     }
@@ -90,7 +90,7 @@ const useMedicos = () => {
       }
     } catch (err) {
       setFormError("Error de conexión al registrar médico");
-      console.error('Error creating medico:', err);
+      // Eliminado log de error creating medico
     } finally {
       setSaving(false);
     }
@@ -119,7 +119,7 @@ const useMedicos = () => {
       }
     } catch (err) {
       setEditError("Error de conexión al actualizar médico");
-      console.error('Error updating medico:', err);
+      // Eliminado log de error updating medico
     } finally {
       setEditSaving(false);
     }
@@ -166,7 +166,7 @@ const useMedicos = () => {
           text: 'Error de conexión al eliminar médico',
           icon: 'error'
         });
-        console.error('Error deleting medico:', err);
+        // Eliminado log de error deleting medico
       }
     }
   };

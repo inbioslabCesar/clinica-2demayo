@@ -18,11 +18,16 @@ export function useTarifasCrud(cargarTarifas, setNuevaTarifa, setTarifaEditando,
       const data = tarifaEditando
         ? { ...nuevaTarifa, id: tarifaEditando.id, servicio_tipo: nuevaTarifa.servicio_tipo || tarifaEditando.servicio_tipo }
         : nuevaTarifa;
+      // Normalizar: evitar enviar cadenas vacías para porcentajes (backend interpreta '' -> 0)
+      const payload = { ...data };
+      if (payload.porcentaje_medico === "" || payload.porcentaje_medico === null) payload.porcentaje_medico = null;
+      if (payload.porcentaje_clinica === "" || payload.porcentaje_clinica === null) payload.porcentaje_clinica = null;
+
       const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       const result = await response.json();
       if (result.success) {

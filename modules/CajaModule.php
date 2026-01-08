@@ -8,7 +8,8 @@ class CajaModule {
         $types = "i";
         $params = [$usuario_id];
         if ($fecha !== null) {
-            $query .= " AND DATE(created_at) = ?";
+            // Usar la columna 'fecha' explícita para evitar desalineaciones por zona horaria
+            $query .= " AND fecha = ?";
             $types .= "s";
             $params[] = $fecha;
         }

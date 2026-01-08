@@ -1,6 +1,10 @@
 <?php
-// Log temporal para depuración de sesión
-file_put_contents(__DIR__ . '/debug_session.txt', date('Y-m-d H:i:s') . "\n" . print_r($_SESSION, true) . "\n", FILE_APPEND);
+// Log de sesión solo en entornos locales para depuración
+$host = $_SERVER['HTTP_HOST'] ?? '';
+$isLocal = $host === 'localhost' || $host === '127.0.0.1' || strpos($host, 'localhost:') === 0;
+if ($isLocal) {
+    file_put_contents(__DIR__ . '/debug_session.txt', date('Y-m-d H:i:s') . "\n" . print_r($_SESSION, true) . "\n", FILE_APPEND);
+}
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 if ($method === 'GET') {

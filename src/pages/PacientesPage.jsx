@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import PacienteList from "../components/PacienteList";
+import PacienteList from "../components/paciente-list/PacienteList";
 
 function PacientesPage() {
   const [pacientes] = useState([]);

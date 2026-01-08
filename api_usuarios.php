@@ -21,6 +21,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
             if (!isset($data[$field]) || empty($data[$field])) {
                 http_response_code(400);
                 echo json_encode(['error' => "Campo $field es obligatorio para crear usuario"]);
+                                // Eliminado echo de error de campo obligatorio
                 exit;
             }
         }
@@ -36,14 +37,16 @@ switch ($_SERVER['REQUEST_METHOD']) {
             
             if ($stmt->execute()) {
                 echo json_encode(['success' => true, 'id' => $mysqli->insert_id, 'message' => 'Usuario creado correctamente']);
+                            // Eliminado echo de usuario creado correctamente
             } else {
                 throw new Exception('Error ejecutando consulta: ' . $stmt->error);
             }
             $stmt->close();
         } catch (Exception $e) {
-            error_log("Error en POST usuarios: " . $e->getMessage());
+            // Eliminado log de error POST usuarios
             http_response_code(500);
             echo json_encode(['error' => 'Error interno del servidor al crear usuario']);
+                    // Eliminado echo de error interno al crear usuario
         }
         break;
     case 'PUT':
@@ -52,7 +55,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
         // Validar que se recibió el ID
         if (!isset($data['id']) || empty($data['id'])) {
             http_response_code(400);
-            echo json_encode(['error' => 'ID de usuario requerido para actualizar']);
+            // Eliminado echo de error de ID requerido para actualizar
             break;
         }
         

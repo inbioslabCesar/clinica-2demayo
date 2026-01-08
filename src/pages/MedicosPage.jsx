@@ -1,5 +1,5 @@
 import React from "react";
-import MedicoList from "../components/MedicoList";
+import MedicoList from "../components/medico/MedicoList";
 
 function MedicosPage() {
   return (

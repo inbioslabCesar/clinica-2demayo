@@ -43,14 +43,23 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         // Si exId es un objeto con id, extraer el id
         const id = typeof exId === 'object' ? exId.id : exId;
         const exObj = examenesDisponibles.find(e => e.id == id);
-        
-        if (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0) {
-          exObj.valores_referenciales.forEach(param => {
+        // Fallback: usar parámetros adjuntos a la orden si el catálogo no los trae
+        let exOrdenDetalle = null;
+        if (Array.isArray(orden.examenes)) {
+          exOrdenDetalle = orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id)) || null;
+        }
+        const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
+          ? exObj.valores_referenciales
+          : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
+
+        if (paramsList.length > 0) {
+          paramsList.filter(p => p && typeof p === 'object').forEach(param => {
             if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
               res[`${id}__${param.nombre}`] = "";
             }
           });
         } else {
+          // Sin parámetros definidos: usar campo libre
           res[`${id}`] = "";
         }
       });
@@ -59,14 +68,33 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     }
   }, [orden, examenesDisponibles]);
 
+  // Normaliza valores numéricos desde entradas de texto (soporta coma decimal y unidades)
+  function normalizeNumber(value) {
+    // Cuando no haya número válido, retornar NaN en lugar de 0.
+    // Esto evita que rangos vacíos se muestren como "0 - 0".
+    if (value === null || value === undefined) return NaN;
+    if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+    let s = String(value).trim();
+    // convertir coma decimal a punto
+    s = s.replace(/,/g, ".");
+    // extraer el primer número válido (soporta signo y decimales)
+    const match = s.match(/-?\d+(?:\.\d+)?/);
+    if (!match) return NaN;
+    const n = parseFloat(match[0]);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
   function evalFormula(formula, valoresPorNombre) {
     if (!formula) return "";
     let expr = formula;
     const nombres = Object.keys(valoresPorNombre).sort((a, b) => b.length - a.length);
     nombres.forEach(nombre => {
-      const val = valoresPorNombre[nombre] || 0;
-  const regex = new RegExp(nombre.replace(/[.*+?^${}()|[\]\\]/g, '$&'), 'g');
-      expr = expr.replace(regex, val === "" ? 0 : val);
+      const rawVal = valoresPorNombre[nombre];
+      const numVal = normalizeNumber(rawVal);
+      // Escapar el nombre para usar en RegExp
+      const safeName = nombre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(safeName, 'g');
+      expr = expr.replace(regex, Number.isFinite(numVal) ? numVal : 0);
     });
     try {
       const result = evaluate(expr);
@@ -77,6 +105,36 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     } catch {
       return "";
     }
+  }
+
+  // Extrae min/max desde un texto de referencia (p.ej. "2.5-5.8", "2,5 – 5,8", "entre 2.5 y 5.8").
+  function parseMinMaxFromText(texto) {
+    if (!texto) return { min: null, max: null };
+    let s = String(texto).trim();
+    // normalizar separadores y coma decimal
+    s = s.replace(/,/g, '.');
+    // quitar etiquetas comunes
+    s = s.replace(/^(?:N\s*:\s*|Normal\s*:\s*)/i, '');
+    s = s.replace(/Rango(?:\s*de)?\s*referencia\s*:?/i, '');
+    // patrón de rango "x - y" con distintos separadores
+    const mRango = s.match(/(-?\d+(?:\.\d+)?)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d+(?:\.\d+)?)/i);
+    if (mRango) {
+      const min = parseFloat(mRango[1]);
+      const max = parseFloat(mRango[2]);
+      return {
+        min: Number.isFinite(min) ? min : null,
+        max: Number.isFinite(max) ? max : null,
+      };
+    }
+    // límites unilaterales
+    const mMin = s.match(/(?:>=|≥|desde|mayor\s*a?)\s*(-?\d+(?:\.\d+)?)/i);
+    const mMax = s.match(/(?:<=|≤|hasta|menor\s*a?)\s*(-?\d+(?:\.\d+)?)/i);
+    const min = mMin ? parseFloat(mMin[1]) : null;
+    const max = mMax ? parseFloat(mMax[1]) : null;
+    return {
+      min: Number.isFinite(min) ? min : null,
+      max: Number.isFinite(max) ? max : null,
+    };
   }
 
   const handleChange = (e) => {
@@ -110,16 +168,22 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       examenesArray.forEach(exId => {
         const id = typeof exId === 'object' ? exId.id : exId;
         const exObj = examenesDisponibles.find(e => e.id == id);
-        if (!exObj || !Array.isArray(exObj.valores_referenciales)) return;
+        const exOrdenDetalle = Array.isArray(orden.examenes)
+          ? orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id))
+          : null;
+        const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
+          ? exObj.valores_referenciales
+          : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
+        if (!Array.isArray(paramsList) || paramsList.length === 0) return;
         // construir mapa de valores por nombre para esta iteración (usar los valores ya calculados o ingresados)
         const valoresPorNombre = {};
-        exObj.valores_referenciales.forEach(param => {
+        paramsList.filter(p => p && typeof p === 'object').forEach(param => {
           if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
             valoresPorNombre[param.nombre] = resultadosToSend[`${id}__${param.nombre}`] || "";
           }
         });
         // evaluar y almacenar fórmulas
-        exObj.valores_referenciales.forEach(param => {
+        paramsList.filter(p => p && typeof p === 'object').forEach(param => {
           if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
             if (param.formula && param.formula.trim() !== "") {
               const computed = evalFormula(param.formula, valoresPorNombre);
@@ -162,20 +226,31 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     let fueraDeRango = false;
     let min = null, max = null;
     
-    if (!isNaN(parseFloat(param.min)) && param.min !== null && param.min !== "") {
-      min = parseFloat(param.min);
-    } else if (param.referencias && param.referencias[0] && !isNaN(parseFloat(param.referencias[0].valor_min))) {
-      min = parseFloat(param.referencias[0].valor_min);
+    if (param && param.min !== null && param.min !== "") {
+      const m = normalizeNumber(param.min);
+      if (Number.isFinite(m)) min = m;
+    } else if (param && param.referencias && param.referencias[0]) {
+      const mRef = normalizeNumber(param.referencias[0].valor_min);
+      if (Number.isFinite(mRef)) min = mRef;
     }
     
-    if (!isNaN(parseFloat(param.max)) && param.max !== null && param.max !== "") {
-      max = parseFloat(param.max);
-    } else if (param.referencias && param.referencias[0] && !isNaN(parseFloat(param.referencias[0].valor_max))) {
-      max = parseFloat(param.referencias[0].valor_max);
+    if (param && param.max !== null && param.max !== "") {
+      const M = normalizeNumber(param.max);
+      if (Number.isFinite(M)) max = M;
+    } else if (param && param.referencias && param.referencias[0]) {
+      const MRef = normalizeNumber(param.referencias[0].valor_max);
+      if (Number.isFinite(MRef)) max = MRef;
+    }
+
+    // Si no hay min/max numéricos, intentar parsear desde el texto de referencia
+    if ((min === null && max === null) && param && Array.isArray(param.referencias) && param.referencias[0]) {
+      const fromText = parseMinMaxFromText(param.referencias[0].valor);
+      if (fromText.min !== null) min = fromText.min;
+      if (fromText.max !== null) max = fromText.max;
     }
     
-    let valorNum = parseFloat(valor);
-    if (!isNaN(valorNum)) {
+    let valorNum = normalizeNumber(valor);
+    if (Number.isFinite(valorNum)) {
       if (min !== null && valorNum < min) fueraDeRango = true;
       if (max !== null && valorNum > max) fueraDeRango = true;
     }
@@ -221,15 +296,22 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                 // Si exId es un objeto con id, extraer el id
                 const id = typeof exId === 'object' ? exId.id : exId;
                 const exObj = examenesDisponibles.find(e => e.id == id);
-              
-                if (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0) {
-                  // Construir un mapa nombre->valor para este examen
+                const exOrdenDetalle = Array.isArray(orden.examenes)
+                  ? orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id))
+                  : null;
+                const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
+                  ? exObj.valores_referenciales
+                  : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
+
+                if (Array.isArray(paramsList) && paramsList.length > 0) {
+                  // Construir un mapa nombre->valor para este examen usando la lista efectiva de parámetros
                   const valoresPorNombre = {};
-                  exObj.valores_referenciales.forEach(param => {
+                  paramsList.filter(p => p && typeof p === 'object').forEach(param => {
                     if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
                       valoresPorNombre[param.nombre] = resultados[`${id}__${param.nombre}`] || "";
                     }
                   });
+                  const examName = (exObj && exObj.nombre) || (exOrdenDetalle && exOrdenDetalle.nombre) || `Examen ${id}`;
 
                   return (
                     <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
@@ -239,17 +321,28 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           🧪
                         </div>
                         <div>
-                          <h4 className="text-lg font-bold text-gray-900">{exObj.nombre}</h4>
+                          <h4 className="text-lg font-bold text-gray-900">{examName}</h4>
                           <p className="text-sm text-gray-600">Complete todos los parámetros requeridos</p>
                         </div>
                       </div>
 
                       {/* Parámetros del examen */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {exObj.valores_referenciales.map((param) => {
+                        {(() => {
+                          return (paramsList || []).filter(p => p && typeof p === 'object').map((param) => {
                           if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
                             const tieneFormula = param.formula && param.formula.trim() !== "";
                             let valor = resultados[`${id}__${param.nombre}`] || "";
+
+                            // Nombre a mostrar: si viene como "Item 1" y este examen solo tiene un parámetro,
+                            // mostrar el nombre del examen para una mejor UX, manteniendo la clave original.
+                            const parametrosValidos = (paramsList || []).filter(p => p && typeof p === 'object' && (p.tipo === undefined || p.tipo === "Parámetro") && p.nombre && p.nombre.trim() !== "");
+                            const defaults = parametrosValidos.filter(p => /^item\s*\d+$/i.test((p.nombre || '').trim()));
+                            const isDefaultItem = /^item\s*\d+$/i.test((param.nombre || '').trim());
+                            const defaultIndex = isDefaultItem ? defaults.findIndex(p => p === param) : -1;
+                            const displayName = isDefaultItem
+                              ? (defaults.length <= 1 ? examName : `${examName} — Parámetro ${defaultIndex + 1}`)
+                              : param.nombre;
                             
                             if (tieneFormula) {
                               valor = evalFormula(param.formula, valoresPorNombre);
@@ -259,12 +352,22 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             if (valor === undefined || valor === null) valor = "";
 
                             const { fueraDeRango, min, max } = getParameterStatus(param, valor);
+                            // Texto de referencia a mostrar: soporta rango (min/max) o valor textual
+                            let referenciaTexto = null;
+                            if (min !== null || max !== null) {
+                              referenciaTexto = `Rango de referencia: ${min !== null ? min : '∞'} - ${max !== null ? max : '∞'}`;
+                            } else if (Array.isArray(param.referencias) && param.referencias.length > 0) {
+                              const r0 = param.referencias[0] || {};
+                              if (r0.valor && String(r0.valor).trim() !== '') {
+                                referenciaTexto = `Referencia: ${r0.valor}`;
+                              }
+                            }
 
                             return (
                               <div key={param.nombre} className="space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
                                   <div className="flex items-center gap-2 mb-1">
-                                    <span>{param.nombre}</span>
+                                    <span>{displayName}</span>
                                     {tieneFormula && (
                                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                                         🧮 Calculado
@@ -276,10 +379,8 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                       Fórmula: {param.formula}
                                     </span>
                                   )}
-                                  {(min !== null || max !== null) && (
-                                    <div className="text-xs text-gray-500 mt-1">
-                                      Rango de referencia: {min !== null ? `${min}` : '∞'} - {max !== null ? `${max}` : '∞'}
-                                    </div>
+                                  {referenciaTexto && (
+                                    <div className="text-xs text-gray-500 mt-1">{referenciaTexto}</div>
                                   )}
                                 </label>
                                 
@@ -324,7 +425,8 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             );
                           }
                           return null;
-                        })}
+                        });
+                        })()}
                       </div>
                     </div>
                   );

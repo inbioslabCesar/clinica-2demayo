@@ -1,6 +1,6 @@
 // Modal para crear/editar exámenes de laboratorio
-import Modal from "../Modal";
-import ExamenEditorForm from "../ExamenEditorForm";
+import Modal from "../comunes/Modal";
+import ExamenEditorForm from "./ExamenEditorForm";
 
 export default function ExamenModal({ open, onClose, form, handleChange, handleValoresReferencialesChange, handleSubmit, editId }) {
   return (

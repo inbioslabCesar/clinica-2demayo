@@ -38,8 +38,8 @@ function LiquidacionHonorariosPage() {
         } else {
           Swal.fire("Error", data.error || "No se pudo eliminar el honorario.", "error");
         }
-      } catch (error) {
-        console.error("Error al eliminar honorario:", error);
+      } catch {
+        // Eliminado log de error al eliminar honorario
         Swal.fire("Error", "Error de conexión.", "error");
       }
     };
@@ -65,8 +65,8 @@ function LiquidacionHonorariosPage() {
       if (data.success) {
         setMedicos(data.medicos || []);
       }
-    } catch (error) {
-      console.error("Error al cargar médicos:", error);
+    } catch {
+      // Eliminado log de error al cargar médicos
     }
   };
 
@@ -83,11 +83,11 @@ function LiquidacionHonorariosPage() {
       const response = await fetch(`${BASE_URL}api_honorarios_pendientes.php${query}`);
       const data = await response.json();
       if (data.success) {
-        console.log("Honorarios recibidos:", data.honorarios);
+        // Eliminado log de honorarios recibidos
         setHonorarios(data.honorarios || []);
       }
-    } catch (error) {
-      console.error("Error al cargar honorarios:", error);
+    } catch {
+      // Eliminado log de error al cargar honorarios
     } finally {
       setLoading(false);
     }
