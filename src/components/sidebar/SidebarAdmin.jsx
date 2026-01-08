@@ -45,6 +45,24 @@ export default function SidebarAdmin({ onClose }) {
         <Icon iconName="Money" className="text-xl text-amber-600" />
         <span>Gestión de Tarifas</span>
       </Link>
+
+      <Link
+        to="/web-servicios"
+        className="py-3 px-4 rounded-lg text-sky-700 hover:bg-gradient-to-r hover:from-sky-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Repair" className="text-xl text-sky-600" />
+        <span>Servicios Web</span>
+      </Link>
+      <Link
+        to="/web-ofertas"
+        className="py-3 px-4 rounded-lg text-pink-700 hover:bg-gradient-to-r hover:from-pink-50 hover:to-rose-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Financial" className="text-xl text-pink-600" />
+        <span>Ofertas Web</span>
+      </Link>
+
       <Link
         to="/contabilidad"
         className="py-3 px-4 rounded-lg text-violet-700 hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"

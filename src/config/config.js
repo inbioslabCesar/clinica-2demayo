@@ -4,7 +4,7 @@ const isProduction = window.location.hostname !== 'localhost' && window.location
 
 // URL base automática según el entorno
 export const BASE_URL = isProduction 
-    ? "https://clinica2demayo.com/"
+    ? (window.location.origin.replace(/\/+$/, '') + '/')
     : "http://localhost/clinica-2demayo/";
 
 // Configuración de seguridad

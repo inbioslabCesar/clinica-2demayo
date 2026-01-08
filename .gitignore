@@ -9,6 +9,7 @@ lerna-debug.log*
 # Build outputs
 dist
 dist-ssr
+dist-public
 build
 *.local
 
@@ -25,6 +26,15 @@ session_debug.php
 *.sql.backup
 backup/
 uploads/
+# Permitir versionar carpetas vacías necesarias para hosting
+!uploads/
+uploads/*
+!uploads/web/
+uploads/web/*
+!uploads/web/ofertas/
+!uploads/web/ofertas/.gitkeep
+!uploads/web/servicios/
+!uploads/web/servicios/.gitkeep
 temp/
 
 # Scripts administrativos (NO subir a hosting)
@@ -45,6 +55,9 @@ logs
 *.log
 error.log
 access.log
+
+# Uploaded assets (generated at runtime)
+public/uploads/
 
 # Editor directories and files
 .vscode/*

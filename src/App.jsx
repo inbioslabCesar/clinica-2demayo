@@ -91,6 +91,8 @@ const SeleccionarServicioPage = lazy(() =>
 );
 const DescuentosPage = lazy(() => import("./pages/DescuentosPage.jsx"));
 const AuditoriaEliminacionesPage = lazy(() => import("./pages/AuditoriaEliminacionesPage.jsx"));
+const WebServiciosCrudPage = lazy(() => import("./pages/WebServiciosCrudPage.jsx"));
+const WebOfertasCrudPage = lazy(() => import("./pages/WebOfertasCrudPage.jsx"));
 
 function App() {
   const [usuario, setUsuario] = useState(() => {
@@ -414,6 +416,23 @@ function App() {
                         rolesPermitidos={["administrador"]}
                       >
                         <GestionTarifasPage />
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  <Route
+                    path="/web-servicios"
+                    element={
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                        <WebServiciosCrudPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/web-ofertas"
+                    element={
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                        <WebOfertasCrudPage />
                       </ProtectedRoute>
                     }
                   />
