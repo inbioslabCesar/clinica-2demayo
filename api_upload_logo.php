@@ -33,8 +33,7 @@ finfo_close($finfo);
 
 $allowed = [
     'image/png' => 'png',
-    'image/jpeg' => 'jpg',
-    'image/svg+xml' => 'svg'
+    'image/jpeg' => 'jpg'
 ];
 
 if (!isset($allowed[$mime])) {

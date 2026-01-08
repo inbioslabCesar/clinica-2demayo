@@ -4,7 +4,7 @@ import { AgendarConsulta } from "../components/paciente";
 function AgendarConsultaPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const pacienteId = location.state?.pacienteId;
+  const pacienteId = location.state?.pacienteId || new URLSearchParams(location.search).get('paciente_id');
 
   // Si no hay pacienteId, redirigir o mostrar mensaje
   if (!pacienteId) {

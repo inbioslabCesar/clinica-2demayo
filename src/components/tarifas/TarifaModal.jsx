@@ -75,9 +75,11 @@ function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNue
                 max="100"
                 value={nuevaTarifa.porcentaje_medico}
                 onChange={(e) => setNuevaTarifa({ ...nuevaTarifa, porcentaje_medico: e.target.value })}
-                className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Ej: 50"
+                className="w-full border rounded px-3 py-2 bg-gray-100 cursor-not-allowed"
+                placeholder="Deshabilitado — usar Monto fijo para Médico"
+                disabled
               />
+              <div className="text-xs text-gray-500 mt-1">Deshabilitado: usa "Monto fijo para Médico" en su lugar.</div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">% para Clínica</label>
@@ -88,9 +90,11 @@ function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNue
                 max="100"
                 value={nuevaTarifa.porcentaje_clinica}
                 onChange={(e) => setNuevaTarifa({ ...nuevaTarifa, porcentaje_clinica: e.target.value })}
-                className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Ej: 50"
+                className="w-full border rounded px-3 py-2 bg-gray-100 cursor-not-allowed"
+                placeholder="Deshabilitado — usar Monto fijo para Clínica"
+                disabled
               />
+              <div className="text-xs text-gray-500 mt-1">Deshabilitado: usa "Monto fijo para Clínica" en su lugar.</div>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

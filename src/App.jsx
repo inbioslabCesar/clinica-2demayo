@@ -90,6 +90,7 @@ const SeleccionarServicioPage = lazy(() =>
   import("./pages/SeleccionarServicioPage.jsx")
 );
 const DescuentosPage = lazy(() => import("./pages/DescuentosPage.jsx"));
+const AuditoriaEliminacionesPage = lazy(() => import("./pages/AuditoriaEliminacionesPage.jsx"));
 
 function App() {
   const [usuario, setUsuario] = useState(() => {
@@ -589,6 +590,17 @@ function App() {
                         rolesPermitidos={["administrador", "recepcionista"]}
                       >
                         <DescuentosPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/contabilidad/auditoria-eliminaciones"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                      >
+                        <AuditoriaEliminacionesPage />
                       </ProtectedRoute>
                     }
                   />

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import { BASE_URL } from "../config/config";
 import Swal from "sweetalert2";
 import TarifasTable from "../components/tarifas/TarifasTable";
@@ -62,18 +62,16 @@ function GestionTarifasPage() {
   if (filtroMedico.trim()) {
     const filtroLower = filtroMedico.trim().toLowerCase();
     tarifasFiltradas = tarifasFiltradas.filter((t) => {
-      const medico = medicos.find((m) => m.id === parseInt(t.medico_id));
-      if (medico) {
-        const nombreCompleto = `${medico.nombre} ${medico.apellido}`.toLowerCase();
-        const nombre = medico.nombre.toLowerCase();
-        const apellido = medico.apellido.toLowerCase();
-        return (
-          nombreCompleto.includes(filtroLower) ||
-          nombre.includes(filtroLower) ||
-          apellido.includes(filtroLower)
-        );
-      }
-      return false;
+      const medico = medicos.find((m) => Number(m.id) === Number(t.medico_id));
+      if (!medico) return false;
+      const nombre = (medico.nombres || medico.nombre || "").toLowerCase();
+      const apellido = (medico.apellidos || medico.apellido || "").toLowerCase();
+      const nombreCompleto = `${nombre} ${apellido}`.trim();
+      return (
+        nombreCompleto.includes(filtroLower) ||
+        nombre.includes(filtroLower) ||
+        apellido.includes(filtroLower)
+      );
     });
   }
 
@@ -170,7 +168,7 @@ function GestionTarifasPage() {
         serviciosMedicos={serviciosMedicos}
         medicos={medicos}
         generarDescripcion={(medicoId, descripcionBase) => {
-          const medico = medicos.find((m) => m.id === parseInt(medicoId));
+          const medico = medicos.find((m) => Number(m.id) === Number(medicoId));
           return generarDescripcion(medico, descripcionBase);
         }}
         guardarTarifa={() => guardarTarifa(nuevaTarifa, tarifaEditando)}

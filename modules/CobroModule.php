@@ -153,7 +153,7 @@ class CobroModule
                                 $stmt_stock_return->bind_param("ii", $nuevo_stock, $medicamento_id);
                                 $stmt_stock_return->execute();
                                 $observaciones = "Devolución - Anulación Cobro #{$data['id']} - Paciente: $nombre_paciente (DNI: $dni_paciente, HC: $hc_paciente) - " . ($es_caja ? "$cantidad_vendida caja(s)" : "$cantidad_vendida unidad(es)");
-                                $usuario_actual = $_SESSION['usuario_id'] ?? 1;
+                                $usuario_actual = $_SESSION['usuario']['id'] ?? 1;
                                 $stmt_mov_return = $conn->prepare("INSERT INTO movimientos_medicamento (medicamento_id, tipo_movimiento, cantidad, observaciones, usuario_id, fecha_hora) VALUES (?, ?, ?, ?, ?, NOW())");
                                 $stmt_mov_return->bind_param("isisi", $medicamento_id, $tipo_movimiento, $cantidad_total_unidades, $observaciones, $usuario_actual);
                                 $stmt_mov_return->execute();
@@ -178,16 +178,21 @@ class CobroModule
     public static function procesarCobro($conn, $data)
     {
         try {
+            // Validar que exista una caja abierta antes de cualquier registro
+            $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
+            $turno_cobro = $data['turno'] ?? null;
+            $caja_abierta = CajaModule::obtenerCajaAbierta($conn, $data['usuario_id'], $fecha_cobro, $turno_cobro);
+            if (!$caja_abierta || empty($caja_abierta['id'])) {
+                throw new \Exception('No hay una caja abierta para tu usuario y fecha/turno actual. Abre tu caja antes de cobrar.');
+            }
+            $caja_id = $caja_abierta['id'];
+
             // Registrar cobro principal y detalles
             $cobro_id = self::registrarCobro($conn, $data);
             // Registrar descuento aplicado si corresponde
             self::registrarDescuento($conn, $data, $cobro_id);
 
-            // Obtener caja abierta y registrar ingreso
-            $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
-            $turno_cobro = $data['turno'] ?? null;
-            $caja_abierta = CajaModule::obtenerCajaAbierta($conn, $data['usuario_id'], $fecha_cobro, $turno_cobro);
-            $caja_id = $caja_abierta['id'] ?? null;
+            // Caja ya validada arriba; usar datos para registrar ingreso
 
             // Registrar movimientos de laboratorio de referencia
             foreach ($data['detalles'] as $detalle) {
@@ -359,7 +364,7 @@ class CobroModule
                                 'usuario_id_param' => $usuario_id_param,
                                 'turno_param' => $turno_param,
                                 'honorario_movimiento_id' => $mov_id,
-                                'cobrado_por' => ($_SESSION['usuario_id'] ?? $usuario_id_param),
+                                'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id_param),
                                 'liquidado_por' => $liquidado_por,
                                 'fecha_liquidacion' => $fecha_liquidacion
                             ];

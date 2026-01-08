@@ -171,6 +171,7 @@ export default function ExamenesLaboratorioCrudPage() {
         setMsgType("success");
         setForm({
           nombre: "",
+          categoria: "",
           metodologia: "",
           valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
           precio_publico: "",
@@ -180,6 +181,8 @@ export default function ExamenesLaboratorioCrudPage() {
           tiempo_resultado: "",
           condicion_paciente: "",
           preanalitica: "",
+          titulo: "",
+          es_subtitulo: false,
         });
         setEditId(null);
         setModalOpen(false);

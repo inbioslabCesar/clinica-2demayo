@@ -28,6 +28,13 @@ function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratul
                 <div className="flex gap-1">
                   <button onClick={() => onEditar(p)} className="bg-yellow-400 text-white px-1 py-1 rounded text-xs hover:bg-yellow-500">Editar</button>
                   <button onClick={() => onEliminar(p)} className="bg-red-500 text-white px-1 py-1 rounded text-xs hover:bg-red-600">Eliminar</button>
+                  <button
+                    onClick={() => onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`)}
+                    className="bg-indigo-600 text-white px-1 py-1 rounded text-xs hover:bg-indigo-700"
+                    title="Cotizar / seleccionar servicio"
+                  >
+                    Cotizar
+                  </button>
                   <button onClick={() => onNavigate(`/consumo-paciente/${p.id}`)} className="bg-blue-600 text-white px-1 py-1 rounded text-xs hover:bg-blue-700" title="Ver consumo total">Consumo</button>
                   <button onClick={() => onDescargarCaratula(p)} className="bg-purple-600 text-white px-1 py-1 rounded text-xs hover:bg-purple-700" title="Descargar carátula">Carátula</button>
                 </div>

@@ -145,7 +145,7 @@ export default function DashboardCajaAbierta({
               <span className="hidden sm:inline">Actualizar</span>
             </button>
             <button
-              onClick={() => navigate("/contabilidad/cierre-caja")}
+              onClick={() => navigate("/contabilidad/cerrar-caja")}
               className="bg-gradient-to-r from-red-500 to-red-600 text-white px-3 py-2 md:px-6 md:py-2 rounded-lg font-semibold hover:from-red-600 hover:to-red-700 transition-all flex items-center gap-1 md:gap-2 text-xs md:text-sm"
             >
               <FaTimes className="text-sm" />

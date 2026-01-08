@@ -33,6 +33,15 @@ export default function EgresosPage() {
           </div>
           <div className="text-orange-700 font-bold text-lg text-center">Descuentos Aplicados</div>
         </div>
+        <div className="bg-white rounded-2xl shadow-lg border border-rose-200 flex flex-col items-center justify-center px-10 py-8 min-w-[260px] cursor-pointer hover:scale-105 transition" onClick={() => navigate("/contabilidad/auditoria-eliminaciones") }>
+          <div className="mb-2">
+            <svg width="64" height="64" fill="none" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" fill="#fb7185"/>
+              <text x="12" y="32" textAnchor="middle" fontSize="28" fill="#fff">🛡️</text>
+            </svg>
+          </div>
+          <div className="text-rose-700 font-bold text-lg text-center">Auditoría de Eliminaciones</div>
+        </div>
       </div>
     </div>
   );

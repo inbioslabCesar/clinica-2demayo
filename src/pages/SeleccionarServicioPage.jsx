@@ -7,7 +7,9 @@ export default function SeleccionarServicioPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [paciente, setPaciente] = useState(null);
-  const pacienteId = location.state?.pacienteId;
+  const qs = new URLSearchParams(location.search);
+  const pacienteId = location.state?.pacienteId || qs.get('paciente_id');
+  const cobroId = qs.get('cobro_id');
 
     const [procedimientos, setProcedimientos] = useState([]);
 
@@ -102,7 +104,7 @@ export default function SeleccionarServicioPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <button
                   className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-100 font-bold"
-                  onClick={() => navigate(`/agendar-consulta`, { state: { pacienteId: paciente.id } })}
+                  onClick={() => navigate(`/agendar-consulta${cobroId ? `?cobro_id=${cobroId}` : ''}`, { state: { pacienteId: paciente.id } })}
                 >👨‍⚕️ Consulta Médica</button>
                 <button
                   className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-green-100 font-bold"

@@ -63,12 +63,56 @@ switch ($method) {
         $result = $conn->query($sql);
         $examenes = [];
         while ($row = $result->fetch_assoc()) {
-            // Decodificar el campo JSON si existe
+            // Decodificar y normalizar el campo JSON si existe
+            $raw = [];
             if (isset($row['valores_referenciales']) && $row['valores_referenciales']) {
-                $row['valores_referenciales'] = json_decode($row['valores_referenciales'], true);
-            } else {
-                $row['valores_referenciales'] = [];
+                $decoded = json_decode($row['valores_referenciales'], true);
+                if (is_array($decoded)) { $raw = $decoded; }
             }
+            // Normalización robusta: garantizar nombre/tipo y estructura de referencias
+            $items = [];
+            foreach ($raw as $idx => $it) {
+                if (!is_array($it)) continue;
+                $item = [];
+                $item['tipo'] = isset($it['tipo']) && $it['tipo'] !== '' ? $it['tipo'] : 'Parámetro';
+                // Preferir nombre explícito; si falta, usar 'titulo'; si sigue faltando y es único parámetro, usar nombre del examen
+                $fallbackNombre = 'Item ' . ($idx + 1);
+                if (count($raw) === 1 && !empty($row['nombre'])) { $fallbackNombre = $row['nombre']; }
+                $item['nombre'] = isset($it['nombre']) && trim($it['nombre']) !== ''
+                    ? $it['nombre']
+                    : (isset($it['titulo']) && trim($it['titulo']) !== '' ? $it['titulo'] : $fallbackNombre);
+                $item['metodologia'] = isset($it['metodologia']) ? $it['metodologia'] : '';
+                $item['unidad'] = isset($it['unidad']) ? $it['unidad'] : '';
+                $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+                $item['referencias'] = [];
+                if (isset($it['referencias']) && is_array($it['referencias'])) {
+                    foreach ($it['referencias'] as $r) {
+                        if (!is_array($r)) continue;
+                        $item['referencias'][] = [
+                            'valor' => $r['valor'] ?? '',
+                            'valor_min' => $r['valor_min'] ?? '',
+                            'valor_max' => $r['valor_max'] ?? '',
+                            'desc' => $r['desc'] ?? ''
+                        ];
+                    }
+                }
+                // Compatibilidad con esquemas antiguos (min/max)
+                if (!empty($it['min']) || !empty($it['max'])) {
+                    $item['referencias'][] = [
+                        'valor' => '',
+                        'valor_min' => $it['min'] ?? '',
+                        'valor_max' => $it['max'] ?? '',
+                        'desc' => 'Rango'
+                    ];
+                }
+                $item['formula'] = isset($it['formula']) ? $it['formula'] : '';
+                $item['negrita'] = !empty($it['negrita']) ? true : false;
+                $item['color_texto'] = isset($it['color_texto']) ? $it['color_texto'] : '#000000';
+                $item['color_fondo'] = isset($it['color_fondo']) ? $it['color_fondo'] : '#ffffff';
+                $item['orden'] = (isset($it['orden']) && is_numeric($it['orden'])) ? intval($it['orden']) : ($idx + 1);
+                $items[] = $item;
+            }
+            $row['valores_referenciales'] = $items;
             $examenes[] = $row;
         }
         echo json_encode(["success" => true, "examenes" => $examenes]);

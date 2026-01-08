@@ -1,4 +1,3 @@
-
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
@@ -488,9 +487,16 @@ if (file_exists($vendor)) {
             
             // Forzar descarga con nombre más descriptivo
             $filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $row['id'] . '_' . date('Ymd') . '.pdf';
+            $pdfOutput = $dompdf->output();
+            // Limpiar buffers para evitar bytes extra que corrompan el PDF
+            if (ob_get_length()) { @ob_end_clean(); }
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="' . $filename . '"');
-            // Producción: salida PDF eliminada para depuración
+            header('Content-Length: ' . strlen($pdfOutput));
+            header('Cache-Control: private, max-age=0, must-revalidate');
+            header('Pragma: public');
+            echo $pdfOutput;
+            flush();
             exit;
         } catch (Exception $e) {
             // Si dompdf falla, caeremos al fallback HTML
@@ -499,7 +505,8 @@ if (file_exists($vendor)) {
     }
 }
 
-// Fallback: devolver HTML imprimible
+// Fallback: devolver HTML imprimible para visualización
+if (ob_get_length()) { @ob_end_clean(); }
 header('Content-Type: text/html; charset=utf-8');
-// Eliminado echo de HTML en fallback
+echo $html;
 exit;

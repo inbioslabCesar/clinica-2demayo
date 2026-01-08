@@ -87,7 +87,7 @@ switch ($method) {
             // Obtener detalles completos de los exámenes
             if (!empty($examenes_ids)) {
                 $placeholders = str_repeat('?,', count($examenes_ids) - 1) . '?';
-                $sql_examenes = "SELECT id, nombre, metodologia as descripcion, condicion_paciente, tiempo_resultado FROM examenes_laboratorio WHERE id IN ($placeholders)";
+                $sql_examenes = "SELECT id, nombre, metodologia as descripcion, condicion_paciente, tiempo_resultado, valores_referenciales FROM examenes_laboratorio WHERE id IN ($placeholders)";
                 $stmt_examenes = $conn->prepare($sql_examenes);
                 $stmt_examenes->bind_param(str_repeat('i', count($examenes_ids)), ...$examenes_ids);
                 $stmt_examenes->execute();
@@ -95,6 +95,53 @@ switch ($method) {
 
                 $examenes_detalle = [];
                 while ($examen = $res_examenes->fetch_assoc()) {
+                    // Decodificar y normalizar valores_referenciales si existen
+                    $items = [];
+                    if (!empty($examen['valores_referenciales'])) {
+                        $decoded = json_decode($examen['valores_referenciales'], true);
+                        if (is_array($decoded)) {
+                            foreach ($decoded as $idx => $it) {
+                                if (!is_array($it)) continue;
+                                $item = [];
+                                $item['tipo'] = isset($it['tipo']) && $it['tipo'] !== '' ? $it['tipo'] : 'Parámetro';
+                                $fallbackNombre = 'Item ' . ($idx + 1);
+                                if (count($decoded) === 1 && !empty($examen['nombre'])) { $fallbackNombre = $examen['nombre']; }
+                                $item['nombre'] = isset($it['nombre']) && trim($it['nombre']) !== ''
+                                    ? $it['nombre']
+                                    : (isset($it['titulo']) && trim($it['titulo']) !== '' ? $it['titulo'] : $fallbackNombre);
+                                $item['metodologia'] = isset($it['metodologia']) ? $it['metodologia'] : '';
+                                $item['unidad'] = isset($it['unidad']) ? $it['unidad'] : '';
+                                $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+                                $item['referencias'] = [];
+                                if (isset($it['referencias']) && is_array($it['referencias'])) {
+                                    foreach ($it['referencias'] as $r) {
+                                        if (!is_array($r)) continue;
+                                        $item['referencias'][] = [
+                                            'valor' => $r['valor'] ?? '',
+                                            'valor_min' => $r['valor_min'] ?? '',
+                                            'valor_max' => $r['valor_max'] ?? '',
+                                            'desc' => $r['desc'] ?? ''
+                                        ];
+                                    }
+                                }
+                                if (!empty($it['min']) || !empty($it['max'])) {
+                                    $item['referencias'][] = [
+                                        'valor' => '',
+                                        'valor_min' => $it['min'] ?? '',
+                                        'valor_max' => $it['max'] ?? '',
+                                        'desc' => 'Rango'
+                                    ];
+                                }
+                                $item['formula'] = isset($it['formula']) ? $it['formula'] : '';
+                                $item['negrita'] = !empty($it['negrita']) ? true : false;
+                                $item['color_texto'] = isset($it['color_texto']) ? $it['color_texto'] : '#000000';
+                                $item['color_fondo'] = isset($it['color_fondo']) ? $it['color_fondo'] : '#ffffff';
+                                $item['orden'] = (isset($it['orden']) && is_numeric($it['orden'])) ? intval($it['orden']) : ($idx + 1);
+                                $items[] = $item;
+                            }
+                        }
+                    }
+                    $examen['valores_referenciales'] = $items;
                     $examenes_detalle[] = $examen;
                 }
                 $stmt_examenes->close();

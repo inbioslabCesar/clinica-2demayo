@@ -274,12 +274,14 @@ function AgendarConsulta({ pacienteId }) {
 
   return (
     <div className="w-full flex flex-col items-center py-8 px-2 md:px-0 bg-gradient-to-br from-gray-50 to-blue-50 min-h-[80vh]">
-      <button
-        onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
-        className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 self-end mb-4"
-      >
-        Volver
-      </button>
+      {!(new URLSearchParams(window.location.search).get('cobro_id') || new URLSearchParams(window.location.search).get('cotizacion_id')) && (
+        <button
+          onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
+          className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 self-end mb-4"
+        >
+          Volver
+        </button>
+      )}
       <div className="w-full max-w-[2100px] flex flex-col md:flex-row gap-16 items-start justify-center">
         {/* Tarjeta disponibilidad */}
         <div className="w-full md:w-[1100px] flex flex-col items-center md:items-start">

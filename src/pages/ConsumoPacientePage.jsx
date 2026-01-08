@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import Spinner from "../components/comunes/Spinner";
@@ -35,26 +35,26 @@ export default function ConsumoPacientePage() {
         setLoading(false);
       });
   }, [pacienteId]);
-
-  if (loading) return <Spinner />;
-  if (error) return <div className="text-red-600 font-bold p-6">{error}</div>;
-
+  
+  // Memo: base del historial
+  const historialBase = useMemo(() => (
+    Array.isArray(consumo?.historial) ? consumo.historial : []
+  ), [consumo]);
   // Filtrar por fecha (solo parte de la fecha, ignorando hora)
-  let historialFiltrado = consumo.historial;
   function soloFecha(fechaStr) {
     // Si la fecha viene como 'YYYY-MM-DD' o 'YYYY-MM-DD HH:mm:ss', toma solo la parte de la fecha
     return fechaStr.split(' ')[0];
   }
-  if (fechaInicio) {
-    historialFiltrado = historialFiltrado.filter(item => soloFecha(item.fecha) >= fechaInicio);
-  }
-  if (fechaFin) {
-    historialFiltrado = historialFiltrado.filter(item => soloFecha(item.fecha) <= fechaFin);
-  }
+  const historialFiltrado = useMemo(() => {
+    let arr = historialBase;
+    if (fechaInicio) arr = arr.filter(item => soloFecha(item.fecha) >= fechaInicio);
+    if (fechaFin) arr = arr.filter(item => soloFecha(item.fecha) <= fechaFin);
+    return arr;
+  }, [historialBase, fechaInicio, fechaFin]);
   // Agrupar por cobro (por fecha y monto total)
-  function agruparCobros(historial) {
+  const cobrosAgrupados = useMemo(() => {
     const grupos = {};
-    historial.forEach(item => {
+    historialFiltrado.forEach(item => {
       const key = soloFecha(item.fecha) + '_' + item.monto + '_' + item.servicio;
       if (!grupos[key]) {
         grupos[key] = {
@@ -68,13 +68,15 @@ export default function ConsumoPacientePage() {
       grupos[key].montoTotal += Number(item.monto);
     });
     return Object.values(grupos);
-  }
-  const cobrosAgrupados = agruparCobros(historialFiltrado);
+  }, [historialFiltrado]);
+    if (loading) return <Spinner />;
+    if (error) return <div className="text-red-600 font-bold p-6">{error}</div>;
   // Calcular paginación
   const totalItems = cobrosAgrupados.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
   const startIdx = (page - 1) * itemsPerPage;
   const endIdx = startIdx + itemsPerPage;
+  const gruposPagina = cobrosAgrupados.slice(startIdx, endIdx);
 
   function imprimirTicketCobro() {
     if (!modalDetalle || !modalDetallesCobro) return;
@@ -121,6 +123,35 @@ export default function ConsumoPacientePage() {
     });
   }
 
+  function navegarEditarCotizacion() {
+    if (!modalDetalle) return;
+    const servicio = String(modalDetalle.servicio || '').toLowerCase();
+    const map = {
+      laboratorio: '/cotizar-laboratorio',
+      ecografia: '/cotizar-ecografia',
+      rayosx: '/cotizar-rayosx',
+      'rayos_x': '/cotizar-rayosx',
+      procedimiento: '/cotizar-procedimientos',
+      procedimientos: '/cotizar-procedimientos',
+      operacion: '/cotizar-operacion',
+      operaciones: '/cotizar-operacion',
+      farmacia: '/cotizar-farmacia',
+      consulta: '/agendar-consulta' // ir directo a agendar consulta cuando es consulta
+    };
+    const base = map[servicio] || '/seleccionar-servicio';
+    // Incluir cotizacion_id si está disponible en los detalles
+    const cotizacionId = (modalDetalle.detalles && modalDetalle.detalles[0] && modalDetalle.detalles[0].cotizacion_id) ? modalDetalle.detalles[0].cotizacion_id : null;
+    const queryParams = new URLSearchParams();
+    if (modalDetalle.cobro_id) queryParams.set('cobro_id', modalDetalle.cobro_id);
+    if (cotizacionId) queryParams.set('cotizacion_id', cotizacionId);
+    // Las rutas de cotización esperan :pacienteId
+    const path = base.includes('/cotizar-')
+      ? `${base}/${pacienteId}?${queryParams.toString()}`
+      : `${base}?${queryParams.toString()}&paciente_id=${pacienteId}`;
+    setModalVisible(false);
+    navigate(path);
+  }
+
   return (
     <div className="max-w-3xl mx-auto p-6 bg-white rounded-xl shadow-lg mt-8 font-sans">
       {/* Modal de detalle de servicio */}
@@ -135,31 +166,131 @@ export default function ConsumoPacientePage() {
             <div className="mb-2">
               <span className="font-semibold">Fecha:</span> {modalDetalle.fecha}<br />
             </div>
-            <table className="min-w-full border rounded mb-4">
+            <div className="max-h-[50vh] overflow-y-auto rounded mb-4 border">
+              <table className="min-w-full">
               <thead>
                 <tr className="bg-blue-100">
                   <th className="px-2 py-1 border text-left">Servicio</th>
                   <th className="px-2 py-1 border text-left">Descripción</th>
                   <th className="px-2 py-1 border text-right">Monto (S/)</th>
+                  <th className="px-2 py-1 border text-center">Acción</th>
                 </tr>
               </thead>
               <tbody>
-                {modalDetallesCobro.map((d, i) => (
-                  <tr key={i}>
-                    <td className="border px-2 py-1">{d.servicio_tipo || modalDetalle.servicio}</td>
-                    <td className="border px-2 py-1">{d.descripcion && d.descripcion !== "0" ? d.descripcion : <span className="italic text-gray-500">Sin detalle</span>}</td>
-                    <td className="border px-2 py-1 text-right">{Number(d.subtotal || d.monto).toFixed(2)}</td>
-                  </tr>
-                ))}
+                {modalDetallesCobro.map((d, i) => {
+                  const servicioTipo = d.servicio_tipo || modalDetalle.servicio;
+                  return (
+                    <tr key={i}>
+                      <td className="border px-2 py-1">{servicioTipo}</td>
+                      <td className="border px-2 py-1">{d.descripcion && d.descripcion !== "0" ? d.descripcion : <span className="italic text-gray-500">Sin detalle</span>}</td>
+                      <td className="border px-2 py-1 text-right">{Number(d.subtotal || d.monto).toFixed(2)}</td>
+                      <td className="border px-2 py-1 text-center">
+                        <button
+                          className="text-red-600 hover:text-red-800 text-xs font-semibold"
+                          onClick={async () => {
+                            const monto = Number(d.subtotal || d.monto || 0);
+                            const confirma = await Swal.fire({
+                              title: monto >= 500 ? 'Eliminar ítem de alto impacto' : 'Eliminar ítem',
+                              text: servicioTipo === 'farmacia' ? '¿Eliminar y reponer stock?' : '¿Eliminar este servicio del cobro?',
+                              icon: 'warning',
+                              showCancelButton: true,
+                              confirmButtonText: 'Continuar',
+                              cancelButtonText: 'Cancelar',
+                              input: 'text',
+                              inputLabel: 'Motivo de la eliminación',
+                              inputPlaceholder: 'Ej. error de registro, duplicado, ajuste',
+                              inputValidator: (value) => {
+                                if (!value || value.trim().length < 4) {
+                                  return 'Ingresa un motivo (mínimo 4 caracteres)';
+                                }
+                                return undefined;
+                              }
+                            });
+                            if (!confirma.isConfirmed) return;
+                            const motivo = (confirma.value || '').trim();
+
+                            if (monto >= 500) {
+                              const confirma2 = await Swal.fire({
+                                title: 'Confirmación final',
+                                html: `<div style='font-size:1.05em'>Este ítem tiene un monto de <b>S/ ${monto.toFixed(2)}</b>.<br/>Es una eliminación de alto impacto.</div>`,
+                                icon: 'warning',
+                                showCancelButton: true,
+                                confirmButtonText: 'Eliminar definitivamente',
+                                cancelButtonText: 'Cancelar',
+                                input: 'text',
+                                inputPlaceholder: 'Escribe ELIMINAR para confirmar',
+                                inputValidator: (value) => {
+                                  if (value !== 'ELIMINAR') return 'Debes escribir ELIMINAR';
+                                  return undefined;
+                                }
+                              });
+                              if (!confirma2.isConfirmed) return;
+                            }
+                            try {
+                              const resp = await fetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
+                                method: 'POST',
+                                credentials: 'include',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  cobro_id: modalDetalle.cobro_id,
+                                  servicio_tipo: servicioTipo,
+                                  motivo,
+                                  item: {
+                                    servicio_id: d.servicio_id,
+                                    descripcion: d.descripcion,
+                                    cantidad: d.cantidad,
+                                    precio_unitario: d.precio_unitario,
+                                    subtotal: d.subtotal || d.monto,
+                                    derivado: d.derivado,
+                                    tipo_derivacion: d.tipo_derivacion,
+                                    valor_derivacion: d.valor_derivacion,
+                                    laboratorio_referencia: d.laboratorio_referencia
+                                  }
+                                })
+                              });
+                              const data = await resp.json();
+                              if (data.success) {
+                                Swal.fire('Eliminado', 'Ítem eliminado correctamente.', 'success');
+                                setModalDetallesCobro(prev => prev.filter((_, idx) => idx !== i));
+                                fetch(`${BASE_URL}api_consumos_paciente.php?paciente_id=${pacienteId}`, { credentials: 'include' })
+                                  .then(r => r.json())
+                                  .then(n => { if (n.success) setConsumo(n); });
+                              } else {
+                                Swal.fire('Error', data.error || 'No se pudo eliminar', 'error');
+                              }
+                            } catch {
+                              Swal.fire('Error', 'Fallo de conexión con el servidor', 'error');
+                            }
+                          }}
+                        >Eliminar</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
-            </table>
+              </table>
+            </div>
             <div className="font-bold text-right text-green-700 text-lg mb-4">
               Total: S/ {modalDetallesCobro.reduce((sum, d) => sum + Number(d.subtotal || d.monto), 0).toFixed(2)}
             </div>
-            <button
-              className="w-full py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded shadow"
-              onClick={imprimirTicketCobro}
-            >Imprimir ticket</button>
+            {String(modalDetalle.servicio).toLowerCase() === 'consulta' && (
+              <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 text-sm">
+                Las consultas no admiten edición. Solo puedes eliminar este ítem.
+                Para reprogramar, agenda una nueva cita desde "Consulta Médica".
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {String(modalDetalle.servicio).toLowerCase() !== 'consulta' && (
+                <button
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow"
+                  onClick={navegarEditarCotizacion}
+                >Editar cotización</button>
+              )}
+              <button
+                className="w-full py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded shadow"
+                onClick={imprimirTicketCobro}
+              >Imprimir ticket</button>
+            </div>
           </div>
         </div>
       )}
@@ -232,29 +363,32 @@ export default function ConsumoPacientePage() {
             </tr>
           </thead>
           <tbody>
-            {consumo.historial.length === 0 ? (
+            {cobrosAgrupados.length === 0 ? (
               <tr>
                 <td colSpan={4} className="text-center py-6 text-gray-500">No hay servicios registrados.</td>
               </tr>
             ) : (
-              consumo.historial.slice(startIdx, endIdx).map((item, idx) => (
+              gruposPagina.map((grupo, idx) => (
                 <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-blue-50"}>
-                  <td className="border px-3 py-2">{item.fecha}</td>
+                  <td className="border px-3 py-2">{grupo.fecha}</td>
                   <td className="border px-3 py-2">
                     <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                      item.servicio === 'consulta' ? 'bg-green-100 text-green-700' :
-                      item.servicio === 'laboratorio' ? 'bg-yellow-100 text-yellow-700' :
-                      item.servicio === 'farmacia' ? 'bg-purple-100 text-purple-700' :
-                      item.servicio === 'procedimiento' ? 'bg-blue-100 text-blue-700' :
+                      grupo.servicio === 'consulta' ? 'bg-green-100 text-green-700' :
+                      grupo.servicio === 'laboratorio' ? 'bg-yellow-100 text-yellow-700' :
+                      grupo.servicio === 'farmacia' ? 'bg-purple-100 text-purple-700' :
+                      grupo.servicio === 'procedimiento' ? 'bg-blue-100 text-blue-700' :
                       'bg-gray-100 text-gray-700'
                     }`}>
-                      {item.servicio}
+                      {grupo.servicio}
                       {/* Ícono de descarga si hay resultados de laboratorio */}
-                      {item.servicio === 'laboratorio' && item.resultados_laboratorio && (
+                      {grupo.servicio === 'laboratorio' && grupo.detalles && grupo.detalles.some(d => d.resultados_laboratorio) && (
                         <button
                           className="ml-2 text-purple-700 hover:text-purple-900"
                           title="Descargar resultados"
-                          onClick={() => window.open(item.resultados_laboratorio, '_blank')}
+                          onClick={() => {
+                            const link = grupo.detalles.find(d => d.resultados_laboratorio)?.resultados_laboratorio;
+                            if (link) window.open(link, '_blank');
+                          }}
                         >
                           <span role="img" aria-label="descargar">📥</span>
                         </button>
@@ -265,13 +399,20 @@ export default function ConsumoPacientePage() {
                     <button
                       className="px-3 py-1 bg-blue-100 hover:bg-blue-200 rounded text-blue-900 font-semibold text-xs shadow"
                       onClick={() => {
-                        setModalDetalle(item);
-                        setModalDetallesCobro(item.detalles);
+                        const detallesFlatten = (grupo.detalles || []).flatMap(it => Array.isArray(it.detalles) ? it.detalles : []);
+                        setModalDetalle({
+                          ...grupo,
+                          cobro_id: grupo.detalles?.[0]?.cobro_id,
+                          tipo_pago: detallesFlatten?.[0]?.tipo_pago,
+                          cobertura: detallesFlatten?.[0]?.cobertura,
+                          detalles: detallesFlatten
+                        });
+                        setModalDetallesCobro(detallesFlatten);
                         setModalVisible(true);
                       }}
                     >Ver detalle</button>
                   </td>
-                  <td className="border px-3 py-2 text-right font-semibold text-green-700">{Number(item.monto).toFixed(2)}</td>
+                  <td className="border px-3 py-2 text-right font-semibold text-green-700">{Number(grupo.montoTotal).toFixed(2)}</td>
                 </tr>
               ))
             )}

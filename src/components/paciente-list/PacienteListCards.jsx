@@ -23,6 +23,16 @@ function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratul
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
                 </button>
+                <button
+                  onClick={() => onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-full transition-colors"
+                  title="Cotizar / seleccionar servicio"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
+                    <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor">Q</text>
+                  </svg>
+                </button>
                 <button onClick={() => onNavigate(`/consumo-paciente/${p.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full transition-colors" title="Ver consumo total">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
