@@ -1,0 +1,1 @@
+import{j as e}from"./vendor-B5yQt2qK.js";import"./examenes-laboratorio-crud-BJk1fG4Z.js";function s(){return e.jsxs("div",{className:"max-w-3xl mx-auto p-6",children:[e.jsx("h1",{className:"text-2xl font-bold mb-6 text-center",children:"Reporte de Finanzas"}),e.jsx("div",{className:"text-gray-500 text-center",children:"(Vista en construcción)"})]})}export{s as default};

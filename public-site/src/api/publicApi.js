@@ -28,3 +28,13 @@ export async function getOfertas() {
   const data = await fetchJson('api_public_ofertas.php')
   return data?.ofertas || []
 }
+
+export async function getBanners() {
+  const data = await fetchJson('api_public_banners.php')
+  return data?.banners || []
+}
+
+export async function getConfiguracion() {
+  const data = await fetchJson('api_get_configuracion.php')
+  return data?.data || null
+}

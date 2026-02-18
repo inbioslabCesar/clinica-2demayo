@@ -93,6 +93,7 @@ const DescuentosPage = lazy(() => import("./pages/DescuentosPage.jsx"));
 const AuditoriaEliminacionesPage = lazy(() => import("./pages/AuditoriaEliminacionesPage.jsx"));
 const WebServiciosCrudPage = lazy(() => import("./pages/WebServiciosCrudPage.jsx"));
 const WebOfertasCrudPage = lazy(() => import("./pages/WebOfertasCrudPage.jsx"));
+const WebBannersCrudPage = lazy(() => import("./pages/WebBannersCrudPage.jsx"));
 
 function App() {
   const [usuario, setUsuario] = useState(() => {
@@ -433,6 +434,15 @@ function App() {
                     element={
                       <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
                         <WebOfertasCrudPage />
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  <Route
+                    path="/web-banners"
+                    element={
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                        <WebBannersCrudPage />
                       </ProtectedRoute>
                     }
                   />

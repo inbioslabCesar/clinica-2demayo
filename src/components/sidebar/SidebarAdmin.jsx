@@ -64,6 +64,15 @@ export default function SidebarAdmin({ onClose }) {
       </Link>
 
       <Link
+        to="/web-banners"
+        className="py-3 px-4 rounded-lg text-indigo-700 hover:bg-gradient-to-r hover:from-indigo-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Picture" className="text-xl text-indigo-600" />
+        <span>Banners Web</span>
+      </Link>
+
+      <Link
         to="/contabilidad"
         className="py-3 px-4 rounded-lg text-violet-700 hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
         onClick={onClose}

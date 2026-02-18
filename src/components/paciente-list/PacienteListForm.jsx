@@ -56,6 +56,24 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
   }, [form.edad, form.edad_unidad]);
   const [loading, setLoading] = useState(false);
 
+  const guardarPacienteFallback = async (pacientePayload) => {
+    try {
+      const res = await fetch(`${BASE_URL}api_pacientes.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pacientePayload),
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success || !data?.paciente) {
+        return { success: false, error: data?.error || "Error al guardar paciente" };
+      }
+      return { success: true, paciente: data.paciente };
+    } catch {
+      return { success: false, error: "Error de conexión con el servidor" };
+    }
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     if (name === "tipo_documento") {
@@ -112,83 +130,98 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
     e.preventDefault();
     setLoading(true);
     setError("");
-    let formToSend = { ...form };
-    const camposMayuscula = [
-      "nombre",
-      "apellido",
-      "historia_clinica",
-      "procedencia",
-      "direccion",
-      "tipo_seguro"
-    ];
-    camposMayuscula.forEach((campo) => {
-      if (formToSend[campo]) {
-        formToSend[campo] = formToSend[campo].toUpperCase();
-      }
-    });
-    if (formToSend.email) {
-      formToSend.email = formToSend.email.trim();
-    }
-    if (formToSend.tipo_documento === "dni") {
-      if (!/^\d{8}$/.test(formToSend.dni)) {
-        setError("El DNI debe tener exactamente 8 dígitos.");
-        setLoading(false);
-        return;
-      }
-    } else if (formToSend.tipo_documento === "carnet_extranjeria") {
-      if (!/^\d{12}$/.test(formToSend.dni)) {
-        setError("El Carnet de extranjería debe tener exactamente 12 dígitos.");
-        setLoading(false);
-        return;
-      }
-    } else if (formToSend.tipo_documento === "sin_documento") {
-      formToSend.dni = (99990000 + Math.floor(Math.random() * 100)).toString();
-    }
-    // Validación de DNI duplicado (opcional, si lo quieres mantener)
-    if (formToSend.tipo_documento === "dni" && formToSend.dni) {
-      try {
-        const resDni = await fetch(`${BASE_URL}api_pacientes.php?busqueda=${formToSend.dni}&limit=1`, { credentials: "include" });
-        const dataDni = await resDni.json();
-        if (dataDni.success && Array.isArray(dataDni.pacientes) && dataDni.pacientes.length > 0) {
-          const pacienteEncontrado = dataDni.pacientes[0];
-          if (!form.id || pacienteEncontrado.id !== form.id) {
-            Swal.fire({
-              icon: "warning",
-              title: "DNI ya registrado",
-              html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
-              confirmButtonText: "Aceptar",
-              showClass: { popup: 'animate__animated animate__fadeInDown' },
-              hideClass: { popup: 'animate__animated animate__fadeOutUp' }
-            });
-            setLoading(false);
-            return;
-          }
+    try {
+      let formToSend = { ...form };
+      const camposMayuscula = [
+        "nombre",
+        "apellido",
+        "historia_clinica",
+        "procedencia",
+        "direccion",
+        "tipo_seguro"
+      ];
+      camposMayuscula.forEach((campo) => {
+        if (formToSend[campo]) {
+          formToSend[campo] = formToSend[campo].toUpperCase();
         }
-      } catch (err) {
-        // Error al consultar DNI, ignorado intencionalmente
-      }
-    }
-    // Usar guardarPaciente del hook
-    const result = await guardarPaciente(formToSend);
-    setLoading(false);
-    if (result.success) {
-      onRegistroExitoso(result.paciente);
-      Swal.fire({
-        icon: "success",
-        title: form.id ? "Paciente actualizado" : "Paciente registrado",
-        html: `<b>Historia Clínica:</b> ${result.paciente.historia_clinica || '-'}`,
-        confirmButtonText: "Aceptar"
       });
-    } else {
-      setError(result.error || "Error al guardar paciente");
+      if (formToSend.email) {
+        formToSend.email = formToSend.email.trim();
+      }
+      if (formToSend.tipo_documento === "dni") {
+        if (!/^\d{8}$/.test(formToSend.dni)) {
+          setError("El DNI debe tener exactamente 8 dígitos.");
+          return;
+        }
+      } else if (formToSend.tipo_documento === "carnet_extranjeria") {
+        if (!/^\d{12}$/.test(formToSend.dni)) {
+          setError("El Carnet de extranjería debe tener exactamente 12 dígitos.");
+          return;
+        }
+      } else if (formToSend.tipo_documento === "sin_documento") {
+        formToSend.dni = (99990000 + Math.floor(Math.random() * 100)).toString();
+      }
+
+      if (formToSend.tipo_documento === "dni" && formToSend.dni) {
+        try {
+          const resDni = await fetch(`${BASE_URL}api_pacientes.php?busqueda=${formToSend.dni}&limit=1`, { credentials: "include" });
+          const dataDni = await resDni.json();
+          if (dataDni.success && Array.isArray(dataDni.pacientes) && dataDni.pacientes.length > 0) {
+            const pacienteEncontrado = dataDni.pacientes[0];
+            if (!form.id || pacienteEncontrado.id !== form.id) {
+              Swal.fire({
+                icon: "warning",
+                title: "DNI ya registrado",
+                html: `<div style='font-size:1.1em'><b>El DNI ingresado ya está registrado en el sistema.</b><br>Verifique los datos o busque el paciente existente.</div>`,
+                confirmButtonText: "Aceptar",
+                showClass: { popup: 'animate__animated animate__fadeInDown' },
+                hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+              });
+              return;
+            }
+          }
+        } catch (err) {
+          // Error al consultar DNI, ignorado intencionalmente
+        }
+      }
+
+      const guardar = typeof guardarPaciente === "function" ? guardarPaciente : guardarPacienteFallback;
+      const result = await guardar(formToSend);
+
+      if (result.success) {
+        if (typeof onRegistroExitoso === "function") {
+          onRegistroExitoso(result.paciente);
+        }
+        Swal.fire({
+          icon: "success",
+          title: form.id ? "Paciente actualizado" : "Paciente registrado",
+          html: `<b>Historia Clínica:</b> ${result.paciente?.historia_clinica || '-'}`,
+          confirmButtonText: "Aceptar"
+        });
+      } else {
+        setError(result.error || "Error al guardar paciente");
+        Swal.fire({
+          icon: "error",
+          title: form.id ? "Error al actualizar paciente" : "Error al registrar paciente",
+          html: `<div style='font-size:1.1em'>${result.error || (form.id ? "Error al actualizar paciente" : "Error al registrar paciente")}</div>`,
+          confirmButtonText: "Aceptar",
+          showClass: { popup: 'animate__animated animate__fadeInDown' },
+          hideClass: { popup: 'animate__animated animate__fadeOutUp' }
+        });
+      }
+    } catch (err) {
+      const message = err?.message || "Error inesperado al registrar paciente";
+      setError(message);
       Swal.fire({
         icon: "error",
         title: form.id ? "Error al actualizar paciente" : "Error al registrar paciente",
-        html: `<div style='font-size:1.1em'>${result.error || (form.id ? "Error al actualizar paciente" : "Error al registrar paciente")}</div>`,
+        html: `<div style='font-size:1.1em'>${message}</div>`,
         confirmButtonText: "Aceptar",
         showClass: { popup: 'animate__animated animate__fadeInDown' },
         hideClass: { popup: 'animate__animated animate__fadeOutUp' }
       });
+    } finally {
+      setLoading(false);
     }
   };
 

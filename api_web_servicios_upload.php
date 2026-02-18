@@ -63,6 +63,15 @@ $filename = 'servicio_' . date('Ymd_His') . '_' . $suffix . '.' . $ext;
 $relativeDir = '/uploads/web/servicios';
 $targetDir = __DIR__ . $relativeDir;
 
+function getBaseUrlPrefix() {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+    $basePath = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
+    if ($basePath === '.' || $basePath === '/') $basePath = '';
+    return $scheme . '://' . $host . $basePath;
+}
+
 if (!is_dir($targetDir)) {
     @mkdir($targetDir, 0775, true);
 }
@@ -74,9 +83,7 @@ if (!move_uploaded_file($tmpPath, $targetPath)) {
     exit;
 }
 
-$scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? '';
-$absoluteUrl = $scheme . '://' . $host . $relativeDir . '/' . $filename;
+$absoluteUrl = getBaseUrlPrefix() . $relativeDir . '/' . $filename;
 
 echo json_encode([
     'success' => true,

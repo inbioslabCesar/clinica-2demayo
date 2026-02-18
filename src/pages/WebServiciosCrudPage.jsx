@@ -205,8 +205,14 @@ export default function WebServiciosCrudPage() {
             <textarea className="w-full border rounded px-3 py-2" rows={3} value={form.descripcion} onChange={(e) => setForm((f) => ({ ...f, descripcion: e.target.value }))} />
           </div>
           <div>
-            <label className="block text-sm font-semibold">Icono (opcional)</label>
-            <input className="w-full border rounded px-3 py-2" value={form.icono} onChange={(e) => setForm((f) => ({ ...f, icono: e.target.value }))} />
+            <label className="block text-sm font-semibold">Icono (clave, opcional)</label>
+            <input
+              className="w-full border rounded px-3 py-2"
+              value={form.icono}
+              onChange={(e) => setForm((f) => ({ ...f, icono: e.target.value }))}
+              placeholder="Ej: consultas, laboratorio, rayosx, ecografias, operaciones, hospitalizacion"
+            />
+            <p className="text-xs text-gray-600 mt-1">Usa una clave para que la web muestre el icono en la tarjeta.</p>
           </div>
 
           <div>
