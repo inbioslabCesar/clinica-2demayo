@@ -87,3 +87,7 @@ composer.phar
 *.tmp
 *.temp
 *.bak
+
+# Deployment archives
+*.zip
+!uploads/web/ofertas/*.zip
