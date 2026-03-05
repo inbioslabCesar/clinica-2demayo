@@ -4,6 +4,7 @@ const ImpresionHistoriaClinica = ({
   hc, 
   diagnosticos,
   medicamentos,
+  resultadosLaboratorio,
   ordenesLaboratorio,
   medicoInfo,
   configuracionClinica 
@@ -39,6 +40,74 @@ const ImpresionHistoriaClinica = ({
     });
   };
 
+  const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
+  const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
+  const motivoConsulta = triaje?.motivo || triaje?.motivo_consulta || '';
+  const sintomasPrincipales = triaje?.sintomas || triaje?.sintomas_principales || triaje?.sintoma_principal || '';
+  const nivelConciencia = triaje?.nivel_conciencia || triaje?.nivelConciencia || '';
+  const hidratacion = triaje?.hidratacion || triaje?.estado_hidratacion || '';
+  const coloracion = triaje?.coloracion || triaje?.estado_coloracion || '';
+
+  const calcularImc = () => {
+    const peso = parseFloat(triaje?.peso);
+    const tallaRaw = parseFloat(triaje?.talla);
+    if (!Number.isFinite(peso) || !Number.isFinite(tallaRaw) || peso <= 0 || tallaRaw <= 0) return null;
+    const tallaEnMetros = tallaRaw <= 3 ? tallaRaw : tallaRaw / 100;
+    const imc = peso / Math.pow(tallaEnMetros, 2);
+    return Number.isFinite(imc) ? imc.toFixed(1) : null;
+  };
+
+  const imcCalculado = calcularImc();
+  const tallaNumerica = parseFloat(triaje?.talla);
+  const unidadTalla = Number.isFinite(tallaNumerica) && tallaNumerica > 0 && tallaNumerica <= 3 ? 'm' : 'cm';
+
+  const normalizarTexto = (texto) => String(texto || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+  const limpiarPrefijoRepetido = (valor, etiquetas = []) => {
+    let limpio = String(valor ?? '').trim();
+    etiquetas.forEach((etiqueta) => {
+      const txt = String(etiqueta || '').trim();
+      if (!txt) return;
+      const escapado = txt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`^${escapado}\\s*[:\\-]\\s*`, 'i');
+      limpio = limpio.replace(re, '').trim();
+    });
+    return limpio;
+  };
+
+  const esParametroGenerico = (parametro) => /^item\s*\d+$/i.test(String(parametro || '').trim());
+
+  const isMetaResultKey = (key) => {
+    const k = String(key || '');
+    return k.endsWith('__imprimir_examen') || k.endsWith('__alarma_activa') || k.endsWith('__alarma_dias');
+  };
+
+  const idToNombreExamen = {};
+  if (Array.isArray(ordenesLaboratorio)) {
+    ordenesLaboratorio.forEach((orden) => {
+      if (!Array.isArray(orden?.examenes)) return;
+      orden.examenes.forEach((examen) => {
+        if (typeof examen === 'object' && examen?.id) {
+          idToNombreExamen[String(examen.id)] = examen.nombre || `Examen ${examen.id}`;
+        } else if (typeof examen === 'number' || (typeof examen === 'string' && /^\d+$/.test(examen))) {
+          idToNombreExamen[String(examen)] = `Examen ${examen}`;
+        }
+      });
+    });
+  }
+
+  const resultadosConDatos = Array.isArray(resultadosLaboratorio)
+    ? resultadosLaboratorio.filter((resultado) => {
+        if (!resultado?.resultados || typeof resultado.resultados !== 'object') return false;
+        return Object.entries(resultado.resultados).some(([k, v]) => !isMetaResultKey(k) && v !== null && String(v).trim() !== '');
+      })
+    : [];
+
   // Función para mostrar mensaje cuando no hay datos
   const SeccionVacia = ({ titulo, mensaje = "No hay información registrada" }) => (
     <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -53,7 +122,7 @@ const ImpresionHistoriaClinica = ({
 
   return (
     <div className="bg-white p-8 max-w-4xl mx-auto shadow-lg print:shadow-none print:max-w-none">
-      <style jsx>{`
+      <style>{`
         @media print {
           .firma-medico {
             break-inside: avoid;
@@ -105,7 +174,7 @@ const ImpresionHistoriaClinica = ({
             👤 DATOS DEL PACIENTE
           </h3>
           <div className="space-y-1 text-sm">
-            <p><strong>Nombre:</strong> {paciente?.nombres} {paciente?.apellidos}</p>
+            <p><strong>Nombre:</strong> {nombrePaciente} {apellidoPaciente}</p>
             <p><strong>DNI:</strong> {paciente?.dni}</p>
             <p><strong>Edad:</strong> {paciente?.edad} años</p>
             <p><strong>Sexo:</strong> {paciente?.sexo}</p>
@@ -128,12 +197,22 @@ const ImpresionHistoriaClinica = ({
       </div>
 
       {/* Motivo de consulta desde triaje */}
-      {triaje?.motivo && (
+      {motivoConsulta && (
         <div className="mb-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
           <h3 className="font-semibold text-yellow-800 mb-2 border-b border-yellow-300">
             📝 MOTIVO DE CONSULTA
           </h3>
-          <p className="text-sm leading-relaxed">{triaje.motivo}</p>
+          <p className="text-sm leading-relaxed">{motivoConsulta}</p>
+        </div>
+      )}
+
+      {/* Síntomas principales desde triaje */}
+      {sintomasPrincipales && (
+        <div className="mb-6 p-4 bg-orange-50 rounded-lg border border-orange-200">
+          <h3 className="font-semibold text-orange-800 mb-2 border-b border-orange-300">
+            🩺 SÍNTOMAS PRINCIPALES
+          </h3>
+          <p className="text-sm leading-relaxed">{sintomasPrincipales}</p>
         </div>
       )}
 
@@ -176,12 +255,38 @@ const ImpresionHistoriaClinica = ({
             )}
             {triaje.talla && (
               <div>
-                <strong>Talla:</strong> {triaje.talla} cm
+                <strong>Talla:</strong> {triaje.talla} {unidadTalla}
               </div>
             )}
-            {triaje.peso && triaje.talla && (
+            {imcCalculado && (
               <div>
-                <strong>IMC:</strong> {(parseFloat(triaje.peso) / Math.pow(parseFloat(triaje.talla) / 100, 2)).toFixed(1)} kg/m²
+                <strong>IMC:</strong> {imcCalculado} kg/m²
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Estado general del triaje */}
+      {(nivelConciencia || hidratacion || coloracion) && (
+        <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+          <h3 className="font-semibold text-purple-800 mb-2 border-b border-purple-300">
+            👤 ESTADO GENERAL
+          </h3>
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            {nivelConciencia && (
+              <div>
+                <strong>Conciencia:</strong> {nivelConciencia}
+              </div>
+            )}
+            {hidratacion && (
+              <div>
+                <strong>Hidratación:</strong> {hidratacion}
+              </div>
+            )}
+            {coloracion && (
+              <div>
+                <strong>Coloración:</strong> {coloracion}
               </div>
             )}
           </div>
@@ -249,27 +354,16 @@ const ImpresionHistoriaClinica = ({
           <h3 className="font-semibold text-red-800 mb-2 border-b border-red-300">
             🎯 DIAGNÓSTICOS CIE-10
           </h3>
-          <div className="space-y-3">
+          <div className="bg-white rounded border border-red-100 p-2 text-xs leading-tight space-y-1">
             {diagnosticos.map((diagnostico, index) => (
-              <div key={index} className="text-sm p-3 bg-white rounded border border-red-100">
-                <div className="flex items-start gap-3">
-                  <span className="inline-block w-6 h-6 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
-                    {index + 1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <span className="inline-block px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded">
-                        {diagnostico.tipo || 'Principal'}
-                      </span>
-                      <span className="inline-block px-2 py-1 bg-gray-100 text-gray-800 text-xs font-mono rounded">
-                        {diagnostico.codigo}
-                      </span>
-                    </div>
-                    <p className="text-sm font-medium text-gray-900 leading-relaxed">
-                      {diagnostico.descripcion}
-                    </p>
-                  </div>
-                </div>
+              <div key={index} className="text-gray-900">
+                <span className="font-semibold">{index + 1}.</span>{' '}
+                <span className="font-mono">{diagnostico.codigo || 'S/C'}</span>{' '}
+                <span>- {diagnostico.descripcion || diagnostico.nombre || 'Sin descripción'}</span>
+                <span className="text-gray-600"> ({diagnostico.tipo || 'Principal'})</span>
+                {diagnostico.observaciones && String(diagnostico.observaciones).trim() !== '' && (
+                  <span className="text-gray-700"> · Obs: {diagnostico.observaciones}</span>
+                )}
               </div>
             ))}
           </div>
@@ -294,99 +388,162 @@ const ImpresionHistoriaClinica = ({
           <h3 className="font-semibold text-green-800 mb-2 border-b border-green-300">
             💉 RECETA MÉDICA
           </h3>
-          <div className="space-y-3">
-            {medicamentos.map((medicamento, index) => (
-              <div key={index} className="text-sm p-3 bg-white rounded border border-green-100">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p><strong>Medicamento:</strong> {medicamento.medicamento}</p>
-                    <p><strong>Concentración:</strong> {medicamento.concentracion}</p>
-                    <p><strong>Forma Farmacéutica:</strong> {medicamento.forma_farmaceutica}</p>
-                  </div>
-                  <div>
-                    <p><strong>Dosis:</strong> {medicamento.dosis}</p>
-                    <p><strong>Frecuencia:</strong> {medicamento.frecuencia}</p>
-                    <p><strong>Duración:</strong> {medicamento.duracion}</p>
-                  </div>
+          <div className="bg-white rounded border border-green-100 p-2 text-xs leading-tight space-y-1">
+            {medicamentos.map((medicamento, index) => {
+              const nombreMed = medicamento?.nombre || medicamento?.medicamento || 'Medicamento sin nombre';
+              const codigoMed = medicamento?.codigo ? ` (${medicamento.codigo})` : '';
+              const dosis = medicamento?.dosis || '';
+              const frecuencia = medicamento?.frecuencia || '';
+              const duracion = medicamento?.duracion || '';
+              const obs = medicamento?.observaciones || medicamento?.indicaciones || '';
+
+              const detalles = [
+                dosis ? `D: ${dosis}` : null,
+                frecuencia ? `F: ${frecuencia}` : null,
+                duracion ? `T: ${duracion}` : null,
+                obs ? `Obs: ${obs}` : null,
+              ].filter(Boolean).join(' | ');
+
+              return (
+                <div key={index} className="text-gray-900">
+                  <span className="font-semibold">{index + 1}.</span>{' '}
+                  <span className="font-semibold">{nombreMed}</span>
+                  <span className="text-gray-600">{codigoMed}</span>
+                  {detalles && <span> - {detalles}</span>}
                 </div>
-                {medicamento.indicaciones && (
-                  <div className="mt-2 pt-2 border-t border-green-100">
-                    <p><strong>Indicaciones:</strong> {medicamento.indicaciones}</p>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : (
         <SeccionVacia titulo="💉 RECETA MÉDICA" mensaje="No se han prescrito medicamentos para esta consulta" />
       )}
 
-      {/* Exámenes de Laboratorio Solicitados */}
-      {ordenesLaboratorio && ordenesLaboratorio.length > 0 ? (
-        <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 seccion-laboratorio">
-          <h3 className="font-semibold text-blue-800 mb-2 border-b border-blue-300">
-            🔬 EXÁMENES DE LABORATORIO SOLICITADOS
-          </h3>
-          <div className="space-y-3">
-            {ordenesLaboratorio.map((orden, ordenIndex) => (
-              <div key={ordenIndex} className="p-3 bg-white rounded-lg border border-blue-100">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded">
-                    Orden #{orden.id || ordenIndex + 1}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {formatearFecha(orden.fecha_solicitud)}
-                  </span>
-                </div>
-                
-                {/* Lista de exámenes en esta orden */}
-                {orden.examenes && orden.examenes.length > 0 ? (
-                  <div className="space-y-2">
-                    {orden.examenes.map((examen, examenIndex) => (
-                      <div key={examenIndex} className="flex items-center gap-3 p-2 bg-blue-50 rounded border-l-4 border-blue-300">
-                        <span className="w-5 h-5 bg-blue-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
-                          {examenIndex + 1}
-                        </span>
-                        <div className="flex-1">
-                          <p className="font-medium text-sm text-gray-900">{examen.nombre}</p>
-                          {examen.descripcion && (
-                            <p className="text-xs text-gray-600 mt-1">{examen.descripcion}</p>
-                          )}
-                          {examen.condicion_paciente && (
-                            <p className="text-xs text-amber-600 mt-1">
-                              <strong>Condición:</strong> {examen.condicion_paciente}
-                            </p>
-                          )}
-                          {examen.tiempo_resultado && (
-                            <p className="text-xs text-green-600 mt-1">
-                              <strong>Tiempo estimado:</strong> {examen.tiempo_resultado}
-                            </p>
-                          )}
-                        </div>
-                        <div className="text-xs">
-                          <span className={`px-2 py-1 rounded-full text-xs ${
-                            orden.estado === 'pendiente' 
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : orden.estado === 'completado'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}>
-                            {orden.estado || 'Pendiente'}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+      {/* Exámenes de Laboratorio Solicitados (solo si no existen resultados) */}
+      {resultadosConDatos.length === 0 && (
+        ordenesLaboratorio && ordenesLaboratorio.length > 0 ? (
+          <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 seccion-laboratorio">
+            <h3 className="font-semibold text-blue-800 mb-2 border-b border-blue-300">
+              🔬 EXÁMENES DE LABORATORIO SOLICITADOS
+            </h3>
+            <div className="space-y-3">
+              {ordenesLaboratorio.map((orden, ordenIndex) => (
+                <div key={ordenIndex} className="p-3 bg-white rounded-lg border border-blue-100">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded">
+                      Orden #{orden.id || ordenIndex + 1}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {formatearFecha(orden.fecha_solicitud)}
+                    </span>
                   </div>
-                ) : (
-                  <p className="text-sm text-gray-500 italic">No hay exámenes específicos registrados</p>
-                )}
-              </div>
-            ))}
+                  
+                  {orden.examenes && orden.examenes.length > 0 ? (
+                    <div className="space-y-2">
+                      {orden.examenes.map((examen, examenIndex) => (
+                        <div key={examenIndex} className="flex items-center gap-3 p-2 bg-blue-50 rounded border-l-4 border-blue-300">
+                          <span className="w-5 h-5 bg-blue-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                            {examenIndex + 1}
+                          </span>
+                          <div className="flex-1">
+                            <p className="font-medium text-sm text-gray-900">{examen.nombre}</p>
+                            {examen.descripcion && (
+                              <p className="text-xs text-gray-600 mt-1">{examen.descripcion}</p>
+                            )}
+                          </div>
+                          <div className="text-xs">
+                            <span className={`px-2 py-1 rounded-full text-xs ${
+                              orden.estado === 'pendiente' 
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : orden.estado === 'completado'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {orden.estado || 'Pendiente'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 italic">No hay exámenes específicos registrados</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <SeccionVacia titulo="🔬 EXÁMENES DE LABORATORIO SOLICITADOS" mensaje="No se han solicitado exámenes de laboratorio para esta consulta" />
+        )
+      )}
+
+      {/* Resultados de laboratorio - formato comprimido */}
+      {resultadosConDatos.length > 0 && (
+        <div className="mb-4 p-1.5 bg-cyan-50 rounded-lg border border-cyan-200 seccion-laboratorio">
+          <h3 className="font-semibold text-cyan-800 mb-0.5 border-b border-cyan-300 text-xs">
+            🧪 RESULTADOS DE LABORATORIO
+          </h3>
+          <div className="space-y-0.5">
+            {resultadosConDatos.map((resultado, idx) => {
+              const agrupados = {};
+              Object.entries(resultado.resultados || {}).forEach(([key, value]) => {
+                if (isMetaResultKey(key)) return;
+                if (value === null || String(value).trim() === '') return;
+                let examId = key;
+                let parametro = null;
+                if (key.includes('__')) {
+                  [examId, parametro] = key.split('__');
+                }
+                if (!agrupados[examId]) agrupados[examId] = [];
+                agrupados[examId].push({ parametro, value });
+              });
+
+              return (
+                <div key={resultado.id || idx} className="bg-white border border-cyan-100 rounded p-1 text-[11px] leading-tight">
+                  <div className="text-[9px] text-gray-600 mb-0.5">
+                    Fecha: {formatearFecha(resultado.fecha)} {formatearHora(resultado.fecha)}
+                  </div>
+                  {(() => {
+                    const resumenPorExamen = Object.entries(agrupados).map(([examId, items]) => {
+                    const nombreExamen = idToNombreExamen[String(examId)] || `Examen ${examId}`;
+                    const partes = items
+                      .map(({ parametro, value }) => {
+                        const valorLimpio = limpiarPrefijoRepetido(value, [parametro, nombreExamen]);
+                        if (!valorLimpio) return '';
+
+                        const parametroNorm = normalizarTexto(parametro);
+                        const examenNorm = normalizarTexto(nombreExamen);
+                        const valorNorm = normalizarTexto(valorLimpio);
+
+                        const mostrarParametro = Boolean(
+                          parametro &&
+                          !esParametroGenerico(parametro) &&
+                          parametroNorm &&
+                          parametroNorm !== examenNorm &&
+                          !valorNorm.startsWith(parametroNorm)
+                        );
+
+                        return mostrarParametro ? `${parametro}: ${valorLimpio}` : valorLimpio;
+                      })
+                      .filter(Boolean);
+
+                    const partesUnicas = [...new Set(partes)];
+                    if (partesUnicas.length === 0) return '';
+
+                    return `${nombreExamen}: ${partesUnicas.join(' | ')}`;
+                  }).filter(Boolean);
+
+                    return (
+                      <div className="text-gray-800">
+                        {resumenPorExamen.join(' • ')}
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })}
           </div>
         </div>
-      ) : (
-        <SeccionVacia titulo="🔬 EXÁMENES DE LABORATORIO SOLICITADOS" mensaje="No se han solicitado exámenes de laboratorio para esta consulta" />
       )}
 
       {/* Pie de página con firma digital */}
@@ -404,7 +561,7 @@ const ImpresionHistoriaClinica = ({
                 <img 
                   src={medicoInfo.firma} 
                   alt="Firma digital del médico" 
-                  className="mx-auto border border-gray-300 rounded bg-white p-1 firma-img-hc"
+                  className="mx-auto bg-transparent p-0 firma-img-hc"
                 />
               </div>
             )}
@@ -413,11 +570,11 @@ const ImpresionHistoriaClinica = ({
               <p className="font-semibold text-sm">
                 Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
               </p>
+              <p className="text-xs text-gray-600">{medicoInfo?.especialidad}</p>
               <p className="text-xs text-gray-600">CMP: {medicoInfo?.cmp || 'N/A'}</p>
               {medicoInfo?.rne && (
                 <p className="text-xs text-gray-600">RNE: {medicoInfo.rne}</p>
               )}
-              <p className="text-xs text-gray-600">{medicoInfo?.especialidad}</p>
               
               {/* Mensaje si no hay firma */}
               {!medicoInfo?.firma && (

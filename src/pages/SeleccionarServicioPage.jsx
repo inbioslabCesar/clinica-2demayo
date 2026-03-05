@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Swal from "sweetalert2";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
@@ -10,6 +10,18 @@ export default function SeleccionarServicioPage() {
   const qs = new URLSearchParams(location.search);
   const pacienteId = location.state?.pacienteId || qs.get('paciente_id');
   const cobroId = qs.get('cobro_id');
+  const rutaVolver = useMemo(() => {
+    const fromState = location.state?.backTo || location.state?.from;
+    const fromQuery = qs.get('back_to');
+    const candidata = (typeof fromState === 'string' && fromState.trim())
+      ? fromState.trim()
+      : (typeof fromQuery === 'string' && fromQuery.trim() ? fromQuery.trim() : '');
+
+    if (candidata && candidata.startsWith('/')) return candidata;
+    if (pacienteId) return '/pacientes';
+    return '/';
+  }, [location.state, pacienteId, qs]);
+  const textoVolver = rutaVolver === '/pacientes' ? 'Volver a Pacientes' : 'Volver al Dashboard';
 
     const [procedimientos, setProcedimientos] = useState([]);
 
@@ -51,21 +63,21 @@ export default function SeleccionarServicioPage() {
   // Al seleccionar uno, navega a la página correspondiente y pasa el pacienteId
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 md:p-12 lg:p-16 xl:p-20">
-      <div className="max-w-[1800px] mx-auto">
-        <div className="bg-gradient-to-r from-purple-600 to-blue-400 rounded-t-xl p-8 mb-0">
+    <div className="min-h-screen bg-gray-50">
+      <div className="w-full max-w-[1500px] mx-auto px-4 lg:px-6 py-4">
+        <div className="bg-gradient-to-r from-purple-600 to-blue-400 rounded-t-xl p-5 md:p-6 mb-0">
           <h2 className="text-xl font-bold text-white flex items-center gap-2"><span>🗂️</span> Atención en Recepción</h2>
           <p className="text-white text-sm">Gestión de pacientes y servicios</p>
         </div>
-        <div className="bg-white rounded-b-xl shadow p-4">
+        <div className="bg-white rounded-b-xl shadow p-4 md:p-5">
           <button
             className="bg-blue-500 text-white px-4 py-2 rounded font-bold hover:bg-blue-600 mb-4"
-            onClick={() => navigate("/")}
-          >Volver al Dashboard</button>
+            onClick={() => navigate(rutaVolver)}
+          >{textoVolver}</button>
           {paciente ? (
-            <div className="bg-blue-50 rounded p-4 mb-4">
+            <div className="bg-blue-50 rounded-lg p-4 md:p-5 mb-4">
               <div className="font-bold text-blue-800 mb-2">Paciente encontrado:</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-8 text-sm md:text-base">
                 <div>
                   <div><b>Nombre:</b> {paciente.nombre}</div>
                   <div><b>Apellido:</b> {paciente.apellido}</div>
@@ -99,39 +111,39 @@ export default function SeleccionarServicioPage() {
             <div className="text-center text-gray-500 mb-4">Busca un paciente por DNI para mostrar los servicios.</div>
           )}
           {paciente && (
-            <div className="bg-blue-50 rounded-lg p-4 mb-2">
+            <div className="bg-blue-50 rounded-lg p-4 md:p-5 mb-2">
               <div className="font-semibold text-blue-700 mb-2 flex items-center gap-2"><span>🔽</span> Seleccionar Servicio para: <span className="text-black">{paciente.nombre} {paciente.apellido}</span></div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4 auto-rows-fr">
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-100 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-blue-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/agendar-consulta${cobroId ? `?cobro_id=${cobroId}` : ''}`, { state: { pacienteId: paciente.id } })}
-                >👨‍⚕️ Consulta Médica</button>
+                ><span>👨‍⚕️</span><span className="whitespace-normal">Consulta Médica</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-green-100 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-green-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-laboratorio/${paciente.id}`)}
-                >🧪 Laboratorio <span className="text-yellow-500">💰</span></button>
+                ><span>🧪</span><span className="whitespace-normal">Laboratorio</span> <span className="text-yellow-500">💰</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-purple-100 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-purple-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-farmacia/${paciente.id}`)}
-                >💊 Farmacia <span className="text-yellow-500">💰</span></button>
+                ><span>💊</span><span className="whitespace-normal">Farmacia</span> <span className="text-yellow-500">💰</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-50 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-blue-50 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-rayosx/${paciente.id}`)}
-                >🩻 Rayos X <span className="text-yellow-500">💰</span></button>
+                ><span>🩻</span><span className="whitespace-normal">Rayos X</span> <span className="text-yellow-500">💰</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-50 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-blue-50 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-ecografia/${paciente.id}`)}
-                >🩺 Ecografías <span className="text-yellow-500">💰</span></button>
+                ><span>🩺</span><span className="whitespace-normal">Ecografías</span> <span className="text-yellow-500">💰</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-orange-100 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-orange-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-procedimientos/${paciente.id}`)}
-                >🛠️ Procedimientos <span className="text-yellow-500">💰</span></button>
+                ><span>🛠️</span><span className="whitespace-normal">Procedimientos</span> <span className="text-yellow-500">💰</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-100 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-blue-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-operacion/${paciente.id}`)}
-                >🩼 Operaciones/Cirugías Mayores <span className="text-yellow-500">💰</span></button>
+                ><span>🩼</span><span className="whitespace-normal">Operaciones/Cirugías Mayores</span> <span className="text-yellow-500">💰</span></button>
                 <button
-                  className="flex items-center gap-2 justify-center border rounded-lg py-3 px-2 bg-white hover:bg-blue-50 font-bold"
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-blue-50 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => {
                     Swal.fire({
                       title: "Página en construcción",
@@ -140,7 +152,7 @@ export default function SeleccionarServicioPage() {
                       confirmButtonText: "OK"
                     });
                   }}
-                >👨‍⚕️ Medicina Ocupacional <span className="text-yellow-500">💰</span></button>
+                ><span>👨‍⚕️</span><span className="whitespace-normal">Medicina Ocupacional</span> <span className="text-yellow-500">💰</span></button>
               </div>
               <div className="mt-2 text-xs text-gray-500 flex gap-4 items-center">
                 <span>💰 = Requiere pago previo</span>

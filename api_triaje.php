@@ -1,8 +1,15 @@
 <?php
 require_once __DIR__ . '/init_api.php';
+require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
+
+if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'No autenticado']);
+    exit;
+}
 
 switch ($method) {
     case 'POST':

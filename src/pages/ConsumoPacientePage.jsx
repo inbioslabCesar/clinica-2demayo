@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import Spinner from "../components/comunes/Spinner";
 import { FaMoneyBillWave, FaUserCircle, FaClipboardList } from "react-icons/fa";
@@ -13,6 +13,7 @@ export default function ConsumoPacientePage() {
   const [fechaFin, setFechaFin] = useState("");
   const { pacienteId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [consumo, setConsumo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -69,6 +70,27 @@ export default function ConsumoPacientePage() {
     });
     return Object.values(grupos);
   }, [historialFiltrado]);
+
+  const rutaVolver = useMemo(() => {
+    const sp = new URLSearchParams(location.search);
+    const backFromState = (location.state && typeof location.state.backTo === 'string')
+      ? location.state.backTo
+      : null;
+    const backFromQuery = sp.get('back_to');
+    const destino = backFromState || backFromQuery;
+    if (!destino || !destino.startsWith('/') || destino.startsWith('/consumo-paciente/')) {
+      return '/pacientes';
+    }
+    return destino;
+  }, [location.search, location.state]);
+
+  const cotizacionIdDesdeRuta = useMemo(() => {
+    const sp = new URLSearchParams(location.search);
+    const raw = sp.get('cotizacion_id');
+    const parsed = Number(raw || 0);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
+
     if (loading) return <Spinner />;
     if (error) return <div className="text-red-600 font-bold p-6">{error}</div>;
   // Calcular paginación
@@ -152,6 +174,100 @@ export default function ConsumoPacientePage() {
     navigate(path);
   }
 
+  async function manejarEliminarDetalle(d, i, servicioTipo) {
+    const cotizacionId = Number(d?.cotizacion_id || 0) || cotizacionIdDesdeRuta || null;
+    if (cotizacionId) {
+      const go = await Swal.fire({
+        icon: 'info',
+        title: 'Ítem vinculado a cotización',
+        text: `Este ítem pertenece a la cotización #${cotizacionId}. Debes ajustarlo o anularlo desde Cotizaciones para mantener la contabilidad sincronizada.`,
+        showCancelButton: true,
+        confirmButtonText: 'Ir a Cotizaciones',
+        cancelButtonText: 'Cerrar'
+      });
+      if (go.isConfirmed) {
+        setModalVisible(false);
+        navigate(`/cotizaciones?accion=anular&cotizacion_id=${cotizacionId}`);
+      }
+      return;
+    }
+
+    const monto = Number(d.subtotal || d.monto || 0);
+    const confirma = await Swal.fire({
+      title: monto >= 500 ? 'Eliminar ítem de alto impacto' : 'Eliminar ítem',
+      text: servicioTipo === 'farmacia' ? '¿Eliminar y reponer stock?' : '¿Eliminar este servicio del cobro?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Continuar',
+      cancelButtonText: 'Cancelar',
+      input: 'text',
+      inputLabel: 'Motivo de la eliminación',
+      inputPlaceholder: 'Ej. error de registro, duplicado, ajuste',
+      inputValidator: (value) => {
+        if (!value || value.trim().length < 4) {
+          return 'Ingresa un motivo (mínimo 4 caracteres)';
+        }
+        return undefined;
+      }
+    });
+    if (!confirma.isConfirmed) return;
+    const motivo = (confirma.value || '').trim();
+
+    if (monto >= 500) {
+      const confirma2 = await Swal.fire({
+        title: 'Confirmación final',
+        html: `<div style='font-size:1.05em'>Este ítem tiene un monto de <b>S/ ${monto.toFixed(2)}</b>.<br/>Es una eliminación de alto impacto.</div>`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Eliminar definitivamente',
+        cancelButtonText: 'Cancelar',
+        input: 'text',
+        inputPlaceholder: 'Escribe ELIMINAR para confirmar',
+        inputValidator: (value) => {
+          if (value !== 'ELIMINAR') return 'Debes escribir ELIMINAR';
+          return undefined;
+        }
+      });
+      if (!confirma2.isConfirmed) return;
+    }
+
+    try {
+      const resp = await fetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cobro_id: modalDetalle.cobro_id,
+          servicio_tipo: servicioTipo,
+          motivo,
+          item: {
+            servicio_id: d.servicio_id,
+            descripcion: d.descripcion,
+            cantidad: d.cantidad,
+            precio_unitario: d.precio_unitario,
+            subtotal: d.subtotal || d.monto,
+            derivado: d.derivado,
+            tipo_derivacion: d.tipo_derivacion,
+            valor_derivacion: d.valor_derivacion,
+            laboratorio_referencia: d.laboratorio_referencia
+          }
+        })
+      });
+      const data = await resp.json();
+      if (data.success) {
+        Swal.fire('Eliminado', 'Ítem eliminado correctamente.', 'success');
+        setModalDetallesCobro(prev => prev.filter((_, idx) => idx !== i));
+        fetch(`${BASE_URL}api_consumos_paciente.php?paciente_id=${pacienteId}`, { credentials: 'include' })
+          .then(r => r.json())
+          .then(n => { if (n.success) setConsumo(n); });
+      } else {
+        Swal.fire('Error', data.error || 'No se pudo eliminar', 'error');
+      }
+    } catch {
+      Swal.fire('Error', 'Fallo de conexión con el servidor', 'error');
+    }
+  }
+
   return (
     <div className="max-w-3xl mx-auto p-6 bg-white rounded-xl shadow-lg mt-8 font-sans">
       {/* Modal de detalle de servicio */}
@@ -179,6 +295,7 @@ export default function ConsumoPacientePage() {
               <tbody>
                 {modalDetallesCobro.map((d, i) => {
                   const servicioTipo = d.servicio_tipo || modalDetalle.servicio;
+                  const cotizacionIdItem = Number(d?.cotizacion_id || 0) || cotizacionIdDesdeRuta || null;
                   return (
                     <tr key={i}>
                       <td className="border px-2 py-1">{servicioTipo}</td>
@@ -186,83 +303,9 @@ export default function ConsumoPacientePage() {
                       <td className="border px-2 py-1 text-right">{Number(d.subtotal || d.monto).toFixed(2)}</td>
                       <td className="border px-2 py-1 text-center">
                         <button
-                          className="text-red-600 hover:text-red-800 text-xs font-semibold"
-                          onClick={async () => {
-                            const monto = Number(d.subtotal || d.monto || 0);
-                            const confirma = await Swal.fire({
-                              title: monto >= 500 ? 'Eliminar ítem de alto impacto' : 'Eliminar ítem',
-                              text: servicioTipo === 'farmacia' ? '¿Eliminar y reponer stock?' : '¿Eliminar este servicio del cobro?',
-                              icon: 'warning',
-                              showCancelButton: true,
-                              confirmButtonText: 'Continuar',
-                              cancelButtonText: 'Cancelar',
-                              input: 'text',
-                              inputLabel: 'Motivo de la eliminación',
-                              inputPlaceholder: 'Ej. error de registro, duplicado, ajuste',
-                              inputValidator: (value) => {
-                                if (!value || value.trim().length < 4) {
-                                  return 'Ingresa un motivo (mínimo 4 caracteres)';
-                                }
-                                return undefined;
-                              }
-                            });
-                            if (!confirma.isConfirmed) return;
-                            const motivo = (confirma.value || '').trim();
-
-                            if (monto >= 500) {
-                              const confirma2 = await Swal.fire({
-                                title: 'Confirmación final',
-                                html: `<div style='font-size:1.05em'>Este ítem tiene un monto de <b>S/ ${monto.toFixed(2)}</b>.<br/>Es una eliminación de alto impacto.</div>`,
-                                icon: 'warning',
-                                showCancelButton: true,
-                                confirmButtonText: 'Eliminar definitivamente',
-                                cancelButtonText: 'Cancelar',
-                                input: 'text',
-                                inputPlaceholder: 'Escribe ELIMINAR para confirmar',
-                                inputValidator: (value) => {
-                                  if (value !== 'ELIMINAR') return 'Debes escribir ELIMINAR';
-                                  return undefined;
-                                }
-                              });
-                              if (!confirma2.isConfirmed) return;
-                            }
-                            try {
-                              const resp = await fetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
-                                method: 'POST',
-                                credentials: 'include',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  cobro_id: modalDetalle.cobro_id,
-                                  servicio_tipo: servicioTipo,
-                                  motivo,
-                                  item: {
-                                    servicio_id: d.servicio_id,
-                                    descripcion: d.descripcion,
-                                    cantidad: d.cantidad,
-                                    precio_unitario: d.precio_unitario,
-                                    subtotal: d.subtotal || d.monto,
-                                    derivado: d.derivado,
-                                    tipo_derivacion: d.tipo_derivacion,
-                                    valor_derivacion: d.valor_derivacion,
-                                    laboratorio_referencia: d.laboratorio_referencia
-                                  }
-                                })
-                              });
-                              const data = await resp.json();
-                              if (data.success) {
-                                Swal.fire('Eliminado', 'Ítem eliminado correctamente.', 'success');
-                                setModalDetallesCobro(prev => prev.filter((_, idx) => idx !== i));
-                                fetch(`${BASE_URL}api_consumos_paciente.php?paciente_id=${pacienteId}`, { credentials: 'include' })
-                                  .then(r => r.json())
-                                  .then(n => { if (n.success) setConsumo(n); });
-                              } else {
-                                Swal.fire('Error', data.error || 'No se pudo eliminar', 'error');
-                              }
-                            } catch {
-                              Swal.fire('Error', 'Fallo de conexión con el servidor', 'error');
-                            }
-                          }}
-                        >Eliminar</button>
+                          className={`${cotizacionIdItem ? 'text-blue-600 hover:text-blue-800' : 'text-red-600 hover:text-red-800'} text-xs font-semibold`}
+                          onClick={() => manejarEliminarDetalle(d, i, servicioTipo)}
+                        >{cotizacionIdItem ? 'Ajustar' : 'Eliminar'}</button>
                       </td>
                     </tr>
                   );
@@ -275,8 +318,8 @@ export default function ConsumoPacientePage() {
             </div>
             {String(modalDetalle.servicio).toLowerCase() === 'consulta' && (
               <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 text-sm">
-                Las consultas no admiten edición. Solo puedes eliminar este ítem.
-                Para reprogramar, agenda una nueva cita desde "Consulta Médica".
+                Las consultas no admiten edición directa.
+                Si el ítem está vinculado a una cotización, debes ajustarlo/anularlo desde "Cotizaciones".
               </div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -294,7 +337,7 @@ export default function ConsumoPacientePage() {
           </div>
         </div>
       )}
-      <button onClick={() => navigate(-1)} className="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 px-4 py-2 rounded hover:bg-blue-300 flex items-center gap-2 text-blue-900 font-semibold">
+      <button onClick={() => navigate(rutaVolver)} className="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 px-4 py-2 rounded hover:bg-blue-300 flex items-center gap-2 text-blue-900 font-semibold">
         ← Volver
       </button>
       <div className="flex items-center gap-3 mb-4">

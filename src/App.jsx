@@ -63,6 +63,15 @@ const CotizarOperacionPage = lazy(() =>
 const LaboratorioPanelPage = lazy(() =>
   import("./pages/LaboratorioPanelPage.jsx")
 );
+const LaboratorioCompararResultadosPage = lazy(() =>
+  import("./pages/LaboratorioCompararResultadosPage.jsx")
+);
+const InventarioLaboratorioPage = lazy(() =>
+  import("./pages/InventarioLaboratorioPage.jsx")
+);
+const InventarioGeneralPage = lazy(() =>
+  import("./pages/InventarioGeneralPage.jsx")
+);
 const ResultadosLaboratorioPage = lazy(() =>
   import("./pages/ResultadosLaboratorioPage.jsx")
 );
@@ -94,6 +103,9 @@ const AuditoriaEliminacionesPage = lazy(() => import("./pages/AuditoriaEliminaci
 const WebServiciosCrudPage = lazy(() => import("./pages/WebServiciosCrudPage.jsx"));
 const WebOfertasCrudPage = lazy(() => import("./pages/WebOfertasCrudPage.jsx"));
 const WebBannersCrudPage = lazy(() => import("./pages/WebBannersCrudPage.jsx"));
+const CotizacionesPage = lazy(() => import("./pages/CotizacionesPage.jsx"));
+const CobrarCotizacionPage = lazy(() => import("./pages/CobrarCotizacionPage.jsx"));
+const MiFirmaProfesionalPage = lazy(() => import("./pages/MiFirmaProfesionalPage.jsx"));
 
 function App() {
   const [usuario, setUsuario] = useState(() => {
@@ -133,6 +145,26 @@ function App() {
       }
     }
   }, [usuario]);
+
+  const getHomeByRole = (rol) => {
+    switch (rol) {
+      case "medico":
+        return "/mis-consultas";
+      case "laboratorista":
+        return "/panel-laboratorio";
+      case "enfermero":
+        return "/panel-enfermero";
+      case "recepcionista":
+        return "/pacientes";
+      case "administrador":
+        return "/usuarios";
+      case "químico":
+      case "quimico":
+        return "/medicamentos";
+      default:
+        return "/";
+    }
+  };
 
   return (
     <BrowserRouter>
@@ -420,6 +452,17 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/inventario-general"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador"]}
+                      >
+                        <InventarioGeneralPage />
+                      </ProtectedRoute>
+                    }
+                  />
 
                   <Route
                     path="/web-servicios"
@@ -557,6 +600,28 @@ function App() {
                     }
                   />
                   <Route
+                    path="/cotizaciones"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                      >
+                        <CotizacionesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/cobrar-cotizacion/:cotizacionId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                      >
+                        <CobrarCotizacionPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/contabilidad/egresos"
                     element={
                       <ProtectedRoute
@@ -660,7 +725,31 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/laboratorio/comparar-resultados/:pacienteId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["laboratorista"]}
+                      >
+                        <LaboratorioCompararResultadosPage />
+                      </ProtectedRoute>
+                    }
+                  />
                 </>
+              )}
+              {(usuario?.rol === "administrador" || usuario?.rol === "laboratorista") && (
+                <Route
+                  path="/laboratorio/inventario"
+                  element={
+                    <ProtectedRoute
+                      usuario={usuario}
+                      rolesPermitidos={["administrador", "laboratorista"]}
+                    >
+                      <InventarioLaboratorioPage />
+                    </ProtectedRoute>
+                  }
+                />
               )}
               {/* Solo visible para químicos */}
               {(usuario?.rol === "químico" || usuario?.rol === "quimico") && (
@@ -689,6 +778,20 @@ function App() {
                   />
                 </>
               )}
+              {usuario && (
+                <Route
+                  path="/mi-firma-profesional"
+                  element={
+                    <ProtectedRoute
+                      usuario={usuario}
+                      rolesPermitidos={["administrador", "recepcionista", "enfermero", "laboratorista", "químico", "quimico"]}
+                    >
+                      <MiFirmaProfesionalPage />
+                    </ProtectedRoute>
+                  }
+                />
+              )}
+              <Route path="*" element={<Navigate to={getHomeByRole(usuario?.rol)} replace />} />
               {/* Puedes agregar más rutas aquí */}
             </Routes>
           </DashboardLayout>

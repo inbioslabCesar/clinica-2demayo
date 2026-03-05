@@ -1,6 +1,7 @@
+import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
-export default function TriageStats({ totalRows, triajeStatus }) {
+function TriageStats({ totalRows, triajeStatus }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div className="bg-gradient-to-r from-emerald-500 to-green-600 rounded-2xl p-4 text-white">
@@ -43,3 +44,5 @@ export default function TriageStats({ totalRows, triajeStatus }) {
     </div>
   );
 }
+
+export default memo(TriageStats);

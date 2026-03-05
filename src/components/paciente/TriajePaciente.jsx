@@ -12,11 +12,22 @@ export default function TriajePaciente({ triaje }) {
       <p className="text-sm text-yellow-600 mt-2">El triaje debe ser realizado por el personal de enfermería</p>
     </div>
   );
+
+  const motivoConsulta = triaje?.motivo || triaje?.motivo_consulta || "";
+  const sintomasPrincipales = triaje?.sintomas || triaje?.sintomas_principales || triaje?.sintoma_principal || "";
+
+  const peso = parseFloat(triaje?.peso);
+  const tallaRaw = parseFloat(triaje?.talla);
+  const tallaEnMetros = Number.isFinite(tallaRaw) && tallaRaw > 0 ? (tallaRaw <= 3 ? tallaRaw : tallaRaw / 100) : null;
+  const imc = Number.isFinite(peso) && tallaEnMetros
+    ? (peso / Math.pow(tallaEnMetros, 2)).toFixed(1)
+    : null;
+  const unidadTalla = Number.isFinite(tallaRaw) && tallaRaw > 0 && tallaRaw <= 3 ? "m" : "cm";
   
   return (
     <div className="space-y-4">
       {/* Motivo de Consulta - Principal y destacado */}
-      {triaje.motivo && (
+      {motivoConsulta && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex items-start gap-3">
             <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
@@ -26,14 +37,14 @@ export default function TriajePaciente({ triaje }) {
             </div>
             <div className="flex-1">
               <h4 className="font-semibold text-blue-900 mb-2">📋 Motivo de Consulta</h4>
-              <p className="text-blue-800 leading-relaxed">{triaje.motivo}</p>
+              <p className="text-blue-800 leading-relaxed">{motivoConsulta}</p>
             </div>
           </div>
         </div>
       )}
 
       {/* Síntomas Principales */}
-      {triaje.sintomas && (
+      {sintomasPrincipales && (
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
           <div className="flex items-start gap-3">
             <div className="w-8 h-8 bg-orange-500 rounded-full flex items-center justify-center flex-shrink-0">
@@ -43,7 +54,7 @@ export default function TriajePaciente({ triaje }) {
             </div>
             <div className="flex-1">
               <h4 className="font-semibold text-orange-900 mb-2">🩺 Síntomas Principales</h4>
-              <p className="text-orange-800 leading-relaxed">{triaje.sintomas}</p>
+              <p className="text-orange-800 leading-relaxed">{sintomasPrincipales}</p>
             </div>
           </div>
         </div>
@@ -111,16 +122,16 @@ export default function TriajePaciente({ triaje }) {
             <div className="bg-white rounded-lg p-3 shadow-sm border">
               <div className="text-xs text-gray-500 font-medium uppercase">Talla</div>
               <div className="text-lg font-bold text-indigo-600">{triaje.talla}</div>
-              <div className="text-xs text-gray-400">cm</div>
+              <div className="text-xs text-gray-400">{unidadTalla}</div>
             </div>
           )}
           
           {/* IMC calculado si hay peso y talla */}
-          {triaje.peso && triaje.talla && (
+          {imc && (
             <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg p-3 shadow-sm border border-emerald-200">
               <div className="text-xs text-emerald-700 font-medium uppercase">IMC</div>
               <div className="text-lg font-bold text-emerald-600">
-                {(parseFloat(triaje.peso) / Math.pow(parseFloat(triaje.talla) / 100, 2)).toFixed(1)}
+                {imc}
               </div>
               <div className="text-xs text-emerald-500">kg/m²</div>
             </div>

@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import CobroModuloFinal from "../components/cobro/CobroModuloFinal.jsx";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteListSearch from "../components/paciente-list/PacienteListSearch.jsx";
@@ -8,8 +7,8 @@ import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage() {
-  // Handler para mostrar el módulo de cobros
-  const handleRegistrarVenta = () => {
+  // Handler para registrar cotización (o editar cotización existente)
+  const handleRegistrarVenta = async () => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos un medicamento.");
       return;
@@ -19,7 +18,7 @@ export default function FarmaciaCotizadorPage() {
       setMensaje("Debes seleccionar o crear un paciente antes de registrar la venta.");
       return;
     }
-    // Construir detalles para el Módulo de Cobros, respetando stock disponible
+    // Construir detalles para cotización, respetando stock disponible
     const detalles = seleccionados
       .map(mid => {
         const med = medicamentos.find(m => String(m.id) === String(mid));
@@ -57,13 +56,46 @@ export default function FarmaciaCotizadorPage() {
       setMensaje("No hay cantidades válidas para cotizar. Verifica el stock disponible.");
       return;
     }
-    setDetallesCotizacion(detalles);
-    setTotalCotizacion(calcularTotal());
-    setMostrarCobro(true);
+
+    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+    const sp = new URLSearchParams(location.search);
+    const cotizacionId = sp.get('cotizacion_id');
+
+    const payload = cotizacionId
+      ? {
+          accion: 'editar',
+          cotizacion_id: Number(cotizacionId),
+          detalles,
+          total,
+          motivo: 'Edición de cotización desde cotizador de Farmacia'
+        }
+      : {
+          paciente_id: Number(pacienteId || pacienteDatos?.id),
+          total,
+          detalles,
+          observaciones: 'Cotización registrada desde cotizador de Farmacia'
+        };
+
+    try {
+      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || 'No se pudo registrar la cotización');
+      }
+
+      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
+      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+        navigate('/cotizaciones');
+      });
+    } catch (error) {
+      Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
+    }
   };
-  const [mostrarCobro, setMostrarCobro] = useState(false);
-  const [detallesCotizacion, setDetallesCotizacion] = useState([]);
-  const [totalCotizacion, setTotalCotizacion] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
@@ -198,6 +230,8 @@ export default function FarmaciaCotizadorPage() {
       m.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
       (m.codigo && m.codigo.toLowerCase().includes(busqueda.toLowerCase()))
   );
+
+  const mostrarPanelDerecho = seleccionados.length > 0;
 
   const agregarSeleccion = (id) => {
     const normId = String(id);
@@ -413,12 +447,7 @@ export default function FarmaciaCotizadorPage() {
     }, 0);
   };
 
-  // Recalcular total en tiempo real cuando cambian selecciones o datos precargados
-  useEffect(() => {
-    setTotalCotizacion(calcularTotal());
-  }, [seleccionados, cantidades, tiposVenta, _preloadedFarmaciaRaw, medicamentos, unidadesPorCaja, isEditing]);
-
-  // Nota: la venta se procesa directamente en el módulo de cobros.
+  // Nota: la cotización se registra directamente en el backend de cotizaciones.
 
   // Actualizar cobro: agregar únicamente la diferencia respecto a lo precargado
   const actualizarCobro = async () => {
@@ -663,8 +692,6 @@ export default function FarmaciaCotizadorPage() {
         setCantidades(prev => ({ ...prev, ...mapCant }));
         setTiposVenta(prev => ({ ...prev, ...mapTipo }));
         setPreloadedFarmacia(preMap);
-        setTotalCotizacion(calcularTotal());
-
         // Redirigir automáticamente a la vista de Consumo del Paciente
         const pacienteDestino = data.cobro?.paciente_id || pacienteId || (pacienteDatos && pacienteDatos.id);
         if (pacienteDestino) {
@@ -813,7 +840,7 @@ export default function FarmaciaCotizadorPage() {
         />
       </div>
       <div className="mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className={`grid grid-cols-1 gap-4 ${mostrarPanelDerecho ? 'md:grid-cols-2' : ''}`}>
           {/* Columna izquierda: lista de medicamentos para cotizar */}
           <div className="col-span-1">
             {medicamentos.length === 0 ? (
@@ -939,8 +966,9 @@ export default function FarmaciaCotizadorPage() {
             )}
           </div>
           {/* Columna derecha: resumen de cotización y módulo de cobros */}
-          <div className="col-span-1 md:sticky md:top-24 md:ml-8 w-full md:w-[28rem] lg:w-[32rem] xl:w-[36rem]">
-            {seleccionados.length > 0 && !mostrarCobro && (
+          {mostrarPanelDerecho && (
+          <div className="col-span-1 md:sticky md:top-24 w-full">
+            {seleccionados.length > 0 && (
               <div className="mb-6">
                 <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
                 <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
@@ -1029,41 +1057,19 @@ export default function FarmaciaCotizadorPage() {
                   {new URLSearchParams(location.search).get('cobro_id') ? (
                     <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                   ) : (
-                    <button onClick={handleRegistrarVenta} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Venta</button>
+                    <button onClick={handleRegistrarVenta} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
                   )}
                 </div>
                 {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                   <div className="mt-2 flex items-center justify-end gap-2">
-                    <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cobrar'}.</span>
+                    <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cotizar'}.</span>
                     <button onClick={() => navigate('/contabilidad')} className="text-sm bg-yellow-100 text-yellow-800 px-3 py-1 rounded border border-yellow-300 hover:bg-yellow-200">Ir a Contabilidad</button>
                   </div>
                 )}
               </div>
             )}
-            {mostrarCobro && (
-              pacienteDatos && pacienteDatos.nombre && pacienteDatos.dni && pacienteDatos.historia_clinica ? (
-                <CobroModuloFinal
-                  paciente={pacienteDatos}
-                  servicio={{ key: "farmacia", label: "Farmacia" }}
-                  detalles={detallesCotizacion}
-                  total={totalCotizacion}
-                  onCobroCompleto={() => {
-                    setMostrarCobro(false);
-                    setSeleccionados([]);
-                    setCantidades({});
-                    setMensaje("Venta procesada correctamente.");
-                  }}
-                  onCancelar={() => setMostrarCobro(false)}
-                />
-              ) : (
-                busquedaIntentada ? (
-                  <div className="p-4 bg-red-100 text-red-700 rounded-lg font-semibold text-center">
-                    Faltan datos completos del paciente (nombre, DNI y historia clínica). Por favor, ingrésalos antes de continuar con el cobro.
-                  </div>
-                ) : null
-              )
-            )}
           </div>
+          )}
         </div>
       </div>
       {mensaje && (

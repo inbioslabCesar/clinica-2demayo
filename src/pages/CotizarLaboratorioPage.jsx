@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import CobroModuloFinal from "../components/cobro/CobroModuloFinal";
 import { useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 // import Swal from "sweetalert2";
@@ -8,11 +7,8 @@ import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 
 export default function CotizarLaboratorioPage() {
-  const [mostrarCobro, setMostrarCobro] = useState(false);
-  const [detallesCotizacion, setDetallesCotizacion] = useState([]);
   // Estado para configuración de derivación por examen
   const [derivaciones, setDerivaciones] = useState({}); // { [examenId]: { derivado: bool, tipo: 'monto'|'porcentaje', valor: number, laboratorio: string } }
-  const [totalCotizacion, setTotalCotizacion] = useState(0);
   // const [cotizacionReady, setCotizacionReady] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -417,12 +413,12 @@ export default function CotizarLaboratorioPage() {
     setMensaje("");
   };
 
-  const generarCotizacion = () => {
+  const generarCotizacion = async () => {
     if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un examen para cobrar.");
+      setMensaje("Selecciona al menos un examen para cotizar.");
       return;
     }
-    // Construir detalles para el Módulo de Cobros, incluyendo derivación
+    // Construir detalles para cotización, incluyendo derivación
     const detalles = seleccionados.map(exId => {
       const exIdNum = Number(exId);
       const ex = examenes.find(e => Number(e.id) === exIdNum);
@@ -444,10 +440,48 @@ export default function CotizarLaboratorioPage() {
         laboratorio_referencia: derivacion.laboratorio || ''
       };
     });
-    setDetallesCotizacion(detalles);
-    setTotalCotizacion(detalles.reduce((total, d) => total + d.subtotal, 0));
-    setMostrarCobro(true);
+
+    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+    const sp = new URLSearchParams(location.search);
+    const cotizacionId = sp.get('cotizacion_id');
+
+    const payload = cotizacionId
+      ? {
+          accion: 'editar',
+          cotizacion_id: Number(cotizacionId),
+          detalles,
+          total,
+          motivo: 'Edición de cotización desde cotizador de Laboratorio'
+        }
+      : {
+          paciente_id: Number(pacienteId),
+          total,
+          detalles,
+          observaciones: 'Cotización registrada desde cotizador de Laboratorio'
+        };
+
+    try {
+      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || 'No se pudo registrar la cotización');
+      }
+
+      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
+      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+        navigate('/cotizaciones');
+      });
+    } catch (error) {
+      Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
+    }
   };
+
+  const mostrarPanelDerecho = seleccionados.length > 0;
 
   return (
   <div className="max-w-full mx-auto p-4 md:p-16 bg-white rounded-xl shadow-lg mt-8">
@@ -505,8 +539,8 @@ export default function CotizarLaboratorioPage() {
           ))}
         </select>
       </div>
-      <div className="flex flex-col md:flex-row gap-8">
-        <div className="flex-1 md:max-w-2xl mx-auto">
+      <div className={`flex flex-col gap-8 ${mostrarPanelDerecho ? 'md:flex-row' : ''}`}>
+        <div className={`w-full ${mostrarPanelDerecho ? 'flex-1' : ''}`}>
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Selecciona los exámenes:</h4>
             <div className="mb-2">
@@ -515,7 +549,7 @@ export default function CotizarLaboratorioPage() {
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value)}
                 placeholder="Buscar examen..."
-                className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-80"
+                className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"
               />
             </div>
             <div className="mb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -682,8 +716,9 @@ export default function CotizarLaboratorioPage() {
           </div>
         </div>
         {/* Cotización en tiempo real en columna derecha */}
-        <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit flex flex-col items-center">
-          {seleccionados.length > 0 && !mostrarCobro && (
+        {mostrarPanelDerecho && (
+        <div className="w-full md:sticky md:top-8 h-fit flex flex-col md:max-w-xl">
+          {seleccionados.length > 0 && (
             <div className="mb-6 w-full">
               <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
               <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
@@ -717,34 +752,19 @@ export default function CotizarLaboratorioPage() {
                 {new URLSearchParams(location.search).get('cobro_id') ? (
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
-                  <button onClick={generarCotizacion} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Cobrar</button>
+                  <button onClick={generarCotizacion} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
                 )}
               </div>
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">
-                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cobrar'}.</span>
+                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cotizar'}.</span>
                   <button onClick={() => navigate('/contabilidad')} className="text-sm bg-yellow-100 text-yellow-800 px-3 py-1 rounded border border-yellow-300 hover:bg-yellow-200">Ir a Contabilidad</button>
                 </div>
               )}
             </div>
           )}
-
-          {mostrarCobro && paciente && (
-            <div className="w-full max-w-xl mx-auto">
-              <CobroModuloFinal
-                paciente={paciente}
-                servicio={{ key: "laboratorio", label: "Laboratorio" }}
-                detalles={detallesCotizacion}
-                total={totalCotizacion}
-                onCobroCompleto={() => {
-                  setMostrarCobro(false);
-                  setMensaje("Cotización procesada correctamente.");
-                }}
-                onCancelar={() => setMostrarCobro(false)}
-              />
-            </div>
-          )}
         </div>
+        )}
       </div>
       {/* Eliminado control de paginación duplicado */}
       {mensaje && (

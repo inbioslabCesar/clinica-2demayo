@@ -7,6 +7,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const [consultas, setConsultas] = useState([]);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
+  const [totalRows, setTotalRows] = useState(0);
+  const [stats, setStats] = useState({ total: 0, pendientes: 0, emergencias: 0 });
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   
@@ -15,20 +17,43 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
 
-  useEffect(() => {
+  const cargarConsultas = async () => {
     if (!medicoId) return;
     setLoading(true);
-    fetch(`${BASE_URL}api_consultas.php?medico_id=${medicoId}`, { credentials: "include" })
-      .then(r => r.json())
-      .then(data => { 
-        setConsultas(data.consultas || []);
-        setLoading(false);
-      })
-      .catch(error => {
-        console.error("Error cargando consultas:", error);
-        setLoading(false);
+    try {
+      const params = new URLSearchParams({
+        medico_id: String(medicoId),
+        page: String(page),
+        per_page: String(rowsPerPage),
       });
-  }, [medicoId]);
+      if (busqueda.trim()) params.set('search', busqueda.trim());
+      if (fechaDesde) params.set('fecha_desde', fechaDesde);
+      if (fechaHasta) params.set('fecha_hasta', fechaHasta);
+
+      const response = await fetch(`${BASE_URL}api_consultas.php?${params.toString()}`, { credentials: "include" });
+      const data = await response.json();
+
+      setConsultas(data.consultas || []);
+      setStats(data.stats || { total: 0, pendientes: 0, emergencias: 0 });
+      setTotalRows(data.pagination?.total ?? data.stats?.total ?? 0);
+
+      const totalPagesServidor = data.pagination?.total_pages ?? 1;
+      if (page > totalPagesServidor) {
+        setPage(totalPagesServidor);
+      }
+    } catch (error) {
+      console.error("Error cargando consultas:", error);
+      setConsultas([]);
+      setStats({ total: 0, pendientes: 0, emergencias: 0 });
+      setTotalRows(0);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    cargarConsultas();
+  }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
   const actualizarEstado = async (id, estado) => {
     setMsg("");
@@ -41,10 +66,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
         body: JSON.stringify({ id, estado })
       });
       
-      // Refrescar lista
-      const response = await fetch(`${BASE_URL}api_consultas.php?medico_id=${medicoId}`, { credentials: "include" });
-      const data = await response.json();
-      setConsultas(data.consultas || []);
+      await cargarConsultas();
       setMsg(`Consulta ${estado} correctamente`);
     } catch (error) {
       console.error("Error actualizando estado:", error);
@@ -53,38 +75,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       setLoading(false);
     }
   };
-
-
-  // Filtrar por búsqueda y fechas
-  const consultasFiltradas = consultas.filter(c => {
-    // Filtro de búsqueda
-    const texto = busqueda.trim().toLowerCase();
-    if (texto) {
-      const match = (c.paciente_nombre && c.paciente_nombre.toLowerCase().includes(texto)) ||
-                   (c.paciente_apellido && c.paciente_apellido.toLowerCase().includes(texto)) ||
-                   (c.historia_clinica && c.historia_clinica.toLowerCase().includes(texto)) ||
-                   (c.dni && c.dni.toLowerCase().includes(texto));
-      if (!match) return false;
-    }
-    // Filtro de fechas
-    if (!fechaDesde && !fechaHasta) return true;
-    if (!c.fecha) return false;
-    if (fechaDesde && c.fecha < fechaDesde) return false;
-    if (fechaHasta && c.fecha > fechaHasta) return false;
-    return true;
-  })
-  // Ordenar por fecha y hora descendente (última consulta primero)
-  .sort((a, b) => {
-    // Combinar fecha y hora para comparar
-    const fechaA = a.fecha ? new Date(a.fecha + 'T' + (a.hora || '00:00')) : new Date(0);
-    const fechaB = b.fecha ? new Date(b.fecha + 'T' + (b.hora || '00:00')) : new Date(0);
-    return fechaB - fechaA;
-  });
-
-  // Calcular datos paginados
-  const totalRows = consultasFiltradas.length;
+  const consultasPaginadas = consultas;
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
-  const consultasPaginadas = consultasFiltradas.slice((page - 1) * rowsPerPage, page * rowsPerPage);
 
   // Funciones de paginación
   const handleRowsPerPage = (e) => {
@@ -98,6 +90,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';
     try {
+      // Evita desfase por zona horaria cuando viene en formato YYYY-MM-DD
+      const soloFecha = String(dateStr).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(soloFecha)) {
+        const [year, month, day] = soloFecha.split('-');
+        return `${day}/${month}/${year}`;
+      }
+
       return new Date(dateStr).toLocaleDateString('es-ES', {
         day: '2-digit',
         month: '2-digit',
@@ -171,6 +170,47 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       default:
         return '⚪ ';
     }
+  };
+
+  const getHoyYmd = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const getTipoConsultaMeta = (consulta) => {
+    const tipo = String(consulta?.tipo_consulta || '').trim().toLowerCase();
+    if (tipo === 'espontanea' || tipo === 'espontánea') {
+      return {
+        label: 'Espontánea',
+        icon: '⚡',
+        className: 'bg-amber-100 text-amber-800 border-amber-200'
+      };
+    }
+    if (tipo === 'programada') {
+      return {
+        label: 'Programada',
+        icon: '📅',
+        className: 'bg-cyan-100 text-cyan-800 border-cyan-200'
+      };
+    }
+
+    const hoyYmd = getHoyYmd();
+    if (consulta?.fecha && String(consulta.fecha) > hoyYmd) {
+      return {
+        label: 'Programada',
+        icon: '📅',
+        className: 'bg-cyan-100 text-cyan-800 border-cyan-200'
+      };
+    }
+
+    return {
+      label: 'Consulta',
+      icon: '🩺',
+      className: 'bg-gray-100 text-gray-700 border-gray-200'
+    };
   };
 
   return (
@@ -251,7 +291,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-blue-100 text-xs sm:text-sm font-medium">Total Consultas</p>
-              <p className="text-2xl sm:text-3xl font-bold">{consultasFiltradas.length}</p>
+              <p className="text-2xl sm:text-3xl font-bold">{stats.total}</p>
             </div>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -265,7 +305,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-green-100 text-xs sm:text-sm font-medium">Pendientes</p>
-              <p className="text-2xl sm:text-3xl font-bold">{consultasFiltradas.filter(c => c.estado === 'pendiente').length}</p>
+              <p className="text-2xl sm:text-3xl font-bold">{stats.pendientes}</p>
             </div>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -279,7 +319,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-red-100 text-xs sm:text-sm font-medium">Emergencias</p>
-              <p className="text-2xl sm:text-3xl font-bold">{consultasFiltradas.filter(c => c.clasificacion === 'Emergencia').length}</p>
+              <p className="text-2xl sm:text-3xl font-bold">{stats.emergencias}</p>
             </div>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -288,6 +328,20 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Leyenda rápida de tipo de consulta */}
+      <div className="mb-4 sm:mb-6 flex flex-wrap items-center gap-2 sm:gap-3 text-xs sm:text-sm">
+        <span className="text-gray-600 font-medium">Tipo de consulta:</span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-cyan-100 text-cyan-800 border-cyan-200 font-medium">
+          📅 Programada
+        </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-amber-100 text-amber-800 border-amber-200 font-medium">
+          ⚡ Espontánea
+        </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-gray-100 text-gray-700 border-gray-200 font-medium">
+          🩺 Consulta
+        </span>
       </div>
 
       {/* Lista de consultas moderna - Responsive */}
@@ -332,12 +386,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                 <tbody className="divide-y divide-gray-200">
                   {consultasPaginadas.map((consulta, index) => {
                     const esFilaPar = index % 2 === 0;
+                    const tipoMeta = getTipoConsultaMeta(consulta);
+                    const esProgramada = tipoMeta.label === 'Programada';
                     
                     return (
                       <tr
                         key={consulta.id}
                         className={`${
-                          esFilaPar ? 'bg-white/60' : 'bg-blue-50/40'
+                          esProgramada ? 'bg-cyan-50/70' : (esFilaPar ? 'bg-white/60' : 'bg-blue-50/40')
                         } hover:bg-blue-100/60 transition-all duration-200 hover:shadow-lg transform hover:-translate-y-0.5`}
                       >
                         <td className="px-6 py-4">
@@ -351,7 +407,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                               <div className="font-semibold text-gray-900">
                                 {consulta.paciente_nombre ? `${consulta.paciente_nombre} ${consulta.paciente_apellido || ''}`.trim() : `Paciente #${consulta.paciente_id}`}
                               </div>
-                              <div className="text-sm text-gray-500">Consulta médica</div>
+                              <div className="mt-1">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${tipoMeta.className}`}>
+                                  {tipoMeta.icon} {tipoMeta.label}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -473,10 +533,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
 
           {/* Vista Móvil - Tarjetas */}
           <div className="lg:hidden space-y-3 sm:space-y-4">
-            {consultasPaginadas.map((consulta) => (
+            {consultasPaginadas.map((consulta) => {
+              const tipoMeta = getTipoConsultaMeta(consulta);
+              const esProgramada = tipoMeta.label === 'Programada';
+              return (
               <div
                 key={consulta.id}
-                className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/50 p-4 hover:shadow-xl transition-all duration-200 hover:scale-[1.02]"
+                className={`backdrop-blur-sm rounded-xl shadow-lg border p-4 hover:shadow-xl transition-all duration-200 hover:scale-[1.02] ${
+                  esProgramada ? 'bg-cyan-50/80 border-cyan-200/70' : 'bg-white/80 border-white/50'
+                }`}
               >
                 {/* Header de la tarjeta con paciente */}
                 <div className="flex items-center gap-3 mb-3">
@@ -489,7 +554,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                     <h3 className="font-semibold text-gray-900 truncate">
                       {consulta.paciente_nombre ? `${consulta.paciente_nombre} ${consulta.paciente_apellido || ''}`.trim() : `Paciente #${consulta.paciente_id}`}
                     </h3>
-                    <p className="text-sm text-gray-500">Consulta médica</p>
+                    <p className="text-sm text-gray-500">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${tipoMeta.className}`}>
+                        {tipoMeta.icon} {tipoMeta.label}
+                      </span>
+                    </p>
                   </div>
                 </div>
 
@@ -580,7 +649,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                   )}
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         </>
       )}
@@ -593,7 +662,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       )}
 
       {/* Paginación moderna responsive */}
-      {consultasFiltradas.length > 0 && (
+      {totalRows > 0 && (
         <div className="mt-4 sm:mt-8 bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 border border-white/50">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
             {/* Controles de página */}

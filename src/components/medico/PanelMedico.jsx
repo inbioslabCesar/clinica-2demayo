@@ -49,7 +49,9 @@ function PanelMedico() {
   const fetchBloques = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medicoId}`);
+      const response = await fetch(`${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medicoId}`, {
+        credentials: "include"
+      });
       const data = await response.json();
       setBloquesGuardados(data.disponibilidad || []);
     } catch {
@@ -68,6 +70,7 @@ function PanelMedico() {
       const response = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ medico_id: medicoId, bloques })
       });
       const data = await response.json();

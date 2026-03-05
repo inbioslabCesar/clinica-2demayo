@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 const roles = [
   "administrador",
@@ -11,15 +11,21 @@ const roles = [
 
 function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
   const esEdicion = !!initialData.id;
+  const fileInputRef = useRef(null);
   const [form, setForm] = useState({
     usuario: initialData.usuario || "",
     nombre: initialData.nombre || "",
     dni: initialData.dni || "",
     profesion: initialData.profesion || "",
+    cargo_firma: initialData.cargo_firma || "",
+    colegiatura_tipo: initialData.colegiatura_tipo || "",
+    colegiatura_numero: initialData.colegiatura_numero || "",
+    firma_reportes: initialData.firma_reportes || "",
     rol: initialData.rol || "recepcionista",
     activo: initialData.activo !== undefined ? initialData.activo : 1,
     password: ""
   });
+  const [previewFirma, setPreviewFirma] = useState(initialData.firma_reportes || "");
   const [error, setError] = useState("");
 
   const handleChange = e => {
@@ -44,12 +50,44 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
     onSubmit(form);
   };
 
+  const handleFirmaFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+      setError("La firma debe ser PNG, JPG o JPEG");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setError("La firma no debe superar 2MB");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = String(ev.target?.result || "");
+      setForm((prev) => ({ ...prev, firma_reportes: dataUrl }));
+      setPreviewFirma(dataUrl);
+      setError("");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const quitarFirma = () => {
+    setForm((prev) => ({ ...prev, firma_reportes: "" }));
+    setPreviewFirma("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   return (
     <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
       <input name="usuario" value={form.usuario} onChange={handleChange} placeholder="Usuario" className="border rounded px-2 py-1" required />
       <input name="nombre" value={form.nombre} onChange={handleChange} placeholder="Nombre completo" className="border rounded px-2 py-1" required />
       <input name="dni" value={form.dni} onChange={handleChange} placeholder="DNI" className="border rounded px-2 py-1" required />
       <input name="profesion" value={form.profesion} onChange={handleChange} placeholder="Profesión" className="border rounded px-2 py-1" />
+      <input name="cargo_firma" value={form.cargo_firma} onChange={handleChange} placeholder="Cargo para firma (ej: Tecnólogo Médico)" className="border rounded px-2 py-1" />
+      <input name="colegiatura_tipo" value={form.colegiatura_tipo} onChange={handleChange} placeholder="Tipo colegiatura (ej: CTMP)" className="border rounded px-2 py-1" />
+      <input name="colegiatura_numero" value={form.colegiatura_numero} onChange={handleChange} placeholder="N° colegiatura" className="border rounded px-2 py-1" />
       <select name="rol" value={form.rol} onChange={handleChange} className="border rounded px-2 py-1" required>
         {roles.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
       </select>
@@ -69,6 +107,18 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
       {esEdicion && (
         <div className="text-xs text-gray-500 md:col-span-2">Deja la contraseña vacía para no cambiarla.</div>
       )}
+      <div className="md:col-span-2 border rounded p-3 bg-gray-50">
+        <div className="text-sm font-semibold mb-2">Firma para reportes (opcional)</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/jpg" onChange={handleFirmaFile} className="text-sm" />
+          <button type="button" onClick={quitarFirma} className="bg-red-100 text-red-700 rounded px-2 py-1 text-sm">Quitar</button>
+        </div>
+        {previewFirma ? (
+          <img src={previewFirma} alt="Firma" className="mt-2 max-h-20 object-contain" />
+        ) : (
+          <div className="mt-2 text-xs text-gray-500">Sin firma cargada</div>
+        )}
+      </div>
       {error && <div className="text-red-600 md:col-span-2">{error}</div>}
       <div className="flex gap-2 md:col-span-2">
         <button type="submit" className="bg-blue-600 text-white rounded px-4 py-2 font-bold" disabled={loading}>

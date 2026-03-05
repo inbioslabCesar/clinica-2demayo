@@ -16,10 +16,10 @@ function FormularioAgendarConsulta({
   msg,
 }) {
   return (
-    <div className="w-full md:w-[700px] flex flex-col items-center md:pl-0">
+    <div className="w-full flex flex-col items-stretch">
       <form
         onSubmit={handleSubmit}
-        className="flex flex-col gap-2 md:gap-4 mb-4 bg-white rounded-2xl shadow-xl border border-green-200 p-8 w-full max-w-2xl text-xs md:text-base"
+        className="flex flex-col gap-2 md:gap-4 mb-4 bg-white rounded-2xl shadow-xl border border-green-200 p-6 md:p-8 w-full text-xs md:text-base"
       >
         <div className="mb-4">
           <label className="block font-semibold mb-1">Tipo de Consulta:</label>

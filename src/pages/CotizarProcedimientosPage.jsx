@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { CobroModuloFinal } from "../components/cobro";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
@@ -12,9 +11,6 @@ export default function CotizarProcedimientosPage() {
   const [procedimientos, setProcedimientos] = useState([]);
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
-  const [mostrarCobro, setMostrarCobro] = useState(false);
-  const [detallesCotizacion, setDetallesCotizacion] = useState([]);
-  const [totalCotizacion, setTotalCotizacion] = useState(0);
   const [mensaje, setMensaje] = useState("");
   const [paciente, setPaciente] = useState(null);
   const [preloadedCounts, setPreloadedCounts] = useState({}); // {procId: cantidad}
@@ -51,7 +47,6 @@ export default function CotizarProcedimientosPage() {
     // Limpiar selección y mensaje al entrar
     setSeleccionados([]);
     setCantidades({});
-    setMostrarCobro(false);
     setMensaje("");
   }, [pacienteId]);
 
@@ -288,7 +283,7 @@ export default function CotizarProcedimientosPage() {
     }, 0);
   };
 
-  const cotizar = () => {
+  const cotizar = async () => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos un procedimiento.");
       return;
@@ -310,10 +305,48 @@ export default function CotizarProcedimientosPage() {
         subtotal: proc.precio_particular * cantidad
       } : null;
     }).filter(Boolean);
-    setDetallesCotizacion(detalles);
-    setTotalCotizacion(calcularTotal());
-    setMostrarCobro(true);
+
+    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+    const sp = new URLSearchParams(location.search);
+    const cotizacionId = sp.get('cotizacion_id');
+
+    const payload = cotizacionId
+      ? {
+          accion: 'editar',
+          cotizacion_id: Number(cotizacionId),
+          detalles,
+          total,
+          motivo: 'Edición de cotización desde cotizador de Procedimientos'
+        }
+      : {
+          paciente_id: Number(pacienteId),
+          total,
+          detalles,
+          observaciones: 'Cotización registrada desde cotizador de Procedimientos'
+        };
+
+    try {
+      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || 'No se pudo registrar la cotización');
+      }
+
+      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
+      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+        navigate('/cotizaciones');
+      });
+    } catch (error) {
+      Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
+    }
   };
+
+  const mostrarPanelDerecho = seleccionados.length > 0;
 
   return (
     <div className="max-w-7xl mx-auto p-10 bg-white rounded-xl shadow-lg mt-8">
@@ -356,8 +389,8 @@ export default function CotizarProcedimientosPage() {
           )}
         </div>
       </div>
-      <div className="flex flex-col md:flex-row gap-8">
-        <div className="flex-1 md:max-w-xl mx-auto">
+      <div className="flex flex-col gap-8 md:flex-row">
+        <div className={`w-full ${mostrarPanelDerecho ? 'flex-1' : ''}`}>
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Selecciona los procedimientos:</h4>
             <input
@@ -365,7 +398,7 @@ export default function CotizarProcedimientosPage() {
               placeholder="Buscar procedimiento..."
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
-              className="border px-3 py-2 rounded-lg w-full max-w-md mb-2"
+              className="border px-3 py-2 rounded-lg w-full mb-2"
             />
             {procedimientosFiltrados.length === 0 ? (
               <div className="text-center text-gray-500">No hay procedimientos para mostrar.</div>
@@ -401,8 +434,9 @@ export default function CotizarProcedimientosPage() {
           </div>
         </div>
         {/* Cotización en tiempo real en columna derecha */}
-        <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit">
-          {seleccionados.length > 0 && !mostrarCobro && (
+        {mostrarPanelDerecho && (
+        <div className="w-full md:sticky md:top-8 h-fit md:max-w-xl">
+          {seleccionados.length > 0 && (
             <div className="mb-6">
               <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
               <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
@@ -427,33 +461,19 @@ export default function CotizarProcedimientosPage() {
                 {new URLSearchParams(location.search).get('cobro_id') ? (
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
-                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Cotizar</button>
+                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
                 )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">
-                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cobrar'}.</span>
+                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cotizar'}.</span>
                   <button onClick={() => navigate('/contabilidad')} className="text-sm bg-yellow-100 text-yellow-800 px-3 py-1 rounded border border-yellow-300 hover:bg-yellow-200">Ir a Contabilidad</button>
                 </div>
               )}
               </div>
             </div>
           )}
-          {mostrarCobro && (
-            <CobroModuloFinal
-              paciente={paciente}
-              servicio={{ key: "procedimiento", label: "Procedimiento" }}
-              detalles={detallesCotizacion}
-              total={totalCotizacion}
-              onCobroCompleto={() => {
-                setMostrarCobro(false);
-                setSeleccionados([]);
-                setCantidades({});
-                setMensaje("Cotización procesada correctamente.");
-              }}
-              onCancelar={() => setMostrarCobro(false)}
-            />
-          )}
         </div>
+        )}
       </div>
       {mensaje && (
         <div className={`mt-6 text-center font-semibold ${mensaje.includes('correctamente') ? 'text-green-600' : 'text-red-600'}`}>{mensaje}</div>

@@ -28,6 +28,14 @@ export default function SidebarRecepcionista({ onClose }) {
         <Icon iconName="BarChart4" className="text-xl text-violet-600" />
         <span>Reportes</span>
       </Link>
+      <Link
+        to="/cotizaciones"
+        className="py-3 px-4 rounded-lg text-fuchsia-700 hover:bg-gradient-to-r hover:from-fuchsia-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Paste" className="text-xl text-fuchsia-600" />
+        <span>Cotizaciones</span>
+      </Link>
     </>
   );
 }

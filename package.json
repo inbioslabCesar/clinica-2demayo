@@ -5,6 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "cross-env CONSOLE_NINJA_DISABLED=1 vite --host",
+    "dev:sistema": "cross-env CONSOLE_NINJA_DISABLED=1 vite --host",
+    "kill:5173": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$conn = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; Write-Output ('Stopped PID ' + $_) } } else { Write-Output 'No process on 5173' }\"",
+    "kill:5174": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$conn = Get-NetTCPConnection -LocalPort 5174 -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; Write-Output ('Stopped PID ' + $_) } } else { Write-Output 'No process on 5174' }\"",
+    "dev:clean": "npm run kill:5173 && npm run dev -- --force",
+    "dev:sistema:clean": "npm run kill:5173 && npm run dev:sistema -- --force",
+    "dev:public:clean": "npm run kill:5174 && npm run dev:public -- --force",
+    "dev:all:clean": "npm run kill:5173 && npm run kill:5174 && start \"vite-public\" cmd /c \"npm run dev:public -- --force\" && npm run dev -- --force",
     "dev:ninja": "vite --host",
     "dev:public": "cross-env CONSOLE_NINJA_DISABLED=1 vite --config vite.public.config.js --host",
     "build": "vite build",

@@ -4,6 +4,8 @@ const ImpresionRecetaMedicamentos = ({
   medicoInfo,
   configuracionClinica 
 }) => {
+  const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
+  const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
   // Función para obtener la ruta del logo según el entorno
   const getLogoPath = () => {
     // Intentar detectar si estamos en producción por el hostname o protocol
@@ -35,12 +37,13 @@ const ImpresionRecetaMedicamentos = ({
   };
 
   return (
-    <div className="bg-white max-w-2xl mx-auto print:shadow-none print:max-w-none" style={{ 
+    <div className="bg-white max-w-2xl mx-auto print:shadow-none print:max-w-none a5-receta-print" style={{ 
       minHeight: '210mm', // A5 format
       maxWidth: '148mm',   // A5 width
-      padding: '10mm',     // Smaller padding
+      padding: '8mm',
       fontFamily: 'Arial, sans-serif',
-      fontSize: '12px'
+      fontSize: '10px',
+      lineHeight: 1.2
     }}>
       {/* Encabezado estilo receta médica compacto */}
       <div className="border-2 border-black p-2 mb-4">
@@ -97,7 +100,7 @@ const ImpresionRecetaMedicamentos = ({
           👤 DATOS DEL PACIENTE
         </h3>
         <div className="grid grid-cols-1 gap-1 text-xs">
-          <p className="text-black"><strong>Paciente:</strong> {paciente?.nombres} {paciente?.apellidos}</p>
+          <p className="text-black"><strong>Paciente:</strong> {nombrePaciente} {apellidoPaciente}</p>
           <div className="grid grid-cols-3 gap-2">
             <p className="text-black"><strong>DNI:</strong> {paciente?.dni}</p>
             <p className="text-black"><strong>Edad:</strong> {paciente?.edad} años</p>
@@ -182,7 +185,7 @@ const ImpresionRecetaMedicamentos = ({
                 <img 
                   src={medicoInfo.firma} 
                   alt="Firma digital del médico" 
-                  className="mx-auto border border-gray-300 rounded bg-white p-1 firma-img-receta"
+                  className="mx-auto bg-transparent p-0 firma-img-receta"
                 
                 />
               </div>
@@ -192,11 +195,11 @@ const ImpresionRecetaMedicamentos = ({
               <p className="font-bold text-black text-xs">
                 Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
               </p>
+              <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
               <p className="text-xs text-black">CMP: {medicoInfo?.cmp || 'N/A'}</p>
               {medicoInfo?.rne && (
                 <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
               )}
-              <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
               
               {/* Mensaje si no hay firma */}
               {!medicoInfo?.firma && (

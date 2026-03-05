@@ -313,16 +313,16 @@ if (tipoDescuento === 'porcentaje') {
   const totalCobro = calcularTotal();
 
   return (
-    <div className="bg-white p-8 md:p-12 rounded-2xl shadow-2xl border border-blue-200 max-w-2xl lg:max-w-4xl mx-auto mt-8 lg:mt-12">
+    <div className="bg-white p-5 md:p-7 lg:p-8 rounded-2xl shadow-2xl border border-blue-200 w-full max-w-[1200px] mx-auto mt-6 lg:mt-8">
       <h3 className="text-2xl font-bold mb-6 text-blue-800 flex items-center gap-2">
         <span className="text-3xl">💰</span> Módulo de Cobros
       </h3>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-7">
         {/* Columna izquierda: Paciente, cobertura, motivo */}
         <div className="space-y-6 flex flex-col justify-between h-full">
-          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-sm">
+          <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 shadow-sm">
             <h4 className="font-semibold mb-2 text-gray-700 flex items-center gap-2 text-lg"><span className="text-blue-500">👤</span> Paciente</h4>
-            <div className="text-xl font-bold">{paciente.nombre}</div>
+            <div className="text-lg lg:text-xl font-bold">{paciente.nombre}</div>
             <div className="text-base text-gray-600">DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</div>
           </div>
           <div>
@@ -352,7 +352,7 @@ if (tipoDescuento === 'porcentaje') {
         </div>
         {/* Columna derecha: Detalle, descuento, pago, acción */}
         <div className="space-y-6 flex flex-col justify-between h-full">
-          <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100 shadow-sm">
+          <div className="bg-blue-50 p-5 rounded-2xl border border-blue-100 shadow-sm">
             <h4 className="font-semibold mb-2 text-blue-700 flex items-center gap-2 text-lg"><span className="text-blue-400">🧾</span> Detalle del Servicio</h4>
             {detallesCobro.map((detalle, index) => {
               let precio = detalle.subtotal;
@@ -367,12 +367,12 @@ if (tipoDescuento === 'porcentaje') {
               );
             })}
             <hr className="my-3" />
-            <div className="flex justify-between items-center font-bold text-xl">
+            <div className="flex justify-between items-center font-bold text-lg lg:text-xl">
               <span>Total:</span>
               <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
             </div>
           </div>
-          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-sm">
+          <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 shadow-sm">
             <CobroDescuento
               tipoDescuento={tipoDescuento}
               setTipoDescuento={setTipoDescuento}

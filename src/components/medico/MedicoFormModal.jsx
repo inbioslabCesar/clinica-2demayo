@@ -1,6 +1,6 @@
 
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 const MedicoFormModal = ({ 
   isOpen, 
@@ -15,6 +15,16 @@ const MedicoFormModal = ({
   const [previewFirma, setPreviewFirma] = useState(formData.firma || null);
   const [firmaError, setFirmaError] = useState('');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setPreviewFirma(formData.firma || null);
+      setFirmaError('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [isOpen, formData.firma]);
   
   if (!isOpen) return null;
 

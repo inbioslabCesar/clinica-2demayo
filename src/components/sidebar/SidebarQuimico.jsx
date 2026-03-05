@@ -12,6 +12,9 @@ export default function SidebarQuimico({ onClose }) {
       <Link to="/farmacia/ventas" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>
         Ventas de Farmacia
       </Link>
+      <Link to="/mi-firma-profesional" className="py-2 px-3 rounded-lg text-green-700 hover:bg-green-100 font-medium" onClick={onClose}>
+        Mi Firma Profesional
+      </Link>
     </>
   );
 }

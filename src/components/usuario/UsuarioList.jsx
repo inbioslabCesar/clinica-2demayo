@@ -66,7 +66,7 @@ function UsuarioList() {
 
   const fetchUsuarios = () => {
     setLoading(true);
-  fetch(BASE_URL + "api_usuarios.php")
+  fetch(BASE_URL + "api_usuarios.php", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         setUsuarios(Array.isArray(data) ? data : data.usuarios || []);
@@ -100,7 +100,7 @@ function UsuarioList() {
       cancelButtonText: 'Cancelar'
     }).then((result) => {
       if (result.isConfirmed) {
-        fetch(BASE_URL + `api_usuarios.php?id=${id}`, { method: "DELETE" })
+        fetch(BASE_URL + `api_usuarios.php?id=${id}`, { method: "DELETE", credentials: "include" })
           .then(res => res.json())
           .then((data) => {
             if (data.success) {
@@ -126,6 +126,7 @@ function UsuarioList() {
     
     fetch(BASE_URL + "api_usuarios.php", {
       method: method,
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(dataToSend)
     })

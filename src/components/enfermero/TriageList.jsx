@@ -49,7 +49,7 @@ function TriageList() {
     setCargandoTriaje(true);
     setTriajeData(null);
     try {
-      const res = await fetch(BASE_URL + `api_triaje.php?consulta_id=${c.id}`);
+      const res = await fetch(BASE_URL + `api_triaje.php?consulta_id=${c.id}`, { credentials: 'include' });
       const data = await res.json();
       if (data.success && data.triaje && data.triaje.datos) {
         setTriajeData(data.triaje.datos);
@@ -82,14 +82,19 @@ function TriageList() {
       const result = await response.json();
       if (!result.success) {
         alert('Error al guardar triaje: ' + (result.error || 'Error desconocido'));
+        setGuardando(false);
+        return;
       }
+
+      setTriajeActual(null);
+      setTriajeData(null);
+      recargarConsultas();
     } catch {
       alert('Error de red al guardar triaje');
+      setGuardando(false);
+      return;
     }
     setGuardando(false);
-    setTriajeActual(null);
-    setTriajeData(null);
-    recargarConsultas();
   };
 
   // Handler para cancelar triaje

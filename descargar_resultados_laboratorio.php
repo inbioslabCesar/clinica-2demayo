@@ -26,7 +26,7 @@ if (!$row) {
     echo 'Resultados no encontrados';
     exit;
 }
-// Soporte para debug: ?json=1 devuelve la fila tal cual
+
 $debugJson = isset($_GET['json']) && $_GET['json'] == '1';
 if ($debugJson) {
     header('Content-Type: application/json');
@@ -41,7 +41,6 @@ if ($debugJson) {
     exit;
 }
 
-// Obtener el orden asociado (puede venir por orden_id o consulta_id)
 $orden = null;
 if (!empty($row['orden_id'])) {
     $stmt = $conn->prepare('SELECT * FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
@@ -58,100 +57,224 @@ if (!$orden && !empty($row['consulta_id'])) {
     $stmt->close();
 }
 
-// Cargar paciente y datos básicos si están disponibles
 $paciente_nombre = '';
 if (!empty($orden['paciente_id'])) {
     $stmt = $conn->prepare('SELECT nombre, apellido FROM pacientes WHERE id = ? LIMIT 1');
     $stmt->bind_param('i', $orden['paciente_id']);
     $stmt->execute();
     $p = $stmt->get_result()->fetch_assoc();
-    if ($p) $paciente_nombre = trim(($p['nombre'] ?? '') . ' ' . ($p['apellido'] ?? ''));
+    if ($p) {
+        $paciente_nombre = trim(($p['nombre'] ?? '') . ' ' . ($p['apellido'] ?? ''));
+    }
     $stmt->close();
-} else if (!empty($row['consulta_id'])) {
+} elseif (!empty($row['consulta_id'])) {
     $stmt = $conn->prepare('SELECT p.nombre, p.apellido FROM consultas c JOIN pacientes p ON c.paciente_id = p.id WHERE c.id = ? LIMIT 1');
     $stmt->bind_param('i', $row['consulta_id']);
     $stmt->execute();
     $p = $stmt->get_result()->fetch_assoc();
-    if ($p) $paciente_nombre = trim(($p['nombre'] ?? '') . ' ' . ($p['apellido'] ?? ''));
+    if ($p) {
+        $paciente_nombre = trim(($p['nombre'] ?? '') . ' ' . ($p['apellido'] ?? ''));
+    }
     $stmt->close();
 }
 
-// Decodificar resultados y examenes
 $resultados_map = json_decode($row['resultados'], true) ?: [];
 $examenes_ids = [];
 if ($orden && !empty($orden['examenes'])) {
     $examenes_ids = json_decode($orden['examenes'], true);
-    if (!is_array($examenes_ids)) $examenes_ids = [];
+    if (!is_array($examenes_ids)) {
+        $examenes_ids = [];
+    }
 }
 
-// Cargar detalles de exámenes solicitados
 $examenes_detalle = [];
 if (!empty($examenes_ids)) {
-    // Normalizar array de IDs (puede venir como objetos)
-    $ids = array_map(function($it){ return is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it); }, $examenes_ids);
+    $ids = array_map(function ($it) {
+        return is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it);
+    }, $examenes_ids);
     $unique = array_values(array_unique(array_filter($ids)));
     if (!empty($unique)) {
         $placeholders = implode(',', array_fill(0, count($unique), '?'));
-        // Preparar dinámicamente
         $types = str_repeat('i', count($unique));
         $sql = "SELECT * FROM examenes_laboratorio WHERE id IN ($placeholders)";
         $stmt = $conn->prepare($sql);
-        // bind_param with dynamic args
         $stmt->bind_param($types, ...$unique);
         $stmt->execute();
         $resEx = $stmt->get_result();
         while ($r = $resEx->fetch_assoc()) {
-            if (isset($r['valores_referenciales']) && $r['valores_referenciales']) {
-                $r['valores_referenciales'] = json_decode($r['valores_referenciales'], true) ?: [];
-            } else {
-                $r['valores_referenciales'] = [];
-            }
+            $r['valores_referenciales'] = !empty($r['valores_referenciales'])
+                ? (json_decode($r['valores_referenciales'], true) ?: [])
+                : [];
             $examenes_detalle[$r['id']] = $r;
         }
         $stmt->close();
     }
 }
 
-// Helper de escape
 function h($s) { return htmlspecialchars($s ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
-// Construir HTML del reporte
-$html = '<!doctype html><html><head><meta charset="utf-8"><title>Resultados de Laboratorio</title>';
-$html .= '<style>
-body { font-family: Arial, sans-serif; margin: 0; padding: 20px; font-size: 12px; color: #333; }
-.header-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid #ddd; padding-bottom: 15px; }
-.clinica-info { flex: 1; }
-.clinica-logo { max-height: 80px; max-width: 120px; margin-right: 15px; float: left; }
-.clinica-name { font-size: 18px; font-weight: bold; color: #2c3e50; margin: 0; }
-.clinica-details { font-size: 11px; color: #666; margin: 2px 0; }
-.report-title { text-align: center; font-size: 18px; font-weight: bold; margin: 20px 0 10px 0; color: #2c3e50; }
-.report-subtitle { text-align: right; font-size: 12px; margin-bottom: 5px; }
-.patient-section { background: #f8f9fa; padding: 15px; border: 1px solid #ddd; margin: 20px 0; border-radius: 4px; }
-.patient-row { display: flex; margin: 4px 0; }
-.patient-label { font-weight: bold; width: 130px; color: #444; }
-.exam-title { background: #e9ecef; padding: 10px; font-weight: bold; font-size: 14px; margin: 25px 0 15px 0; border-left: 4px solid #007bff; text-align: center; text-transform: uppercase; }
-.exam-subtitle { color: #666; font-size: 11px; margin: 5px 0; }
-.results-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-.results-table th { background: #f1f3f4; padding: 10px 8px; border: 1px solid #ccc; font-weight: bold; font-size: 11px; text-align: center; }
-.results-table td { padding: 8px; border: 1px solid #ccc; font-size: 11px; }
-.subtitle-row td { background: #f8f9fa; font-weight: bold; text-align: center; }
-body { position: relative; min-height: 100vh; padding-bottom: 120px; }
-.footer-section { position: absolute; bottom: 80px; right: 20px; width: 200px; }
-.signature-area { text-align: center; width: 150px; border: 1px solid #ddd; padding: 10px; background: white; margin-left: auto; }
-.signature-line { border-bottom: 1px solid #333; width: 120px; margin: 20px auto 5px; }
-.signature-text { font-size: 10px; margin: 5px 0; }
-.page-footer { position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: white; border-top: 1px solid #ddd; padding: 10px 20px; font-size: 10px; color: #666; }
-@media print { body { min-height: 100vh; } .footer-section { position: fixed; bottom: 80px; right: 20px; } .page-footer { position: fixed; bottom: 0; } }
-</style>';
-$html .= '</head><body>';
+$toNullableFloat = function ($val) {
+    if ($val === null) return null;
+    if (is_string($val)) {
+        $val = trim($val);
+        if ($val === '') return null;
+        $val = str_replace(',', '.', $val);
+    }
+    return is_numeric($val) ? floatval($val) : null;
+};
 
-// Header similar al modelo INBIOSLAB
-$html .= '<div class="header-top">';
+$normalizarSexo = function ($sexoValor) {
+    $sx = strtolower(trim((string)$sexoValor));
+    if ($sx === 'masculino' || $sx === 'm') return 'M';
+    if ($sx === 'femenino' || $sx === 'f') return 'F';
+    return '';
+};
 
-// Logo de la clínica en la izquierda
-$html .= '<div style="display: flex; align-items: center;">';
+$getReferenciaAplicada = function (array $referencias, $sexoNorm, $edadNum) use ($toNullableFloat) {
+    if (empty($referencias)) return null;
+    $candidatas = [];
+    foreach ($referencias as $ref) {
+        $okSexo = true;
+        if (!empty($ref['sexo'])) {
+            $sx = strtolower(trim((string)$ref['sexo']));
+            if ($sx === 'masculino' || $sx === 'm') $sx = 'M';
+            elseif ($sx === 'femenino' || $sx === 'f') $sx = 'F';
+            if ($sx === 'M' || $sx === 'F') {
+                $okSexo = ($sexoNorm !== '' && $sx === $sexoNorm);
+            }
+        }
 
-// Detectar automáticamente la ruta según el entorno
+        $okEdad = true;
+        $edadMin = $toNullableFloat($ref['edad_min'] ?? null);
+        $edadMax = $toNullableFloat($ref['edad_max'] ?? null);
+        if ($edadNum !== null) {
+            if ($edadMin !== null && $edadNum < $edadMin) $okEdad = false;
+            if ($edadMax !== null && $edadNum > $edadMax) $okEdad = false;
+        }
+
+        if ($okSexo && $okEdad) {
+            $candidatas[] = $ref;
+        }
+    }
+    if (!empty($candidatas)) return $candidatas[0];
+    return $referencias[0];
+};
+
+$firmante_nombre = trim((string)($clinica_config['director_general'] ?? $clinica_config['director_nombre'] ?? ''));
+$firmante_cargo = trim((string)($clinica_config['director_cargo'] ?? ''));
+$firmante_colegiatura = trim((string)($clinica_config['colegio_profesional'] ?? ''));
+$firmante_firma = '';
+
+$firmadoPorUsuarioId = isset($row['firmado_por_usuario_id']) ? intval($row['firmado_por_usuario_id']) : 0;
+if ($firmadoPorUsuarioId > 0) {
+    $stmt_firmante = $conn->prepare('SELECT nombre, profesion, cargo_firma, colegiatura_tipo, colegiatura_numero, firma_reportes FROM usuarios WHERE id = ? LIMIT 1');
+    if ($stmt_firmante) {
+        $stmt_firmante->bind_param('i', $firmadoPorUsuarioId);
+        $stmt_firmante->execute();
+        $firmante_usuario = $stmt_firmante->get_result()->fetch_assoc();
+        $stmt_firmante->close();
+
+        if ($firmante_usuario) {
+            $nombreUsuario = trim((string)($firmante_usuario['nombre'] ?? ''));
+            $cargoUsuario = trim((string)($firmante_usuario['cargo_firma'] ?? ''));
+            $profesionUsuario = trim((string)($firmante_usuario['profesion'] ?? ''));
+            $colegiaturaTipo = trim((string)($firmante_usuario['colegiatura_tipo'] ?? ''));
+            $colegiaturaNumero = trim((string)($firmante_usuario['colegiatura_numero'] ?? ''));
+            $firmaUsuario = trim((string)($firmante_usuario['firma_reportes'] ?? ''));
+
+            if ($nombreUsuario !== '') {
+                $firmante_nombre = $nombreUsuario;
+            }
+            if ($cargoUsuario !== '') {
+                $firmante_cargo = $cargoUsuario;
+            } elseif ($profesionUsuario !== '') {
+                $firmante_cargo = $profesionUsuario;
+            }
+
+            if ($colegiaturaTipo !== '' || $colegiaturaNumero !== '') {
+                $firmante_colegiatura = trim($colegiaturaTipo . ' ' . $colegiaturaNumero);
+            }
+
+            if ($firmaUsuario !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaUsuario)) {
+                $firmante_firma = $firmaUsuario;
+            }
+        }
+    }
+}
+
+if ($firmante_firma === '' && !empty($clinica_config['firma_url'])) {
+    $firma_path = __DIR__ . '/' . ltrim($clinica_config['firma_url'], './');
+    if (file_exists($firma_path)) {
+        $firma_data = base64_encode(file_get_contents($firma_path));
+        $firma_ext = strtolower((string)pathinfo($firma_path, PATHINFO_EXTENSION));
+        $firma_mime = ($firma_ext === 'jpg' || $firma_ext === 'jpeg') ? 'image/jpeg' : (($firma_ext === 'png') ? 'image/png' : 'image/png');
+        $firmante_firma = 'data:' . $firma_mime . ';base64,' . $firma_data;
+    }
+}
+// Datos adicionales de paciente
+$paciente_dni = '';
+$historia_clinica = '';
+$fecha_nacimiento = '';
+$sexo = '';
+$edad = '';
+$edad_unidad = 'años';
+$medico_solicitante = '';
+$tipo_solicitud = '';
+
+if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
+    $pac_data = null;
+
+    if (!empty($row['orden_id'])) {
+        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
+                                o.consulta_id, c.medico_id,
+                                CASE WHEN o.consulta_id IS NOT NULL THEN 'Médico' ELSE 'Particular' END as tipo_solicitud
+                         FROM pacientes p
+                         INNER JOIN ordenes_laboratorio o ON p.id = o.paciente_id
+                         LEFT JOIN consultas c ON o.consulta_id = c.id
+                         WHERE o.id = ? LIMIT 1";
+        $stmt_pac = $conn->prepare($paciente_sql);
+        $stmt_pac->bind_param("i", $row['orden_id']);
+        $stmt_pac->execute();
+        $pac_data = $stmt_pac->get_result()->fetch_assoc();
+        $stmt_pac->close();
+    }
+
+    if (!$pac_data && !empty($row['consulta_id'])) {
+        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
+                                c.id as consulta_id, c.medico_id,
+                                'Médico' as tipo_solicitud
+                         FROM consultas c
+                         INNER JOIN pacientes p ON c.paciente_id = p.id
+                         WHERE c.id = ? LIMIT 1";
+        $stmt_pac = $conn->prepare($paciente_sql);
+        $stmt_pac->bind_param("i", $row['consulta_id']);
+        $stmt_pac->execute();
+        $pac_data = $stmt_pac->get_result()->fetch_assoc();
+        $stmt_pac->close();
+    }
+
+    if ($pac_data) {
+        $paciente_dni = $pac_data['dni'] ?? '';
+        $historia_clinica = $pac_data['historia_clinica'] ?? '';
+        $fecha_nacimiento = $pac_data['fecha_nacimiento'] ?? '';
+        $sexo = $pac_data['sexo'] ?? '';
+        $edad = $pac_data['edad'] ?? '';
+        $edad_unidad = $pac_data['edad_unidad'] ?? 'años';
+        $tipo_solicitud = $pac_data['tipo_solicitud'] ?? '';
+
+        if (!empty($pac_data['medico_id'])) {
+            $medico_sql = "SELECT CONCAT(nombre, ' ', apellido) as nombre_completo FROM medicos WHERE id = ? LIMIT 1";
+            $stmt_med = $conn->prepare($medico_sql);
+            $stmt_med->bind_param("i", $pac_data['medico_id']);
+            $stmt_med->execute();
+            $med_data = $stmt_med->get_result()->fetch_assoc();
+            $stmt_med->close();
+            $medico_solicitante = $med_data['nombre_completo'] ?? '';
+        }
+    }
+}
+
+// Resolver logo
 $isProduction = (
     (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ||
     (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'clinica2demayo.com') !== false) ||
@@ -159,354 +282,306 @@ $isProduction = (
     (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false)
 );
 
-// Múltiples rutas posibles para el logo
 $logo_paths = [];
-
-// Si hay configuración en la base de datos, intentar esas rutas primero
-if (!empty($clinica_config['logo_url'])) {
-    $logo_paths[] = __DIR__ . '/' . ltrim($clinica_config['logo_url'], './');
-    $logo_paths[] = ltrim($clinica_config['logo_url'], './');
+$logo_config_value = '';
+foreach (['logo_laboratorio_url', 'logo_resultados_laboratorio_url', 'logo_resultados_url', 'logo_url'] as $logo_key) {
+    if (!empty($clinica_config[$logo_key])) {
+        $logo_config_value = (string)$clinica_config[$logo_key];
+        break;
+    }
 }
 
-// Agregar rutas por defecto según el entorno
+if ($logo_config_value !== '') {
+    $logo_paths[] = __DIR__ . '/' . ltrim($logo_config_value, './');
+    $logo_paths[] = ltrim($logo_config_value, './');
+}
 if ($isProduction) {
-    // Rutas para producción (Hostinger)
-    $logo_paths[] = 'uploads/logo_1760763858_7b2d4d55a879.png';  // Logo específico de Hostinger
-    $logo_paths[] = '2demayo.svg';                                // Logo SVG en raíz
+    $logo_paths[] = 'uploads/logo_1760763858_7b2d4d55a879.png';
+    $logo_paths[] = '2demayo.svg';
     $logo_paths[] = __DIR__ . '/uploads/logo_1760763858_7b2d4d55a879.png';
     $logo_paths[] = __DIR__ . '/2demayo.svg';
 } else {
-    // Rutas para desarrollo
     $logo_paths[] = 'public/2demayo.svg';
     $logo_paths[] = '2demayo.svg';
     $logo_paths[] = __DIR__ . '/public/2demayo.svg';
     $logo_paths[] = __DIR__ . '/2demayo.svg';
 }
 
-// Buscar logo en múltiples ubicaciones
-$logo_loaded = false;
+$logo_html_header = '<div style="display:block;width:130px;text-align:center;margin:0;font-size:12px;font-weight:bold;color:#2c3e50;line-height:1.2;">'
+    . h($clinica_config['nombre_clinica'] ?? 'Clínica 2 de Mayo')
+    . '</div>';
 foreach ($logo_paths as $logo_path) {
-    if (file_exists($logo_path)) {
-        // Convertir imagen a base64 para que funcione en PDF
-        $logo_data = base64_encode(file_get_contents($logo_path));
-        $logo_ext = pathinfo($logo_path, PATHINFO_EXTENSION);
-        
-        // Determinar MIME type correcto
-        if ($logo_ext === 'svg') {
-            $logo_mime = 'image/svg+xml';
-        } elseif ($logo_ext === 'jpg' || $logo_ext === 'jpeg') {
-            $logo_mime = 'image/jpeg';
-        } elseif ($logo_ext === 'png') {
-            $logo_mime = 'image/png';
-        } else {
-            $logo_mime = 'image/' . $logo_ext;
-        }
-        
-        $html .= '<img src="data:' . $logo_mime . ';base64,' . $logo_data . '" alt="Logo" class="clinica-logo">';
-        $logo_loaded = true;
-        break;
-    }
+    if (!file_exists($logo_path)) continue;
+    $logo_data = base64_encode(file_get_contents($logo_path));
+    $logo_ext = strtolower((string)pathinfo($logo_path, PATHINFO_EXTENSION));
+    $logo_mime = 'image/png';
+    if ($logo_ext === 'svg') $logo_mime = 'image/svg+xml';
+    elseif ($logo_ext === 'jpg' || $logo_ext === 'jpeg') $logo_mime = 'image/jpeg';
+    elseif ($logo_ext === 'png') $logo_mime = 'image/png';
+    $logo_html_header = '<div style="display:block;width:130px;text-align:center;margin:0;">'
+        . '<img src="data:' . $logo_mime . ';base64,' . $logo_data . '" alt="Logo" style="max-height:78px;max-width:130px;display:block;margin:0 auto;">'
+        . '</div>';
+    break;
 }
 
-if (!$logo_loaded) {
-    // Eliminado log de depuración de logo y entorno
-}
-$html .= '</div>';
-
-// Información de la clínica en la derecha
-$html .= '<div style="text-align: right;">';
-$html .= '<h1 class="clinica-name">' . h($clinica_config['nombre_clinica'] ?? 'Laboratorio Clínico') . '</h1>';
-if (!empty($clinica_config['direccion'])) {
-    $html .= '<div class="clinica-details"><strong>Dirección:</strong> ' . h($clinica_config['direccion']) . '</div>';
-}
-if (!empty($clinica_config['telefono'])) {
-    $html .= '<div class="clinica-details"><strong>Teléfono:</strong> ' . h($clinica_config['telefono']) . '</div>';
-}
-if (!empty($clinica_config['email'])) {
-    $html .= '<div class="clinica-details"><strong>Email:</strong> ' . h($clinica_config['email']) . '</div>';
-}
-$html .= '</div>';
-
-$html .= '</div>'; // fin header-top
-
-// Obtener datos adicionales del paciente si están disponibles
-$paciente_dni = '';
-$historia_clinica = '';
-$fecha_nacimiento = '';
-$sexo = '';
-$edad = '';
-$medico_solicitante = '';
-$tipo_solicitud = '';
-
-if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
-    // Intentar obtener más datos del paciente y la orden
-    $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
-                            o.consulta_id, c.medico_id,
-                            CASE 
-                                WHEN o.consulta_id IS NOT NULL THEN 'Médico'
-                                ELSE 'Particular'
-                            END as tipo_solicitud
-                     FROM pacientes p 
-                     INNER JOIN ordenes_laboratorio o ON p.id = o.paciente_id 
-                     LEFT JOIN consultas c ON o.consulta_id = c.id
-                     WHERE o.id = ? LIMIT 1";
-    
-    $orden_id_buscar = !empty($row['orden_id']) ? $row['orden_id'] : 
-                      (!empty($row['consulta_id']) ? $row['consulta_id'] : null);
-    
-    if ($orden_id_buscar) {
-        $stmt_pac = $conn->prepare($paciente_sql);
-        $stmt_pac->bind_param("i", $orden_id_buscar);
-        $stmt_pac->execute();
-        $res_pac = $stmt_pac->get_result();
-        $pac_data = $res_pac->fetch_assoc();
-        $stmt_pac->close();
-        
-        if ($pac_data) {
-            $paciente_dni = $pac_data['dni'] ?? '';
-            $historia_clinica = $pac_data['historia_clinica'] ?? '';
-            $fecha_nacimiento = $pac_data['fecha_nacimiento'] ?? '';
-            $sexo = $pac_data['sexo'] ?? '';
-            $edad = $pac_data['edad'] ?? '';
-            $edad_unidad = $pac_data['edad_unidad'] ?? 'años';
-            $tipo_solicitud = $pac_data['tipo_solicitud'] ?? '';
-            
-            // Debug temporal - eliminar después
-            error_log("Debug datos paciente: " . json_encode($pac_data));
-            
-            // Si es una solicitud médica, obtener el nombre del médico
-            if ($pac_data['medico_id']) {
-                $medico_sql = "SELECT CONCAT(nombre, ' ', apellido) as nombre_completo FROM medicos WHERE id = ? LIMIT 1";
-                $stmt_med = $conn->prepare($medico_sql);
-                $stmt_med->bind_param("i", $pac_data['medico_id']);
-                $stmt_med->execute();
-                $res_med = $stmt_med->get_result();
-                $med_data = $res_med->fetch_assoc();
-                $stmt_med->close();
-                $medico_solicitante = $med_data['nombre_completo'] ?? '';
-            }
-        }
-    }
-}
-
-// Sección de datos del paciente en dos columnas usando tabla
-$html .= '<div class="patient-section">';
-$html .= '<table style="width: 100%; border: none;">';
-$html .= '<tr>';
-
-// Columna izquierda
-$html .= '<td style="width: 50%; vertical-align: top; border: none; padding-right: 20px;">';
-$html .= '<div class="patient-row"><span class="patient-label">Paciente:</span> <span>' . h($paciente_nombre) . '</span></div>';
-if ($paciente_dni) {
-    $html .= '<div class="patient-row"><span class="patient-label">DNI:</span> <span>' . h($paciente_dni) . '</span></div>';
-}
-if ($historia_clinica) {
-    $html .= '<div class="patient-row"><span class="patient-label">Historia Clínica:</span> <span>' . h($historia_clinica) . '</span></div>';
-}
-// Mostrar edad siempre, calculada o como "N/A"
-if ($edad) {
-    $html .= '<div class="patient-row"><span class="patient-label">Edad:</span> <span>' . h($edad . ' ' . $edad_unidad) . '</span></div>';
-} else {
-    $html .= '<div class="patient-row"><span class="patient-label">Edad:</span> <span>N/A</span></div>';
-}
-$html .= '</td>';
-
-// Columna derecha
-$html .= '<td style="width: 50%; vertical-align: top; border: none;">';
-if ($sexo) {
-    $html .= '<div class="patient-row"><span class="patient-label">Sexo:</span> <span>' . h($sexo) . '</span></div>';
-}
-if ($fecha_nacimiento) {
-    $html .= '<div class="patient-row"><span class="patient-label">Fecha Nac.:</span> <span>' . h($fecha_nacimiento) . '</span></div>';
-}
-$html .= '<div class="patient-row"><span class="patient-label">Fecha Examen:</span> <span>' . h($row['fecha']) . '</span></div>';
-
-// Información de quien solicita el examen
-if ($tipo_solicitud) {
-    $html .= '<div class="patient-row"><span class="patient-label">Referencia:</span> <span>' . h($tipo_solicitud) . '</span></div>';
-    if ($tipo_solicitud === 'Médico' && $medico_solicitante) {
-        $html .= '<div class="patient-row"><span class="patient-label">Médico:</span> <span>' . h($medico_solicitante) . '</span></div>';
-    }
-}
-$html .= '</td>';
-
-$html .= '</tr>';
-$html .= '</table>';
-$html .= '</div>'; // fin patient-section
+// Construir contenido de resultados
+$hayFueraRango = false;
+$rowsHtml = '';
+$examenesImpresos = 0;
 
 if (empty($examenes_detalle)) {
-    // Si no hay exámenes, mostrar resultado crudo
-    $html .= '<div class="exam-title">Resultados</div>';
-    $html .= '<pre style="background:#f8f9fa;padding:10px;border:1px solid #ddd;">' . h(json_encode($resultados_map, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</pre>';
+    $rowsHtml .= '<tr><td colspan="5" style="padding:8px;"><pre style="margin:0;white-space:pre-wrap;">' . h(json_encode($resultados_map, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</pre></td></tr>';
 } else {
-    // Crear una sola tabla para todos los exámenes
-    $html .= '<table class="results-table" style="margin-top: 18px;">';
-    $html .= '<thead><tr style="background: linear-gradient(90deg, #e5e7eb 0%, #d1d5db 100%);">';
-    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Examen / Parámetro</th>';
-    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Metodología</th>';
-    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Resultado</th>';
-    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Unidades</th>';
-    $html .= '<th style="padding: 6px 6px; text-align: left; font-weight: bold; font-size: 11px;">Valores de Referencia</th>';
-    $html .= '</tr></thead><tbody>';
     foreach ($examenes_detalle as $exId => $ex) {
+        $imprimirExamen = $resultados_map[$exId . '__imprimir_examen'] ?? 1;
+        $imprimirExamenNorm = is_string($imprimirExamen) ? strtolower(trim($imprimirExamen)) : $imprimirExamen;
+        if (
+            $imprimirExamenNorm === 0 ||
+            $imprimirExamenNorm === '0' ||
+            $imprimirExamenNorm === false ||
+            $imprimirExamenNorm === 'false' ||
+            $imprimirExamenNorm === 'no'
+        ) {
+            continue;
+        }
+
+        $examenesImpresos++;
+
         if (!empty($ex['valores_referenciales'])) {
             foreach ($ex['valores_referenciales'] as $param) {
                 $tipo = $param['tipo'] ?? 'Parámetro';
+                $tipoNorm = strtolower(trim((string)$tipo));
+                $tipoNorm = str_replace(['á','é','í','ó','ú'], ['a','e','i','o','u'], $tipoNorm);
                 $nombre_param = $param['nombre'] ?? '';
-                if (strtolower($tipo) !== 'parámetro') {
-                    $bgColor = $param['color_fondo'] ?? '#f8f9fa';
-                    $textColor = $param['color_texto'] ?? '#000';
-                    $fontWeight = $param['negrita'] ? 'bold' : 'normal';
-                    $html .= '<tr class="subtitle-row" style="border-bottom: 1px solid #e5e7eb;"><td colspan="5" style="background:' . h($bgColor) . ';color:' . h($textColor) . ';font-weight:' . $fontWeight . ';text-align:left;padding:2px 4px;">' . h($nombre_param) . '</td></tr>';
+
+                if ($tipoNorm === 'titulo' || $tipoNorm === 'subtitulo') {
+                    $rowsHtml .= '<tr><td colspan="5" style="background:#edf2f7;color:#1f2937;font-weight:bold;text-align:left;padding:6px 8px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
                     continue;
                 }
+
+                if ($tipoNorm === 'texto largo') {
+                    $keyTexto = $exId . '__' . $nombre_param;
+                    $valorTexto = isset($resultados_map[$keyTexto]) ? $resultados_map[$keyTexto] : '';
+                    $rowsHtml .= '<tr><td colspan="5" style="padding:6px 8px;">'
+                        . '<div style="font-weight:bold; margin-bottom:3px;">' . h($nombre_param) . '</div>'
+                        . '<div>' . nl2br(h((string)$valorTexto)) . '</div>'
+                        . '</td></tr>';
+                    continue;
+                }
+
                 $nombre = $param['nombre'] ?? '';
                 $metodo = $param['metodologia'] ?? '';
                 $unidad = $param['unidad'] ?? '';
                 $key = $exId . '__' . $nombre;
                 $valor = isset($resultados_map[$key]) ? $resultados_map[$key] : '';
+                $valorNum = $toNullableFloat($valor);
+
+                $edadPaciente = $toNullableFloat($edad);
+                $sexoPaciente = $normalizarSexo($sexo);
+                $referenciasLista = (!empty($param['referencias']) && is_array($param['referencias'])) ? $param['referencias'] : [];
+                $referenciaAplicada = $getReferenciaAplicada($referenciasLista, $sexoPaciente, $edadPaciente);
+
+                $minRef = $referenciaAplicada ? $toNullableFloat($referenciaAplicada['valor_min'] ?? null) : null;
+                $maxRef = $referenciaAplicada ? $toNullableFloat($referenciaAplicada['valor_max'] ?? null) : null;
+
+                if ($minRef === null && $maxRef === null && $referenciaAplicada && !empty($referenciaAplicada['valor'])) {
+                    $txt = str_replace(',', '.', (string)$referenciaAplicada['valor']);
+                    if (preg_match('/(-?\d+(?:\.\d+)?)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d+(?:\.\d+)?)/i', $txt, $mRango)) {
+                        $minRef = floatval($mRango[1]);
+                        $maxRef = floatval($mRango[2]);
+                    }
+                }
+
+                $fueraRango = false;
+                if ($valor !== '' && $valorNum !== null) {
+                    if ($minRef !== null && $valorNum < $minRef) $fueraRango = true;
+                    if ($maxRef !== null && $valorNum > $maxRef) $fueraRango = true;
+                }
+
+                $valorMostrar = (string)$valor;
+                if ($valor !== '' && $valorNum !== null) {
+                    if (isset($param['decimales']) && $param['decimales'] !== '' && is_numeric($param['decimales'])) {
+                        $valorMostrar = number_format($valorNum, intval($param['decimales']), '.', ',');
+                    } elseif (floor($valorNum) == $valorNum) {
+                        $valorMostrar = number_format($valorNum, 0, '.', ',');
+                    }
+                }
+                if ($fueraRango && $valorMostrar !== '') {
+                    $hayFueraRango = true;
+                    $valorMostrar = '* ' . $valorMostrar;
+                }
+
                 $refs = '';
                 if (!empty($param['referencias']) && is_array($param['referencias'])) {
                     $parts = [];
                     foreach ($param['referencias'] as $r) {
                         if (!empty($r['valor_min']) && !empty($r['valor_max'])) {
-                            $desc = '';
-                            if (!empty($r['desc'])) {
-                                $desc = ucfirst(strtolower(trim($r['desc']))) . ' ';
-                            }
-                            $parts[] = '• ' . $desc . h($r['valor_min']) . '-' . h($r['valor_max']);
+                            $parts[] = '• ' . h($r['valor_min']) . '-' . h($r['valor_max']);
                         } elseif (!empty($r['valor'])) {
-                            $desc = '';
-                            if (!empty($r['desc'])) {
-                                $desc = ucfirst(strtolower(trim($r['desc']))) . ' ';
-                            }
-                            $parts[] = '• ' . $desc . h($r['valor']);
+                            $parts[] = '• ' . h($r['valor']);
                         }
                     }
                     $refs = implode('<br>', $parts);
                 }
-                $cellStyle = '';
-                if (!empty($param['color_fondo']) && $param['color_fondo'] !== '#ffffff') {
-                    $cellStyle .= 'background:' . h($param['color_fondo']) . ';';
-                }
-                if (!empty($param['color_texto']) && $param['color_texto'] !== '#000000') {
-                    $cellStyle .= 'color:' . h($param['color_texto']) . ';';
-                }
-                if (!empty($param['negrita'])) {
-                    $cellStyle .= 'font-weight:bold;';
-                }
-                $html .= '<tr style="border-bottom: 1px solid #e5e7eb;">';
-                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; font-weight: bold;">' . h($nombre) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; text-align: center;">' . h($metodo) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; text-align: center; font-weight: bold; font-size: 12px;">' . h((string)$valor) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px; text-align: center;">' . h($unidad) . '</td>';
-                $html .= '<td style="' . $cellStyle . ' padding: 2px 4px;">' . $refs . '</td>';
-                $html .= '</tr>';
+
+                $rowsHtml .= '<tr>'
+                    . '<td style="padding:5px 7px;font-weight:bold;">' . h($nombre) . '</td>'
+                    . '<td style="padding:5px 7px;text-align:center;color:#374151;">' . h($metodo) . '</td>'
+                    . '<td style="padding:5px 7px;text-align:center;font-weight:bold;color:#111827;">' . h((string)$valorMostrar) . '</td>'
+                    . '<td style="padding:5px 7px;text-align:center;color:#374151;">' . h($unidad) . '</td>'
+                    . '<td style="padding:5px 7px;color:#374151;">' . $refs . '</td>'
+                    . '</tr>';
             }
         } else {
             $rawKey = (string)$exId;
             $val = isset($resultados_map[$rawKey]) ? $resultados_map[$rawKey] : null;
-            if ($val !== null && $val !== '') {
-                $html .= '<tr><td colspan="5" style="padding: 2px 4px;"><strong>Resultado:</strong><div style="margin-top:5px;">' . nl2br(h((string)$val)) . '</div></td></tr>';
-            } else {
-                $html .= '<tr><td colspan="5" style="background:#fff3cd;color:#856404;text-align:center;padding: 2px 4px;">No hay resultados registrados para este examen.</td></tr>';
-            }
+            $rowsHtml .= '<tr><td colspan="5" style="padding:6px 8px;">'
+                . ($val !== null && $val !== '' ? nl2br(h((string)$val)) : 'No hay resultados registrados para este examen.')
+                . '</td></tr>';
         }
     }
-    $html .= '</tbody></table>';
-    $html .= '</div>'; // card
-}
 
-// Footer con firma en esquina inferior derecha
-$html .= '<div class="footer-section">';
-
-// Área de firma (esquina inferior derecha, posición absoluta)
-$html .= '<div class="signature-area">';
-
-// Si hay firma digital disponible
-if (!empty($clinica_config['firma_url'])) {
-    $firma_path = __DIR__ . '/' . ltrim($clinica_config['firma_url'], './');
-    if (file_exists($firma_path)) {
-        // Convertir firma a base64
-        $firma_data = base64_encode(file_get_contents($firma_path));
-        $firma_ext = pathinfo($firma_path, PATHINFO_EXTENSION);
-        $firma_mime = 'image/' . ($firma_ext === 'jpg' ? 'jpeg' : $firma_ext);
-        $html .= '<img src="data:' . $firma_mime . ';base64,' . $firma_data . '" alt="Firma" style="max-height:40px;max-width:100px;margin-bottom:5px;">';
-    }
-    
-    // Información del firmante
-    if (!empty($clinica_config['director_nombre']) || !empty($clinica_config['director_cargo'])) {
-        $html .= '<div class="signature-line"></div>';
-        if (!empty($clinica_config['director_nombre'])) {
-            $html .= '<div class="signature-text" style="font-weight:bold;">' . h($clinica_config['director_nombre']) . '</div>';
-        }
-        if (!empty($clinica_config['director_cargo'])) {
-            $html .= '<div class="signature-text">' . h($clinica_config['director_cargo']) . '</div>';
-        }
-        if (!empty($clinica_config['colegio_profesional'])) {
-            $html .= '<div class="signature-text">' . h($clinica_config['colegio_profesional']) . '</div>';
-        }
-    }
-} else {
-    // Espacio para firma manual como en el modelo
-    $html .= '<div class="signature-line"></div>';
-    $html .= '<div class="signature-text">Firma y Sello</div>';
-}
-
-$html .= '</div>'; // signature-area
-$html .= '</div>'; // footer-section
-
-// Pie de página con información de horarios
-$html .= '<div class="page-footer">';
-if (!empty($clinica_config['horario_atencion'])) {
-    $html .= '<div><strong>Horario de Atención:</strong></div>';
-    $html .= '<div>' . nl2br(h($clinica_config['horario_atencion'])) . '</div>';
-}
-if (!empty($clinica_config['website'])) {
-    $html .= '<div><strong>Website:</strong> ' . h($clinica_config['website']) . '</div>';
-}
-$html .= '</div>';
-
-$html .= '</body></html>';
-
-// Intentar generar PDF si la librería está disponible
-$vendor = __DIR__ . '/vendor/autoload.php';
-if (file_exists($vendor)) {
-    require_once $vendor;
-    if (class_exists('\Dompdf\Dompdf')) {
-        try {
-            $options = new \Dompdf\Options();
-            $options->set('isRemoteEnabled', true);
-            $options->set('isHtml5ParserEnabled', true);
-            $options->set('isPhpEnabled', false);
-            
-            $dompdf = new \Dompdf\Dompdf($options);
-            $dompdf->setPaper('A4', 'portrait');
-            $dompdf->loadHtml($html);
-            $dompdf->render();
-            
-            // Forzar descarga con nombre más descriptivo
-            $filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $row['id'] . '_' . date('Ymd') . '.pdf';
-            $pdfOutput = $dompdf->output();
-            // Limpiar buffers para evitar bytes extra que corrompan el PDF
-            if (ob_get_length()) { @ob_end_clean(); }
-            header('Content-Type: application/pdf');
-            header('Content-Disposition: attachment; filename="' . $filename . '"');
-            header('Content-Length: ' . strlen($pdfOutput));
-            header('Cache-Control: private, max-age=0, must-revalidate');
-            header('Pragma: public');
-            echo $pdfOutput;
-            flush();
-            exit;
-        } catch (Exception $e) {
-            // Si dompdf falla, caeremos al fallback HTML
-            // Eliminado log de error dompdf
-        }
+    if ($examenesImpresos === 0) {
+        $rowsHtml .= '<tr><td colspan="5" style="padding:8px;text-align:center;color:#6b7280;">No hay exámenes marcados para imprimir.</td></tr>';
     }
 }
 
-// Fallback: devolver HTML imprimible para visualización
+$bodyCss = '<style>
+body { font-family: dejavusanscondensed, DejaVu Sans, Arial, sans-serif; font-size: 11px; color: #1f2937; }
+.results-title { font-family: Courier, "Courier New", monospace; font-size: 13px; font-weight: bold; letter-spacing: 0.2px; color: #1f2937; margin: 8px 0 8px 0; text-transform: uppercase; text-align: center; }
+.results-table { width: 100%; border-collapse: collapse; border: 1px solid #d5dbe1; }
+.results-table thead { display: table-header-group; }
+.results-table th { font-family: Courier, "Courier New", monospace; background: #eaf0f7; color: #111827; border-bottom: 1px solid #d5dbe1; padding: 8px 7px; font-size: 10.6px; text-align: left; letter-spacing: 0.15px; }
+.results-table td { font-family: Courier, "Courier New", monospace; border-bottom: 1px solid #e5e7eb; padding: 5px 7px; font-size: 10.8px; vertical-align: top; line-height: 1.15; }
+.results-table tr { page-break-inside: avoid; }
+.results-table tbody tr:nth-child(even) td { background: #fcfdff; }
+</style>';
+
+$bodyHtml = '<div class="results-title">Resultados de laboratorio</div><table class="results-table">'
+    . '<thead><tr>'
+    . '<th style="width:30%;">Examen / Parámetro</th><th style="width:18%;text-align:center;">Metodología</th><th style="width:14%;text-align:center;">Resultado</th><th style="width:12%;text-align:center;">Unidades</th><th style="width:26%;">Valores de Referencia</th>'
+    . '</tr></thead><tbody>'
+    . $rowsHtml
+    . '</tbody></table>';
+
+// Firma HTML
+$signatureHtml = '';
+$signatureHtml .= '<div style="display:inline-block;min-width:175px;max-width:210px;text-align:center;">';
+if (!empty($firmante_firma) && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmante_firma)) {
+    $signatureHtml .= '<img src="' . $firmante_firma . '" alt="Firma" style="display:block;max-height:68px;max-width:165px;margin:5px auto -6px auto;">';
+}
+$signatureHtml .= '<hr style="border:0;border-top:2.2px solid #000;width:172px;margin:0 auto 5px auto;height:0;">';
+if ($firmante_nombre !== '') $signatureHtml .= '<div style="font-size:9.2px;font-weight:bold;line-height:1.15;letter-spacing:0.2px;text-transform:uppercase;">' . h($firmante_nombre) . '</div>';
+if ($firmante_cargo !== '') $signatureHtml .= '<div style="font-size:8.8px;line-height:1.15;">' . h($firmante_cargo) . '</div>';
+if ($firmante_colegiatura !== '') $signatureHtml .= '<div style="font-size:8.8px;line-height:1.15;">' . h($firmante_colegiatura) . '</div>';
+$signatureHtml .= '</div>';
+
+// Header mPDF
+$headerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, sans-serif; border-bottom:1px solid #cfd8e3; padding-bottom:6px; margin-bottom:8px;">'
+    . '<table width="100%" style="border-collapse:collapse;">'
+    . '<tr>'
+    . '<td width="45%" style="vertical-align:top;text-align:left;padding-right:0;">' . $logo_html_header . '</td>'
+    . '<td width="55%" style="vertical-align:top;text-align:right;font-family:DejaVu Serif, Georgia, serif;">'
+    . '<div style="font-family:DejaVu Serif, Georgia, serif;font-size:17px;font-weight:bold;letter-spacing:0.25px;color:#2c3e50;">' . h($clinica_config['nombre_clinica'] ?? 'Laboratorio Clínico') . '</div>'
+    . (!empty($clinica_config['direccion']) ? '<div style="font-size:9.8px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Dirección:</span> ' . h($clinica_config['direccion']) . '</div>' : '')
+    . (!empty($clinica_config['telefono']) ? '<div style="font-size:9.8px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Teléfono:</span> ' . h($clinica_config['telefono']) . '</div>' : '')
+    . (!empty($clinica_config['email']) ? '<div style="font-size:9.8px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Email:</span> ' . h($clinica_config['email']) . '</div>' : '')
+    . '</td></tr></table>'
+    . '</div>'
+    . '<div style="background:#f7fafc; padding:8px 9px; border:1px solid #d7dee8; border-radius:4px; font-size:11.8px;">'
+    . '<table width="100%" style="border-collapse:collapse;"><tr>'
+    . '<td width="50%" style="vertical-align:top;line-height:1.18;font-size:11.8px;">'
+    . '<div style="font-size:11.8px;"><span style="font-weight:600;">Paciente:</span> ' . h($paciente_nombre) . '</div>'
+    . ($paciente_dni ? '<div style="font-size:11.8px;"><span style="font-weight:600;">DNI:</span> ' . h($paciente_dni) . '</div>' : '')
+    . ($historia_clinica ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Historia Clínica:</span> ' . h($historia_clinica) . '</div>' : '')
+    . '<div style="font-size:11.8px;"><span style="font-weight:600;">Edad:</span> ' . h($edad ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
+    . '</td>'
+    . '<td width="50%" style="vertical-align:top;line-height:1.17;font-size:11.8px;">'
+    . ($sexo ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Sexo:</span> ' . h($sexo) . '</div>' : '')
+    . ($fecha_nacimiento ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Fecha Nac.:</span> ' . h($fecha_nacimiento) . '</div>' : '')
+    . '<div style="font-size:11.8px;"><span style="font-weight:600;">Fecha Examen:</span> ' . h($row['fecha']) . '</div>'
+    . ($tipo_solicitud ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Referencia:</span> ' . h($tipo_solicitud) . '</div>' : '')
+    . (($tipo_solicitud === 'Médico' && $medico_solicitante) ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Médico:</span> ' . h($medico_solicitante) . '</div>' : '')
+    . '</td></tr></table>'
+    . '</div>';
+
+// Footer mPDF
+$footerLeftHtml = '';
+$footerLeftLineStyle = 'font-size:10.2px;line-height:1.2;color:#334155;';
+$horarioRaw = trim((string)($clinica_config['horario_atencion'] ?? ''));
+if ($horarioRaw !== '') {
+    $footerLeftHtml .= '<div style="' . $footerLeftLineStyle . '"><strong>Horario de Atención:</strong></div>';
+    foreach (preg_split('/\r\n|\r|\n/', $horarioRaw) as $lineaHorario) {
+        $lineaHorario = trim((string)$lineaHorario);
+        if ($lineaHorario !== '') $footerLeftHtml .= '<div style="' . $footerLeftLineStyle . '">' . h($lineaHorario) . '</div>';
+    }
+}
+$websiteRaw = trim((string)($clinica_config['website'] ?? ''));
+if ($websiteRaw !== '') $footerLeftHtml .= '<div style="' . $footerLeftLineStyle . '"><strong>Website:</strong> ' . h($websiteRaw) . '</div>';
+if ($hayFueraRango) $footerLeftHtml .= '<div style="' . $footerLeftLineStyle . '">* El asterisco indica resultado fuera del rango de referencia.</div>';
+
+$footerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, sans-serif;font-size:8.6px;color:#4b5563;">'
+    . '<table width="100%" style="border-collapse:collapse;">'
+    . '<tr>'
+    . '<td width="72%" style="height:92px;">&nbsp;</td>'
+    . '<td width="28%" style="height:92px;text-align:center;vertical-align:top;"><div style="padding-top:26px;">' . $signatureHtml . '</div></td>'
+    . '</tr>'
+    . '</table>'
+    . '<div style="border-top:1px solid #d1d9e4; margin-top:2px; padding-top:6px;"></div>'
+    . '<table width="100%" style="border-collapse:collapse;">'
+    . '<tr>'
+    . '<td width="72%" style="vertical-align:top;line-height:1.12;">' . $footerLeftHtml . '</td>'
+    . '<td width="28%" style="vertical-align:top;">&nbsp;</td>'
+    . '</tr>'
+    . '</table>'
+    . '<div style="margin-top:1px;text-align:right;font-size:7.6px;color:#6b7280;">Página {PAGENO} de {nbpg}</div>'
+    . '</div>';
+
+// Intentar generar PDF con mPDF
+$autoloadCandidates = [
+    __DIR__ . '/vendor/autoload.php',
+    dirname(__DIR__) . '/base-php/vendor/autoload.php'
+];
+foreach ($autoloadCandidates as $autoloadFile) {
+    if (file_exists($autoloadFile)) require_once $autoloadFile;
+}
+
+$filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $row['id'] . '_' . date('Ymd') . '.pdf';
+
+if (class_exists('\Mpdf\Mpdf')) {
+    try {
+        $mpdf = new \Mpdf\Mpdf([
+            'mode' => 'utf-8',
+            'format' => 'A4',
+            'default_font' => 'dejavusanscondensed',
+            'margin_left' => 8,
+            'margin_right' => 8,
+            'margin_top' => 66,
+            'margin_bottom' => 54,
+        ]);
+
+        $mpdf->SetHTMLHeader($headerHtml);
+        $mpdf->SetHTMLFooter($footerHtml);
+        $mpdf->WriteHTML($bodyCss, \Mpdf\HTMLParserMode::HEADER_CSS);
+        $mpdf->WriteHTML($bodyHtml, \Mpdf\HTMLParserMode::HTML_BODY);
+
+        $pdfOutput = $mpdf->Output('', 'S');
+        if (ob_get_length()) { @ob_end_clean(); }
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($pdfOutput));
+        header('Cache-Control: private, max-age=0, must-revalidate');
+        header('Pragma: public');
+        echo $pdfOutput;
+        flush();
+        exit;
+    } catch (Exception $e) {
+        // fallback HTML
+    }
+}
+
+// Fallback: HTML simple
 if (ob_get_length()) { @ob_end_clean(); }
 header('Content-Type: text/html; charset=utf-8');
-echo $html;
+echo '<!doctype html><html><head><meta charset="utf-8"><title>Resultados</title></head><body>' . $headerHtml . $bodyCss . $bodyHtml . '<hr>' . $footerHtml . '</body></html>';
 exit;

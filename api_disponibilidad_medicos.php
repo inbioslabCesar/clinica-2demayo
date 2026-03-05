@@ -1,14 +1,33 @@
 
 <?php
 require_once __DIR__ . '/init_api.php';
+require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
+$sessionUsuario = $_SESSION['usuario'] ?? null;
+$rolSesion = $sessionUsuario['rol'] ?? null;
+$medicoSesionId = intval($sessionUsuario['id'] ?? ($_SESSION['medico_id'] ?? 0));
+$esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
+
+if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'No autenticado']);
+    exit;
+}
 
 switch ($method) {
     case 'GET':
         // Listar disponibilidad de un médico (por id) o todos
         $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
+        if ($esSesionMedico) {
+            if ($medico_id && $medico_id !== $medicoSesionId) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado para ver disponibilidad de otro médico']);
+                exit;
+            }
+            $medico_id = $medicoSesionId;
+        }
         $sql = 'SELECT * FROM disponibilidad_medicos';
         $params = [];
         if ($medico_id) {
@@ -34,6 +53,11 @@ switch ($method) {
         $bloques = $data['bloques'] ?? null;
         if (!$medico_id || !is_array($bloques) || count($bloques) === 0) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos o bloques vacíos']);
+            exit;
+        }
+        if ($esSesionMedico && intval($medico_id) !== $medicoSesionId) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'No autorizado para registrar disponibilidad de otro médico']);
             exit;
         }
         $stmt = $conn->prepare('INSERT INTO disponibilidad_medicos (medico_id, fecha, hora_inicio, hora_fin) VALUES (?, ?, ?, ?)');
@@ -65,6 +89,18 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
         }
+        if ($esSesionMedico) {
+            $stmtOwner = $conn->prepare('SELECT medico_id FROM disponibilidad_medicos WHERE id = ? LIMIT 1');
+            $stmtOwner->bind_param('i', $id);
+            $stmtOwner->execute();
+            $ownerRow = $stmtOwner->get_result()->fetch_assoc();
+            $stmtOwner->close();
+            if (!$ownerRow || intval($ownerRow['medico_id']) !== $medicoSesionId) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado para modificar este bloque']);
+                exit;
+            }
+        }
         $stmt = $conn->prepare('UPDATE disponibilidad_medicos SET fecha=?, hora_inicio=?, hora_fin=? WHERE id=?');
         $stmt->bind_param('sssi', $fecha, $hora_inicio, $hora_fin, $id);
         $ok = $stmt->execute();
@@ -78,6 +114,18 @@ switch ($method) {
         if (!$id) {
             echo json_encode(['success' => false, 'error' => 'ID requerido']);
             exit;
+        }
+        if ($esSesionMedico) {
+            $stmtOwner = $conn->prepare('SELECT medico_id FROM disponibilidad_medicos WHERE id = ? LIMIT 1');
+            $stmtOwner->bind_param('i', $id);
+            $stmtOwner->execute();
+            $ownerRow = $stmtOwner->get_result()->fetch_assoc();
+            $stmtOwner->close();
+            if (!$ownerRow || intval($ownerRow['medico_id']) !== $medicoSesionId) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado para eliminar este bloque']);
+                exit;
+            }
         }
         $stmt = $conn->prepare('DELETE FROM disponibilidad_medicos WHERE id=?');
         $stmt->bind_param('i', $id);

@@ -1,12 +1,18 @@
+import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
-export default function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
-  // Ordenar por fecha y hora descendente (último primero)
-  const consultasOrdenadas = [...consultasPagina].sort((a, b) => {
-    const fechaA = new Date(`${a.fecha}T${a.hora}`);
-    const fechaB = new Date(`${b.fecha}T${b.hora}`);
-    return fechaB - fechaA;
-  });
+function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+  const formatearFecha = (fecha) => {
+    if (!fecha) return '-';
+    const partes = String(fecha).split('-');
+    if (partes.length !== 3) return fecha;
+    return `${partes[2]}/${partes[1]}/${partes[0]}`;
+  };
+
+  const formatearHora = (hora) => {
+    if (!hora) return '-';
+    return String(hora).slice(0, 5);
+  };
   return (
     <div className="hidden lg:block">
       <table className="w-full">
@@ -21,7 +27,7 @@ export default function TriageTable({ consultasPagina, triajeStatus, onRealizarT
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
-          {consultasOrdenadas.map((c) => (
+          {consultasPagina.map((c) => (
             <tr key={c.id} className="hover:bg-gray-50 transition-colors duration-200">
               <td className="px-6 py-4">
                 <div className="flex items-center gap-2">
@@ -51,8 +57,8 @@ export default function TriageTable({ consultasPagina, triajeStatus, onRealizarT
                 <div className="flex items-center gap-2">
                   <Icon iconName="Calendar" className="text-lg text-gray-400" />
                   <div className="text-sm">
-                    <div className="text-gray-800">{c.fecha}</div>
-                    <div className="text-gray-500">{c.hora}</div>
+                    <div className="text-gray-800">{formatearFecha(c.fecha)}</div>
+                    <div className="text-gray-500">{formatearHora(c.hora)}</div>
                   </div>
                 </div>
               </td>
@@ -85,3 +91,5 @@ export default function TriageTable({ consultasPagina, triajeStatus, onRealizarT
     </div>
   );
 }
+
+export default memo(TriageTable);

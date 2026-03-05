@@ -69,6 +69,21 @@ try {
         case 'POST':
             // Guardar configuración
             $input = json_decode(file_get_contents('php://input'), true);
+
+            $logoUrlNormalizado = null;
+            if (isset($input['logo_url'])) {
+                $logoRaw = trim((string)$input['logo_url']);
+                if ($logoRaw !== '') {
+                    $logoRaw = str_replace('\\\\', '/', $logoRaw);
+                    if (preg_match('~(?:^|/)(uploads/[^?#\\s]+)$~i', $logoRaw, $m) && !empty($m[1])) {
+                        $logoRaw = ltrim($m[1], '/');
+                    } else {
+                        $logoRaw = preg_replace('#^\./#', '', $logoRaw);
+                        $logoRaw = ltrim($logoRaw, '/');
+                    }
+                    $logoUrlNormalizado = $logoRaw;
+                }
+            }
             
             // Validar datos requeridos
             $required_fields = ['nombre_clinica', 'direccion', 'telefono', 'email'];
@@ -109,7 +124,7 @@ try {
                     $input['telefono'],
                     $input['email'],
                     $input['horario_atencion'] ?? '',
-                    $input['logo_url'] ?? null,
+                    $logoUrlNormalizado,
                     $input['website'] ?? null,
                     $input['ruc'] ?? null,
                     $input['especialidades'] ?? null,
@@ -140,7 +155,7 @@ try {
                     $input['telefono'],
                     $input['email'],
                     $input['horario_atencion'] ?? '',
-                    $input['logo_url'] ?? null,
+                    $logoUrlNormalizado,
                     $input['website'] ?? null,
                     $input['ruc'] ?? null,
                     $input['especialidades'] ?? null,

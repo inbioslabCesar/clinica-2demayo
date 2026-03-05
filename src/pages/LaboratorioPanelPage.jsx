@@ -9,6 +9,13 @@ function LaboratorioPanelPage() {
   const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
+  const [resumenPanel, setResumenPanel] = useState({
+    total: 0,
+    pendientes: 0,
+    completadas: 0,
+    hoy: 0,
+    vencidas: 0,
+  });
 
   useEffect(() => {
     fetch(BASE_URL + "api_examenes_laboratorio.php", {
@@ -18,20 +25,50 @@ function LaboratorioPanelPage() {
       .then(data => setExamenesDisponibles(data.examenes || []));
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== 'ordenes') return;
+
+    fetch(BASE_URL + "api_ordenes_laboratorio.php", {
+      credentials: 'include'
+    })
+      .then(res => res.json())
+      .then(data => {
+        const ordenes = data?.success && Array.isArray(data.ordenes) ? data.ordenes : [];
+        const hoyTexto = new Date().toDateString();
+        const resumen = {
+          total: ordenes.length,
+          pendientes: ordenes.filter(o => o.estado === 'pendiente').length,
+          completadas: ordenes.filter(o => o.estado === 'completado').length,
+          hoy: ordenes.filter(o => o.fecha && new Date(o.fecha).toDateString() === hoyTexto).length,
+          vencidas: ordenes.filter(o => Number(o.alarmas_vencidas || 0) > 0).length,
+        };
+        setResumenPanel(resumen);
+      })
+      .catch(() => {
+        setResumenPanel({ total: 0, pendientes: 0, completadas: 0, hoy: 0, vencidas: 0 });
+      });
+  }, [reloadKey, activeTab]);
+
+
   const handleSeleccionarOrden = async (orden) => {
-    // Si la orden está completada, buscar resultados
-    if (orden.estado === 'completado') {
-      // Usar consulta_id si existe, sino id de la orden
-      const idBusqueda = orden.consulta_id ? orden.consulta_id : orden.id;
-      const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`);
-      const data = await res.json();
-      if (data.success && data.resultado) {
-        setOrdenSeleccionada({ ...orden, resultados: data.resultado.resultados });
-        setActiveTab("procesar");
-        return;
-      }
+    if (orden.estado === 'cancelada') {
+      return;
     }
-    setOrdenSeleccionada(orden);
+    try {
+      const idBusqueda = orden.id;
+      const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+
+      if (data.success && data.resultado && data.resultado.resultados && typeof data.resultado.resultados === 'object') {
+        setOrdenSeleccionada({ ...orden, resultados: data.resultado.resultados });
+      } else {
+        setOrdenSeleccionada(orden);
+      }
+    } catch {
+      setOrdenSeleccionada(orden);
+    }
     setActiveTab("procesar");
   };
 
@@ -39,6 +76,30 @@ function LaboratorioPanelPage() {
     setOrdenSeleccionada(null);
     setReloadKey(k => k + 1);
     setActiveTab("ordenes");
+  };
+
+  const handleGuardadoResultados = async (saveResponse) => {
+    if (!ordenSeleccionada) return;
+
+    try {
+      const idBusqueda = ordenSeleccionada.id;
+      const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+
+      setOrdenSeleccionada((prev) => ({
+        ...(prev || ordenSeleccionada),
+        estado: saveResponse?.estado || 'completado',
+        resultados: data?.success && data?.resultado ? data.resultado.resultados : (prev?.resultados || {}),
+      }));
+      setReloadKey(k => k + 1);
+    } catch {
+      setOrdenSeleccionada((prev) => ({
+        ...(prev || ordenSeleccionada),
+        estado: saveResponse?.estado || prev?.estado || 'pendiente',
+      }));
+    }
   };
 
   const getExamenesNombres = (examenes) => {
@@ -92,17 +153,40 @@ function LaboratorioPanelPage() {
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50">
       {/* Header con gradiente */}
       <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-2xl">
-              🔬
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-xl">
+                🔬
+              </div>
+              <div>
+                <h1 className="text-xl font-bold">Panel de Laboratorio</h1>
+                <p className="text-purple-100">Gestión de órdenes y resultados de laboratorio</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">Panel de Laboratorio</h1>
-              <p className="text-purple-100">Gestión de órdenes y resultados de laboratorio</p>
-            </div>
-          </div>
 
+            {activeTab === 'ordenes' && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 w-full lg:w-auto lg:min-w-[520px]">
+                <div className="rounded-lg bg-white/15 px-3 py-2">
+                  <div className="text-[11px] text-purple-100">Total</div>
+                  <div className="text-lg font-bold leading-tight">{resumenPanel.total}</div>
+                </div>
+                <div className="rounded-lg bg-white/15 px-3 py-2">
+                  <div className="text-[11px] text-purple-100">Pendientes</div>
+                  <div className="text-lg font-bold leading-tight">{resumenPanel.pendientes}</div>
+                </div>
+                <div className="rounded-lg bg-white/15 px-3 py-2">
+                  <div className="text-[11px] text-purple-100">Completadas</div>
+                  <div className="text-lg font-bold leading-tight">{resumenPanel.completadas}</div>
+                </div>
+                <div className="rounded-lg bg-white/15 px-3 py-2">
+                  <div className="text-[11px] text-purple-100">Hoy</div>
+                  <div className="text-lg font-bold leading-tight">{resumenPanel.hoy}</div>
+                  <div className="text-[11px] text-purple-100">🚨 {resumenPanel.vencidas}</div>
+                </div>
+              </div>
+            )}
+          </div>
           {/* Navegación por tabs */}
           <div className="flex gap-1 bg-white/10 backdrop-blur-sm rounded-lg p-1">
             {tabs.map((tab) => (
@@ -123,11 +207,12 @@ function LaboratorioPanelPage() {
               </button>
             ))}
           </div>
+
         </div>
       </div>
 
       {/* Contenido principal */}
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-4">
         {activeTab === "ordenes" && (
           <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20">
             <OrdenesLaboratorioList key={reloadKey} onSeleccionarOrden={handleSeleccionarOrden} />
@@ -135,52 +220,60 @@ function LaboratorioPanelPage() {
         )}
 
         {activeTab === "procesar" && ordenSeleccionada && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {/* Botón volver */}
             <button 
               onClick={handleVolver} 
-              className="flex items-center gap-2 px-4 py-2 bg-white/80 backdrop-blur-sm rounded-lg shadow-md hover:bg-white transition-colors border border-white/20 text-gray-700 hover:text-gray-900"
+              className="flex items-center gap-2 px-3 py-1.5 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:bg-white transition-colors border border-white/20 text-gray-700 hover:text-gray-900"
             >
               <span>←</span>
               <span>Volver a órdenes</span>
             </button>
 
             {/* Información de la orden */}
-            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-6 text-white">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="text-purple-200 text-sm">Orden</div>
-                  <div className="text-xl font-bold">#{ordenSeleccionada.id}</div>
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-4 text-white">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+                  <div className="text-purple-200 text-xs">Orden</div>
+                  <div className="text-lg font-bold leading-tight">#{ordenSeleccionada.id}</div>
                 </div>
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="text-purple-200 text-sm">Paciente</div>
-                  <div className="text-xl font-bold">
+                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 col-span-2 lg:col-span-1">
+                  <div className="text-purple-200 text-xs">Paciente</div>
+                  <div className="text-lg font-bold leading-tight line-clamp-2">
                     {ordenSeleccionada.paciente_nombre} {ordenSeleccionada.paciente_apellido}
                   </div>
                 </div>
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="text-purple-200 text-sm">Consulta ID</div>
-                  <div className="text-xl font-bold">{ordenSeleccionada.consulta_id}</div>
+                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+                  <div className="text-purple-200 text-xs">Consulta ID</div>
+                  <div className="text-lg font-bold leading-tight">{ordenSeleccionada.consulta_id || '-'}</div>
                 </div>
-                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <div className="text-purple-200 text-sm">Estado</div>
-                  <div className={`text-xl font-bold ${
-                    ordenSeleccionada.estado === 'completado' ? 'text-green-300' : 'text-yellow-300'
+                <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+                  <div className="text-purple-200 text-xs">Estado</div>
+                  <div className={`text-lg font-bold leading-tight ${
+                    ordenSeleccionada.estado === 'completado'
+                      ? 'text-green-300'
+                      : ordenSeleccionada.estado === 'cancelada'
+                      ? 'text-red-300'
+                      : 'text-yellow-300'
                   }`}>
-                    {ordenSeleccionada.estado === 'completado' ? 'Completado' : 'Pendiente'}
+                    {ordenSeleccionada.estado === 'completado'
+                      ? 'Completado'
+                      : ordenSeleccionada.estado === 'cancelada'
+                      ? 'Cancelada'
+                      : 'Pendiente'}
                   </div>
                 </div>
               </div>
               
-              <div className="mt-4 bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                <div className="text-purple-200 text-sm mb-2">Exámenes solicitados</div>
-                <div className="text-lg">{getExamenesNombres(ordenSeleccionada.examenes)}</div>
+              <div className="mt-3 bg-white/10 backdrop-blur-sm rounded-lg p-3">
+                <div className="text-purple-200 text-xs mb-1">Exámenes solicitados</div>
+                <div className="text-sm leading-6 max-h-24 overflow-y-auto pr-1">{getExamenesNombres(ordenSeleccionada.examenes)}</div>
               </div>
             </div>
 
             {/* Formulario de resultados */}
-            <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20 p-6">
-              <LlenarResultadosForm orden={ordenSeleccionada} onVolver={handleVolver} onGuardado={handleVolver} />
+            <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20 p-4">
+              <LlenarResultadosForm orden={ordenSeleccionada} onVolver={handleVolver} onGuardado={handleGuardadoResultados} />
             </div>
           </div>
         )}

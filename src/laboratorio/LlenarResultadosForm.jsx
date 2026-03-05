@@ -10,6 +10,96 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("success");
 
+  const isTipoParametro = (tipo) => {
+    const t = String(tipo || 'Parámetro').trim().toLowerCase();
+    return t === '' || t === 'parámetro' || t === 'parametro';
+  };
+
+  const isTipoTextoLargo = (tipo) => String(tipo || '').trim().toLowerCase() === 'texto largo';
+
+  const isTipoCampo = (tipo) => String(tipo || '').trim().toLowerCase() === 'campo';
+
+  const isTipoTitulo = (tipo) => {
+    const t = String(tipo || '').trim().toLowerCase();
+    return t === 'título' || t === 'titulo' || t === 'subtítulo' || t === 'subtitulo';
+  };
+
+  const parseExamenesArray = (examenesRaw) => {
+    if (typeof examenesRaw === 'string') {
+      try {
+        return JSON.parse(examenesRaw);
+      } catch {
+        return examenesRaw.split(',').map(s => s.trim()).filter(s => s);
+      }
+    }
+    if (Array.isArray(examenesRaw)) return examenesRaw;
+    if (examenesRaw) return [examenesRaw];
+    return [];
+  };
+
+  const getExamenId = (examenItem) => (typeof examenItem === 'object' ? examenItem.id : examenItem);
+
+  const printFlagKey = (examId) => `${examId}__imprimir_examen`;
+  const alarmActiveKey = (examId) => `${examId}__alarma_activa`;
+  const alarmDaysKey = (examId) => `${examId}__alarma_dias`;
+
+  const parseSuggestedDaysFromTiempo = (tiempoRaw) => {
+    const raw = String(tiempoRaw || '').trim();
+    if (!raw) return null;
+
+    const normalized = raw
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    const dayMatch = normalized.match(/(\d+)\s*(dias?|d)\b/);
+    if (dayMatch) {
+      const days = parseInt(dayMatch[1], 10);
+      return Number.isFinite(days) && days > 0 ? days : null;
+    }
+
+    const hourMatch = normalized.match(/(\d+)\s*(horas?|hrs?|h)\b/);
+    if (hourMatch) {
+      const hours = parseInt(hourMatch[1], 10);
+      if (Number.isFinite(hours) && hours > 0) {
+        return Math.max(1, Math.ceil(hours / 24));
+      }
+    }
+
+    const numberMatch = normalized.match(/\b(\d+)\b/);
+    if (numberMatch) {
+      const fallback = parseInt(numberMatch[1], 10);
+      return Number.isFinite(fallback) && fallback > 0 ? fallback : null;
+    }
+
+    return null;
+  };
+
+  const isExamPrintable = (examId, source = resultados) => {
+    const raw = source[printFlagKey(examId)];
+    if (raw === undefined || raw === null || raw === '') return true;
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw === 1;
+    const normalized = String(raw).trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'si' || normalized === 'sí';
+  };
+
+  const isExamAlarmActive = (examId, source = resultados) => {
+    const raw = source[alarmActiveKey(examId)];
+    if (raw === undefined || raw === null || raw === '') return false;
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw === 1;
+    const normalized = String(raw).trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'si' || normalized === 'sí';
+  };
+
+  const getExamAlarmDays = (examId, source = resultados) => {
+    const raw = source[alarmDaysKey(examId)];
+    if (raw === undefined || raw === null) return '';
+    const asText = String(raw).trim();
+    return asText;
+  };
+
   useEffect(() => {
     fetch(BASE_URL + "api_examenes_laboratorio.php", {
       credentials: 'include'
@@ -20,41 +110,55 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
   useEffect(() => {
     if (!examenesDisponibles || examenesDisponibles.length === 0) return;
+    const examenesArray = parseExamenesArray(orden.examenes);
+
     if (orden.resultados && typeof orden.resultados === 'object') {
-      setResultados({ ...orden.resultados });
+      const preloaded = { ...orden.resultados };
+      examenesArray.forEach(exItem => {
+        const id = getExamenId(exItem);
+        const exObj = examenesDisponibles.find(e => e.id == id);
+        const exOrdenDetalle = Array.isArray(orden.examenes)
+          ? orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id))
+          : null;
+        const suggestedDays = parseSuggestedDaysFromTiempo(
+          (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
+        );
+
+        if (!Object.prototype.hasOwnProperty.call(preloaded, printFlagKey(id))) {
+          preloaded[printFlagKey(id)] = 1;
+        }
+        if (!Object.prototype.hasOwnProperty.call(preloaded, alarmActiveKey(id))) {
+          preloaded[alarmActiveKey(id)] = 0;
+        }
+        if (!Object.prototype.hasOwnProperty.call(preloaded, alarmDaysKey(id))) {
+          preloaded[alarmDaysKey(id)] = suggestedDays || '';
+        }
+      });
+      setResultados(preloaded);
     } else {
       const res = {};
       
-      // Procesar examenes - puede venir en diferentes formatos
-      let examenesArray = [];
-      if (typeof orden.examenes === 'string') {
-        try {
-          examenesArray = JSON.parse(orden.examenes);
-        } catch {
-          examenesArray = orden.examenes.split(',').map(s => s.trim()).filter(s => s);
-        }
-      } else if (Array.isArray(orden.examenes)) {
-        examenesArray = orden.examenes;
-      } else if (orden.examenes) {
-        examenesArray = [orden.examenes];
-      }
-      
       examenesArray.forEach(exId => {
         // Si exId es un objeto con id, extraer el id
-        const id = typeof exId === 'object' ? exId.id : exId;
+        const id = getExamenId(exId);
+        res[printFlagKey(id)] = 1;
+        res[alarmActiveKey(id)] = 0;
         const exObj = examenesDisponibles.find(e => e.id == id);
         // Fallback: usar parámetros adjuntos a la orden si el catálogo no los trae
         let exOrdenDetalle = null;
         if (Array.isArray(orden.examenes)) {
           exOrdenDetalle = orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id)) || null;
         }
+        res[alarmDaysKey(id)] = parseSuggestedDaysFromTiempo(
+          (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
+        ) || '';
         const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
           ? exObj.valores_referenciales
           : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
 
         if (paramsList.length > 0) {
           paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-            if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+            if ((isTipoParametro(param.tipo) || isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo)) && param.nombre && param.nombre.trim() !== "") {
               res[`${id}__${param.nombre}`] = "";
             }
           });
@@ -84,7 +188,58 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     return Number.isFinite(n) ? n : NaN;
   }
 
-  function evalFormula(formula, valoresPorNombre) {
+  function normalizeSexValue(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return "";
+    const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (normalized.startsWith('m')) return 'masculino';
+    if (normalized.startsWith('f')) return 'femenino';
+    return normalized;
+  }
+
+  function getPacienteContext() {
+    return {
+      edad: normalizeNumber(orden?.paciente_edad),
+      sexo: normalizeSexValue(orden?.paciente_sexo),
+    };
+  }
+
+  function getApplicableReference(param, paciente) {
+    if (!param || !Array.isArray(param.referencias) || param.referencias.length === 0) return null;
+
+    const refs = param.referencias.filter((r) => r && typeof r === 'object');
+    if (refs.length === 0) return null;
+
+    const { edad, sexo } = paciente || {};
+    if (!Number.isFinite(edad) || !sexo) {
+      return refs[0] || null;
+    }
+
+    const refMatch = refs.find((ref) => {
+      const refSexo = normalizeSexValue(ref.sexo || 'cualquiera');
+      const refEdadMin = normalizeNumber(ref.edad_min);
+      const refEdadMax = normalizeNumber(ref.edad_max);
+      const sexoMatch = !refSexo || refSexo === 'cualquiera' || refSexo === sexo;
+      const edadMinOk = !Number.isFinite(refEdadMin) || edad >= refEdadMin;
+      const edadMaxOk = !Number.isFinite(refEdadMax) || edad <= refEdadMax;
+      return sexoMatch && edadMinOk && edadMaxOk;
+    });
+
+    return refMatch || refs[0] || null;
+  }
+
+  function formatWithDecimals(value, decimales) {
+    if (value === null || value === undefined || value === "") return "";
+    const numVal = normalizeNumber(value);
+    if (!Number.isFinite(numVal)) return String(value);
+    if (decimales !== null && decimales !== undefined && decimales !== "" && !isNaN(parseInt(decimales, 10))) {
+      return Number(numVal).toFixed(parseInt(decimales, 10));
+    }
+    if (Number.isInteger(numVal)) return String(Math.trunc(numVal));
+    return String(numVal);
+  }
+
+  function evalFormula(formula, valoresPorNombre, decimales = null) {
     if (!formula) return "";
     let expr = formula;
     const nombres = Object.keys(valoresPorNombre).sort((a, b) => b.length - a.length);
@@ -94,12 +249,20 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       // Escapar el nombre para usar en RegExp
       const safeName = nombre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(safeName, 'g');
-      expr = expr.replace(regex, Number.isFinite(numVal) ? numVal : 0);
+      if (!regex.test(expr)) {
+        return;
+      }
+      if (!Number.isFinite(numVal)) {
+        expr = "";
+        return;
+      }
+      expr = expr.replace(regex, numVal);
     });
+    if (!expr || expr.trim() === "") return "";
     try {
       const result = evaluate(expr);
       if (typeof result === "number" && !isNaN(result)) {
-        return result.toFixed(1);
+        return formatWithDecimals(result, decimales);
       }
       return result;
     } catch {
@@ -142,6 +305,41 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     setResultados(nuevos);
   };
 
+  const handlePrintToggle = (examId, checked) => {
+    setResultados(prev => ({
+      ...prev,
+      [printFlagKey(examId)]: checked ? 1 : 0,
+    }));
+  };
+
+  const handleAlarmToggle = (examId, checked, suggestedDays = null) => {
+    setResultados(prev => {
+      const next = {
+        ...prev,
+        [alarmActiveKey(examId)]: checked ? 1 : 0,
+      };
+
+      if (!checked) {
+        next[alarmDaysKey(examId)] = '';
+      } else {
+        const currentDays = String(prev[alarmDaysKey(examId)] ?? '').trim();
+        if (!currentDays && suggestedDays && Number.isFinite(Number(suggestedDays)) && Number(suggestedDays) > 0) {
+          next[alarmDaysKey(examId)] = String(parseInt(suggestedDays, 10));
+        }
+      }
+
+      return next;
+    });
+  };
+
+  const handleAlarmDaysChange = (examId, value) => {
+    const digitsOnly = String(value || '').replace(/[^0-9]/g, '');
+    setResultados(prev => ({
+      ...prev,
+      [alarmDaysKey(examId)]: digitsOnly,
+    }));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setGuardando(true);
@@ -149,28 +347,52 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
     try {
       // Antes de enviar, evaluar todas las fórmulas y asegurarnos de inyectar sus valores en el objeto `resultados`
-      const resultadosToSend = { ...resultados };
-      // Procesar examenes - puede venir en diferentes formatos (misma lógica que en useEffect)
-      let examenesArray = [];
-      if (typeof orden.examenes === 'string') {
-        try {
-          examenesArray = JSON.parse(orden.examenes);
-        } catch {
-          examenesArray = orden.examenes.split(',').map(s => s.trim()).filter(s => s);
-        }
-      } else if (Array.isArray(orden.examenes)) {
-        examenesArray = orden.examenes;
-      } else if (orden.examenes) {
-        examenesArray = [orden.examenes];
-      }
+      const examenesArray = parseExamenesArray(orden.examenes);
+      const examIdsSet = new Set(
+        examenesArray
+          .map(getExamenId)
+          .map(id => String(id))
+          .filter(id => id !== "" && id !== "0")
+      );
+      const resultadosToSend = Object.fromEntries(
+        Object.entries(resultados).filter(([key]) => {
+          const keyText = String(key);
+          const examPrefix = keyText.includes('__') ? keyText.split('__')[0] : keyText;
+          return examIdsSet.has(examPrefix);
+        })
+      );
 
       // Para cada examen, buscar sus parámetros y calcular fórmulas si las tiene
       examenesArray.forEach(exId => {
-        const id = typeof exId === 'object' ? exId.id : exId;
+        const id = getExamenId(exId);
         const exObj = examenesDisponibles.find(e => e.id == id);
         const exOrdenDetalle = Array.isArray(orden.examenes)
           ? orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id))
           : null;
+        const suggestedDays = parseSuggestedDaysFromTiempo(
+          (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
+        );
+
+        if (!Object.prototype.hasOwnProperty.call(resultadosToSend, printFlagKey(id))) {
+          resultadosToSend[printFlagKey(id)] = 1;
+        }
+        if (!Object.prototype.hasOwnProperty.call(resultadosToSend, alarmActiveKey(id))) {
+          resultadosToSend[alarmActiveKey(id)] = 0;
+        }
+        if (!Object.prototype.hasOwnProperty.call(resultadosToSend, alarmDaysKey(id))) {
+          resultadosToSend[alarmDaysKey(id)] = suggestedDays || '';
+        }
+
+        const alarmActive = isExamAlarmActive(id, resultadosToSend);
+        const alarmDaysText = String(resultadosToSend[alarmDaysKey(id)] ?? '').trim();
+        const alarmDaysNum = parseInt(alarmDaysText, 10);
+        if (alarmActive && Number.isFinite(alarmDaysNum) && alarmDaysNum > 0) {
+          resultadosToSend[alarmDaysKey(id)] = String(alarmDaysNum);
+        } else if (alarmActive && suggestedDays) {
+          resultadosToSend[alarmDaysKey(id)] = String(parseInt(suggestedDays, 10));
+        } else {
+          resultadosToSend[alarmDaysKey(id)] = '';
+        }
         const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
           ? exObj.valores_referenciales
           : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
@@ -178,15 +400,15 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         // construir mapa de valores por nombre para esta iteración (usar los valores ya calculados o ingresados)
         const valoresPorNombre = {};
         paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-          if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+          if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
             valoresPorNombre[param.nombre] = resultadosToSend[`${id}__${param.nombre}`] || "";
           }
         });
         // evaluar y almacenar fórmulas
         paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-          if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+          if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
             if (param.formula && param.formula.trim() !== "") {
-              const computed = evalFormula(param.formula, valoresPorNombre);
+              const computed = evalFormula(param.formula, valoresPorNombre, param.decimales);
               // actualizar tanto el mapa local como el objeto a enviar
               valoresPorNombre[param.nombre] = computed === null || computed === undefined ? "" : computed;
               resultadosToSend[`${id}__${param.nombre}`] = computed === null || computed === undefined ? "" : computed;
@@ -195,12 +417,16 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         });
       });
 
-      // Usar orden.consulta_id si existe, sino orden.id
-      const consultaId = orden.consulta_id ? orden.consulta_id : orden.id;
       const res = await fetch(BASE_URL + "api_resultados_laboratorio.php", {
         method: "POST",
+        credentials: 'include',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consulta_id: consultaId, tipo_examen: "varios", resultados: resultadosToSend }),
+        body: JSON.stringify({
+          orden_id: orden.id,
+          consulta_id: orden.consulta_id || null,
+          tipo_examen: "varios",
+          resultados: resultadosToSend,
+        }),
       });
       const data = await res.json();
       
@@ -208,7 +434,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         setMsg("✅ Resultados guardados correctamente");
         setMsgType("success");
         setTimeout(() => {
-          onGuardado && onGuardado();
+          onGuardado && onGuardado(data);
         }, 1000);
       } else {
         setMsg("❌ " + (data.error || "Error al guardar"));
@@ -225,26 +451,29 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const getParameterStatus = (param, valor) => {
     let fueraDeRango = false;
     let min = null, max = null;
-    
+
+    const paciente = getPacienteContext();
+    const referenciaAplicada = getApplicableReference(param, paciente);
+
     if (param && param.min !== null && param.min !== "") {
       const m = normalizeNumber(param.min);
       if (Number.isFinite(m)) min = m;
-    } else if (param && param.referencias && param.referencias[0]) {
-      const mRef = normalizeNumber(param.referencias[0].valor_min);
+    } else if (referenciaAplicada) {
+      const mRef = normalizeNumber(referenciaAplicada.valor_min);
       if (Number.isFinite(mRef)) min = mRef;
     }
-    
+
     if (param && param.max !== null && param.max !== "") {
       const M = normalizeNumber(param.max);
       if (Number.isFinite(M)) max = M;
-    } else if (param && param.referencias && param.referencias[0]) {
-      const MRef = normalizeNumber(param.referencias[0].valor_max);
+    } else if (referenciaAplicada) {
+      const MRef = normalizeNumber(referenciaAplicada.valor_max);
       if (Number.isFinite(MRef)) max = MRef;
     }
 
     // Si no hay min/max numéricos, intentar parsear desde el texto de referencia
-    if ((min === null && max === null) && param && Array.isArray(param.referencias) && param.referencias[0]) {
-      const fromText = parseMinMaxFromText(param.referencias[0].valor);
+    if ((min === null && max === null) && referenciaAplicada && referenciaAplicada.valor) {
+      const fromText = parseMinMaxFromText(referenciaAplicada.valor);
       if (fromText.min !== null) min = fromText.min;
       if (fromText.max !== null) max = fromText.max;
     }
@@ -255,50 +484,41 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       if (max !== null && valorNum > max) fueraDeRango = true;
     }
 
-    return { fueraDeRango, min, max };
+    return { fueraDeRango, min, max, referenciaAplicada };
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header del formulario */}
-      <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-6 text-white">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-2xl">
+      <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-4 text-white">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-lg">
             📊
           </div>
           <div>
-            <h3 className="text-xl font-bold">Procesar Resultados de Laboratorio</h3>
-            <p className="text-purple-100">Complete los valores para cada examen solicitado</p>
+            <h3 className="text-lg font-bold">Procesar Resultados de Laboratorio</h3>
+            <p className="text-purple-100 text-sm">Complete los valores de cada examen solicitado</p>
           </div>
         </div>
       </div>
 
       {/* Formulario principal */}
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6">
-          <div className="max-h-[600px] overflow-y-auto space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-4">
+          <div className="max-h-[600px] overflow-y-auto space-y-4">
             {(() => {
-              // Procesar examenes - mismo lógica que en useEffect
-              let examenesArray = [];
-              if (typeof orden.examenes === 'string') {
-                try {
-                  examenesArray = JSON.parse(orden.examenes);
-                } catch {
-                  examenesArray = orden.examenes.split(',').map(s => s.trim()).filter(s => s);
-                }
-              } else if (Array.isArray(orden.examenes)) {
-                examenesArray = orden.examenes;
-              } else if (orden.examenes) {
-                examenesArray = [orden.examenes];
-              }
+              const examenesArray = parseExamenesArray(orden.examenes);
               
               return examenesArray.map(exId => {
                 // Si exId es un objeto con id, extraer el id
-                const id = typeof exId === 'object' ? exId.id : exId;
+                const id = getExamenId(exId);
                 const exObj = examenesDisponibles.find(e => e.id == id);
                 const exOrdenDetalle = Array.isArray(orden.examenes)
                   ? orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id))
                   : null;
+                const suggestedAlarmDays = parseSuggestedDaysFromTiempo(
+                  (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
+                );
                 const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
                   ? exObj.valores_referenciales
                   : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
@@ -307,7 +527,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   // Construir un mapa nombre->valor para este examen usando la lista efectiva de parámetros
                   const valoresPorNombre = {};
                   paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-                    if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+                    if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
                       valoresPorNombre[param.nombre] = resultados[`${id}__${param.nombre}`] || "";
                     }
                   });
@@ -316,27 +536,131 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   return (
                     <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
                       {/* Header del examen */}
-                      <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-200">
-                        <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
-                          🧪
+                      <div className="flex items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
+                            🧪
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-bold text-gray-900">{examName}</h4>
+                            <p className="text-sm text-gray-600">Complete todos los parámetros requeridos</p>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="text-lg font-bold text-gray-900">{examName}</h4>
-                          <p className="text-sm text-gray-600">Complete todos los parámetros requeridos</p>
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                          <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={isExamPrintable(id)}
+                              onChange={(e) => handlePrintToggle(id, e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Imprimir este examen</span>
+                          </label>
+                          <div className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isExamAlarmActive(id)}
+                                onChange={(e) => handleAlarmToggle(id, e.target.checked, suggestedAlarmDays)}
+                                className="h-4 w-4"
+                              />
+                              <span>Alarma</span>
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={getExamAlarmDays(id)}
+                              onChange={(e) => handleAlarmDaysChange(id, e.target.value)}
+                              disabled={!isExamAlarmActive(id)}
+                              className="w-14 px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100 disabled:text-gray-400"
+                              placeholder={suggestedAlarmDays ? String(suggestedAlarmDays) : 'días'}
+                            />
+                            <span className="text-xs text-gray-500">días</span>
+                          </div>
                         </div>
                       </div>
 
+                      {!isExamPrintable(id) && (
+                        <div className="mb-4 px-3 py-2 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
+                          Este examen no se incluirá en el PDF.
+                        </div>
+                      )}
+
                       {/* Parámetros del examen */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {(() => {
-                          return (paramsList || []).filter(p => p && typeof p === 'object').map((param) => {
-                          if ((param.tipo === undefined || param.tipo === "Parámetro") && param.nombre && param.nombre.trim() !== "") {
+                      {isExamPrintable(id) && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {(() => {
+                            return (paramsList || []).filter(p => p && typeof p === 'object').map((param, idx) => {
+                          if (isTipoTitulo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
+                            return (
+                              <div key={`title-${idx}-${param.nombre}`} className="md:col-span-2">
+                                <div
+                                  className="rounded-lg px-3 py-2"
+                                  style={{
+                                    background: param.color_fondo || '#f3f4f6',
+                                    color: param.color_texto || '#111827',
+                                    fontWeight: param.negrita ? 'bold' : 'normal',
+                                    fontStyle: param.cursiva ? 'italic' : 'normal',
+                                    textAlign: param.alineacion || 'left',
+                                  }}
+                                >
+                                  {param.nombre}
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (isTipoTextoLargo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
+                            const textoValue = resultados[`${id}__${param.nombre}`] || "";
+                            return (
+                              <div key={`text-${idx}-${param.nombre}`} className="md:col-span-2 space-y-2">
+                                <label className="block text-sm font-semibold text-gray-700">
+                                  {param.nombre}
+                                </label>
+                                <textarea
+                                  name={`${id}__${param.nombre}`}
+                                  value={textoValue}
+                                  onChange={handleChange}
+                                  rows={Number(param.rows) > 0 ? Number(param.rows) : 4}
+                                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
+                                  placeholder="Ingrese texto libre"
+                                />
+                              </div>
+                            );
+                          }
+
+                          if (isTipoCampo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
+                            const fieldValue = resultados[`${id}__${param.nombre}`] || "";
+                            return (
+                              <div key={`campo-${idx}-${param.nombre}`} className="space-y-2">
+                                <label className="block text-sm font-semibold text-gray-700">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span>{param.nombre}</span>
+                                  </div>
+                                  {param.metodologia && (
+                                    <span className="text-xs text-gray-500 font-normal">Metodología: {param.metodologia}</span>
+                                  )}
+                                </label>
+                                <input
+                                  type="text"
+                                  name={`${id}__${param.nombre}`}
+                                  value={fieldValue}
+                                  onChange={handleChange}
+                                  className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                                  placeholder="Ingrese el valor"
+                                />
+                              </div>
+                            );
+                          }
+
+                          if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
                             const tieneFormula = param.formula && param.formula.trim() !== "";
                             let valor = resultados[`${id}__${param.nombre}`] || "";
 
                             // Nombre a mostrar: si viene como "Item 1" y este examen solo tiene un parámetro,
                             // mostrar el nombre del examen para una mejor UX, manteniendo la clave original.
-                            const parametrosValidos = (paramsList || []).filter(p => p && typeof p === 'object' && (p.tipo === undefined || p.tipo === "Parámetro") && p.nombre && p.nombre.trim() !== "");
+                            const parametrosValidos = (paramsList || []).filter(p => p && typeof p === 'object' && isTipoParametro(p.tipo) && p.nombre && p.nombre.trim() !== "");
                             const defaults = parametrosValidos.filter(p => /^item\s*\d+$/i.test((p.nombre || '').trim()));
                             const isDefaultItem = /^item\s*\d+$/i.test((param.nombre || '').trim());
                             const defaultIndex = isDefaultItem ? defaults.findIndex(p => p === param) : -1;
@@ -345,26 +669,24 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                               : param.nombre;
                             
                             if (tieneFormula) {
-                              valor = evalFormula(param.formula, valoresPorNombre);
+                              valor = evalFormula(param.formula, valoresPorNombre, param.decimales);
                             }
                             
                             if (typeof valor === 'number' && isNaN(valor)) valor = "";
                             if (valor === undefined || valor === null) valor = "";
 
-                            const { fueraDeRango, min, max } = getParameterStatus(param, valor);
+                            const { fueraDeRango, min, max, referenciaAplicada } = getParameterStatus(param, valor);
                             // Texto de referencia a mostrar: soporta rango (min/max) o valor textual
                             let referenciaTexto = null;
                             if (min !== null || max !== null) {
                               referenciaTexto = `Rango de referencia: ${min !== null ? min : '∞'} - ${max !== null ? max : '∞'}`;
-                            } else if (Array.isArray(param.referencias) && param.referencias.length > 0) {
-                              const r0 = param.referencias[0] || {};
-                              if (r0.valor && String(r0.valor).trim() !== '') {
-                                referenciaTexto = `Referencia: ${r0.valor}`;
+                            } else if (referenciaAplicada && referenciaAplicada.valor && String(referenciaAplicada.valor).trim() !== '') {
+                                referenciaTexto = `Referencia: ${referenciaAplicada.valor}`;
                               }
-                            }
+
 
                             return (
-                              <div key={param.nombre} className="space-y-2">
+                              <div key={`param-${idx}-${param.nombre}`} className="space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
                                   <div className="flex items-center gap-2 mb-1">
                                     <span>{displayName}</span>
@@ -391,7 +713,6 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                     value={valor}
                                     onChange={tieneFormula ? undefined : handleChange}
                                     readOnly={tieneFormula}
-                                    required
                                     className={`w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 ${
                                       fueraDeRango
                                         ? 'border-red-400 bg-red-50 text-red-700 font-semibold focus:ring-2 focus:ring-red-500'
@@ -424,37 +745,80 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                               </div>
                             );
                           }
-                          return null;
-                        });
-                        })()}
-                      </div>
+                            return null;
+                          });
+                          })()}
+                        </div>
+                      )}
                     </div>
                   );
                 } else if (exObj) {
                   // Examen sin parámetros definidos
                   return (
                     <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
-                          🧪
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
+                            🧪
+                          </div>
+                          <h4 className="text-lg font-bold text-gray-900">{exObj.nombre}</h4>
                         </div>
-                        <h4 className="text-lg font-bold text-gray-900">{exObj.nombre}</h4>
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                          <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={isExamPrintable(id)}
+                              onChange={(e) => handlePrintToggle(id, e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Imprimir este examen</span>
+                          </label>
+                          <div className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isExamAlarmActive(id)}
+                                onChange={(e) => handleAlarmToggle(id, e.target.checked, parseSuggestedDaysFromTiempo(exObj?.tiempo_resultado || ''))}
+                                className="h-4 w-4"
+                              />
+                              <span>Alarma</span>
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={getExamAlarmDays(id)}
+                              onChange={(e) => handleAlarmDaysChange(id, e.target.value)}
+                              disabled={!isExamAlarmActive(id)}
+                              className="w-14 px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100 disabled:text-gray-400"
+                              placeholder={parseSuggestedDaysFromTiempo(exObj?.tiempo_resultado || '') ? String(parseSuggestedDaysFromTiempo(exObj?.tiempo_resultado || '')) : 'días'}
+                            />
+                            <span className="text-xs text-gray-500">días</span>
+                          </div>
+                        </div>
                       </div>
-                      
-                      <div className="space-y-2">
-                        <label className="block text-sm font-semibold text-gray-700">
-                          Resultado del examen
-                        </label>
-                        <textarea
-                          name={`${id}`}
-                          value={resultados[`${id}`] || ""}
-                          onChange={handleChange}
-                          rows={4}
-                          required
-                          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
-                          placeholder="Ingrese el resultado completo del examen..."
-                        />
-                      </div>
+
+                      {!isExamPrintable(id) && (
+                        <div className="mb-4 px-3 py-2 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
+                          Este examen no se incluirá en el PDF.
+                        </div>
+                      )}
+
+                      {isExamPrintable(id) && (
+                        <div className="space-y-2">
+                          <label className="block text-sm font-semibold text-gray-700">
+                            Resultado del examen
+                          </label>
+                          <textarea
+                            name={`${id}`}
+                            value={resultados[`${id}`] || ""}
+                            onChange={handleChange}
+                            rows={4}
+                            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all duration-200"
+                            placeholder="Ingrese el resultado completo del examen..."
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 }

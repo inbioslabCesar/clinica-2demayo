@@ -87,13 +87,13 @@ function DisponibilidadMedicos() {
   return (
     <div className="mb-6 w-full">
       <h3 className="font-extrabold text-xl mb-4 text-center text-blue-700 tracking-tight">Disponibilidad de Médicos</h3>
-      <div className="flex flex-col md:flex-row gap-8 mb-4 items-start justify-center w-full">
+      <div className="flex flex-col md:flex-row gap-5 mb-4 items-start justify-center w-full">
         {/* Calendario estilizado */}
-        <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl shadow-lg border border-blue-200 p-4 flex flex-col items-center w-full max-w-[320px] md:max-w-lg">
+        <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl shadow-lg border border-blue-200 p-3 md:p-4 flex flex-col items-center w-full max-w-[320px] md:max-w-[360px]">
           <Calendar
             onChange={setSelectedDate}
             value={selectedDate}
-            className="border rounded-xl shadow text-base md:text-lg w-[280px] h-[340px] md:w-[360px] md:h-[420px] bg-white"
+            className="border rounded-xl shadow text-base md:text-lg w-[280px] h-[340px] md:w-[330px] md:h-[390px] bg-white"
             tileContent={({ date, view }) => {
               if (view !== 'month') return null;
               const bloques = getBloquesParaFecha(date);
@@ -120,18 +120,18 @@ function DisponibilidadMedicos() {
           />
         </div>
         {/* Tabla y búsqueda estilizadas */}
-        <div className="flex-1 w-full max-w-lg">
+        <div className="flex-1 w-full min-w-0">
           <div className="flex justify-end mb-3">
             <input
               type="text"
               placeholder="Buscar por nombre o especialidad..."
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
-              className="border-2 border-blue-200 rounded-full px-4 py-2 shadow focus:ring-2 focus:ring-blue-300 w-full max-w-xs text-base"
+              className="border-2 border-blue-200 rounded-full px-4 py-2 shadow focus:ring-2 focus:ring-blue-300 w-full max-w-sm text-base"
             />
           </div>
           {loading ? <div className="text-center text-blue-600 font-semibold">Cargando...</div> : (
-            <div className="overflow-x-auto bg-white rounded-xl shadow border border-gray-200" style={{ maxHeight: 260, minHeight: 80 }}>
+            <div className="overflow-x-auto bg-white rounded-xl shadow border border-gray-200" style={{ maxHeight: 'clamp(240px, 44vh, 360px)', minHeight: 120 }}>
               <table className="min-w-full text-[12px] md:text-base border-separate border-spacing-y-1">
                 <thead className="bg-blue-50">
                   <tr>

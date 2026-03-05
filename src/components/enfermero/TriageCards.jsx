@@ -1,15 +1,21 @@
+import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
-export default function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
-  // Ordenar por fecha y hora descendente (último primero)
-  const consultasOrdenadas = [...consultasPagina].sort((a, b) => {
-    const fechaA = new Date(`${a.fecha}T${a.hora}`);
-    const fechaB = new Date(`${b.fecha}T${b.hora}`);
-    return fechaB - fechaA;
-  });
+function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+  const formatearFecha = (fecha) => {
+    if (!fecha) return '-';
+    const partes = String(fecha).split('-');
+    if (partes.length !== 3) return fecha;
+    return `${partes[2]}/${partes[1]}/${partes[0]}`;
+  };
+
+  const formatearHora = (hora) => {
+    if (!hora) return '-';
+    return String(hora).slice(0, 5);
+  };
   return (
     <div className="lg:hidden p-4 space-y-4">
-      {consultasOrdenadas.map((c) => (
+      {consultasPagina.map((c) => (
         <div key={c.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
@@ -50,7 +56,7 @@ export default function TriageCards({ consultasPagina, triajeStatus, onRealizarT
               <Icon iconName="Calendar" className="text-lg text-gray-400" />
               <div>
                 <div className="text-xs text-gray-500">Fecha y Hora</div>
-                <div className="text-sm text-gray-800">{c.fecha} - {c.hora}</div>
+                <div className="text-sm text-gray-800">{formatearFecha(c.fecha)} - {formatearHora(c.hora)}</div>
               </div>
             </div>
           </div>
@@ -66,3 +72,5 @@ export default function TriageCards({ consultasPagina, triajeStatus, onRealizarT
     </div>
   );
 }
+
+export default memo(TriageCards);

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { CobroModuloFinal } from "../components/cobro";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
@@ -7,9 +6,6 @@ import { BASE_URL } from "../config/config";
 export default function CotizarOperacionPage() {
     const [medicos, setMedicos] = useState([]);
   
-  const [mostrarCobro, setMostrarCobro] = useState(false);
-  const [detallesCotizacion, setDetallesCotizacion] = useState([]);
-  const [totalCotizacion, setTotalCotizacion] = useState(0);
   const { pacienteId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -302,7 +298,7 @@ export default function CotizarOperacionPage() {
       setMensaje("Selecciona al menos una operación/cirugía.");
       return;
     }
-    // Construir detalles para el Módulo de Cobros, incluyendo medico_id y especialidad
+    // Construir detalles para cotización, incluyendo medico_id y especialidad
     const detalles = seleccionados.map(tid => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
       const cantidad = cantidades[tid] || 1;
@@ -328,10 +324,48 @@ export default function CotizarOperacionPage() {
         especialidad: tarifa.especialidad || ""
       } : null;
     }).filter(Boolean);
-    setDetallesCotizacion(detalles);
-    setTotalCotizacion(calcularTotal());
-    setMostrarCobro(true);
+
+    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+    const sp = new URLSearchParams(location.search);
+    const cotizacionId = sp.get('cotizacion_id');
+
+    const payload = cotizacionId
+      ? {
+          accion: 'editar',
+          cotizacion_id: Number(cotizacionId),
+          detalles,
+          total,
+          motivo: 'Edición de cotización desde cotizador de Operaciones'
+        }
+      : {
+          paciente_id: Number(pacienteId),
+          total,
+          detalles,
+          observaciones: 'Cotización registrada desde cotizador de Operaciones'
+        };
+
+    try {
+      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || 'No se pudo registrar la cotización');
+      }
+
+      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
+      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+        navigate('/cotizaciones');
+      });
+    } catch (error) {
+      Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
+    }
   };
+
+  const mostrarPanelDerecho = seleccionados.length > 0;
 
   return (
     <div className="max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
@@ -370,8 +404,8 @@ export default function CotizarOperacionPage() {
           <span className="font-bold">Paciente:</span> {paciente.nombres || paciente.nombre} {paciente.apellidos || paciente.apellido} (DNI: {paciente.dni})
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="mb-4 max-h-[500px] overflow-y-auto md:max-w-xl mx-auto">
+      <div className={`grid grid-cols-1 gap-8 ${mostrarPanelDerecho ? 'md:grid-cols-2' : ''}`}>
+        <div className="mb-4 max-h-[500px] overflow-y-auto w-full">
           <div className="font-bold mb-2 flex flex-col gap-2">
             <span>Operaciones/Cirugías disponibles:</span>
             <input
@@ -379,7 +413,7 @@ export default function CotizarOperacionPage() {
               placeholder="Buscar operación/cirugía..."
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
-              className="border px-3 py-2 rounded-lg w-full max-w-md"
+              className="border px-3 py-2 rounded-lg w-full"
             />
           </div>
           {tarifasFiltradas.length === 0 ? (
@@ -430,8 +464,9 @@ export default function CotizarOperacionPage() {
             </ul>
           )}
         </div>
-        {seleccionados.length > 0 && (
-          !mostrarCobro && (
+        {mostrarPanelDerecho && (
+          <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit">
+          {seleccionados.length > 0 && (
             <div className="bg-blue-50 rounded-2xl p-6 border border-blue-200 shadow mb-4 max-h-[500px] overflow-y-auto">
               <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
                 <span>📝</span>Resumen de Cotización
@@ -466,34 +501,19 @@ export default function CotizarOperacionPage() {
                   disabled={cajaEstado === 'cerrada'}
                   className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                 >
-                  <span>🛒</span>Registrar Cotización
+                  Registrar Cotización
                 </button>
               )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">
-                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cobrar'}.</span>
+                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cotizar'}.</span>
                   <button onClick={() => navigate('/contabilidad')} className="text-sm bg-yellow-100 text-yellow-800 px-3 py-1 rounded border border-yellow-300 hover:bg-yellow-200">Ir a Contabilidad</button>
                 </div>
               )}
             </div>
-          )
+          )}
+          </div>
         )}
-
-      {mostrarCobro && paciente && (
-        <div className="w-full md:max-w-xl mx-auto">
-          <CobroModuloFinal
-            paciente={paciente}
-            servicio={{ key: "operacion", label: "Operaciones/Cirugías Mayores" }}
-            detalles={detallesCotizacion}
-            total={totalCotizacion}
-            onCobroCompleto={() => {
-              setMostrarCobro(false);
-              setMensaje("Cotización procesada correctamente.");
-            }}
-            onCancelar={() => setMostrarCobro(false)}
-          />
-        </div>
-      )}
       </div>
       {mensaje && (
         <div className="mt-4 text-center font-semibold text-green-600">

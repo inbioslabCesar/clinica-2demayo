@@ -268,11 +268,21 @@ export default function ExamenesLaboratorioCrudPage() {
   // Obtener categorías únicas
   const categorias = Array.from(new Set(examenes.map(ex => ex.categoria).filter(Boolean)));
 
+  const normalizeSearchText = (value) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
   const filtered = examenes.filter(
-    (ex) =>
-      (ex.nombre.toLowerCase().includes(search.toLowerCase()) ||
-      ex.metodologia.toLowerCase().includes(search.toLowerCase())) &&
-      (categoriaFilter === "" || ex.categoria === categoriaFilter)
+    (ex) => {
+      const terms = normalizeSearchText(search).split(/\s+/).filter(Boolean);
+      const searchable = normalizeSearchText(`${ex.nombre} ${ex.metodologia}`);
+      const matchesSearch = terms.length === 0 || terms.every((term) => searchable.includes(term));
+      const matchesCategory = categoriaFilter === "" || ex.categoria === categoriaFilter;
+      return matchesSearch && matchesCategory;
+    }
   );
   
   // Calcular estadísticas

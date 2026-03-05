@@ -9,10 +9,19 @@ export default function ResultadosLaboratorioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const isMetaResultKey = (key) => {
+    const k = String(key || "");
+    return (
+      k.endsWith("__imprimir_examen") ||
+      k.endsWith("__alarma_activa") ||
+      k.endsWith("__alarma_dias")
+    );
+  };
+
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`).then(res => res.json()),
+      fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' }).then(res => res.json()),
       fetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: 'include' }).then(res => res.json())
     ]).then(([resLab, resEx]) => {
       if (resLab.success) setResultados(resLab.resultados || []);
@@ -196,6 +205,7 @@ export default function ResultadosLaboratorioPage() {
                     // Agrupar resultados por examen principal
                     const agrupados = {};
                     Object.entries(res.resultados).forEach(([ex, val]) => {
+                      if (isMetaResultKey(ex)) return;
                       let exId = ex;
                       let nombreParam = null;
                       if (ex.includes("__")) {
@@ -247,9 +257,10 @@ export default function ResultadosLaboratorioPage() {
                               const { min, max } = getMinMax(paramItem);
                               const refText = (paramItem && Array.isArray(paramItem.referencias) && paramItem.referencias[0] && typeof paramItem.referencias[0].valor === 'string' && paramItem.referencias[0].valor.trim() !== '') ? paramItem.referencias[0].valor : '';
                               const isOut = paramItem && fueraDeRango(val, paramItem);
+                              const nombreDuplicado = normalizeName(displayName) === normalizeName(examName);
                               return (
                                 <li key={ex}>
-                                  <b>{displayName}:</b>{' '}
+                                  {!nombreDuplicado && <><b>{displayName}:</b>{' '}</>}
                                   <span className={isOut ? 'text-red-600 font-bold' : ''}>{val}{unidad}</span>
                                   {(min !== null || max !== null || refText) && (
                                     <span className="ml-2 text-xs text-gray-500">[

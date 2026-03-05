@@ -3,6 +3,26 @@ import Swal from 'sweetalert2';
 import { BASE_URL } from '../config/config.js';
 
 function ConfiguracionPage() {
+  const normalizeLogoForSave = (value) => {
+    let raw = String(value || '').trim();
+    if (!raw) return '';
+    raw = raw.replace(/\\/g, '/');
+    const uploadsMatch = raw.match(/(?:^|\/)(uploads\/[^?#\s]+)$/i);
+    if (uploadsMatch && uploadsMatch[1]) {
+      return uploadsMatch[1].replace(/^\/+/, '');
+    }
+    raw = raw.replace(/^\.\//, '').replace(/^\/+/, '');
+    return raw;
+  };
+
+  const resolveLogoPreviewUrl = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (/^(https?:\/\/|data:|blob:)/i.test(raw)) return raw;
+    const base = String(BASE_URL || '').replace(/\/+$/, '');
+    return `${base}/${raw.replace(/^\/+/, '')}`;
+  };
+
   const [configuracion, setConfiguracion] = useState({
     nombre_clinica: '',
     direccion: '',
@@ -97,6 +117,21 @@ function ConfiguracionPage() {
     }));
   };
 
+  const subirArchivoLogo = async (file) => {
+    const form = new FormData();
+    form.append('logo', file);
+    const resp = await fetch(BASE_URL + 'api_upload_logo.php', {
+      method: 'POST',
+      credentials: 'include',
+      body: form
+    });
+    const j = await resp.json();
+    if (!(resp.ok && j.success && j.path)) {
+      throw new Error(j.error || 'Error subiendo archivo');
+    }
+    return String(j.path);
+  };
+
   const guardarConfiguracion = async () => {
     // Validar campos requeridos
     if (!configuracion.nombre_clinica || !configuracion.direccion || 
@@ -125,13 +160,27 @@ function ConfiguracionPage() {
     setLoading(true);
     
     try {
+      let logoUrlFinal = normalizeLogoForSave(configuracion.logo_url);
+
+      if (configuracion._logo_file) {
+        setUploadingLogo(true);
+        const uploadedPath = await subirArchivoLogo(configuracion._logo_file);
+        logoUrlFinal = normalizeLogoForSave(uploadedPath);
+      }
+
+      const { _logo_file, ...restConfig } = configuracion;
+      const payload = {
+        ...restConfig,
+        logo_url: logoUrlFinal,
+      };
+
       const response = await fetch(BASE_URL + 'api_configuracion.php', {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(configuracion)
+        body: JSON.stringify(payload)
       });
 
       if (response.ok) {
@@ -144,7 +193,10 @@ function ConfiguracionPage() {
             confirmButtonText: 'OK'
           });
           // actualizar preview si guardamos una ruta relativa
-          if (configuracion.logo_url) setLogoPreview(configuracion.logo_url);
+          if (payload.logo_url) {
+            setLogoPreview(payload.logo_url);
+            setConfiguracion(prev => ({ ...prev, logo_url: payload.logo_url, _logo_file: null }));
+          }
         } else {
           throw new Error(result.error || 'Error al guardar la configuración');
         }
@@ -178,6 +230,7 @@ function ConfiguracionPage() {
         confirmButtonText: 'OK'
       });
     } finally {
+      setUploadingLogo(false);
       setLoading(false);
     }
   };
@@ -200,22 +253,13 @@ function ConfiguracionPage() {
     }
     setUploadingLogo(true);
     try {
-      const form = new FormData();
-      form.append('logo', file);
-      const resp = await fetch(BASE_URL + 'api_upload_logo.php', {
-        method: 'POST',
-        credentials: 'include',
-        body: form
-      });
-      const j = await resp.json();
-      if (resp.ok && j.success) {
+      const uploadedPath = await subirArchivoLogo(file);
+      if (uploadedPath) {
         // Guardar la ruta en el state para cuando pulse "Guardar Configuración"
-        setConfiguracion(prev => ({ ...prev, logo_url: j.path, _logo_file: null }));
+        setConfiguracion(prev => ({ ...prev, logo_url: uploadedPath, _logo_file: null }));
         // Si la ruta es relativa, convertir a URL pública para preview en dev
-        setLogoPreview(j.path);
+        setLogoPreview(uploadedPath);
         Swal.fire({ title: 'Listo', text: 'Logo subido correctamente.', icon: 'success' });
-      } else {
-        throw new Error(j.error || 'Error subiendo archivo');
       }
     } catch (err) {
       console.error('Error upload logo', err);
@@ -367,7 +411,7 @@ function ConfiguracionPage() {
                 <div className="mt-3">
                   <div className="text-xs text-gray-600 mb-1">Vista previa:</div>
                   <img
-                    src={logoPreview.startsWith('http') ? logoPreview : '/' + logoPreview.replace(/^\/+/, '')}
+                    src={resolveLogoPreviewUrl(logoPreview)}
                     alt="Logo preview"
                     style={{ maxHeight: 96 }}
                   />

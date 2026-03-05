@@ -22,14 +22,14 @@ function HistoriaClinicaPage() {
   const [ordenesLab, setOrdenesLab] = useState([]);
   useEffect(() => {
     if (!consultaId) return;
-    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`)
+    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.resultados) setResultadosLab(data.resultados);
         else setResultadosLab([]);
       })
       .catch(() => setResultadosLab([]));
-    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}`)
+    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.ordenes)) {
@@ -91,7 +91,7 @@ function HistoriaClinicaPage() {
   }, [pacienteId]);
   useEffect(() => {
     if (!consultaId) return;
-    fetch(`${BASE_URL}api_triaje.php?consulta_id=${consultaId}`)
+    fetch(`${BASE_URL}api_triaje.php?consulta_id=${consultaId}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.triaje && data.triaje.datos)
@@ -489,6 +489,7 @@ function HistoriaClinicaPage() {
             hc={hc}
             diagnosticos={diagnosticos}
             medicamentos={hc.receta}
+            resultadosLaboratorio={resultadosLab}
             ordenesLaboratorio={ordenesLab}
             medicoInfo={medicoInfo}
             configuracionClinica={configuracionClinica}
@@ -502,6 +503,7 @@ function HistoriaClinicaPage() {
             paciente={paciente}
             ordenesLaboratorio={ordenesLab}
             medicoInfo={medicoInfo}
+            firmaMedico={firmaMedico}
             configuracionClinica={configuracionClinica}
           />
         </div>

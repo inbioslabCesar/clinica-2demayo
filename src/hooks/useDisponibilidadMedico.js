@@ -19,7 +19,7 @@ export default function useDisponibilidadMedico(medicoId = null) {
       const url = medicoId
         ? `${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medicoId}`
         : `${BASE_URL}api_disponibilidad_medicos.php`;
-      const res = await fetch(url);
+      const res = await fetch(url, { credentials: "include" });
       const data = await res.json();
       setDisponibilidad(data.disponibilidad || []);
       setError(null);
@@ -43,6 +43,7 @@ export default function useDisponibilidadMedico(medicoId = null) {
       const res = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
         method,
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(body)
       });
       if (res.ok) {
@@ -73,6 +74,7 @@ export default function useDisponibilidadMedico(medicoId = null) {
       const res = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ id })
       });
       if (res.ok) {

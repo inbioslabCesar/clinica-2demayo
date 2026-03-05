@@ -45,6 +45,14 @@ export default function SidebarAdmin({ onClose }) {
         <Icon iconName="Money" className="text-xl text-amber-600" />
         <span>Gestión de Tarifas</span>
       </Link>
+      <Link
+        to="/inventario-general"
+        className="py-3 px-4 rounded-lg text-emerald-700 hover:bg-gradient-to-r hover:from-emerald-50 hover:to-teal-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="FabricFolder" className="text-xl text-emerald-600" />
+        <span>Inventario General</span>
+      </Link>
 
       <Link
         to="/web-servicios"
@@ -79,6 +87,22 @@ export default function SidebarAdmin({ onClose }) {
       >
         <Icon iconName="BarChart4" className="text-xl text-violet-600" />
         <span>Reportes</span>
+      </Link>
+      <Link
+        to="/laboratorio/inventario"
+        className="py-3 px-4 rounded-lg text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="TestBeaker" className="text-xl text-purple-600" />
+        <span>Inventario Lab</span>
+      </Link>
+      <Link
+        to="/cotizaciones"
+        className="py-3 px-4 rounded-lg text-fuchsia-700 hover:bg-gradient-to-r hover:from-fuchsia-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Paste" className="text-xl text-fuchsia-600" />
+        <span>Cotizaciones</span>
       </Link>
       <Link
         to="/configuracion"

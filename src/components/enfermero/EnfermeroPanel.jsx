@@ -48,63 +48,59 @@ function EnfermeroPanel() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-cyan-50 to-blue-50 p-4 sm:p-6 lg:p-8">
-      {/* Header */}
-      <div className="mb-8">
+      {/* Header + Navegación compacta */}
+      <div className="mb-6">
         <div className="bg-gradient-to-r from-teal-600 via-cyan-600 to-blue-600 rounded-2xl p-6 sm:p-8 text-white shadow-2xl relative overflow-hidden">
           {/* Efectos de fondo */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-16 translate-x-16"></div>
           <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-12 -translate-x-12"></div>
           
-          <div className="relative z-10">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="flex items-center justify-center w-16 h-16 bg-white/20 rounded-2xl backdrop-blur-sm">
+          <div className="relative z-10 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-white/20 rounded-2xl backdrop-blur-sm">
                 <Icon iconName="Health" className="text-3xl text-white" />
               </div>
               <div>
                 <h1 className="text-3xl sm:text-4xl font-bold drop-shadow-lg">
                   Panel de Enfermería
                 </h1>
-                <p className="text-lg text-white/90 mt-1">
+                <p className="text-base sm:text-lg text-white/90 mt-1">
                   Gestión integral de cuidados médicos
                 </p>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Navegación por tabs */}
-      <div className="mb-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
-          {tabs.map((tabItem) => (
-            <button
-              key={tabItem.key}
-              className={`group relative p-6 rounded-2xl border-2 font-semibold transition-all duration-300 transform hover:scale-[1.02] ${getColorClasses(tabItem.color, tab === tabItem.key)}`}
-              onClick={() => setTab(tabItem.key)}
-            >
-              <div className="flex flex-col items-center gap-3">
-                <div className={`flex items-center justify-center w-12 h-12 rounded-xl ${tab === tabItem.key ? 'bg-white/20' : `bg-${tabItem.color}-100`}`}>
-                  <Icon 
-                    iconName={tabItem.icon} 
-                    className={`text-2xl ${tab === tabItem.key ? 'text-white' : `text-${tabItem.color}-600`}`} 
-                  />
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-bold">{tabItem.label}</div>
-                  <div className={`text-sm ${tab === tabItem.key ? 'text-white/80' : 'text-gray-600'}`}>
-                    {tabItem.description}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full xl:w-auto xl:min-w-[680px]">
+              {tabs.map((tabItem) => (
+                <button
+                  key={tabItem.key}
+                  className={`group relative p-4 rounded-xl border-2 font-semibold transition-all duration-300 transform hover:scale-[1.02] ${getColorClasses(tabItem.color, tab === tabItem.key)}`}
+                  onClick={() => setTab(tabItem.key)}
+                >
+                  <div className="flex flex-col items-center gap-2">
+                    <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${tab === tabItem.key ? 'bg-white/20' : `bg-${tabItem.color}-100`}`}>
+                      <Icon 
+                        iconName={tabItem.icon} 
+                        className={`text-xl ${tab === tabItem.key ? 'text-white' : `text-${tabItem.color}-600`}`} 
+                      />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-lg font-bold leading-tight">{tabItem.label}</div>
+                      <div className={`text-xs ${tab === tabItem.key ? 'text-white/80' : 'text-gray-600'}`}>
+                        {tabItem.description}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-              
-              {/* Indicador activo */}
-              {tab === tabItem.key && (
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-white rounded-full shadow-lg flex items-center justify-center">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                </div>
-              )}
-            </button>
-          ))}
+
+                  {tab === tabItem.key && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-white rounded-full shadow-lg flex items-center justify-center">
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

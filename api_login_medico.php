@@ -3,14 +3,8 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
-// Debug temporal para producción
 $rawInput = file_get_contents('php://input');
 $data = json_decode($rawInput, true);
-
-// Log para debugging (remover después de arreglar)
-error_log("Login Debug - Raw input: " . $rawInput);
-error_log("Login Debug - Parsed data: " . print_r($data, true));
-error_log("Login Debug - Request method: " . $_SERVER['REQUEST_METHOD']);
 
 // Si es GET, mostrar info de debug
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {

@@ -5,7 +5,7 @@ require_once __DIR__ . '/config.php';
 
 switch ($_SERVER['REQUEST_METHOD']) {
     case 'GET':
-        $result = $mysqli->query('SELECT id, usuario, nombre, dni, profesion, rol, activo, creado_en FROM usuarios');
+        $result = $mysqli->query('SELECT id, usuario, nombre, dni, profesion, firma_reportes, colegiatura_tipo, colegiatura_numero, cargo_firma, rol, activo, creado_en FROM usuarios');
         $usuarios = [];
         while ($row = $result->fetch_assoc()) {
             $usuarios[] = $row;
@@ -27,13 +27,24 @@ switch ($_SERVER['REQUEST_METHOD']) {
         }
         
         try {
-            $stmt = $mysqli->prepare('INSERT INTO usuarios (usuario, password, nombre, dni, profesion, rol, activo) VALUES (?, SHA2(?,256), ?, ?, ?, ?, ?)');
+            $firmaReportes = $data['firma_reportes'] ?? null;
+            $colegiaturaTipo = $data['colegiatura_tipo'] ?? null;
+            $colegiaturaNumero = $data['colegiatura_numero'] ?? null;
+            $cargoFirma = $data['cargo_firma'] ?? null;
+
+            if (!empty($firmaReportes) && !preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaReportes)) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Formato de firma inválido. Debe ser PNG o JPEG en base64.']);
+                exit;
+            }
+
+            $stmt = $mysqli->prepare('INSERT INTO usuarios (usuario, password, nombre, dni, profesion, firma_reportes, colegiatura_tipo, colegiatura_numero, cargo_firma, rol, activo) VALUES (?, SHA2(?,256), ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             if (!$stmt) {
                 throw new Exception('Error preparando consulta: ' . $mysqli->error);
             }
             
             $activo = $data['activo'] ?? 1;
-            $stmt->bind_param('ssssssi', $data['usuario'], $data['password'], $data['nombre'], $data['dni'], $data['profesion'], $data['rol'], $activo);
+            $stmt->bind_param('ssssssssssi', $data['usuario'], $data['password'], $data['nombre'], $data['dni'], $data['profesion'], $firmaReportes, $colegiaturaTipo, $colegiaturaNumero, $cargoFirma, $data['rol'], $activo);
             
             if ($stmt->execute()) {
                 echo json_encode(['success' => true, 'id' => $mysqli->insert_id, 'message' => 'Usuario creado correctamente']);
@@ -82,7 +93,13 @@ switch ($_SERVER['REQUEST_METHOD']) {
         }
         
         // Manejar otros campos
-        foreach (['usuario','nombre','dni','profesion','rol','activo'] as $campo) {
+        if (isset($data['firma_reportes']) && !empty($data['firma_reportes']) && !preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $data['firma_reportes'])) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Formato de firma inválido. Debe ser PNG o JPEG en base64.']);
+            exit;
+        }
+
+        foreach (['usuario','nombre','dni','profesion','firma_reportes','colegiatura_tipo','colegiatura_numero','cargo_firma','rol','activo'] as $campo) {
             if (isset($data[$campo])) {
                 $campos[] = "$campo = ?";
                 $params[] = $data[$campo];

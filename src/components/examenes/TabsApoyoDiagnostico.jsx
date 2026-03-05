@@ -28,6 +28,34 @@ export default function TabsApoyoDiagnostico({ consultaId, resultadosLab, ordene
     return map;
   }, [examenes]);
 
+  const ordenesLabOrdenadas = React.useMemo(() => {
+    if (!Array.isArray(ordenesLab) || ordenesLab.length === 0) return [];
+
+    const resultadoFechaPorOrden = new Map();
+    if (Array.isArray(resultadosLab)) {
+      resultadosLab.forEach((r) => {
+        const oid = Number(r?.orden_id || 0);
+        if (!oid) return;
+        const ts = r?.fecha ? new Date(r.fecha).getTime() : NaN;
+        if (Number.isNaN(ts)) return;
+        const previo = resultadoFechaPorOrden.get(oid);
+        if (previo === undefined || ts > previo) {
+          resultadoFechaPorOrden.set(oid, ts);
+        }
+      });
+    }
+
+    const getTs = (orden) => {
+      const oid = Number(orden?.id || 0);
+      const tsResultado = oid ? resultadoFechaPorOrden.get(oid) : undefined;
+      if (tsResultado !== undefined) return tsResultado;
+      const tsOrden = orden?.fecha ? new Date(orden.fecha).getTime() : NaN;
+      return Number.isNaN(tsOrden) ? 0 : tsOrden;
+    };
+
+    return [...ordenesLab].sort((a, b) => getTs(a) - getTs(b));
+  }, [ordenesLab, resultadosLab]);
+
   return (
     <div className="mb-4">
       <div className="flex flex-wrap gap-1 sm:gap-2 mb-2">
@@ -64,10 +92,10 @@ export default function TabsApoyoDiagnostico({ consultaId, resultadosLab, ordene
               </div>
             )}
             {/* Mostrar exámenes solicitados aunque no haya resultados */}
-            {ordenesLab && ordenesLab.length > 0 && (
+            {ordenesLabOrdenadas.length > 0 && (
               <div className="mb-3 p-2 bg-yellow-50 border border-yellow-300 rounded">
                 <div className="font-semibold text-yellow-800 mb-1">Exámenes solicitados:</div>
-                {ordenesLab.map((orden, idx) => (
+                {ordenesLabOrdenadas.map((orden, idx) => (
                   <ul key={orden.id || idx} className="list-disc ml-5 text-sm">
                     {Array.isArray(orden.examenes) && orden.examenes.length > 0 ? (
                       orden.examenes.map((ex, i) => {

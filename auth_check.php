@@ -29,6 +29,11 @@ if (isset($_SESSION['usuario'])) {
                      strpos($_SERVER['SCRIPT_NAME'], 'api_cajas_cerradas.php') !== false;
     $isHonorariosMedicos = strpos($_SERVER['SCRIPT_NAME'], 'api_honorarios_medicos') !== false ||
                           strpos($_SERVER['SCRIPT_NAME'], 'api_movimientos_honorarios.php') !== false;
+    $isConsultas = strpos($_SERVER['SCRIPT_NAME'], 'api_consultas.php') !== false;
+    $isDisponibilidadMedicos = strpos($_SERVER['SCRIPT_NAME'], 'api_disponibilidad_medicos.php') !== false;
+    $isOrdenesLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_laboratorio.php') !== false;
+    $isResultadosLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_resultados_laboratorio.php') !== false;
+    $isTriaje = strpos($_SERVER['SCRIPT_NAME'], 'api_triaje.php') !== false;
     
     $rolesPermitidos = ['administrador', 'quimico', 'laboratorio', 'laboratorista', 'recepcionista'];
     
@@ -67,6 +72,13 @@ if (isset($_SESSION['usuario'])) {
     }
     
     if ($isExamenesLab || $isMedicamentos || $isHistorialMedico) {
+        $rolesPermitidos[] = 'medico';
+    }
+    if ($isConsultas || $isDisponibilidadMedicos || $isOrdenesLaboratorio || $isResultadosLaboratorio) {
+        $rolesPermitidos[] = 'medico';
+    }
+    if ($isTriaje) {
+        $rolesPermitidos[] = 'enfermero';
         $rolesPermitidos[] = 'medico';
     }
     // Permitir acceso a médicos solo para api_historia_clinica.php

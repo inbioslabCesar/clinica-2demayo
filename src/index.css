@@ -77,5 +77,34 @@ html, body, #root {
 		height: 80px !important;
 		width: auto !important;
 	}
+
+	/* Ajustes compactos para impresión en hoja A5 (Receta y Laboratorio) */
+	.a5-receta-print,
+	.a5-lab-print {
+		font-size: 10px !important;
+		line-height: 1.2 !important;
+	}
+
+	.a5-receta-print .text-lg,
+	.a5-lab-print .text-lg {
+		font-size: 14px !important;
+	}
+
+	.a5-receta-print .text-sm,
+	.a5-lab-print .text-sm {
+		font-size: 11px !important;
+	}
+
+	.a5-receta-print .text-xs,
+	.a5-lab-print .text-xs {
+		font-size: 9px !important;
+	}
+
+	.a5-receta-print .firma-img-receta,
+	.a5-lab-print .firma-img-lab {
+		max-width: 130px !important;
+		height: 48px !important;
+		width: auto !important;
+	}
 }
 

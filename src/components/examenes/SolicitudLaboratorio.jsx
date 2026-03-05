@@ -4,7 +4,6 @@ import { BASE_URL } from "../../config/config";
 import ExamenesSelector from "./ExamenesSelector";
 
 export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true }) {
-  // ...existing code...
   // Calcular total cotización (precio público)
   // Preparado para usar precio convenio en el futuro
   // const totalConvenio = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_convenio) || 0), 0);
@@ -33,6 +32,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
       const response = await fetch(BASE_URL + "api_ordenes_laboratorio.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ consulta_id: consultaId, examenes }),
       });
       
@@ -52,26 +52,17 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
     }
   };
 
-  // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
-  useEffect(() => {
-    fetch(BASE_URL + "api_examenes_laboratorio.php", { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => setExamenesDisponibles(data.examenes || []));
-  }, []);
-
-  // ...existing code...
-
   return (
-    <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 border border-emerald-200 rounded-xl p-6 shadow-lg">
+    <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 border border-emerald-200 rounded-xl p-4 sm:p-6 shadow-lg">
       {/* Encabezado con icono */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-md">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
+        <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-md shrink-0">
           <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         </div>
-        <div>
-          <h3 className="text-xl font-bold text-emerald-800">🔬 Solicitud de Análisis de Laboratorio</h3>
+        <div className="min-w-0">
+          <h3 className="text-lg sm:text-xl font-bold text-emerald-800">🔬 Solicitud de Análisis de Laboratorio</h3>
           <p className="text-sm text-emerald-600">Seleccione los exámenes requeridos para el diagnóstico</p>
         </div>
       </div>
@@ -97,7 +88,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
               </svg>
               <span className="font-semibold text-blue-800">📋 Exámenes Seleccionados ({examenes.length})</span>
             </div>
-            <div className="max-h-80 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="max-h-96 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-3">
               {seleccionados.map(ex => (
                 <div key={ex.id} className="bg-white rounded-lg p-3 border border-blue-100 shadow-sm">
                   <div className="flex items-start gap-3">
@@ -148,12 +139,12 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         )}
 
         {/* Botón de envío y mensajes */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <button 
             type="submit" 
             className={`
               px-6 py-3 rounded-lg font-semibold text-white shadow-lg transition-all duration-200
-              flex items-center gap-2 min-w-[140px] justify-center
+              flex items-center gap-2 min-w-[140px] justify-center w-full sm:w-auto
               ${examenes.length === 0 || guardando
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 hover:shadow-xl transform hover:-translate-y-0.5'
@@ -180,7 +171,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
           </button>
 
           {/* Contador de exámenes seleccionados */}
-          <div className="text-sm text-emerald-700 font-medium">
+          <div className="text-sm text-emerald-700 font-medium text-center sm:text-right">
             {examenes.length === 0 ? (
               <span className="text-gray-500">Ningún examen seleccionado</span>
             ) : (

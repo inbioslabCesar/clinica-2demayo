@@ -35,14 +35,21 @@ function normalize_valores_referenciales($raw) {
                     'valor' => $r['valor'] ?? '',
                     'valor_min' => $r['valor_min'] ?? '',
                     'valor_max' => $r['valor_max'] ?? '',
-                    'desc' => $r['desc'] ?? ''
+                    'desc' => $r['desc'] ?? '',
+                    'sexo' => $r['sexo'] ?? 'cualquiera',
+                    'edad_min' => $r['edad_min'] ?? '',
+                    'edad_max' => $r['edad_max'] ?? ''
                 ];
             }
         }
         $item['formula'] = $it['formula'] ?? '';
         $item['negrita'] = !empty($it['negrita']) ? true : false;
+        $item['cursiva'] = !empty($it['cursiva']) ? true : false;
+        $item['alineacion'] = $it['alineacion'] ?? 'left';
         $item['color_texto'] = $it['color_texto'] ?? '#000000';
         $item['color_fondo'] = $it['color_fondo'] ?? '#ffffff';
+        $item['decimales'] = (isset($it['decimales']) && $it['decimales'] !== '' && is_numeric($it['decimales'])) ? intval($it['decimales']) : null;
+        $item['rows'] = (isset($it['rows']) && $it['rows'] !== '' && is_numeric($it['rows'])) ? intval($it['rows']) : null;
         $item['orden'] = isset($it['orden']) && is_numeric($it['orden']) ? intval($it['orden']) : ($idx + 1);
         $items[] = $item;
     }
@@ -92,7 +99,10 @@ switch ($method) {
                             'valor' => $r['valor'] ?? '',
                             'valor_min' => $r['valor_min'] ?? '',
                             'valor_max' => $r['valor_max'] ?? '',
-                            'desc' => $r['desc'] ?? ''
+                            'desc' => $r['desc'] ?? '',
+                            'sexo' => $r['sexo'] ?? 'cualquiera',
+                            'edad_min' => $r['edad_min'] ?? '',
+                            'edad_max' => $r['edad_max'] ?? ''
                         ];
                     }
                 }
@@ -107,8 +117,12 @@ switch ($method) {
                 }
                 $item['formula'] = isset($it['formula']) ? $it['formula'] : '';
                 $item['negrita'] = !empty($it['negrita']) ? true : false;
+                $item['cursiva'] = !empty($it['cursiva']) ? true : false;
+                $item['alineacion'] = isset($it['alineacion']) ? $it['alineacion'] : 'left';
                 $item['color_texto'] = isset($it['color_texto']) ? $it['color_texto'] : '#000000';
                 $item['color_fondo'] = isset($it['color_fondo']) ? $it['color_fondo'] : '#ffffff';
+                $item['decimales'] = (isset($it['decimales']) && $it['decimales'] !== '' && is_numeric($it['decimales'])) ? intval($it['decimales']) : null;
+                $item['rows'] = (isset($it['rows']) && $it['rows'] !== '' && is_numeric($it['rows'])) ? intval($it['rows']) : null;
                 $item['orden'] = (isset($it['orden']) && is_numeric($it['orden'])) ? intval($it['orden']) : ($idx + 1);
                 $items[] = $item;
             }
