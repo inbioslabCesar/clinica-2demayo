@@ -3,6 +3,24 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function ensure_medicos_profesional_columns_login($conn) {
+    $checks = [
+        'tipo_profesional' => "ALTER TABLE medicos ADD COLUMN tipo_profesional VARCHAR(30) NOT NULL DEFAULT 'medico'",
+        'abreviatura_profesional' => "ALTER TABLE medicos ADD COLUMN abreviatura_profesional VARCHAR(20) NOT NULL DEFAULT 'Dr(a).'",
+        'colegio_sigla' => "ALTER TABLE medicos ADD COLUMN colegio_sigla VARCHAR(20) NULL",
+        'nro_colegiatura' => "ALTER TABLE medicos ADD COLUMN nro_colegiatura VARCHAR(30) NULL",
+    ];
+
+    foreach ($checks as $col => $sqlAlter) {
+        $exists = $conn->query("SHOW COLUMNS FROM medicos LIKE '{$col}'");
+        if ($exists && $exists->num_rows === 0) {
+            $conn->query($sqlAlter);
+        }
+    }
+}
+
+ensure_medicos_profesional_columns_login($conn);
+
 $rawInput = file_get_contents('php://input');
 $data = json_decode($rawInput, true);
 
@@ -25,7 +43,7 @@ if (!$email || !$password) {
     exit;
 }
 
-$stmt = $conn->prepare('SELECT id, nombre, apellido, especialidad, email, password, cmp, rne, firma FROM medicos WHERE email = ? LIMIT 1');
+$stmt = $conn->prepare('SELECT id, nombre, apellido, especialidad, email, password, cmp, rne, firma, tipo_profesional, abreviatura_profesional, colegio_sigla, nro_colegiatura FROM medicos WHERE email = ? LIMIT 1');
 $stmt->bind_param('s', $email);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -35,6 +53,7 @@ if ($row = $result->fetch_assoc()) {
     // Guardar el id y datos del médico en la sesión para compatibilidad
     $_SESSION['medico_id'] = $row['id'];
     $row['rol'] = 'medico';
+    $row['permisos'] = [];
     unset($row['password']); // No enviar la contraseña al frontend
     $_SESSION['usuario'] = $row;
     echo json_encode(['success' => true, 'medico' => $row]);

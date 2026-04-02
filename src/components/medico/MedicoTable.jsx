@@ -1,3 +1,5 @@
+import { formatProfesionalName } from "../../utils/profesionalDisplay";
+
 const MedicoTable = ({
   medicos,
   loading,
@@ -7,6 +9,10 @@ const MedicoTable = ({
   onSort,
   onEdit,
   onDelete,
+  onVerDeuda,
+  onProgramarHorario,
+  onGestionarDisponibilidad,
+  rolUsuario,
   // Paginación
   page,
   setPage,
@@ -17,6 +23,7 @@ const MedicoTable = ({
   startIdx,
   endIdx
 }) => {
+  const esAdminOrRecep = rolUsuario === 'administrador' || rolUsuario === 'recepcionista';
 
   if (loading) {
     return (
@@ -159,7 +166,7 @@ const MedicoTable = ({
                         {medico.nombre.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <div className="font-semibold text-gray-900">Dr(a). {medico.nombre} {medico.apellido || ''}</div>
+                        <div className="font-semibold text-gray-900">{formatProfesionalName(medico)}</div>
                         <div className="text-sm text-gray-500">ID: {medico.id}</div>
                       </div>
                     </div>
@@ -174,6 +181,37 @@ const MedicoTable = ({
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center justify-center gap-2">
+                      {esAdminOrRecep && (
+                        <button
+                          onClick={() => onProgramarHorario && onProgramarHorario(medico)}
+                          className="p-2 text-teal-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg transition-colors"
+                          title="Programar horario mensual"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                        </button>
+                      )}
+                      {esAdminOrRecep && (
+                        <button
+                          onClick={() => onGestionarDisponibilidad && onGestionarDisponibilidad(medico)}
+                          className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Gestionar disponibilidad diaria"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2zm4-6h6" />
+                          </svg>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onVerDeuda && onVerDeuda(medico)}
+                        className="p-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="Ver deuda"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 10v-1m-6-6h12" />
+                        </svg>
+                      </button>
                       <button
                         onClick={() => onEdit(medico)}
                         className="p-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors"
@@ -211,11 +249,42 @@ const MedicoTable = ({
                   {medico.nombre.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900">Dr(a). {medico.nombre} {medico.apellido || ''}</h3>
+                  <h3 className="font-bold text-gray-900">{formatProfesionalName(medico)}</h3>
                   <p className="text-gray-600 text-sm">ID: #{medico.id}</p>
                 </div>
               </div>
               <div className="flex gap-2">
+                {esAdminOrRecep && (
+                  <button
+                    onClick={() => onProgramarHorario && onProgramarHorario(medico)}
+                    className="p-2 text-teal-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg transition-colors"
+                    title="Programar horario mensual"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                )}
+                {esAdminOrRecep && (
+                  <button
+                    onClick={() => onGestionarDisponibilidad && onGestionarDisponibilidad(medico)}
+                    className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="Gestionar disponibilidad diaria"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2zm4-6h6" />
+                    </svg>
+                  </button>
+                )}
+                <button
+                  onClick={() => onVerDeuda && onVerDeuda(medico)}
+                  className="p-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors"
+                  title="Ver deuda"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 10v-1m-6-6h12" />
+                  </svg>
+                </button>
                 <button
                   onClick={() => onEdit(medico)}
                   className="p-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors"

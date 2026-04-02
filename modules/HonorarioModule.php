@@ -19,14 +19,19 @@ class HonorarioModule {
             ];
         }
         $tarifa_total = floatval($tarifa[$precio_key]);
-        // Validar medico_id
-        if (empty($detalleConsulta['medico_id'])) {
+        $medico_id = isset($detalleConsulta['medico_id']) ? intval($detalleConsulta['medico_id']) : 0;
+        if ($medico_id <= 0 && !empty($tarifa['medico_id'])) {
+            $medico_id = intval($tarifa['medico_id']);
+        }
+
+        // Validar medico_id con fallback desde tarifa
+        if ($medico_id <= 0) {
             return [
                 'success' => false,
                 'error' => "Error: El medico_id no puede ser nulo o vacío"
             ];
         }
-        // Calcular honorarios
+        // Calcular honorarios solo desde columnas de tarifas.
         $monto_medico = null;
         $monto_clinica = null;
         $porcentaje_aplicado_medico = null;
@@ -38,6 +43,7 @@ class HonorarioModule {
             $monto_medico = round($tarifa_total * floatval($tarifa['porcentaje_medico']) / 100, 2);
             $porcentaje_aplicado_medico = floatval($tarifa['porcentaje_medico']);
         } else {
+            $monto_medico = 0;
             $porcentaje_aplicado_medico = 0;
         }
         if (!empty($tarifa['monto_clinica'])) {
@@ -47,11 +53,11 @@ class HonorarioModule {
             $monto_clinica = round($tarifa_total * floatval($tarifa['porcentaje_clinica']) / 100, 2);
             $porcentaje_aplicado_clinica = floatval($tarifa['porcentaje_clinica']);
         } else {
+            $monto_clinica = 0;
             $porcentaje_aplicado_clinica = 0;
         }
         $consulta_id = isset($detalleConsulta['consulta_id']) ? $detalleConsulta['consulta_id'] : null;
         $paciente_id = isset($detalleConsulta['paciente_id']) ? $detalleConsulta['paciente_id'] : null;
-        $medico_id = isset($detalleConsulta['medico_id']) ? $detalleConsulta['medico_id'] : ($tarifa['medico_id'] ?? null);
         $stmt_honorario = $conn->prepare("INSERT INTO honorarios_medicos_movimientos (
             consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, descripcion, tarifa_total,
             monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, created_at, cobro_id

@@ -809,4 +809,6 @@ clinica-2demayo/
 
 ---
 
+robocopy "c:\laragon\www\clinica-2demayo" "c:\laragon\www\nueva-clinica" /E /XD node_modules dist dist-public .git /XF *.log debug_session.txt tmp_*.pdf
+
 > Este README sirve como guía para mantener una arquitectura ordenada, escalable y fácil de mantener. Actualiza el checklist y la documentación conforme avances en el desarrollo.

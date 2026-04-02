@@ -5,7 +5,9 @@ import { BASE_URL } from "../config/config";
 export default function ResultadosLaboratorioPage() {
   const { consultaId } = useParams();
   const [resultados, setResultados] = useState([]);
+  const [documentosExternos, setDocumentosExternos] = useState([]);
   const [examenes, setExamenes] = useState([]);
+  const [archivoVisor, setArchivoVisor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -19,20 +21,53 @@ export default function ResultadosLaboratorioPage() {
   };
 
   useEffect(() => {
+    let isMounted = true;
     setLoading(true);
-    Promise.all([
-      fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' }).then(res => res.json()),
-      fetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: 'include' }).then(res => res.json())
-    ]).then(([resLab, resEx]) => {
-      if (resLab.success) setResultados(resLab.resultados || []);
-      else setError(resLab.error || "No hay resultados");
-      setExamenes(resEx.examenes || []);
-      setLoading(false);
-    }).catch(() => {
-      setError("Error al cargar resultados");
-      setLoading(false);
-    });
+    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
+      .then(res => res.json())
+      .then((resLab) => {
+        if (!isMounted) return;
+        if (resLab.success) {
+          setResultados(resLab.resultados || []);
+          setDocumentosExternos(resLab.documentos_externos || []);
+          setError("");
+        } else {
+          setError(resLab.error || "No hay resultados");
+          setDocumentosExternos([]);
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setError("Error al cargar resultados");
+        setDocumentosExternos([]);
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    fetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: 'include' })
+      .then(res => res.json())
+      .then((resEx) => {
+        if (!isMounted) return;
+        setExamenes(resEx.examenes || []);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setExamenes([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, [consultaId]);
+
+  function formatBytes(bytes) {
+    const b = Number(bytes || 0);
+    if (b <= 0) return "";
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`;
+    return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  }
 
   // Normaliza valores numéricos desde texto (soporta coma decimal y unidades)
   function normalizeNumber(value) {
@@ -286,6 +321,99 @@ export default function ResultadosLaboratorioPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {!loading && !error && documentosExternos.length > 0 && (
+        <div className="mt-8 border-2 border-blue-200 rounded-xl p-5 bg-gradient-to-r from-blue-50 to-indigo-50 shadow">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-lg">🔗</span>
+            <h3 className="text-lg font-bold text-blue-800">Resultados Referenciados (Laboratorio Externo)</h3>
+          </div>
+          <div className="space-y-3">
+            {documentosExternos.map((doc) => (
+              <div key={doc.documento_id} className="bg-white border border-blue-200 rounded-lg p-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+                  <div>
+                    <p className="font-semibold text-blue-900">{doc.titulo || `Documento #${doc.documento_id}`}</p>
+                    <p className="text-xs text-gray-500">
+                      Orden #{doc.orden_id || "-"} · {doc.fecha ? new Date(doc.fecha).toLocaleString('es-ES') : "Sin fecha"}
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                    {Array.isArray(doc.archivos) ? doc.archivos.length : 0} archivo(s)
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {(doc.archivos || []).map((arch) => (
+                    <button
+                      key={arch.archivo_id}
+                      type="button"
+                      onClick={() => setArchivoVisor(arch)}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold"
+                      title={arch.nombre_original}
+                    >
+                      👁️ Ver archivo
+                      <span className="text-[11px] text-indigo-500">{arch.nombre_original}</span>
+                      <span className="text-[10px] text-gray-400">{formatBytes(arch.tamano)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {archivoVisor && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-5xl h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-800 truncate">{archivoVisor.nombre_original}</p>
+                <p className="text-xs text-gray-500">Vista previa del archivo referenciado</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={archivoVisor.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs px-3 py-1.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold"
+                >
+                  Abrir en pestaña
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setArchivoVisor(null)}
+                  className="text-xs px-3 py-1.5 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 font-semibold"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 bg-gray-50">
+              {String(archivoVisor.mime_type || '').startsWith('image/') ? (
+                <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
+                  <img src={archivoVisor.url} alt={archivoVisor.nombre_original} className="max-w-full max-h-full object-contain rounded border" />
+                </div>
+              ) : String(archivoVisor.mime_type || '').includes('dicom') ? (
+                <div className="w-full h-full flex items-center justify-center text-center p-6">
+                  <div>
+                    <p className="font-semibold text-gray-700 mb-1">No hay visor DICOM integrado en esta pantalla.</p>
+                    <p className="text-sm text-gray-500">Puedes abrir el archivo en una pestaña externa para visualizarlo.</p>
+                  </div>
+                </div>
+              ) : (
+                <iframe
+                  src={archivoVisor.url}
+                  title={archivoVisor.nombre_original}
+                  className="w-full h-full border-0"
+                />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

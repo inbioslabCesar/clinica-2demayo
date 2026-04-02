@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
+import { useQuoteCart } from "../context/QuoteCartContext";
 
 export default function CotizarProcedimientosPage() {
    
@@ -16,6 +17,8 @@ export default function CotizarProcedimientosPage() {
   const [preloadedCounts, setPreloadedCounts] = useState({}); // {procId: cantidad}
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
   const [cajaEstado, setCajaEstado] = useState(null);
+  const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
 
    const [busqueda, setBusqueda] = useState("");
     // Filtrar procedimientos por búsqueda
@@ -83,6 +86,7 @@ export default function CotizarProcedimientosPage() {
     if (cotizacionId) loaders.push(fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cot = data.cotizacion || null; if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+      setCotizacionDetallesOriginales(detalles);
       const itemsProc = detalles.filter(d => { const t = (d.servicio_tipo || '').toLowerCase(); return t === 'procedimiento' || t === 'procedimientos'; });
       if (itemsProc.length) {
         setPreloadedItems(prev => [...prev, ...itemsProc]);
@@ -204,6 +208,7 @@ export default function CotizarProcedimientosPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               cobro_id: Number(cobroId),
+              cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
               servicio_tipo: 'procedimiento',
               item: line,
               motivo: motivoReduccion
@@ -235,7 +240,12 @@ export default function CotizarProcedimientosPage() {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cobro_id: Number(cobroId), servicio_tipo: 'procedimiento', items: additionsAfterReductions })
+          body: JSON.stringify({
+            cobro_id: Number(cobroId),
+            cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
+            servicio_tipo: 'procedimiento',
+            items: additionsAfterReductions
+          })
         });
         const data = await resp.json();
         if (!data?.success) throw new Error(data?.error || 'No se pudo actualizar el cobro');
@@ -283,62 +293,215 @@ export default function CotizarProcedimientosPage() {
     }, 0);
   };
 
-  const cotizar = async () => {
-    if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un procedimiento.");
-      return;
-    }
-    const detalles = seleccionados.map(pid => {
+  const construirDetallesSeleccionados = () => {
+    return seleccionados.map(pid => {
       const proc = procedimientos.find(p => Number(p.id) === Number(pid));
-      const cantidad = cantidades[pid] || 1;
+      const cantidad = Number(cantidades[pid] || 1);
       let descripcion = proc && proc.descripcion ? proc.descripcion : (proc && proc.nombre ? proc.nombre : "");
-      // Si la descripción es 0, usar el nombre
       if (descripcion === 0 || descripcion === "0" || descripcion === null || descripcion === undefined) {
         descripcion = proc && proc.nombre ? proc.nombre : "";
       }
       return proc ? {
         servicio_tipo: "procedimiento",
-        servicio_id: pid,
+        servicio_id: Number(pid),
         descripcion,
         cantidad,
-        precio_unitario: proc.precio_particular,
-        subtotal: proc.precio_particular * cantidad
+        precio_unitario: Number(proc.precio_particular || 0),
+        subtotal: Number(proc.precio_particular || 0) * cantidad
       } : null;
     }).filter(Boolean);
+  };
 
-    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+  const agregarAlCarrito = () => {
+    if (seleccionados.length === 0) {
+      Swal.fire('Atención', 'Selecciona al menos un procedimiento para agregar al carrito.', 'info');
+      return;
+    }
+
+    const sp = new URLSearchParams(location.search);
+    const isEditingCotizacion = Boolean(sp.get('cotizacion_id')) && !Boolean(sp.get('cobro_id'));
+    const detallesBase = construirDetallesSeleccionados();
+
+    const yaExisteEnCarrito = (detalle) => {
+      return Array.isArray(cart?.items) && cart.items.some((it) => (
+        String(it?.serviceType || '').toLowerCase() === 'procedimiento'
+        && Number(it?.serviceId || 0) === Number(detalle?.servicio_id || 0)
+        && Number(it?.unitPrice || 0) === Number(detalle?.precio_unitario || 0)
+      ));
+    };
+
+    const detalles = detallesBase
+      .map((d) => {
+        if (!isEditingCotizacion) return d;
+        const preQty = Number(preloadedCounts[Number(d.servicio_id)] || 0);
+        const desiredQty = Number(d.cantidad || 0);
+        const diff = desiredQty - preQty;
+        if (diff <= 0) return null;
+        return {
+          ...d,
+          cantidad: diff,
+          subtotal: Number(d.precio_unitario || 0) * diff,
+        };
+      })
+      .filter(Boolean)
+      .filter((d) => !(isEditingCotizacion && yaExisteEnCarrito(d)));
+
+    if (detalles.length === 0) {
+      Swal.fire('Atención', isEditingCotizacion ? 'No hay procedimientos nuevos para agregar al carrito.' : 'No hay procedimientos válidos para agregar.', 'info');
+      return;
+    }
+
+    addItems({
+      patientId: Number(pacienteId),
+      patientName: paciente ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim() : `Paciente #${pacienteId}`,
+      items: detalles.map((d) => ({
+        serviceType: 'procedimiento',
+        serviceId: Number(d.servicio_id || 0),
+        description: d.descripcion || 'Procedimiento',
+        quantity: Number(d.cantidad || 1),
+        unitPrice: Number(d.precio_unitario || 0),
+        source: 'procedimiento',
+      })),
+    });
+
+    if (!isEditingCotizacion) {
+      setSeleccionados([]);
+      setMensaje('');
+    }
+    Swal.fire('Listo', `Se agregaron ${detalles.length} procedimiento(s) al carrito.`, 'success');
+  };
+
+  const obtenerDetallesCotizacion = async (targetCotizacionId) => {
+    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!data?.success || !data?.cotizacion) {
+      throw new Error(data?.error || 'No se pudo cargar la cotización actual para edición');
+    }
+    return Array.isArray(data.cotizacion.detalles) ? data.cotizacion.detalles : [];
+  };
+
+  const construirDetallesEditados = async (cotizacionId, detallesProcedimiento) => {
+    const base = cotizacionDetallesOriginales.length > 0
+      ? cotizacionDetallesOriginales
+      : await obtenerDetallesCotizacion(cotizacionId);
+    const detallesNoProc = base.filter((d) => {
+      const t = String(d?.servicio_tipo || '').toLowerCase();
+      return t !== 'procedimiento' && t !== 'procedimientos';
+    });
+    return [...detallesNoProc, ...detallesProcedimiento];
+  };
+
+  const cotizar = async () => {
+    if (seleccionados.length === 0) {
+      setMensaje("Selecciona al menos un procedimiento.");
+      return;
+    }
+    const detalles = construirDetallesSeleccionados();
+
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
+
+    let limpiarCarritoAlFinal = false;
+    const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
+    const esMismoPacienteCarrito = Number(cart?.patientId || 0) === Number(pacienteId || 0);
+    if (cartItemsCount > 0 && esMismoPacienteCarrito) {
+      const esEdicionCotizacion = Boolean(cotizacionId);
+      const confirm = await Swal.fire({
+        title: 'Carrito activo detectado',
+        text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
+        cancelButtonText: 'Cancelar',
+      });
+      if (!confirm.isConfirmed) return;
+      limpiarCarritoAlFinal = true;
+    }
+
+    const detallesFinales = cotizacionId
+      ? await construirDetallesEditados(cotizacionId, detalles)
+      : detalles;
+
+    if (!Array.isArray(detallesFinales) || detallesFinales.length === 0) {
+      Swal.fire('Atención', 'La cotización no puede quedar sin ítems.', 'warning');
+      return;
+    }
+
+    const total = detallesFinales.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
 
     const payload = cotizacionId
       ? {
           accion: 'editar',
           cotizacion_id: Number(cotizacionId),
-          detalles,
+          detalles: detallesFinales,
           total,
-          motivo: 'Edición de cotización desde cotizador de Procedimientos'
+          motivo: 'Edición de cotización (merge seguro) desde cotizador de Procedimientos'
         }
       : {
           paciente_id: Number(pacienteId),
           total,
-          detalles,
+          detalles: detallesFinales,
           observaciones: 'Cotización registrada desde cotizador de Procedimientos'
         };
 
     try {
+      let data;
       const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      data = await res.json();
+
+      const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
+      if (!data?.success && cotizacionId && noEditable) {
+        const payloadAdenda = {
+          accion: 'adenda',
+          cotizacion_id: Number(cotizacionId),
+          detalles: detallesFinales,
+          total,
+          motivo: 'Adenda automática desde cotizador de Procedimientos (cotización pagada)'
+        };
+        const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadAdenda)
+        });
+        data = await resAdenda.json();
+      }
+
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
 
-      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
-      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+      const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
+      const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
+
+      setMensaje(
+        fueAdenda
+          ? 'Adenda creada correctamente.'
+          : (cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.')
+      );
+      Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
+        if (limpiarCarritoAlFinal) {
+          clearCart();
+        }
+        if (cotizacionDestino > 0 && cotizacionId) {
+          try {
+            const refrescados = await obtenerDetallesCotizacion(cotizacionDestino);
+            setCotizacionDetallesOriginales(refrescados);
+          } catch {
+            // Continuar navegación aunque falle el refresco.
+          }
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionDestino)}&modo=editar&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionDestino), backTo: '/cotizaciones', modo: 'editar' },
+          });
+          return;
+        }
         navigate('/cotizaciones');
       });
     } catch (error) {
@@ -349,7 +512,7 @@ export default function CotizarProcedimientosPage() {
   const mostrarPanelDerecho = seleccionados.length > 0;
 
   return (
-    <div className="max-w-7xl mx-auto p-10 bg-white rounded-xl shadow-lg mt-8">
+    <div className={`max-w-7xl mx-auto p-10 bg-white rounded-xl shadow-lg mt-8 transition-all ${cartCount > 0 ? 'xl:mr-[22rem]' : ''}`}>
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <span className="text-3xl">🛠️</span>
@@ -370,6 +533,13 @@ export default function CotizarProcedimientosPage() {
           if (!isEditing) {
             return (
               <button onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver</button>
+            );
+          }
+          if (cotizacionId && !cobroId) {
+            return (
+              <button onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+                state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+              })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">← Volver a Servicios</button>
             );
           }
           return (
@@ -458,10 +628,11 @@ export default function CotizarProcedimientosPage() {
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
+                <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
                 {new URLSearchParams(location.search).get('cobro_id') ? (
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
-                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
+                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar Cotización'}</button>
                 )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">

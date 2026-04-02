@@ -15,6 +15,37 @@ const emptyForm = {
   activo: true,
 }
 
+function formatDateLabel(value) {
+  if (!value) return ''
+  const parsed = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString('es-PE')
+}
+
+function getVigenciaLabel(item) {
+  if (item?.fecha_inicio && item?.fecha_fin) {
+    return `${formatDateLabel(item.fecha_inicio)} a ${formatDateLabel(item.fecha_fin)}`
+  }
+  if (item?.fecha_inicio) return `Desde ${formatDateLabel(item.fecha_inicio)}`
+  if (item?.fecha_fin) return `Hasta ${formatDateLabel(item.fecha_fin)}`
+  return 'Vigencia permanente'
+}
+
+function getVigenciaTone(item) {
+  if (item?.fecha_inicio && item?.fecha_fin) {
+    return {
+      background: 'linear-gradient(135deg, var(--color-primary-light, #dbeafe), #ffffff)',
+      borderColor: 'var(--color-primary, #2563eb)',
+      color: 'var(--color-primary-dark, #1d4ed8)',
+    }
+  }
+  return {
+    background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.10), #ffffff)',
+    borderColor: 'var(--color-secondary, #4f46e5)',
+    color: 'var(--color-secondary, #4f46e5)',
+  }
+}
+
 export default function WebOfertasCrudPage() {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
@@ -176,12 +207,23 @@ export default function WebOfertasCrudPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => (
+              {items.map((it) => {
+                const vigenciaTone = getVigenciaTone(it)
+                return (
                 <tr key={it.id} className="border-t">
                   <td className="p-2">{it.titulo}</td>
                   <td className="p-2">{it.precio_oferta ?? ''}</td>
                   <td className="p-2">
-                    {(it.fecha_inicio || '') + (it.fecha_fin ? ` a ${it.fecha_fin}` : '')}
+                    <span
+                      className="inline-block rounded-full border px-3 py-1 text-xs font-semibold"
+                      style={{
+                        background: vigenciaTone.background,
+                        borderColor: vigenciaTone.borderColor,
+                        color: vigenciaTone.color,
+                      }}
+                    >
+                      {getVigenciaLabel(it)}
+                    </span>
                   </td>
                   <td className="p-2">{it.activo ? 'Sí' : 'No'}</td>
                   <td className="p-2 flex gap-2">
@@ -193,7 +235,8 @@ export default function WebOfertasCrudPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
               {items.length === 0 && (
                 <tr>
                   <td className="p-4 text-gray-600" colSpan={5}>

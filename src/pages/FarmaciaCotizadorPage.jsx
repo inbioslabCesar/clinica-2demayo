@@ -3,13 +3,36 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteListSearch from "../components/paciente-list/PacienteListSearch.jsx";
 import { BASE_URL } from "../config/config";
+import { useQuoteCart } from "../context/QuoteCartContext";
 import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage() {
+  const obtenerDetallesCotizacion = async (targetCotizacionId) => {
+    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+      credentials: "include",
+    });
+    const data = await res.json();
+    if (!data?.success || !data?.cotizacion) {
+      throw new Error(data?.error || "No se pudo cargar la cotización actual para edición");
+    }
+    return Array.isArray(data.cotizacion.detalles) ? data.cotizacion.detalles : [];
+  };
+
+  const construirDetallesEditados = async (cotizacionId, detallesFarmacia) => {
+    const base = cotizacionDetallesOriginales.length > 0
+      ? cotizacionDetallesOriginales
+      : await obtenerDetallesCotizacion(cotizacionId);
+    const detallesNoFarmacia = base.filter((d) => String(d?.servicio_tipo || "").toLowerCase() !== "farmacia");
+    return [...detallesNoFarmacia, ...detallesFarmacia];
+  };
+
   // Handler para registrar cotización (o editar cotización existente)
   const handleRegistrarVenta = async () => {
-    if (seleccionados.length === 0) {
+    const sp = new URLSearchParams(location.search);
+    const cotizacionId = sp.get('cotizacion_id');
+
+    if (!cotizacionId && seleccionados.length === 0) {
       setMensaje("Selecciona al menos un medicamento.");
       return;
     }
@@ -52,27 +75,52 @@ export default function FarmaciaCotizadorPage() {
         };
       })
       .filter(Boolean);
-    if (detalles.length === 0) {
+    if (!cotizacionId && detalles.length === 0) {
       setMensaje("No hay cantidades válidas para cotizar. Verifica el stock disponible.");
       return;
     }
 
-    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
-    const sp = new URLSearchParams(location.search);
-    const cotizacionId = sp.get('cotizacion_id');
+    let limpiarCarritoAlFinal = false;
+    const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
+    const pacienteActualId = Number(pacienteId || pacienteDatos?.id || 0);
+    const esMismoPacienteCarrito = Number(cart?.patientId || 0) === pacienteActualId;
+    if (cartItemsCount > 0 && esMismoPacienteCarrito) {
+      const esEdicionCotizacion = Boolean(cotizacionId);
+      const confirm = await Swal.fire({
+        title: 'Carrito activo detectado',
+        text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
+        cancelButtonText: 'Cancelar',
+      });
+      if (!confirm.isConfirmed) return;
+      limpiarCarritoAlFinal = true;
+    }
+
+    const detallesFinales = cotizacionId
+      ? await construirDetallesEditados(cotizacionId, detalles)
+      : detalles;
+
+    if (!Array.isArray(detallesFinales) || detallesFinales.length === 0) {
+      Swal.fire('Atención', 'La cotización no puede quedar sin ítems.', 'warning');
+      return;
+    }
+
+    const total = detallesFinales.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
 
     const payload = cotizacionId
       ? {
           accion: 'editar',
           cotizacion_id: Number(cotizacionId),
-          detalles,
+          detalles: detallesFinales,
           total,
-          motivo: 'Edición de cotización desde cotizador de Farmacia'
+          motivo: 'Edición de cotización (merge seguro) desde cotizador de Farmacia'
         }
       : {
           paciente_id: Number(pacienteId || pacienteDatos?.id),
           total,
-          detalles,
+          detalles: detallesFinales,
           observaciones: 'Cotización registrada desde cotizador de Farmacia'
         };
 
@@ -89,7 +137,25 @@ export default function FarmaciaCotizadorPage() {
       }
 
       setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
-      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(async () => {
+        if (limpiarCarritoAlFinal) {
+          clearCart();
+        }
+
+        if (cotizacionId) {
+          try {
+            const refrescados = await obtenerDetallesCotizacion(cotizacionId);
+            setCotizacionDetallesOriginales(refrescados);
+          } catch {
+            // Mantener navegación aunque falle el refresco.
+          }
+        }
+        if (cotizacionId) {
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId || pacienteDatos?.id)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId || pacienteDatos?.id), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+          });
+          return;
+        }
         navigate('/cotizaciones');
       });
     } catch (error) {
@@ -116,14 +182,17 @@ export default function FarmaciaCotizadorPage() {
   const pacienteId = params.pacienteId || null;
   const [pacienteDatos, setPacienteDatos] = useState(null); // {dni, nombre}
   const isEditing = Boolean(new URLSearchParams(location.search).get('cobro_id'));
+  const isCotizacionEditMode = Boolean(new URLSearchParams(location.search).get('cotizacion_id'));
   const [manualDni, setManualDni] = useState("");
   const [manualNombres, setManualNombres] = useState("");
   const [manualApellidos, setManualApellidos] = useState("");
   // const usuarioId = 1; // Cambia por el usuario actual
   const [mensaje, setMensaje] = useState("");
+  const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [preloadedFarmacia, setPreloadedFarmacia] = useState({}); // { mid: { unidad: qty, caja: qty } }
   const [_preloadedFarmaciaRaw, setPreloadedFarmaciaRaw] = useState([]); // array de ítems farmacia precargados (para referencias)
   const [cajaEstado, setCajaEstado] = useState(null); // 'abierta' | 'cerrada' | null
+  const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
 
   useEffect(() => {
     fetch(`${BASE_URL}api_medicamentos.php`, { credentials: "include" })
@@ -177,6 +246,7 @@ export default function FarmaciaCotizadorPage() {
     const cobroId = paramsSearch.get("cobro_id");
     const cotizacionId = paramsSearch.get("cotizacion_id");
     const loaders = [];
+    if (!cotizacionId) setCotizacionDetallesOriginales([]);
     if (cobroId) loaders.push(fetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null; if (!data.success || !cobro) return;
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
@@ -204,6 +274,7 @@ export default function FarmaciaCotizadorPage() {
     if (cotizacionId) loaders.push(fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cot = data.cotizacion || null; if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+      setCotizacionDetallesOriginales(detalles);
       const itemsFarm = detalles.filter(d => (d.servicio_tipo || '').toLowerCase() === 'farmacia');
       if (itemsFarm.length) {
         setPreloadedFarmaciaRaw(itemsFarm);
@@ -223,6 +294,107 @@ export default function FarmaciaCotizadorPage() {
     const precio = Number(med.precio_compra || 0);
     const margen = Number(med.margen_ganancia || 0);
     return precio + (precio * margen) / 100;
+  };
+
+  const construirDetallesSeleccionados = () => {
+    return seleccionados
+      .map(mid => {
+        const med = medicamentos.find(m => String(m.id) === String(mid));
+        if (!med) return null;
+        const tipo = tiposVenta[mid] || "unidad";
+        const unidadesCaja = unidadesPorCaja[mid] || 30;
+        const stockUnidades = Number(med.stock || 0);
+        const stockCajas = Math.floor(stockUnidades / unidadesCaja);
+        let cantidad = Number(cantidades[mid] ?? 0);
+        if (tipo === 'caja') cantidad = Math.min(cantidad, stockCajas);
+        else cantidad = Math.min(cantidad, stockUnidades);
+        if (cantidad <= 0) return null;
+        const precioVenta = getPrecioVenta(med);
+        const nombreMed = (med && med.nombre && med.nombre !== "0") ? med.nombre : "Medicamento sin nombre";
+        let subtotal = 0;
+        let descripcion = nombreMed;
+        if (tipo === "caja") {
+          subtotal = precioVenta * unidadesCaja * cantidad;
+          descripcion += " (Caja)";
+        } else {
+          subtotal = precioVenta * cantidad;
+          descripcion += " (Unidad)";
+        }
+        return {
+          servicio_tipo: "farmacia",
+          servicio_id: Number(mid),
+          descripcion,
+          cantidad,
+          precio_unitario: precioVenta,
+          subtotal
+        };
+      })
+      .filter(Boolean);
+  };
+
+  const agregarAlCarrito = () => {
+    if (seleccionados.length === 0) {
+      Swal.fire('Atención', 'Selecciona al menos un medicamento para agregar al carrito.', 'info');
+      return;
+    }
+
+    const seleccionadosParaCarrito = isCotizacionEditMode
+      ? seleccionados.filter((mid) => {
+          const tipoSel = tiposVenta[mid] || 'unidad';
+          return Number(preloadedFarmacia?.[mid]?.[tipoSel] || 0) <= 0;
+        })
+      : seleccionados;
+
+    if (seleccionadosParaCarrito.length === 0) {
+      Swal.fire('Atención', 'No hay medicamentos nuevos para agregar al carrito.', 'info');
+      return;
+    }
+
+    const yaExisteEnCarrito = (detalle) => {
+      const descripcion = String(detalle?.descripcion || '').toLowerCase();
+      const presentacion = descripcion.includes('(caja)') ? 'caja' : 'unidad';
+      const precio = Number(detalle?.precio_unitario || 0);
+      return Array.isArray(cart?.items) && cart.items.some((it) => {
+        if (String(it?.serviceType || '').toLowerCase() !== 'farmacia') return false;
+        if (Number(it?.serviceId || 0) !== Number(detalle?.servicio_id || 0)) return false;
+        if (Number(it?.unitPrice || 0) !== precio) return false;
+        return String(it?.presentation || 'unidad').toLowerCase() === presentacion;
+      });
+    };
+
+    const detalles = construirDetallesSeleccionados().filter((d) => {
+      if (!seleccionadosParaCarrito.includes(String(d.servicio_id))) return false;
+      if (isCotizacionEditMode && yaExisteEnCarrito(d)) return false;
+      return true;
+    });
+
+    if (detalles.length === 0) {
+      Swal.fire('Atención', 'No hay medicamentos válidos para agregar. Verifica stock o si ya están en el carrito.', 'info');
+      return;
+    }
+
+    const cantidadAgregada = detalles.length;
+
+    addItems({
+      patientId: Number(pacienteId || pacienteDatos?.id),
+      patientName: pacienteDatos?.nombre || `Paciente #${pacienteId || pacienteDatos?.id}`,
+      items: detalles.map((d) => ({
+        serviceType: 'farmacia',
+        serviceId: d.servicio_id,
+        description: d.descripcion,
+        quantity: Number(d.cantidad || 1),
+        unitPrice: Number(d.precio_unitario || 0),
+        presentation: String(d.descripcion || '').toLowerCase().includes('(caja)') ? 'caja' : 'unidad',
+        source: 'farmacia',
+      })),
+    });
+
+    // En creación nueva limpiamos selección para evitar duplicados; en edición conservamos contexto actual.
+    if (!isCotizacionEditMode) {
+      setSeleccionados([]);
+      setMensaje('');
+    }
+    Swal.fire('Listo', `Se agregaron ${cantidadAgregada} medicamento(s) al carrito.`, 'success');
   };
 
   const filtrarMedicamentos = medicamentos.filter(
@@ -309,14 +481,13 @@ export default function FarmaciaCotizadorPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cobro_id: Number(cobroId),
+            cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
             servicio_tipo: 'farmacia',
             motivo,
             item: {
               servicio_id: Number(normId),
               descripcion,
-              // eliminación parcial soportada por backend para farmacia
               cantidad_eliminar: cantidadEliminar,
-              // valores auxiliares (backend puede recalcular)
               precio_unitario: precioVenta,
               subtotal: tipo === 'caja' ? (precioVenta * unidadesCaja * cantidadEliminar) : (precioVenta * cantidadEliminar)
             }
@@ -328,7 +499,6 @@ export default function FarmaciaCotizadorPage() {
           return;
         }
 
-        // Ajustar estado local: reducir precarga y selección
         setPreloadedFarmacia(prev => {
           const next = { ...prev };
           const cur = next[normId] || { unidad: 0, caja: 0 };
@@ -338,7 +508,6 @@ export default function FarmaciaCotizadorPage() {
           return next;
         });
         setPreloadedFarmaciaRaw(prev => {
-          // best-effort: mantener referencia, backend es la fuente de verdad
           return Array.isArray(prev) ? prev : [];
         });
 
@@ -582,6 +751,7 @@ export default function FarmaciaCotizadorPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cobro_id: Number(cobroId),
+            cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
             servicio_tipo: 'farmacia',
             motivo: motivoEliminacion,
             item: {
@@ -611,7 +781,12 @@ export default function FarmaciaCotizadorPage() {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cobro_id: Number(cobroId), servicio_tipo: 'farmacia', items: itemsAgregar })
+          body: JSON.stringify({
+            cobro_id: Number(cobroId),
+            cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
+            servicio_tipo: 'farmacia',
+            items: itemsAgregar
+          })
         });
         const data = await resp.json();
         if (!data.success) {
@@ -706,7 +881,9 @@ export default function FarmaciaCotizadorPage() {
   };
 
   return (
-  <div className="w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-24 2xl:px-40 py-6 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
+  <div
+    className={`w-full mx-auto px-4 sm:px-8 lg:px-12 xl:pl-24 2xl:pl-40 py-6 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100 transition-all ${cartCount > 0 ? 'xl:pr-[24rem] 2xl:pr-[24rem]' : 'xl:pr-24 2xl:pr-40'}`}
+  >
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-3xl font-bold text-blue-900 flex items-center gap-2">
           <span role="img" aria-label="medicamentos">💊</span>
@@ -735,8 +912,13 @@ export default function FarmaciaCotizadorPage() {
             onClick={() => {
               const sp = new URLSearchParams(location.search);
               const isEditing = Boolean(sp.get('cobro_id') || sp.get('cotizacion_id'));
+              const cotizacionId = sp.get('cotizacion_id');
               const pid = pacienteId || pacienteDatos?.id;
-              if (isEditing) {
+              if (cotizacionId && !sp.get('cobro_id')) {
+                navigate(`/seleccionar-servicio?paciente_id=${Number(pid)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+                  state: { pacienteId: Number(pid), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+                });
+              } else if (isEditing) {
                 navigate(pid ? `/consumo-paciente/${pid}` : '/pacientes');
               } else {
                 navigate('/medicamentos');
@@ -746,7 +928,7 @@ export default function FarmaciaCotizadorPage() {
             {(() => {
               const sp = new URLSearchParams(location.search);
               const isEditing = Boolean(sp.get('cobro_id') || sp.get('cotizacion_id'));
-              return isEditing ? '← Volver a Consumo del Paciente' : '← Ir a Lista de Medicamentos';
+              return isEditing ? '← Volver a Servicios' : '← Ir a Lista de Medicamentos';
             })()}
           </button>
         )}
@@ -1054,10 +1236,11 @@ export default function FarmaciaCotizadorPage() {
                 </div>
                 <div className="flex gap-3 mt-4 justify-end">
                   <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
+                  <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
                   {new URLSearchParams(location.search).get('cobro_id') ? (
                     <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                   ) : (
-                    <button onClick={handleRegistrarVenta} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
+                    <button onClick={handleRegistrarVenta} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{isCotizacionEditMode ? 'Actualizar cotización' : 'Registrar Cotización'}</button>
                   )}
                 </div>
                 {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { RECEPCION_PERMISOS, RECEPCION_PERMISOS_LEGACY, normalizePermisos } from "../../config/recepcionPermisos";
 
 const roles = [
   "administrador",
@@ -11,6 +12,14 @@ const roles = [
 
 function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
   const esEdicion = !!initialData.id;
+  const permisosNormalizados = normalizePermisos(initialData.permisos || []);
+  const usaCompatLegadoRecepcion =
+    esEdicion &&
+    initialData.rol === "recepcionista" &&
+    permisosNormalizados.length === 0;
+  const permisosIniciales = usaCompatLegadoRecepcion
+    ? RECEPCION_PERMISOS_LEGACY
+    : permisosNormalizados;
   const fileInputRef = useRef(null);
   const [form, setForm] = useState({
     usuario: initialData.usuario || "",
@@ -22,6 +31,7 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
     colegiatura_numero: initialData.colegiatura_numero || "",
     firma_reportes: initialData.firma_reportes || "",
     rol: initialData.rol || "recepcionista",
+    permisos: permisosIniciales,
     activo: initialData.activo !== undefined ? initialData.activo : 1,
     password: ""
   });
@@ -32,8 +42,23 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
     const { name, value, type, checked } = e.target;
     setForm(f => ({
       ...f,
-      [name]: type === "checkbox" ? (checked ? 1 : 0) : value
+      [name]: name === "rol"
+        ? value
+        : (type === "checkbox" ? (checked ? 1 : 0) : value),
+      permisos: name === "rol" && value !== "recepcionista" ? [] : f.permisos
     }));
+  };
+
+  const togglePermiso = (permiso) => {
+    setForm((prev) => {
+      const exists = prev.permisos.includes(permiso);
+      return {
+        ...prev,
+        permisos: exists
+          ? prev.permisos.filter((p) => p !== permiso)
+          : [...prev.permisos, permiso]
+      };
+    });
   };
 
   const handleSubmit = e => {
@@ -44,6 +69,10 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
     }
     if (!esEdicion && !form.password) {
       setError("La contraseña es obligatoria al crear usuario");
+      return;
+    }
+    if (form.rol === "recepcionista" && (!Array.isArray(form.permisos) || form.permisos.length === 0)) {
+      setError("Selecciona al menos un privilegio para la recepcionista");
       return;
     }
     setError("");
@@ -106,6 +135,31 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
       />
       {esEdicion && (
         <div className="text-xs text-gray-500 md:col-span-2">Deja la contraseña vacía para no cambiarla.</div>
+      )}
+      {form.rol === "recepcionista" && (
+        <div className="md:col-span-2 border rounded p-3 bg-blue-50">
+          <div className="text-sm font-semibold mb-2">Privilegios de recepcionista</div>
+          {usaCompatLegadoRecepcion && (
+            <div className="mb-2 text-xs text-blue-700">
+              Usuario registrado antes de la nueva logica: se marcaron los accesos legacy que reflejan su panel actual.
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {RECEPCION_PERMISOS.map((permiso) => (
+              <label key={permiso.key} className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={form.permisos.includes(permiso.key)}
+                  onChange={() => togglePermiso(permiso.key)}
+                />
+                {permiso.label}
+              </label>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-gray-600">
+            Solo podra ver en sidebar y abrir rutas de los modulos marcados.
+          </div>
+        </div>
       )}
       <div className="md:col-span-2 border rounded p-3 bg-gray-50">
         <div className="text-sm font-semibold mb-2">Firma para reportes (opcional)</div>

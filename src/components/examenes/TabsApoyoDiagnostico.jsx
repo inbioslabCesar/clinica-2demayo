@@ -1,10 +1,137 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ResultadosLaboratorio from "./ResultadosLaboratorio";
 import { BASE_URL } from "../../config/config";
 
-export default function TabsApoyoDiagnostico({ consultaId, resultadosLab, ordenesLab = [] }) {
-  const [tab, setTab] = useState("laboratorio");
+// ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
+const TIPOS_IMAGEN = [
+  { key: "rx",         label: "Rayos X",    emoji: "📸", color: "sky" },
+  { key: "ecografia",  label: "Ecografía",  emoji: "🫀", color: "violet" },
+  { key: "tomografia", label: "Tomografía", emoji: "🔬", color: "amber" },
+];
+
+const ESTADO_BADGE = {
+  pendiente:  "bg-yellow-100 text-yellow-800",
+  completado: "bg-green-100 text-green-800",
+  cancelado:  "bg-red-100 text-red-600",
+};
+
+// ── Sub-panel para un tipo de imagen ─────────────────────────────────────────
+function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
+  const [ordenes, setOrdenes]             = useState([]);
+  const [loadingOrdenes, setLoadingOrdenes] = useState(false);
+
+  const cargarOrdenes = useCallback(() => {
+    if (!consultaId) return;
+    setLoadingOrdenes(true);
+    fetch(`${BASE_URL}api_ordenes_imagen.php?consulta_id=${consultaId}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) setOrdenes((d.ordenes || []).filter((o) => o.tipo === tipo));
+      })
+      .catch(() => {})
+      .finally(() => setLoadingOrdenes(false));
+  }, [consultaId, tipo]);
+
+  useEffect(() => { cargarOrdenes(); }, [cargarOrdenes]);
+
+  const handleCancelar = async (ordenId) => {
+    await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "cancelar", orden_id: ordenId }),
+    });
+    cargarOrdenes();
+  };
+
+  const esPagada = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
+
+  const cotizBadge = (ord) => {
+    const cot = ord.cotizacion;
+    if (!cot) return null;
+    if (esPagada(cot)) return <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-800">💰 Pagado</span>;
+    return <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">⏳ Pendiente pago · {cot.numero_comprobante}</span>;
+  };
+
+  const puedeVer = (ord) =>
+    ord.estado === "completado" ||
+    parseInt(ord.carga_anticipada) === 1 ||
+    esPagada(ord.cotizacion);
+
+  return (
+    <div>
+      {/* Botón navegar a SolicitudImagenPage */}
+      <button
+        onClick={() => navigate(`/solicitud-imagen/${consultaId}/${tipo}`)}
+        className={`mb-4 bg-${color}-600 text-white px-4 py-2 rounded hover:bg-${color}-700 transition text-sm font-semibold`}
+      >
+        {emoji} Solicitar {label}
+      </button>
+
+      {/* Lista de órdenes */}
+      {loadingOrdenes && <p className="text-xs text-gray-400">Cargando...</p>}
+      {!loadingOrdenes && ordenes.length === 0 && (
+        <p className="text-sm text-gray-500">No hay solicitudes de {label} para esta consulta.</p>
+      )}
+      {ordenes.map((ord) => (
+        <div key={ord.id} className="mb-3 border border-gray-200 rounded-xl p-3 bg-white shadow-sm">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-lg">{emoji}</span>
+              <span className="font-semibold text-gray-700 text-sm">{label}</span>
+              {ord.servicios_nombres?.length > 0 && (
+                <span className="text-xs text-gray-500 font-normal">— {ord.servicios_nombres.join(" · ")}</span>
+              )}
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize ${ESTADO_BADGE[ord.estado] || "bg-gray-100 text-gray-600"}`}>
+                {ord.estado}
+              </span>
+              {parseInt(ord.carga_anticipada) === 1 && (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">⚡ Urgente</span>
+              )}
+              {cotizBadge(ord)}
+            </div>
+            <div className="flex gap-1.5">
+              {puedeVer(ord) && (
+                <button
+                  onClick={() => navigate(`/visor-imagen/${ord.id}`)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded-lg font-semibold transition flex items-center gap-1"
+                >
+                  🖼️ Ver Imágenes
+                </button>
+              )}
+              {ord.estado === "pendiente" && (
+                <button
+                  onClick={() => handleCancelar(ord.id)}
+                  className="text-xs text-red-400 hover:text-red-600 transition px-2 py-1 rounded border border-red-200 hover:border-red-400"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </div>
+          {ord.indicaciones && (
+            <p className="text-xs text-gray-600 mt-1.5 pl-7">{ord.indicaciones}</p>
+          )}
+          <p className="text-[10px] text-gray-400 mt-1 pl-7">
+            Solicitado: {new Date(ord.fecha).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" })}
+            {ord.archivos?.length > 0 && ` · ${ord.archivos.length} archivo(s) adjunto(s)`}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const STORAGE_KEY = "apoyo_diagnostico_tab";
+
+export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [] }) {
+  const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
+
+  const cambiarTab = (t) => {
+    sessionStorage.setItem(STORAGE_KEY, t);
+    setTab(t);
+  };
   const [examenes, setExamenes] = useState([]);
   const navigate = useNavigate();
 
@@ -56,22 +183,62 @@ export default function TabsApoyoDiagnostico({ consultaId, resultadosLab, ordene
     return [...ordenesLab].sort((a, b) => getTs(a) - getTs(b));
   }, [ordenesLab, resultadosLab]);
 
+  const hayResultadosRegistrados = React.useMemo(() => {
+    if (!Array.isArray(resultadosLab) || resultadosLab.length === 0) return false;
+    return resultadosLab.some((r) => {
+      const val = r?.resultados;
+      if (!val) return false;
+      if (typeof val === 'string') return val.trim() !== '';
+      if (typeof val === 'object') return Object.keys(val).length > 0;
+      return true;
+    });
+  }, [resultadosLab]);
+
+  const hayOrdenesCompletadas = React.useMemo(() => {
+    if (!Array.isArray(ordenesLabOrdenadas) || ordenesLabOrdenadas.length === 0) return false;
+    return ordenesLabOrdenadas.some((orden) => {
+      const estadoVisual = String(orden?.estado_visual || orden?.estado || '').toLowerCase();
+      return estadoVisual === 'completado' || Number(orden?.analisis_completos || 0) > 0;
+    });
+  }, [ordenesLabOrdenadas]);
+
+  const resultadosConDatoPorOrden = React.useMemo(() => {
+    const map = new Map();
+    if (!Array.isArray(resultadosLab)) return map;
+    resultadosLab.forEach((r) => {
+      const oid = Number(r?.orden_id || 0);
+      if (!oid) return;
+      const val = r?.resultados;
+      const conDato = !!val && (
+        (typeof val === 'string' && val.trim() !== '') ||
+        (typeof val === 'object' && Object.keys(val).length > 0)
+      );
+      if (conDato) map.set(oid, true);
+    });
+    return map;
+  }, [resultadosLab]);
+
+  const sinOrdenIdEnResultados = React.useMemo(() => {
+    if (!Array.isArray(resultadosLab) || resultadosLab.length === 0) return true;
+    return resultadosLab.every((r) => Number(r?.orden_id || 0) <= 0);
+  }, [resultadosLab]);
+
   return (
     <div className="mb-4">
       <div className="flex flex-wrap gap-1 sm:gap-2 mb-2">
-        <button onClick={() => setTab("laboratorio")}
+        <button onClick={() => cambiarTab("laboratorio")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "laboratorio" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🧪 <span className="hidden sm:inline">Laboratorio</span><span className="sm:hidden">Lab</span>
         </button>
-        <button onClick={() => setTab("rx")}
+        <button onClick={() => cambiarTab("rx")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "rx" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           📸 <span className="hidden sm:inline">RX</span>
         </button>
-        <button onClick={() => setTab("ecografia")}
+        <button onClick={() => cambiarTab("ecografia")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "ecografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🫀 <span className="hidden sm:inline">Ecografía</span><span className="sm:hidden">Eco</span>
         </button>
-        <button onClick={() => setTab("tomografia")}
+        <button onClick={() => cambiarTab("tomografia")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "tomografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
         </button>
@@ -107,20 +274,21 @@ export default function TabsApoyoDiagnostico({ consultaId, resultadosLab, ordene
                     ) : (
                       <li className="text-gray-500">Sin detalles de exámenes</li>
                     )}
-                    <li className="text-xs text-gray-500">Estado: {orden.estado || 'pendiente'}</li>
+                    <li className="text-xs text-gray-500">Estado: {(() => {
+                      const estadoVisual = String(orden.estado_visual || orden.estado || 'pendiente').toLowerCase();
+                      if (estadoVisual === 'completado') return 'completado';
+                      if (Number(orden.analisis_completos || 0) > 0) return 'completado';
+                      if (resultadosConDatoPorOrden.get(Number(orden.id || 0))) return 'completado';
+                      // Legacy: resultados ligados por consulta_id sin orden_id.
+                      if (hayResultadosRegistrados && sinOrdenIdEnResultados && ordenesLabOrdenadas.length === 1) {
+                        return 'completado';
+                      }
+                      return estadoVisual || 'pendiente';
+                    })()}</li>
                   </ul>
                 ))}
                 {/* Si hay exámenes pero aún no hay resultados */}
-                {(
-                  !resultadosLab ||
-                  resultadosLab.length === 0 ||
-                  resultadosLab.every(
-                    (r) =>
-                      !r.resultados ||
-                      (typeof r.resultados === 'object' && Object.keys(r.resultados).length === 0) ||
-                      (typeof r.resultados === 'string' && r.resultados.trim() === '')
-                  )
-                ) && (
+                {!hayResultadosRegistrados && !hayOrdenesCompletadas && (
                   <div className="mt-2 text-sm text-gray-500">Aún no hay resultados disponibles.</div>
                 )}
               </div>
@@ -164,13 +332,13 @@ export default function TabsApoyoDiagnostico({ consultaId, resultadosLab, ordene
           </>
         )}
         {tab === "rx" && (
-          <div className="text-gray-500">(Próximamente: solicitud y resultados de Rayos X)</div>
+          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigate={navigate} />
         )}
         {tab === "ecografia" && (
-          <div className="text-gray-500">(Próximamente: solicitud y resultados de Ecografía)</div>
+          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigate={navigate} />
         )}
         {tab === "tomografia" && (
-          <div className="text-gray-500">(Próximamente: solicitud y resultados de Tomografía)</div>
+          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigate={navigate} />
         )}
       </div>
     </div>

@@ -3,6 +3,7 @@ import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 
 export default function MiFirmaProfesionalPage() {
+  const DEFAULT_LOGO_SIZE_PDF = 130;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -18,6 +19,7 @@ export default function MiFirmaProfesionalPage() {
   const [logoLaboratorio, setLogoLaboratorio] = useState("");
   const [logoPreviewTemp, setLogoPreviewTemp] = useState("");
   const [logoFile, setLogoFile] = useState(null);
+  const [logoSizePdf, setLogoSizePdf] = useState(DEFAULT_LOGO_SIZE_PDF);
   const [logoSaving, setLogoSaving] = useState(false);
   const inputFileRef = useRef(null);
   const inputLogoRef = useRef(null);
@@ -74,6 +76,7 @@ export default function MiFirmaProfesionalPage() {
       .then((data) => {
         if (data?.success) {
           setLogoLaboratorio(String(data.logo_url || ""));
+          setLogoSizePdf(Number(data.logo_size_pdf || DEFAULT_LOGO_SIZE_PDF));
         }
       })
       .catch(() => {});
@@ -131,6 +134,26 @@ export default function MiFirmaProfesionalPage() {
       });
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "No se pudo guardar");
+
+      // Guardar también configuración de logo/tamaño para laboratorista,
+      // así no se pierde al usar el botón "Guardar configuración".
+      if (mostrarSeccionLogoLab) {
+        const logoRes = await fetch(`${BASE_URL}api_logo_laboratorio.php`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            logo_url: logoLaboratorio || '',
+            logo_size_pdf: Number(logoSizePdf) || DEFAULT_LOGO_SIZE_PDF,
+          }),
+        });
+        const logoData = await logoRes.json();
+        if (!(logoRes.ok && logoData?.success)) {
+          throw new Error(logoData?.error || 'No se pudo guardar tamaño de logo');
+        }
+        setLogoSizePdf(Number(logoData.logo_size_pdf || logoSizePdf || DEFAULT_LOGO_SIZE_PDF));
+      }
+
       Swal.fire("Listo", "Firma profesional actualizada", "success");
       cargar();
     } catch (error) {
@@ -194,7 +217,10 @@ export default function MiFirmaProfesionalPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logo_url: logoPath })
+        body: JSON.stringify({
+          logo_url: logoPath,
+          logo_size_pdf: Number(logoSizePdf) || DEFAULT_LOGO_SIZE_PDF,
+        })
       });
       const result = await response.json();
       if (!(response.ok && result.success)) {
@@ -202,6 +228,7 @@ export default function MiFirmaProfesionalPage() {
       }
 
       setLogoLaboratorio(String(result.logo_url || logoPath || ''));
+      setLogoSizePdf(Number(result.logo_size_pdf || logoSizePdf || DEFAULT_LOGO_SIZE_PDF));
       setLogoFile(null);
       if (logoPreviewTemp && logoPreviewTemp.startsWith('blob:')) {
         URL.revokeObjectURL(logoPreviewTemp);
@@ -233,7 +260,10 @@ export default function MiFirmaProfesionalPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logo_url: '' })
+        body: JSON.stringify({
+          logo_url: '',
+          logo_size_pdf: Number(logoSizePdf) || DEFAULT_LOGO_SIZE_PDF,
+        })
       });
       const result = await response.json();
       if (!(response.ok && result.success)) {
@@ -263,7 +293,7 @@ export default function MiFirmaProfesionalPage() {
     <div className="max-w-4xl mx-auto p-4 md:p-8">
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6 space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-purple-800">Mi firma profesional</h1>
+          <h1 className="text-2xl font-bold" style={{ color: "var(--color-secondary)" }}>Mi firma profesional</h1>
           <p className="text-sm text-gray-600">Configura la firma y colegiatura para reportes institucionales.</p>
         </div>
 
@@ -312,7 +342,7 @@ export default function MiFirmaProfesionalPage() {
         {mostrarSeccionLogoLab && (
           <div className="border-t pt-6">
             <div className="mb-3">
-              <h2 className="text-lg font-semibold text-purple-800">Logo para reportes de laboratorio</h2>
+              <h2 className="text-lg font-semibold" style={{ color: "var(--color-secondary)" }}>Logo para reportes de laboratorio</h2>
               <p className="text-sm text-gray-600">Este logo se usará en los PDFs de resultados de laboratorio.</p>
             </div>
 
@@ -348,7 +378,8 @@ export default function MiFirmaProfesionalPage() {
                 type="button"
                 onClick={guardarLogoLaboratorio}
                 disabled={logoSaving}
-                className="bg-purple-600 text-white px-3 py-2 rounded hover:bg-purple-700 disabled:opacity-50"
+                className="text-white px-3 py-2 rounded disabled:opacity-50"
+                style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
               >
                 {logoSaving ? 'Guardando...' : 'Guardar logo'}
               </button>
@@ -362,11 +393,34 @@ export default function MiFirmaProfesionalPage() {
                 Quitar logo
               </button>
             </div>
+
+            <div className="mt-3 max-w-xs">
+              <label className="block text-sm text-gray-700 mb-1">Tamaño del logo en PDF (px)</label>
+              <input
+                type="number"
+                min={40}
+                max={260}
+                value={logoSizePdf}
+                onChange={(e) => {
+                  const raw = Number(e.target.value || DEFAULT_LOGO_SIZE_PDF);
+                  const bounded = Math.min(260, Math.max(40, raw));
+                  setLogoSizePdf(bounded);
+                }}
+                className="w-full border rounded px-3 py-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">Este valor define el ancho máximo del logo en el encabezado del PDF.</p>
+            </div>
           </div>
         )}
 
         <div>
-          <button type="button" disabled={saving} onClick={guardar} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={guardar}
+            className="text-white px-4 py-2 rounded disabled:opacity-50"
+            style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
+          >
             {saving ? "Guardando..." : "Guardar configuración"}
           </button>
         </div>

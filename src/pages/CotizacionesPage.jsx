@@ -2,20 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
-import { FiEdit3, FiEye, FiSlash, FiDollarSign } from "react-icons/fi";
+import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen } from "react-icons/fi";
 
-const serviceRouteMap = {
-  laboratorio: "/cotizar-laboratorio",
-  rayosx: "/cotizar-rayosx",
-  rayos_x: "/cotizar-rayosx",
-  "rayos x": "/cotizar-rayosx",
-  ecografia: "/cotizar-ecografia",
-  operacion: "/cotizar-operacion",
-  operaciones: "/cotizar-operacion",
-  procedimiento: "/cotizar-procedimientos",
-  procedimientos: "/cotizar-procedimientos",
-  farmacia: "/cotizar-farmacia",
-};
+const SERVICIOS_IMAGEN = new Set(["rayosx", "ecografia", "tomografia"]);
+function tieneServicioImagen(serviciosTipos) {
+  return Array.isArray(serviciosTipos) && serviciosTipos.some((tipo) => SERVICIOS_IMAGEN.has(tipo));
+}
 
 function normalizarServicioTipo(value) {
   const base = String(value || "").toLowerCase().trim();
@@ -23,16 +15,34 @@ function normalizarServicioTipo(value) {
   if (base === "rayos_x" || base === "rayos x") return "rayosx";
   if (base === "operaciones") return "operacion";
   if (base === "procedimientos") return "procedimiento";
+  if (base === "consulta_medica" || base === "consulta médica" || base === "consulta medica") return "consulta";
   return base;
+}
+
+function formatDateInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export default function CotizacionesPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const today = new Date().toISOString().slice(0, 10);
   const autoAnularRef = useRef(false);
 
   const actionBtnBase = "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-transform hover:scale-105";
+  const themeGradient = {
+    backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
+  };
+  const themePrimarySoft = {
+    backgroundColor: "var(--color-primary-light)",
+    color: "var(--color-primary-dark)",
+  };
+  const themeOutline = {
+    color: "var(--color-primary-dark)",
+    borderColor: "var(--color-primary-light)",
+  };
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -42,13 +52,13 @@ export default function CotizacionesPage() {
 
   const [qInput, setQInput] = useState("");
   const [estadoInput, setEstadoInput] = useState("");
-  const [fechaInicioInput, setFechaInicioInput] = useState(today);
-  const [fechaFinInput, setFechaFinInput] = useState(today);
+  const [fechaInicioInput, setFechaInicioInput] = useState("");
+  const [fechaFinInput, setFechaFinInput] = useState("");
   const [filtrosAplicados, setFiltrosAplicados] = useState({
     q: "",
     estado: "",
-    fechaInicio: today,
-    fechaFin: today,
+    fechaInicio: "",
+    fechaFin: "",
   });
 
   const cargar = useCallback(async () => {
@@ -97,17 +107,46 @@ export default function CotizacionesPage() {
     });
   };
 
+  const aplicarRangoDias = (dias) => {
+    const fin = new Date();
+    const inicio = new Date(fin);
+    inicio.setDate(fin.getDate() - (dias - 1));
+
+    const inicioStr = formatDateInput(inicio);
+    const finStr = formatDateInput(fin);
+
+    setFechaInicioInput(inicioStr);
+    setFechaFinInput(finStr);
+    setPage(1);
+    setFiltrosAplicados((prev) => ({
+      ...prev,
+      fechaInicio: inicioStr,
+      fechaFin: finStr,
+    }));
+  };
+
+  const mostrarTodo = () => {
+    setFechaInicioInput("");
+    setFechaFinInput("");
+    setPage(1);
+    setFiltrosAplicados((prev) => ({
+      ...prev,
+      fechaInicio: "",
+      fechaFin: "",
+    }));
+  };
+
   const limpiarFiltros = () => {
     setQInput("");
     setEstadoInput("");
-    setFechaInicioInput(today);
-    setFechaFinInput(today);
+    setFechaInicioInput("");
+    setFechaFinInput("");
     setPage(1);
     setFiltrosAplicados({
       q: "",
       estado: "",
-      fechaInicio: today,
-      fechaFin: today,
+      fechaInicio: "",
+      fechaFin: "",
     });
   };
 
@@ -165,6 +204,9 @@ export default function CotizacionesPage() {
 
     autoAnularRef.current = true;
 
+    // Limpiar la URL inmediatamente para que un refresh no vuelva a disparar el dialog
+    navigate("/cotizaciones", { replace: true });
+
     const ejecutarAnulacion = async () => {
       let cotizacionObjetivo = rows.find((r) => Number(r.id) === cotizacionId) || null;
 
@@ -196,134 +238,13 @@ export default function CotizacionesPage() {
     };
 
     ejecutarAnulacion();
-  }, [location.search, loading, rows, anularCotizacion]);
-
-  const ajustarItemCotizacion = async (cotizacion) => {
-    let detalles = Array.isArray(cotizacion.detalles) ? cotizacion.detalles : [];
-    if (!detalles.length) {
-      try {
-        const resCot = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacion.id)}`, {
-          credentials: "include",
-        });
-        const dataCot = await resCot.json();
-        if (!dataCot?.success || !dataCot?.cotizacion) {
-          throw new Error(dataCot?.error || "No se pudo cargar detalle de cotización");
-        }
-        detalles = Array.isArray(dataCot.cotizacion.detalles) ? dataCot.cotizacion.detalles : [];
-      } catch (error) {
-        Swal.fire("Error", error?.message || "No se pudo cargar el detalle para ajustar", "error");
-        return;
-      }
-    }
-
-    if (!detalles.length) {
-      Swal.fire("Sin detalle", "No hay ítems para ajustar en esta cotización.", "info");
-      return;
-    }
-
-    const activos = detalles.filter((d) => Number(d.cantidad || 0) > 0);
-    if (!activos.length) {
-      Swal.fire("Sin ítems activos", "Todos los ítems ya fueron ajustados.", "info");
-      return;
-    }
-
-    const options = {};
-    activos.forEach((d) => {
-      options[String(d.id)] = `${d.servicio_tipo} | ${d.descripcion} | Cant: ${d.cantidad} | S/ ${Number(d.subtotal || 0).toFixed(2)}`;
-    });
-
-    const sel = await Swal.fire({
-      title: `Ajustar cotización #${cotizacion.id}`,
-      input: "select",
-      inputOptions: options,
-      inputPlaceholder: "Selecciona un ítem",
-      showCancelButton: true,
-      confirmButtonText: "Siguiente",
-      cancelButtonText: "Cancelar",
-      inputValidator: (value) => (!value ? "Selecciona un ítem" : undefined),
-    });
-    if (!sel.isConfirmed) return;
-
-    const item = activos.find((d) => String(d.id) === String(sel.value));
-    if (!item) return;
-
-    const qty = await Swal.fire({
-      title: "Cantidad a quitar",
-      input: "number",
-      inputValue: 1,
-      inputAttributes: {
-        min: "1",
-        max: String(Math.max(1, Number(item.cantidad || 1))),
-        step: "1",
-      },
-      showCancelButton: true,
-      confirmButtonText: "Siguiente",
-      cancelButtonText: "Cancelar",
-      inputValidator: (value) => {
-        const n = Number(value);
-        if (!Number.isInteger(n) || n <= 0) return "Ingresa una cantidad válida";
-        if (n > Number(item.cantidad || 0)) return "No puede ser mayor a la cantidad actual";
-        return undefined;
-      },
-    });
-    if (!qty.isConfirmed) return;
-
-    const motivo = await Swal.fire({
-      title: "Motivo del ajuste",
-      input: "text",
-      inputPlaceholder: "Escribe el motivo",
-      showCancelButton: true,
-      confirmButtonText: "Aplicar ajuste",
-      cancelButtonText: "Cancelar",
-      inputValidator: (value) => {
-        if (!value || !value.trim()) return "Motivo obligatorio";
-        if (value.trim().length < 4) return "Mínimo 4 caracteres";
-        return undefined;
-      },
-    });
-    if (!motivo.isConfirmed) return;
-
-    try {
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accion: "devolucion_item",
-          cotizacion_id: Number(cotizacion.id),
-          cotizacion_detalle_id: Number(item.id),
-          cantidad_eliminar: Number(qty.value),
-          motivo: String(motivo.value || "").trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!data?.success) throw new Error(data?.error || "No se pudo aplicar el ajuste");
-      Swal.fire("Listo", `Ajuste aplicado. Monto devuelto: S/ ${Number(data.monto_devuelto || 0).toFixed(2)}`, "success");
-      cargar();
-    } catch (error) {
-      Swal.fire("Error", error?.message || "No se pudo aplicar el ajuste", "error");
-    }
-  };
-
-  const irEditarServicio = (cotizacion, servicioTipo) => {
-    const tipo = normalizarServicioTipo(servicioTipo);
-    if (tipo === "consulta") {
-      navigate(`/agendar-consulta?cotizacion_id=${cotizacion.id}`, {
-        state: { pacienteId: cotizacion.paciente_id, backTo: "/cotizaciones" },
-      });
-      return;
-    }
-
-    const base = serviceRouteMap[tipo];
-    if (!base) return;
-    navigate(`${base}/${cotizacion.paciente_id}?cotizacion_id=${cotizacion.id}`);
-  };
+  }, [location.search, loading, rows, anularCotizacion, navigate]);
 
   return (
     <div className="max-w-full mx-auto p-4 md:p-8">
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-          <h2 className="text-2xl font-bold text-purple-800">Cotizaciones</h2>
+          <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Cotizaciones</h2>
           <div className="text-sm text-gray-600">Total registros: <b>{total}</b></div>
         </div>
 
@@ -360,7 +281,37 @@ export default function CotizacionesPage() {
         </div>
 
         <div className="flex flex-wrap gap-2 mb-4">
-          <button onClick={filtrar} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Filtrar</button>
+          <button
+            onClick={() => aplicarRangoDias(1)}
+            className="px-3 py-1 rounded"
+            style={themePrimarySoft}
+          >
+            Hoy
+          </button>
+          <button
+            onClick={() => aplicarRangoDias(7)}
+            className="px-3 py-1 rounded"
+            style={themePrimarySoft}
+          >
+            Ultimos 7 dias
+          </button>
+          <button
+            onClick={() => aplicarRangoDias(30)}
+            className="px-3 py-1 rounded"
+            style={themePrimarySoft}
+          >
+            Ultimos 30 dias
+          </button>
+          <button
+            onClick={mostrarTodo}
+            className="bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200"
+          >
+            Todo
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button onClick={filtrar} className="text-white px-4 py-2 rounded" style={themeGradient}>Filtrar</button>
           <button onClick={limpiarFiltros} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Limpiar</button>
         </div>
 
@@ -396,6 +347,28 @@ export default function CotizacionesPage() {
                     .map((s) => normalizarServicioTipo(s))
                     .filter(Boolean)
                 ));
+                const cotizacionPagada = ["pagado", "completado"].includes(estadoRow);
+                const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
+                const puedeSubirResultadoReferencia = cotizacionPagada
+                  && servicios.includes("laboratorio")
+                  && tieneLaboratorioReferencia
+                  && Number(row.paciente_id || 0) > 0;
+                const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
+                const puedeProcesarLaboratorioInterno = cotizacionPagada
+                  && servicios.includes("laboratorio")
+                  && !tieneLaboratorioReferencia
+                  && Number(row.paciente_id || 0) > 0;
+                const puedeAbrirLaboratorio = puedeSubirResultadoReferencia || puedeProcesarLaboratorioInterno || tieneResultadosLaboratorio;
+                const tituloResultadoReferencia = encodeURIComponent(`Resultado laboratorio referencia - Cot. #${row.id}`);
+                const ordenLaboratorioId = Number(row.orden_laboratorio_id || 0);
+                const ordenQuery = ordenLaboratorioId > 0 ? `&orden_id=${ordenLaboratorioId}` : "";
+                const tituloResultadoInterno = encodeURIComponent(`Resultado laboratorio interno - Cot. #${row.id}`);
+                const laboratorioUrl = puedeSubirResultadoReferencia
+                  ? `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&abrir=1&tipo=laboratorio&titulo=${tituloResultadoReferencia}&back_to=/cotizaciones`
+                  : `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&tipo=laboratorio&titulo=${tituloResultadoInterno}&back_to=/cotizaciones`;
+                const laboratorioTitulo = puedeSubirResultadoReferencia
+                  ? (tieneResultadosLaboratorio ? "Ver resultados de laboratorio" : "Subir resultado de laboratorio de referencia")
+                  : (tieneResultadosLaboratorio ? "Abrir documentos y luego editar en panel" : "Abrir documentos y luego procesar en panel");
                 return (
                   <tr key={row.id} className="border-t align-top">
                     <td className="px-3 py-2 font-semibold">#{row.id}</td>
@@ -408,14 +381,14 @@ export default function CotizacionesPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
                         {servicios.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
-                          <button
+                          <span
                             key={`${row.id}-${s}`}
-                            onClick={() => irEditarServicio(row, s)}
-                            className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200"
-                            title="Abrir servicio"
+                            className="text-xs px-2 py-1 rounded"
+                            style={themePrimarySoft}
+                            title="Servicio cotizado"
                           >
                             {estadoRow === "anulada" ? `${s} (anulada)` : s}
-                          </button>
+                          </span>
                         ))}
                       </div>
                     </td>
@@ -429,13 +402,44 @@ export default function CotizacionesPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-2">
                         <button
-                          onClick={() => navigate(`/consumo-paciente/${row.paciente_id}?cotizacion_id=${row.id}&back_to=/cotizaciones`)}
-                          className={`${actionBtnBase} bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200`}
+                          onClick={() => navigate(`/cotizaciones/${row.id}/detalle`)}
+                          className={`${actionBtnBase}`}
+                          style={themeOutline}
                           title="Ver detalle"
                           aria-label="Ver detalle"
                         >
                           <FiEye className="text-sm" />
                         </button>
+                        {puedeAbrirLaboratorio && (
+                          <button
+                            onClick={() => navigate(laboratorioUrl)}
+                            className={`${actionBtnBase} ${tieneResultadosLaboratorio ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200'}`}
+                            title={laboratorioTitulo}
+                            aria-label={laboratorioTitulo}
+                          >
+                            <FiFileText className="text-sm" />
+                          </button>
+                        )}
+                        {Number(row.consulta_ref_id || 0) > 0 && Number(row.paciente_id || 0) > 0 && servicios.includes('consulta') && (
+                          <button
+                            onClick={() => navigate(`/historia-clinica-lectura/${row.paciente_id}/${row.consulta_ref_id}?back_to=/cotizaciones`)}
+                            className={`${actionBtnBase} bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200`}
+                            title="Ver Historia Clínica"
+                            aria-label="Ver Historia Clínica"
+                          >
+                            <FiBookOpen className="text-sm" />
+                          </button>
+                        )}
+                        {["pagado", "completado"].includes(String(row.estado || "").toLowerCase()) && tieneServicioImagen(servicios) && (
+                          <button
+                            onClick={() => navigate(`/imagenes-paciente/${row.paciente_id}?cotizacion_id=${row.id}`)}
+                            className={`${actionBtnBase} bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-200`}
+                            title="Subir / ver imágenes"
+                            aria-label="Subir / ver imágenes"
+                          >
+                            <FiCamera className="text-sm" />
+                          </button>
+                        )}
                         {(String(row.estado || "").toLowerCase() === "pendiente" || String(row.estado || "").toLowerCase() === "parcial") && (
                           <button
                             onClick={() => navigate(`/cobrar-cotizacion/${row.id}`)}
@@ -448,22 +452,27 @@ export default function CotizacionesPage() {
                         )}
                         {String(row.estado || "").toLowerCase() !== "anulada" && (
                           <button
+                            onClick={() => {
+                              navigate(`/seleccionar-servicio?paciente_id=${row.paciente_id}&cotizacion_id=${row.id}&back_to=/cotizaciones&modo=editar`, {
+                                state: { pacienteId: row.paciente_id, cotizacionId: row.id, backTo: "/cotizaciones", modo: "editar" },
+                              });
+                            }}
+                            className={`${actionBtnBase}`}
+                            style={themeOutline}
+                            title="Editar cotización"
+                            aria-label="Editar cotización"
+                          >
+                            <FiEdit2 className="text-sm" />
+                          </button>
+                        )}
+                        {String(row.estado || "").toLowerCase() !== "anulada" && (
+                          <button
                             onClick={() => anularCotizacion(row)}
                             className={`${actionBtnBase} bg-red-100 text-red-700 border-red-200 hover:bg-red-200`}
                             title="Anular"
                             aria-label="Anular"
                           >
                             <FiSlash className="text-sm" />
-                          </button>
-                        )}
-                        {(String(row.estado || "").toLowerCase() === "pagado" || String(row.estado || "").toLowerCase() === "parcial") && (
-                          <button
-                            onClick={() => ajustarItemCotizacion(row)}
-                            className={`${actionBtnBase} bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200`}
-                            title="Ajustar ítem"
-                            aria-label="Ajustar ítem"
-                          >
-                            <FiEdit3 className="text-sm" />
                           </button>
                         )}
                       </div>

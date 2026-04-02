@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS configuracion_clinica (
   email VARCHAR(100) NOT NULL,
   horario_atencion TEXT,
   logo_url VARCHAR(500) NULL,
+  logo_size_sistema VARCHAR(10) NULL,
+  logo_size_publico VARCHAR(10) NULL,
   website VARCHAR(255) NULL,
   ruc VARCHAR(20) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

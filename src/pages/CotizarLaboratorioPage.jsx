@@ -1,12 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 // import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
+import { useQuoteCart } from "../context/QuoteCartContext";
 
 export default function CotizarLaboratorioPage() {
+  const safeText = (value) => String(value || "");
+  const safeLower = (value) => safeText(value).toLowerCase();
+  const asBool = (value) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value === 1;
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized === "1" || normalized === "true" || normalized === "si" || normalized === "sí" || normalized === "yes";
+  };
+
   // Estado para configuración de derivación por examen
   const [derivaciones, setDerivaciones] = useState({}); // { [examenId]: { derivado: bool, tipo: 'monto'|'porcentaje', valor: number, laboratorio: string } }
   // const [cotizacionReady, setCotizacionReady] = useState(false);
@@ -28,7 +38,13 @@ export default function CotizarLaboratorioPage() {
   const [preloadedLab, setPreloadedLab] = useState({}); // {exId: {cantidad, derivado, tipo, valor, laboratorio}}
   const [pendingLabItems, setPendingLabItems] = useState([]); // items desde cobro para mapear contra examenes
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas para eliminar exacto
+  const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [cajaEstado, setCajaEstado] = useState(null);
+  const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const cotizacionId = searchParams.get('cotizacion_id');
+  const cobroId = searchParams.get('cobro_id');
+  const isEditingCotizacion = Boolean(cotizacionId) && !cobroId;
 
   useEffect(() => {
     // Cargar exámenes, tarifas, ranking y paciente
@@ -38,14 +54,20 @@ export default function CotizarLaboratorioPage() {
       fetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include" }).then(res => res.json()),
       pacienteId ? fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, { credentials: "include" }).then(res => res.json()) : Promise.resolve({ success: false })
     ]).then(([examenesData, tarifasData, rankingData, pacienteData]) => {
-      setExamenes(examenesData.examenes || []);
-      setTarifas(tarifasData.tarifas || []);
-      setRanking(rankingData.ranking || []);
+      setExamenes(Array.isArray(examenesData?.examenes) ? examenesData.examenes : []);
+      setTarifas(Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : []);
+      setRanking(Array.isArray(rankingData?.ranking) ? rankingData.ranking : []);
       if (pacienteData && pacienteData.success && pacienteData.paciente) {
         setPaciente(pacienteData.paciente);
       }
       setLoading(false);
       // Eliminado log de depuración de tarifas y examenes
+    }).catch(() => {
+      setExamenes([]);
+      setTarifas([]);
+      setRanking([]);
+      setLoading(false);
+      setMensaje("No se pudo cargar información del cotizador. Intenta nuevamente.");
     });
   }, [pacienteId]);
 
@@ -59,11 +81,15 @@ export default function CotizarLaboratorioPage() {
 
   // Precarga desde cobro existente si viene ?cobro_id=...
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const cobroId = params.get("cobro_id");
-    const cotizacionId = params.get("cotizacion_id");
     const loaders = [];
-    if (cobroId || cotizacionId) setPreloadedItems([]);
+    if (cobroId || cotizacionId) {
+      setPreloadedItems([]);
+      setPendingLabItems([]);
+      setPreloadedLab({});
+      setDerivaciones({});
+      setSeleccionados([]);
+    }
+    if (!cotizacionId) setCotizacionDetallesOriginales([]);
     if (cobroId) loaders.push(fetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(r => r.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null;
       if (!data.success || !cobro) return;
@@ -81,19 +107,101 @@ export default function CotizarLaboratorioPage() {
       const cot = data.cotizacion || null;
       if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+      setCotizacionDetallesOriginales(detalles);
       const itemsLab = detalles.filter(d => (d.servicio_tipo || '').toLowerCase() === 'laboratorio').map(d => ({
         servicio_id: d.servicio_id,
         descripcion: d.descripcion,
         cantidad: d.cantidad,
         precio_unitario: d.precio_unitario,
-        subtotal: d.subtotal
+        subtotal: d.subtotal,
+        derivado: d.derivado,
+        tipo_derivacion: d.tipo_derivacion,
+        valor_derivacion: d.valor_derivacion,
+        laboratorio_referencia: d.laboratorio_referencia
       }));
-      if (itemsLab.length) setPendingLabItems(prev => [...prev, ...itemsLab]);
-      if (itemsLab.length) setPreloadedItems(prev => [...prev, ...itemsLab]);
+
+      const faltanCamposDerivacion = itemsLab.some((it) => {
+        const hasDerivado = it.derivado !== undefined && it.derivado !== null && String(it.derivado).trim() !== "";
+        const hasTipo = String(it.tipo_derivacion || "").trim() !== "";
+        const hasLab = String(it.laboratorio_referencia || "").trim() !== "";
+        const hasValor = !(it.valor_derivacion === undefined || it.valor_derivacion === null || String(it.valor_derivacion).trim() === "");
+        return !hasDerivado && !hasTipo && !hasLab && !hasValor;
+      });
+
+      if (faltanCamposDerivacion && Number(cot.paciente_id || 0) > 0 && itemsLab.length > 0) {
+        loaders.push(
+          fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?paciente_id=${Number(cot.paciente_id)}&cotizacion_id=${Number(cotizacionId)}`, { credentials: "include" })
+            .then((r) => r.json())
+            .then((movData) => {
+              const movimientosIniciales = Array.isArray(movData?.movimientos) ? movData.movimientos : [];
+              if (movimientosIniciales.length > 0) {
+                return movimientosIniciales;
+              }
+              // Si el backend soporta cotizacion_id y no devolvio movimientos para esta cotizacion,
+              // no debemos caer al fallback por paciente porque mezclaria datos de otras cotizaciones.
+              if (movData?.supports_cotizacion_id) {
+                return [];
+              }
+              return fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?paciente_id=${Number(cot.paciente_id)}`, { credentials: "include" })
+                .then((rr) => rr.json())
+                .then((legacyData) => (Array.isArray(legacyData?.movimientos) ? legacyData.movimientos : []));
+            })
+            .then((movimientos) => {
+              const fallbackMap = {};
+
+              for (const mov of movimientos) {
+                const exId = Number(mov?.examen_id || 0);
+                if (!exId) continue;
+                const keyExamen = `id:${exId}`;
+                if (!fallbackMap[keyExamen]) {
+                  fallbackMap[keyExamen] = mov;
+                }
+
+                const obsNorm = String(mov?.observaciones || "").toLowerCase().trim();
+                if (obsNorm) {
+                  const keyObs = `obs:${obsNorm}`;
+                  if (!fallbackMap[keyObs]) fallbackMap[keyObs] = mov;
+                }
+              }
+
+              const mergedItems = itemsLab.map((it) => {
+                const currentHasLab = String(it.laboratorio_referencia || "").trim() !== "";
+                const currentHasTipo = String(it.tipo_derivacion || "").trim() !== "";
+                const currentHasValor = !(it.valor_derivacion === undefined || it.valor_derivacion === null || String(it.valor_derivacion).trim() === "");
+                const currentHasDerivado = it.derivado !== undefined && it.derivado !== null && String(it.derivado).trim() !== "";
+                if (currentHasLab || currentHasTipo || currentHasValor || currentHasDerivado) return it;
+
+                const byId = fallbackMap[`id:${Number(it.servicio_id || 0)}`];
+                const byObs = fallbackMap[`obs:${String(it.descripcion || "").toLowerCase().trim()}`];
+                const src = byId || byObs;
+                if (!src) return it;
+
+                return {
+                  ...it,
+                  derivado: 1,
+                  tipo_derivacion: src.tipo || it.tipo_derivacion || "",
+                  valor_derivacion: src.monto ?? it.valor_derivacion ?? "",
+                  laboratorio_referencia: src.laboratorio || it.laboratorio_referencia || "",
+                };
+              });
+
+              setPendingLabItems((prev) => [...prev, ...mergedItems]);
+              setPreloadedItems((prev) => [...prev, ...mergedItems]);
+            })
+            .catch(() => {
+              // Si falla el fallback, mantenemos el flujo con los datos disponibles.
+              setPendingLabItems(prev => [...prev, ...itemsLab]);
+              setPreloadedItems(prev => [...prev, ...itemsLab]);
+            })
+        );
+      } else if (itemsLab.length) {
+        setPendingLabItems(prev => [...prev, ...itemsLab]);
+        setPreloadedItems(prev => [...prev, ...itemsLab]);
+      }
     }));
     if (!loaders.length) return;
     Promise.all(loaders).catch(() => {});
-  }, [location.search]);
+  }, [cobroId, cotizacionId]);
 
   // Cuando tengamos examenes y items pendientes, mapear por id o por nombre
   useEffect(() => {
@@ -111,13 +219,35 @@ export default function CotizarLaboratorioPage() {
       if (ex) {
         const exId = Number(ex.id);
         toSelect.push(exId);
+        const nextDerivado = asBool(it.derivado);
+        const nextTipo = it.tipo_derivacion || "";
+        const nextValor = it.valor_derivacion ?? "";
+        const nextLaboratorio = it.laboratorio_referencia || "";
+
+        if (!countsMap[exId]) {
+          countsMap[exId] = {
+            cantidad: 0,
+            derivado: nextDerivado,
+            tipo: nextTipo,
+            valor: nextValor,
+            laboratorio: nextLaboratorio,
+          };
+        } else {
+          // Si existe más de una línea para el mismo examen, conservar la configuración derivada más completa.
+          countsMap[exId].derivado = countsMap[exId].derivado || nextDerivado;
+          if (!countsMap[exId].tipo && nextTipo) countsMap[exId].tipo = nextTipo;
+          if ((countsMap[exId].valor === "" || countsMap[exId].valor === null || countsMap[exId].valor === undefined) && (nextValor !== "" && nextValor !== null && nextValor !== undefined)) {
+            countsMap[exId].valor = nextValor;
+          }
+          if (!countsMap[exId].laboratorio && nextLaboratorio) countsMap[exId].laboratorio = nextLaboratorio;
+        }
+
         derivMap[exId] = {
-          derivado: !!it.derivado,
-          tipo: it.tipo_derivacion || "",
-          valor: it.valor_derivacion ?? "",
-          laboratorio: it.laboratorio_referencia || ""
+          derivado: countsMap[exId].derivado,
+          tipo: countsMap[exId].tipo,
+          valor: countsMap[exId].valor,
+          laboratorio: countsMap[exId].laboratorio,
         };
-        if (!countsMap[exId]) countsMap[exId] = { cantidad: 0, ...derivMap[exId] };
         countsMap[exId].cantidad += Number(it.cantidad || 1);
       }
     });
@@ -171,7 +301,7 @@ export default function CotizarLaboratorioPage() {
           cantidad: diff,
           precio_unitario: precio,
           subtotal: precio * diff,
-          derivado: !!deriv.derivado,
+          derivado: asBool(deriv.derivado),
           tipo_derivacion: deriv.tipo || "",
           valor_derivacion: deriv.valor || 0,
           laboratorio_referencia: deriv.laboratorio || ""
@@ -280,6 +410,7 @@ export default function CotizarLaboratorioPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               cobro_id: Number(cobroId),
+              cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
               servicio_tipo: 'laboratorio',
               item: line,
               motivo: motivoReduccion
@@ -322,7 +453,12 @@ export default function CotizarLaboratorioPage() {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cobro_id: Number(cobroId), servicio_tipo: 'laboratorio', items: additionsAfterReductions })
+          body: JSON.stringify({
+            cobro_id: Number(cobroId),
+            cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
+            servicio_tipo: 'laboratorio',
+            items: additionsAfterReductions
+          })
         });
         const data = await resp.json();
         if (!data?.success) throw new Error(data?.error || 'No se pudo actualizar el cobro');
@@ -339,7 +475,7 @@ export default function CotizarLaboratorioPage() {
         if (!nextLab[exId]) {
           nextLab[exId] = {
             cantidad: 0,
-            derivado: !!line?.derivado,
+            derivado: asBool(line?.derivado),
             tipo: line?.tipo_derivacion || "",
             valor: line?.valor_derivacion ?? "",
             laboratorio: line?.laboratorio_referencia || ""
@@ -347,7 +483,7 @@ export default function CotizarLaboratorioPage() {
         }
         nextLab[exId].cantidad += qty;
         // Mantener true si alguna línea tiene derivación
-        nextLab[exId].derivado = nextLab[exId].derivado || !!line?.derivado;
+        nextLab[exId].derivado = nextLab[exId].derivado || asBool(line?.derivado);
         // Preferir valores no vacíos
         if (!nextLab[exId].tipo && line?.tipo_derivacion) nextLab[exId].tipo = line.tipo_derivacion;
         if ((nextLab[exId].valor === "" || nextLab[exId].valor === null || nextLab[exId].valor === undefined) && (line?.valor_derivacion ?? "") !== "") {
@@ -385,21 +521,23 @@ export default function CotizarLaboratorioPage() {
 
   if (loading) return <div>Cargando exámenes y tarifas...</div>;
   // Obtener categorías únicas
-  const categorias = Array.from(new Set(examenes.map(ex => ex.categoria).filter(Boolean)));
+  const categorias = Array.from(new Set(examenes.map(ex => ex?.categoria).filter(Boolean)));
   // Filtrar exámenes por búsqueda y categoría
   // Ordenar por ranking (más solicitados primero)
-  const rankingIds = ranking.map(r => parseInt(r.id));
+  const rankingIds = ranking.map(r => Number(r?.id)).filter(Number.isFinite);
   const examenesOrdenados = [...examenes].sort((a, b) => {
-    const idxA = rankingIds.indexOf(a.id);
-    const idxB = rankingIds.indexOf(b.id);
-    if (idxA === -1 && idxB === -1) return a.nombre.localeCompare(b.nombre);
+    const idA = Number(a?.id);
+    const idB = Number(b?.id);
+    const idxA = rankingIds.indexOf(idA);
+    const idxB = rankingIds.indexOf(idB);
+    if (idxA === -1 && idxB === -1) return safeText(a?.nombre).localeCompare(safeText(b?.nombre));
     if (idxA === -1) return 1;
     if (idxB === -1) return -1;
     return idxA - idxB;
   });
 
   const examenesFiltrados = examenesOrdenados.filter(ex => {
-    const matchBusqueda = busqueda.trim().length === 0 || ex.nombre.toLowerCase().includes(busqueda.toLowerCase());
+    const matchBusqueda = busqueda.trim().length === 0 || safeLower(ex?.nombre).includes(safeLower(busqueda));
     const matchCategoria = categoriaFilter === "" || ex.categoria === categoriaFilter;
     return matchBusqueda && matchCategoria;
   });
@@ -413,20 +551,14 @@ export default function CotizarLaboratorioPage() {
     setMensaje("");
   };
 
-  const generarCotizacion = async () => {
-    if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un examen para cotizar.");
-      return;
-    }
-    // Construir detalles para cotización, incluyendo derivación
-    const detalles = seleccionados.map(exId => {
+  const construirDetallesSeleccionados = () => {
+    return seleccionados.map(exId => {
       const exIdNum = Number(exId);
       const ex = examenes.find(e => Number(e.id) === exIdNum);
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
-      let descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
+      const descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
       const derivacion = derivaciones[exId] || { derivado: false };
-      // Usar precio_publico si no hay tarifa
-      let precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
       return {
         servicio_tipo: "laboratorio",
         servicio_id: exIdNum,
@@ -440,40 +572,217 @@ export default function CotizarLaboratorioPage() {
         laboratorio_referencia: derivacion.laboratorio || ''
       };
     });
+  };
 
-    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
-    const sp = new URLSearchParams(location.search);
-    const cotizacionId = sp.get('cotizacion_id');
+  const agregarAlCarrito = () => {
+    if (seleccionados.length === 0) {
+      Swal.fire('Atención', 'Selecciona al menos un examen para agregar al carrito.', 'info');
+      return;
+    }
+
+    const seleccionadosParaCarrito = isEditingCotizacion
+      ? seleccionados.filter((exId) => Number(preloadedLab[exId]?.cantidad || 0) <= 0)
+      : seleccionados;
+
+    if (seleccionadosParaCarrito.length === 0) {
+      Swal.fire('Atención', 'No hay exámenes nuevos para agregar al carrito.', 'info');
+      return;
+    }
+
+    const yaExisteEnCarrito = (detalle) => {
+      const precio = Number(detalle?.precio_unitario || 0);
+      const derivado = Boolean(detalle?.derivado);
+      const tipo = String(detalle?.tipo_derivacion || "").toLowerCase();
+      const valor = Number(detalle?.valor_derivacion || 0);
+      const laboratorio = String(detalle?.laboratorio_referencia || "").trim().toLowerCase();
+
+      return Array.isArray(cart?.items) && cart.items.some((it) => {
+        if (String(it?.serviceType || "").toLowerCase() !== "laboratorio") return false;
+        if (Number(it?.serviceId || 0) !== Number(detalle?.servicio_id || 0)) return false;
+        if (Number(it?.unitPrice || 0) !== precio) return false;
+
+        const itDerivado = Boolean(it?.derivado);
+        const itTipo = String(it?.tipoDerivacion || "").toLowerCase();
+        const itValor = Number(it?.valorDerivacion || 0);
+        const itLab = String(it?.laboratorioReferencia || "").trim().toLowerCase();
+
+        return itDerivado === derivado && itTipo === tipo && itValor === valor && itLab === laboratorio;
+      });
+    };
+
+    const detalles = construirDetallesSeleccionados().filter((d) => {
+      if (!seleccionadosParaCarrito.includes(Number(d.servicio_id))) return false;
+      if (isEditingCotizacion && yaExisteEnCarrito(d)) return false;
+      return true;
+    });
+
+    const cantidadAgregada = detalles.length;
+    if (cantidadAgregada === 0) {
+      Swal.fire('Atención', 'Los exámenes seleccionados ya están en el carrito.', 'info');
+      return;
+    }
+
+    addItems({
+      patientId: Number(pacienteId),
+      patientName: paciente ? `${paciente.nombre || ''} ${paciente.apellido || ''}`.trim() : `Paciente #${pacienteId}`,
+      items: detalles.map((d) => ({
+        serviceType: 'laboratorio',
+        serviceId: d.servicio_id,
+        description: d.descripcion,
+        quantity: Number(d.cantidad || 1),
+        unitPrice: Number(d.precio_unitario || 0),
+        source: 'laboratorio',
+        derivado: Boolean(d.derivado),
+        tipoDerivacion: d.tipo_derivacion || '',
+        valorDerivacion: Number(d.valor_derivacion || 0),
+        laboratorioReferencia: d.laboratorio_referencia || '',
+      })),
+    });
+
+    // En creación nueva limpiamos selección para evitar duplicados; en edición conservamos contexto actual.
+    if (!isEditingCotizacion) {
+      limpiarSeleccion();
+    }
+    Swal.fire('Listo', `Se agregaron ${cantidadAgregada} examen(es) al carrito.`, 'success');
+  };
+
+  const obtenerDetallesCotizacion = async (targetCotizacionId) => {
+    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!data?.success || !data?.cotizacion) {
+      throw new Error(data?.error || 'No se pudo cargar la cotización actual para edición');
+    }
+    return Array.isArray(data.cotizacion.detalles) ? data.cotizacion.detalles : [];
+  };
+
+  const construirDetallesEditados = async (detallesLaboratorio) => {
+    if (!cotizacionId) return detallesLaboratorio;
+    const base = cotizacionDetallesOriginales.length > 0
+      ? cotizacionDetallesOriginales
+      : await obtenerDetallesCotizacion(cotizacionId);
+
+    const detallesNoLaboratorio = base.filter((d) => String(d?.servicio_tipo || '').toLowerCase() !== 'laboratorio');
+    return [...detallesNoLaboratorio, ...detallesLaboratorio];
+  };
+
+  const generarCotizacion = async ({ irACobro = false } = {}) => {
+    if (!cotizacionId && seleccionados.length === 0) {
+      setMensaje("Selecciona al menos un examen para cotizar.");
+      return;
+    }
+
+    let limpiarCarritoAlFinal = false;
+    const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
+    const esMismoPacienteCarrito = Number(cart?.patientId || 0) === Number(pacienteId || 0);
+    if (cartItemsCount > 0 && esMismoPacienteCarrito) {
+      const esEdicionCotizacion = Boolean(cotizacionId);
+      const confirm = await Swal.fire({
+        title: 'Carrito activo detectado',
+        text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
+        cancelButtonText: 'Cancelar',
+      });
+      if (!confirm.isConfirmed) return;
+      limpiarCarritoAlFinal = true;
+    }
+
+    const detallesLaboratorio = construirDetallesSeleccionados();
+    const detallesFinales = cotizacionId
+      ? await construirDetallesEditados(detallesLaboratorio)
+      : detallesLaboratorio;
+
+    if (!Array.isArray(detallesFinales) || detallesFinales.length === 0) {
+      Swal.fire('Atención', 'La cotización no puede quedar sin ítems.', 'warning');
+      return;
+    }
+
+    const total = detallesFinales.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
 
     const payload = cotizacionId
       ? {
           accion: 'editar',
           cotizacion_id: Number(cotizacionId),
-          detalles,
+          detalles: detallesFinales,
           total,
-          motivo: 'Edición de cotización desde cotizador de Laboratorio'
+          motivo: 'Edición de cotización (merge seguro) desde cotizador de Laboratorio'
         }
       : {
           paciente_id: Number(pacienteId),
           total,
-          detalles,
+          detalles: detallesFinales,
           observaciones: 'Cotización registrada desde cotizador de Laboratorio'
         };
 
     try {
+      let data;
       const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      data = await res.json();
+
+      const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
+      if (!data?.success && cotizacionId && noEditable) {
+        const payloadAdenda = {
+          accion: 'adenda',
+          cotizacion_id: Number(cotizacionId),
+          detalles: detallesFinales,
+          total,
+          motivo: 'Adenda automática desde cotizador de Laboratorio (cotización pagada)'
+        };
+        const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadAdenda)
+        });
+        data = await resAdenda.json();
+      }
+
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
 
-      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
-      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+      const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
+      const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
+
+      setMensaje(
+        fueAdenda
+          ? 'Adenda creada correctamente.'
+          : (cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.')
+      );
+      Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
+        if (limpiarCarritoAlFinal) {
+          clearCart();
+        }
+
+        if (cotizacionDestino > 0 && cotizacionId) {
+          try {
+            const refrescados = await obtenerDetallesCotizacion(cotizacionDestino);
+            setCotizacionDetallesOriginales(refrescados);
+          } catch {
+            // Si no se puede recargar, continuamos con navegación para no bloquear el flujo.
+          }
+        }
+
+        if (irACobro && cotizacionDestino > 0) {
+          navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
+          return;
+        }
+
+        if (cotizacionDestino > 0 && cotizacionId) {
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionDestino)}&modo=editar&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionDestino), backTo: '/cotizaciones', modo: 'editar' },
+          });
+          return;
+        }
+
         navigate('/cotizaciones');
       });
     } catch (error) {
@@ -481,31 +790,37 @@ export default function CotizarLaboratorioPage() {
     }
   };
 
-  const mostrarPanelDerecho = seleccionados.length > 0;
+  const mostrarPanelDerecho = seleccionados.length > 0 || isEditingCotizacion;
 
   return (
-  <div className="max-w-full mx-auto p-4 md:p-16 bg-white rounded-xl shadow-lg mt-8">
+  <div
+    className={`max-w-full mx-auto p-4 md:p-16 bg-white rounded-xl shadow-lg mt-8 transition-all ${cartCount > 0 ? 'xl:mr-[22rem]' : ''}`}
+  >
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-2">
         <div className="flex items-center gap-3 mb-2 md:mb-0">
           <span className="text-3xl">🔬</span>
           <h2 className="text-2xl font-bold text-blue-800">Cotización de Laboratorio</h2>
-          {(new URLSearchParams(location.search).get('cobro_id') || new URLSearchParams(location.search).get('cotizacion_id')) && (
+          {(cobroId || cotizacionId) && (
             <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded border border-yellow-300">
-              {new URLSearchParams(location.search).get('cobro_id')
-                ? `Editando cobro #${new URLSearchParams(location.search).get('cobro_id')}`
-                : `Editando cotización #${new URLSearchParams(location.search).get('cotizacion_id')}`}
+              {cobroId
+                ? `Editando cobro #${cobroId}`
+                : `Editando cotización #${cotizacionId}`}
             </span>
           )}
         </div>
-        <div className="flex w-full md:w-auto justify-end items-end">
+        <div className="flex w-full md:w-auto justify-end items-end xl:pr-24">
           {(() => {
-            const sp = new URLSearchParams(location.search);
-            const cobroId = sp.get('cobro_id');
-            const cotizacionId = sp.get('cotizacion_id');
             const isEditing = Boolean(cobroId || cotizacionId);
             if (!isEditing) {
               return (
                 <button onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver</button>
+              );
+            }
+            if (cotizacionId && !cobroId) {
+              return (
+                <button onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+                  state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+                })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">← Volver a Servicios</button>
               );
             }
             return (
@@ -749,15 +1064,21 @@ export default function CotizarLaboratorioPage() {
               </div>
               <div className="flex flex-wrap gap-3 mt-4 justify-end">
                 <button onClick={limpiarSeleccion} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
-                {new URLSearchParams(location.search).get('cobro_id') ? (
+                <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
+                {cobroId ? (
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
+                ) : isEditingCotizacion ? (
+                  <>
+                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Actualizar cotización</button>
+                    <button onClick={() => generarCotizacion({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Actualizar y cobrar</button>
+                  </>
                 ) : (
                   <button onClick={generarCotizacion} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
                 )}
               </div>
-              {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
+              {cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">
-                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cotizar'}.</span>
+                  <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {cobroId ? 'actualizar' : 'guardar'}.</span>
                   <button onClick={() => navigate('/contabilidad')} className="text-sm bg-yellow-100 text-yellow-800 px-3 py-1 rounded border border-yellow-300 hover:bg-yellow-200">Ir a Contabilidad</button>
                 </div>
               )}

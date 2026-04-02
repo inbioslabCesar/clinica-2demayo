@@ -6,6 +6,7 @@ CREATE TABLE usuarios (
   nombre VARCHAR(100) NOT NULL,
   dni VARCHAR(15) NOT NULL,
   profesion VARCHAR(100) NOT NULL,
+  permisos TEXT NULL,
   rol ENUM('administrador', 'medico', 'enfermero', 'recepcionista', 'laboratorista') NOT NULL DEFAULT 'recepcionista',
   activo TINYINT(1) NOT NULL DEFAULT 1,
   creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP

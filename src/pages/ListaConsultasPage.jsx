@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 // Lazy loading de librerías pesadas para exportar
 
 export default function ListaConsultasPage() {
+  const navigate = useNavigate();
   const [consultas, setConsultas] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(3);
@@ -23,7 +25,9 @@ export default function ListaConsultasPage() {
       fechaDesde,
       fechaHasta
     });
-    fetch(`${BASE_URL}api_consultas.php?${params.toString()}`)
+    fetch(`${BASE_URL}api_consultas.php?${params.toString()}`, {
+      credentials: "include"
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
@@ -176,12 +180,13 @@ export default function ListaConsultasPage() {
                 <th className="p-2">Médico</th>
                 <th className="p-2">Motivo</th>
                 <th className="p-2">Estado</th>
+                <th className="p-2 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {consultas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center p-4">
+                  <td colSpan={7} className="text-center p-4">
                     No hay consultas registradas
                   </td>
                 </tr>
@@ -198,6 +203,16 @@ export default function ListaConsultasPage() {
                     <td className="p-2">{c.medico_nombre}</td>
                     <td className="p-2">{c.motivo}</td>
                     <td className="p-2">{c.estado}</td>
+                    <td className="p-2 text-center">
+                      <button
+                        onClick={() =>
+                          navigate(`/agendar-consulta?paciente_id=${Number(c.paciente_id || 0)}&consulta_id=${Number(c.id || 0)}`)
+                        }
+                        className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-blue-700 transition-colors"
+                      >
+                        Editar
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}

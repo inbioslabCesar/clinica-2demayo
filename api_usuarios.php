@@ -3,11 +3,69 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function permisosPermitidosRecepcion() {
+    return [
+        'ver_pacientes',
+        'ver_usuarios',
+        'ver_medicos',
+        'ver_panel_enfermeria',
+        'ver_gestion_tarifas',
+        'ver_inventario_general',
+        'ver_panel_laboratorio',
+        'ver_inventario_laboratorio',
+        'ver_modulo_quimico',
+        'ver_contabilidad',
+        'ver_cotizaciones',
+        'ver_lista_consultas',
+        'ver_recordatorios_citas',
+        'ver_web_servicios',
+        'ver_web_ofertas',
+        'ver_web_banners',
+        'ver_configuracion',
+        'ver_plantillas_hc',
+        'ver_tema',
+        'ver_reabrir_caja',
+    ];
+}
+
+function normalizarPermisosRecepcion($raw) {
+    if (is_string($raw)) {
+        $decoded = json_decode($raw, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $raw = $decoded;
+        } else {
+            $raw = explode(',', $raw);
+        }
+    }
+    if (!is_array($raw)) {
+        return [];
+    }
+    $allow = array_flip(permisosPermitidosRecepcion());
+    $clean = [];
+    foreach ($raw as $item) {
+        $key = trim((string)$item);
+        if ($key !== '' && isset($allow[$key])) {
+            $clean[$key] = true;
+        }
+    }
+    return array_keys($clean);
+}
+
+function asegurarColumnaPermisos($mysqli) {
+    $check = $mysqli->query("SHOW COLUMNS FROM usuarios LIKE 'permisos'");
+    if ($check && $check->num_rows === 0) {
+        $mysqli->query("ALTER TABLE usuarios ADD COLUMN permisos TEXT NULL AFTER cargo_firma");
+    }
+}
+
+asegurarColumnaPermisos($mysqli);
+
 switch ($_SERVER['REQUEST_METHOD']) {
     case 'GET':
-        $result = $mysqli->query('SELECT id, usuario, nombre, dni, profesion, firma_reportes, colegiatura_tipo, colegiatura_numero, cargo_firma, rol, activo, creado_en FROM usuarios');
+        $result = $mysqli->query('SELECT id, usuario, nombre, dni, profesion, firma_reportes, colegiatura_tipo, colegiatura_numero, cargo_firma, permisos, rol, activo, creado_en FROM usuarios');
         $usuarios = [];
         while ($row = $result->fetch_assoc()) {
+            $row['permisos'] = normalizarPermisosRecepcion($row['permisos'] ?? '[]');
             $usuarios[] = $row;
         }
         echo json_encode($usuarios);
@@ -31,6 +89,15 @@ switch ($_SERVER['REQUEST_METHOD']) {
             $colegiaturaTipo = $data['colegiatura_tipo'] ?? null;
             $colegiaturaNumero = $data['colegiatura_numero'] ?? null;
             $cargoFirma = $data['cargo_firma'] ?? null;
+            $rol = $data['rol'] ?? 'recepcionista';
+            $permisos = normalizarPermisosRecepcion($data['permisos'] ?? []);
+
+            if ($rol === 'recepcionista' && count($permisos) === 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Debe seleccionar al menos un privilegio para la recepcionista.']);
+                exit;
+            }
+            $permisosJson = json_encode($rol === 'recepcionista' ? $permisos : []);
 
             if (!empty($firmaReportes) && !preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaReportes)) {
                 http_response_code(400);
@@ -38,13 +105,13 @@ switch ($_SERVER['REQUEST_METHOD']) {
                 exit;
             }
 
-            $stmt = $mysqli->prepare('INSERT INTO usuarios (usuario, password, nombre, dni, profesion, firma_reportes, colegiatura_tipo, colegiatura_numero, cargo_firma, rol, activo) VALUES (?, SHA2(?,256), ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt = $mysqli->prepare('INSERT INTO usuarios (usuario, password, nombre, dni, profesion, firma_reportes, colegiatura_tipo, colegiatura_numero, cargo_firma, permisos, rol, activo) VALUES (?, SHA2(?,256), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             if (!$stmt) {
                 throw new Exception('Error preparando consulta: ' . $mysqli->error);
             }
             
             $activo = $data['activo'] ?? 1;
-            $stmt->bind_param('ssssssssssi', $data['usuario'], $data['password'], $data['nombre'], $data['dni'], $data['profesion'], $firmaReportes, $colegiaturaTipo, $colegiaturaNumero, $cargoFirma, $data['rol'], $activo);
+            $stmt->bind_param('sssssssssssi', $data['usuario'], $data['password'], $data['nombre'], $data['dni'], $data['profesion'], $firmaReportes, $colegiaturaTipo, $colegiaturaNumero, $cargoFirma, $permisosJson, $rol, $activo);
             
             if ($stmt->execute()) {
                 echo json_encode(['success' => true, 'id' => $mysqli->insert_id, 'message' => 'Usuario creado correctamente']);
@@ -103,8 +170,24 @@ switch ($_SERVER['REQUEST_METHOD']) {
             if (isset($data[$campo])) {
                 $campos[] = "$campo = ?";
                 $params[] = $data[$campo];
-                $types .= is_int($data[$campo]) ? 'i' : 's';
+                $types .= ($campo === 'activo') ? 'i' : 's';
             }
+        }
+
+        if (isset($data['permisos'])) {
+            $permisosEdit = normalizarPermisosRecepcion($data['permisos']);
+            if (($data['rol'] ?? null) === 'recepcionista' && count($permisosEdit) === 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Debe seleccionar al menos un privilegio para la recepcionista.']);
+                exit;
+            }
+            $campos[] = 'permisos = ?';
+            $params[] = json_encode($permisosEdit);
+            $types .= 's';
+        } elseif (isset($data['rol']) && $data['rol'] !== 'recepcionista') {
+            $campos[] = 'permisos = ?';
+            $params[] = '[]';
+            $types .= 's';
         }
         
         if (count($campos) > 0) {

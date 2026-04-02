@@ -13,6 +13,7 @@ export default function useUsuarioLogueado() {
             nombre: data.nombre,
             rol: data.rol,
             usuario: data.usuario,
+            permisos: Array.isArray(data.permisos) ? data.permisos : [],
           });
         } else {
           setUsuario(null);

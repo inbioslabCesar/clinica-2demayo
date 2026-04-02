@@ -1,6 +1,7 @@
 
 
 import { useState, useRef, useEffect } from 'react';
+import { BASE_URL } from '../../config/config';
 
 const MedicoFormModal = ({ 
   isOpen, 
@@ -14,6 +15,7 @@ const MedicoFormModal = ({
 }) => {
   const [previewFirma, setPreviewFirma] = useState(formData.firma || null);
   const [firmaError, setFirmaError] = useState('');
+  const [configuracion, setConfiguracion] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -23,8 +25,44 @@ const MedicoFormModal = ({
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+      cargarConfiguracion();
     }
   }, [isOpen, formData.firma]);
+
+  const cargarConfiguracion = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}api_configuracion.php`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setConfiguracion(data.data);
+      }
+    } catch (err) {
+      console.error('Error cargando configuración:', err);
+    }
+  };
+
+  const generarEmailYPassword = (nroColegiatura) => {
+    if (!nroColegiatura || !configuracion) return;
+    
+    const nroLimpio = String(nroColegiatura).trim();
+    if (!nroLimpio) return;
+
+    const nombreEmpresa = (configuracion.nombre_clinica || 'empresa').toLowerCase().replace(/\s+/g, '');
+    const nuevoEmail = `${nroLimpio}@${nombreEmpresa}.com`;
+    const nuevoPassword = nroLimpio;
+
+    onChange({ target: { name: 'email', value: nuevoEmail } });
+    onChange({ target: { name: 'password', value: nuevoPassword } });
+  };
+
+  const handleNroColegiaturChange = (e) => {
+    onChange(e);
+    if (mode === 'create' && configuracion) {
+      generarEmailYPassword(e.target.value);
+    }
+  };
   
   if (!isOpen) return null;
 
@@ -86,6 +124,18 @@ const MedicoFormModal = ({
   const buttonColor = isEditMode
     ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700'
     : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700';
+
+  const tipoProfesional = formData.tipo_profesional || 'medico';
+  const esMedico = tipoProfesional === 'medico';
+  const mapaAbreviaturas = {
+    medico: 'Dr(a).',
+    psicologo: 'Psic.',
+    obstetra: 'Obst.',
+    odontologo: 'Od.',
+    nutricionista: 'Nut.',
+    enfermeria: 'Lic.',
+    otro: 'Prof.',
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
@@ -193,6 +243,52 @@ const MedicoFormModal = ({
                     required
                   />
                 </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Tipo de Profesional *</label>
+                    <select
+                      name="tipo_profesional"
+                      value={tipoProfesional}
+                      onChange={(e) => {
+                        const nuevoTipo = e.target.value;
+                        onChange(e);
+                        onChange({
+                          target: {
+                            name: 'abreviatura_profesional',
+                            value: mapaAbreviaturas[nuevoTipo] || 'Prof.',
+                          },
+                        });
+                        if (nuevoTipo === 'medico' && !(formData.colegio_sigla || '').trim()) {
+                          onChange({ target: { name: 'colegio_sigla', value: 'CMP' } });
+                        }
+                      }}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      required
+                    >
+                      <option value="medico">Médico</option>
+                      <option value="psicologo">Psicólogo</option>
+                      <option value="obstetra">Obstetra</option>
+                      <option value="odontologo">Odontólogo</option>
+                      <option value="nutricionista">Nutricionista</option>
+                      <option value="enfermeria">Lic. Enfermería</option>
+                      <option value="otro">Otro profesional</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Abreviatura profesional *</label>
+                    <input
+                      type="text"
+                      name="abreviatura_profesional"
+                      value={formData.abreviatura_profesional || ''}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder="Ej: Dr(a)., Psic., Obst., Lic."
+                      required
+                    />
+                  </div>
+                </div>
               </div>
               
               {/* Sección: Códigos Profesionales */}
@@ -204,26 +300,26 @@ const MedicoFormModal = ({
                   <h4 className="text-lg font-semibold text-gray-800">Códigos Profesionales</h4>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       <span className="flex items-center gap-2">
                         <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a1 1 0 011-1h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        C.M.P. (Colegio Médico del Perú) *
+                        Sigla de Colegio {esMedico ? '*' : '(opcional)'}
                       </span>
                     </label>
                     <input
                       type="text"
-                      name="cmp"
-                      value={formData.cmp || ''}
+                      name="colegio_sigla"
+                      value={formData.colegio_sigla || ''}
                       onChange={onChange}
                       className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
-                      placeholder="64201"
-                      required
+                      placeholder={esMedico ? 'CMP' : 'Ej: CPSP'}
+                      required={esMedico}
                     />
-                    <p className="text-xs text-gray-500 mt-1">Obligatorio para todos los médicos</p>
+                    <p className="text-xs text-gray-500 mt-1">Ejemplos: CMP, CPSP, CPO.</p>
                   </div>
                   
                   <div>
@@ -232,7 +328,36 @@ const MedicoFormModal = ({
                         <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                         </svg>
-                        R.N.E. (Registro Nacional de Especialidad)
+                        Nro. de Colegiatura {esMedico ? '*' : '(opcional)'}
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      name="nro_colegiatura"
+                      value={formData.nro_colegiatura || formData.cmp || ''}
+                      onChange={(e) => {
+                        handleNroColegiaturChange(e);
+                        onChange({ target: { name: 'cmp', value: e.target.value } });
+                      }}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder={esMedico ? '64201' : 'Ej: 36922'}
+                      required={esMedico}
+                    />
+                    {mode === 'create' && (
+                      <p className="text-xs text-green-600 mt-1">💡 Email y contraseña se generarán automáticamente al guardar.</p>
+                    )}
+                    {mode !== 'create' && (
+                      <p className="text-xs text-gray-500 mt-1">Para médicos corresponde al CMP.</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      <span className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                        R.N.E. (opcional)
                       </span>
                     </label>
                     <input
@@ -241,9 +366,9 @@ const MedicoFormModal = ({
                       value={formData.rne || ''}
                       onChange={onChange}
                       className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
-                      placeholder="36922"
+                      placeholder="Solo si aplica"
                     />
-                    <p className="text-xs text-gray-500 mt-1">Solo para médicos especialistas</p>
+                    <p className="text-xs text-gray-500 mt-1">Registro de especialidad, cuando exista.</p>
                   </div>
                 </div>
               </div>
@@ -263,7 +388,7 @@ const MedicoFormModal = ({
                       <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
                       </svg>
-                      Email *
+                      Email {mode === 'create' ? '(Auto-generado)' : '*'}
                     </span>
                   </label>
                   <input
@@ -272,9 +397,13 @@ const MedicoFormModal = ({
                     value={formData.email}
                     onChange={onChange}
                     className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
-                    placeholder="doctor@clinica2demayo.com"
-                    required
+                    placeholder={mode === 'create' ? "Se generará automáticamente" : "doctor@ejemplo.com"}
+                    required={mode !== 'create'}
+                    readOnly={mode === 'create'}
                   />
+                  {mode === 'create' && formData.email && (
+                    <p className="text-xs text-green-600 mt-1">✓ Email generado: {formData.email}</p>
+                  )}
                 </div>
                 
                 <div>
@@ -283,25 +412,112 @@ const MedicoFormModal = ({
                       <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                       </svg>
-                      {isEditMode ? 'Nueva Contraseña' : 'Contraseña de Acceso *'}
+                      {isEditMode ? 'Nueva Contraseña' : mode === 'create' ? 'Contraseña (Auto-generada)' : 'Contraseña de Acceso *'}
                     </span>
                   </label>
                   <input
-                    type="password"
+                    type={mode === 'create' ? "text" : "password"}
                     name="password"
                     value={formData.password}
                     onChange={onChange}
                     className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
-                    placeholder="••••••••"
+                    placeholder={mode === 'create' ? "Se generará automáticamente" : "••••••••"}
                     required={!isEditMode}
                     autoComplete={isEditMode ? "new-password" : "new-password"}
+                    readOnly={mode === 'create'}
                   />
                   {isEditMode && (
                     <p className="text-xs text-gray-500 mt-1">Dejar vacío para mantener la contraseña actual</p>
                   )}
-                  {!isEditMode && (
-                    <p className="text-xs text-gray-500 mt-1">Mínimo 8 caracteres recomendados</p>
+                  {mode === 'create' && formData.password && (
+                    <p className="text-xs text-green-600 mt-1">✓ Contraseña: {formData.password} (puede cambiarla después)</p>
                   )}
+                  {mode === 'create' && !formData.password && (
+                    <p className="text-xs text-gray-500 mt-1">Se generará automáticamente al ingresar el número de colegiatura</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Sección: Condiciones de Pago */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 10v-1m-6-6h12" />
+                  </svg>
+                  <h4 className="text-lg font-semibold text-gray-800">Condiciones de Pago</h4>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Modalidad de Pago</label>
+                    <select
+                      name="modalidad_pago"
+                      value={formData.modalidad_pago || 'acto'}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                    >
+                      <option value="acto">Por acto médico</option>
+                      <option value="hora">Por hora</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Frecuencia de Pago</label>
+                    <select
+                      name="frecuencia_pago"
+                      value={formData.frecuencia_pago || 'mensual'}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                    >
+                      <option value="quincenal">Quincenal</option>
+                      <option value="mensual">Mensual</option>
+                    </select>
+                  </div>
+                </div>
+
+                {String(formData.modalidad_pago || 'acto') === 'hora' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Monto por Hora (S/)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      name="monto_hora"
+                      value={formData.monto_hora ?? ''}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder="80.00"
+                      required
+                    />
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                    <input
+                      type="checkbox"
+                      name="permite_adelanto"
+                      checked={!!formData.permite_adelanto}
+                      onChange={onChange}
+                      className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    Permitir adelantos
+                  </label>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Tope adelanto por periodo (S/)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      name="tope_adelanto_periodo"
+                      value={formData.tope_adelanto_periodo ?? ''}
+                      onChange={onChange}
+                      disabled={!formData.permite_adelanto}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white disabled:bg-gray-100 disabled:text-gray-400"
+                      placeholder="300.00"
+                    />
+                  </div>
                 </div>
               </div>
               
@@ -402,7 +618,7 @@ const MedicoFormModal = ({
                       )}
                       <div className="border-t-2 border-gray-300 pt-2">
                         <div className="text-sm font-medium text-gray-800">
-                          {formData.nombre} {formData.apellido}
+                          {(formData.abreviatura_profesional || 'Dr(a).')} {formData.nombre} {formData.apellido}
                         </div>
                         {formData.especialidad && (
                           <div className="text-xs text-gray-600">
@@ -410,7 +626,11 @@ const MedicoFormModal = ({
                           </div>
                         )}
                         <div className="text-xs text-gray-600">
-                          {formData.cmp && `C.M.P. ${formData.cmp}`}
+                          {(formData.colegio_sigla || '').trim() && (formData.nro_colegiatura || formData.cmp)
+                            ? `${formData.colegio_sigla}: ${formData.nro_colegiatura || formData.cmp}`
+                            : (formData.nro_colegiatura || formData.cmp)
+                              ? `Colegiatura: ${formData.nro_colegiatura || formData.cmp}`
+                              : ''}
                           {formData.rne && ` - R.N.E ${formData.rne}`}
                         </div>
                       </div>

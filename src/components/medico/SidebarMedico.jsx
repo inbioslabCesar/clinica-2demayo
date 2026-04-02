@@ -27,16 +27,6 @@ export default function SidebarMedico() {
       >
         Mis consultas
       </Link>
-      <Link
-        to="/historial-consultas"
-        className={
-          location.pathname.startsWith("/historial-consultas")
-            ? "font-bold text-blue-700"
-            : "text-blue-900 hover:underline"
-        }
-      >
-        Historial de consultas
-      </Link>
       
       {/* Botón Firma Digital */}
       <div className="border-t border-blue-200 pt-3 mt-3">

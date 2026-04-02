@@ -12,6 +12,7 @@ try {
             'nombre' => $_SESSION['usuario']['nombre'] ?? '',
             'rol' => $_SESSION['usuario']['rol'] ?? '',
             'usuario' => $_SESSION['usuario']['usuario'] ?? '',
+            'permisos' => $_SESSION['usuario']['permisos'] ?? [],
             'tipo' => 'usuario'
         ]);
     } elseif (isset($_SESSION['medico_id']) && isset($_SESSION['medico'])) {
@@ -22,6 +23,7 @@ try {
             'usuario_id' => $_SESSION['medico_id'],
             'nombre' => $_SESSION['medico']['nombre'] ?? '',
             'rol' => 'medico',
+            'permisos' => [],
             'tipo' => 'medico'
         ]);
     } else {

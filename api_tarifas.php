@@ -2,6 +2,24 @@
 require_once __DIR__ . '/init_api.php'; 
 require_once "config.php";
 require_once "auth_check.php";
+
+function ensure_medicos_profesional_columns_tarifas($conn) {
+    $checks = [
+        'tipo_profesional' => "ALTER TABLE medicos ADD COLUMN tipo_profesional VARCHAR(30) NOT NULL DEFAULT 'medico'",
+        'abreviatura_profesional' => "ALTER TABLE medicos ADD COLUMN abreviatura_profesional VARCHAR(20) NOT NULL DEFAULT 'Dr(a).'",
+        'colegio_sigla' => "ALTER TABLE medicos ADD COLUMN colegio_sigla VARCHAR(20) NULL",
+        'nro_colegiatura' => "ALTER TABLE medicos ADD COLUMN nro_colegiatura VARCHAR(30) NULL",
+    ];
+
+    foreach ($checks as $col => $sqlAlter) {
+        $exists = $conn->query("SHOW COLUMNS FROM medicos LIKE '{$col}'");
+        if ($exists && $exists->num_rows === 0) {
+            $conn->query($sqlAlter);
+        }
+    }
+}
+
+ensure_medicos_profesional_columns_tarifas($conn);
 // Función para obtener los tipos de servicio
 function getTiposServicio() {
     return [
@@ -28,7 +46,9 @@ function obtenerTodasLasTarifas($conn) {
     $hasMedicoId = $checkColumn->num_rows > 0;
     
     if ($hasMedicoId) {
-        $query = "SELECT t.*, m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad as medico_especialidad 
+        $query = "SELECT t.*, m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad as medico_especialidad,
+                         m.tipo_profesional as medico_tipo_profesional, m.abreviatura_profesional as medico_abreviatura_profesional,
+                         m.colegio_sigla as medico_colegio_sigla, m.nro_colegiatura as medico_nro_colegiatura
                   FROM tarifas t 
                   LEFT JOIN medicos m ON t.medico_id = m.id 
                   WHERE t.activo = 1 
@@ -51,6 +71,10 @@ function obtenerTodasLasTarifas($conn) {
             'medico_nombre' => $hasMedicoId ? $row['medico_nombre'] : null,
             'medico_apellido' => $hasMedicoId ? $row['medico_apellido'] : null,
             'medico_especialidad' => $hasMedicoId ? $row['medico_especialidad'] : null,
+            'medico_tipo_profesional' => $hasMedicoId ? $row['medico_tipo_profesional'] : null,
+            'medico_abreviatura_profesional' => $hasMedicoId ? $row['medico_abreviatura_profesional'] : null,
+            'medico_colegio_sigla' => $hasMedicoId ? $row['medico_colegio_sigla'] : null,
+            'medico_nro_colegiatura' => $hasMedicoId ? $row['medico_nro_colegiatura'] : null,
             'porcentaje_medico' => isset($row['porcentaje_medico']) ? floatval($row['porcentaje_medico']) : null,
             'porcentaje_clinica' => isset($row['porcentaje_clinica']) ? floatval($row['porcentaje_clinica']) : null,
             'monto_medico' => isset($row['monto_medico']) ? floatval($row['monto_medico']) : null,

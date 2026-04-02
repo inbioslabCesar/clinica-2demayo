@@ -1,9 +1,26 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import useMedicos from '../../hooks/useMedicos';
 import MedicoSearchBar from './MedicoSearchBar';
 import MedicoTable from './MedicoTable';
 import MedicoFormModal from './MedicoFormModal';
+import ProgramarHorarioModal from './ProgramarHorarioModal';
+import CuentaCorrienteMedicoModal from './CuentaCorrienteMedicoModal';
 
 function MedicoList() {
+  const navigate = useNavigate();
+  const rolUsuario = (() => {
+    try {
+      const u = sessionStorage.getItem('usuario');
+      if (u) return JSON.parse(u)?.rol || '';
+      const m = sessionStorage.getItem('medico');
+      if (m) return JSON.parse(m)?.rol || '';
+    } catch { /* ignore */ }
+    return '';
+  })();
+  const [medicoHorario, setMedicoHorario]   = useState(null); // para ProgramarHorarioModal
+  const [medicoCuenta, setMedicoCuenta]     = useState(null); // para CuentaCorrienteMedicoModal
+
   const {
     // Estados
     medicos,
@@ -47,7 +64,8 @@ function MedicoList() {
     handleEditChange,
     handleEditSubmit,
     handleSort,
-    deleteMedico
+    deleteMedico,
+    verDeudaMedico
   } = useMedicos();
 
   return (
@@ -73,6 +91,10 @@ function MedicoList() {
             onSort={handleSort}
             onEdit={handleEdit}
             onDelete={deleteMedico}
+            onVerDeuda={(m) => setMedicoCuenta(m)}
+            onProgramarHorario={(m) => setMedicoHorario(m)}
+            onGestionarDisponibilidad={(m) => navigate(`/medicos/${m.id}/disponibilidad`, { state: { medico: m } })}
+            rolUsuario={rolUsuario}
             // Paginación
             page={page}
             setPage={setPage}
@@ -107,6 +129,24 @@ function MedicoList() {
             error={editError}
             isSaving={editSaving}
           />
+
+          {/* Modal cuenta corriente */}
+          {medicoCuenta && (
+            <CuentaCorrienteMedicoModal
+              medico={medicoCuenta}
+              rolUsuario={rolUsuario}
+              onClose={() => setMedicoCuenta(null)}
+            />
+          )}
+
+          {/* Modal programar horario mensual */}
+          {medicoHorario && (
+            <ProgramarHorarioModal
+              medico={medicoHorario}
+              onClose={() => setMedicoHorario(null)}
+              onGuardado={() => {}}
+            />
+          )}
         </div>
       </div>
     </div>

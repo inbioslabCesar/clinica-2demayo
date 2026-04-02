@@ -9,6 +9,35 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("success");
+  const [archivosExternos, setArchivosExternos] = useState({});
+  const [subiendoArchivo, setSubiendoArchivo] = useState({});
+  const [subidosArchivo, setSubidosArchivo] = useState({});
+  const [docExternos, setDocExternos] = useState([]);
+
+  const pacienteId = orden?.paciente_id_ref || orden?.paciente_id;
+
+  const cargarDocExternos = () => {
+    if (!pacienteId || !orden?.id) return;
+    fetch(`${BASE_URL}api_documentos_paciente.php?paciente_id=${pacienteId}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.documentos) {
+          // Prefer explicit order match, but keep cotizacion-linked fallback for historical uploads.
+          const ordenIdStr = String(orden.id);
+          const cotizacionId = Number(orden?.cotizacion_id || 0);
+          setDocExternos(data.documentos.filter(d => {
+            if (d.origen !== 'externo') return false;
+            if (String(d.orden_id || '') === ordenIdStr) return true;
+            return Number(d.orden_id || 0) === 0
+              && cotizacionId > 0
+              && Number(d.cotizacion_id || 0) === cotizacionId;
+          }));
+        }
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => { cargarDocExternos(); }, [orden?.id]);
 
   const isTipoParametro = (tipo) => {
     const t = String(tipo || 'Parámetro').trim().toLowerCase();
@@ -170,7 +199,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       
       setResultados(res);
     }
-  }, [orden, examenesDisponibles]);
+  }, [orden?.id, examenesDisponibles]);
 
   // Normaliza valores numéricos desde entradas de texto (soporta coma decimal y unidades)
   function normalizeNumber(value) {
@@ -487,6 +516,145 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     return { fueraDeRango, min, max, referenciaAplicada };
   };
 
+  const handleArchivoExamenChange = (examId, file) => {
+    setArchivosExternos(prev => ({ ...prev, [examId]: file || null }));
+    setSubidosArchivo(prev => ({ ...prev, [examId]: false }));
+  };
+
+  const handleSubirArchivoExamen = async (examId, examNombre) => {
+    const archivo = archivosExternos[examId];
+    if (!archivo || !pacienteId) return;
+    setSubiendoArchivo(prev => ({ ...prev, [examId]: true }));
+    try {
+      const fd = new FormData();
+      fd.append('paciente_id', pacienteId);
+      fd.append('tipo', 'laboratorio');
+      fd.append('titulo', examNombre + ' - Resultado Externo');
+      fd.append('descripcion', 'Resultado procesado en laboratorio externo. Orden #' + orden.id);
+      fd.append('orden_id', orden.id);
+      fd.append('archivos[]', archivo);
+      const res = await fetch(BASE_URL + 'api_documentos_paciente.php', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubidosArchivo(prev => ({ ...prev, [examId]: true }));
+        setArchivosExternos(prev => ({ ...prev, [examId]: null }));
+        cargarDocExternos();
+      } else {
+        alert('Error al subir: ' + (data.error || 'Error desconocido'));
+      }
+    } catch {
+      alert('Error de conexión al subir el archivo');
+    } finally {
+      setSubiendoArchivo(prev => ({ ...prev, [examId]: false }));
+    }
+  };
+
+  const handleEliminarDocExamen = async (documentoId) => {
+    if (!window.confirm('¿Eliminar este archivo?')) return;
+    try {
+      const res = await fetch(BASE_URL + 'api_documentos_paciente.php', {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documento_id: documentoId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        cargarDocExternos();
+      } else {
+        alert('Error al eliminar: ' + (data.error || 'Error desconocido'));
+      }
+    } catch {
+      alert('Error de conexión al eliminar');
+    }
+  };
+
+  const renderUploadExamen = (id, examName) => {
+    const archivo = archivosExternos[id];
+    const subiendo = subiendoArchivo[id];
+    const docsExamen = docExternos.filter(d => d.archivos && d.archivos.length > 0);
+    const totalArchivos = docsExamen.reduce((acc, d) => acc + (d.archivos?.length || 0), 0);
+    const yaSubido = totalArchivos > 0;
+
+    return (
+      <div className={`mt-4 pt-4 border-t ${yaSubido ? 'border-emerald-200' : 'border-dashed border-indigo-200'}`}>
+        {/* Header de sección */}
+        <div className="flex items-center gap-2 mb-3">
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+            🏥 Lab. externo
+          </span>
+          <span className="text-xs text-gray-500">Resultado del laboratorio de referencia</span>
+        </div>
+
+        {/* Banner "ya cargado" */}
+        {yaSubido && (
+          <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <span className="text-emerald-600 text-base">✅</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-emerald-700">Archivo ya cargado</p>
+              <p className="text-[11px] text-emerald-600">{totalArchivos} archivo{totalArchivos !== 1 ? 's' : ''} adjunto{totalArchivos !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Lista de archivos existentes */}
+        {docsExamen.length > 0 && (
+          <div className="mb-3 space-y-1.5">
+            {docsExamen.map(doc =>
+              doc.archivos?.map(arch => (
+                <div key={arch.id} className="flex items-center gap-1">
+                  <a
+                    href={arch.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 hover:bg-emerald-100 transition-colors min-w-0"
+                  >
+                    <span>{arch.mime_type === 'application/pdf' ? '📝' : '🖼️'}</span>
+                    <span className="truncate font-medium">{arch.nombre_original}</span>
+                    <span className="ml-auto text-emerald-500 flex-shrink-0 text-[10px]">↓ Ver</span>
+                  </a>
+                  <button
+                    type="button"
+                    title="Eliminar archivo"
+                    onClick={() => handleEliminarDocExamen(doc.documento_id)}
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors text-sm font-bold"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Input para agregar/subir nuevo archivo */}
+        <div className="flex items-center gap-2">
+          <label className="cursor-pointer flex-1 flex items-center gap-2 px-3 py-2 text-xs border border-dashed border-indigo-300 rounded-lg hover:border-indigo-500 hover:bg-indigo-50 transition-colors min-w-0">
+            <span>📁</span>
+            <span className="text-gray-500 truncate">
+              {archivo ? archivo.name : yaSubido ? 'Agregar otro archivo...' : 'Seleccionar PDF o imagen...'}
+            </span>
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => handleArchivoExamenChange(id, e.target.files?.[0] || null)} />
+          </label>
+          {archivo && (
+            <button
+              type="button"
+              disabled={subiendo}
+              onClick={() => handleSubirArchivoExamen(id, examName)}
+              className="flex-shrink-0 px-4 py-2 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {subiendo ? '⏳ Subiendo...' : '⬆ Subir'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* Header del formulario */}
@@ -750,6 +918,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           })()}
                         </div>
                       )}
+                      {exOrdenDetalle?.derivado && renderUploadExamen(id, examName)}
                     </div>
                   );
                 } else if (exObj) {
@@ -819,6 +988,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           />
                         </div>
                       )}
+                      {exOrdenDetalle?.derivado && renderUploadExamen(id, exObj.nombre)}
                     </div>
                   );
                 }

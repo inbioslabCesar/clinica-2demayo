@@ -14,12 +14,27 @@ $medico_id = $_SESSION['medico_id'];
 try {
     $pdo = new PDO("mysql:host=$host;dbname=$database", $username, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    $checks = [
+        'tipo_profesional' => "ALTER TABLE medicos ADD COLUMN tipo_profesional VARCHAR(30) NOT NULL DEFAULT 'medico'",
+        'abreviatura_profesional' => "ALTER TABLE medicos ADD COLUMN abreviatura_profesional VARCHAR(20) NOT NULL DEFAULT 'Dr(a).'",
+        'colegio_sigla' => "ALTER TABLE medicos ADD COLUMN colegio_sigla VARCHAR(20) NULL",
+        'nro_colegiatura' => "ALTER TABLE medicos ADD COLUMN nro_colegiatura VARCHAR(30) NULL",
+    ];
+
+    foreach ($checks as $col => $sqlAlter) {
+        $stmtCol = $pdo->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'medicos' AND column_name = ? LIMIT 1");
+        $stmtCol->execute([$col]);
+        if (!$stmtCol->fetch(PDO::FETCH_ASSOC)) {
+            $pdo->exec($sqlAlter);
+        }
+    }
     
     switch ($_SERVER['REQUEST_METHOD']) {
         case 'GET':
             // Obtener información profesional completa del médico
             $stmt = $pdo->prepare("
-                SELECT nombre, apellido, especialidad, cmp, rne, firma, email 
+                 SELECT nombre, apellido, especialidad, cmp, rne, firma, email, tipo_profesional, abreviatura_profesional, colegio_sigla, nro_colegiatura 
                 FROM medicos 
                 WHERE id = ?
             ");
@@ -47,7 +62,7 @@ try {
             $params = [];
             
             // Campos que se pueden actualizar
-            $allowedFields = ['nombre', 'apellido', 'especialidad', 'cmp', 'rne', 'firma'];
+                $allowedFields = ['nombre', 'apellido', 'especialidad', 'cmp', 'rne', 'firma', 'tipo_profesional', 'abreviatura_profesional', 'colegio_sigla', 'nro_colegiatura'];
             
             foreach ($allowedFields as $field) {
                 if (isset($input[$field])) {

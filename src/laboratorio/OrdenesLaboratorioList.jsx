@@ -26,6 +26,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     return Number.isInteger(saved) && saved >= 0 ? saved : 0;
   });
   const [ordenes, setOrdenes] = useState([]);
+  const [totalOrdenes, setTotalOrdenes] = useState(0);
   const [loading, setLoading] = useState(true);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -85,6 +86,9 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     setError("");
 
     const params = new URLSearchParams();
+    params.set('paginated', '1');
+    params.set('page', String(page + 1));
+    params.set('limit', String(rowsPerPage));
     if (fechaInicio) params.set('filtro_fecha_desde', fechaInicio);
     if (fechaFin) params.set('filtro_fecha_hasta', fechaFin);
     if (busquedaDebounced.trim()) params.set('filtro_busqueda', busquedaDebounced.trim());
@@ -98,9 +102,11 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       .then(data => {
         if (data.success) {
           setOrdenes(data.ordenes || []);
+          setTotalOrdenes(Number(data.total || 0));
         } else {
           setError(data.error || "Error al cargar órdenes");
           setOrdenes([]);
+          setTotalOrdenes(0);
         }
         setLoading(false);
         setInitialLoaded(true);
@@ -108,11 +114,12 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       .catch((err) => {
         setError("Error de conexión con el servidor");
         setOrdenes([]);
+        setTotalOrdenes(0);
         setLoading(false);
         setInitialLoaded(true);
         console.error('Error al cargar órdenes:', err);
       });
-  }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro, filtroAlertaEstado]);
+  }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro, filtroAlertaEstado, page, rowsPerPage]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -138,13 +145,13 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       });
   }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro]);
 
-  // Mostrar el último paciente primero (orden más reciente primero)
-  const ordenesFiltradas = [...ordenes].reverse();
+  // Ya viene paginado y ordenado desde el backend.
+  const ordenesFiltradas = ordenes;
 
   // Paginación
-  const totalPages = Math.ceil(ordenesFiltradas.length / rowsPerPage);
+  const totalPages = Math.ceil(totalOrdenes / rowsPerPage);
   const totalPagesSafe = Math.max(1, totalPages);
-  const canClampPage = initialLoaded && ordenesFiltradas.length > 0;
+  const canClampPage = initialLoaded && totalOrdenes > 0;
   const pageSafe = canClampPage
     ? Math.min(Math.max(0, page), totalPagesSafe - 1)
     : Math.max(0, page);
@@ -180,13 +187,17 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   };
 
   const pageWindow = getPageWindow();
-  const paginated = ordenesFiltradas.slice(pageSafe * rowsPerPage, (pageSafe + 1) * rowsPerPage);
+  const paginated = ordenesFiltradas;
 
   const getExamenesNombres = (examenes) => {
     if (!Array.isArray(examenes)) return "";
     return examenes.map(ex => {
+      // ex puede ser un objeto {id, nombre} o un ID numérico/string
+      if (ex && typeof ex === 'object') {
+        return ex.nombre || ex.descripcion || `#${ex.id}`;
+      }
       const exObj = examenesDisponibles.find(e => e.id == ex);
-      return exObj ? exObj.nombre : ex;
+      return exObj ? exObj.nombre : String(ex);
     }).join(", ");
   };
 
@@ -399,7 +410,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
 
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-600">
-            Mostrando {paginated.length} de {ordenesFiltradas.length} órdenes
+            Mostrando {paginated.length} de {totalOrdenes} órdenes
           </span>
           <div className="flex items-center gap-1 flex-wrap justify-end">
             <button
@@ -465,7 +476,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
         </div>
       </div>
       {/* Contenido principal */}
-      {ordenesFiltradas.length === 0 ? (
+      {totalOrdenes === 0 ? (
         <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-8 text-center">
           <div className="text-6xl mb-4">🔍</div>
           <p className="text-gray-600 text-lg">No se encontraron órdenes con los filtros aplicados</p>
@@ -582,7 +593,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                             >
                               📈 Comparar
                             </button>
-                            {/* PDF eliminado desde la vista de laboratorio */}
                           </div>
                             );
                           })()}
@@ -703,7 +713,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                       >
                         📈 Comparar
                       </button>
-                      {/* Botón de descarga eliminado en panel de laboratorio */}
                     </div>
                   </div>
                   </>

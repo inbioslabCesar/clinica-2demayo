@@ -13,10 +13,52 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
+  const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '', direccion: '', telefono: '', celular: '', ruc: '', email: '' });
 
   // Cargar tarifas al montar el componente
   useEffect(() => {
     cargarTarifas();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const cargarMarcaClinica = async () => {
+      try {
+        const resp = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        const data = await resp.json();
+        if (!mounted || !data?.success) return;
+        const cfg = data.data || {};
+        const nombre = String(cfg.nombre_clinica || '').trim().toUpperCase() || 'MI CLINICA';
+        const rawLogo = String(cfg.logo_url || '').trim();
+        const logo = rawLogo
+          ? (/^(https?:\/\/|data:|blob:)/i.test(rawLogo)
+            ? rawLogo
+            : `${String(BASE_URL || '').replace(/\/+$/, '')}/${rawLogo.replace(/^\/+/, '')}`)
+          : '';
+        setClinicBrand({
+          name: nombre,
+          logo,
+          slogan: String(cfg.slogan || '').trim(),
+          slogan_color: String(cfg.slogan_color || '').trim(),
+          nombre_color: String(cfg.nombre_color || '').trim(),
+          direccion: String(cfg.direccion || '').trim(),
+          telefono: String(cfg.telefono || '').trim(),
+          celular: String(cfg.celular || '').trim(),
+          ruc: String(cfg.ruc || '').trim(),
+          email: String(cfg.email || '').trim(),
+        });
+      } catch {
+        // fallback defaults
+      }
+    };
+    cargarMarcaClinica();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const cargarTarifas = async () => {
@@ -131,7 +173,14 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     
     const comprobante = `
   <div style="text-align: left; font-family: monospace;">
-    <h3 style="text-align: center; margin-bottom: 20px;">🏥 CLÍNICA 2 DE MAYO</h3>
+    ${clinicBrand.logo ? `<div style="text-align:center;margin-bottom:6px;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="height:52px;object-fit:contain;" /></div>` : ''}
+    <h3 style="text-align: center; margin-bottom: 4px;${clinicBrand.nombre_color ? ' color:' + clinicBrand.nombre_color + ';' : ''}">${clinicBrand.name}</h3>
+    ${clinicBrand.slogan ? `<p style="text-align:center;margin:0 0 4px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>` : ''}
+    ${clinicBrand.direccion ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.direccion}</p>` : ''}
+    ${clinicBrand.telefono ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Tel: ${clinicBrand.telefono}</p>` : ''}
+    ${clinicBrand.celular ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Cel: ${clinicBrand.celular}</p>` : ''}
+    ${clinicBrand.email ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.email}</p>` : ''}
+    ${clinicBrand.ruc ? `<p style="text-align:center;margin:2px 0;font-size:11px;">RUC: ${clinicBrand.ruc}</p>` : ''}
     <hr>
     <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
     <p>Fecha: ${fechaHora}</p>

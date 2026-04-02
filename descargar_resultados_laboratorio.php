@@ -164,15 +164,25 @@ $firmante_nombre = trim((string)($clinica_config['director_general'] ?? $clinica
 $firmante_cargo = trim((string)($clinica_config['director_cargo'] ?? ''));
 $firmante_colegiatura = trim((string)($clinica_config['colegio_profesional'] ?? ''));
 $firmante_firma = '';
+$firmanteUsuarioAplicado = false;
+$rolesFirmantesLaboratorio = ['laboratorista', 'quimico', 'químico'];
 
 $firmadoPorUsuarioId = isset($row['firmado_por_usuario_id']) ? intval($row['firmado_por_usuario_id']) : 0;
 if ($firmadoPorUsuarioId > 0) {
-    $stmt_firmante = $conn->prepare('SELECT nombre, profesion, cargo_firma, colegiatura_tipo, colegiatura_numero, firma_reportes FROM usuarios WHERE id = ? LIMIT 1');
+    $stmt_firmante = $conn->prepare('SELECT nombre, rol, profesion, cargo_firma, colegiatura_tipo, colegiatura_numero, firma_reportes FROM usuarios WHERE id = ? LIMIT 1');
     if ($stmt_firmante) {
         $stmt_firmante->bind_param('i', $firmadoPorUsuarioId);
         $stmt_firmante->execute();
         $firmante_usuario = $stmt_firmante->get_result()->fetch_assoc();
         $stmt_firmante->close();
+
+        if ($firmante_usuario) {
+            $rolFirmante = strtolower(trim((string)($firmante_usuario['rol'] ?? '')));
+            $firmanteEsValido = in_array($rolFirmante, $rolesFirmantesLaboratorio, true);
+            if (!$firmanteEsValido) {
+                $firmante_usuario = null;
+            }
+        }
 
         if ($firmante_usuario) {
             $nombreUsuario = trim((string)($firmante_usuario['nombre'] ?? ''));
@@ -197,6 +207,49 @@ if ($firmadoPorUsuarioId > 0) {
 
             if ($firmaUsuario !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaUsuario)) {
                 $firmante_firma = $firmaUsuario;
+            }
+
+            $firmanteUsuarioAplicado = true;
+        }
+    }
+}
+
+if (!$firmanteUsuarioAplicado) {
+    $stmt_fallback_firmante = $conn->prepare(
+        "SELECT nombre, profesion, cargo_firma, colegiatura_tipo, colegiatura_numero, firma_reportes
+         FROM usuarios
+         WHERE rol IN ('laboratorista', 'quimico', 'químico')
+         ORDER BY
+            CASE WHEN firma_reportes IS NOT NULL AND TRIM(firma_reportes) <> '' THEN 0 ELSE 1 END,
+            id ASC
+         LIMIT 1"
+    );
+    if ($stmt_fallback_firmante) {
+        $stmt_fallback_firmante->execute();
+        $fallback_firmante = $stmt_fallback_firmante->get_result()->fetch_assoc();
+        $stmt_fallback_firmante->close();
+
+        if ($fallback_firmante) {
+            $nombreFallback = trim((string)($fallback_firmante['nombre'] ?? ''));
+            $cargoFallback = trim((string)($fallback_firmante['cargo_firma'] ?? ''));
+            $profesionFallback = trim((string)($fallback_firmante['profesion'] ?? ''));
+            $colegiaturaTipoFallback = trim((string)($fallback_firmante['colegiatura_tipo'] ?? ''));
+            $colegiaturaNumeroFallback = trim((string)($fallback_firmante['colegiatura_numero'] ?? ''));
+            $firmaFallback = trim((string)($fallback_firmante['firma_reportes'] ?? ''));
+
+            if ($nombreFallback !== '') {
+                $firmante_nombre = $nombreFallback;
+            }
+            if ($cargoFallback !== '') {
+                $firmante_cargo = $cargoFallback;
+            } elseif ($profesionFallback !== '') {
+                $firmante_cargo = $profesionFallback;
+            }
+            if ($colegiaturaTipoFallback !== '' || $colegiaturaNumeroFallback !== '') {
+                $firmante_colegiatura = trim($colegiaturaTipoFallback . ' ' . $colegiaturaNumeroFallback);
+            }
+            if ($firmaFallback !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaFallback)) {
+                $firmante_firma = $firmaFallback;
             }
         }
     }
@@ -307,8 +360,20 @@ if ($isProduction) {
     $logo_paths[] = __DIR__ . '/2demayo.svg';
 }
 
-$logo_html_header = '<div style="display:block;width:130px;text-align:center;margin:0;font-size:12px;font-weight:bold;color:#2c3e50;line-height:1.2;">'
-    . h($clinica_config['nombre_clinica'] ?? 'Clínica 2 de Mayo')
+$logo_size_pdf = 130;
+foreach (['logo_laboratorio_size_pdf', 'logo_resultados_size_pdf', 'logo_size_pdf'] as $logo_size_key) {
+    if (isset($clinica_config[$logo_size_key]) && $clinica_config[$logo_size_key] !== null && $clinica_config[$logo_size_key] !== '') {
+        $logo_size_pdf = intval($clinica_config[$logo_size_key]);
+        break;
+    }
+}
+if ($logo_size_pdf < 40) $logo_size_pdf = 40;
+if ($logo_size_pdf > 260) $logo_size_pdf = 260;
+$logo_max_height = intval(round($logo_size_pdf * 0.60));
+if ($logo_max_height < 30) $logo_max_height = 30;
+
+$logo_html_header = '<div style="display:block;width:' . $logo_size_pdf . 'px;text-align:center;margin:0;font-size:12px;font-weight:bold;color:#2c3e50;line-height:1.2;">'
+    . h($clinica_config['nombre_clinica'] ?? 'Mi Clínica')
     . '</div>';
 foreach ($logo_paths as $logo_path) {
     if (!file_exists($logo_path)) continue;
@@ -318,8 +383,8 @@ foreach ($logo_paths as $logo_path) {
     if ($logo_ext === 'svg') $logo_mime = 'image/svg+xml';
     elseif ($logo_ext === 'jpg' || $logo_ext === 'jpeg') $logo_mime = 'image/jpeg';
     elseif ($logo_ext === 'png') $logo_mime = 'image/png';
-    $logo_html_header = '<div style="display:block;width:130px;text-align:center;margin:0;">'
-        . '<img src="data:' . $logo_mime . ';base64,' . $logo_data . '" alt="Logo" style="max-height:78px;max-width:130px;display:block;margin:0 auto;">'
+    $logo_html_header = '<div style="display:block;width:' . $logo_size_pdf . 'px;text-align:center;margin:0;">'
+        . '<img src="data:' . $logo_mime . ';base64,' . $logo_data . '" alt="Logo" style="max-height:' . $logo_max_height . 'px;max-width:' . $logo_size_pdf . 'px;display:block;margin:0 auto;">'
         . '</div>';
     break;
 }
@@ -583,5 +648,77 @@ if (class_exists('\Mpdf\Mpdf')) {
 // Fallback: HTML simple
 if (ob_get_length()) { @ob_end_clean(); }
 header('Content-Type: text/html; charset=utf-8');
-echo '<!doctype html><html><head><meta charset="utf-8"><title>Resultados</title></head><body>' . $headerHtml . $bodyCss . $bodyHtml . '<hr>' . $footerHtml . '</body></html>';
+$fallbackCss = '<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: #eef2f7;
+    color: #1f2937;
+    font-family: Arial, sans-serif;
+}
+.report-page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 12px auto;
+    background: #fff;
+    box-shadow: 0 0 0 1px #d8e0ea, 0 12px 28px rgba(15, 23, 42, .12);
+    padding: 10mm 9mm;
+    display: flex;
+    flex-direction: column;
+}
+.report-content { flex: 1 1 auto; }
+.report-footer {
+    margin-top: auto;
+    flex-shrink: 0;
+    page-break-inside: avoid;
+}
+.report-actions {
+    width: 210mm;
+    margin: 12px auto 0 auto;
+    text-align: right;
+}
+.print-btn {
+    border: 0;
+    background: #2563eb;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.print-btn:hover { background: #1d4ed8; }
+@media print {
+    @page { size: A4; margin: 8mm; }
+    html, body {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0;
+        padding: 0;
+        background: #fff;
+    }
+    .report-actions { display: none; }
+    .report-page {
+        width: 194mm;
+        min-height: 281mm;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+    }
+    .report-content {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+    .report-footer {
+        margin-top: auto;
+    }
+}
+</style>';
+
+echo '<!doctype html><html><head><meta charset="utf-8"><title>Resultados</title>' . $fallbackCss . '</head><body>'
+    . '<div class="report-actions"><button class="print-btn" onclick="window.print()">Imprimir</button></div>'
+    . '<div class="report-page">'
+    . '<div class="report-content">' . $headerHtml . $bodyCss . $bodyHtml . '</div>'
+    . '<div class="report-footer">' . $footerHtml . '</div>'
+    . '</div>'
+    . '</body></html>';
 exit;

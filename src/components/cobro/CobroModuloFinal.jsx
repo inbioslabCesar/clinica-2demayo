@@ -38,6 +38,11 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
+  const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '', direccion: '', telefono: '', celular: '', ruc: '', email: '' });
+
+  const nombrePaciente = String(paciente?.nombre || paciente?.nombres || '').trim();
+  const apellidoPaciente = String(paciente?.apellido || paciente?.apellidos || '').trim();
+  const nombrePacienteCompleto = `${nombrePaciente} ${apellidoPaciente}`.trim();
 
   // Cargar tarifas solo si no se reciben detalles por props
   useEffect(() => {
@@ -45,6 +50,47 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles
       cargarTarifas();
     }
   }, [detalles]);
+
+  useEffect(() => {
+    let mounted = true;
+    const cargarMarcaClinica = async () => {
+      try {
+        const resp = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        const data = await resp.json();
+        if (!mounted || !data?.success) return;
+        const cfg = data.data || {};
+        const nombre = String(cfg.nombre_clinica || '').trim().toUpperCase() || 'MI CLINICA';
+        const rawLogo = String(cfg.logo_url || '').trim();
+        const logo = rawLogo
+          ? (/^(https?:\/\/|data:|blob:)/i.test(rawLogo)
+            ? rawLogo
+            : `${String(BASE_URL || '').replace(/\/+$/, '')}/${rawLogo.replace(/^\/+/, '')}`)
+          : '';
+        setClinicBrand({
+          name: nombre,
+          logo,
+          slogan: String(cfg.slogan || '').trim(),
+          slogan_color: String(cfg.slogan_color || '').trim(),
+          nombre_color: String(cfg.nombre_color || '').trim(),
+          direccion: String(cfg.direccion || '').trim(),
+          telefono: String(cfg.telefono || '').trim(),
+          celular: String(cfg.celular || '').trim(),
+          ruc: String(cfg.ruc || '').trim(),
+          email: String(cfg.email || '').trim(),
+        });
+      } catch {
+        // fallback defaults
+      }
+    };
+    cargarMarcaClinica();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const cargarTarifas = async () => {
     try {
@@ -101,7 +147,7 @@ if (tipoDescuento === 'porcentaje') {
       return;
     }
     // Validar datos completos del paciente
-    if (!paciente || !paciente.nombre || !paciente.dni || !paciente.historia_clinica) {
+    if (!paciente || !nombrePacienteCompleto || !paciente.dni || !paciente.historia_clinica) {
       Swal.fire('Error', 'Faltan datos completos del paciente (nombre, DNI o historia clínica)', 'error');
       return;
     }
@@ -129,7 +175,7 @@ if (tipoDescuento === 'porcentaje') {
         paciente_id: paciente.id,
         usuario_id: usuario.id,
         usuario_nombre: usuario.nombre || '',
-        paciente_nombre: paciente.apellido ? `${paciente.nombre} ${paciente.apellido}` : paciente.nombre,
+        paciente_nombre: nombrePacienteCompleto,
         total: Math.max(montoOriginal - descuento, 0),
         monto_original: montoOriginal,
         monto_descuento: descuento,
@@ -172,7 +218,9 @@ if (tipoDescuento === 'porcentaje') {
       if (result.success) {
         // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio
         if (servicio?.key === 'laboratorio' && !servicio?.consulta_id) {
-          const examenesIds = detallesCobro.map(d => d.servicio_id);
+          const examenesIds = detallesCobro
+            .filter(d => d.servicio_tipo === 'laboratorio' && d.servicio_id)
+            .map(d => d.servicio_id);
           const ordenResponse = await fetch(`${BASE_URL}api_ordenes_laboratorio.php`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -181,7 +229,8 @@ if (tipoDescuento === 'porcentaje') {
               consulta_id: null,
               examenes: examenesIds,
               paciente_id: paciente?.id || null,
-              cobro_id: result.cobro_id
+              cobro_id: result.cobro_id,
+              cotizacion_id: servicio?.cotizacion_id || null,
             })
           });
           await ordenResponse.json(); // Eliminado: no se usa la variable
@@ -190,7 +239,11 @@ if (tipoDescuento === 'porcentaje') {
         await mostrarComprobante(result.cobro_id, cobroData);
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
-          onCobroCompleto(result.cobro_id, servicio);
+          onCobroCompleto(result.cobro_id, servicio, {
+            monto_original: Number(montoOriginal || 0),
+            monto_descuento: Number(descuento || 0),
+            total_cobrado: Number(cobroData.total || 0),
+          });
         }
       } else {
         Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
@@ -206,7 +259,7 @@ if (tipoDescuento === 'porcentaje') {
   const mostrarComprobante = async (cobroId, datosComprobante) => {
 
     const fechaHora = new Date().toLocaleString('es-PE');
-    const nombreCompleto = paciente.apellido ? `${paciente.nombre} ${paciente.apellido}` : paciente.nombre;
+    const nombreCompleto = nombrePacienteCompleto;
     const consulta = datosComprobante.servicio_info || {};
     const tipoConsulta = consulta.tipo_consulta || '';
     let horaConsulta = consulta.hora || '';
@@ -218,7 +271,7 @@ if (tipoDescuento === 'porcentaje') {
       fechaConsulta = datosComprobante.detalles[0].fecha || '';
     }
     const numeroOrden = tipoConsulta === 'programada' ? (consulta.numero_orden || 'N/A') : '';
-    const logoSrc = window.location.hostname === 'localhost' ? '/public/2demayo.svg' : '/logo-clinica.png';
+    const logoSrc = clinicBrand.logo || '/2demayo.svg';
 
     // Determinar si el servicio es consulta médica
     const esConsultaMedica = consulta.key === 'consulta';
@@ -227,6 +280,14 @@ if (tipoDescuento === 'porcentaje') {
     let nombreMedico = '';
     if (Array.isArray(datosComprobante.detalles)) {
       for (const d of datosComprobante.detalles) {
+        const medicoCompleto = String(
+          d.medico_nombre_completo
+          || `${d.medico_nombre || ''} ${d.medico_apellido || ''}`
+        ).trim();
+        if (medicoCompleto) {
+          nombreMedico = medicoCompleto;
+          break;
+        }
         if (d.medico_nombre) {
           nombreMedico = d.medico_nombre;
           break;
@@ -245,8 +306,14 @@ if (tipoDescuento === 'porcentaje') {
     const comprobante = `
       <div style="text-align: left; font-family: monospace;">
         <div style="text-align: center; margin-bottom: 0;">
-          <img src='${logoSrc}' alt='Logo Clínica 2 de Mayo' style='height:60px; margin-bottom:4px; display:block; margin-left:auto; margin-right:auto;' />
-          <h3 style="text-align: center; margin-bottom: 20px; margin-top: 4px;">CLÍNICA 2 DE MAYO</h3>
+          <img src='${logoSrc}' alt='Logo' style='height:60px; margin-bottom:4px; display:block; margin-left:auto; margin-right:auto;' />
+          <h3 style="text-align: center; margin-bottom: 4px; margin-top: 4px;${clinicBrand.nombre_color ? ' color:' + clinicBrand.nombre_color + ';' : ''}">${clinicBrand.name}</h3>
+          ${clinicBrand.slogan ? `<p style="text-align:center;margin:0 0 4px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>` : ''}
+          ${clinicBrand.direccion ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.direccion}</p>` : ''}
+          ${clinicBrand.telefono ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Tel: ${clinicBrand.telefono}</p>` : ''}
+          ${clinicBrand.celular ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Cel: ${clinicBrand.celular}</p>` : ''}
+          ${clinicBrand.email ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.email}</p>` : ''}
+          ${clinicBrand.ruc ? `<p style="text-align:center;margin:2px 0;font-size:11px;">RUC: ${clinicBrand.ruc}</p>` : ''}
         </div>
         <hr>
         <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
@@ -322,7 +389,7 @@ if (tipoDescuento === 'porcentaje') {
         <div className="space-y-6 flex flex-col justify-between h-full">
           <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 shadow-sm">
             <h4 className="font-semibold mb-2 text-gray-700 flex items-center gap-2 text-lg"><span className="text-blue-500">👤</span> Paciente</h4>
-            <div className="text-lg lg:text-xl font-bold">{paciente.nombre}</div>
+            <div className="text-lg lg:text-xl font-bold">{nombrePacienteCompleto || '-'}</div>
             <div className="text-base text-gray-600">DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</div>
           </div>
           <div>
@@ -359,9 +426,16 @@ if (tipoDescuento === 'porcentaje') {
               if ((typeof precio !== 'number' || precio <= 0) && typeof detalle.precio_publico === 'number') {
                 precio = detalle.precio_publico;
               }
+              const medicoNombre = String(
+                detalle.medico_nombre_completo
+                || `${detalle.medico_nombre || ''} ${detalle.medico_apellido || ''}`
+              ).trim();
               return (
                 <div key={index} className="flex justify-between items-center text-base">
-                  <span>{detalle.descripcion}</span>
+                  <span>
+                    {detalle.descripcion}
+                    {medicoNombre ? <span className="block text-xs text-gray-500">{medicoNombre}</span> : null}
+                  </span>
                   <span className="font-bold">S/ {precio > 0 ? precio.toFixed(2) : '—'}</span>
                 </div>
               );

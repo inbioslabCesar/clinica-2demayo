@@ -18,12 +18,13 @@ try {
     if (!$configuracion) {
         // Si no hay configuración, devolver valores por defecto
         $configuracion = [
-            'nombre_clinica' => 'Clínica 2 de Mayo',
-            'direccion' => 'Av. Principal 123, Lima, Perú',
-            'telefono' => '(01) 234-5678',
-            'email' => 'info@clinica2demayo.com',
+            'nombre_clinica' => 'Mi Clínica',
+            'direccion' => '',
+            'telefono' => '',
+            'email' => '',
             'horario_atencion' => 'Lunes a Viernes: 7:00 AM - 8:00 PM\nSábados: 7:00 AM - 2:00 PM',
             'logo_url' => null,
+            'logo_laboratorio_url' => null,
             'website' => null,
             'ruc' => null,
             'especialidades' => null,
@@ -32,7 +33,15 @@ try {
             'valores' => null,
             'director_general' => null,
             'jefe_enfermeria' => null,
-            'contacto_emergencias' => null
+            'contacto_emergencias' => null,
+            'celular' => null,
+            'google_maps_embed' => null,
+            'slogan' => null,
+            'slogan_color' => null,
+            'nombre_color' => null,
+            'nombre_font_size' => null,
+            'logo_size_sistema' => null,
+            'logo_size_publico' => null
         ];
     }
     

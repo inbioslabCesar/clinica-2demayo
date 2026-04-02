@@ -1,3 +1,5 @@
+import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
+
 const ImpresionRecetaMedicamentos = ({ 
   paciente, 
   medicamentos,
@@ -6,19 +8,18 @@ const ImpresionRecetaMedicamentos = ({
 }) => {
   const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
   const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
-  // Función para obtener la ruta del logo según el entorno
-  const getLogoPath = () => {
-    // Intentar detectar si estamos en producción por el hostname o protocol
+
+  // Resolver logo con base URL del servidor PHP
+  const resolveLogoUrl = (rawValue) => {
+    const raw = String(rawValue || '').trim();
+    if (!raw) return '/2demayo.svg';
+    if (/^(https?:\/\/|data:|blob:)/i.test(raw)) return raw;
     const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-    
-    if (isProduction) {
-      // En producción (Hostinger), usar ruta absoluta desde la raíz del dominio
-      return `${window.location.protocol}//${window.location.host}/2demayo.svg`;
-    } else {
-      // En desarrollo local, usar la ruta relativa a public
-      return '/2demayo.svg';
-    }
+    const base = isProduction ? (window.location.origin.replace(/\/+$/, '') + '/') : 'http://localhost/clinica-2demayo/';
+    return `${base}${raw.replace(/^\/+/, '')}`;
   };
+
+  const logoSrc = resolveLogoUrl(configuracionClinica?.logo_url);
   const formatearFecha = (fecha) => {
     if (!fecha) return '';
     return new Date(fecha).toLocaleDateString('es-ES', {
@@ -51,14 +52,19 @@ const ImpresionRecetaMedicamentos = ({
           {/* Logo e información de la clínica - compacto */}
           <div className="flex items-center gap-2">
             <img 
-              src={getLogoPath()} 
-              alt="Logo Clínica 2 de Mayo" 
+              src={logoSrc} 
+              alt={configuracionClinica?.nombre_clinica || 'Logo'} 
               className="h-10 w-auto"
             />
             <div>
               <h1 className="text-sm font-bold text-black uppercase leading-tight">
-                {configuracionClinica?.nombre_clinica || 'CLÍNICA 2 DE MAYO'}
+                {configuracionClinica?.nombre_clinica || 'MI CLÍNICA'}
               </h1>
+              {configuracionClinica?.slogan && (
+                <p className="text-xs font-medium" style={{ color: configuracionClinica.slogan_color || '#374151' }}>
+                  {configuracionClinica.slogan}
+                </p>
+              )}
               <p className="text-xs text-black">{configuracionClinica?.direccion || 'Dirección de la clínica'}</p>
               <p className="text-xs text-black">
                 Tel: {configuracionClinica?.telefono || '123-456-789'}
@@ -72,10 +78,10 @@ const ImpresionRecetaMedicamentos = ({
           {/* Información del médico - compacto */}
           <div className="text-right">
             <h2 className="text-sm font-bold text-black leading-tight">
-              Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
+              {formatProfesionalName(medicoInfo || {})}
             </h2>
             <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
-            <p className="text-xs text-black">CMP: {medicoInfo?.cmp || 'N/A'}</p>
+            <p className="text-xs text-black">{formatColegiatura(medicoInfo || {})}</p>
             {medicoInfo?.rne && (
               <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
             )}
@@ -193,10 +199,10 @@ const ImpresionRecetaMedicamentos = ({
             
             <div className="border-t border-black pt-1 min-w-24">
               <p className="font-bold text-black text-xs">
-                Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
+                {formatProfesionalName(medicoInfo || {})}
               </p>
               <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
-              <p className="text-xs text-black">CMP: {medicoInfo?.cmp || 'N/A'}</p>
+              <p className="text-xs text-black">{formatColegiatura(medicoInfo || {})}</p>
               {medicoInfo?.rne && (
                 <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
               )}

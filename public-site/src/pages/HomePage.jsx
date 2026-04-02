@@ -5,14 +5,16 @@ import HeroCarousel from '../components/HeroCarousel'
 import ServiceIcon from '../components/ServiceIcon'
 import CountUpNumber from '../components/CountUpNumber'
 import VerticalOffersSlider from '../components/VerticalOffersSlider'
+import { resolvePublicLogoSize } from '../utils/logoSizing'
 
 function clampIndex(value, length) {
   if (length <= 0) return 0
   return ((value % length) + length) % length
 }
 
-export default function HomePage({ sistemaUrl }) {
-  const publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`
+export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`, clinicName = 'Portal de Salud', configuracion, logoSize }) {
+
+  const resolvedLogoSize = logoSize || resolvePublicLogoSize(configuracion?.logo_size_publico)
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -22,14 +24,33 @@ export default function HomePage({ sistemaUrl }) {
   const [serviciosTotal, setServiciosTotal] = useState(0)
   const [ofertasTotal, setOfertasTotal] = useState(0)
 
+  const heroSlides = useMemo(() => {
+    if (loading) return []
+    if (!banners.length) return undefined
+    return banners.map((x) => ({
+      id: x.id,
+      title: x.titulo || '',
+      subtitle: x.subtitulo || '',
+      imageSrc: x.imagen_url,
+      showWhiteOverlay: x.overlay_blanco === 0 ? false : true,
+      textSide: x.texto_lado === 'right' ? 'right' : 'left',
+      titleColor: x.titulo_color || null,
+      subtitleColor: x.subtitulo_color || null,
+      titleSize: x.titulo_tamano || 'lg',
+      subtitleSize: x.subtitulo_tamano || 'md',
+      imageAlt: x.titulo || 'Banner',
+    }))
+  }, [loading, banners])
+
   const [ubicacionQuery, setUbicacionQuery] = useState('')
   const [ubicacionError, setUbicacionError] = useState('')
 
   const pacientesElegidosBase = Number(import.meta.env.VITE_PUBLIC_PACIENTES_ELEGIDOS || 25000)
 
-  const mapQuery = ((import.meta.env.VITE_PUBLIC_MAP_QUERY || 'Clínica Dos de Mayo') + '').trim()
-  const mapDestination = ((import.meta.env.VITE_PUBLIC_MAP_DESTINATION || mapQuery) + '').trim()
+  const mapQuery = ((import.meta.env.VITE_PUBLIC_MAP_QUERY || configuracion?.nombre_clinica || clinicName || 'Portal de Salud') + '').trim()
+  const mapDestination = ((import.meta.env.VITE_PUBLIC_MAP_DESTINATION || configuracion?.direccion || mapQuery) + '').trim()
   const mapsEmbedSrc = ((
+    configuracion?.google_maps_embed ||
     import.meta.env.VITE_PUBLIC_MAP_EMBED_SRC ||
     'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3947.1003684427533!2d-74.54990752410586!3d-8.391788584656554!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x91a3bd84abc5f5db%3A0x72cd3f56488f2aed!2sPolicl%C3%ADnico%20Dos%20de%20Mayo!5e0!3m2!1ses-419!2spe!4v1767937155771!5m2!1ses-419!2spe'
   ) + '').trim()
@@ -300,50 +321,44 @@ export default function HomePage({ sistemaUrl }) {
         <div className="max-w-[1900px] mx-auto px-1 sm:px-1">
           <HeroCarousel
             className="rounded-3x1 border-0 bg-transparent backdrop-blur-0"
-            heightClassName="h-[92vh] min-h-[460px] sm:min-h-[580px] lg:min-h-[480px] max-h-[780px]"
-            slides={
-              banners.length
-                ? banners.map((x) => ({
-                    id: x.id,
-                    title: x.titulo || '',
-                    subtitle: x.subtitulo || '',
-                    imageSrc: x.imagen_url,
-                    showWhiteOverlay: x.overlay_blanco === 0 ? false : true,
-                    textSide: x.texto_lado === 'right' ? 'right' : 'left',
-                    titleColor: x.titulo_color || null,
-                    subtitleColor: x.subtitulo_color || null,
-                    titleSize: x.titulo_tamano || 'lg',
-                    subtitleSize: x.subtitulo_tamano || 'md',
-                    imageAlt: x.titulo || 'Banner',
-                  }))
-                : undefined
-            }
+            heightClassName="h-[40vh] min-h-[160px] sm:min-h-[300px] lg:min-h-[800px] max-h-[1000px]"
+            slides={heroSlides}
           />
         </div>
       </div>
 
       <section className="rounded-2xl border bg-white p-6">
-        <h1 className="text-3xl font-bold">Bienvenido</h1>
+        <h1 className="text-3xl font-bold" style={{ color: configuracion?.nombre_color || 'var(--color-primary, #E85D8E)', fontSize: configuracion?.nombre_font_size || undefined }}>
+          {clinicName || 'Bienvenido'}
+        </h1>
+        {configuracion?.slogan && (
+          <p className="mt-1 text-lg font-medium" style={{ color: configuracion.slogan_color || 'var(--color-secondary, #3A4FA3)' }}>
+            {configuracion.slogan}
+          </p>
+        )}
         <p className="mt-2 text-slate-700">
           Conoce nuestros servicios y ofertas. Para acceder al sistema interno, usa el botón “Iniciar sesión”.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           <Link
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-700 to-blue-600 text-white text-base font-semibold hover:from-purple-800 hover:to-blue-700 transition-colors"
+            className="px-4 py-2 rounded-lg text-white text-base font-semibold hover:opacity-90 transition-colors"
             to="/servicios"
+            style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
           >
             Ver servicios
           </Link>
           <Link
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-700 to-blue-600 text-white text-base font-semibold hover:from-purple-800 hover:to-blue-700 transition-colors"
+            className="px-4 py-2 rounded-lg text-white text-base font-semibold hover:opacity-90 transition-colors"
             to="/ofertas"
+            style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
           >
             Ver ofertas
           </Link>
           <a
-            className="px-4 py-2 rounded-lg border text-base font-semibold text-slate-900 hover:bg-slate-50 transition-colors"
+            className="px-4 py-2 rounded-lg border text-base font-semibold hover:bg-slate-50 transition-colors"
             href={sistemaUrl}
             rel="noopener noreferrer"
+            style={{ color: 'var(--color-primary, #E85D8E)', borderColor: 'var(--color-primary, #E85D8E)' }}
           >
             Iniciar sesión
           </a>
@@ -353,7 +368,7 @@ export default function HomePage({ sistemaUrl }) {
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-4 sm:p-6">
         <div className="flex items-end justify-between gap-3 flex-wrap">
           <div>
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">Servicios que ofrecemos</h2>
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight" style={{ color: 'var(--color-primary, #1e293b)' }}>Servicios que ofrecemos</h2>
             <div className="mt-1 text-slate-700">Conoce nuestros servicios y ofertas vigentes.</div>
           </div>
         </div>
@@ -362,7 +377,7 @@ export default function HomePage({ sistemaUrl }) {
           <div className="rounded-2xl border bg-white p-6">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-xl font-semibold">Servicios</h3>
-              <Link to="/servicios" className="text-base font-semibold text-blue-700 hover:underline">
+              <Link to="/servicios" className="text-base font-semibold hover:underline" style={{ color: 'var(--color-secondary, #2563eb)' }}>
                 Ver todos
               </Link>
             </div>
@@ -399,7 +414,7 @@ export default function HomePage({ sistemaUrl }) {
           <div className="rounded-2xl border bg-white p-6">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-xl font-semibold">Ofertas</h3>
-              <Link to="/ofertas" className="text-base font-semibold text-blue-700 hover:underline">
+              <Link to="/ofertas" className="text-base font-semibold hover:underline" style={{ color: 'var(--color-secondary, #2563eb)' }}>
                 Ver todas
               </Link>
             </div>
@@ -418,11 +433,11 @@ export default function HomePage({ sistemaUrl }) {
 
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-4 sm:p-6">
         <div className="grid md:grid-cols-2 gap-6 items-stretch">
-          <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-900 to-blue-700 min-h-[320px]">
+          <div className="relative overflow-hidden rounded-2xl border min-h-[320px]" style={{ background: 'linear-gradient(to bottom right, var(--color-login-from, #0f172a), var(--color-secondary, #2563eb))' }}>
             {banners?.[0]?.imagen_url || banners?.[0]?.imagen_fija_url ? (
               <img
                 src={banners[0].imagen_fija_url || banners[0].imagen_url}
-                alt={banners[0].titulo || 'Clínica 2 de Mayo'}
+                alt={banners[0].titulo || clinicName}
                 className="absolute inset-0 h-full w-full object-cover"
                 loading="eager"
                 fetchPriority="high"
@@ -433,11 +448,11 @@ export default function HomePage({ sistemaUrl }) {
             <div className="relative z-10 p-6 h-full flex items-end">
               <div className="flex items-center gap-3">
                 <div className="h-12 w-12 rounded-xl bg-white/90 flex items-center justify-center">
-                  <img src={publicLogoSrc} alt="" className="h-10 w-10" />
+                  <img src={publicLogoSrc} alt="" className="object-contain" style={{ width: resolvedLogoSize.feature, height: resolvedLogoSize.feature }} />
                 </div>
                 <div className="text-white">
-                  <div className="font-semibold leading-tight">Clínica 2 de Mayo</div>
-                  <div className="text-sm text-white/80">Atención con calidez y confianza</div>
+                  <div className="font-semibold leading-tight">{clinicName}</div>
+                  <div className="text-sm text-white/80">{configuracion?.slogan || 'Atención con calidez y confianza'}</div>
                 </div>
               </div>
             </div>
@@ -445,7 +460,7 @@ export default function HomePage({ sistemaUrl }) {
 
           <div className="rounded-2xl border bg-white p-6 flex flex-col justify-center">
             <div className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">
-              Cuidado <span className="text-blue-700">que inspira confianza</span>
+              Cuidado <span style={{ color: 'var(--color-secondary, #2563eb)' }}>que inspira confianza</span>
             </div>
             <div className="mt-3 text-slate-700">
               Tu bienestar es lo primero. Te acompañamos con atención personalizada y un equipo comprometido.
@@ -454,7 +469,7 @@ export default function HomePage({ sistemaUrl }) {
             <div className="mt-6 grid sm:grid-cols-3 gap-3">
               <div className="rounded-2xl border bg-slate-50 px-4 py-3">
                 <div className="text-xs font-semibold text-slate-600">Pacientes que nos eligieron</div>
-                <div className="mt-1 text-3xl font-extrabold text-blue-700">
+                <div className="mt-1 text-3xl font-extrabold" style={{ color: 'var(--color-secondary, #2563eb)' }}>
                   <span className="tabular-nums">
                     {pacientesFormatter ? pacientesFormatter.format(pacientesElegidosLive) : String(pacientesElegidosLive)}+
                   </span>
@@ -473,12 +488,12 @@ export default function HomePage({ sistemaUrl }) {
                 </div>
               </div>
             </div>
-            <div className="mt-2 text-sm font-semibold text-blue-800 tracking-wide">CALIDAD Y CONFIANZA EN SALUD</div>
+            <div className="mt-2 text-sm font-semibold tracking-wide" style={{ color: 'var(--color-primary-dark, #1e40af)' }}>CALIDAD Y CONFIANZA EN SALUD</div>
 
             <div className="mt-6 grid sm:grid-cols-2 gap-4">
               <div className="flex items-start gap-3">
-                <div className="shrink-0 h-10 w-10 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6 text-blue-700" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <div className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--color-primary-light, #eff6ff)', border: '1px solid var(--color-primary, #E85D8E)30' }}>
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" style={{ color: 'var(--color-primary, #E85D8E)' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                     <circle cx="12" cy="7" r="4" />
                   </svg>
@@ -490,8 +505,8 @@ export default function HomePage({ sistemaUrl }) {
               </div>
 
               <div className="flex items-start gap-3">
-                <div className="shrink-0 h-10 w-10 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6 text-blue-700" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <div className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--color-primary-light, #eff6ff)', border: '1px solid var(--color-primary, #E85D8E)30' }}>
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" style={{ color: 'var(--color-primary, #E85D8E)' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" />
                   </svg>
                 </div>
@@ -517,7 +532,8 @@ export default function HomePage({ sistemaUrl }) {
             href={mapsDirectionsUrl('', mapDestination)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-700 font-semibold hover:underline"
+            className="font-semibold hover:underline"
+            style={{ color: 'var(--color-secondary, #2563eb)' }}
           >
             Ver ubicación en Google Maps ↗
           </a>
@@ -551,14 +567,15 @@ export default function HomePage({ sistemaUrl }) {
             </form>
 
             <div className="rounded-2xl border bg-white p-4">
-              <div className="font-semibold text-slate-900">Clínica 2 de Mayo</div>
+              <div className="font-semibold" style={{ color: 'var(--color-primary, #1e293b)' }}>{clinicName}</div>
               <div className="text-slate-700">{mapDestination}</div>
               <div className="mt-3 flex flex-wrap gap-3">
                 <a
                   href={mapsDirectionsUrl('', mapDestination)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-700 to-blue-600 text-white text-base font-semibold hover:from-purple-800 hover:to-blue-700 transition-colors"
+                  className="px-4 py-2 rounded-xl text-white text-base font-semibold hover:opacity-90 transition-colors"
+                  style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
                 >
                   Cómo llegar
                 </a>
@@ -632,7 +649,7 @@ export default function HomePage({ sistemaUrl }) {
                     <div>
                       <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight">
                         <div>{card.titleA}</div>
-                        <div className="text-blue-700">{card.titleB}</div>
+                        <div style={{ color: 'var(--color-secondary, #2563eb)' }}>{card.titleB}</div>
                       </div>
                       <div className="mt-3 text-slate-700">{card.desc}</div>
                     </div>
@@ -673,9 +690,10 @@ export default function HomePage({ sistemaUrl }) {
               aria-label={`Ir al slide ${i + 1}`}
               className={`h-2.5 w-2.5 rounded-full border transition-colors ${
                 i === featureActiveIndex
-                  ? 'bg-blue-700 border-blue-700'
+                  ? ''
                   : 'bg-white/80 border-white/80 hover:bg-white'
               }`}
+              style={i === featureActiveIndex ? { backgroundColor: 'var(--color-primary, #2563eb)', borderColor: 'var(--color-primary, #2563eb)' } : undefined}
             />
           ))}
         </div>

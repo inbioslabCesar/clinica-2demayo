@@ -47,8 +47,142 @@ switch ($method) {
         $stmt->close();
         break;
     case 'POST':
-        // Agregar múltiples bloques de disponibilidad
         $data = json_decode(file_get_contents('php://input'), true);
+        $accion = $data['accion'] ?? 'agregar_bloques';
+
+        // —— Programar un mes completo ——
+        if ($accion === 'programar_mes') {
+            if ($esSesionMedico) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'Solo admin o recepcionista puede programar horarios']);
+                exit;
+            }
+            $medico_id  = intval($data['medico_id'] ?? 0);
+            $anio       = intval($data['anio'] ?? date('Y'));
+            $mes        = intval($data['mes'] ?? date('n'));
+            $hora_inicio = trim((string)($data['hora_inicio'] ?? '08:00'));
+            $hora_fin    = trim((string)($data['hora_fin'] ?? '12:00'));
+            // Compatibilidad: dias_semana + hora_inicio/hora_fin (modo antiguo)
+            $dias_semana = isset($data['dias_semana']) && is_array($data['dias_semana'])
+                ? array_map('intval', $data['dias_semana'])
+                : [0,1,2,3,4,5,6];
+            // Nuevo modo: bloques_semana con horario por día, ejemplo:
+            // {"1":{"activo":true,"hora_inicio":"08:00","hora_fin":"12:00"}, ...}
+            $bloques_semana = isset($data['bloques_semana']) && is_array($data['bloques_semana'])
+                ? $data['bloques_semana']
+                : null;
+
+            if ($medico_id <= 0 || $mes < 1 || $mes > 12 || $anio < 2020) {
+                echo json_encode(['success' => false, 'error' => 'Datos inválidos']);
+                exit;
+            }
+            $reglasDia = [];
+            if (is_array($bloques_semana)) {
+                foreach ($bloques_semana as $diaSemanaRaw => $cfg) {
+                    if (!is_array($cfg)) continue;
+                    $diaSemana = intval($diaSemanaRaw);
+                    if ($diaSemana < 0 || $diaSemana > 6) continue;
+
+                    $activo = !array_key_exists('activo', $cfg) || !!$cfg['activo'];
+                    if (!$activo) continue;
+
+                    $hi = trim((string)($cfg['hora_inicio'] ?? ''));
+                    $hf = trim((string)($cfg['hora_fin'] ?? ''));
+                    if ($hi === '' || $hf === '' || $hi >= $hf) {
+                        echo json_encode(['success' => false, 'error' => "Horario inválido para el día {$diaSemana}"]);
+                        exit;
+                    }
+                    $reglasDia[$diaSemana] = [
+                        'hora_inicio' => $hi,
+                        'hora_fin' => $hf,
+                    ];
+                }
+            }
+
+            if (count($reglasDia) === 0) {
+                if ($hora_inicio >= $hora_fin) {
+                    echo json_encode(['success' => false, 'error' => 'La hora inicio debe ser anterior a hora fin']);
+                    exit;
+                }
+                foreach ($dias_semana as $d) {
+                    if ($d < 0 || $d > 6) continue;
+                    $reglasDia[$d] = [
+                        'hora_inicio' => $hora_inicio,
+                        'hora_fin' => $hora_fin,
+                    ];
+                }
+            }
+
+            if (count($reglasDia) === 0) {
+                echo json_encode(['success' => false, 'error' => 'Selecciona al menos un día de la semana']);
+                exit;
+            }
+
+            $diasEnMes = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
+            $insertados = 0;
+            $omitidos   = 0;
+            $stmtCheck  = $conn->prepare('SELECT id FROM disponibilidad_medicos WHERE medico_id=? AND fecha=? LIMIT 1');
+            $stmtIns    = $conn->prepare('INSERT INTO disponibilidad_medicos (medico_id, fecha, hora_inicio, hora_fin) VALUES (?, ?, ?, ?)');
+
+            for ($d = 1; $d <= $diasEnMes; $d++) {
+                $fechaDia  = sprintf('%04d-%02d-%02d', $anio, $mes, $d);
+                $diaSemana = intval(date('w', mktime(0,0,0,$mes,$d,$anio))); // 0=Dom
+                if (!isset($reglasDia[$diaSemana])) continue;
+
+                $horaInicioDia = $reglasDia[$diaSemana]['hora_inicio'];
+                $horaFinDia = $reglasDia[$diaSemana]['hora_fin'];
+
+                // Si ya existe un bloque ese día, omitir
+                $stmtCheck->bind_param('is', $medico_id, $fechaDia);
+                $stmtCheck->execute();
+                if ($stmtCheck->get_result()->num_rows > 0) {
+                    $omitidos++;
+                    continue;
+                }
+
+                $stmtIns->bind_param('isss', $medico_id, $fechaDia, $horaInicioDia, $horaFinDia);
+                if ($stmtIns->execute()) {
+                    $insertados++;
+                }
+            }
+            $stmtCheck->close();
+            $stmtIns->close();
+
+            echo json_encode([
+                'success'   => true,
+                'insertados'=> $insertados,
+                'omitidos'  => $omitidos,
+                'mensaje'   => "Se programaron $insertados días. $omitidos ya tenían disponibilidad.",
+            ]);
+            break;
+        }
+
+        // —— Limpiar todos los bloques de un mes ——
+        if ($accion === 'limpiar_mes') {
+            if ($esSesionMedico) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'Solo admin o recepcionista puede limpiar horarios']);
+                exit;
+            }
+            $medico_id = intval($data['medico_id'] ?? 0);
+            $anio      = intval($data['anio'] ?? date('Y'));
+            $mes       = intval($data['mes'] ?? date('n'));
+            if ($medico_id <= 0) {
+                echo json_encode(['success' => false, 'error' => 'medico_id requerido']);
+                exit;
+            }
+            $mesStr = sprintf('%04d-%02d', $anio, $mes);
+            $stmt = $conn->prepare("DELETE FROM disponibilidad_medicos WHERE medico_id=? AND fecha LIKE ?");
+            $like = "$mesStr-%";
+            $stmt->bind_param('is', $medico_id, $like);
+            $ok = $stmt->execute();
+            $eliminados = $stmt->affected_rows;
+            $stmt->close();
+            echo json_encode(['success' => $ok, 'eliminados' => $eliminados]);
+            break;
+        }
+
+        // —— Agregar múltiples bloques de disponibilidad (comportamiento original) ——
         $medico_id = $data['medico_id'] ?? null;
         $bloques = $data['bloques'] ?? null;
         if (!$medico_id || !is_array($bloques) || count($bloques) === 0) {

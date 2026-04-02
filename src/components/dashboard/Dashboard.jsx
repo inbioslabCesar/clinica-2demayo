@@ -1,19 +1,18 @@
 
 
 import { useEffect, useState, useCallback } from "react";
-import { useLocation } from "react-router-dom";
 import RecepcionModulo from "../cobro/RecepcionModulo";
 import { BASE_URL } from "../../config/config";
 import { Icon } from '@fluentui/react';
 
 function Dashboard({ usuario }) {
   const [ultimaHC, setUltimaHC] = useState(null);
+  const [clinicName, setClinicName] = useState('');
   const [estadisticas, setEstadisticas] = useState({
     pacientesHoy: 0,
     consultasHoy: 0,
     totalPacientes: 0
   });
-  const location = useLocation();
 
   // Función para obtener estadísticas reales desde la API
   const obtenerEstadisticas = useCallback(async () => {
@@ -54,15 +53,23 @@ function Dashboard({ usuario }) {
       .then(data => {
         if (data.success) setUltimaHC(data.ultima_hc);
       });
-    
-    // También actualizar estadísticas cuando se registre un nuevo paciente
-    obtenerEstadisticas();
   }, [obtenerEstadisticas]);
 
   useEffect(() => {
     actualizarUltimaHC();
     obtenerEstadisticas();
-  }, [usuario, location.pathname, actualizarUltimaHC, obtenerEstadisticas]);
+  }, [usuario?.id, actualizarUltimaHC, obtenerEstadisticas]);
+
+  useEffect(() => {
+    fetch(BASE_URL + "api_get_configuracion.php", { credentials: "include" })
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && data.data?.nombre_clinica) {
+          setClinicName(String(data.data.nombre_clinica).trim());
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const formatearFecha = () => {
     return new Intl.DateTimeFormat('es-ES', {
@@ -74,100 +81,126 @@ function Dashboard({ usuario }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4 sm:p-6 lg:p-8">
+    <div
+      className="min-h-screen p-3 sm:p-4 lg:p-5"
+      style={{
+        background: "linear-gradient(135deg, var(--color-primary-light) 0%, #eef2ff 55%, #f8fafc 100%)",
+      }}
+    >
       {/* Header Moderno */}
-      <div className="mb-8">
-        <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 rounded-2xl p-6 sm:p-8 text-white shadow-2xl relative overflow-hidden">
+      <div className="mb-4">
+        <div
+          className="rounded-2xl p-4 sm:p-5 text-white shadow-lg relative overflow-hidden"
+          style={{
+            background:
+              "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)",
+          }}
+        >
           {/* Efectos de fondo */}
-          <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -translate-y-20 translate-x-20"></div>
-          <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/5 rounded-full translate-y-16 -translate-x-16"></div>
+          <div className="absolute top-0 right-0 w-28 h-28 bg-white/10 rounded-full -translate-y-14 translate-x-14"></div>
+          <div className="absolute bottom-0 left-0 w-20 h-20 bg-white/5 rounded-full translate-y-10 -translate-x-10"></div>
           
           <div className="relative z-10">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="flex items-center justify-center w-16 h-16 bg-white/20 rounded-2xl backdrop-blur-sm">
-                <Icon iconName="Hospital" className="text-3xl text-white" />
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center justify-center w-11 h-11 bg-white/20 rounded-xl backdrop-blur-sm">
+                <Icon iconName="Hospital" className="text-xl text-white" />
               </div>
               <div>
-                <h1 className="text-3xl sm:text-4xl font-bold drop-shadow-lg">
+                <h1 className="text-2xl sm:text-3xl font-bold drop-shadow-lg leading-tight">
                   ¡Bienvenido, {usuario?.nombre} {usuario?.apellido || ""}!
                 </h1>
-                <p className="text-lg text-white/90 mt-1">
+                <p className="text-sm sm:text-base text-white/90 mt-1">
                   {formatearFecha()}
                 </p>
               </div>
             </div>
-            <p className="text-xl text-white/95 font-medium">
-              Panel de Control - Clínica 2 de Mayo
+            <p className="text-sm sm:text-base text-white/95 font-medium">
+              Panel de Control{clinicName ? ` - ${clinicName}` : ''}
             </p>
           </div>
         </div>
       </div>
 
       {/* Tarjetas de Estadísticas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        <div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 border border-cyan-100 hover:border-cyan-200">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-xl">
-              <Icon iconName="People" className="text-2xl text-white" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+        <div className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-300 border"
+          style={{ borderColor: "var(--color-primary-light)" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div
+              className="flex items-center justify-center w-10 h-10 rounded-lg"
+              style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+            >
+              <Icon iconName="People" className="text-lg text-white" />
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-gray-800">{estadisticas.pacientesHoy}</p>
-              <p className="text-sm text-gray-500">Hoy</p>
+              <p className="text-xl font-bold text-gray-800 leading-tight">{estadisticas.pacientesHoy}</p>
+              <p className="text-xs text-gray-500">Hoy</p>
             </div>
           </div>
-          <h3 className="text-lg font-semibold text-gray-800 mb-1">Pacientes Atendidos</h3>
-          <p className="text-sm text-gray-600">En el día de hoy</p>
+          <h3 className="text-base font-semibold text-gray-800 mb-1">Pacientes Atendidos</h3>
+          <p className="text-xs text-gray-600">En el dia de hoy</p>
         </div>
 
-        <div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 border border-emerald-100 hover:border-emerald-200">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-emerald-400 to-green-500 rounded-xl">
-              <Icon iconName="Health" className="text-2xl text-white" />
+        <div className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-300 border"
+          style={{ borderColor: "var(--color-primary-light)" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div
+              className="flex items-center justify-center w-10 h-10 rounded-lg"
+              style={{ background: "linear-gradient(135deg, var(--color-secondary), var(--color-accent))" }}
+            >
+              <Icon iconName="Health" className="text-lg text-white" />
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-gray-800">{estadisticas.consultasHoy}</p>
-              <p className="text-sm text-gray-500">Hoy</p>
+              <p className="text-xl font-bold text-gray-800 leading-tight">{estadisticas.consultasHoy}</p>
+              <p className="text-xs text-gray-500">Hoy</p>
             </div>
           </div>
-          <h3 className="text-lg font-semibold text-gray-800 mb-1">Consultas Médicas</h3>
-          <p className="text-sm text-gray-600">En el día de hoy</p>
+          <h3 className="text-base font-semibold text-gray-800 mb-1">Consultas Medicas</h3>
+          <p className="text-xs text-gray-600">En el dia de hoy</p>
         </div>
 
-        <div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 border border-purple-100 hover:border-purple-200 sm:col-span-2 lg:col-span-1">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-purple-400 to-indigo-500 rounded-xl">
-              <Icon iconName="Contact" className="text-2xl text-white" />
+        <div className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-300 border sm:col-span-2 lg:col-span-1"
+          style={{ borderColor: "var(--color-primary-light)" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div
+              className="flex items-center justify-center w-10 h-10 rounded-lg"
+              style={{ background: "linear-gradient(135deg, var(--color-accent), var(--color-primary))" }}
+            >
+              <Icon iconName="Contact" className="text-lg text-white" />
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-gray-800">{estadisticas.totalPacientes}</p>
-              <p className="text-sm text-gray-500">Total</p>
+              <p className="text-xl font-bold text-gray-800 leading-tight">{estadisticas.totalPacientes}</p>
+              <p className="text-xs text-gray-500">Total</p>
             </div>
           </div>
-          <h3 className="text-lg font-semibold text-gray-800 mb-1">Pacientes Registrados</h3>
-          <p className="text-sm text-gray-600">En la base de datos</p>
+          <h3 className="text-base font-semibold text-gray-800 mb-1">Pacientes Registrados</h3>
+          <p className="text-xs text-gray-600">En la base de datos</p>
         </div>
       </div>
 
       {/* Última Historia Clínica */}
       {ultimaHC && (
-        <div className="mb-8">
-          <div className="bg-white rounded-2xl p-6 shadow-lg border border-amber-100">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl">
-                <Icon iconName="DocumentSearch" className="text-2xl text-white" />
+        <div className="mb-4">
+          <div className="bg-white rounded-xl p-3 shadow-sm border" style={{ borderColor: "var(--color-primary-light)" }}>
+            <div className="flex items-center gap-3 mb-2">
+              <div
+                className="flex items-center justify-center w-9 h-9 rounded-lg"
+                style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-secondary))" }}
+              >
+                <Icon iconName="DocumentSearch" className="text-base text-white" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-gray-800">Última Historia Clínica</h3>
-                <p className="text-gray-600">Registro más reciente en el sistema</p>
+                <h3 className="text-base font-bold text-gray-800">Ultima Historia Clinica</h3>
+                <p className="text-xs text-gray-600">Registro mas reciente</p>
               </div>
             </div>
-            <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
+            <div className="rounded-lg p-2 border" style={{ background: "var(--color-primary-light)", borderColor: "var(--color-primary-light)" }}>
               <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center w-8 h-8 bg-amber-100 rounded-lg">
-                  <Icon iconName="NumberField" className="text-lg text-amber-700" />
+                <div className="flex items-center justify-center w-7 h-7 rounded-md bg-white/80">
+                  <Icon iconName="NumberField" className="text-sm" style={{ color: "var(--color-secondary)" }} />
                 </div>
-                <span className="text-lg font-mono font-bold text-amber-800">{ultimaHC}</span>
-                <span className="text-sm text-amber-600 bg-amber-100 px-2 py-1 rounded-full">
+                <span className="text-base font-mono font-bold" style={{ color: "var(--color-secondary)" }}>{ultimaHC}</span>
+                <span className="text-xs px-2 py-1 rounded-full bg-white/80" style={{ color: "var(--color-secondary)" }}>
                   HC #{ultimaHC}
                 </span>
               </div>
@@ -177,19 +210,25 @@ function Dashboard({ usuario }) {
       )}
 
       {/* Módulo de Recepción Modernizado */}
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-        <div className="bg-gradient-to-r from-indigo-500 to-purple-600 p-6 text-white">
+      <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">
+        <div
+          className="p-4 text-white"
+          style={{
+            background:
+              "linear-gradient(90deg, var(--color-secondary) 0%, var(--color-primary) 100%)",
+          }}
+        >
           <div className="flex items-center gap-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-xl backdrop-blur-sm">
-              <Icon iconName="ContactCard" className="text-2xl text-white" />
+            <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-xl backdrop-blur-sm">
+              <Icon iconName="ContactCard" className="text-lg text-white" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold">Atención en Recepción</h2>
-              <p className="text-indigo-100">Gestión de pacientes y servicios</p>
+              <h2 className="text-xl font-bold">Atencion en Recepcion</h2>
+              <p className="text-sm text-indigo-100">Gestion de pacientes y servicios</p>
             </div>
           </div>
         </div>
-        <div className="p-6">
+        <div className="p-4">
           <RecepcionModulo onPacienteRegistrado={actualizarUltimaHC} />
         </div>
       </div>

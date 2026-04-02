@@ -1,6 +1,6 @@
 // Orquesta la vista principal y conecta los componentes
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
 import usePacientes from "./usePacientes";
 import PacienteListHeader from "./PacienteListHeader";
@@ -12,26 +12,59 @@ import PacienteListForm from "./PacienteListForm";
 import { exportarExcel, exportarPDF } from "./PacienteListExport";
 
 function PacienteList() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Leer estado inicial desde URL
+  const initialPage        = Number(searchParams.get("page")     || 1);
+  const initialRows        = Number(searchParams.get("rows")     || 5);
+  const initialBusqueda    = searchParams.get("q")               || "";
+  const initialFechaDesde  = searchParams.get("desde")           || "";
+  const initialFechaHasta  = searchParams.get("hasta")           || "";
+
+  // Helper: actualizar URL sin añadir historial
+  const syncUrl = (updates) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v !== "" && v !== null && v !== undefined) next.set(k, String(v));
+        else next.delete(k);
+      });
+      return next;
+    }, { replace: true });
+  };
   const {
     pacientes,
     loading,
     error,
     page,
-    setPage,
+    setPage: _setPage,
     rowsPerPage,
-    setRowsPerPage,
+    setRowsPerPage: _setRowsPerPage,
     totalRows,
     totalPages,
     busqueda,
-    setBusqueda,
+    setBusqueda: _setBusqueda,
     fechaDesde,
-    setFechaDesde,
+    setFechaDesde: _setFechaDesde,
     fechaHasta,
-    setFechaHasta,
+    setFechaHasta: _setFechaHasta,
     guardarPaciente,
     eliminarPaciente,
     recargarPacientes
-  } = usePacientes();
+  } = usePacientes({
+    initialPage,
+    initialRowsPerPage: initialRows,
+    initialBusqueda,
+    initialFechaDesde,
+    initialFechaHasta,
+  });
+
+  // Setters que sincronizan la URL
+  const setPage = (v) => { _setPage(v); syncUrl({ page: v === 1 ? null : v }); };
+  const setRowsPerPage = (v) => { _setRowsPerPage(v); syncUrl({ rows: v === 5 ? null : v, page: null }); };
+  const setBusqueda = (v) => { _setBusqueda(v); syncUrl({ q: v || null, page: null }); };
+  const setFechaDesde = (v) => { _setFechaDesde(v); syncUrl({ desde: v || null }); };
+  const setFechaHasta = (v) => { _setFechaHasta(v); syncUrl({ hasta: v || null }); };
 
   // Modal y edición
   const [modalOpen, setModalOpen] = useState(false);
@@ -83,7 +116,7 @@ function PacienteList() {
     recargarPacientes(); // Recarga los datos desde el backend tras eliminar
   };
   const handleDescargarCaratula = (paciente) => {
-    const url = `${BASE_URL}descargar_caratula_paciente.php?paciente_id=${paciente.id}`;
+    const url = `${BASE_URL}descargar_caratula_paciente.php?paciente_id=${paciente.id}&_ts=${Date.now()}`;
     const link = document.createElement('a');
     link.href = url;
     link.download = `caratula_${paciente.historia_clinica}.pdf`;
@@ -129,9 +162,9 @@ function PacienteList() {
       </div>
       <PacienteListFilters
         busqueda={busqueda}
-        setBusqueda={value => { setBusqueda(value); setPage(1); }}
+        setBusqueda={setBusqueda}
         rowsPerPage={rowsPerPage}
-        setRowsPerPage={value => { setRowsPerPage(value); setPage(1); }}
+        setRowsPerPage={setRowsPerPage}
         fechaDesde={fechaDesde}
         setFechaDesde={setFechaDesde}
         fechaHasta={fechaHasta}

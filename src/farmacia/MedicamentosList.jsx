@@ -74,6 +74,20 @@ export default function MedicamentosList() {
   const [motivoCuarentena, setMotivoCuarentena] = useState("");
   const [filtroCuarentena, setFiltroCuarentena] = useState(false);
 
+  const themeGradient = {
+    backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
+  };
+  const themeTextGradient = {
+    backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
+    WebkitBackgroundClip: "text",
+    backgroundClip: "text",
+    color: "transparent",
+  };
+  const primarySoftButtonStyle = {
+    color: "var(--color-primary-dark)",
+    borderColor: "var(--color-primary-light)",
+  };
+
   const fetchMedicamentos = () => {
     setLoading(true);
     setError(null);
@@ -174,7 +188,7 @@ export default function MedicamentosList() {
   return (
   <div className="w-full mx-auto px-0 sm:px-4 md:px-8 lg:px-16 xl:px-32 2xl:px-0 py-10">
       <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600 mb-2">
+        <h1 className="text-4xl font-bold text-transparent bg-clip-text mb-2" style={themeTextGradient}>
           💊 
           
         </h1>
@@ -203,7 +217,8 @@ export default function MedicamentosList() {
         <span className="ml-2 text-sm">por página</span>
         <button
           onClick={handleAdd}
-          className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-6 py-3 rounded-lg shadow-lg hover:from-purple-700 hover:to-blue-700 transform hover:scale-105 transition-all duration-200 font-semibold flex items-center gap-2"
+          className="text-white px-6 py-3 rounded-lg shadow-lg transform hover:scale-105 transition-all duration-200 font-semibold flex items-center gap-2"
+          style={themeGradient}
         >
           <span className="text-lg">+</span>
           Nuevo Medicamento
@@ -268,44 +283,44 @@ export default function MedicamentosList() {
         <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 rounded-lg">
           <table className="w-full bg-white border border-gray-200 rounded-lg text-xs sm:text-sm md:text-base">
             <thead>
-              <tr className="bg-gradient-to-r from-purple-600 to-blue-600 text-white">
-                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider">
+              <tr className="text-white" style={themeGradient}>
+                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider" style={{ borderColor: "var(--color-primary-light)" }}>
                   Código
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider">
+                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider" style={{ borderColor: "var(--color-primary-light)" }}>
                   Nombre
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider sm:hidden">
+                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider sm:hidden" style={{ borderColor: "var(--color-primary-light)" }}>
                   Acciones
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider hidden md:table-cell">
+                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider hidden md:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Presentación
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider hidden lg:table-cell">
+                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider hidden lg:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Concentración
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-xs font-semibold uppercase tracking-wider hidden xl:table-cell">
+                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider hidden xl:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Laboratorio
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden md:table-cell">
+                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden md:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Stock
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Vencimiento
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Precio Compra (S/)
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Margen (%)
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Precio Venta (S/)
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Estado
                 </th>
-                <th className="py-3 px-4 border-b border-purple-400 text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell">
+                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
                   Acciones
                 </th>
               </tr>
@@ -339,7 +354,16 @@ export default function MedicamentosList() {
                   return (
                     <tr
                       key={m.id}
-                      className={`transition-colors duration-200 hover:bg-purple-100 hover:shadow-sm ${rowClass} ${vencClass}`}
+                      className={`transition-colors duration-200 hover:shadow-sm ${rowClass} ${vencClass}`}
+                      style={{
+                        ...(rowClass ? { "--tw-bg-opacity": 1 } : {}),
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = "var(--color-primary-light)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = "";
+                      }}
                     >
                       <td className="py-3 px-4 border-b border-gray-200 font-medium text-gray-900">
                         {m.codigo}
@@ -350,21 +374,24 @@ export default function MedicamentosList() {
                       <td className="py-3 px-4 border-b border-gray-200 text-center sm:hidden flex flex-row gap-2 justify-center">
                         <button
                           onClick={() => setDetalleMed(m)}
-                          className="p-2 text-blue-600 hover:text-white hover:bg-blue-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
+                          style={primarySoftButtonStyle}
                           title="Ver detalles"
                         >
                           <FaInfoCircle size={16} />
                         </button>
                         <button
                           onClick={() => handleEdit(m)}
-                          className="p-2 text-indigo-600 hover:text-white hover:bg-indigo-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
+                          style={primarySoftButtonStyle}
                           title="Editar"
                         >
                           <FaEdit size={16} />
                         </button>
                         <button
                           onClick={() => setMovimientosMed(m)}
-                          className="p-2 text-purple-600 hover:text-white hover:bg-purple-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
+                          style={primarySoftButtonStyle}
                           title="Historial"
                         >
                           <FaHistory size={16} />
@@ -434,14 +461,16 @@ export default function MedicamentosList() {
                       <td className="py-3 px-4 border-b border-gray-200 text-center gap-2 justify-center hidden sm:table-cell">
                         <button
                           onClick={() => handleEdit(m)}
-                          className="p-2 text-indigo-600 hover:text-white hover:bg-indigo-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
+                          style={primarySoftButtonStyle}
                           title="Editar"
                         >
                           <FaEdit size={16} />
                         </button>
                         <button
                           onClick={() => setMovimientosMed(m)}
-                          className="p-2 text-purple-600 hover:text-white hover:bg-purple-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
+                          style={primarySoftButtonStyle}
                           title="Historial"
                         >
                           <FaHistory size={16} />

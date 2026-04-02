@@ -11,6 +11,8 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
+  const [cargaAnticipada, setCargaAnticipada] = useState(false);
+  const [cotizResult, setCotizResult] = useState(null); // {numero_comprobante, total}
   // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
   useEffect(() => {
     fetch(BASE_URL + "api_examenes_laboratorio.php", { credentials: 'include' })
@@ -28,24 +30,31 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
     e.preventDefault();
     setGuardando(true);
     setMsg("");
+    setCotizResult(null);
     try {
       const response = await fetch(BASE_URL + "api_ordenes_laboratorio.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ consulta_id: consultaId, examenes }),
+        body: JSON.stringify({ consulta_id: consultaId, examenes, carga_anticipada: cargaAnticipada }),
       });
       
-      if (response.ok) {
-        setMsg("Orden enviada correctamente");
+      const d = await response.json();
+      if (d.success) {
+        if (d.numero_comprobante) {
+          setCotizResult({ numero_comprobante: d.numero_comprobante, total: d.total ?? 0 });
+          setMsg(`✅ Orden enviada · Cotización ${d.numero_comprobante} generada`);
+        } else {
+          setMsg("✅ Orden enviada correctamente");
+        }
         setExamenes([]);
-        // Auto-limpiar mensaje después de 3 segundos
-        setTimeout(() => setMsg(""), 3000);
+        setCargaAnticipada(false);
+        setTimeout(() => { setMsg(""); setCotizResult(null); }, 6000);
       } else {
-        throw new Error("Error al enviar la orden");
+        throw new Error(d.error ?? "Error al enviar la orden");
       }
-    } catch {
-      setMsg("Error al enviar la orden. Intente nuevamente.");
+    } catch (err) {
+      setMsg(`Error: ${err.message ?? "Intente nuevamente."}`);
       setTimeout(() => setMsg(""), 5000);
     } finally {
       setGuardando(false);
@@ -138,6 +147,20 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
           </div>
         )}
 
+        {/* Carga anticipada */}
+        <label className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer hover:bg-amber-100 transition">
+          <input
+            type="checkbox"
+            checked={cargaAnticipada}
+            onChange={(e) => setCargaAnticipada(e.target.checked)}
+            className="w-4 h-4 accent-amber-500"
+          />
+          <div>
+            <p className="font-semibold text-amber-800 text-sm">⚡ Urgente — Carga anticipada</p>
+            <p className="text-xs text-amber-600">Permite subir resultados sin esperar el pago de la cotización.</p>
+          </div>
+        </label>
+
         {/* Botón de envío y mensajes */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <button 
@@ -183,22 +206,19 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         {/* Mensaje de confirmación o error */}
         {msg && (
           <div className={`
-            rounded-lg p-4 border shadow-sm flex items-center gap-3
-            ${msg.includes('correctamente') 
+            rounded-lg p-4 border shadow-sm flex items-start gap-3
+            ${msg.startsWith('✅') 
               ? 'bg-green-50 border-green-200 text-green-800' 
               : 'bg-red-50 border-red-200 text-red-800'
             }
           `}>
-            {msg.includes('correctamente') ? (
-              <svg className="w-6 h-6 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            ) : (
-              <svg className="w-6 h-6 text-red-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-            )}
-            <span className="font-semibold">{msg}</span>
+            <span className="font-semibold flex-1">{msg}</span>
+          </div>
+        )}
+        {cotizResult && (
+          <div className="rounded-lg p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm">
+            <p className="font-bold">Cotización: {cotizResult.numero_comprobante}</p>
+            <p>Total: S/ {parseFloat(cotizResult.total).toFixed(2)} — pendiente de pago en recepción</p>
           </div>
         )}
       </form>

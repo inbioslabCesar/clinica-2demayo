@@ -142,10 +142,18 @@ function ServiciosSelector({ paciente }) {
   }
 
   return (
-    <div className="mt-4 p-4 bg-blue-50 rounded border border-blue-200">
-      <h3 className="text-lg font-semibold mb-3 text-blue-800">
-        🏥 Seleccionar Servicio para: {paciente.nombre} {paciente.apellido}
-      </h3>
+    <div className="mt-4 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-cyan-50 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold text-blue-800">
+          Paso 3: Cotizar servicio para {paciente.nombre} {paciente.apellido}
+        </h3>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
+          Acciones rapidas
+        </span>
+      </div>
+      <p className="mb-3 text-sm text-blue-700">
+        Selecciona el servicio y el sistema te llevara directamente al flujo de cotizacion o agendamiento.
+      </p>
       
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {serviciosBase.map((servicio) => {
@@ -197,8 +205,8 @@ function ServiciosSelector({ paciente }) {
         </button>
       </div>
       
-      <div className="mt-3 text-sm text-gray-600 text-center">
-        💰 = Requiere pago previo | 🏥 = Agendar primero, cobrar después
+      <div className="mt-3 rounded-lg border border-blue-100 bg-white px-3 py-2 text-xs text-gray-700 text-center">
+        💰 Requiere pago previo | Consulta medica se agenda primero y se cobra segun flujo.
       </div>
     </div>
   );

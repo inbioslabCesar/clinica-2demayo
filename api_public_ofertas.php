@@ -30,14 +30,17 @@ try {
     $stmt = $pdo->query($sql);
     $ofertas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Campo amigable opcional
+    // Campo amigable de vigencia para mostrar en frontend sin logica adicional
     foreach ($ofertas as &$o) {
         $inicio = $o['fecha_inicio'] ?? null;
         $fin = $o['fecha_fin'] ?? null;
-        if ($inicio && $fin) $o['vigencia'] = $inicio . ' al ' . $fin;
-        elseif ($inicio) $o['vigencia'] = 'Desde ' . $inicio;
-        elseif ($fin) $o['vigencia'] = 'Hasta ' . $fin;
-        else $o['vigencia'] = null;
+        $inicioFmt = $inicio ? date('d/m/Y', strtotime($inicio)) : null;
+        $finFmt = $fin ? date('d/m/Y', strtotime($fin)) : null;
+
+        if ($inicioFmt && $finFmt) $o['vigencia'] = $inicioFmt . ' al ' . $finFmt;
+        elseif ($inicioFmt) $o['vigencia'] = 'Desde ' . $inicioFmt;
+        elseif ($finFmt) $o['vigencia'] = 'Hasta ' . $finFmt;
+        else $o['vigencia'] = 'Vigencia permanente';
     }
 
     echo json_encode([

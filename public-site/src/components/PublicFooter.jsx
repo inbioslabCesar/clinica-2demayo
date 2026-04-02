@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PUBLIC_API_BASE } from '../api/publicApi'
+import { resolvePublicLogoSize } from '../utils/logoSizing'
 
 function resolvePublicUrl(maybePath) {
   const s = (maybePath || '').trim()
@@ -53,38 +54,43 @@ function normalizeLines(text) {
     .filter(Boolean)
 }
 
-export default function PublicFooter({ configuracion, sistemaUrl }) {
+export default function PublicFooter({ configuracion, sistemaUrl, logoSize }) {
   const cfg = configuracion || {}
   const fallbackLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`
   const configuredLogoSrc = resolvePublicUrl(cfg.logo_url)
   const [logoFailed, setLogoFailed] = useState(false)
   const logoSrc = !logoFailed && configuredLogoSrc ? configuredLogoSrc : fallbackLogoSrc
-  const nombre = (cfg.nombre_clinica || 'Clínica 2 de Mayo').trim()
+  const nombre = (cfg.nombre_clinica || '').trim() || 'Portal de Salud'
   const direccion = (cfg.direccion || '').trim()
   const telefono = (cfg.telefono || '').trim()
   const email = (cfg.email || '').trim()
   const emergencias = (cfg.contacto_emergencias || '').trim()
   const website = (cfg.website || '').trim()
+  const resolvedLogoSize = logoSize || resolvePublicLogoSize(cfg.logo_size_publico)
 
   const horarioLines = useMemo(() => normalizeLines(cfg.horario_atencion), [cfg.horario_atencion])
 
   return (
-    <footer className="border-t border-white/15 bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 text-white">
+    <footer className="border-t border-white/15 text-white" style={{ background: 'linear-gradient(to right, var(--color-login-from, #020617), var(--color-login-via, #0f172a), var(--color-login-to, #172554))' }}>
       <div className="max-w-6xl mx-auto px-4 py-10">
         <div className="grid lg:grid-cols-4 gap-8">
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="h-14 w-14 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden">
+              <div
+                className="rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden"
+                style={{ width: resolvedLogoSize.footerFrame, height: resolvedLogoSize.footerFrame }}
+              >
                 <img
                   src={logoSrc}
                   alt={nombre}
-                  className="h-12 w-12 object-contain"
+                  className="object-contain"
+                  style={{ width: resolvedLogoSize.footerImage, height: resolvedLogoSize.footerImage }}
                   onError={() => setLogoFailed(true)}
                 />
               </div>
               <div>
                 <div className="text-lg font-semibold leading-tight">{nombre}</div>
-                <div className="text-sm text-white/70">Servicios y ofertas</div>
+                <div className="text-sm text-white/70">{cfg.slogan || 'Servicios y ofertas'}</div>
               </div>
             </div>
             <div className="text-sm text-white/70">

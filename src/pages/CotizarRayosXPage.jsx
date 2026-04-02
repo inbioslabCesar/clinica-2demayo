@@ -3,6 +3,7 @@ import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { BASE_URL } from "../config/config";
+import { useQuoteCart } from "../context/QuoteCartContext";
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
@@ -18,16 +19,38 @@ export default function CotizarRayosXPage() {
   const [mensaje, setMensaje] = useState("");
   const [preloadedCounts, setPreloadedCounts] = useState({}); // {tarifaId: cantidad}
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
+  const [pendingRxItems, setPendingRxItems] = useState([]); // ítems crudos para resolver contra tarifas actuales
   const [cajaEstado, setCajaEstado] = useState(null);
+  const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+
+  const normalizeText = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, " ");
+
+  const obtenerNombreMedicoTarifa = (tarifa) => {
+    if (!tarifa) return "";
+
+    const medicoPorTarifa = String(
+      `${tarifa.medico_nombre || ""} ${tarifa.medico_apellido || ""}`
+    ).trim();
+    if (medicoPorTarifa) return medicoPorTarifa;
+
+    const medicoId = Number(tarifa.medico_id || 0);
+    if (medicoId <= 0) return "";
+
+    const medico = medicos.find((m) => Number(m.id) === medicoId);
+    if (!medico) return "";
+
+    return `${medico.nombres || medico.nombre || ""} ${medico.apellidos || medico.apellido || ""}`.trim();
+  };
 
   // Filtrar tarifas por búsqueda
   const tarifasFiltradas = tarifas.filter(tarifa => {
     const texto = `${tarifa.descripcion || tarifa.nombre}`.toLowerCase();
-    let medico = null;
-    if (tarifa && tarifa.medico_id) {
-      medico = medicos.find(m => m.id === tarifa.medico_id);
-    }
-    const doctor = medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`.toLowerCase() : "sin doctor";
+    const doctor = (obtenerNombreMedicoTarifa(tarifa) || "sin doctor").toLowerCase();
     return (
       texto.includes(busqueda.toLowerCase()) ||
       doctor.includes(busqueda.toLowerCase())
@@ -77,38 +100,61 @@ export default function CotizarRayosXPage() {
     const cobroId = params.get("cobro_id");
     const cotizacionId = params.get("cotizacion_id");
     const loaders = [];
-    if (cobroId || cotizacionId) setPreloadedItems([]);
+    if (cobroId || cotizacionId) {
+      setPreloadedItems([]);
+      setPendingRxItems([]);
+    }
     if (cobroId) loaders.push(fetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null; if (!data.success || !cobro) return;
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
       const itemsRx = [];
       detalles.forEach(cd => { if ((cd.servicio_tipo || '').toLowerCase() === 'rayosx') { try { const arr = JSON.parse(cd.descripcion); if (Array.isArray(arr)) itemsRx.push(...arr); } catch { /* ignore parse error */ } } });
       if (itemsRx.length) {
-        setPreloadedItems(prev => [...prev, ...itemsRx]);
-        const uniqueSel = Array.from(new Set(itemsRx.map(it => Number(it.servicio_id)).filter(Boolean)));
-        setSeleccionados(uniqueSel);
-        const map = {}; const qtys = {};
-        itemsRx.forEach(it => { const tid = Number(it.servicio_id); map[tid] = (map[tid] || 0) + Number(it.cantidad || 1); qtys[tid] = map[tid]; });
-        setCantidades(prev => ({ ...prev, ...qtys }));
-        setPreloadedCounts(map);
+        setPendingRxItems(prev => [...prev, ...itemsRx]);
       }
     }));
     if (cotizacionId) loaders.push(fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cot = data.cotizacion || null; if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+      setCotizacionDetallesOriginales(detalles);
       const itemsRx = detalles.filter(d => (d.servicio_tipo || '').toLowerCase() === 'rayosx');
       if (itemsRx.length) {
-        setPreloadedItems(prev => [...prev, ...itemsRx]);
-        const uniqueSel = Array.from(new Set(itemsRx.map(it => Number(it.servicio_id)).filter(Boolean)));
-        setSeleccionados(uniqueSel);
-        const map = {}; const qtys = {};
-        itemsRx.forEach(it => { const tid = Number(it.servicio_id); map[tid] = (map[tid] || 0) + Number(it.cantidad || 1); qtys[tid] = map[tid]; });
-        setCantidades(prev => ({ ...prev, ...qtys }));
-        setPreloadedCounts(map);
+        setPendingRxItems(prev => [...prev, ...itemsRx]);
       }
     }));
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
   }, [location.search]);
+
+  // Resolver ítems precargados contra tarifas actuales (por id o por descripción)
+  useEffect(() => {
+    if (!pendingRxItems.length || !tarifas.length) return;
+
+    const counts = {};
+    const qtys = {};
+    const resolvedItems = [];
+
+    pendingRxItems.forEach((item) => {
+      const rawId = Number(item.servicio_id || item.tarifa_id || 0);
+      const byId = tarifas.find((t) => Number(t.id) === rawId) || null;
+      const byDesc = tarifas.find(
+        (t) => normalizeText(t.descripcion || t.nombre) === normalizeText(item.descripcion)
+      ) || null;
+      const tarifa = byId || byDesc;
+      if (!tarifa) return;
+
+      const resolvedId = Number(tarifa.id);
+      const qty = Number(item.cantidad || 1);
+      counts[resolvedId] = (counts[resolvedId] || 0) + qty;
+      qtys[resolvedId] = counts[resolvedId];
+      resolvedItems.push({ ...item, _resolved_id: resolvedId });
+    });
+
+    const uniqueSel = Array.from(new Set(Object.keys(counts).map(Number))).filter(Boolean);
+    setSeleccionados(uniqueSel);
+    setCantidades((prev) => ({ ...prev, ...qtys }));
+    setPreloadedCounts(counts);
+    setPreloadedItems(resolvedItems);
+  }, [pendingRxItems, tarifas]);
 
   const actualizarCobro = async () => {
     const cobroId = new URLSearchParams(location.search).get('cobro_id');
@@ -188,7 +234,8 @@ export default function CotizarRayosXPage() {
       let biggestQty = -1;
       for (let i = 0; i < lines.length; i++) {
         const ln = lines[i];
-        if (Number(ln?.servicio_id) !== Number(servicioId)) continue;
+        const lnResolved = Number(ln?._resolved_id || ln?.servicio_id || 0);
+        if (lnResolved !== Number(servicioId)) continue;
         const q = Number(ln?.cantidad || 0);
         if (q <= 0) continue;
         if (q === remaining) { exactIdx = i; break; }
@@ -220,6 +267,7 @@ export default function CotizarRayosXPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               cobro_id: Number(cobroId),
+              cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
               servicio_tipo: 'rayosx',
               item: line,
               motivo: motivoReduccion
@@ -251,7 +299,12 @@ export default function CotizarRayosXPage() {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cobro_id: Number(cobroId), servicio_tipo: 'rayosx', items: additionsAfterReductions })
+          body: JSON.stringify({
+            cobro_id: Number(cobroId),
+            cotizacion_id: Number(new URLSearchParams(location.search).get('cotizacion_id') || 0),
+            servicio_tipo: 'rayosx',
+            items: additionsAfterReductions
+          })
         });
         const data = await resp.json();
         if (!data?.success) {
@@ -302,20 +355,11 @@ export default function CotizarRayosXPage() {
     }, 0);
   };
 
-  const cotizar = async () => {
-    if (seleccionados.length === 0) {
-      setMensaje("Selecciona al menos un estudio de Rayos X.");
-      return;
-    }
-    // Construir detalles para cotización
-    const detalles = seleccionados.map(tid => {
+  const construirDetallesSeleccionados = () => {
+    return seleccionados.map(tid => {
       const tarifa = tarifas.find(t => t.id === tid);
-      const cantidad = cantidades[tid] || 1;
-      // Buscar el médico por medico_id
-      let medico = null;
-      if (tarifa && tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
-        medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
-      }
+      const cantidad = Number(cantidades[tid] || 1);
+      const nombreMedico = obtenerNombreMedicoTarifa(tarifa);
       return tarifa ? {
         servicio_tipo: "rayosx",
         servicio_id: tid,
@@ -323,43 +367,203 @@ export default function CotizarRayosXPage() {
         cantidad,
         precio_unitario: tarifa.precio_particular,
         subtotal: tarifa.precio_particular * cantidad,
-        medico_nombre: medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"
+        medico_id: tarifa.medico_id || "",
+        medico_nombre: nombreMedico
       } : null;
     }).filter(Boolean);
+  };
 
-    const total = detalles.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+  const agregarAlCarrito = () => {
+    if (seleccionados.length === 0) {
+      Swal.fire('Atención', 'Selecciona al menos un estudio de Rayos X para agregar al carrito.', 'info');
+      return;
+    }
+
+    const sp = new URLSearchParams(location.search);
+    const isEditingCotizacion = Boolean(sp.get('cotizacion_id')) && !Boolean(sp.get('cobro_id'));
+    const detallesBase = construirDetallesSeleccionados();
+
+    const yaExisteEnCarrito = (detalle) => {
+      return Array.isArray(cart?.items) && cart.items.some((it) => (
+        String(it?.serviceType || '').toLowerCase() === 'rayosx'
+        && Number(it?.serviceId || 0) === Number(detalle?.servicio_id || 0)
+        && Number(it?.unitPrice || 0) === Number(detalle?.precio_unitario || 0)
+      ));
+    };
+
+    const detalles = detallesBase
+      .map((d) => {
+        if (!isEditingCotizacion) return d;
+        const preQty = Number(preloadedCounts[Number(d.servicio_id)] || 0);
+        const desiredQty = Number(d.cantidad || 0);
+        const diff = desiredQty - preQty;
+        if (diff <= 0) return null;
+        return {
+          ...d,
+          cantidad: diff,
+          subtotal: Number(d.precio_unitario || 0) * diff,
+        };
+      })
+      .filter(Boolean)
+      .filter((d) => !(isEditingCotizacion && yaExisteEnCarrito(d)));
+
+    if (detalles.length === 0) {
+      Swal.fire('Atención', isEditingCotizacion ? 'No hay estudios nuevos para agregar al carrito.' : 'No hay estudios válidos para agregar.', 'info');
+      return;
+    }
+
+    addItems({
+      patientId: Number(pacienteId),
+      patientName: paciente ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim() : `Paciente #${pacienteId}`,
+      items: detalles.map((d) => ({
+        serviceType: 'rayosx',
+        serviceId: Number(d.servicio_id || 0),
+        description: d.descripcion || 'Rayos X',
+        quantity: Number(d.cantidad || 1),
+        unitPrice: Number(d.precio_unitario || 0),
+        source: 'rayosx',
+      })),
+    });
+
+    if (!isEditingCotizacion) {
+      setSeleccionados([]);
+      setMensaje('');
+    }
+    Swal.fire('Listo', `Se agregaron ${detalles.length} estudio(s) al carrito.`, 'success');
+  };
+
+  const obtenerDetallesCotizacion = async (targetCotizacionId) => {
+    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!data?.success || !data?.cotizacion) {
+      throw new Error(data?.error || 'No se pudo cargar la cotización actual para edición');
+    }
+    return Array.isArray(data.cotizacion.detalles) ? data.cotizacion.detalles : [];
+  };
+
+  const construirDetallesEditados = async (cotizacionId, detallesRayosX) => {
+    const base = cotizacionDetallesOriginales.length > 0
+      ? cotizacionDetallesOriginales
+      : await obtenerDetallesCotizacion(cotizacionId);
+    const detallesNoRayosX = base.filter((d) => {
+      const t = String(d?.servicio_tipo || '').toLowerCase();
+      return t !== 'rayosx' && t !== 'rayos_x';
+    });
+    return [...detallesNoRayosX, ...detallesRayosX];
+  };
+
+  const cotizar = async () => {
+    if (seleccionados.length === 0) {
+      setMensaje("Selecciona al menos un estudio de Rayos X.");
+      return;
+    }
+    // Construir detalles para cotización
+    const detalles = construirDetallesSeleccionados();
+
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
+
+    let limpiarCarritoAlFinal = false;
+    const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
+    const esMismoPacienteCarrito = Number(cart?.patientId || 0) === Number(pacienteId || 0);
+    if (cartItemsCount > 0 && esMismoPacienteCarrito) {
+      const esEdicionCotizacion = Boolean(cotizacionId);
+      const confirm = await Swal.fire({
+        title: 'Carrito activo detectado',
+        text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
+        cancelButtonText: 'Cancelar',
+      });
+      if (!confirm.isConfirmed) return;
+      limpiarCarritoAlFinal = true;
+    }
+
+    const detallesFinales = cotizacionId
+      ? await construirDetallesEditados(cotizacionId, detalles)
+      : detalles;
+
+    if (!Array.isArray(detallesFinales) || detallesFinales.length === 0) {
+      Swal.fire('Atención', 'La cotización no puede quedar sin ítems.', 'warning');
+      return;
+    }
+
+    const total = detallesFinales.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
 
     const payload = cotizacionId
       ? {
           accion: 'editar',
           cotizacion_id: Number(cotizacionId),
-          detalles,
+          detalles: detallesFinales,
           total,
-          motivo: 'Edición de cotización desde cotizador de Rayos X'
+          motivo: 'Edición de cotización (merge seguro) desde cotizador de Rayos X'
         }
       : {
           paciente_id: Number(pacienteId),
           total,
-          detalles,
+          detalles: detallesFinales,
           observaciones: 'Cotización registrada desde cotizador de Rayos X'
         };
 
     try {
+      let data;
       const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      data = await res.json();
+
+      const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
+      if (!data?.success && cotizacionId && noEditable) {
+        const payloadAdenda = {
+          accion: 'adenda',
+          cotizacion_id: Number(cotizacionId),
+          detalles: detallesFinales,
+          total,
+          motivo: 'Adenda automática desde cotizador de Rayos X (cotización pagada)'
+        };
+        const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadAdenda)
+        });
+        data = await resAdenda.json();
+      }
+
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
 
-      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
-      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(() => {
+      const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
+      const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
+
+      setMensaje(
+        fueAdenda
+          ? 'Adenda creada correctamente.'
+          : (cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.')
+      );
+      Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
+        if (limpiarCarritoAlFinal) {
+          clearCart();
+        }
+        if (cotizacionDestino > 0 && cotizacionId) {
+          try {
+            const refrescados = await obtenerDetallesCotizacion(cotizacionDestino);
+            setCotizacionDetallesOriginales(refrescados);
+          } catch {
+            // Continuar navegación aunque falle el refresco.
+          }
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionDestino)}&modo=editar&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionDestino), backTo: '/cotizaciones', modo: 'editar' },
+          });
+          return;
+        }
         navigate('/cotizaciones');
       });
     } catch (error) {
@@ -370,7 +574,7 @@ export default function CotizarRayosXPage() {
   const mostrarPanelDerecho = seleccionados.length > 0;
 
   return (
-    <div className="max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100">
+    <div className={`max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100 transition-all ${cartCount > 0 ? 'xl:mr-[22rem]' : ''}`}>
       {(() => {
         const sp = new URLSearchParams(location.search);
         const cobroId = sp.get('cobro_id');
@@ -382,6 +586,16 @@ export default function CotizarRayosXPage() {
               onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
               className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
             >← Volver</button>
+          );
+        }
+        if (cotizacionId && !cobroId) {
+          return (
+            <button
+              onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+                state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+              })}
+              className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
+            >← Volver a Servicios</button>
           );
         }
         return (
@@ -423,16 +637,13 @@ export default function CotizarRayosXPage() {
           ) : (
             <ul className="divide-y divide-gray-100">
               {tarifasFiltradas.map(tarifa => {
-                let medico = null;
-                if (tarifa && tarifa.medico_id) {
-                  medico = medicos.find(m => m.id === tarifa.medico_id);
-                }
+                const medicoNombre = obtenerNombreMedicoTarifa(tarifa);
                 return (
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
                       <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
-                      <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
+                      <div className="text-xs text-blue-700 mt-1">Doctor: {medicoNombre || "Sin doctor"}</div>
                     </div>
                     {seleccionados.includes(Number(tarifa.id)) ? (
                       <>
@@ -488,10 +699,11 @@ export default function CotizarRayosXPage() {
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
+                <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
                 {new URLSearchParams(location.search).get('cobro_id') ? (
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
-                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
+                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar Cotización'}</button>
                 )}
                 {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                   <div className="mt-2 flex items-center justify-end gap-2">

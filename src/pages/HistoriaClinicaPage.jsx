@@ -1,6 +1,6 @@
 
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import TabsApoyoDiagnostico from "../components/examenes/TabsApoyoDiagnostico";
 import { FormularioHistoriaClinica, TriajePaciente, DatosPaciente, TratamientoPaciente } from "../components/paciente";
@@ -9,9 +9,25 @@ import ImpresionHistoriaClinica from "../components/print/ImpresionHistoriaClini
 import ImpresionAnalisisLaboratorio from "../components/print/ImpresionAnalisisLaboratorio";
 import ImpresionRecetaMedicamentos from "../components/print/ImpresionRecetaMedicamentos";
 import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintReceta } from "../hooks/usePrint";
+import { formatColegiatura, formatProfesionalName } from "../utils/profesionalDisplay";
+
+const hcTemplateFlag = String(import.meta.env.VITE_HC_TEMPLATE_ENGINE_READ || "").toLowerCase();
+const HC_TEMPLATE_ENGINE_READ = hcTemplateFlag === "" || ["1", "true", "yes", "on"].includes(hcTemplateFlag);
+const DEFAULT_PROXIMA_CITA = {
+  programar: false,
+  fecha: "",
+  hora: "",
+  medico_id: "",
+  consulta_id: null,
+};
 
 function HistoriaClinicaPage() {
   const { pacienteId, consultaId } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const searchParams = new URLSearchParams(location.search);
+  const readOnly = location.pathname.startsWith('/historia-clinica-lectura') || searchParams.get('read_only') === '1';
+  const backTo = searchParams.get('back_to') || '';
   const { componentRef: printRef, handlePrint: handlePrintHC } = usePrintHistoriaClinica();
   const { componentRef: printLabRef, handlePrint: handlePrintLab } = usePrintLaboratorio();
   const { componentRef: printRecetaRef, handlePrint: handlePrintReceta } = usePrintReceta();
@@ -20,6 +36,19 @@ function HistoriaClinicaPage() {
   const [firmaMedico, setFirmaMedico] = useState(null);
   const [resultadosLab, setResultadosLab] = useState([]);
   const [ordenesLab, setOrdenesLab] = useState([]);
+  const [usuarioSesion, setUsuarioSesion] = useState(null);
+  useEffect(() => {
+    const usuarioRaw = sessionStorage.getItem("usuario");
+    if (usuarioRaw) {
+      try {
+        setUsuarioSesion(JSON.parse(usuarioRaw));
+      } catch {
+        setUsuarioSesion(null);
+      }
+    } else {
+      setUsuarioSesion(null);
+    }
+  }, []);
   useEffect(() => {
     if (!consultaId) return;
     fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
@@ -40,6 +69,19 @@ function HistoriaClinicaPage() {
       })
       .catch(() => setOrdenesLab([]));
   }, [consultaId]);
+
+  const formatearFechaEvento = (rawValue) => {
+    if (!rawValue) return "-";
+    const parsed = new Date(String(rawValue).replace(" ", "T"));
+    if (Number.isNaN(parsed.getTime())) return String(rawValue);
+    return parsed.toLocaleString("es-PE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
   const [paciente, setPaciente] = useState(null);
   const [triaje, setTriaje] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,19 +94,28 @@ function HistoriaClinicaPage() {
     examen_fisico: "",
     tratamiento: "",
     receta: [],
+    proxima_cita: { ...DEFAULT_PROXIMA_CITA },
   });
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
   const [diagnosticos, setDiagnosticos] = useState([]);
+  const [hcTemplateMeta, setHcTemplateMeta] = useState(null);
+  const [hcTemplateResolution, setHcTemplateResolution] = useState(null);
   useEffect(() => {
     if (!consultaId) return;
-    fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}`, { credentials: 'include' })
+    const templateQuery = HC_TEMPLATE_ENGINE_READ ? '&include_template=1' : '';
+    fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}${templateQuery}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.datos) {
+          const rawProxima = data.datos.proxima_cita || {};
           setHc({
             ...data.datos,
             receta: Array.isArray(data.datos.receta) ? data.datos.receta : [],
+            proxima_cita: {
+              ...DEFAULT_PROXIMA_CITA,
+              ...(rawProxima && typeof rawProxima === "object" ? rawProxima : {}),
+            },
           });
           if (Array.isArray(data.datos.diagnosticos)) {
             setDiagnosticos(data.datos.diagnosticos);
@@ -72,8 +123,49 @@ function HistoriaClinicaPage() {
             setDiagnosticos([]);
           }
         }
+        if (HC_TEMPLATE_ENGINE_READ) {
+          setHcTemplateMeta(data.template || null);
+          setHcTemplateResolution(data.template_resolution || null);
+        }
       });
   }, [consultaId]);
+  useEffect(() => {
+    const sections = hcTemplateMeta?.sections;
+    if (!sections || typeof sections !== "object") return;
+
+    setHc((current) => {
+      const next = { ...current };
+      let changed = false;
+
+      Object.values(sections).forEach((sectionFields) => {
+        if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return;
+        Object.keys(sectionFields).forEach((fieldKey) => {
+          if (typeof next[fieldKey] === "undefined") {
+            next[fieldKey] = "";
+            changed = true;
+          }
+        });
+      });
+
+      return changed ? next : current;
+    });
+  }, [hcTemplateMeta]);
+
+  useEffect(() => {
+    if (!medicoInfo?.id) return;
+    setHc((current) => {
+      const actual = current.proxima_cita || DEFAULT_PROXIMA_CITA;
+      if (actual.medico_id) return current;
+      return {
+        ...current,
+        proxima_cita: {
+          ...DEFAULT_PROXIMA_CITA,
+          ...actual,
+          medico_id: String(medicoInfo.id),
+        },
+      };
+    });
+  }, [medicoInfo]);
   useEffect(() => {
     if (!pacienteId) return;
     setLoading(true);
@@ -111,15 +203,68 @@ function HistoriaClinicaPage() {
       .catch(() => setConfiguracionClinica(null));
   }, []);
   useEffect(() => {
-    const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
-    if (medicoSession) {
-      setMedicoInfo(medicoSession);
-      setFirmaMedico(medicoSession.firma || null);
-    } else {
-      setMedicoInfo(null);
-      setFirmaMedico(null);
-    }
-  }, []);
+    let cancelled = false;
+
+    const cargarMedicoDesdeConsulta = async () => {
+      if (!consultaId) {
+        if (!cancelled) {
+          setMedicoInfo(null);
+          setFirmaMedico(null);
+        }
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaId}`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        const consulta = Array.isArray(data?.consultas) ? data.consultas[0] : null;
+
+        if (consulta) {
+          const medicoConsulta = {
+            id: consulta.medico_id || null,
+            nombre: consulta.medico_nombre || '',
+            apellido: consulta.medico_apellido || '',
+            especialidad: consulta.medico_especialidad || '',
+            tipo_profesional: consulta.medico_tipo_profesional || 'medico',
+            abreviatura_profesional: consulta.medico_abreviatura_profesional || 'Dr(a).',
+            colegio_sigla: consulta.medico_colegio_sigla || 'CMP',
+            nro_colegiatura: consulta.medico_nro_colegiatura || consulta.medico_cmp || '',
+            cmp: consulta.medico_cmp || '',
+            rne: consulta.medico_rne || '',
+            firma: consulta.medico_firma || null,
+          };
+
+          if (!cancelled) {
+            setMedicoInfo(medicoConsulta);
+            setFirmaMedico(medicoConsulta.firma || null);
+          }
+          return;
+        }
+      } catch {
+        // Fallback below to session data when query fails.
+      }
+
+      const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
+      if (!cancelled) {
+        if (medicoSession) {
+          setMedicoInfo(medicoSession);
+          setFirmaMedico(medicoSession.firma || null);
+        } else {
+          setMedicoInfo(null);
+          setFirmaMedico(null);
+        }
+      }
+    };
+
+    cargarMedicoDesdeConsulta();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [consultaId]);
   if (loading) return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/50 flex flex-col items-center gap-4">
@@ -155,21 +300,26 @@ function HistoriaClinicaPage() {
     </div>
   );
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 py-4 sm:py-8 px-2 sm:px-4 overflow-x-hidden">
+    <div className="min-h-screen py-4 sm:py-8 px-2 sm:px-4 overflow-x-hidden" style={{ background: 'linear-gradient(to bottom right, var(--color-primary-light, #eff6ff), #ffffff, var(--color-accent, #eef2ff))' }}>
       <div className="max-w-6xl mx-auto w-full">
         {/* Header profesional de Historia Clínica */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-6 lg:p-8 mb-6 border border-white/50 w-full">
           <div className="flex flex-col sm:flex-row items-center gap-4 mb-6">
-            <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center flex-shrink-0">
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))' }}>
               <svg className="w-6 h-6 sm:w-8 sm:h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
             <div className="text-center sm:text-left flex-1 min-w-0">
-              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-blue-800 to-indigo-800 bg-clip-text text-transparent">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold" style={{ color: 'var(--color-primary, #1e3a8a)' }}>
                 📋 Historia Clínica
               </h1>
-              <p className="text-gray-600 mt-1 text-sm sm:text-base">Sistema Médico Integral - Clínica 2 de Mayo</p>
+              <p className="text-gray-600 mt-1 text-sm sm:text-base">
+                {configuracionClinica?.slogan
+                  ? `${configuracionClinica.slogan} - ${configuracionClinica?.nombre_clinica || 'Clínica'}`
+                  : `Sistema Médico Integral - ${configuracionClinica?.nombre_clinica || 'Sistema Clínico'}`
+                }
+              </p>
             </div>
             <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-green-100 to-blue-100 rounded-full flex-shrink-0">
               <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
@@ -213,7 +363,7 @@ function HistoriaClinicaPage() {
                 <p className={`text-xs mt-1 ${
                   firmaMedico ? 'text-green-600' : 'text-amber-600'
                 }`}>
-                  Dr(a). {medicoInfo.nombre} {medicoInfo.apellido} - CMP: {medicoInfo.cmp || 'N/A'}
+                  {formatProfesionalName(medicoInfo)} - {formatColegiatura(medicoInfo)}
                 </p>
               </div>
             </div>
@@ -243,13 +393,59 @@ function HistoriaClinicaPage() {
           </div>
           <TriajePaciente triaje={triaje} />
         </div>
+        {readOnly && (
+          <div className="mb-6 p-4 rounded-2xl border bg-blue-50/80 border-blue-200 backdrop-blur-sm">
+            <p className="text-sm font-medium text-blue-800">
+              Vista de solo lectura. No se permiten cambios ni guardado de la historia clínica desde este acceso.
+            </p>
+          </div>
+        )}
+        {HC_TEMPLATE_ENGINE_READ && hcTemplateMeta && (
+          <div className="mb-6 p-4 rounded-2xl border bg-indigo-50/80 border-indigo-200 backdrop-blur-sm">
+            <p className="text-sm font-medium text-indigo-800">
+              Plantilla HC activa: {hcTemplateMeta.nombre || hcTemplateMeta.id || "General"}
+            </p>
+            <p className="text-xs text-indigo-700 mt-1">
+              ID: {hcTemplateMeta.id || "medicina_general"} | Version: {hcTemplateMeta.version || "n/a"}
+              {hcTemplateResolution?.resolved_by === "clinica_default"
+                ? " | Modo: por defecto (todas las especialidades)"
+                : hcTemplateResolution?.resolved_by === "consulta_especialidad" || hcTemplateResolution?.resolved_by === "especialidad"
+                  ? ` | Modo: por especialidad${hcTemplateResolution?.especialidad_detectada ? ` (${hcTemplateResolution.especialidad_detectada})` : ""}`
+                  : hcTemplateResolution?.resolved_by
+                    ? ` | ${hcTemplateResolution.resolved_by}`
+                    : ""}
+            </p>
+            {usuarioSesion?.rol === "administrador" && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => navigate("/configuracion/plantillas-hc")}
+                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs hover:bg-indigo-700"
+                >
+                  Configurar Plantillas HC
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {/* Formulario principal de Historia Clínica */}
         <form
           onSubmit={async (e) => {
             e.preventDefault();
+            if (readOnly) return;
+            const proxima = hc.proxima_cita || DEFAULT_PROXIMA_CITA;
+            if (proxima.programar && (!proxima.fecha || !proxima.hora)) {
+              setMsg("Para programar próxima cita debes indicar fecha y hora.");
+              return;
+            }
+
             setGuardando(true);
             setMsg("");
             const datos = { ...hc, diagnosticos, receta: hc.receta };
+            if (!proxima.programar) {
+              delete datos.proxima_cita;
+            }
+
             const res = await fetch(`${BASE_URL}api_historia_clinica.php`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -260,7 +456,9 @@ function HistoriaClinicaPage() {
             setGuardando(false);
             setMsg(
               data.success
-                ? "Guardado correctamente"
+                ? (data.proxima_cita?.consulta_id
+                  ? `Guardado correctamente. Próxima cita registrada #${data.proxima_cita.consulta_id}.`
+                  : "Guardado correctamente")
                 : data.error || "Error al guardar"
             );
           }}
@@ -276,7 +474,11 @@ function HistoriaClinicaPage() {
               </div>
               <h2 className="text-lg font-semibold text-gray-800">📝 Anamnesis y Examen Físico</h2>
             </div>
-            <FormularioHistoriaClinica hc={hc} setHc={setHc} />
+            <FormularioHistoriaClinica
+              hc={hc}
+              setHc={setHc}
+              templateSections={hcTemplateMeta?.sections || {}}
+            />
           </div>
           {/* Laboratorio y Apoyo Diagnóstico */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
@@ -290,6 +492,7 @@ function HistoriaClinicaPage() {
             </div>
             <TabsApoyoDiagnostico
               consultaId={consultaId}
+              pacienteId={pacienteId}
               resultadosLab={resultadosLab}
               ordenesLab={ordenesLab}
             />
@@ -334,6 +537,116 @@ function HistoriaClinicaPage() {
               setTratamiento={valor => setHc(h => ({ ...h, tratamiento: valor }))}
             />
           </div>
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-8 h-8 bg-gradient-to-r from-cyan-500 to-sky-500 rounded-full flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10m-11 9h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v11a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-gray-800">📅 Próxima cita sugerida</h2>
+            </div>
+
+            <div className="space-y-4">
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(hc.proxima_cita?.programar)}
+                  onChange={(e) =>
+                    setHc((current) => ({
+                      ...current,
+                      proxima_cita: {
+                        ...DEFAULT_PROXIMA_CITA,
+                        ...(current.proxima_cita || {}),
+                        programar: e.target.checked,
+                        medico_id: (current.proxima_cita?.medico_id || (medicoInfo?.id ? String(medicoInfo.id) : "")),
+                      },
+                    }))
+                  }
+                  disabled={readOnly}
+                />
+                Programar próxima cita al guardar esta HC
+              </label>
+
+              {Boolean(hc.proxima_cita?.programar) && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Fecha</label>
+                      <input
+                        type="date"
+                        className="w-full border rounded-lg px-3 py-2"
+                        value={hc.proxima_cita?.fecha || ""}
+                        min={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) =>
+                          setHc((current) => ({
+                            ...current,
+                            proxima_cita: {
+                              ...DEFAULT_PROXIMA_CITA,
+                              ...(current.proxima_cita || {}),
+                              fecha: e.target.value,
+                            },
+                          }))
+                        }
+                        disabled={readOnly}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Hora</label>
+                      <input
+                        type="time"
+                        className="w-full border rounded-lg px-3 py-2"
+                        value={hc.proxima_cita?.hora || ""}
+                        onChange={(e) =>
+                          setHc((current) => ({
+                            ...current,
+                            proxima_cita: {
+                              ...DEFAULT_PROXIMA_CITA,
+                              ...(current.proxima_cita || {}),
+                              hora: e.target.value,
+                            },
+                          }))
+                        }
+                        disabled={readOnly}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Profesional</label>
+                      <input
+                        className="w-full border rounded-lg px-3 py-2 bg-slate-50"
+                        value={formatProfesionalName(medicoInfo) || "Profesional actual"}
+                        disabled
+                      />
+                    </div>
+                  </div>
+
+                  {Array.isArray(hc.proxima_cita?.historial) && hc.proxima_cita.historial.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-sm font-semibold text-slate-700 mb-2">Historial de cambios</p>
+                      <div className="space-y-2 max-h-52 overflow-auto pr-1">
+                        {[...hc.proxima_cita.historial]
+                          .sort((a, b) => String(b?.fecha_evento || "").localeCompare(String(a?.fecha_evento || "")))
+                          .map((evento, idx) => (
+                            <div key={`${evento?.fecha_evento || "evt"}-${idx}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                              <div className="font-semibold text-slate-800">
+                                {String(evento?.accion || "evento").replace(/_/g, " ")}
+                              </div>
+                              <div className="text-slate-600 mt-0.5">{formatearFechaEvento(evento?.fecha_evento)} • {evento?.actor || "sistema"}</div>
+                              {evento?.antes?.fecha || evento?.despues?.fecha ? (
+                                <div className="text-slate-500 mt-1">
+                                  {evento?.antes?.fecha ? `Antes: ${evento.antes.fecha} ${evento?.antes?.hora || ""}` : ""}
+                                  {evento?.despues?.fecha ? `  |  Ahora: ${evento.despues.fecha} ${evento?.despues?.hora || ""}` : ""}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
           {/* Botones de Acción y Footer Profesional */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex flex-col gap-4">
@@ -341,9 +654,16 @@ function HistoriaClinicaPage() {
                 <button
                   type="submit"
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none text-sm whitespace-nowrap"
-                  disabled={guardando}
+                  disabled={guardando || readOnly}
                 >
-                  {guardando ? (
+                  {readOnly ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Solo lectura</span>
+                    </>
+                  ) : guardando ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       <span>Guardando...</span>
@@ -357,6 +677,18 @@ function HistoriaClinicaPage() {
                     </>
                   )}
                 </button>
+                {backTo && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(backTo)}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 17l-5-5m0 0l5-5m-5 5h12" />
+                    </svg>
+                    <span>Volver</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -438,7 +770,7 @@ function HistoriaClinicaPage() {
                         </div>
                       )}
                       <div className="text-xs text-gray-500">
-                        C.M.P. {medicoInfo?.cmp || 'N/A'}
+                        {formatColegiatura(medicoInfo)}
                         {medicoInfo?.rne && ` - R.N.E ${medicoInfo.rne}`}
                       </div>
                       <div className="text-xs text-gray-400 mt-1">

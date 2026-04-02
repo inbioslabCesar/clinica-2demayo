@@ -13,7 +13,7 @@ export default function HeroCarousel({
   heightClassName = '',
 }) {
   const slides = useMemo(() => {
-    if (Array.isArray(slidesProp) && slidesProp.length > 0) return slidesProp
+    if (Array.isArray(slidesProp)) return slidesProp
 
     // Defaults without external images (ready to replace by adding imageSrc).
     return [
@@ -21,19 +21,19 @@ export default function HeroCarousel({
         id: 's1',
         title: 'Tu salud en manos expertas',
         subtitle: 'Conoce nuestros servicios y ofertas',
-        gradientClass: 'from-blue-700 to-purple-700',
+        gradientStyle: 'linear-gradient(135deg, var(--color-primary, #E85D8E), var(--color-secondary, #3A4FA3))',
       },
       {
         id: 's2',
         title: 'Atención rápida y confiable',
         subtitle: 'Equipo médico y atención personalizada',
-        gradientClass: 'from-slate-900 to-blue-700',
+        gradientStyle: 'linear-gradient(135deg, var(--color-secondary, #3A4FA3), var(--color-accent, #6366f1))',
       },
       {
         id: 's3',
-        title: 'Clínica 2 de Mayo',
+        title: 'Tu bienestar importa',
         subtitle: 'Cuidamos de ti y de tu familia',
-        gradientClass: 'from-purple-700 to-slate-900',
+        gradientStyle: 'linear-gradient(135deg, var(--color-primary-dark, #9c174d), var(--color-primary, #E85D8E))',
       },
     ]
   }, [slidesProp])
@@ -149,75 +149,92 @@ export default function HeroCarousel({
       className={`rounded-3xl overflow-hidden border border-white/30 bg-white/10 backdrop-blur ${className}`}
     >
       <div className={`relative ${heightClass}`}>
-        <div
-          ref={trackRef}
-          className={`absolute inset-y-0 left-0 flex h-full will-change-transform ${
-            isTransitioning ? 'transition-transform duration-1000 ease-in-out' : 'transition-none'
-          }`}
-          style={{ width: `${extendedSlides.length * 100}%`, transform: `translateX(-${pos * stepPct}%)` }}
-        >
-          {extendedSlides.map((s, i) => {
-            const realIndex = shouldLoop ? clampIndex(i - 1, slides.length) : i
-            const imageFailed = !!failedByIndex[realIndex]
-            const isInitiallyVisible = shouldLoop ? i === 1 : i === 0
-            const isCurrentVisible = realIndex === activeIndex
-            const shouldPrioritizeImage = isInitiallyVisible || isCurrentVisible
-            const textSide = (s.textSide || 'left') === 'right' ? 'right' : 'left'
-            const titleStyle = s.titleColor ? { color: s.titleColor } : undefined
-            const subtitleStyle = s.subtitleColor ? { color: s.subtitleColor } : undefined
+        {slides.length === 0 ? (
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(135deg, var(--color-primary-light, #fde7ef), #ffffff, var(--color-accent, #6366f1))',
+            }}
+          >
+            <div className="absolute inset-0 animate-pulse bg-white/20" />
+          </div>
+        ) : (
+          <div
+            ref={trackRef}
+            className={`absolute inset-y-0 left-0 flex h-full will-change-transform ${
+              isTransitioning ? 'transition-transform duration-1000 ease-in-out' : 'transition-none'
+            }`}
+            style={{ width: `${extendedSlides.length * 100}%`, transform: `translateX(-${pos * stepPct}%)` }}
+          >
+            {extendedSlides.map((s, i) => {
+              const realIndex = shouldLoop ? clampIndex(i - 1, slides.length) : i
+              const imageFailed = !!failedByIndex[realIndex]
+              const isInitiallyVisible = shouldLoop ? i === 1 : i === 0
+              const isCurrentVisible = realIndex === activeIndex
+              const shouldPrioritizeImage = isInitiallyVisible || isCurrentVisible
+              const textSide = (s.textSide || 'left') === 'right' ? 'right' : 'left'
+              const titleStyle = s.titleColor ? { color: s.titleColor } : undefined
+              const subtitleStyle = s.subtitleColor ? { color: s.subtitleColor } : undefined
 
-            return (
-              <div
-                key={`${s.id ?? 'slide'}-${i}`}
-                className="relative h-full shrink-0"
-                style={{ width: `${stepPct}%` }}
-              >
-                {s.imageSrc && !imageFailed ? (
-                  <img
-                    src={s.imageSrc}
-                    alt={s.imageAlt || s.title || 'Banner'}
-                    className="absolute inset-0 h-full w-full object-cover"
-                    loading={shouldPrioritizeImage ? 'eager' : 'lazy'}
-                    fetchPriority={shouldPrioritizeImage ? 'high' : 'auto'}
-                    decoding="async"
-                    onError={() => setFailedByIndex((m) => ({ ...m, [realIndex]: true }))}
-                  />
-                ) : (
-                  <div
-                    className={`absolute inset-0 bg-gradient-to-r ${s.gradientClass || 'from-blue-700 to-purple-700'}`}
-                  />
-                )}
+              return (
+                <div
+                  key={`${s.id ?? 'slide'}-${i}`}
+                  className="relative h-full shrink-0"
+                  style={{ width: `${stepPct}%` }}
+                >
+                  {s.imageSrc && !imageFailed ? (
+                    <img
+                      src={s.imageSrc}
+                      alt={s.imageAlt || s.title || 'Banner'}
+                      className="absolute inset-0 h-full w-full object-contain sm:object-cover"
+                      loading={shouldPrioritizeImage ? 'eager' : 'lazy'}
+                      fetchPriority={shouldPrioritizeImage ? 'high' : 'auto'}
+                      decoding="async"
+                      onError={() => setFailedByIndex((m) => ({ ...m, [realIndex]: true }))}
+                    />
+                  ) : (
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        background:
+                          s.gradientStyle ||
+                          'linear-gradient(135deg, var(--color-primary, #E85D8E), var(--color-secondary, #3A4FA3))',
+                      }}
+                    />
+                  )}
 
-                {s.showWhiteOverlay === false ? null : textSide === 'right' ? (
-                  <div className="absolute inset-y-0 right-0 w-[58%] bg-gradient-to-l from-white via-white/85 to-transparent" />
-                ) : (
-                  <div className="absolute inset-y-0 left-0 w-[58%] bg-gradient-to-r from-white via-white/85 to-transparent" />
-                )}
+                  {s.showWhiteOverlay === false ? null : textSide === 'right' ? (
+                    <div className="absolute inset-y-0 right-0 w-[70%] sm:w-[58%] bg-gradient-to-l from-white via-white/85 to-transparent" />
+                  ) : (
+                    <div className="absolute inset-y-0 left-0 w-[70%] sm:w-[58%] bg-gradient-to-r from-white via-white/85 to-transparent" />
+                  )}
 
-                <div className={`relative z-10 h-full flex items-center ${textSide === 'right' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`px-6 sm:px-10 max-w-2xl ${textSide === 'right' ? 'text-right' : 'text-left'}`}>
-                    {s.title ? (
-                      <div
-                        className={`${getTitleClass(s.titleSize)} font-bold tracking-tight text-slate-900 leading-[1.05]`}
-                        style={titleStyle}
-                      >
-                        {s.title}
-                      </div>
-                    ) : null}
-                    {s.subtitle ? (
-                      <div
-                        className={`mt-4 ${getSubtitleClass(s.subtitleSize)} font-normal text-slate-700`}
-                        style={subtitleStyle}
-                      >
-                        {s.subtitle}
-                      </div>
-                    ) : null}
+                  <div className={`relative z-10 h-full flex items-center ${textSide === 'right' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`px-6 sm:px-10 max-w-2xl ${textSide === 'right' ? 'text-right' : 'text-left'}`}>
+                      {s.title ? (
+                        <div
+                          className={`${getTitleClass(s.titleSize)} font-bold tracking-tight text-slate-900 leading-[1.05]`}
+                          style={titleStyle}
+                        >
+                          {s.title}
+                        </div>
+                      ) : null}
+                      {s.subtitle ? (
+                        <div
+                          className={`mt-4 ${getSubtitleClass(s.subtitleSize)} font-normal text-slate-700`}
+                          style={subtitleStyle}
+                        >
+                          {s.subtitle}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        )}
 
         {slides.length > 1 ? (
           <>

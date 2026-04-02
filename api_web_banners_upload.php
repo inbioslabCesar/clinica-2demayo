@@ -22,8 +22,9 @@ if (!isset($_FILES['imagen']) || !is_uploaded_file($_FILES['imagen']['tmp_name']
 }
 
 $allowed = [
-    'image/png' => 'png',
+    'image/png'  => 'png',
     'image/jpeg' => 'jpg',
+    'image/webp' => 'webp',
 ];
 
 $maxBytes = 5 * 1024 * 1024; // 5MB
@@ -66,7 +67,7 @@ function saveOneBannerImage($tmpPath, $size, $error, $targetDir, $relativeDir, $
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($tmpPath);
     if (!isset($allowed[$mime])) {
-        throw new RuntimeException('Formato no permitido. Solo PNG o JPG');
+        throw new RuntimeException('Formato no permitido. Solo PNG, JPG o WEBP');
     }
     $ext = $allowed[$mime];
 

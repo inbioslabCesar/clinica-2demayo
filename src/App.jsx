@@ -1,5 +1,9 @@
 import React, { useState, useEffect, lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import ErrorBoundary from "./components/comunes/ErrorBoundary.jsx";
+import { QuoteCartProvider } from "./context/QuoteCartContext";
+import { ThemeProvider } from "./context/ThemeContext";
+import { hasPermiso, normalizePermisos } from "./config/recepcionPermisos";
 // Lazy loading para todos los componentes y páginas principales
 const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
@@ -40,9 +44,6 @@ const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
   import("./pages/HistoriaClinicaPage.jsx")
 );
-const HistorialConsultasMedico = lazy(() =>
-  import("./historia_clinica/HistorialConsultasMedico.jsx")
-);
 const EnfermeroPanelPage = lazy(() => import("./pages/EnfermeroPanelPage.jsx"));
 const SolicitudLaboratorioPage = lazy(() =>
   import("./pages/SolicitudLaboratorioPage.jsx")
@@ -77,6 +78,7 @@ const ResultadosLaboratorioPage = lazy(() =>
 );
 const ReportesPage = lazy(() => import("./pages/ReportesPage.jsx"));
 const ListaConsultasPage = lazy(() => import("./pages/ListaConsultasPage.jsx"));
+const RecordatoriosCitasPage = lazy(() => import("./pages/RecordatoriosCitasPage.jsx"));
 const ReportePacientesPage = lazy(() =>
   import("./pages/ReportePacientesPage.jsx")
 );
@@ -84,6 +86,8 @@ const ReporteFinanzasPage = lazy(() =>
   import("./pages/ReporteFinanzasPage.jsx")
 );
 const ConfiguracionPage = lazy(() => import("./pages/ConfiguracionPage.jsx"));
+const PlantillasHCPage = lazy(() => import("./pages/PlantillasHCPage.jsx"));
+const TemaPage = lazy(() => import("./pages/TemaPage.jsx"));
 const GestionTarifasPage = lazy(() => import("./pages/GestionTarifasPage.jsx"));
 const ProtectedRoute = lazy(() => import("./components/comunes/ProtectedRoute.jsx"));
 const MedicamentosList = lazy(() => import("./farmacia/MedicamentosList.jsx"));
@@ -104,43 +108,75 @@ const WebServiciosCrudPage = lazy(() => import("./pages/WebServiciosCrudPage.jsx
 const WebOfertasCrudPage = lazy(() => import("./pages/WebOfertasCrudPage.jsx"));
 const WebBannersCrudPage = lazy(() => import("./pages/WebBannersCrudPage.jsx"));
 const CotizacionesPage = lazy(() => import("./pages/CotizacionesPage.jsx"));
+const DetalleCotizacionPage = lazy(() => import("./pages/DetalleCotizacionPage.jsx"));
 const CobrarCotizacionPage = lazy(() => import("./pages/CobrarCotizacionPage.jsx"));
 const MiFirmaProfesionalPage = lazy(() => import("./pages/MiFirmaProfesionalPage.jsx"));
+const DocumentosPacientePage = lazy(() => import("./pages/DocumentosPacientePage.jsx"));
+const OrdenesImagenPacientePage = lazy(() => import("./pages/OrdenesImagenPacientePage.jsx"));
+const VisorImagenPage = lazy(() => import("./pages/VisorImagenPage.jsx"));
+const SolicitudImagenPage = lazy(() => import("./pages/SolicitudImagenPage.jsx"));
+
+// Reinicia el ErrorBoundary en cada cambio de ruta para que errores de una
+// página no persistan al navegar a otra (ej. presionar el botón Back).
+function RouteErrorBoundary({ children }) {
+  const location = useLocation();
+  return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
+}
+
+function hydrateUsuario(rawUsuario) {
+  if (!rawUsuario || typeof rawUsuario !== "object") return null;
+  return {
+    ...rawUsuario,
+    permisos: normalizePermisos(rawUsuario.permisos || []),
+  };
+}
 
 function App() {
   const [usuario, setUsuario] = useState(() => {
     // Restaurar usuario o medico desde sessionStorage si existe
     const storedUsuario = sessionStorage.getItem("usuario");
     const storedMedico = sessionStorage.getItem("medico");
-    if (storedUsuario) return JSON.parse(storedUsuario);
-    if (storedMedico) return JSON.parse(storedMedico);
+    if (storedUsuario) {
+      try {
+        return hydrateUsuario(JSON.parse(storedUsuario));
+      } catch {
+        return null;
+      }
+    }
+    if (storedMedico) {
+      try {
+        return hydrateUsuario(JSON.parse(storedMedico));
+      } catch {
+        return null;
+      }
+    }
     return null;
   });
 
-  // Al hacer logout, limpiar sessionStorage y destruir sesión en backend
-  const handleLogout = async () => {
-    try {
-      await fetch("/policlinico-2demayo/api_logout.php", {
-        method: "POST",
-        credentials: "include",
-      });
-    } catch (err) {
+  // Logout sin render intermedio para evitar parpadeo visual
+  const handleLogout = () => {
+    fetch("/policlinico-2demayo/api_logout.php", {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+    }).catch((err) => {
       console.error("Error al cerrar sesión en el backend:", err);
-    }
-    setUsuario(null);
+    });
+
     sessionStorage.removeItem("usuario");
     sessionStorage.removeItem("medico");
-    window.location.href = "/";
+    window.location.replace("/");
   };
 
   useEffect(() => {
     // Si cambia el usuario, sincronizar sessionStorage
     if (usuario) {
+      const payload = hydrateUsuario(usuario);
       if (usuario.rol === "medico") {
-        sessionStorage.setItem("medico", JSON.stringify(usuario));
+        sessionStorage.setItem("medico", JSON.stringify(payload));
         sessionStorage.removeItem("usuario");
       } else {
-        sessionStorage.setItem("usuario", JSON.stringify(usuario));
+        sessionStorage.setItem("usuario", JSON.stringify(payload));
         sessionStorage.removeItem("medico");
       }
     }
@@ -155,7 +191,13 @@ function App() {
       case "enfermero":
         return "/panel-enfermero";
       case "recepcionista":
-        return "/pacientes";
+        if (hasPermiso(usuario, "ver_pacientes")) return "/pacientes";
+        if (hasPermiso(usuario, "ver_medicos")) return "/medicos";
+        if (hasPermiso(usuario, "ver_cotizaciones")) return "/cotizaciones";
+        if (hasPermiso(usuario, "ver_contabilidad")) return "/contabilidad";
+        if (hasPermiso(usuario, "ver_panel_laboratorio")) return "/panel-laboratorio";
+        if (hasPermiso(usuario, "ver_modulo_quimico")) return "/medicamentos";
+        return "/";
       case "administrador":
         return "/usuarios";
       case "químico":
@@ -167,11 +209,14 @@ function App() {
   };
 
   return (
-    <BrowserRouter>
-      {/* Suspense envuelve todo el contenido para lazy loading global */}
-      <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
-        {usuario ? (
-          <DashboardLayout usuario={usuario} onLogout={handleLogout}>
+    <ThemeProvider>
+    <QuoteCartProvider>
+      <BrowserRouter>
+        {/* Suspense envuelve todo el contenido para lazy loading global */}
+        <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
+          {usuario ? (
+            <DashboardLayout usuario={usuario} onLogout={handleLogout}>
+            <RouteErrorBoundary>
             <Routes>
               {/* Redirigir a médicos y laboratoristas que intenten acceder a '/' */}
               <Route
@@ -197,6 +242,7 @@ function App() {
                   <ProtectedRoute
                     usuario={usuario}
                     rolesPermitidos={["administrador", "recepcionista"]}
+                    permisosRequeridos={["ver_pacientes"]}
                   >
                     <PacientesPage />
                   </ProtectedRoute>
@@ -207,7 +253,8 @@ function App() {
                 element={
                   <ProtectedRoute
                     usuario={usuario}
-                    rolesPermitidos={["administrador"]}
+                    rolesPermitidos={["administrador", "recepcionista"]}
+                    permisosRequeridos={["ver_usuarios"]}
                   >
                     <UsuariosPage />
                   </ProtectedRoute>
@@ -219,6 +266,7 @@ function App() {
                   <ProtectedRoute
                     usuario={usuario}
                     rolesPermitidos={["administrador", "recepcionista"]}
+                    permisosRequeridos={["ver_pacientes"]}
                   >
                     <AgendarConsultaPage />
                   </ProtectedRoute>
@@ -272,17 +320,6 @@ function App() {
                     }
                   />
                   <Route
-                    path="/historial-consultas"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["medico"]}
-                      >
-                        <HistorialConsultasMedico medicoId={usuario.id} />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
                     path="/solicitud-laboratorio/:consultaId"
                     element={
                       <ProtectedRoute
@@ -304,16 +341,40 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+                  {/* Visor de imágenes diagnósticas — también accesible para médicos */}
+                  <Route
+                    path="/visor-imagen/:ordenId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <VisorImagenPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/solicitud-imagen/:consultaId/:tipo"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <SolicitudImagenPage />
+                      </ProtectedRoute>
+                    }
+                  />
                 </>
               )}
-              {(usuario?.rol === "químico" || usuario?.rol === "quimico") && (
+              {(usuario?.rol === "químico" || usuario?.rol === "quimico" || usuario?.rol === "recepcionista") && (
                 <>
                   <Route
                     path="/medicamentos"
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["químico", "quimico"]}
+                        rolesPermitidos={["químico", "quimico", "recepcionista"]}
+                        permisosRequeridos={["ver_modulo_quimico"]}
                       >
                         <MedicamentosList />
                       </ProtectedRoute>
@@ -324,7 +385,8 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["químico", "quimico"]}
+                        rolesPermitidos={["químico", "quimico", "recepcionista"]}
+                        permisosRequeridos={["ver_modulo_quimico"]}
                       >
                         <FarmaciaCotizadorPage />
                       </ProtectedRoute>
@@ -335,7 +397,8 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["químico", "quimico"]}
+                        rolesPermitidos={["químico", "quimico", "recepcionista"]}
+                        permisosRequeridos={["ver_modulo_quimico"]}
                       >
                         <FarmaciaVentasPage />
                       </ProtectedRoute>
@@ -343,14 +406,17 @@ function App() {
                   />
                 </>
               )}
-              {/* Solo visible para enfermeros */}
-              {usuario?.rol === "enfermero" && (
+              {/* Visible para enfermería, admin y recepción */}
+              {(usuario?.rol === "enfermero" ||
+                usuario?.rol === "administrador" ||
+                usuario?.rol === "recepcionista") && (
                 <Route
                   path="/panel-enfermero"
                   element={
                     <ProtectedRoute
                       usuario={usuario}
-                      rolesPermitidos={["enfermero"]}
+                      rolesPermitidos={["enfermero", "administrador", "recepcionista"]}
+                      permisosRequeridos={["ver_panel_enfermeria"]}
                     >
                       <EnfermeroPanelPage />
                     </ProtectedRoute>
@@ -377,9 +443,22 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["administrador"]}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_medicos"]}
                       >
                         <MedicosPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/medicos/:medicoId/disponibilidad"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_medicos"]}
+                      >
+                        <PanelMedicoPage />
                       </ProtectedRoute>
                     }
                   />
@@ -390,6 +469,7 @@ function App() {
                         <ProtectedRoute
                           usuario={usuario}
                           rolesPermitidos={["administrador", "recepcionista"]}
+                          permisosRequeridos={["ver_contabilidad"]}
                         >
                           <ContabilidadPage />
                         </ProtectedRoute>
@@ -403,8 +483,21 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_lista_consultas"]}
                       >
                         <ListaConsultasPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/recordatorios-citas"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_recordatorios_citas"]}
+                      >
+                        <RecordatoriosCitasPage />
                       </ProtectedRoute>
                     }
                   />
@@ -414,6 +507,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <ReportePacientesPage />
                       </ProtectedRoute>
@@ -425,6 +519,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <ReporteFinanzasPage />
                       </ProtectedRoute>
@@ -435,9 +530,34 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["administrador"]}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_configuracion"]}
                       >
                         <ConfiguracionPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/configuracion/plantillas-hc"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_plantillas_hc"]}
+                      >
+                        <PlantillasHCPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/tema"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_tema"]}
+                      >
+                        <TemaPage />
                       </ProtectedRoute>
                     }
                   />
@@ -446,7 +566,8 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["administrador"]}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_gestion_tarifas"]}
                       >
                         <GestionTarifasPage />
                       </ProtectedRoute>
@@ -457,7 +578,8 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["administrador"]}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_inventario_general"]}
                       >
                         <InventarioGeneralPage />
                       </ProtectedRoute>
@@ -467,7 +589,7 @@ function App() {
                   <Route
                     path="/web-servicios"
                     element={
-                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador", "recepcionista"]} permisosRequeridos={["ver_web_servicios"]}>
                         <WebServiciosCrudPage />
                       </ProtectedRoute>
                     }
@@ -475,7 +597,7 @@ function App() {
                   <Route
                     path="/web-ofertas"
                     element={
-                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador", "recepcionista"]} permisosRequeridos={["ver_web_ofertas"]}>
                         <WebOfertasCrudPage />
                       </ProtectedRoute>
                     }
@@ -484,7 +606,7 @@ function App() {
                   <Route
                     path="/web-banners"
                     element={
-                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador"]}>
+                      <ProtectedRoute usuario={usuario} rolesPermitidos={["administrador", "recepcionista"]} permisosRequeridos={["ver_web_banners"]}>
                         <WebBannersCrudPage />
                       </ProtectedRoute>
                     }
@@ -495,6 +617,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <LiquidacionHonorariosPage />
                       </ProtectedRoute>
@@ -506,6 +629,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <LiquidacionLaboratorioReferenciaPage />
                       </ProtectedRoute>
@@ -517,6 +641,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarLaboratorioPage />
                       </ProtectedRoute>
@@ -528,6 +653,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarRayosXPage />
                       </ProtectedRoute>
@@ -539,6 +665,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarEcografiaPage />
                       </ProtectedRoute>
@@ -550,6 +677,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarOperacionPage />
                       </ProtectedRoute>
@@ -561,6 +689,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <FarmaciaCotizadorPage />
                       </ProtectedRoute>
@@ -572,6 +701,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarProcedimientosPage />
                       </ProtectedRoute>
@@ -583,6 +713,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <SeleccionarServicioPage />
                       </ProtectedRoute>
@@ -594,8 +725,21 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <ConsumoPacientePage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/historia-clinica-lectura/:pacienteId/:consultaId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_pacientes"]}
+                      >
+                        <HistoriaClinicaPage />
                       </ProtectedRoute>
                     }
                   />
@@ -605,8 +749,21 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizacionesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/cotizaciones/:cotizacionId/detalle"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
+                      >
+                        <DetalleCotizacionPage />
                       </ProtectedRoute>
                     }
                   />
@@ -616,6 +773,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CobrarCotizacionPage />
                       </ProtectedRoute>
@@ -627,6 +785,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <EgresosPage />
                       </ProtectedRoute>
@@ -638,6 +797,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <RegistrarEgresoPage />
                       </ProtectedRoute>
@@ -649,6 +809,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <CerrarCajaView />
                       </ProtectedRoute>
@@ -659,7 +820,8 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["administrador"]}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_reabrir_caja"]}
                       >
                         <ReabrirCajaPage />
                       </ProtectedRoute>
@@ -682,6 +844,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <DescuentosPage />
                       </ProtectedRoute>
@@ -693,6 +856,7 @@ function App() {
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contabilidad"]}
                       >
                         <AuditoriaEliminacionesPage />
                       </ProtectedRoute>
@@ -700,20 +864,61 @@ function App() {
                   />
                 </>
               )}
+              {/* Visible para admin, recepcionista y laboratorista */}
+              <Route
+                path="/documentos-paciente/:pacienteId"
+                element={
+                  <ProtectedRoute
+                    usuario={usuario}
+                    rolesPermitidos={["administrador", "recepcionista", "laboratorista"]}
+                    permisosRequeridos={["ver_panel_laboratorio"]}
+                  >
+                    <DocumentosPacientePage usuario={usuario} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/imagenes-paciente/:pacienteId"
+                element={
+                  <ProtectedRoute
+                    usuario={usuario}
+                    rolesPermitidos={["administrador", "recepcionista", "laboratorista"]}
+                    permisosRequeridos={["ver_panel_laboratorio"]}
+                  >
+                    <OrdenesImagenPacientePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/visor-imagen/:ordenId"
+                element={
+                  <ProtectedRoute
+                    usuario={usuario}
+                    rolesPermitidos={["administrador", "recepcionista", "laboratorista"]}
+                    permisosRequeridos={["ver_panel_laboratorio"]}
+                  >
+                    <VisorImagenPage />
+                  </ProtectedRoute>
+                }
+              />
+              {/* Visible para admin, recepcionista y laboratorista */}
+              {(usuario?.rol === "administrador" || usuario?.rol === "recepcionista" || usuario?.rol === "laboratorista") && (
+                <Route
+                  path="/panel-laboratorio"
+                  element={
+                    <ProtectedRoute
+                      usuario={usuario}
+                      rolesPermitidos={["administrador", "recepcionista", "laboratorista"]}
+                      permisosRequeridos={["ver_panel_laboratorio"]}
+                    >
+                      <LaboratorioPanelPage />
+                    </ProtectedRoute>
+                  }
+                />
+              )}
               {/* Solo visible para laboratoristas */}
               {usuario?.rol === "laboratorista" && (
                 <>
-                  <Route
-                    path="/panel-laboratorio"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["laboratorista"]}
-                      >
-                        <LaboratorioPanelPage />
-                      </ProtectedRoute>
-                    }
-                  />
                   <Route
                     path="/examenes-laboratorio"
                     element={
@@ -738,45 +943,19 @@ function App() {
                   />
                 </>
               )}
-              {(usuario?.rol === "administrador" || usuario?.rol === "laboratorista") && (
+              {(usuario?.rol === "administrador" || usuario?.rol === "laboratorista" || usuario?.rol === "recepcionista") && (
                 <Route
                   path="/laboratorio/inventario"
                   element={
                     <ProtectedRoute
                       usuario={usuario}
-                      rolesPermitidos={["administrador", "laboratorista"]}
+                      rolesPermitidos={["administrador", "laboratorista", "recepcionista"]}
+                      permisosRequeridos={["ver_inventario_laboratorio"]}
                     >
                       <InventarioLaboratorioPage />
                     </ProtectedRoute>
                   }
                 />
-              )}
-              {/* Solo visible para químicos */}
-              {(usuario?.rol === "químico" || usuario?.rol === "quimico") && (
-                <>
-                  <Route
-                    path="/medicamentos"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["químico", "quimico"]}
-                      >
-                        <MedicamentosList />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/farmacia/cotizador"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["químico", "quimico"]}
-                      >
-                        <FarmaciaCotizadorPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                </>
               )}
               {usuario && (
                 <Route
@@ -794,15 +973,16 @@ function App() {
               <Route path="*" element={<Navigate to={getHomeByRole(usuario?.rol)} replace />} />
               {/* Puedes agregar más rutas aquí */}
             </Routes>
-          </DashboardLayout>
-        ) : (
-          <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-800 via-blue-500 to-green-400">
+            </RouteErrorBoundary>
+            </DashboardLayout>
+          ) : (
             <Login onLogin={setUsuario} />
-          </div>
         )}
         {/* Puedes agregar más rutas aquí */}
       </Suspense>
     </BrowserRouter>
+    </QuoteCartProvider>
+    </ThemeProvider>
   );
 }
 

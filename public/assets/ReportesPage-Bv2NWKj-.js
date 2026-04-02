@@ -1,0 +1,1 @@
+import{j as a}from"./vendor-CdenvYwQ.js";import"./examenes-laboratorio-crud-BFi5qrZf.js";function o(){return a.jsx("div",{className:"max-w-3xl mx-auto p-6",children:"// Página eliminada para nuevo diseño"})}export{o as default};

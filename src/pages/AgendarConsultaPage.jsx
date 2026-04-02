@@ -4,10 +4,15 @@ import { AgendarConsulta } from "../components/paciente";
 function AgendarConsultaPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const pacienteId = location.state?.pacienteId || new URLSearchParams(location.search).get('paciente_id');
+  const searchParams = new URLSearchParams(location.search);
+  const pacienteId = location.state?.pacienteId || searchParams.get('paciente_id');
+  const consultaId = location.state?.consultaId || searchParams.get('consulta_id');
+  const cotizacionId = searchParams.get('cotizacion_id');
+  const modo = searchParams.get('modo');
+  const isEditIntent = Boolean(consultaId) || (modo === 'editar' && Boolean(cotizacionId));
 
-  // Si no hay pacienteId, redirigir o mostrar mensaje
-  if (!pacienteId) {
+  // Si no hay pacienteId ni consultaId, redirigir o mostrar mensaje
+  if (!pacienteId && !consultaId && !cotizacionId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="bg-white p-6 rounded shadow text-center">
@@ -30,10 +35,15 @@ function AgendarConsultaPage() {
       <div className="w-full max-w-[1700px] mx-auto px-4 lg:px-6 py-4">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-bold text-blue-800">
-            Agendar Consulta Médica
+            {isEditIntent ? "Editar Consulta Médica" : "Agendar Consulta Médica"}
           </h1>
         </div>
-        <AgendarConsulta pacienteId={pacienteId} />
+        <AgendarConsulta
+          pacienteId={pacienteId}
+          consultaId={consultaId}
+          cotizacionId={cotizacionId}
+          isEditIntent={isEditIntent}
+        />
       </div>
     </div>
   );

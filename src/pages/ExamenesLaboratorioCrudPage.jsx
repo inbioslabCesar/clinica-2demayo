@@ -301,9 +301,19 @@ export default function ExamenesLaboratorioCrudPage() {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50">
+    <div
+      className="min-h-screen"
+      style={{
+        background: "linear-gradient(135deg, var(--color-primary-light) 0%, #ffffff 45%, #eef2ff 100%)",
+      }}
+    >
       {/* Header con gradiente */}
-      <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white">
+      <div
+        className="text-white"
+        style={{
+          background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)",
+        }}
+      >
         <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-2xl">
@@ -311,7 +321,7 @@ export default function ExamenesLaboratorioCrudPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold">Gestión de Exámenes de Laboratorio</h1>
-              <p className="text-purple-100">Administre el catálogo completo de exámenes y pruebas de laboratorio</p>
+              <p className="text-white/80">Administre el catálogo completo de exámenes y pruebas de laboratorio</p>
             </div>
           </div>
         </div>
@@ -370,9 +380,10 @@ export default function ExamenesLaboratorioCrudPage() {
                 onClick={() => setViewMode('table')}
                 className={`px-3 py-1 rounded-md text-sm transition-colors ${
                   viewMode === 'table' 
-                    ? 'bg-white text-purple-600 shadow-sm' 
+                    ? 'bg-white shadow-sm' 
                     : 'text-gray-600 hover:text-gray-800'
                 }`}
+                style={viewMode === 'table' ? { color: "var(--color-primary)" } : undefined}
               >
                 📊 Tabla
               </button>
@@ -380,9 +391,10 @@ export default function ExamenesLaboratorioCrudPage() {
                 onClick={() => setViewMode('cards')}
                 className={`px-3 py-1 rounded-md text-sm transition-colors ${
                   viewMode === 'cards' 
-                    ? 'bg-white text-purple-600 shadow-sm' 
+                    ? 'bg-white shadow-sm' 
                     : 'text-gray-600 hover:text-gray-800'
                 }`}
+                style={viewMode === 'cards' ? { color: "var(--color-primary)" } : undefined}
               >
                 🗃️ Tarjetas
               </button>
@@ -437,8 +449,8 @@ export default function ExamenesLaboratorioCrudPage() {
         {/* Contenido principal */}
           {loading ? (
             <div className="flex items-center justify-center p-12">
-              <div className="flex items-center gap-3 text-purple-600">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+              <div className="flex items-center gap-3" style={{ color: "var(--color-primary)" }}>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderBottomColor: "var(--color-primary)" }}></div>
                 <span className="text-lg">Cargando exámenes de laboratorio...</span>
               </div>
             </div>
@@ -448,7 +460,8 @@ export default function ExamenesLaboratorioCrudPage() {
               <p className="text-gray-600 text-lg mb-4">No hay exámenes registrados</p>
               <button
                 onClick={handleNew}
-                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg transform hover:scale-105"
+                className="px-6 py-3 text-white rounded-lg transition-all font-medium shadow-lg transform hover:scale-105"
+                style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
               >
                 ➕ Crear Primer Examen
               </button>

@@ -336,7 +336,7 @@ function GestionHonorariosMedicos() {
               <option value="todos">Todos los médicos</option>
               {medicos.map(medico => (
                 <option key={medico.id} value={medico.id}>
-                  Dr(a). {medico.nombre} {medico.apellido} - {medico.especialidad}
+                  {(medico.abreviatura_profesional || 'Dr(a).')} {medico.nombre} {medico.apellido} - {medico.especialidad}
                 </option>
               ))}
             </select>
@@ -397,7 +397,7 @@ function GestionHonorariosMedicos() {
                     <div className="flex items-center">
                       <div>
                         <div className="text-sm font-medium text-gray-900">
-                          Dr(a). {config.nombre} {config.apellido}
+                          {config.abreviatura_profesional || 'Dr(a).'} {config.nombre} {config.apellido}
                         </div>
                         <div className="text-sm text-gray-500">{config.especialidad}</div>
                       </div>
@@ -554,7 +554,7 @@ function GestionHonorariosMedicos() {
                   <option value="">Seleccionar médico...</option>
                   {medicos.map(medico => (
                     <option key={medico.id} value={medico.id}>
-                      Dr(a). {medico.nombre} {medico.apellido} - {medico.especialidad}
+                      {(medico.abreviatura_profesional || 'Dr(a).')} {medico.nombre} {medico.apellido} - {medico.especialidad}
                     </option>
                   ))}
                 </select>

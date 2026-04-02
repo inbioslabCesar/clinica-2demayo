@@ -6,7 +6,8 @@ export default function SidebarAdmin({ onClose }) {
     <>
       <Link
         to="/"
-        className="group relative py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-800 text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center gap-3 overflow-hidden"
+        className="group relative py-3 px-4 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center gap-3 overflow-hidden"
+        style={{ background: 'linear-gradient(to right, var(--color-sidebar-from), var(--color-sidebar-via), var(--color-sidebar-to))' }}
         onClick={onClose}
       >
         <Icon iconName="ViewDashboard" className="text-xl text-white" />
@@ -36,6 +37,14 @@ export default function SidebarAdmin({ onClose }) {
       >
         <Icon iconName="Health" className="text-xl text-emerald-600" />
         <span>Médicos</span>
+      </Link>
+      <Link
+        to="/panel-enfermero"
+        className="py-3 px-4 rounded-lg text-rose-700 hover:bg-gradient-to-r hover:from-rose-50 hover:to-pink-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Heart" className="text-xl text-rose-600" />
+        <span>Panel Enfermería</span>
       </Link>
       <Link
         to="/gestion-tarifas"
@@ -105,12 +114,44 @@ export default function SidebarAdmin({ onClose }) {
         <span>Cotizaciones</span>
       </Link>
       <Link
+        to="/lista-consultas"
+        className="py-3 px-4 rounded-lg text-indigo-700 hover:bg-gradient-to-r hover:from-indigo-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Calendar" className="text-xl text-indigo-600" />
+        <span>Lista de Consultas</span>
+      </Link>
+      <Link
+        to="/recordatorios-citas"
+        className="py-3 px-4 rounded-lg text-sky-700 hover:bg-gradient-to-r hover:from-sky-50 hover:to-cyan-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="ReminderTime" className="text-xl text-sky-600" />
+        <span>Recordatorios Citas</span>
+      </Link>
+      <Link
         to="/configuracion"
         className="py-3 px-4 rounded-lg text-gray-700 hover:bg-gradient-to-r hover:from-gray-50 hover:to-slate-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
         onClick={onClose}
       >
         <Icon iconName="Settings" className="text-xl text-gray-600" />
         <span>Configuración</span>
+      </Link>
+      <Link
+        to="/configuracion/plantillas-hc"
+        className="py-3 px-4 rounded-lg text-cyan-700 hover:bg-gradient-to-r hover:from-cyan-50 hover:to-sky-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="EditCreate" className="text-xl text-cyan-600" />
+        <span>Plantillas HC</span>
+      </Link>
+      <Link
+        to="/tema"
+        className="py-3 px-4 rounded-lg text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300 hover:shadow-md hover:scale-[1.01]"
+        onClick={onClose}
+      >
+        <Icon iconName="Color" className="text-xl text-purple-600" />
+        <span>Personalización</span>
       </Link>
       <Link
         to="/reabrir-caja"

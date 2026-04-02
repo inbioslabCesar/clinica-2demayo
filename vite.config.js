@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  cacheDir: 'node_modules/.vite-sistema',
   server: {
     host: true,
     port: 5173,
@@ -18,7 +19,21 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       '@fluentui/react',
-      'react-router-dom'
+      'react-router-dom',
+      'axios',
+      'react-icons/fa',
+      'react-icons/fi',
+      'react-calendar',
+      'react-to-print',
+      'recharts',
+      'mathjs',
+      'xlsx',
+      'jspdf',
+      'jspdf-autotable',
+      'file-saver',
+      'sweetalert2',
+      'sweetalert2-react-content',
+      'dicom-parser'
       // Agrega aquí dependencias que usas en casi todas las páginas
     ],
     exclude: [

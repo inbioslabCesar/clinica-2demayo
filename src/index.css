@@ -4,6 +4,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme CSS Custom Properties – default purple palette */
+:root {
+	--color-primary: #7c3aed;
+	--color-primary-dark: #5b21b6;
+	--color-primary-light: #ede9fe;
+	--color-secondary: #4338ca;
+	--color-accent: #6366f1;
+	--color-navbar-bg: #6b21a8;
+	--color-sidebar-from: #9333ea;
+	--color-sidebar-via: #7e22ce;
+	--color-sidebar-to: #3730a3;
+	--color-login-from: #1e3a8a;
+	--color-login-via: #6b21a8;
+	--color-login-to: #312e81;
+}
+
 /* Reset CSS básico */
 html, body, #root {
 	height: 100%;

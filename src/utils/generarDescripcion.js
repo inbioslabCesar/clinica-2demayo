@@ -7,7 +7,7 @@ export function generarDescripcion(medico, descripcionBase) {
   // Eliminar nombre/especialidad duplicados en la descripción base
   let base = descripcionBase || "Consulta";
   // Usar string normal para evitar escapes innecesarios en template string
-  let patronStr = "^(Dr(a).\\s*)?" + nombreCompleto;
+  let patronStr = "^([A-Za-z\\(\\)\\.]{2,12}\\s+)?" + nombreCompleto;
   if (medico.especialidad) {
     patronStr += "(\\s*-\\s*" + medico.especialidad + ")?";
   }

@@ -213,12 +213,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     };
   };
 
+  const themeGradientMain = "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)";
+
   return (
     <div className="w-full px-2 sm:px-4 lg:max-w-7xl lg:mx-auto">
       {/* Panel de filtros con estilo moderno */}
       <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-6 mb-4 sm:mb-8 border border-white/50">
         <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
-          <div className="w-6 h-6 sm:w-8 sm:h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center">
+          <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center" style={{ background: themeGradientMain }}>
             <svg className="w-3 h-3 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
@@ -241,7 +243,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                 value={busqueda}
                 onChange={e => { setBusqueda(e.target.value); setPage(1); }}
                 placeholder="Buscar por nombre, HC o DNI..."
-                className="pl-8 sm:pl-10 w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/80"
+                className="pl-8 sm:pl-10 w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+                onFocus={(e) => {
+                  e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+                }}
+                style={{ boxShadow: "none" }}
               />
             </div>
           </div>
@@ -253,7 +259,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               type="date"
               value={fechaDesde}
               onChange={e => { setFechaDesde(e.target.value); setPage(1); }}
-              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/80"
+              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
             />
           </div>
           
@@ -264,7 +273,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               type="date"
               value={fechaHasta}
               onChange={e => { setFechaHasta(e.target.value); setPage(1); }}
-              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white/80"
+              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
             />
           </div>
         </div>
@@ -287,10 +299,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
 
       {/* Estadísticas rápidas */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 mb-4 sm:mb-8">
-        <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl">
+        <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl" style={{ background: themeGradientMain }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-blue-100 text-xs sm:text-sm font-medium">Total Consultas</p>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">Total Consultas</p>
               <p className="text-2xl sm:text-3xl font-bold">{stats.total}</p>
             </div>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
@@ -301,10 +313,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           </div>
         </div>
         
-        <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl">
+        <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl" style={{ background: "linear-gradient(90deg, var(--color-secondary) 0%, var(--color-accent) 100%)" }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-green-100 text-xs sm:text-sm font-medium">Pendientes</p>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">Pendientes</p>
               <p className="text-2xl sm:text-3xl font-bold">{stats.pendientes}</p>
             </div>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
@@ -315,10 +327,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           </div>
         </div>
         
-        <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl">
+        <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl" style={{ background: "linear-gradient(90deg, var(--color-accent) 0%, var(--color-primary) 100%)" }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-red-100 text-xs sm:text-sm font-medium">Emergencias</p>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">Emergencias</p>
               <p className="text-2xl sm:text-3xl font-bold">{stats.emergencias}</p>
             </div>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
@@ -372,7 +384,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           <div className="hidden lg:block bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-white/50 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gradient-to-r from-blue-600 to-indigo-600">
+                <thead style={{ background: themeGradientMain }}>
                   <tr>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-white">👤 Paciente</th>
                     <th className="px-6 py-4 text-left text-sm font-semibold text-white">🏥 HC / DNI</th>

@@ -1,4 +1,5 @@
 import React from "react";
+import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
 function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNuevaTarifa, medicos, serviciosMedicos, generarDescripcion: propGenerarDescripcion, guardarTarifa }) {
   // Ya no se genera ni guarda descripcion final, solo se edita descripcion_base
@@ -35,7 +36,7 @@ function TarifaModal({ mostrar, cerrarModal, tarifaEditando, nuevaTarifa, setNue
               <option value="general">Tarifa General (Todos los médicos)</option>
               {medicos.map((medico) => (
                 <option key={medico.id} value={medico.id}>
-                  Dr(a). {medico.nombre} {medico.apellido || ""} - {medico.especialidad || "General"}
+                  {formatProfesionalName(medico)} - {medico.especialidad || "General"}
                 </option>
               ))}
             </select>

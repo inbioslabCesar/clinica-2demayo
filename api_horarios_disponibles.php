@@ -7,6 +7,7 @@ $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'GET') {
     $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
     $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : null;
+    $consulta_id_excluir = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : 0;
     
     if (!$medico_id || !$fecha) {
         echo json_encode(['success' => false, 'error' => 'Se requiere medico_id y fecha']);
@@ -28,21 +29,29 @@ if ($method === 'GET') {
         
         $horariosDisponibles = [];
         
-        while ($row = $res->fetch_assoc()) {
-            // Obtener consultas ya agendadas para este médico en esta fecha
+        $horariosOcupados = [];
+        if ($consulta_id_excluir > 0) {
+            $stmt_consultas = $conn->prepare('
+                SELECT hora FROM consultas 
+                WHERE medico_id = ? AND fecha = ? AND estado NOT IN ("cancelada", "completada") AND id <> ?
+            ');
+            $stmt_consultas->bind_param('isi', $medico_id, $fecha, $consulta_id_excluir);
+        } else {
             $stmt_consultas = $conn->prepare('
                 SELECT hora FROM consultas 
                 WHERE medico_id = ? AND fecha = ? AND estado NOT IN ("cancelada", "completada")
             ');
             $stmt_consultas->bind_param('is', $medico_id, $fecha);
-            $stmt_consultas->execute();
-            $res_consultas = $stmt_consultas->get_result();
-            
-            $horariosOcupados = [];
-            while ($consulta = $res_consultas->fetch_assoc()) {
-                $horariosOcupados[] = $consulta['hora'];
-            }
-            $stmt_consultas->close();
+        }
+
+        $stmt_consultas->execute();
+        $res_consultas = $stmt_consultas->get_result();
+        while ($consulta = $res_consultas->fetch_assoc()) {
+            $horariosOcupados[] = $consulta['hora'];
+        }
+        $stmt_consultas->close();
+
+        while ($row = $res->fetch_assoc()) {
             
             // Generar horarios de 30 en 30 minutos
             list($h_inicio, $m_inicio) = explode(':', $row['hora_inicio']);
@@ -82,7 +91,8 @@ if ($method === 'GET') {
         echo json_encode([
             'success' => true, 
             'horarios_disponibles' => $horariosDisponibles,
-            'total' => count($horariosDisponibles)
+            'total' => count($horariosDisponibles),
+            'consulta_excluida' => $consulta_id_excluir > 0 ? $consulta_id_excluir : null,
         ]);
         
     } catch (Exception $e) {

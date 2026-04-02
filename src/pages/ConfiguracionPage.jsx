@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { BASE_URL } from '../config/config.js';
 
+const LOGO_SIZE_OPTIONS = [
+  { value: '', label: 'Predeterminado' },
+  { value: 'sm', label: 'Pequeño' },
+  { value: 'md', label: 'Mediano' },
+  { value: 'lg', label: 'Grande' },
+  { value: 'xl', label: 'Extra grande' },
+];
+
 function ConfiguracionPage() {
   const normalizeLogoForSave = (value) => {
     let raw = String(value || '').trim();
@@ -38,7 +46,15 @@ function ConfiguracionPage() {
     valores: '',
     director_general: '',
     jefe_enfermeria: '',
-    contacto_emergencias: ''
+    contacto_emergencias: '',
+    celular: '',
+    google_maps_embed: '',
+    slogan: '',
+    slogan_color: '#3A4FA3',
+    nombre_color: '',
+    nombre_font_size: '',
+    logo_size_sistema: '',
+    logo_size_publico: ''
   });
 
   const [loading, setLoading] = useState(false);
@@ -66,7 +82,7 @@ function ConfiguracionPage() {
       if (response.ok) {
         const result = await response.json();
         if (result.success) {
-          setConfiguracion(result.data);
+          setConfiguracion(prev => ({ ...prev, ...(result.data || {}) }));
           // mostrar preview si hay logo
           if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
         } else {
@@ -197,6 +213,15 @@ function ConfiguracionPage() {
             setLogoPreview(payload.logo_url);
             setConfiguracion(prev => ({ ...prev, logo_url: payload.logo_url, _logo_file: null }));
           }
+              window.dispatchEvent(new CustomEvent('clinica-config-updated', {
+                detail: {
+                  logo_url: payload.logo_url || '',
+                  nombre_clinica: payload.nombre_clinica || '',
+                  logo_size_sistema: payload.logo_size_sistema || '',
+                  logo_size_publico: payload.logo_size_publico || '',
+                  updated_at: Date.now()
+                }
+              }));
         } else {
           throw new Error(result.error || 'Error al guardar la configuración');
         }
@@ -259,6 +284,15 @@ function ConfiguracionPage() {
         setConfiguracion(prev => ({ ...prev, logo_url: uploadedPath, _logo_file: null }));
         // Si la ruta es relativa, convertir a URL pública para preview en dev
         setLogoPreview(uploadedPath);
+            window.dispatchEvent(new CustomEvent('clinica-config-updated', {
+              detail: {
+                logo_url: uploadedPath,
+                nombre_clinica: configuracion.nombre_clinica || '',
+                logo_size_sistema: configuracion.logo_size_sistema || '',
+                logo_size_publico: configuracion.logo_size_publico || '',
+                updated_at: Date.now()
+              }
+            }));
         Swal.fire({ title: 'Listo', text: 'Logo subido correctamente.', icon: 'success' });
       }
     } catch (err) {
@@ -272,11 +306,33 @@ function ConfiguracionPage() {
   const clearLogo = () => {
     setConfiguracion(prev => ({ ...prev, logo_url: '' }));
     setLogoPreview('');
+    window.dispatchEvent(new CustomEvent('clinica-config-updated', {
+      detail: {
+        logo_url: '',
+        nombre_clinica: configuracion.nombre_clinica || '',
+        logo_size_sistema: configuracion.logo_size_sistema || '',
+        logo_size_publico: configuracion.logo_size_publico || '',
+        updated_at: Date.now()
+      }
+    }));
   };
 
   return (
     <div className="container mx-auto p-6">
       <h1 className="text-3xl font-bold mb-6 text-blue-800">⚙️ Configuración del Sistema</h1>
+      <div className="mb-6 rounded-lg border border-cyan-200 bg-cyan-50 p-4">
+        <p className="text-sm text-cyan-900 font-semibold">Plantillas de Historia Clinica</p>
+        <p className="text-xs text-cyan-800 mt-1">
+          Para configurar campos sugeridos por especialidad entra a: Configuracion &gt; Plantillas HC.
+        </p>
+        <button
+          type="button"
+          className="mt-3 px-3 py-2 text-xs rounded-md bg-cyan-600 text-white hover:bg-cyan-700"
+          onClick={() => (window.location.href = '/configuracion/plantillas-hc')}
+        >
+          Ir a Plantillas HC
+        </button>
+      </div>
       
       {cargandoDatos ? (
         <div className="bg-white rounded-lg shadow-lg p-6 text-center">
@@ -299,6 +355,44 @@ function ConfiguracionPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
+              <div className="mt-2 flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Color:</label>
+                  <input
+                    type="color"
+                    value={configuracion.nombre_color || '#E85D8E'}
+                    onChange={(e) => manejarCambio('nombre_color', e.target.value)}
+                    className="h-8 w-10 rounded border border-gray-300 cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={configuracion.nombre_color || ''}
+                    onChange={(e) => manejarCambio('nombre_color', e.target.value)}
+                    className="w-24 px-2 py-1 text-xs border border-gray-300 rounded-md font-mono"
+                    placeholder="#E85D8E"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Tamaño:</label>
+                  <select
+                    value={configuracion.nombre_font_size || ''}
+                    onChange={(e) => manejarCambio('nombre_font_size', e.target.value)}
+                    className="px-2 py-1 text-xs border border-gray-300 rounded-md"
+                  >
+                    <option value="">Por defecto</option>
+                    <option value="1.25rem">Pequeño</option>
+                    <option value="1.5rem">Mediano</option>
+                    <option value="1.875rem">Grande</option>
+                    <option value="2.25rem">Extra Grande</option>
+                    <option value="3rem">Muy Grande</option>
+                  </select>
+                </div>
+              </div>
+              {configuracion.nombre_clinica && (
+                <p className="mt-1 text-xs font-semibold" style={{ color: configuracion.nombre_color || '#E85D8E', fontSize: configuracion.nombre_font_size || '1.125rem' }}>
+                  Vista previa: {configuracion.nombre_clinica}
+                </p>
+              )}
             </div>
 
             <div>
@@ -312,6 +406,45 @@ function ConfiguracionPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Eslogan (opcional)
+              </label>
+              <input
+                type="text"
+                value={configuracion.slogan || ''}
+                onChange={(e) => manejarCambio('slogan', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Salud Integral Femenina"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Color del Eslogan
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={configuracion.slogan_color || '#3A4FA3'}
+                  onChange={(e) => manejarCambio('slogan_color', e.target.value)}
+                  className="h-10 w-14 rounded border border-gray-300 cursor-pointer"
+                />
+                <input
+                  type="text"
+                  value={configuracion.slogan_color || '#3A4FA3'}
+                  onChange={(e) => manejarCambio('slogan_color', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                  placeholder="#3A4FA3"
+                />
+              </div>
+              {configuracion.slogan && (
+                <p className="mt-2 text-sm font-medium" style={{ color: configuracion.slogan_color || '#3A4FA3' }}>
+                  Vista previa: {configuracion.slogan}
+                </p>
+              )}
             </div>
 
             <div>
@@ -421,6 +554,46 @@ function ConfiguracionPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tamaño del logo en el sistema
+              </label>
+              <select
+                value={configuracion.logo_size_sistema || ''}
+                onChange={(e) => manejarCambio('logo_size_sistema', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {LOGO_SIZE_OPTIONS.map((option) => (
+                  <option key={option.value || 'default-system'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Se aplica al logo del sidebar y la navbar del sistema.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tamaño del logo en la página pública
+              </label>
+              <select
+                value={configuracion.logo_size_publico || ''}
+                onChange={(e) => manejarCambio('logo_size_publico', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {LOGO_SIZE_OPTIONS.map((option) => (
+                  <option key={option.value || 'default-public'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Se aplica al branding visible en la web pública.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Sitio Web (opcional)
               </label>
               <input
@@ -443,6 +616,34 @@ function ConfiguracionPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Emergencias 24h: +51 987-654-321"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Celular / WhatsApp
+              </label>
+              <input
+                type="tel"
+                value={configuracion.celular || ''}
+                onChange={(e) => manejarCambio('celular', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="+51 987 654 321"
+              />
+              <p className="text-xs text-gray-500 mt-1">Este número se usará para el botón flotante de WhatsApp en la página pública.</p>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Código de Google Maps (iframe embed)
+              </label>
+              <textarea
+                value={configuracion.google_maps_embed || ''}
+                onChange={(e) => manejarCambio('google_maps_embed', e.target.value)}
+                rows="3"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+                placeholder='https://www.google.com/maps/embed?pb=!1m18!1m12...'
+              />
+              <p className="text-xs text-gray-500 mt-1">Pega aquí la URL del iframe de Google Maps. Ve a Google Maps → Compartir → Incorporar un mapa → copia solo la URL del src.</p>
             </div>
 
             <div className="md:col-span-2">

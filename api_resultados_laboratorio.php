@@ -87,15 +87,41 @@ if (!function_exists('calculate_order_progress')) {
             $complete = true;
 
             if (!empty($requiredKeys)) {
+                $complete = true;
                 foreach ($requiredKeys as $requiredKey) {
                     if (!array_key_exists($requiredKey, $resultados) || !is_result_value_meaningful($resultados[$requiredKey])) {
                         $complete = false;
                         break;
                     }
                 }
+                // Fallback: if exact keys weren't found, check bare ID or any "examId__*" prefix.
+                if (!$complete) {
+                    $directKey = (string)$examId;
+                    $complete = array_key_exists($directKey, $resultados) && is_result_value_meaningful($resultados[$directKey]);
+                    if (!$complete) {
+                        $prefix = $examId . '__';
+                        foreach ($resultados as $k => $v) {
+                            if (strpos((string)$k, $prefix) === 0 && is_result_value_meaningful($v)) {
+                                $complete = true;
+                                break;
+                            }
+                        }
+                    }
+                }
             } else {
+                // No required keys defined: check bare exam ID key OR any "examId__*" key.
+                // This handles fallback-named params (e.g. "57" vs "57__Aga y electrolitos").
                 $directKey = (string)$examId;
                 $complete = array_key_exists($directKey, $resultados) && is_result_value_meaningful($resultados[$directKey]);
+                if (!$complete) {
+                    $prefix = $examId . '__';
+                    foreach ($resultados as $k => $v) {
+                        if (strpos((string)$k, $prefix) === 0 && is_result_value_meaningful($v)) {
+                            $complete = true;
+                            break;
+                        }
+                    }
+                }
             }
 
             if ($complete) {
@@ -105,6 +131,77 @@ if (!function_exists('calculate_order_progress')) {
 
         $porcentaje = $total > 0 ? intval(round(($completos / $total) * 100)) : 0;
         return ['total' => $total, 'completos' => $completos, 'porcentaje' => $porcentaje];
+    }
+}
+
+if (!function_exists('is_laboratorio_signer_role')) {
+    function is_laboratorio_signer_role($rol)
+    {
+        $role = strtolower(trim((string)$rol));
+        // Solo profesionales del área de laboratorio pueden firmar resultados.
+        return in_array($role, ['laboratorista', 'quimico', 'químico'], true);
+    }
+}
+
+if (!function_exists('is_valid_laboratorio_signer_user_id')) {
+    function is_valid_laboratorio_signer_user_id($conn, $userId)
+    {
+        $id = intval($userId);
+        if ($id <= 0) {
+            return false;
+        }
+
+        $stmtRole = $conn->prepare('SELECT rol FROM usuarios WHERE id = ? LIMIT 1');
+        if (!$stmtRole) {
+            return false;
+        }
+
+        $stmtRole->bind_param('i', $id);
+        $stmtRole->execute();
+        $rowRole = $stmtRole->get_result()->fetch_assoc();
+        $stmtRole->close();
+
+        return is_laboratorio_signer_role($rowRole['rol'] ?? '');
+    }
+}
+
+if (!function_exists('resolve_laboratorio_signer_user_id')) {
+    function resolve_laboratorio_signer_user_id($conn, $sessionUsuario, $existingSignerId = 0)
+    {
+        $rolSesion = strtolower(trim((string)($sessionUsuario['rol'] ?? '')));
+        $sessionUserId = intval($sessionUsuario['id'] ?? 0);
+
+        // Solo perfiles profesionales del área pueden reemplazar la firma.
+        if ($sessionUserId > 0 && is_laboratorio_signer_role($rolSesion)) {
+            return $sessionUserId;
+        }
+
+        // Si quien opera no es firmante del área, solo conservar firmante previo si también es válido.
+        if ($existingSignerId > 0 && is_valid_laboratorio_signer_user_id($conn, $existingSignerId)) {
+            return $existingSignerId;
+        }
+
+        // Fallback: usar un usuario profesional de laboratorio configurado en el sistema.
+        $stmtSigner = $conn->prepare(
+            "SELECT id
+             FROM usuarios
+             WHERE rol IN ('laboratorista', 'quimico', 'químico')
+             ORDER BY
+                CASE WHEN firma_reportes IS NOT NULL AND TRIM(firma_reportes) <> '' THEN 0 ELSE 1 END,
+                id ASC
+             LIMIT 1"
+        );
+        if ($stmtSigner) {
+            $stmtSigner->execute();
+            $rowSigner = $stmtSigner->get_result()->fetch_assoc();
+            $stmtSigner->close();
+            $fallbackId = intval($rowSigner['id'] ?? 0);
+            if ($fallbackId > 0) {
+                return $fallbackId;
+            }
+        }
+
+        return 0;
     }
 }
 
@@ -122,12 +219,70 @@ if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
 
 switch ($method) {
     case 'GET':
+        $action = trim((string)($_GET['action'] ?? ''));
+
+        // Visor inline de archivos externos referenciados a la consulta.
+        if ($action === 'view_archivo') {
+            $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : 0;
+            $archivo_id = isset($_GET['archivo_id']) ? intval($_GET['archivo_id']) : 0;
+            if ($consulta_id <= 0 || $archivo_id <= 0) {
+                http_response_code(400);
+                echo 'Parámetros inválidos';
+                exit;
+            }
+
+            if ($esSesionMedico) {
+                $stmtOwnerConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+                $stmtOwnerConsulta->bind_param('i', $consulta_id);
+                $stmtOwnerConsulta->execute();
+                $ownerConsulta = $stmtOwnerConsulta->get_result()->fetch_assoc();
+                $stmtOwnerConsulta->close();
+                if (!$ownerConsulta || intval($ownerConsulta['medico_id']) !== $medicoSesionId) {
+                    http_response_code(403);
+                    echo 'No autorizado';
+                    exit;
+                }
+            }
+
+            $stmtArchivo = $conn->prepare(
+                'SELECT dea.id, dea.nombre_original, dea.archivo_path, dea.mime_type, dea.tamano
+                 FROM documentos_externos_archivos dea
+                 INNER JOIN documentos_externos_paciente dep ON dep.id = dea.documento_id
+                 INNER JOIN ordenes_laboratorio ol ON ol.id = dep.orden_id
+                 WHERE dea.id = ? AND ol.consulta_id = ?
+                 LIMIT 1'
+            );
+            $stmtArchivo->bind_param('ii', $archivo_id, $consulta_id);
+            $stmtArchivo->execute();
+            $archivo = $stmtArchivo->get_result()->fetch_assoc();
+            $stmtArchivo->close();
+
+            if (!$archivo || !file_exists($archivo['archivo_path'])) {
+                http_response_code(404);
+                echo 'Archivo no encontrado';
+                exit;
+            }
+
+            $safeName = preg_replace('/[^a-zA-Z0-9._\- ]/', '_', (string)($archivo['nombre_original'] ?? 'archivo'));
+            $mimeServe = !empty($archivo['mime_type']) ? (string)$archivo['mime_type'] : 'application/octet-stream';
+
+            header('Content-Type: ' . $mimeServe);
+            header('Content-Disposition: inline; filename="' . $safeName . '"');
+            header('Content-Length: ' . filesize($archivo['archivo_path']));
+            header('Cache-Control: private, max-age=3600');
+            readfile($archivo['archivo_path']);
+            exit;
+        }
+
         // Obtener resultados de laboratorio por consulta_id
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
         if (!$consulta_id) {
             echo json_encode(['success' => false, 'error' => 'Falta consulta_id']);
             exit;
         }
+
+        header('Content-Type: application/json; charset=utf-8');
+
         if ($esSesionMedico) {
             $stmtOwnerConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
             $stmtOwnerConsulta->bind_param('i', $consulta_id);
@@ -165,7 +320,70 @@ switch ($method) {
             }
             $stmt->close();
         }
-        echo json_encode(['success' => true, 'resultados' => $resultados]);
+
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\') . '/';
+
+        $documentos_externos = [];
+        $stmtDocs = $conn->prepare(
+            'SELECT
+                dep.id AS documento_id,
+                dep.titulo,
+                dep.descripcion,
+                dep.fecha AS documento_fecha,
+                dep.orden_id,
+                dea.id AS archivo_id,
+                dea.nombre_original,
+                dea.mime_type,
+                dea.tamano
+             FROM documentos_externos_paciente dep
+             INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
+             INNER JOIN ordenes_laboratorio ol ON ol.id = dep.orden_id
+             WHERE ol.consulta_id = ? AND LOWER(TRIM(dep.tipo)) = "laboratorio"
+             ORDER BY dep.fecha DESC, dep.id DESC, dea.id ASC'
+        );
+        if ($stmtDocs) {
+            $stmtDocs->bind_param('i', $consulta_id);
+            $stmtDocs->execute();
+            $rowsDocs = $stmtDocs->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtDocs->close();
+
+            $bucket = [];
+            foreach ($rowsDocs as $rowDoc) {
+                $docId = intval($rowDoc['documento_id'] ?? 0);
+                if ($docId <= 0) continue;
+
+                if (!isset($bucket[$docId])) {
+                    $bucket[$docId] = [
+                        'documento_id' => $docId,
+                        'titulo' => (string)($rowDoc['titulo'] ?? ''),
+                        'descripcion' => (string)($rowDoc['descripcion'] ?? ''),
+                        'fecha' => (string)($rowDoc['documento_fecha'] ?? ''),
+                        'orden_id' => intval($rowDoc['orden_id'] ?? 0),
+                        'archivos' => [],
+                    ];
+                }
+
+                $archivoId = intval($rowDoc['archivo_id'] ?? 0);
+                if ($archivoId > 0) {
+                    $mime = !empty($rowDoc['mime_type']) ? (string)$rowDoc['mime_type'] : 'application/octet-stream';
+                    $bucket[$docId]['archivos'][] = [
+                        'archivo_id' => $archivoId,
+                        'nombre_original' => (string)($rowDoc['nombre_original'] ?? ''),
+                        'mime_type' => $mime,
+                        'tamano' => intval($rowDoc['tamano'] ?? 0),
+                        'url' => $baseUrl . 'api_resultados_laboratorio.php?action=view_archivo&consulta_id=' . $consulta_id . '&archivo_id=' . $archivoId,
+                    ];
+                }
+            }
+            $documentos_externos = array_values($bucket);
+        }
+
+        echo json_encode([
+            'success' => true,
+            'resultados' => $resultados,
+            'documentos_externos' => $documentos_externos,
+        ]);
         break;
     case 'POST':
         // Guardar resultados de laboratorio
@@ -174,7 +392,6 @@ switch ($method) {
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
         $tipo_examen = $data['tipo_examen'] ?? null;
         $resultados = $data['resultados'] ?? null;
-        $firmado_por_usuario_id = isset($_SESSION['usuario']['id']) ? intval($_SESSION['usuario']['id']) : null;
         if ((!$orden_id && !$consulta_id) || !$resultados) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
@@ -262,11 +479,17 @@ switch ($method) {
             exit;
         }
         $ok = false;
-        $stmt_check = $conn->prepare('SELECT id FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
+        $existingSignerId = 0;
+        $stmt_check = $conn->prepare('SELECT id, firmado_por_usuario_id FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
         $stmt_check->bind_param('i', $orden['id']);
         $stmt_check->execute();
-        $stmt_check->store_result();
-        if ($stmt_check->num_rows > 0) {
+        $existingResult = $stmt_check->get_result()->fetch_assoc();
+        $hasExistingResult = is_array($existingResult) && isset($existingResult['id']);
+        $existingSignerId = intval($existingResult['firmado_por_usuario_id'] ?? 0);
+
+        $firmado_por_usuario_id = resolve_laboratorio_signer_user_id($conn, $_SESSION['usuario'] ?? null, $existingSignerId);
+
+        if ($hasExistingResult) {
             $stmt_update = $conn->prepare('UPDATE resultados_laboratorio SET tipo_examen = ?, resultados = ?, firmado_por_usuario_id = ?, consulta_id = ? WHERE orden_id = ?');
             $consultaOrden = !empty($orden['consulta_id']) ? intval($orden['consulta_id']) : null;
             $stmt_update->bind_param('ssiii', $tipo_examen, $json, $firmado_por_usuario_id, $consultaOrden, $orden['id']);
@@ -287,7 +510,13 @@ switch ($method) {
         $stmt_check->close();
 
         $progress = calculate_order_progress($conn, $resultados, $orden['examenes'] ?? []);
-        $nuevoEstadoOrden = ($progress['total'] > 0 && $progress['completos'] >= $progress['total']) ? 'completado' : 'pendiente';
+        // Compatibilidad: algunas ordenes legacy no tienen mapeo usable de examenes,
+        // pero si se guardaron resultados significativos no debe quedarse en pendiente.
+        if ($progress['total'] <= 0 && $hasMeaningfulResults) {
+            $nuevoEstadoOrden = 'completado';
+        } else {
+            $nuevoEstadoOrden = ($progress['total'] > 0 && $progress['completos'] >= $progress['total']) ? 'completado' : 'pendiente';
+        }
 
         // Cambiar estado según porcentaje real de llenado
         $stmt2 = $conn->prepare('UPDATE ordenes_laboratorio SET estado = ? WHERE id = ?');

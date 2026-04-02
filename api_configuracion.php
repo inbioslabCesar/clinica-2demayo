@@ -2,6 +2,12 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function normalize_logo_size_option($value) {
+    $allowed = ['sm', 'md', 'lg', 'xl'];
+    $normalized = strtolower(trim((string)($value ?? '')));
+    return in_array($normalized, $allowed, true) ? $normalized : null;
+}
+
 // Verificar que el usuario esté autenticado (usuario normal o médico)
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
     echo json_encode(['error' => 'No autorizado']);
@@ -33,6 +39,24 @@ if ($method !== 'GET') {
 }
 
 try {
+    // Auto-create columns if missing
+    $autoColumns = [
+        'celular' => "ALTER TABLE configuracion_clinica ADD COLUMN celular VARCHAR(30) DEFAULT NULL",
+        'google_maps_embed' => "ALTER TABLE configuracion_clinica ADD COLUMN google_maps_embed TEXT DEFAULT NULL",
+        'slogan' => "ALTER TABLE configuracion_clinica ADD COLUMN slogan VARCHAR(255) DEFAULT NULL",
+        'slogan_color' => "ALTER TABLE configuracion_clinica ADD COLUMN slogan_color VARCHAR(20) DEFAULT NULL",
+        'nombre_color' => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_color VARCHAR(20) DEFAULT NULL",
+        'nombre_font_size' => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_font_size VARCHAR(10) DEFAULT NULL",
+        'logo_size_sistema' => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_sistema VARCHAR(10) DEFAULT NULL",
+        'logo_size_publico' => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_publico VARCHAR(10) DEFAULT NULL",
+    ];
+    foreach ($autoColumns as $col => $ddl) {
+        $chk = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
+        if ($chk->rowCount() === 0) {
+            $pdo->exec($ddl);
+        }
+    }
+
     switch ($method) {
         case 'GET':
             // Obtener configuración actual
@@ -42,10 +66,10 @@ try {
             if (!$configuracion) {
                 // Si no hay configuración, devolver valores por defecto
                 $configuracion = [
-                    'nombre_clinica' => 'Clínica 2 de Mayo',
-                    'direccion' => 'Av. Principal 123, Lima, Perú',
-                    'telefono' => '(01) 234-5678',
-                    'email' => 'info@clinica2demayo.com',
+                    'nombre_clinica' => 'Mi Clínica',
+                    'direccion' => '',
+                    'telefono' => '',
+                    'email' => '',
                     'horario_atencion' => 'Lunes a Viernes: 7:00 AM - 8:00 PM\nSábados: 7:00 AM - 2:00 PM',
                     'logo_url' => null,
                     'website' => null,
@@ -56,7 +80,15 @@ try {
                     'valores' => null,
                     'director_general' => null,
                     'jefe_enfermeria' => null,
-                    'contacto_emergencias' => null
+                    'contacto_emergencias' => null,
+                    'celular' => null,
+                    'google_maps_embed' => null,
+                    'slogan' => null,
+                    'slogan_color' => null,
+                    'nombre_color' => null,
+                    'nombre_font_size' => null,
+                    'logo_size_sistema' => null,
+                    'logo_size_publico' => null
                 ];
             }
             
@@ -84,6 +116,8 @@ try {
                     $logoUrlNormalizado = $logoRaw;
                 }
             }
+            $logoSizeSistema = normalize_logo_size_option($input['logo_size_sistema'] ?? null);
+            $logoSizePublico = normalize_logo_size_option($input['logo_size_publico'] ?? null);
             
             // Validar datos requeridos
             $required_fields = ['nombre_clinica', 'direccion', 'telefono', 'email'];
@@ -114,6 +148,10 @@ try {
                         horario_atencion = ?, logo_url = ?, website = ?, ruc = ?,
                         especialidades = ?, mision = ?, vision = ?, valores = ?,
                         director_general = ?, jefe_enfermeria = ?, contacto_emergencias = ?,
+                        celular = ?, google_maps_embed = ?,
+                        slogan = ?, slogan_color = ?,
+                        nombre_color = ?, nombre_font_size = ?,
+                        logo_size_sistema = ?, logo_size_publico = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = (SELECT id FROM (SELECT id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1) AS temp)
                 ");
@@ -133,7 +171,15 @@ try {
                     $input['valores'] ?? null,
                     $input['director_general'] ?? null,
                     $input['jefe_enfermeria'] ?? null,
-                    $input['contacto_emergencias'] ?? null
+                    $input['contacto_emergencias'] ?? null,
+                    $input['celular'] ?? null,
+                    $input['google_maps_embed'] ?? null,
+                    $input['slogan'] ?? null,
+                    $input['slogan_color'] ?? null,
+                    $input['nombre_color'] ?? null,
+                    $input['nombre_font_size'] ?? null,
+                    $logoSizeSistema,
+                    $logoSizePublico
                 ]);
                 
                 echo json_encode([
@@ -145,8 +191,10 @@ try {
                 $stmt = $pdo->prepare("
                     INSERT INTO configuracion_clinica 
                     (nombre_clinica, direccion, telefono, email, horario_atencion, logo_url, website, ruc,
-                     especialidades, mision, vision, valores, director_general, jefe_enfermeria, contacto_emergencias)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     especialidades, mision, vision, valores, director_general, jefe_enfermeria, contacto_emergencias,
+                     celular, google_maps_embed, slogan, slogan_color, nombre_color, nombre_font_size,
+                     logo_size_sistema, logo_size_publico)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $stmt->execute([
@@ -164,7 +212,15 @@ try {
                     $input['valores'] ?? null,
                     $input['director_general'] ?? null,
                     $input['jefe_enfermeria'] ?? null,
-                    $input['contacto_emergencias'] ?? null
+                    $input['contacto_emergencias'] ?? null,
+                    $input['celular'] ?? null,
+                    $input['google_maps_embed'] ?? null,
+                    $input['slogan'] ?? null,
+                    $input['slogan_color'] ?? null,
+                    $input['nombre_color'] ?? null,
+                    $input['nombre_font_size'] ?? null,
+                    $logoSizeSistema,
+                    $logoSizePublico
                 ]);
                 
                 echo json_encode([

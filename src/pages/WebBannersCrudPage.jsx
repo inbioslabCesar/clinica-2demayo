@@ -82,8 +82,8 @@ export default function WebBannersCrudPage() {
 
     for (const file of imagenFiles) {
       const name = (file?.name || '').toLowerCase()
-      if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg'))) {
-        throw new Error('La imagen debe ser PNG o JPG')
+      if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp'))) {
+        throw new Error('La imagen debe ser PNG, JPG o WEBP')
       }
     }
 
@@ -111,8 +111,8 @@ export default function WebBannersCrudPage() {
     if (!imagenFijaFile) return ''
 
     const name = (imagenFijaFile?.name || '').toLowerCase()
-    if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg'))) {
-      throw new Error('La imagen fija debe ser PNG o JPG')
+    if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp'))) {
+      throw new Error('La imagen fija debe ser PNG, JPG o WEBP')
     }
 
     const fd = new FormData()
@@ -320,11 +320,11 @@ export default function WebBannersCrudPage() {
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-semibold">Subir imagen (PNG o JPG)</label>
+            <label className="block text-sm font-semibold">Subir imagen (PNG, JPG o WEBP)</label>
             <input
               className="w-full"
               type="file"
-              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
               multiple={!editingId}
               onChange={(e) => {
                 const files = Array.from(e.target.files || [])
@@ -344,7 +344,7 @@ export default function WebBannersCrudPage() {
             <input
               className="w-full"
               type="file"
-              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
               onChange={(e) => {
                 const file = (e.target.files && e.target.files[0]) || null
                 setImagenFijaFile(file)

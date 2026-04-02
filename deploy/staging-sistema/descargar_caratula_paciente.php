@@ -1,16 +1,39 @@
-<?php
+﻿<?php
 require_once __DIR__ . '/init_api.php';
 require_once 'config_pdf.php';
 
-// Log de inicio
-
-// Función helper para escapar HTML
 function h($str) {
     return htmlspecialchars($str ?? '', ENT_QUOTES, 'UTF-8');
 }
 
+function cleanOutputBuffers() {
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+}
+
+function findCaratulaBackgroundPath() {
+    $candidates = [
+        __DIR__ . '/public/cartula-hc.png',
+        __DIR__ . '/cartula-hc.png',
+    ];
+
+    foreach ($candidates as $file) {
+        if (is_file($file)) {
+            return $file;
+        }
+    }
+
+    return null;
+}
+
+function printable($value, $fallback = '-') {
+    $v = trim((string)($value ?? ''));
+    return $v === '' ? $fallback : $v;
+}
+
 if (!isset($_GET['paciente_id'])) {
-    ob_end_clean();
+    cleanOutputBuffers();
     header('Content-Type: application/json');
     echo json_encode(['success' => false, 'error' => 'ID de paciente requerido']);
     exit;
@@ -18,243 +41,222 @@ if (!isset($_GET['paciente_id'])) {
 
 $paciente_id = intval($_GET['paciente_id']);
 
-// Obtener datos del paciente
 $sql = "SELECT *, DATE(creado_en) as fecha_hc FROM pacientes WHERE id = ? LIMIT 1";
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $paciente_id);
+$stmt->bind_param('i', $paciente_id);
 $stmt->execute();
 $result = $stmt->get_result();
 $paciente = $result->fetch_assoc();
 $stmt->close();
 
 if (!$paciente) {
-    ob_end_clean();
+    cleanOutputBuffers();
     header('Content-Type: application/json');
     echo json_encode(['success' => false, 'error' => 'Paciente no encontrado']);
     exit;
 }
 
+$backgroundImageFile = findCaratulaBackgroundPath();
 
-// Obtener configuración de la clínica
-$config_sql = "SELECT * FROM configuracion_clinica LIMIT 1";
-$config_result = $conn->query($config_sql);
-$clinica_config = $config_result ? $config_result->fetch_assoc() : [];
+$hc = h(printable($paciente['historia_clinica'] ?? ('HC' . str_pad((string)$paciente['id'], 4, '0', STR_PAD_LEFT))));
+$fechaHc = h(printable($paciente['fecha_hc'] ?? ''));
 
-// Generar HTML de la carátula
-// Detectar entorno y ruta de imagen
-$imgPath = (strpos($_SERVER['HTTP_HOST'] ?? '', 'localhost') !== false)
-    ? 'public/cartula-hc.png'
-    : '/cartula-hc.png';
+$apellido = h(printable($paciente['apellido'] ?? ''));
+$nombre = h(printable($paciente['nombre'] ?? ''));
+$dni = h(printable($paciente['dni'] ?? ''));
+$fechaNacimiento = h(printable($paciente['fecha_nacimiento'] ?? ''));
+$edad = h(printable($paciente['edad'] ?? ''));
+$sexo = h(printable($paciente['sexo'] ?? ''));
+$telefono = h(printable($paciente['telefono'] ?? ''));
+$direccion = h(printable($paciente['direccion'] ?? ''));
+$procedencia = h(printable($paciente['procedencia'] ?? 'No especificado'));
 
-$html = '<!DOCTYPE html>
+$htmlPdf = <<<HTML
+<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Carátula - ' . h($paciente['apellido'] . ', ' . $paciente['nombre']) . '</title>
+<title>Caratula - {$apellido}, {$nombre}</title>
 <style>
-@page { margin: 8mm; size: A4; }
+@page { margin: 0; size: A4; }
 body {
     font-family: Arial, sans-serif;
     margin: 0;
     padding: 0;
-    min-height: 100vh;
-    position: relative;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    /* Imagen de fondo para la carátula */
-    background: url("' . $imgPath . '") no-repeat center center fixed;
-    background-size: cover;
-}
-
-/* Fondo blanco centrado y con padding */
-.caratula-container {
-        width: 75%;
-        max-width: 620px;
-        margin: 150px auto 40px auto;
-        background: transparent;
-    padding: 40px 40px 40px 40px;
-    border-radius: 18px;
-    border: none;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-    position: relative;
-    page-break-inside: avoid;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    min-height: 600px;
-}
-
-    <!-- Sin logo ni título, ya que la carátula de fondo los incluye -->
-    display: flex;
-    margin-bottom: 15px;
-    align-items: center;
-}
-
-.info-label {
-    font-weight: bold;
-    color: #5b21b6;
-    width: 140px;
-    flex-shrink: 0;
-    font-size: 19px;
-    font-family: Arial, sans-serif;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.info-value {
     color: #111111;
-    flex: 1;
-    padding: 10px 14px;
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border-radius: 5px;
-    border: 2px solid #e2e8f0;
-    font-size: 17px;
+    font-size: 13px;
+}
+.sheet {
+    width: 172mm;
+    margin: 60mm auto 0 auto;
+}
+.top-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+}
+.top-table td {
+    border: 1px solid #c4b5fd;
+    background: #ede9fe;
+    color: #5b21b6;
+    font-size: 15px;
+    font-weight: bold;
+    padding: 8px 10px;
+}
+.top-table td:first-child {
+    width: 62%;
+}
+.top-table td:last-child {
+    width: 38%;
+    color: #2563eb;
+}
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.label {
+    width: 45mm;
+    color: #5b21b6;
+    font-size: 15px;
+    font-weight: bold;
+    text-transform: uppercase;
+    vertical-align: middle;
+    padding: 8px 8px 8px 0;
+}
+.value {
+    background: transparent;
+    color: #111111;
+    font-size: 13px;
     font-weight: 600;
-    font-family: Arial, sans-serif;
-    box-shadow: 0 2px 4px rgba(139, 92, 246, 0.1);
+    padding: 8px 10px;
+    vertical-align: middle;
 }
 </style>
 </head>
 <body>
-<div class="caratula-container">
+<div class="sheet">
+  <table class="top-table">
+    <tr>
+      <td>HC N°: {$hc}</td>
+      <td>Fecha: {$fechaHc}</td>
+    </tr>
+  </table>
 
-    <div class="hc-number" style="
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: linear-gradient(90deg, #e0e7ff 0%, #f3f0ff 100%);
-        border-radius: 10px;
-        border: 2px solid #8b5cf6;
-        box-shadow: 0 2px 8px rgba(139,92,246,0.08);
-        padding: 16px 28px;
-        font-size: 20px;
-        font-weight: bold;
-        color: #5b21b6;
-        margin-bottom: 18px;
-        letter-spacing: 1px;
-    ">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="background: #ede9fe; padding: 6px 16px; border-radius: 6px; color: #5b21b6; font-size: 19px; font-weight: bold; border: 1px solid #c4b5fd;">HC N°: ' . h($paciente['historia_clinica'] ?? 'HC' . str_pad($paciente['id'], 4, '0', STR_PAD_LEFT)) . '</span>
-        </div>
-        <div style="background: #ede9fe; padding: 6px 16px; border-radius: 6px; color: #2563eb; font-size: 19px; font-weight: bold; border: 1px solid #c4b5fd;">Fecha: ' . h($paciente['fecha_hc']) . '</div>
-    </div>
-
-    <div class="patient-info">
-        <div class="info-row">
-            <div class="info-label">Apellidos:</div>
-            <div class="info-value">' . h($paciente['apellido']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Nombres:</div>
-            <div class="info-value">' . h($paciente['nombre']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">DNI:</div>
-            <div class="info-value">' . h($paciente['dni']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Fecha de Nac.:</div>
-            <div class="info-value">' . h($paciente['fecha_nacimiento']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Edad:</div>
-            <div class="info-value">' . h($paciente['edad']) . ' años</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Sexo:</div>
-            <div class="info-value">' . h($paciente['sexo']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Teléfono:</div>
-            <div class="info-value">' . h($paciente['telefono']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Dirección:</div>
-            <div class="info-value">' . h($paciente['direccion']) . '</div>
-        </div>
-        
-        <div class="info-row">
-            <div class="info-label">Procedencia:</div>
-            <div class="info-value">' . h($paciente['procedencia'] ?? 'No especificado') . '</div>
-        </div>
-    </div>
+  <table class="data-table">
+    <tr><td class="label">Apellidos:</td><td class="value">{$apellido}</td></tr>
+    <tr><td class="label">Nombres:</td><td class="value">{$nombre}</td></tr>
+    <tr><td class="label">DNI:</td><td class="value">{$dni}</td></tr>
+    <tr><td class="label">Fecha de Nac.:</td><td class="value">{$fechaNacimiento}</td></tr>
+    <tr><td class="label">Edad:</td><td class="value">{$edad} años</td></tr>
+    <tr><td class="label">Sexo:</td><td class="value">{$sexo}</td></tr>
+    <tr><td class="label">Telefono:</td><td class="value">{$telefono}</td></tr>
+    <tr><td class="label">Direccion:</td><td class="value">{$direccion}</td></tr>
+    <tr><td class="label">Procedencia:</td><td class="value">{$procedencia}</td></tr>
+  </table>
 </div>
 </body>
-</html>';
+</html>
+HTML;
 
-// Generar PDF
+$htmlOverlayMpdf = <<<HTML
+<table style="width:100%; table-layout:fixed; border-collapse:collapse; margin-bottom:26px;">
+    <tr>
+    <td style="width:62%; border:1px solid #c4b5fd; background:#ede9fe; color:#5b21b6; font-size:18px; font-weight:bold; padding:12px 10px;">HC N°: {$hc}</td>
+    <td style="width:38%; border:1px solid #c4b5fd; background:#ede9fe; color:#2563eb; font-size:18px; font-weight:bold; padding:12px 10px;">Fecha: {$fechaHc}</td>
+    </tr>
+</table>
+<table style="width:100%; table-layout:fixed; border-collapse:collapse;">
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Apellidos:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$apellido}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Nombres:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$nombre}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">DNI:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$dni}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Fecha de Nac.:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$fechaNacimiento}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Edad:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$edad} años</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Sexo:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$sexo}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Telefono:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$telefono}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Direccion:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$direccion}</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Procedencia:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$procedencia}</td></tr>
+</table>
+HTML;
+
 try {
-    
     if (!file_exists(__DIR__ . '/vendor/autoload.php')) {
-        
-        // Limpiar buffer y devolver HTML como fallback
-        ob_end_clean();
+        cleanOutputBuffers();
         header('Content-Type: text/html; charset=utf-8');
-        header('Content-Disposition: attachment; filename="caratula_paciente_' . $paciente['dni'] . '.html"');
-        echo $html;
-        exit;
-    }
-    
-    require_once 'vendor/autoload.php';
-
-    // Verificar que dompdf esté disponible
-    if (!class_exists('\Dompdf\Dompdf')) {
-        
-        // Fallback a HTML
-        ob_end_clean();
-        header('Content-Type: text/html; charset=utf-8');
-        header('Content-Disposition: attachment; filename="caratula_paciente_' . $paciente['dni'] . '.html"');
-        echo $html;
+        header('Content-Disposition: attachment; filename="caratula_paciente_' . $dni . '.html"');
+        echo $htmlPdf;
         exit;
     }
 
-    $options = new \Dompdf\Options();
-    $options->set('isRemoteEnabled', true);
-    $options->set('isHtml5ParserEnabled', true);
-    $options->set('defaultFont', 'Arial');
-    $options->set('isPhpEnabled', false);
-    $options->set('chroot', realpath(__DIR__));
-    
-    
-    $dompdf = new \Dompdf\Dompdf($options);
-    $dompdf->loadHtml($html);
-    $dompdf->setPaper('A4', 'portrait');
-    
-    $dompdf->render();
-    
-    // Limpiar cualquier output buffer antes de enviar PDF
-    ob_end_clean();
-    
-    // Configurar headers para PDF
+    require_once __DIR__ . '/vendor/autoload.php';
+
+    $pdfOutput = null;
+
+    if (class_exists('\\Mpdf\\Mpdf')) {
+        $mpdf = new \Mpdf\Mpdf([
+            'format' => 'A4',
+            'orientation' => 'P',
+            'margin_left' => 0,
+            'margin_right' => 0,
+            'margin_top' => 0,
+            'margin_bottom' => 0,
+            'tempDir' => sys_get_temp_dir(),
+        ]);
+
+        $mpdf->SetAutoPageBreak(false, 0);
+        $mpdf->AddPage();
+
+        if (!empty($backgroundImageFile) && is_file($backgroundImageFile)) {
+            $mpdf->Image($backgroundImageFile, 0, 0, 210, 297, 'png');
+        }
+
+        $overlayX = 24;
+        $overlayY = 68;
+        $overlayW = 156;
+        $overlayH = 210;
+
+        if (method_exists($mpdf, 'WriteFixedPosHTML')) {
+            $mpdf->WriteFixedPosHTML($htmlOverlayMpdf, $overlayX, $overlayY, $overlayW, $overlayH, 'auto');
+        } else {
+            $mpdf->SetXY($overlayX, $overlayY);
+            $mpdf->WriteHTML($htmlOverlayMpdf);
+        }
+        $pdfOutput = $mpdf->Output('', 'S');
+    } elseif (class_exists('\\Dompdf\\Dompdf')) {
+        $options = new \Dompdf\Options();
+        $options->set('isRemoteEnabled', true);
+        $options->set('isHtml5ParserEnabled', true);
+        $options->set('defaultFont', 'Arial');
+
+        $dompdf = new \Dompdf\Dompdf($options);
+        $dompdf->loadHtml($htmlPdf);
+        $dompdf->setPaper('A4', 'portrait');
+        $dompdf->render();
+        $pdfOutput = $dompdf->output();
+    }
+
+    if ($pdfOutput === null) {
+        cleanOutputBuffers();
+        header('Content-Type: text/html; charset=utf-8');
+        header('Content-Disposition: attachment; filename="caratula_paciente_' . $dni . '.html"');
+        echo $htmlPdf;
+        exit;
+    }
+
+    cleanOutputBuffers();
     header('Content-Type: application/pdf');
-    header('Content-Length: ' . strlen($dompdf->output()));
-    header('Content-Disposition: attachment; filename="caratula_paciente_' . $paciente['dni'] . '.pdf"');
-    header('Cache-Control: private, max-age=0, must-revalidate');
-    header('Pragma: public');
-    
-    
-    // Enviar el contenido del PDF
-    echo $dompdf->output();
-    
+    header('Content-Length: ' . strlen($pdfOutput));
+    header('Content-Disposition: attachment; filename="caratula_paciente_' . $dni . '.pdf"');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Cache-Control: post-check=0, pre-check=0', false);
+    header('Pragma: no-cache');
+    header('Expires: 0');
+    echo $pdfOutput;
 } catch (Exception $e) {
-    
-    // Limpiar buffer y mostrar error
-    ob_end_clean();
-    
-    // En desarrollo, mostrar más detalles del error
-    $isLocal = in_array($_SERVER['HTTP_HOST'] ?? '', ['localhost', '127.0.0.1']) || 
-               strpos($_SERVER['HTTP_HOST'] ?? '', 'localhost:') === 0;
-    
+    cleanOutputBuffers();
+
+    $isLocal = in_array($_SERVER['HTTP_HOST'] ?? '', ['localhost', '127.0.0.1']) ||
+        strpos($_SERVER['HTTP_HOST'] ?? '', 'localhost:') === 0;
+
     if ($isLocal) {
         header('Content-Type: application/json');
         echo json_encode([
@@ -264,13 +266,12 @@ try {
             'file' => $e->getFile(),
             'line' => $e->getLine(),
             'autoload_exists' => file_exists(__DIR__ . '/vendor/autoload.php'),
-            'current_dir' => __DIR__
+            'current_dir' => __DIR__,
         ]);
     } else {
-        // En producción, ofrecer fallback HTML
         header('Content-Type: text/html; charset=utf-8');
-        header('Content-Disposition: attachment; filename="caratula_paciente_' . ($paciente['dni'] ?? 'unknown') . '.html"');
-        echo $html ?? '<h1>Error al generar carátula</h1><p>No se pudo generar el documento PDF.</p>';
+        header('Content-Disposition: attachment; filename="caratula_paciente_' . $dni . '.html"');
+        echo $htmlPdf;
     }
 }
 ?>

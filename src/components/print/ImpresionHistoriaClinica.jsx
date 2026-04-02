@@ -1,3 +1,5 @@
+import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
+
 const ImpresionHistoriaClinica = ({ 
   paciente, 
   triaje, 
@@ -10,19 +12,17 @@ const ImpresionHistoriaClinica = ({
   configuracionClinica 
 }) => {
 
-  // Función para obtener la ruta del logo según el entorno
-  const getLogoPath = () => {
-    // Intentar detectar si estamos en producción por el hostname o protocol
+  // Resolver logo con base URL del servidor PHP
+  const resolveLogoUrl = (rawValue) => {
+    const raw = String(rawValue || '').trim();
+    if (!raw) return '/2demayo.svg';
+    if (/^(https?:\/\/|data:|blob:)/i.test(raw)) return raw;
     const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-    
-    if (isProduction) {
-      // En producción (Hostinger), usar ruta absoluta desde la raíz del dominio
-      return `${window.location.protocol}//${window.location.host}/2demayo.svg`;
-    } else {
-      // En desarrollo local, usar la ruta relativa a public
-      return '/2demayo.svg';
-    }
+    const base = isProduction ? (window.location.origin.replace(/\/+$/, '') + '/') : 'http://localhost/clinica-2demayo/';
+    return `${base}${raw.replace(/^\/+/, '')}`;
   };
+
+  const logoSrc = resolveLogoUrl(configuracionClinica?.logo_url);
   const formatearFecha = (fecha) => {
     if (!fecha) return '';
     return new Date(fecha).toLocaleDateString('es-ES', {
@@ -135,22 +135,27 @@ const ImpresionHistoriaClinica = ({
         }
       `}</style>
       {/* Encabezado de la clínica */}
-      <div className="text-center border-b-2 border-blue-600 pb-4 mb-6">
+      <div className="text-center pb-4 mb-6" style={{ borderBottom: `2px solid ${configuracionClinica?.nombre_color || '#2563eb'}` }}>
         <div className="flex items-center justify-center gap-4 mb-2">
           <img 
-            src={getLogoPath()} 
-            alt="Logo Clínica 2 de Mayo" 
+            src={logoSrc} 
+            alt={configuracionClinica?.nombre_clinica || 'Logo'} 
             className="h-16 w-auto"
           />
           <div>
-            <h1 className="text-2xl font-bold text-blue-800">
-              {configuracionClinica?.nombre_clinica || 'CLÍNICA 2 DE MAYO'}
+            <h1 className="text-2xl font-bold" style={{ color: configuracionClinica?.nombre_color || '#1e40af' }}>
+              {configuracionClinica?.nombre_clinica || 'MI CLÍNICA'}
             </h1>
+            {configuracionClinica?.slogan && (
+              <p className="text-sm font-medium" style={{ color: configuracionClinica.slogan_color || '#4b5563' }}>
+                {configuracionClinica.slogan}
+              </p>
+            )}
             <p className="text-sm text-gray-600">
               {configuracionClinica?.direccion || 'Dirección de la clínica'}
             </p>
             <p className="text-sm text-gray-600">
-              Tel: {configuracionClinica?.telefono || '123-456-789'} | Email: {configuracionClinica?.email || 'contacto@clinica2demayo.com'}
+              Tel: {configuracionClinica?.telefono || '123-456-789'} | Email: {configuracionClinica?.email || 'contacto@clinica.com'}
             </p>
           </div>
         </div>
@@ -187,8 +192,8 @@ const ImpresionHistoriaClinica = ({
             🩺 INFORMACIÓN MÉDICA
           </h3>
           <div className="space-y-1 text-sm">
-            <p><strong>Médico:</strong> Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}</p>
-            <p><strong>CMP:</strong> {medicoInfo?.cmp || 'N/A'}</p>
+            <p><strong>Profesional:</strong> {formatProfesionalName(medicoInfo || {})}</p>
+            <p><strong>Colegiatura:</strong> {formatColegiatura(medicoInfo || {})}</p>
             {medicoInfo?.rne && <p><strong>RNE:</strong> {medicoInfo.rne}</p>}
             <p><strong>Especialidad:</strong> {medicoInfo?.especialidad}</p>
             <p><strong>Fecha Consulta:</strong> {formatearFecha(paciente?.fecha_consulta)}</p>
@@ -452,15 +457,20 @@ const ImpresionHistoriaClinica = ({
                             )}
                           </div>
                           <div className="text-xs">
+                            {(() => {
+                              const estadoOrden = (orden.estado_visual || orden.estado || 'pendiente').toLowerCase();
+                              return (
                             <span className={`px-2 py-1 rounded-full text-xs ${
-                              orden.estado === 'pendiente' 
+                              estadoOrden === 'pendiente' 
                                 ? 'bg-yellow-100 text-yellow-800'
-                                : orden.estado === 'completado'
+                                : estadoOrden === 'completado'
                                 ? 'bg-green-100 text-green-800'
                                 : 'bg-gray-100 text-gray-800'
                             }`}>
-                              {orden.estado || 'Pendiente'}
+                              {orden.estado_visual || orden.estado || 'pendiente'}
                             </span>
+                              );
+                            })()}
                           </div>
                         </div>
                       ))}
@@ -568,10 +578,10 @@ const ImpresionHistoriaClinica = ({
             
             <div className="border-t-2 border-gray-400 pt-2 min-w-[200px]">
               <p className="font-semibold text-sm">
-                Dr(a). {medicoInfo?.nombre} {medicoInfo?.apellido}
+                {formatProfesionalName(medicoInfo || {})}
               </p>
               <p className="text-xs text-gray-600">{medicoInfo?.especialidad}</p>
-              <p className="text-xs text-gray-600">CMP: {medicoInfo?.cmp || 'N/A'}</p>
+              <p className="text-xs text-gray-600">{formatColegiatura(medicoInfo || {})}</p>
               {medicoInfo?.rne && (
                 <p className="text-xs text-gray-600">RNE: {medicoInfo.rne}</p>
               )}

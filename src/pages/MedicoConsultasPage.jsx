@@ -1,5 +1,6 @@
 
 import MedicoConsultas from "../components/medico/MedicoConsultas";
+import { formatProfesionalName } from "../utils/profesionalDisplay";
 
 function MedicoConsultasPage({ usuario }) {
   const medicoId = usuario?.id;
@@ -23,9 +24,19 @@ function MedicoConsultasPage({ usuario }) {
   }
   
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div
+      className="min-h-screen"
+      style={{
+        background: "linear-gradient(135deg, var(--color-primary-light) 0%, #eef2ff 55%, #f8fafc 100%)",
+      }}
+    >
       {/* Header con gradiente médico profesional */}
-      <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 shadow-2xl">
+      <div
+        className="shadow-2xl"
+        style={{
+          background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)",
+        }}
+      >
         <div className="container mx-auto px-6 py-8">
           <div className="text-center">
             <div className="inline-flex items-center gap-3 bg-white/10 rounded-full px-6 py-3 backdrop-blur-sm border border-white/20 mb-4">
@@ -36,11 +47,11 @@ function MedicoConsultasPage({ usuario }) {
               </div>
               <div className="text-left">
                 <h1 className="text-2xl font-bold text-white">Panel Médico</h1>
-                <p className="text-blue-100 text-sm">Dr(a). {usuario?.nombre} {usuario?.apellido || ''}</p>
+                <p className="text-white/80 text-sm">{formatProfesionalName(usuario || {})}</p>
               </div>
             </div>
             <h2 className="text-3xl font-bold text-white mb-2">📋 Mis Consultas Programadas</h2>
-            <p className="text-blue-100 max-w-2xl mx-auto">
+            <p className="text-white/80 max-w-2xl mx-auto">
               Gestiona tus citas médicas, revisa el historial de pacientes y mantén un seguimiento completo de tus consultas
             </p>
           </div>

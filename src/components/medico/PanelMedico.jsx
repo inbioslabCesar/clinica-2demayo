@@ -3,14 +3,52 @@ import DisponibilidadFormMedico from "./DisponibilidadFormMedico";
 import useDisponibilidadMedico from "../../hooks/useDisponibilidadMedico";
 import Spinner from "../comunes/Spinner";
 import { useEffect, useState, useCallback } from "react";
+import { useLocation, useParams } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
 import Swal from 'sweetalert2';
+import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
 
 function PanelMedico() {
-    const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
-    const medicoId = medicoSession?.id;
-    const { deleteDisponibilidad, saveDisponibilidad } = useDisponibilidadMedico(medicoId);
+  const { medicoId: medicoIdParam } = useParams();
+  const location = useLocation();
+  const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
+  const medicoDesdeNavegacion = location.state?.medico || null;
+  const medicoId = Number(medicoIdParam) || medicoSession?.id;
+  const [medicoObjetivo, setMedicoObjetivo] = useState(() => {
+    if (medicoDesdeNavegacion && Number(medicoDesdeNavegacion.id) === Number(medicoId)) {
+      return medicoDesdeNavegacion;
+    }
+    return Number(medicoIdParam) ? null : medicoSession;
+  });
+  const { deleteDisponibilidad, saveDisponibilidad } = useDisponibilidadMedico(medicoId);
+
+  useEffect(() => {
+    if (!medicoId || !Number(medicoIdParam)) return;
+    if (medicoDesdeNavegacion && Number(medicoDesdeNavegacion.id) === Number(medicoId)) {
+      setMedicoObjetivo(medicoDesdeNavegacion);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchMedicoObjetivo = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}api_medicos.php`, { credentials: "include" });
+        const data = await res.json();
+        const medico = (data.medicos || []).find((m) => Number(m.id) === Number(medicoId));
+        if (!cancelled && medico) {
+          setMedicoObjetivo(medico);
+        }
+      } catch {
+        // Si falla, se mantiene visualización por id.
+      }
+    };
+
+    fetchMedicoObjetivo();
+    return () => {
+      cancelled = true;
+    };
+  }, [medicoId, medicoIdParam, medicoDesdeNavegacion]);
 
   // Eliminar disponibilidad y refrescar en tiempo real
   const handleDeleteDisponibilidad = async (id) => {
@@ -120,8 +158,25 @@ function PanelMedico() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto mt-6">
-      <h1 className="text-2xl font-bold mb-8 text-center col-span-2">Panel del Médico</h1>
+    <div
+      className="max-w-6xl mx-auto mt-6 p-4 rounded-2xl"
+      style={{
+        background: "linear-gradient(135deg, var(--color-primary-light) 0%, #ffffff 70%)",
+      }}
+    >
+      <div
+        className="mb-6 rounded-2xl p-5 text-white shadow-lg text-center col-span-2"
+        style={{
+          background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
+        }}
+      >
+        <h1 className="text-2xl font-bold">{Number(medicoIdParam) ? 'Disponibilidad del medico' : 'Panel del Medico'}</h1>
+        <p className="text-sm text-white/80 mt-1">
+          {medicoObjetivo
+            ? `${formatProfesionalName(medicoObjetivo)} · ID ${medicoObjetivo.id}`.trim()
+            : `Medico ID ${medicoId}`}
+        </p>
+      </div>
       <div className="flex flex-col md:flex-row gap-8">
   <div className="md:w-1/2 w-full">
     <DisponibilidadFormMedico onSave={handleSaveDisponibilidad} bloquesGuardados={bloquesGuardados} />

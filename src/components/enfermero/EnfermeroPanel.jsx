@@ -31,26 +31,36 @@ function EnfermeroPanel() {
     }
   ];
 
-  const getColorClasses = (color, isActive) => {
-    const colors = {
-      emerald: isActive 
-        ? "bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-lg border-emerald-300"
-        : "bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300",
-      blue: isActive
-        ? "bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg border-blue-300"
-        : "bg-white text-blue-700 border-blue-200 hover:bg-blue-50 hover:border-blue-300",
-      purple: isActive
-        ? "bg-gradient-to-r from-purple-500 to-indigo-600 text-white shadow-lg border-purple-300"
-        : "bg-white text-purple-700 border-purple-200 hover:bg-purple-50 hover:border-purple-300"
+  const getTabStyle = (isActive) => {
+    if (isActive) {
+      return {
+        background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
+        color: "#ffffff",
+        borderColor: "var(--color-primary)",
+      };
+    }
+    return {
+      background: "#ffffff",
+      color: "var(--color-secondary)",
+      borderColor: "var(--color-primary-light)",
     };
-    return colors[color];
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-cyan-50 to-blue-50 p-4 sm:p-6 lg:p-8">
+    <div
+      className="min-h-screen p-4 sm:p-6 lg:p-8"
+      style={{
+        background: "linear-gradient(135deg, var(--color-primary-light) 0%, #f8fafc 100%)",
+      }}
+    >
       {/* Header + Navegación compacta */}
       <div className="mb-6">
-        <div className="bg-gradient-to-r from-teal-600 via-cyan-600 to-blue-600 rounded-2xl p-6 sm:p-8 text-white shadow-2xl relative overflow-hidden">
+        <div
+          className="rounded-2xl p-6 sm:p-8 text-white shadow-2xl relative overflow-hidden"
+          style={{
+            background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)",
+          }}
+        >
           {/* Efectos de fondo */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-16 translate-x-16"></div>
           <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-12 -translate-x-12"></div>
@@ -74,14 +84,19 @@ function EnfermeroPanel() {
               {tabs.map((tabItem) => (
                 <button
                   key={tabItem.key}
-                  className={`group relative p-4 rounded-xl border-2 font-semibold transition-all duration-300 transform hover:scale-[1.02] ${getColorClasses(tabItem.color, tab === tabItem.key)}`}
+                  className="group relative p-4 rounded-xl border-2 font-semibold transition-all duration-300 transform hover:scale-[1.02]"
+                  style={getTabStyle(tab === tabItem.key)}
                   onClick={() => setTab(tabItem.key)}
                 >
                   <div className="flex flex-col items-center gap-2">
-                    <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${tab === tabItem.key ? 'bg-white/20' : `bg-${tabItem.color}-100`}`}>
+                    <div
+                      className="flex items-center justify-center w-10 h-10 rounded-lg"
+                      style={tab === tabItem.key ? { background: "rgba(255,255,255,0.2)" } : { background: "var(--color-primary-light)" }}
+                    >
                       <Icon 
                         iconName={tabItem.icon} 
-                        className={`text-xl ${tab === tabItem.key ? 'text-white' : `text-${tabItem.color}-600`}`} 
+                        className="text-xl"
+                        style={tab === tabItem.key ? { color: "#ffffff" } : { color: "var(--color-secondary)" }}
                       />
                     </div>
                     <div className="text-center">
@@ -108,14 +123,17 @@ function EnfermeroPanel() {
       <div className="max-w-7xl mx-auto">
         {tab === "triage" && (
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-            <div className="bg-gradient-to-r from-emerald-500 to-green-600 p-6 text-white">
+            <div
+              className="p-6 text-white"
+              style={{ background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)" }}
+            >
               <div className="flex items-center gap-4">
                 <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-xl backdrop-blur-sm">
                   <Icon iconName="Health" className="text-2xl text-white" />
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">Control de Triaje</h2>
-                  <p className="text-emerald-100">Evaluación y clasificación de pacientes</p>
+                  <p className="text-white/80">Evaluación y clasificación de pacientes</p>
                 </div>
               </div>
             </div>
@@ -127,14 +145,17 @@ function EnfermeroPanel() {
         
         {tab === "tratamientos" && (
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-            <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-6 text-white">
+            <div
+              className="p-6 text-white"
+              style={{ background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)" }}
+            >
               <div className="flex items-center gap-4">
                 <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-xl backdrop-blur-sm">
                   <Icon iconName="Health" className="text-2xl text-white" />
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">Gestión de Tratamientos</h2>
-                  <p className="text-blue-100">Control y seguimiento de tratamientos</p>
+                  <p className="text-white/80">Control y seguimiento de tratamientos</p>
                 </div>
               </div>
             </div>
@@ -152,14 +173,17 @@ function EnfermeroPanel() {
         
         {tab === "hospitalizacion" && (
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-            <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-6 text-white">
+            <div
+              className="p-6 text-white"
+              style={{ background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)" }}
+            >
               <div className="flex items-center gap-4">
                 <div className="flex items-center justify-center w-12 h-12 bg-white/20 rounded-xl backdrop-blur-sm">
                   <Icon iconName="Hospital" className="text-2xl text-white" />
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">Control de Hospitalización</h2>
-                  <p className="text-purple-100">Gestión de pacientes hospitalizados</p>
+                  <p className="text-white/80">Gestión de pacientes hospitalizados</p>
                 </div>
               </div>
             </div>

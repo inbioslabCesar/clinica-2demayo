@@ -1,10 +1,39 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import useDisponibilidadMedico from "../../hooks/useDisponibilidadMedico";
 import { BASE_URL } from "../../config/config";
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 
-function DisponibilidadMedicos() {
+function normalizeHHMM(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const [hh = '00', mm = '00'] = raw.split(':');
+  return `${hh.padStart(2, '0')}:${mm.padStart(2, '0')}`;
+}
+
+function formatDateLimaYMD(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === 'year')?.value || '0000';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeDateYMD(value) {
+  return String(value || '').trim().slice(0, 10);
+}
+
+function isConsultaActiva(estado) {
+  const e = String(estado || '').trim().toLowerCase();
+  return e !== 'cancelada' && e !== 'completada';
+}
+
+function DisponibilidadMedicos({ refreshKey = 0 }) {
   const [medicos, setMedicos] = useState([]);
   const [consultas, setConsultas] = useState([]);
   const [busqueda, setBusqueda] = useState("");
@@ -34,25 +63,29 @@ function DisponibilidadMedicos() {
   useEffect(() => {
     Promise.all([
       fetch(`${BASE_URL}api_medicos.php`).then(r => r.json()),
-      fetch(`${BASE_URL}api_consultas.php`).then(r => r.json())
+      fetch(`${BASE_URL}api_consultas.php`, { credentials: 'include' }).then(r => r.json())
     ]).then(([m, c]) => {
       setMedicos(m.medicos || []);
       setConsultas(c.consultas || []);
     });
-  }, []);
+  }, [refreshKey]);
 
   // Agrupar disponibilidad por fecha (YYYY-MM-DD)
-  const disponibilidadPorFecha = {};
-  disponibilidad.forEach(bloque => {
-    if (bloque.fecha) {
-      if (!disponibilidadPorFecha[bloque.fecha]) disponibilidadPorFecha[bloque.fecha] = [];
-      disponibilidadPorFecha[bloque.fecha].push(bloque);
-    }
-  });
+  const disponibilidadPorFecha = useMemo(() => {
+    const mapa = {};
+    disponibilidad.forEach(bloque => {
+      const fechaBloque = normalizeDateYMD(bloque.fecha);
+      if (fechaBloque) {
+        if (!mapa[fechaBloque]) mapa[fechaBloque] = [];
+        mapa[fechaBloque].push(bloque);
+      }
+    });
+    return mapa;
+  }, [disponibilidad]);
   function getBloquesParaFecha(date) {
-    const yyyyMMdd = date.toISOString().slice(0, 10);
+    const yyyyMMdd = formatDateLimaYMD(date);
     // Buscar bloques con fecha exacta para ese día
-    const bloquesFecha = disponibilidad.filter(b => b.fecha === yyyyMMdd);
+    const bloquesFecha = disponibilidad.filter(b => normalizeDateYMD(b.fecha) === yyyyMMdd);
     if (bloquesFecha.length > 0) {
       return bloquesFecha;
     }
@@ -158,13 +191,23 @@ function DisponibilidadMedicos() {
                       m += 30;
                       if (m >= 60) { h++; m = 0; }
                     }
-                    const agendadas = consultas.filter(c => c.medico_id == medico.id &&
-                      (bloque.fecha ? c.fecha === bloque.fecha : true) &&
-                      c.hora >= bloque.hora_inicio && c.hora < bloque.hora_fin && c.estado === 'pendiente');
+                    const horaInicio = normalizeHHMM(bloque.hora_inicio);
+                    const horaFinNorm = normalizeHHMM(bloque.hora_fin);
+                    const agendadas = consultas.filter(c => {
+                      const mismaFecha = bloque.fecha ? c.fecha === bloque.fecha : true;
+                      const horaConsulta = normalizeHHMM(c.hora);
+                      return (
+                        c.medico_id == medico.id &&
+                        mismaFecha &&
+                        isConsultaActiva(c.estado) &&
+                        horaConsulta >= horaInicio &&
+                        horaConsulta < horaFinNorm
+                      );
+                    });
                     const cupos = slots - agendadas.length;
                     return (
                       <tr key={bloque.medico_id + '-' + i} className={cupos > 0 ? "bg-green-50" : "bg-yellow-100"}>
-                        <td className="px-2 py-2 font-bold rounded-l-xl" style={{ color: medicoColors[medico.id] || undefined }}>Dr(a). {medico.nombre} {medico.apellido || ''}</td>
+                        <td className="px-2 py-2 font-bold rounded-l-xl" style={{ color: medicoColors[medico.id] || undefined }}>{(medico.abreviatura_profesional || 'Dr(a).')} {medico.nombre} {medico.apellido || ''}</td>
                         <td className="px-2 py-2">{medico.especialidad}</td>
                         <td className="px-2 py-2">{bloque.hora_inicio} - {bloque.hora_fin} {fechaBloque ? <span className="text-xs text-gray-500 ml-1">({fechaBloque})</span> : null}</td>
                         <td className="px-2 py-2 font-bold rounded-r-xl">{cupos > 0 ? cupos : <span className="text-red-600">Sin cupos</span>}</td>

@@ -21,6 +21,7 @@ $input = json_decode(file_get_contents('php://input'), true);
 $cobro_id = isset($input['cobro_id']) ? intval($input['cobro_id']) : 0;
 $servicio_tipo = $input['servicio_tipo'] ?? '';
 $item = $input['item'] ?? null;
+$cotizacion_id_input = isset($input['cotizacion_id']) ? intval($input['cotizacion_id']) : 0;
 $motivo = isset($input['motivo']) ? trim((string)$input['motivo']) : '';
 // Asegurar usuario_id disponible para logs
 $usuario_id = intval($usuario['id'] ?? ($_SESSION['usuario']['id'] ?? 0));
@@ -31,6 +32,187 @@ function normalize_text($s) {
     $s = mb_strtolower($s, 'UTF-8');
     $s = preg_replace('/\s+/u', ' ', $s);
     return $s;
+}
+
+function table_exists_local(PDO $pdo, $tableName) {
+    try {
+        $stmt = $pdo->prepare('SHOW TABLES LIKE ?');
+        $stmt->execute([(string)$tableName]);
+        return (bool)$stmt->fetch(PDO::FETCH_NUM);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function column_exists_local(PDO $pdo, $tableName, $columnName) {
+    try {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM `{$tableName}` LIKE ?");
+        $stmt->execute([(string)$columnName]);
+        return (bool)$stmt->fetch(PDO::FETCH_NUM);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function resolve_cotizacion_id_local(PDO $pdo, $cotizacion_id_input, $item, $cobro_id) {
+    $cotizacion_id = intval($cotizacion_id_input ?? 0);
+    if ($cotizacion_id <= 0 && is_array($item) && isset($item['cotizacion_id'])) {
+        $cotizacion_id = intval($item['cotizacion_id']);
+    }
+
+    if ($cotizacion_id <= 0 && table_exists_local($pdo, 'cotizacion_movimientos')) {
+        $stmt = $pdo->prepare('SELECT cotizacion_id FROM cotizacion_movimientos WHERE cobro_id = ? AND cotizacion_id IS NOT NULL ORDER BY id DESC LIMIT 1');
+        $stmt->execute([intval($cobro_id)]);
+        $mov = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($mov && isset($mov['cotizacion_id'])) {
+            $cotizacion_id = intval($mov['cotizacion_id']);
+        }
+    }
+
+    return $cotizacion_id > 0 ? $cotizacion_id : 0;
+}
+
+function aplicar_reduccion_cotizacion_detalle_local(PDO $pdo, $row, $cantidadReducir, $montoReducir, $usuarioId, $motivo) {
+    $hasEstadoItem = column_exists_local($pdo, 'cotizaciones_detalle', 'estado_item');
+    $hasVersionItem = column_exists_local($pdo, 'cotizaciones_detalle', 'version_item');
+    $hasEditadoPor = column_exists_local($pdo, 'cotizaciones_detalle', 'editado_por');
+    $hasEditadoEn = column_exists_local($pdo, 'cotizaciones_detalle', 'editado_en');
+    $hasMotivoEdicion = column_exists_local($pdo, 'cotizaciones_detalle', 'motivo_edicion');
+
+    $id = intval($row['id'] ?? 0);
+    $qtyActual = max(0, intval($row['cantidad'] ?? 0));
+    $subActual = max(0, floatval($row['subtotal'] ?? 0));
+    if ($id <= 0 || $qtyActual <= 0) return;
+
+    $qtyToReduce = max(0, intval($cantidadReducir));
+    if ($qtyToReduce <= 0 && $montoReducir > 0) {
+        $unitFromSubtotal = $qtyActual > 0 ? ($subActual / $qtyActual) : 0;
+        if ($unitFromSubtotal > 0) {
+            $qtyToReduce = (int)ceil($montoReducir / $unitFromSubtotal);
+        }
+    }
+    if ($qtyToReduce <= 0) $qtyToReduce = $qtyActual;
+
+    if ($qtyToReduce >= $qtyActual) {
+        if ($hasEstadoItem) {
+            $sets = ["estado_item = 'eliminado'"];
+            $params = [];
+            if ($hasVersionItem) $sets[] = 'version_item = COALESCE(version_item, 0) + 1';
+            if ($hasEditadoPor) { $sets[] = 'editado_por = ?'; $params[] = intval($usuarioId); }
+            if ($hasEditadoEn) $sets[] = 'editado_en = NOW()';
+            if ($hasMotivoEdicion) {
+                $sets[] = 'motivo_edicion = ?';
+                $params[] = (string)$motivo;
+            }
+            $params[] = $id;
+            $sql = 'UPDATE cotizaciones_detalle SET ' . implode(', ', $sets) . ' WHERE id = ?';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+        } else {
+            $stmt = $pdo->prepare('DELETE FROM cotizaciones_detalle WHERE id = ?');
+            $stmt->execute([$id]);
+        }
+        return;
+    }
+
+    $qtyNueva = max(0, $qtyActual - $qtyToReduce);
+    $unitFromSubtotal = $qtyActual > 0 ? ($subActual / $qtyActual) : 0;
+    if ($unitFromSubtotal <= 0) {
+        $unitFromSubtotal = max(0, floatval($row['precio_unitario'] ?? 0));
+    }
+    $subNueva = max(0, $unitFromSubtotal * $qtyNueva);
+
+    $sets = ['cantidad = ?', 'subtotal = ?'];
+    $params = [$qtyNueva, $subNueva];
+    if ($hasVersionItem) $sets[] = 'version_item = COALESCE(version_item, 0) + 1';
+    if ($hasEditadoPor) { $sets[] = 'editado_por = ?'; $params[] = intval($usuarioId); }
+    if ($hasEditadoEn) $sets[] = 'editado_en = NOW()';
+    if ($hasMotivoEdicion) { $sets[] = 'motivo_edicion = ?'; $params[] = (string)$motivo; }
+    $params[] = $id;
+    $sql = 'UPDATE cotizaciones_detalle SET ' . implode(', ', $sets) . ' WHERE id = ?';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+}
+
+function sync_cotizacion_por_eliminacion_local(PDO $pdo, $cotizacion_id, $servicio_tipo, $itemRef, $montoEliminar, $usuarioId, $motivo) {
+    $cotizacion_id = intval($cotizacion_id);
+    if ($cotizacion_id <= 0 || $montoEliminar <= 0) return;
+
+    if (table_exists_local($pdo, 'cotizaciones_detalle')) {
+        $hasEstadoItem = column_exists_local($pdo, 'cotizaciones_detalle', 'estado_item');
+        $sqlDet = 'SELECT id, servicio_id, descripcion, cantidad, precio_unitario, subtotal FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(servicio_tipo) = LOWER(?)';
+        if ($hasEstadoItem) {
+            $sqlDet .= " AND (estado_item IS NULL OR estado_item <> 'eliminado')";
+        }
+        $sqlDet .= ' ORDER BY id DESC';
+
+        $stmtDet = $pdo->prepare($sqlDet);
+        $stmtDet->execute([$cotizacion_id, (string)$servicio_tipo]);
+        $rows = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
+
+        $targetServicioId = isset($itemRef['servicio_id']) ? intval($itemRef['servicio_id']) : 0;
+        $targetDesc = normalize_text($itemRef['descripcion'] ?? '');
+        $targetQty = isset($itemRef['cantidad_eliminar']) ? intval($itemRef['cantidad_eliminar']) : intval($itemRef['cantidad'] ?? 0);
+        $targetSub = isset($itemRef['subtotal']) ? floatval($itemRef['subtotal']) : null;
+        $remainingQty = max(0, $targetQty);
+
+        foreach ($rows as $row) {
+            $rowServicioId = isset($row['servicio_id']) ? intval($row['servicio_id']) : 0;
+            $rowDesc = normalize_text($row['descripcion'] ?? '');
+            $rowSub = isset($row['subtotal']) ? floatval($row['subtotal']) : null;
+
+            $servicioOk = ($targetServicioId > 0 && $rowServicioId > 0) ? ($targetServicioId === $rowServicioId) : true;
+            $descOk = ($targetDesc === '') ? true : (($rowDesc === $targetDesc) || (strpos($rowDesc, $targetDesc) !== false) || (strpos($targetDesc, $rowDesc) !== false));
+            $subOk = ($targetSub === null || $rowSub === null) ? true : (abs($targetSub - $rowSub) < 0.01);
+            if (!($servicioOk && $descOk)) continue;
+
+            $qtyReducir = $remainingQty > 0 ? $remainingQty : 0;
+            $montoReducir = ($remainingQty > 0) ? 0 : ($subOk ? $montoEliminar : 0);
+            aplicar_reduccion_cotizacion_detalle_local($pdo, $row, $qtyReducir, $montoReducir, $usuarioId, $motivo);
+
+            if ($remainingQty > 0) {
+                $remainingQty -= max(0, intval($row['cantidad'] ?? 0));
+                if ($remainingQty <= 0) break;
+            } else {
+                break;
+            }
+        }
+    }
+
+    $stmtCot = $pdo->prepare('SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE');
+    $stmtCot->execute([$cotizacion_id]);
+    $cot = $stmtCot->fetch(PDO::FETCH_ASSOC);
+    if (!$cot) return;
+
+    $nuevoTotal = max(0, floatval($cot['total'] ?? 0) - floatval($montoEliminar));
+    $hasTotalPagado = column_exists_local($pdo, 'cotizaciones', 'total_pagado');
+    $hasSaldo = column_exists_local($pdo, 'cotizaciones', 'saldo_pendiente');
+    $hasVersion = column_exists_local($pdo, 'cotizaciones', 'version_actual');
+    $hasUpdatedAt = column_exists_local($pdo, 'cotizaciones', 'updated_at');
+
+    if ($hasTotalPagado && $hasSaldo) {
+        $pagado = floatval($cot['total_pagado'] ?? 0);
+        $nuevoSaldo = max(0, $nuevoTotal - $pagado);
+        $nuevoEstado = ($nuevoSaldo <= 0.00001) ? 'pagado' : (($pagado > 0) ? 'parcial' : 'pendiente');
+
+        $sets = ['total = ?', 'saldo_pendiente = ?', 'estado = ?'];
+        $params = [$nuevoTotal, $nuevoSaldo, $nuevoEstado];
+        if ($hasVersion) $sets[] = 'version_actual = COALESCE(version_actual, 0) + 1';
+        if ($hasUpdatedAt) $sets[] = 'updated_at = NOW()';
+        $params[] = $cotizacion_id;
+        $sql = 'UPDATE cotizaciones SET ' . implode(', ', $sets) . ' WHERE id = ?';
+        $stmtUpd = $pdo->prepare($sql);
+        $stmtUpd->execute($params);
+    } else {
+        $sets = ['total = ?'];
+        $params = [$nuevoTotal];
+        if ($hasVersion) $sets[] = 'version_actual = COALESCE(version_actual, 0) + 1';
+        if ($hasUpdatedAt) $sets[] = 'updated_at = NOW()';
+        $params[] = $cotizacion_id;
+        $sql = 'UPDATE cotizaciones SET ' . implode(', ', $sets) . ' WHERE id = ?';
+        $stmtUpd = $pdo->prepare($sql);
+        $stmtUpd->execute($params);
+    }
 }
 
 if ($cobro_id <= 0 || empty($servicio_tipo) || !is_array($item)) {
@@ -222,6 +404,24 @@ try {
         $nuevoTotal = max(0, floatval($cobro['total']) - $montoEliminar);
         $stmtUpdCobro = $pdo->prepare('UPDATE cobros SET total = ? WHERE id = ?');
         $stmtUpdCobro->execute([$nuevoTotal, $cobro_id]);
+
+        $cotizacion_id = resolve_cotizacion_id_local($pdo, $cotizacion_id_input, $item, $cobro_id);
+        if ($cotizacion_id > 0) {
+            sync_cotizacion_por_eliminacion_local(
+                $pdo,
+                $cotizacion_id,
+                $servicio_tipo,
+                [
+                    'servicio_id' => $medId,
+                    'descripcion' => $descWanted,
+                    'cantidad_eliminar' => $cantidad_eliminar,
+                    'subtotal' => $montoEliminar
+                ],
+                $montoEliminar,
+                $usuario_id,
+                $motivo !== '' ? $motivo : 'Reducción desde edición de cobro'
+            );
+        }
 
         // Ingresos diarios: intentar ajustar monto en vez de borrar si existe un registro candidato
         $tipoIngresoMap = [
@@ -434,6 +634,19 @@ try {
     $nuevoTotal = max(0, floatval($cobro['total']) - $montoEliminar);
     $stmtUpdCobro = $pdo->prepare('UPDATE cobros SET total = ? WHERE id = ?');
     $stmtUpdCobro->execute([$nuevoTotal, $cobro_id]);
+
+    $cotizacion_id = resolve_cotizacion_id_local($pdo, $cotizacion_id_input, $itemEliminar, $cobro_id);
+    if ($cotizacion_id > 0) {
+        sync_cotizacion_por_eliminacion_local(
+            $pdo,
+            $cotizacion_id,
+            $servicio_tipo,
+            $itemEliminar,
+            $montoEliminar,
+            $usuario_id,
+            $motivo !== '' ? $motivo : 'Eliminación desde edición de cobro'
+        );
+    }
 
     // Eliminar movimientos financieros asociados para servicios no farmacia
     $honorarioEliminado = false;

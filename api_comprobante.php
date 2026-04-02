@@ -21,6 +21,40 @@ $stmt = $pdo->prepare("SELECT servicio_tipo, descripcion, cantidad, precio_unita
 $stmt->execute([$cobro_id]);
 $detalle = $stmt->fetch(PDO::FETCH_ASSOC);
 $detalles = json_decode($detalle['descripcion'], true);
+
+// Obtener configuración de la clínica
+$nombre_clinica = 'MI CLINICA';
+$logo_url = '';
+$slogan = '';
+$slogan_color = '';
+$nombre_color = '';
+$direccion = '';
+$telefono = '';
+$celular = '';
+$ruc = '';
+$email = '';
+try {
+    $stmtCfg = $pdo->prepare("SELECT nombre_clinica, logo_url, slogan, slogan_color, nombre_color, direccion, telefono, celular, ruc, email FROM configuracion_clinica WHERE id = 1 LIMIT 1");
+    $stmtCfg->execute();
+    $cfg = $stmtCfg->fetch(PDO::FETCH_ASSOC);
+    if ($cfg) {
+        if (!empty($cfg['nombre_clinica'])) $nombre_clinica = strtoupper(trim($cfg['nombre_clinica']));
+        if (!empty($cfg['logo_url'])) {
+            $rawLogo = trim($cfg['logo_url']);
+            $logo_url = preg_match('/^(https?:\/\/|data:|blob:)/i', $rawLogo) ? $rawLogo : '/' . ltrim($rawLogo, '/');
+        }
+        $slogan = trim($cfg['slogan'] ?? '');
+        $slogan_color = trim($cfg['slogan_color'] ?? '');
+        $nombre_color = trim($cfg['nombre_color'] ?? '');
+        $direccion = trim($cfg['direccion'] ?? '');
+        $telefono = trim($cfg['telefono'] ?? '');
+        $celular = trim($cfg['celular'] ?? '');
+        $ruc = trim($cfg['ruc'] ?? '');
+        $email = trim($cfg['email'] ?? '');
+    }
+} catch (Exception $e) {
+    // fallback defaults
+}
 // HTML comprobante
 ?>
 <!DOCTYPE html>
@@ -43,7 +77,27 @@ $detalles = json_decode($detalle['descripcion'], true);
 </head>
 <body>
 <div class="comprobante">
-    <h2>Comprobante de Cobro</h2>
+    <?php if (!empty($logo_url)): ?>
+        <div style="text-align:center;margin-bottom:8px;"><img src="<?php echo htmlspecialchars($logo_url); ?>" alt="Logo" style="height:56px;max-width:180px;object-fit:contain;" /></div>
+    <?php endif; ?>
+    <h2<?php if (!empty($nombre_color)) echo ' style="color:'.htmlspecialchars($nombre_color).'"'; ?>><?php echo htmlspecialchars($nombre_clinica); ?></h2>
+    <?php if (!empty($slogan)): ?>
+        <p style="text-align:center;font-style:italic;margin:0 0 8px;<?php if (!empty($slogan_color)) echo 'color:'.htmlspecialchars($slogan_color).';'; ?>"><?php echo htmlspecialchars($slogan); ?></p>
+    <?php endif; ?>
+    <?php if (!empty($direccion)): ?>
+        <p style="text-align:center;font-size:0.9em;margin:2px 0;"><?php echo htmlspecialchars($direccion); ?></p>
+    <?php endif; ?>
+    <?php if (!empty($telefono)): ?>
+        <p style="text-align:center;font-size:0.9em;margin:2px 0;">Tel: <?php echo htmlspecialchars($telefono); ?></p>
+    <?php endif; ?>
+    <?php if (!empty($celular)): ?>
+        <p style="text-align:center;font-size:0.9em;margin:2px 0;">Cel: <?php echo htmlspecialchars($celular); ?></p>
+    <?php endif; ?>
+    <?php if (!empty($ruc)): ?>
+        <p style="text-align:center;font-size:0.9em;margin:2px 0;">RUC: <?php echo htmlspecialchars($ruc); ?></p>
+    <?php endif; ?>
+    <hr>
+    <h3 style="text-align:center;">Comprobante de Cobro</h3>
     <div class="datos">
         <strong>Paciente:</strong> <?php echo htmlspecialchars($cobro['nombre'].' '.$cobro['apellido']); ?><br>
         <strong>DNI:</strong> <?php echo htmlspecialchars($cobro['dni']); ?><br>

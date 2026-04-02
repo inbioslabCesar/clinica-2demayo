@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 
 // Modal SweetAlert2 para impresión tipo etiquetera
-function mostrarEtiquetaImpresion(datos, totalesBackend = null) {
+function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = null) {
   // Usar los totales de métodos de pago del backend si están disponibles
   const total_efectivo = totalesBackend?.total_efectivo ?? datos.total_efectivo ?? 0;
   const total_yape = totalesBackend?.total_yape ?? datos.total_yape ?? 0;
@@ -24,8 +24,18 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null) {
     explicacionDiferencia = "<div style='color:red;font-weight:bold;margin-top:8px;'>No hay efectivo suficiente, egreso cubierto por Yape, Plin, transferencia, o se quedó debiendo tal egreso.</div>";
   }
   // Recibo compacto tipo etiquetera
+  const clinicName = String(clinicBrand?.name || 'MI CLINICA').trim();
+  const logoHtml = clinicBrand?.logo
+    ? `<div style="text-align:center;margin-bottom:6px;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="height:44px;object-fit:contain;" /></div>`
+    : '';
+  const sloganHtml = clinicBrand?.slogan
+    ? `<p style="text-align:center;margin:0 0 6px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>`
+    : '';
   const recibo = `
     <div style="font-family: monospace; font-size: 18px; width: 320px;">
+      ${logoHtml}
+      <h3 style="text-align:center;margin:0 0 4px 0;${clinicBrand?.nombre_color ? 'color:' + clinicBrand.nombre_color + ';' : ''}">${clinicName}</h3>
+      ${sloganHtml}
       <h3 style="text-align:center;margin-bottom:8px;">🧾 Cierre de Caja</h3>
       <hr>
       <div><b>Usuario:</b> ${datos.usuario_nombre || "-"}</div>
@@ -82,6 +92,7 @@ export default function CerrarCajaView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [egresoElectronicoManual, setEgresoElectronicoManual] = useState("");
+  const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '' });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -104,6 +115,40 @@ export default function CerrarCajaView() {
       }
     }
     fetchResumen();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch('/api_get_configuracion.php', {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store'
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!mounted || !data?.success) return;
+        const cfg = data.data || {};
+        const name = String(cfg.nombre_clinica || '').trim().toUpperCase() || 'MI CLINICA';
+        const rawLogo = String(cfg.logo_url || '').trim();
+        const logo = rawLogo
+          ? (/^(https?:\/\/|data:|blob:)/i.test(rawLogo)
+            ? rawLogo
+            : `${window.location.origin}/${rawLogo.replace(/^\/+/, '')}`)
+          : '';
+        setClinicBrand({
+          name,
+          logo,
+          slogan: String(cfg.slogan || '').trim(),
+          slogan_color: String(cfg.slogan_color || '').trim(),
+          nombre_color: String(cfg.nombre_color || '').trim(),
+        });
+      })
+      .catch(() => {
+        // fallback defaults
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Calcular ingreso total y ganancia neta solo si resumen existe
@@ -159,7 +204,7 @@ export default function CerrarCajaView() {
           hora_cierre: data.hora_cierre || new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
           usuario_nombre: data.usuario_nombre || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).nombre : ''),
           usuario_rol: data.usuario_rol || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).rol : ''),
-        }, data.totales);
+        }, data.totales, clinicBrand);
         // Redirigir después de cerrar el modal
         setTimeout(() => navigate('/contabilidad'), 500);
       } else {

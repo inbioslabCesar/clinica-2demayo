@@ -284,7 +284,7 @@ function PagosHonorariosMedicos() {
               <option value="todos">Todos los médicos</option>
               {medicos.map(medico => (
                 <option key={medico.id} value={medico.id}>
-                  Dr(a). {medico.nombre} {medico.apellido}
+                  {(medico.abreviatura_profesional || 'Dr(a).')} {medico.nombre} {medico.apellido}
                 </option>
               ))}
             </select>
@@ -352,7 +352,7 @@ function PagosHonorariosMedicos() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
-                        Dr(a). {movimiento.medico_nombre} {movimiento.medico_apellido}
+                        {movimiento.medico_nombre} {movimiento.medico_apellido}
                       </div>
                       <div className="text-sm text-gray-500">{movimiento.especialidad}</div>
                     </td>
@@ -498,7 +498,7 @@ function PagosHonorariosMedicos() {
             
             <div className="mb-4">
               <div className="text-sm text-gray-600 mb-2">
-                <strong>Médico:</strong> Dr(a). {movimientoSeleccionado.medico_nombre} {movimientoSeleccionado.medico_apellido}
+                <strong>Profesional:</strong> {movimientoSeleccionado.medico_nombre} {movimientoSeleccionado.medico_apellido}
               </div>
               <div className="text-sm text-gray-600 mb-2">
                 <strong>Monto:</strong> S/ {parseFloat(movimientoSeleccionado.monto_medico).toFixed(2)}

@@ -4,7 +4,7 @@ export default function ExamenesTable({ paginated, handleEdit, handleDelete }) {
     <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-gradient-to-r from-purple-500 to-indigo-500 text-white">
+          <thead className="text-white" style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}>
             <tr>
               <th className="px-4 py-3 text-left text-sm font-medium">Nombre</th>
               <th className="px-4 py-3 text-left text-sm font-medium hidden md:table-cell">Metodología</th>
@@ -17,10 +17,10 @@ export default function ExamenesTable({ paginated, handleEdit, handleDelete }) {
           </thead>
           <tbody>
             {paginated.map((ex) => (
-              <tr key={ex.id} className="border-b border-gray-100 hover:bg-purple-50/50 transition-colors">
+              <tr key={ex.id} className="border-b border-gray-100 transition-colors" onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-primary-light)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}>
                 <td className="px-4 py-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 text-sm">🧪</div>
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm" style={{ background: "var(--color-primary-light)", color: "var(--color-secondary)" }}>🧪</div>
                     <div>
                       {ex.titulo && (
                         <div className={`text-sm ${ex.es_subtitulo ? "font-bold text-gray-900" : "font-semibold text-gray-700"}`}>{ex.titulo}</div>

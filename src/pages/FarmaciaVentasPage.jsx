@@ -94,7 +94,7 @@ export default function FarmaciaVentasPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 bg-white rounded-xl shadow-lg mt-8">
-      <h2 className="text-2xl font-bold text-blue-800 mb-4">Ventas de Farmacia</h2>
+      <h2 className="text-2xl font-bold mb-4" style={{ color: "var(--color-secondary)" }}>Ventas de Farmacia</h2>
       <div className="flex gap-4 mb-4 items-center">
         <label className="text-sm">Mostrar:
           <select value={tamanoPagina} onChange={e => { setTamanoPagina(Number(e.target.value)); setPagina(1); }} className="ml-2 border rounded px-2 py-1">
@@ -112,7 +112,7 @@ export default function FarmaciaVentasPage() {
         <label className="text-sm">Hasta:
           <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} className="ml-2 border rounded px-2 py-1" />
         </label>
-        <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={cargarVentas}>Filtrar</button>
+        <button className="px-3 py-1 text-white rounded" onClick={cargarVentas} style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}>Filtrar</button>
         {(fechaInicio || fechaFin) && (
           <button className="px-2 py-1 bg-gray-200 text-gray-700 rounded" onClick={() => { setFechaInicio(""); setFechaFin(""); }}>Limpiar</button>
         )}
@@ -125,7 +125,7 @@ export default function FarmaciaVentasPage() {
         <>
           <table className="w-full text-sm border">
             <thead>
-              <tr className="bg-blue-50">
+              <tr style={{ background: "var(--color-primary-light)" }}>
                 <th className="p-2">Fecha</th>
                 <th className="p-2">Paciente</th>
                 <th className="p-2">DNI</th>
@@ -142,10 +142,10 @@ export default function FarmaciaVentasPage() {
                   <td className="p-2">{v.paciente_nombre || v.paciente_nombre || "-"}</td>
                   <td className="p-2">{v.paciente_dni || "-"}</td>
                   <td className="p-2">{v.usuario_nombre || v.usuario_id}</td>
-                  <td className="p-2 font-bold text-blue-700">S/ {v.total}</td>
+                  <td className="p-2 font-bold" style={{ color: "var(--color-secondary)" }}>S/ {v.total}</td>
                   <td className="p-2">{v.estado}</td>
                   <td className="p-2">
-                    <button className="px-2 py-1 bg-blue-100 text-blue-700 rounded" onClick={() => verDetalle(v)}>Ver</button>
+                    <button className="px-2 py-1 rounded" style={{ background: "var(--color-primary-light)", color: "var(--color-secondary)" }} onClick={() => verDetalle(v)}>Ver</button>
                   </td>
                 </tr>
               ))}
@@ -167,7 +167,7 @@ export default function FarmaciaVentasPage() {
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg relative">
               <button className="absolute top-2 right-2 text-gray-500 text-xl" onClick={() => setModalOpen(false)}>✕</button>
-            <h3 className="text-xl font-bold mb-2 text-blue-700">Detalle de Venta</h3>
+            <h3 className="text-xl font-bold mb-2" style={{ color: "var(--color-secondary)" }}>Detalle de Venta</h3>
             <div className="mb-2 text-sm text-gray-700">
               <div><b>Paciente:</b> {detalleVenta.paciente_nombre || "-"}</div>
               <div><b>DNI:</b> {detalleVenta.paciente_dni || "-"}</div>
@@ -177,7 +177,7 @@ export default function FarmaciaVentasPage() {
             </div>
             <table className="w-full text-sm border mb-2">
               <thead>
-                <tr className="bg-blue-50">
+                <tr style={{ background: "var(--color-primary-light)" }}>
                   <th className="p-2">Medicamento</th>
                   <th className="p-2">Cantidad</th>
                   <th className="p-2">Precio Unitario</th>

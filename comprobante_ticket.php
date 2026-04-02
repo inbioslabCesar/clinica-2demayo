@@ -15,6 +15,45 @@ if (!$ingreso) {
     echo '<h2>Ingreso no encontrado</h2>';
     exit;
 }
+
+$nombre_clinica = 'MI CLINICA';
+$logo_url = '';
+$slogan = '';
+$slogan_color = '';
+$nombre_color = '';
+$direccion = '';
+$telefono = '';
+$celular = '';
+$ruc = '';
+$email = '';
+try {
+    $stmtCfg = $pdo->prepare("SELECT nombre_clinica, logo_url, slogan, slogan_color, nombre_color, direccion, telefono, celular, ruc, email FROM configuracion_clinica WHERE id = 1 LIMIT 1");
+    $stmtCfg->execute();
+    $cfg = $stmtCfg->fetch(PDO::FETCH_ASSOC);
+    if ($cfg) {
+        if (!empty($cfg['nombre_clinica'])) {
+            $nombre_clinica = strtoupper(trim($cfg['nombre_clinica']));
+        }
+        if (!empty($cfg['logo_url'])) {
+            $rawLogo = trim($cfg['logo_url']);
+            if (preg_match('/^(https?:\/\/|data:|blob:)/i', $rawLogo)) {
+                $logo_url = $rawLogo;
+            } else {
+                $logo_url = '/' . ltrim($rawLogo, '/');
+            }
+        }
+        $slogan = trim($cfg['slogan'] ?? '');
+        $slogan_color = trim($cfg['slogan_color'] ?? '');
+        $nombre_color = trim($cfg['nombre_color'] ?? '');
+        $direccion = trim($cfg['direccion'] ?? '');
+        $telefono = trim($cfg['telefono'] ?? '');
+        $celular = trim($cfg['celular'] ?? '');
+        $ruc = trim($cfg['ruc'] ?? '');
+        $email = trim($cfg['email'] ?? '');
+    }
+} catch (Exception $e) {
+    // fallback defaults
+}
 // Formato tipo ticket
 ?>
 <!DOCTYPE html>
@@ -26,6 +65,8 @@ if (!$ingreso) {
         body { font-family: monospace, Arial, sans-serif; background: #fff; color: #222; }
         .ticket { max-width: 340px; margin: 30px auto; border: 1px solid #ccc; border-radius: 8px; padding: 18px; box-shadow: 0 2px 8px #eee; }
         h2 { color: #2563eb; font-size: 1.2em; text-align: center; margin-bottom: 10px; }
+        .clinic-logo { display: block; height: 56px; max-width: 180px; object-fit: contain; margin: 0 auto 6px auto; }
+        .clinic-name { text-align: center; font-size: 1.05em; font-weight: bold; margin-bottom: 8px; }
         .datos { font-size: 0.95em; margin-bottom: 10px; }
         .linea { border-bottom: 1px dashed #bbb; margin: 8px 0; }
         .total { text-align: right; font-size: 1.1em; font-weight: bold; color: #008000; margin-top: 10px; }
@@ -36,6 +77,25 @@ if (!$ingreso) {
 </head>
 <body>
 <div class="ticket">
+    <?php if (!empty($logo_url)): ?>
+        <img src="<?php echo htmlspecialchars($logo_url); ?>" alt="Logo clinica" class="clinic-logo">
+    <?php endif; ?>
+    <div class="clinic-name"<?php if (!empty($nombre_color)): ?> style="color:<?php echo htmlspecialchars($nombre_color); ?>"<?php endif; ?>><?php echo htmlspecialchars($nombre_clinica); ?></div>
+    <?php if (!empty($slogan)): ?>
+        <div style="text-align:center;font-style:italic;font-size:0.85em;margin-bottom:6px;<?php if (!empty($slogan_color)) echo 'color:'.htmlspecialchars($slogan_color).';'; ?>"><?php echo htmlspecialchars($slogan); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($direccion)): ?>
+        <div style="text-align:center;font-size:0.85em;"><?php echo htmlspecialchars($direccion); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($telefono)): ?>
+        <div style="text-align:center;font-size:0.85em;">Tel: <?php echo htmlspecialchars($telefono); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($celular)): ?>
+        <div style="text-align:center;font-size:0.85em;">Cel: <?php echo htmlspecialchars($celular); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($ruc)): ?>
+        <div style="text-align:center;font-size:0.85em;">RUC: <?php echo htmlspecialchars($ruc); ?></div>
+    <?php endif; ?>
     <h2>Ticket de Ingreso</h2>
     <div class="datos">
         <div><span class="label">Fecha:</span> <?php echo htmlspecialchars($ingreso['fecha_hora']); ?></div>

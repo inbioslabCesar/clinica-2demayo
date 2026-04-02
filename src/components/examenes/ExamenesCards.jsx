@@ -6,7 +6,7 @@ export default function ExamenesCards({ paginated, handleEdit, handleDelete }) {
         <div key={ex.id} className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 hover:shadow-xl transition-all transform hover:scale-105">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">🧪</div>
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "var(--color-primary-light)", color: "var(--color-secondary)" }}>🧪</div>
               <div className="text-lg font-bold text-gray-900 line-clamp-1">{ex.nombre}</div>
             </div>
           </div>
@@ -61,7 +61,8 @@ export default function ExamenesCards({ paginated, handleEdit, handleDelete }) {
           <div className="mt-6 pt-4 border-t border-gray-200 flex gap-3">
             <button
               onClick={() => handleEdit(ex)}
-              className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white py-2.5 px-4 rounded-lg hover:from-amber-600 hover:to-orange-600 transition-all font-medium text-sm shadow-md"
+              className="flex-1 text-white py-2.5 px-4 rounded-lg transition-all font-medium text-sm shadow-md"
+              style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
             >
               ✏️ Editar
             </button>

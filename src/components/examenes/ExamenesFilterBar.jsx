@@ -10,14 +10,20 @@ export default function ExamenesFilterBar({ search, setSearch, categoriaFilter, 
               value={search}
               onChange={e => { setSearch(e.target.value); }}
               placeholder="🔍 Buscar por nombre o metodología..."
-              className="w-full px-4 py-3 pl-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+              className="w-full px-4 py-3 pl-4 border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all"
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
             />
           </div>
           <div className="relative">
             <select
               value={categoriaFilter}
               onChange={e => setCategoriaFilter(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all"
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
             >
               <option value="">Todas las categorías</option>
               {categorias.map(cat => (
@@ -46,7 +52,8 @@ export default function ExamenesFilterBar({ search, setSearch, categoriaFilter, 
           {onNew && (
             <button
               onClick={onNew}
-              className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg transform hover:scale-105"
+              className="flex items-center gap-2 px-6 py-2 text-white rounded-lg transition-all font-medium shadow-lg transform hover:scale-105"
+              style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
             >
               ➕ Nuevo Examen
             </button>

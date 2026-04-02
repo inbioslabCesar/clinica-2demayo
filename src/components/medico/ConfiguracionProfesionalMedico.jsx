@@ -7,6 +7,10 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
     nombre: '',
     apellido: '',
     especialidad: '',
+    tipo_profesional: 'medico',
+    abreviatura_profesional: 'Dr(a).',
+    colegio_sigla: 'CMP',
+    nro_colegiatura: '',
     cmp: '',
     rne: '',
     firma: null
@@ -39,6 +43,10 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
           nombre: data.medico.nombre || '',
           apellido: data.medico.apellido || '',
           especialidad: data.medico.especialidad || '',
+          tipo_profesional: data.medico.tipo_profesional || 'medico',
+          abreviatura_profesional: data.medico.abreviatura_profesional || 'Dr(a).',
+          colegio_sigla: data.medico.colegio_sigla || 'CMP',
+          nro_colegiatura: data.medico.nro_colegiatura || data.medico.cmp || '',
           cmp: data.medico.cmp || '',
           rne: data.medico.rne || '',
           firma: data.medico.firma
@@ -105,10 +113,19 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
         return;
       }
 
-      if (!infoProfesional.cmp.trim()) {
-        setMensaje("❌ El código CMP es obligatorio");
+      const tipo = String(infoProfesional.tipo_profesional || 'medico').toLowerCase();
+      const nroColegiatura = String(infoProfesional.nro_colegiatura || infoProfesional.cmp || '').trim();
+      if (tipo === 'medico' && !nroColegiatura) {
+        setMensaje("❌ Para tipo profesional médico, el CMP es obligatorio");
         return;
       }
+
+      const payload = {
+        ...infoProfesional,
+        cmp: nroColegiatura,
+        nro_colegiatura: nroColegiatura,
+        colegio_sigla: (infoProfesional.colegio_sigla || '').trim() || (tipo === 'medico' ? 'CMP' : ''),
+      };
 
       const response = await fetch(`${BASE_URL}api_info_profesional_medico.php`, {
         method: 'POST',
@@ -116,14 +133,14 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify(infoProfesional)
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();
 
       if (data.success) {
         setMensaje("✅ Información profesional guardada exitosamente");
-        setInfoOriginal(infoProfesional);
+        setInfoOriginal(payload);
         setNuevaFirma(null);
         setTimeout(() => {
           onClose();
@@ -283,16 +300,33 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  C.M.P. (Colegio Médico del Perú) *
+                  Sigla de Colegio {String(infoProfesional.tipo_profesional || 'medico') === 'medico' ? '*' : '(opcional)'}
                 </label>
                 <input
                   type="text"
-                  value={infoProfesional.cmp}
-                  onChange={(e) => handleInputChange('cmp', e.target.value)}
+                  value={infoProfesional.colegio_sigla || ''}
+                  onChange={(e) => handleInputChange('colegio_sigla', e.target.value.toUpperCase())}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                  placeholder="Ej: 64201"
+                  placeholder={String(infoProfesional.tipo_profesional || 'medico') === 'medico' ? 'CMP' : 'Ej: CPSP'}
                 />
-                <p className="text-xs text-gray-500 mt-1">Obligatorio para todos los médicos</p>
+                <p className="text-xs text-gray-500 mt-1">Ejemplos: CMP, CPSP, CPO.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Nro. de Colegiatura {String(infoProfesional.tipo_profesional || 'medico') === 'medico' ? '*' : '(opcional)'}
+                </label>
+                <input
+                  type="text"
+                  value={infoProfesional.nro_colegiatura || infoProfesional.cmp || ''}
+                  onChange={(e) => {
+                    handleInputChange('nro_colegiatura', e.target.value);
+                    handleInputChange('cmp', e.target.value);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  placeholder={String(infoProfesional.tipo_profesional || 'medico') === 'medico' ? 'Ej: 64201' : 'Ej: 36922'}
+                />
+                <p className="text-xs text-gray-500 mt-1">Para médicos corresponde al CMP.</p>
               </div>
               
               <div>
@@ -394,7 +428,11 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
                     </div>
                   )}
                   <div className="text-xs text-gray-600">
-                    C.M.P. {infoProfesional.cmp}
+                    {(infoProfesional.colegio_sigla || '').trim() && (infoProfesional.nro_colegiatura || infoProfesional.cmp)
+                      ? `${infoProfesional.colegio_sigla}: ${infoProfesional.nro_colegiatura || infoProfesional.cmp}`
+                      : (infoProfesional.nro_colegiatura || infoProfesional.cmp)
+                        ? `Colegiatura: ${infoProfesional.nro_colegiatura || infoProfesional.cmp}`
+                        : 'Colegiatura: N/A'}
                     {infoProfesional.rne && ` - R.N.E ${infoProfesional.rne}`}
                   </div>
                 </div>

@@ -196,10 +196,11 @@ class CobroModule
 
             // Registrar movimientos de laboratorio de referencia
             foreach ($data['detalles'] as $detalle) {
-                if (!empty($detalle['derivado']) && $detalle['derivado'] === true) {
+                if (!empty($detalle['derivado'])) {
                     $usuario_caja = $caja_abierta['usuario_id'] ?? $data['usuario_id'];
                     $turno_caja = $caja_abierta['turno'] ?? ($data['turno'] ?? null);
-                    LaboratorioModule::registrarMovimientoReferencia($conn, $cobro_id, $detalle, $caja_id, $data['paciente_id'], $usuario_caja, $turno_caja);
+                    $cotizacion_det = isset($detalle['cotizacion_id']) ? intval($detalle['cotizacion_id']) : intval($data['cotizacion_id'] ?? 0);
+                    LaboratorioModule::registrarMovimientoReferencia($conn, $cobro_id, $detalle, $caja_id, $data['paciente_id'], $usuario_caja, $turno_caja, $cotizacion_det);
                 }
             }
 
@@ -260,12 +261,45 @@ class CobroModule
                 // Modificar el registro de honorarios para guardar el id retornado
                 if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento']) && !empty($data['detalles'])) {
                     foreach ($data['detalles'] as $i => $detalleServicio) {
+                        $detalleServicioKeyRaw = strtolower(trim((string)($detalleServicio['servicio_tipo'] ?? $servicio_key)));
+                        $detalleServicioKey = $detalleServicioKeyRaw;
+                        if ($detalleServicioKey === 'rayos_x' || $detalleServicioKey === 'rayos x') $detalleServicioKey = 'rayosx';
+                        if ($detalleServicioKey === 'rx') $detalleServicioKey = 'rayosx';
+                        if ($detalleServicioKey === 'operaciones') $detalleServicioKey = 'operacion';
+                        if ($detalleServicioKey === 'procedimientos') $detalleServicioKey = 'procedimiento';
+                        if (!in_array($detalleServicioKey, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento'], true)) {
+                            $detalleServicioKey = $servicio_key;
+                        }
+
+                        $tipo_ingreso_map_detalle = [
+                            'farmacia' => 'farmacia',
+                            'laboratorio' => 'laboratorio',
+                            'consulta' => 'consulta',
+                            'ecografia' => 'ecografia',
+                            'rayosx' => 'rayosx',
+                            'procedimiento' => 'procedimiento',
+                            'operacion' => 'operaciones',
+                            'cirugia' => 'operaciones',
+                            'cirugia_mayor' => 'operaciones'
+                        ];
+                        $area_servicio_map_detalle = [
+                            'consulta' => 'Consultas',
+                            'laboratorio' => 'Laboratorio',
+                            'farmacia' => 'Farmacia',
+                            'ecografia' => 'Ecografía',
+                            'rayosx' => 'Rayos X',
+                            'procedimiento' => 'Procedimientos',
+                            'operacion' => 'Operaciones',
+                        ];
+                        $tipo_ingreso_detalle = $tipo_ingreso_map_detalle[$detalleServicioKey] ?? 'otros';
+                        $area_servicio_detalle = $area_servicio_map_detalle[$detalleServicioKey] ?? ($area_servicio ?: 'Otros servicios');
+
                         // Asegurar que cada detalle tenga paciente_id
                         if (!isset($detalleServicio['paciente_id']) || $detalleServicio['paciente_id'] === null) {
                             $detalleServicio['paciente_id'] = $data['paciente_id'] ?? null;
                         }
                         $tarifa = null;
-                        if ($servicio_key === 'laboratorio') {
+                        if ($detalleServicioKey === 'laboratorio') {
                             $examen_id = $detalleServicio['servicio_id'] ?? null;
                             if ($examen_id) {
                                 $stmt_examen = $conn->prepare("SELECT * FROM examenes_laboratorio WHERE id = ? AND activo = 1 LIMIT 1");
@@ -278,7 +312,7 @@ class CobroModule
                             } else {
                                 throw new \Exception('No se envió examen_id para laboratorio.');
                             }
-                        } else if ($servicio_key === 'farmacia') {
+                        } else if ($detalleServicioKey === 'farmacia') {
                             $medicamento_id = $detalleServicio['servicio_id'] ?? null;
                             if ($medicamento_id) {
                                 $stmt_medicamento = $conn->prepare("SELECT * FROM medicamentos WHERE id = ? AND estado = 'activo' LIMIT 1");
@@ -294,7 +328,7 @@ class CobroModule
                         } else {
                             $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
                             // Logging para depuración de Rayos X
-                            if ($servicio_key === 'rayosx') {
+                            if ($detalleServicioKey === 'rayosx') {
                                 // Eliminado log de depuración rayosx
                             }
                             if ($tarifa_id) {
@@ -317,12 +351,12 @@ class CobroModule
                                 $medico_id_buscar = isset($detalleServicio['medico_id']) ? $detalleServicio['medico_id'] : null;
                                 if ($medico_id_buscar) {
                                     $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND medico_id = ? AND activo = 1 LIMIT 1");
-                                    $stmt_tarifa_tipo->bind_param("si", $servicio_key, $medico_id_buscar);
+                                    $stmt_tarifa_tipo->bind_param("si", $detalleServicioKey, $medico_id_buscar);
                                     $stmt_tarifa_tipo->execute();
                                     $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
                                 } else {
                                     $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
-                                    $stmt_tarifa_tipo->bind_param("s", $servicio_key);
+                                    $stmt_tarifa_tipo->bind_param("s", $detalleServicioKey);
                                     $stmt_tarifa_tipo->execute();
                                     $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
                                 }
@@ -338,10 +372,30 @@ class CobroModule
                         ];
                         $metodo_pago = $metodo_pago_map[$data['tipo_pago']] ?? 'otros';
                         if ($tarifa) {
-                            $mov_id = HonorarioModule::registrarMovimiento($conn, $detalleServicio, $tarifa, $servicio_key, $metodo_pago, $cobro_id);
-                            $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
-                            $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
-                            // Registrar ingreso en caja por cada honorario
+                            $mov_id = null;
+                            $requiereHonorario = in_array($detalleServicioKey, ['consulta', 'ecografia', 'operacion', 'rayosx', 'procedimiento'], true);
+
+                            if ($requiereHonorario) {
+                                $medicoDetalle = intval($detalleServicio['medico_id'] ?? 0);
+                                $medicoTarifa = intval($tarifa['medico_id'] ?? 0);
+                                $tieneMedicoAsignado = ($medicoDetalle > 0 || $medicoTarifa > 0);
+                                $requiereMedicoEstricto = in_array($detalleServicioKey, ['consulta', 'operacion'], true);
+
+                                if ($tieneMedicoAsignado || $requiereMedicoEstricto) {
+                                    $movimientoHonorario = HonorarioModule::registrarMovimiento($conn, $detalleServicio, $tarifa, $detalleServicioKey, $metodo_pago, $cobro_id);
+                                    if (is_array($movimientoHonorario) && isset($movimientoHonorario['success']) && !$movimientoHonorario['success']) {
+                                        throw new \Exception($movimientoHonorario['error'] ?? 'No se pudo registrar el movimiento de honorario médico.');
+                                    }
+                                    $mov_id = intval($movimientoHonorario);
+                                    if ($mov_id <= 0) {
+                                        throw new \Exception('No se pudo registrar el movimiento de honorario médico.');
+                                    }
+                                    $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
+                                    $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
+                                }
+                            }
+
+                            // Registrar ingreso en caja por cada detalle
                             // Aplicar descuento proporcional si existe
                             $monto_detalle = $detalleServicio['subtotal'] ?? $total_param;
                             $monto_original = $data['monto_original'] ?? null;
@@ -352,8 +406,8 @@ class CobroModule
                             }
                             $params_individual = [
                                 'caja_id' => $caja_id,
-                                'tipo_ingreso' => $tipo_ingreso,
-                                'area_servicio' => $area_servicio,
+                                'tipo_ingreso' => $tipo_ingreso_detalle,
+                                'area_servicio' => $area_servicio_detalle,
                                 'descripcion_ingreso' => $detalleServicio['descripcion'] ?? $descripcion_ingreso,
                                 'total_param' => $monto_detalle,
                                 'metodo_pago' => $metodo_pago,
@@ -381,8 +435,9 @@ class CobroModule
             $servicio_key = $data['servicio_info']['key'] ?? 'consulta';
             $dni_paciente = $data['paciente_dni'] ?? '';
             $hc_paciente = $data['paciente_hc'] ?? '';
-            if ($servicio_key === 'farmacia') {
-                foreach ($data['detalles'] as $detalle) {
+            foreach ($data['detalles'] as $detalle) {
+                $detalleTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+                if ($detalleTipo === 'farmacia') {
                     FarmaciaModule::procesarVenta(
                         $conn,
                         $detalle,

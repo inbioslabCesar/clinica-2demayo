@@ -2,13 +2,81 @@ import { Icon } from '@fluentui/react';
 import Footer from "../comunes/Footer";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { BASE_URL } from "../../config/config";
 import SidebarMedico from "../sidebar/SidebarMedico";
 import SidebarEnfermero from "../sidebar/SidebarEnfermero";
 import SidebarLaboratorista from "../sidebar/SidebarLaboratorista";
 import SidebarQuimico from "../sidebar/SidebarQuimico";
 import SidebarRecepcionista from "../sidebar/SidebarRecepcionista";
 import SidebarAdmin from "../sidebar/SidebarAdmin";
-function Sidebar({ open, onClose, onLogout, usuario }) {
+import QuoteCartPanel from "../cotizacion/QuoteCartPanel";
+
+const BRAND_STORAGE_KEY = "clinica_brand_cache";
+
+function resolveSystemLogoSize(sizeOption) {
+  const key = String(sizeOption || "").trim().toLowerCase();
+  const sizes = {
+    sm: { sidebarFrame: 56, sidebarImage: 40, navbarImage: 36 },
+    md: { sidebarFrame: 64, sidebarImage: 48, navbarImage: 40 },
+    lg: { sidebarFrame: 80, sidebarImage: 60, navbarImage: 52 },
+    xl: { sidebarFrame: 96, sidebarImage: 72, navbarImage: 64 },
+  };
+  return sizes[key] || sizes.md;
+}
+
+function readBrandCache() {
+  try {
+    const raw = sessionStorage.getItem(BRAND_STORAGE_KEY);
+    if (!raw) return { nombre: "", logo_url: "", logo_size_sistema: "", updated_at: 0 };
+    const parsed = JSON.parse(raw);
+    return {
+      nombre: String(parsed?.nombre || "").trim(),
+      logo_url: String(parsed?.logo_url || "").trim(),
+      logo_size_sistema: String(parsed?.logo_size_sistema || "").trim(),
+      updated_at: Number(parsed?.updated_at || 0),
+    };
+  } catch {
+    return { nombre: "", logo_url: "", logo_size_sistema: "", updated_at: 0 };
+  }
+}
+
+function writeBrandCache(partial) {
+  const prev = readBrandCache();
+  const next = {
+    nombre: typeof partial?.nombre === "string" ? partial.nombre : prev.nombre,
+    logo_url: typeof partial?.logo_url === "string" ? partial.logo_url : prev.logo_url,
+    logo_size_sistema: typeof partial?.logo_size_sistema === "string" ? partial.logo_size_sistema : prev.logo_size_sistema,
+    updated_at: Number(partial?.updated_at || Date.now()),
+  };
+  sessionStorage.setItem(BRAND_STORAGE_KEY, JSON.stringify(next));
+}
+
+function applyFavicon(iconHref) {
+  const href = String(iconHref || '').trim() || '/2demayo.svg';
+  let link = document.querySelector("link[rel='icon']");
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = href;
+}
+
+function resolveLogoUrl(logoPath, versionToken) {
+  const fallback = "/2demayo.svg";
+  const raw = String(logoPath || "").trim();
+  if (!raw) return fallback;
+  let url = raw;
+  if (!/^(https?:\/\/|data:|blob:)/i.test(raw)) {
+    const base = String(BASE_URL || "").replace(/\/+$/, "");
+    url = `${base}/${raw.replace(/^\/+/, "")}`;
+  }
+  const v = encodeURIComponent(String(versionToken || ""));
+  if (!v) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${v}`;
+}
+
+function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSize }) {
   // Sidebar fijo en PC (md+), drawer en móvil/tablet
   return (
     <>
@@ -20,22 +88,29 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
       />
       {/* Sidebar */}
       <aside
-        className={`fixed z-50 top-0 left-0 h-full w-64 bg-white border-r border-blue-500 shadow-lg transform transition-transform duration-200 ease-in-out
+        className={`fixed z-50 top-0 left-0 h-full w-64 bg-white border-r shadow-lg transform transition-transform duration-200 ease-in-out
         ${open ? 'translate-x-0' : '-translate-x-full'}
         md:translate-x-0 md:static md:flex md:flex-col md:z-10 md:h-auto md:shadow-none md:bg-white md:w-64`}
+        style={{ borderColor: 'var(--color-accent)' }}
       >
         <div className="flex flex-col h-full min-h-0">
-          <div className="flex flex-col items-center py-6 bg-gradient-to-br from-purple-600 via-purple-700 to-indigo-800 text-white rounded-b-2xl mx-2 mb-4 shadow-lg">
+          <div className="flex flex-col items-center py-6 text-white rounded-b-2xl mx-2 mb-4 shadow-lg" style={{ background: 'linear-gradient(to bottom right, var(--color-sidebar-from), var(--color-sidebar-via), var(--color-sidebar-to))' }}>
             <div className="relative">
               <div className="absolute inset-0 bg-white/20 rounded-full blur-md"></div>
-              <img 
-                src="/2demayo.svg" 
-                alt="Logo" 
-                className="relative h-16 w-16 object-contain bg-white rounded-full p-2 shadow-lg ring-4 ring-white/30" 
-                onError={e => { e.target.onerror = null; e.target.src = '/logo.svg'; }} 
-              />
+              <div
+                className="relative bg-white rounded-full shadow-lg ring-4 ring-white/30 flex items-center justify-center"
+                style={{ width: logoSize.sidebarFrame, height: logoSize.sidebarFrame }}
+              >
+                <img 
+                  src={logoSrc || "/2demayo.svg"}
+                  alt="Logo" 
+                  className="relative object-contain"
+                  style={{ width: logoSize.sidebarImage, height: logoSize.sidebarImage }}
+                  onError={e => { e.target.onerror = null; e.target.src = '/2demayo.svg'; }} 
+                />
+              </div>
             </div>
-            <h5 className="text-lg font-bold text-white mt-3 text-center drop-shadow-lg">Clínica 2 de Mayo</h5>
+            <h5 className="text-lg font-bold text-white mt-3 text-center drop-shadow-lg">{clinicName || "Sistema Clínico"}</h5>
             <div className="w-12 h-0.5 bg-white/30 rounded-full mt-2"></div>
           </div>
           <nav className="flex flex-col gap-3 px-4 flex-1 overflow-y-auto">
@@ -43,12 +118,12 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
             {usuario?.rol === 'enfermero' && <SidebarEnfermero onClose={onClose} />}
             {usuario?.rol === 'laboratorista' && <SidebarLaboratorista onClose={onClose} />}
             {(usuario?.rol === 'químico' || usuario?.rol === 'quimico') && <SidebarQuimico onClose={onClose} />}
-            {usuario?.rol === 'recepcionista' && <SidebarRecepcionista onClose={onClose} />}
+            {usuario?.rol === 'recepcionista' && <SidebarRecepcionista onClose={onClose} usuario={usuario} />}
             {usuario?.rol === 'administrador' && <SidebarAdmin onClose={onClose} />}
             {/* Si el rol no coincide, mostrar Dashboard y Pacientes por defecto */}
             {!['medico','enfermero','laboratorista','químico','quimico','recepcionista','administrador'].includes(usuario?.rol) && (
               <>
-                <Link to="/" className="group relative py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-800 text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center gap-3 overflow-hidden" onClick={onClose}>
+                <Link to="/" className="group relative py-3 px-4 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center gap-3 overflow-hidden" style={{ background: 'linear-gradient(to right, var(--color-sidebar-from), var(--color-sidebar-via), var(--color-sidebar-to))' }} onClick={onClose}>
                   <Icon iconName="ViewDashboard" className="text-xl text-white" />
                   <span className="relative z-10 text-lg">Dashboard</span>
                 </Link>
@@ -86,13 +161,23 @@ function Sidebar({ open, onClose, onLogout, usuario }) {
   );
 }
 
-function Navbar({ usuario, onMenu }) {
+function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize }) {
   // Botón hamburguesa a la derecha en móvil/tablet
   return (
-    <header className="flex items-center justify-between px-6 py-3 bg-purple-800 shadow text-white">
+    <header className="flex items-center justify-between px-6 py-3 shadow text-white" style={{ backgroundColor: 'var(--color-navbar-bg)' }}>
       <div className="flex items-center gap-3">
-        <img src="/2demayo.svg" alt="Logo" className="h-10 w-10 object-contain bg-white rounded-full p-1 shadow" />
-        <span className="text-xl font-bold drop-shadow">Clínica 2 de Mayo</span>
+        <div
+          className="bg-white rounded-full p-1 shadow flex items-center justify-center"
+          style={{ width: logoSize.navbarImage + 8, height: logoSize.navbarImage + 8 }}
+        >
+          <img
+            src={logoSrc || "/2demayo.svg"}
+            alt="Logo"
+            className="object-contain"
+            style={{ width: logoSize.navbarImage, height: logoSize.navbarImage }}
+          />
+        </div>
+        <span className="text-xl font-bold drop-shadow">{clinicName || "Sistema Clínico"}</span>
       </div>
       <div className="flex items-center gap-4">
         <span className="font-semibold text-white/90">{usuario?.nombre} {usuario?.apellido || ""}</span>
@@ -109,7 +194,82 @@ function Navbar({ usuario, onMenu }) {
 // useEffect is already imported above via react import where needed
 
 function DashboardLayout({ usuario, onLogout, children }) {
+  const cachedBrand = readBrandCache();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [logoSrc, setLogoSrc] = useState(
+    resolveLogoUrl(cachedBrand.logo_url || "", cachedBrand.updated_at || Date.now())
+  );
+  const [clinicName, setClinicName] = useState(cachedBrand.nombre || "");
+  const [logoSizeSistema, setLogoSizeSistema] = useState(cachedBrand.logo_size_sistema || "");
+  const systemLogoSize = resolveSystemLogoSize(logoSizeSistema);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const applyLogo = (logoPath, versionToken) => {
+      if (!mounted) return;
+      setLogoSrc(resolveLogoUrl(logoPath, versionToken));
+      writeBrandCache({ logo_url: String(logoPath || ""), updated_at: versionToken || Date.now() });
+    };
+
+    const applyLogoSize = (sizeOption) => {
+      if (!mounted) return;
+      const normalized = String(sizeOption || "").trim().toLowerCase();
+      setLogoSizeSistema(normalized);
+      writeBrandCache({ logo_size_sistema: normalized });
+    };
+
+    const applyName = (name) => {
+      if (!mounted) return;
+      const n = String(name || "").trim();
+      setClinicName(n);
+      if (n) {
+        writeBrandCache({ nombre: n });
+      }
+    };
+
+    const loadConfigLogo = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store"
+        });
+        const data = await res.json();
+        if (!mounted || !data?.success) return;
+        const cfg = data.data || {};
+        applyLogo(cfg.logo_url, cfg.updated_at || Date.now());
+        applyName(cfg.nombre_clinica);
+        applyLogoSize(cfg.logo_size_sistema);
+      } catch {
+        // keep fallback
+      }
+    };
+
+    const onConfigUpdated = (event) => {
+      const detail = event?.detail || {};
+      applyLogo(detail.logo_url || "", detail.updated_at || Date.now());
+      applyName(detail.nombre_clinica);
+      applyLogoSize(detail.logo_size_sistema);
+    };
+
+    loadConfigLogo();
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    const safeName = String(clinicName || '').trim();
+    document.title = safeName ? `${safeName} - Sistema` : 'Sistema';
+  }, [clinicName]);
+
+  useEffect(() => {
+    applyFavicon(logoSrc);
+  }, [logoSrc]);
 
   // Cierra el sidebar automáticamente al cambiar a móvil/tablet
   useEffect(() => {
@@ -126,7 +286,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
   return (
     <div className="min-h-screen flex flex-col bg-blue-50 overflow-x-hidden">
       {/* Navbar at the top */}
-      <Navbar usuario={usuario} onMenu={() => setSidebarOpen(true)} />
+      <Navbar usuario={usuario} onMenu={() => setSidebarOpen(true)} logoSrc={logoSrc} clinicName={clinicName} logoSize={systemLogoSize} />
       <div className="flex flex-1 max-w-full">
         {/* Sidebar for navigation (fijo en PC, drawer en móvil/tablet) */}
         <Sidebar 
@@ -134,13 +294,17 @@ function DashboardLayout({ usuario, onLogout, children }) {
           onClose={() => setSidebarOpen(false)} 
           onLogout={onLogout} 
           usuario={usuario}
+          logoSrc={logoSrc}
+          clinicName={clinicName}
+          logoSize={systemLogoSize}
         />
         <main className="flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto">
           {children}
+          <QuoteCartPanel />
         </main>
       </div>
       {/* Footer at the bottom */}
-      <Footer />
+      <Footer clinicName={clinicName} />
     </div>
   );
 }

@@ -9,6 +9,7 @@ const serviceKeyMap = {
   laboratorio: "laboratorio",
   rayosx: "rayosx",
   rayos_x: "rayosx",
+  rx: "rayosx",
   ecografia: "ecografia",
   operacion: "operacion",
   operaciones: "operacion",
@@ -31,6 +32,19 @@ export default function CobrarCotizacionPage() {
   const [error, setError] = useState("");
   const [cotizacion, setCotizacion] = useState(null);
   const [paciente, setPaciente] = useState(null);
+  const [criterioImputacion, setCriterioImputacion] = useState(() => {
+    const saved = String(localStorage.getItem("cotizacion_criterio_imputacion") || "fifo").toLowerCase();
+    return saved === "lifo" ? "lifo" : "fifo";
+  });
+  const themePrimarySoft = {
+    backgroundColor: "var(--color-primary-light)",
+    borderColor: "var(--color-primary-light)",
+    color: "var(--color-primary-dark)",
+  };
+
+  useEffect(() => {
+    localStorage.setItem("cotizacion_criterio_imputacion", criterioImputacion);
+  }, [criterioImputacion]);
 
   useEffect(() => {
     let mounted = true;
@@ -73,7 +87,7 @@ export default function CobrarCotizacionPage() {
     };
   }, [cotizacionId]);
 
-  const detallesCobro = useMemo(() => {
+  const detallesCotizacionActivos = useMemo(() => {
     const detalles = Array.isArray(cotizacion?.detalles) ? cotizacion.detalles : [];
     return detalles
       .filter((d) => {
@@ -89,11 +103,83 @@ export default function CobrarCotizacionPage() {
         precio_unitario: Number(d.precio_unitario) || 0,
         subtotal: Number(d.subtotal) || (Number(d.precio_unitario) || 0) * (Number(d.cantidad) || 1),
         cotizacion_id: Number(cotizacion?.id),
+        derivado: Boolean(d.derivado),
+        tipo_derivacion: d.tipo_derivacion || "",
+        valor_derivacion: Number(d.valor_derivacion || 0),
+        laboratorio_referencia: d.laboratorio_referencia || "",
         medico_id: d.medico_id || null,
+        medico_nombre_completo: d.medico_nombre_completo || undefined,
         medico_nombre: d.medico_nombre || undefined,
+        medico_apellido: d.medico_apellido || undefined,
         medico_especialidad: d.especialidad || d.medico_especialidad || undefined,
       }));
   }, [cotizacion]);
+
+  const totalDetallesActivos = useMemo(() => {
+    return detallesCotizacionActivos.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+  }, [detallesCotizacionActivos]);
+
+  const saldoPendiente = useMemo(() => {
+    const saldo = Number(cotizacion?.saldo_pendiente);
+    if (Number.isFinite(saldo) && saldo > 0) return saldo;
+    return totalDetallesActivos;
+  }, [cotizacion?.saldo_pendiente, totalDetallesActivos]);
+
+  const detallesCobro = useMemo(() => {
+    if (!detallesCotizacionActivos.length) return [];
+
+    const totalBase = Number(totalDetallesActivos || 0);
+    const saldoObjetivo = Math.max(0, Number(saldoPendiente || 0));
+
+    if (!Number.isFinite(totalBase) || totalBase <= 0) {
+      return detallesCotizacionActivos;
+    }
+
+    // Si el saldo cubre todo, cobrar todos los ítems tal cual.
+    if (saldoObjetivo >= totalBase) {
+      return detallesCotizacionActivos;
+    }
+
+    // Reparte el pago histórico por orden de detalle (FIFO/LIFO configurable):
+    // evita prorrateos artificiales como 8.33/1.67 cuando el pendiente real
+    // corresponde a un ítem específico.
+    let pagadoRestante = Math.max(0, Number(cotizacion?.total_pagado || 0));
+    const source = criterioImputacion === "lifo"
+      ? [...detallesCotizacionActivos].reverse()
+      : detallesCotizacionActivos;
+    const pendientes = [];
+
+    for (const item of source) {
+      const subtotalItem = Math.max(0, Number(item.subtotal || 0));
+      const pagadoEnItem = Math.min(subtotalItem, pagadoRestante);
+      const pendienteItem = Number((subtotalItem - pagadoEnItem).toFixed(2));
+      pagadoRestante = Number((pagadoRestante - pagadoEnItem).toFixed(2));
+
+      if (pendienteItem > 0) {
+        const cantidadOriginal = Math.max(1, Number(item.cantidad || 1));
+        const precioPendiente = Number((pendienteItem / cantidadOriginal).toFixed(2));
+        pendientes.push({
+          ...item,
+          precio_unitario: precioPendiente,
+          subtotal: pendienteItem,
+        });
+      }
+    }
+
+    // Salvaguarda: si por redondeo no quedaron pendientes calculados,
+    // usar el enfoque previo de un solo ítem por saldo.
+    if (!pendientes.length && saldoObjetivo > 0) {
+      const primero = source[0];
+      return [{
+        ...primero,
+        cantidad: 1,
+        precio_unitario: saldoObjetivo,
+        subtotal: saldoObjetivo,
+      }];
+    }
+
+    return pendientes;
+  }, [detallesCotizacionActivos, totalDetallesActivos, saldoPendiente, cotizacion?.total_pagado, criterioImputacion]);
 
   const totalCobro = useMemo(() => {
     return detallesCobro.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
@@ -109,8 +195,9 @@ export default function CobrarCotizacionPage() {
     };
   }, [cotizacion?.id, detallesCobro]);
 
-  const registrarAbono = async (cobroId) => {
+  const registrarAbono = async (cobroId, cobroResumen = null) => {
     let montoAbono = totalCobro;
+    const montoDescuento = Math.max(0, Number(cobroResumen?.monto_descuento || 0));
     try {
       const resCob = await fetch(`${BASE_URL}api_cobros.php?cobro_id=${Number(cobroId)}`, {
         credentials: "include",
@@ -119,9 +206,13 @@ export default function CobrarCotizacionPage() {
       const montoCobrado = Number(dataCob?.cobro?.total);
       if (dataCob?.success && Number.isFinite(montoCobrado) && montoCobrado > 0) {
         montoAbono = montoCobrado;
+      } else if (Number.isFinite(Number(cobroResumen?.total_cobrado)) && Number(cobroResumen.total_cobrado) > 0) {
+        montoAbono = Number(cobroResumen.total_cobrado);
       }
     } catch {
-      // usar totalCobro como fallback
+      if (Number.isFinite(Number(cobroResumen?.total_cobrado)) && Number(cobroResumen.total_cobrado) > 0) {
+        montoAbono = Number(cobroResumen.total_cobrado);
+      }
     }
 
     const resAbono = await fetch(`${BASE_URL}api_cotizaciones.php`, {
@@ -133,6 +224,7 @@ export default function CobrarCotizacionPage() {
         cotizacion_id: Number(cotizacion?.id),
         cobro_id: Number(cobroId),
         monto: Number(montoAbono),
+        monto_descuento: montoDescuento,
         descripcion: `Abono desde vista Cobrar Cotización #${cotizacion?.id}`,
       }),
     });
@@ -143,9 +235,56 @@ export default function CobrarCotizacionPage() {
     }
   };
 
-  const manejarCobroCompleto = async (cobroId) => {
+  const manejarCobroCompleto = async (cobroId, _servicio, cobroResumen) => {
     try {
-      await registrarAbono(cobroId);
+      await registrarAbono(cobroId, cobroResumen);
+
+      // Si la cotización incluye una consulta médica, crear el registro en la tabla
+      // de consultas para que aparezca en el panel del médico.
+      const tieneConsulta = detallesCotizacionActivos.some(
+        (d) => d.servicio_tipo === "consulta" && d.medico_id
+      );
+      if (tieneConsulta) {
+        try {
+          await fetch(`${BASE_URL}api_cotizaciones.php`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accion: "crear_consulta_desde_cotizacion",
+              cotizacion_id: Number(cotizacion?.id),
+            }),
+          });
+        } catch {
+          // La creación de consulta es best-effort; no bloquear el flujo.
+        }
+      }
+
+      // Si la cotización es mixta (tiene ítems de laboratorio pero el key principal
+      // no era 'laboratorio'), CobroModuloFinal no creó la orden; la creamos aquí.
+      const itemsLab = detallesCotizacionActivos.filter(
+        (d) => d.servicio_tipo === "laboratorio" && d.servicio_id
+      );
+      if (itemsLab.length > 0 && servicioPago?.key !== "laboratorio") {
+        try {
+          const examenesIds = itemsLab.map((d) => d.servicio_id);
+          await fetch(`${BASE_URL}api_ordenes_laboratorio.php`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              consulta_id: null,
+              examenes: examenesIds,
+              paciente_id: Number(cotizacion?.paciente_id || 0),
+              cobro_id: Number(cobroId),
+              cotizacion_id: Number(cotizacion?.id || 0) || null,
+            }),
+          });
+        } catch {
+          // Best-effort; no bloquear el flujo.
+        }
+      }
+
       await Swal.fire("Cobro aplicado", "La cotización fue actualizada con el pago realizado.", "success");
       navigate("/cotizaciones");
     } catch (err) {
@@ -211,10 +350,23 @@ export default function CobrarCotizacionPage() {
         Volver a cotizaciones
       </button>
 
-      <div className="bg-blue-50 border border-blue-200 rounded p-4 mb-4 text-sm text-blue-800">
+      <div className="rounded p-4 mb-4 text-sm border" style={themePrimarySoft}>
         <div><b>Cotización:</b> #{cotizacion.id}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
         <div><b>Saldo actual:</b> S/ {Number(cotizacion.saldo_pendiente ?? totalCobro).toFixed(2)}</div>
+        <div className="mt-2 flex items-center gap-2">
+          <label htmlFor="criterio-imputacion" className="font-semibold">Criterio de imputación:</label>
+          <select
+            id="criterio-imputacion"
+            value={criterioImputacion}
+            onChange={(e) => setCriterioImputacion(String(e.target.value || "fifo").toLowerCase())}
+            className="border rounded px-2 py-1 bg-white"
+            style={{ borderColor: "var(--color-primary-light)" }}
+          >
+            <option value="fifo">FIFO (primero antiguo)</option>
+            <option value="lifo">LIFO (primero reciente)</option>
+          </select>
+        </div>
       </div>
 
       <CobroModuloFinal

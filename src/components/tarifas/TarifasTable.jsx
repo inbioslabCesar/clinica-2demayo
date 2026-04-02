@@ -1,4 +1,5 @@
 import React from "react";
+import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
 function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarifa, medicos }) {
   return (
@@ -10,7 +11,7 @@ function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarif
             <div className="text-center py-8 text-gray-500">No hay tarifas registradas para este filtro</div>
           ) : tarifas.map((tarifa) => {
             const medico = medicos && tarifa.medico_id ? medicos.find(m => m.id === parseInt(tarifa.medico_id)) : null;
-            const nombreMedico = medico ? `Dr(a). ${[medico.nombre, medico.apellido].filter(Boolean).join(" ").replace(/\s+/g, ' ').trim()}${medico.especialidad ? ` - ${medico.especialidad}` : ""}` : "General";
+            const nombreMedico = medico ? `${formatProfesionalName(medico)}${medico.especialidad ? ` - ${medico.especialidad}` : ""}` : "General";
             return (
               <div key={tarifa.id} className={`rounded-xl shadow-lg border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-blue-100 p-4 flex flex-col gap-2 ${tarifa.activo !== 1 ? "opacity-60 bg-yellow-50" : ""}`}>
                 <div className="flex items-center justify-between mb-2">
@@ -79,9 +80,9 @@ function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarif
                       {(() => {
                         const medico = medicos && tarifa.medico_id ? medicos.find(m => m.id === parseInt(tarifa.medico_id)) : null;
                         if (medico) {
-                          const nombreCompleto = [medico.nombre, medico.apellido].filter(Boolean).join(" ").replace(/\s+/g, ' ').trim();
+                          const nombreCompleto = formatProfesionalName(medico);
                           const especialidad = medico.especialidad ? ` - ${medico.especialidad}` : "";
-                          return `Dr(a). ${nombreCompleto}${especialidad}`;
+                          return `${nombreCompleto}${especialidad}`;
                         }
                         return "General";
                       })()}

@@ -20,9 +20,105 @@ if (!$usuario || !in_array($rol, ['administrador', 'recepcionista'])) {
 
 
 $paciente_id = isset($_GET['paciente_id']) ? intval($_GET['paciente_id']) : 0;
+$cotizacion_id_ctx = isset($_GET['cotizacion_id']) ? intval($_GET['cotizacion_id']) : 0;
 if ($paciente_id <= 0) {
     echo json_encode(['success' => false, 'error' => 'ID de paciente inválido']);
     exit;
+}
+
+function obtenerEstadoServicio(PDO $pdo, $cobroEstado, $detalles, array &$cacheCotizaciones, $cotizacionIdForzada = null) {
+    $cobroEstadoLc = strtolower((string)$cobroEstado);
+    $estadoDefault = [
+        'estado_pago' => $cobroEstadoLc === 'anulado' ? 'anulada' : ($cobroEstadoLc === 'pagado' ? 'pagado' : 'pendiente'),
+        'cotizacion_id' => null,
+        'saldo_pendiente' => 0.0,
+        'total_pagado' => null,
+        'total_cotizacion' => null,
+    ];
+
+    if (!is_array($detalles) || empty($detalles)) {
+        return $estadoDefault;
+    }
+
+    $cotizacionId = intval($cotizacionIdForzada ?: 0);
+    if ($cotizacionId <= 0) {
+        foreach ($detalles as $d) {
+            if (!is_array($d)) {
+                continue;
+            }
+            $cid = isset($d['cotizacion_id']) ? intval($d['cotizacion_id']) : 0;
+            if ($cid > 0) {
+                $cotizacionId = $cid;
+                break;
+            }
+        }
+    }
+
+    if (!$cotizacionId) {
+        return $estadoDefault;
+    }
+
+    if (!array_key_exists($cotizacionId, $cacheCotizaciones)) {
+        $stmtCot = $pdo->prepare("SELECT * FROM cotizaciones WHERE id = ? LIMIT 1");
+        $stmtCot->execute([$cotizacionId]);
+        $cacheCotizaciones[$cotizacionId] = $stmtCot->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
+    $cot = $cacheCotizaciones[$cotizacionId];
+    if (!$cot) {
+        return [
+            'estado_pago' => 'pendiente',
+            'cotizacion_id' => $cotizacionId,
+            'saldo_pendiente' => 0.0,
+            'total_pagado' => null,
+            'total_cotizacion' => null,
+        ];
+    }
+
+    $estado = strtolower((string)($cot['estado'] ?? ''));
+    $saldo = isset($cot['saldo_pendiente']) ? floatval($cot['saldo_pendiente']) : 0.0;
+    $pagado = isset($cot['total_pagado']) ? floatval($cot['total_pagado']) : null;
+    $total = isset($cot['total']) ? floatval($cot['total']) : null;
+
+    if (!in_array($estado, ['pagado', 'parcial', 'pendiente', 'anulada'], true)) {
+        if ($saldo > 0) {
+            $estado = ($pagado !== null && $pagado > 0) ? 'parcial' : 'pendiente';
+        } else {
+            $estado = 'pagado';
+        }
+    }
+
+    return [
+        'estado_pago' => $estado,
+        'cotizacion_id' => $cotizacionId,
+        'saldo_pendiente' => $saldo,
+        'total_pagado' => $pagado,
+        'total_cotizacion' => $total,
+    ];
+}
+
+function resolverCotizacionIdPorCobro(PDO $pdo, $cobroId, array &$cacheCobroCotizacion) {
+    $cobroId = intval($cobroId);
+    if ($cobroId <= 0) {
+        return null;
+    }
+
+    if (array_key_exists($cobroId, $cacheCobroCotizacion)) {
+        $cached = intval($cacheCobroCotizacion[$cobroId] ?? 0);
+        return $cached > 0 ? $cached : null;
+    }
+
+    try {
+        $stmt = $pdo->prepare("SELECT cotizacion_id FROM cotizacion_movimientos WHERE cobro_id = ? AND cotizacion_id IS NOT NULL ORDER BY id DESC LIMIT 1");
+        $stmt->execute([$cobroId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $cotizacionId = $row ? intval($row['cotizacion_id'] ?? 0) : 0;
+        $cacheCobroCotizacion[$cobroId] = $cotizacionId > 0 ? $cotizacionId : null;
+        return $cotizacionId > 0 ? $cotizacionId : null;
+    } catch (Exception $e) {
+        $cacheCobroCotizacion[$cobroId] = null;
+        return null;
+    }
 }
 
 try {
@@ -36,15 +132,44 @@ try {
     }
 
     // Obtener historial de cobros y servicios pagados (ahora agrupado por cobro)
-    $stmt = $pdo->prepare("SELECT c.id AS cobro_id, c.fecha_cobro AS fecha, cd.servicio_tipo AS servicio, cd.descripcion, cd.subtotal AS monto FROM cobros c JOIN cobros_detalle cd ON c.id = cd.cobro_id WHERE c.paciente_id = ? AND c.estado = 'pagado' ORDER BY c.fecha_cobro DESC");
+    $stmt = $pdo->prepare("SELECT c.id AS cobro_id, c.estado AS cobro_estado, c.fecha_cobro AS fecha, c.total AS monto_cobrado, cd.servicio_tipo AS servicio, cd.descripcion, cd.subtotal AS monto FROM cobros c JOIN cobros_detalle cd ON c.id = cd.cobro_id WHERE c.paciente_id = ? AND c.estado IN ('pagado', 'anulado') ORDER BY c.fecha_cobro DESC");
     $stmt->execute([$paciente_id]);
     $historial_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $historial = [];
+    $cacheCotizaciones = [];
+    $cacheCobroCotizacion = [];
     foreach ($historial_raw as $row) {
         $detalles = json_decode($row['descripcion'], true);
-        // Si el servicio es laboratorio, buscar la orden de laboratorio asociada al cobro
+        $cotizacionIdResuelta = resolverCotizacionIdPorCobro($pdo, $row['cobro_id'] ?? 0, $cacheCobroCotizacion);
+
+        if ($cotizacion_id_ctx > 0 && $cotizacionIdResuelta > 0 && $cotizacionIdResuelta !== $cotizacion_id_ctx) {
+            continue;
+        }
+
+        $cotizacionIdForzada = $cotizacionIdResuelta;
+        if ($cotizacionIdForzada <= 0 && $cotizacion_id_ctx > 0) {
+            // Cuando se navega desde Cotizaciones, usar el contexto de la URL
+            // para resolver estado aunque el detalle del cobro no traiga cotizacion_id.
+            $cotizacionIdForzada = $cotizacion_id_ctx;
+        }
+
+        $estadoServicio = obtenerEstadoServicio($pdo, $row['cobro_estado'] ?? 'pagado', $detalles, $cacheCotizaciones, $cotizacionIdForzada);
+
+        if ($cotizacion_id_ctx > 0 && intval($estadoServicio['cotizacion_id'] ?? 0) > 0 && intval($estadoServicio['cotizacion_id']) !== $cotizacion_id_ctx) {
+            continue;
+        }
+        // Si el servicio incluye laboratorio (fila directa o dentro del JSON de detalles), buscar la orden
+        $tieneLabEnDetalles = false;
+        if (is_array($detalles)) {
+            foreach ($detalles as $d) {
+                if (isset($d['servicio_tipo']) && strtolower(trim((string)$d['servicio_tipo'])) === 'laboratorio') {
+                    $tieneLabEnDetalles = true;
+                    break;
+                }
+            }
+        }
         $resultados_laboratorio_url = null;
-        if ($row['servicio'] === 'laboratorio') {
+        if ($row['servicio'] === 'laboratorio' || $tieneLabEnDetalles) {
             error_log("[DEBUG] Buscando orden de laboratorio para cobro_id: " . $row['cobro_id']);
             $stmtOrden = $pdo->prepare("SELECT id, consulta_id FROM ordenes_laboratorio WHERE cobro_id = ? LIMIT 1");
             $stmtOrden->execute([$row['cobro_id']]);
@@ -77,8 +202,15 @@ try {
             'fecha' => $row['fecha'],
             'servicio' => $row['servicio'],
             'monto' => $row['monto'],
+            'monto_bruto' => $row['monto'],
+            'monto_cobrado' => $row['monto_cobrado'],
             'detalles' => $detalles,
-            'resultados_laboratorio' => $resultados_laboratorio_url
+            'resultados_laboratorio' => $resultados_laboratorio_url,
+            'estado_pago' => $estadoServicio['estado_pago'],
+            'cotizacion_id' => $estadoServicio['cotizacion_id'],
+            'saldo_pendiente' => $estadoServicio['saldo_pendiente'],
+            'total_pagado' => $estadoServicio['total_pagado'],
+            'total_cotizacion' => $estadoServicio['total_cotizacion']
         ];
     }
 

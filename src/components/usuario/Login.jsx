@@ -1,8 +1,20 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL, SECURITY_CONFIG } from "../../config/config";
 import { Icon } from '@fluentui/react';
+import { normalizePermisos } from "../../config/recepcionPermisos";
+
+function applyFavicon(iconHref) {
+  const href = String(iconHref || '').trim() || '/2demayo.svg';
+  let link = document.querySelector("link[rel='icon']");
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = href;
+}
 
 function Login({ onLogin }) {
   const [usuario, setUsuario] = useState("");
@@ -10,7 +22,49 @@ function Login({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [logoSrc, setLogoSrc] = useState('/2demayo.svg');
+  const [clinicName, setClinicName] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let mounted = true;
+    const loadLogo = async () => {
+      try {
+        const res = await fetch(BASE_URL + 'api_get_configuracion.php', {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        const data = await res.json();
+        if (!mounted || !data?.success) return;
+        const cfg = data.data || {};
+        const configuredName = String(cfg.nombre_clinica || '').trim();
+        if (configuredName) setClinicName(configuredName);
+        const raw = String(cfg.logo_url || '').trim();
+        if (!raw) return;
+        const absolute = /^(https?:\/\/|data:|blob:)/i.test(raw)
+          ? raw
+          : `${String(BASE_URL || '').replace(/\/+$/, '')}/${raw.replace(/^\/+/, '')}`;
+        const v = encodeURIComponent(String(cfg.updated_at || Date.now()));
+        setLogoSrc(`${absolute}${absolute.includes('?') ? '&' : '?'}v=${v}`);
+      } catch {
+        // keep fallback logo
+      }
+    };
+    loadLogo();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const safeName = String(clinicName || '').trim();
+    document.title = safeName ? `${safeName} - Acceso` : 'Acceso';
+  }, [clinicName]);
+
+  useEffect(() => {
+    applyFavicon(logoSrc);
+  }, [logoSrc]);
 
   // Validación de seguridad básica
   const validateSecurity = () => {
@@ -67,6 +121,8 @@ function Login({ onLogin }) {
         }
         if (resMedico.ok && dataMedico.success) {
           const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
+          sessionStorage.removeItem('usuario');
+          sessionStorage.removeItem('user_role');
           sessionStorage.setItem('medico', JSON.stringify(medicoConRol));
           onLogin && onLogin(medicoConRol);
           navigate("/");
@@ -90,14 +146,19 @@ function Login({ onLogin }) {
           data = {};
         }
         if (res.ok && data.success) {
-          sessionStorage.setItem('usuario', JSON.stringify(data.usuario));
+          const usuarioNormalizado = {
+            ...data.usuario,
+            permisos: normalizePermisos(data?.usuario?.permisos || []),
+          };
+          sessionStorage.removeItem('medico');
+          sessionStorage.setItem('usuario', JSON.stringify(usuarioNormalizado));
           // Guardar el rol explícitamente para uso global
-          if (data.usuario.rol) {
-            sessionStorage.setItem('user_role', data.usuario.rol);
+          if (usuarioNormalizado.rol) {
+            sessionStorage.setItem('user_role', usuarioNormalizado.rol);
           } else {
             sessionStorage.setItem('user_role', 'recepcionista');
           }
-          onLogin && onLogin(data.usuario);
+          onLogin && onLogin(usuarioNormalizado);
           navigate("/");
           return;
         }
@@ -120,14 +181,19 @@ function Login({ onLogin }) {
           data = {};
         }
         if (res.ok && data.success) {
-          sessionStorage.setItem('usuario', JSON.stringify(data.usuario));
+          const usuarioNormalizado = {
+            ...data.usuario,
+            permisos: normalizePermisos(data?.usuario?.permisos || []),
+          };
+          sessionStorage.removeItem('medico');
+          sessionStorage.setItem('usuario', JSON.stringify(usuarioNormalizado));
           // Guardar el rol explícitamente para uso global
-          if (data.usuario.rol) {
-            sessionStorage.setItem('user_role', data.usuario.rol);
+          if (usuarioNormalizado.rol) {
+            sessionStorage.setItem('user_role', usuarioNormalizado.rol);
           } else {
             sessionStorage.setItem('user_role', 'recepcionista');
           }
-          onLogin && onLogin(data.usuario);
+          onLogin && onLogin(usuarioNormalizado);
           navigate("/");
           return;
         }
@@ -150,6 +216,8 @@ function Login({ onLogin }) {
         }
         if (resMedico.ok && dataMedico.success) {
           const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
+          sessionStorage.removeItem('usuario');
+          sessionStorage.removeItem('user_role');
           sessionStorage.setItem('medico', JSON.stringify(medicoConRol));
           onLogin && onLogin(medicoConRol);
           navigate("/");
@@ -165,12 +233,12 @@ function Login({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-800 to-indigo-900 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{ background: 'linear-gradient(to bottom right, var(--color-login-from), var(--color-login-via), var(--color-login-to))' }}>
       {/* Efectos de fondo */}
       <div className="absolute inset-0">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-400/20 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-400/20 rounded-full blur-3xl"></div>
-        <div className="absolute top-3/4 left-1/2 w-64 h-64 bg-indigo-400/20 rounded-full blur-3xl"></div>
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-3xl opacity-20" style={{ backgroundColor: 'var(--color-login-via)' }}></div>
+        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full blur-3xl opacity-20" style={{ backgroundColor: 'var(--color-login-from)' }}></div>
+        <div className="absolute top-3/4 left-1/2 w-64 h-64 rounded-full blur-3xl opacity-20" style={{ backgroundColor: 'var(--color-login-to)' }}></div>
       </div>
 
       {/* Formulario de Login */}
@@ -181,13 +249,14 @@ function Login({ onLogin }) {
             <div className="relative mx-auto w-20 h-20 mb-6">
               <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full blur-lg opacity-60"></div>
               <img 
-                src="/2demayo.svg" 
+                src={logoSrc}
                 alt="Logo clínica" 
                 className="relative w-20 h-20 object-contain bg-white/90 rounded-full p-3 shadow-lg ring-4 ring-white/30" 
+                onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = '/2demayo.svg'; }}
               />
             </div>
             <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">
-              Clínica 2 de Mayo
+              {clinicName}
             </h1>
             <p className="text-lg text-white/80">
               Acceso al Sistema Médico
@@ -237,7 +306,8 @@ function Login({ onLogin }) {
             <button 
               type="submit" 
               disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-700 hover:from-blue-700 hover:via-purple-700 hover:to-indigo-800 text-white font-bold rounded-2xl py-4 px-6 shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-3 relative overflow-hidden"
+              className="w-full hover:opacity-90 text-white font-bold rounded-2xl py-4 px-6 shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-3 relative overflow-hidden"
+              style={{ background: 'linear-gradient(to right, var(--color-primary), var(--color-accent), var(--color-secondary))' }}
             >
               {loading ? (
                 <>

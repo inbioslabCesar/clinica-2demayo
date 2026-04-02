@@ -217,11 +217,17 @@ export default function InventarioLaboratorioPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 p-4">
+    <div
+      className="min-h-screen p-4"
+      style={{ background: "linear-gradient(135deg, var(--color-primary-light) 0%, #ffffff 55%, #eef2ff 100%)" }}
+    >
       <div className="max-w-7xl mx-auto space-y-4">
-        <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 rounded-xl p-4 text-white shadow-lg">
+        <div
+          className="rounded-xl p-4 text-white shadow-lg"
+          style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary), var(--color-accent))" }}
+        >
           <h1 className="text-xl font-bold">Inventario Interno Laboratorio</h1>
-          <p className="text-sm text-purple-100">Recetas por examen, transferencias al laboratorio y saldo interno</p>
+          <p className="text-sm text-white/80">Recetas por examen, transferencias al laboratorio y saldo interno</p>
         </div>
 
         {mensaje && (
@@ -296,7 +302,8 @@ export default function InventarioLaboratorioPage() {
                 <button
                   type="submit"
                   disabled={savingReceta}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+                  className="disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+                  style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
                 >
                   {savingReceta ? "Guardando..." : editingRecetaId ? "Actualizar" : "Guardar"}
                 </button>
@@ -354,7 +361,8 @@ export default function InventarioLaboratorioPage() {
                 <button
                   type="submit"
                   disabled={savingTransfer}
-                  className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+                  className="disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+                  style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}
                 >
                   {savingTransfer ? "Registrando..." : "Registrar transferencia"}
                 </button>
@@ -372,7 +380,8 @@ export default function InventarioLaboratorioPage() {
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-base font-semibold text-gray-800">Recetas configuradas</h2>
               <button
-                className="text-sm text-indigo-600 hover:text-indigo-700"
+                className="text-sm"
+                style={{ color: "var(--color-secondary)" }}
                 type="button"
                 onClick={fetchAll}
                 disabled={loading}

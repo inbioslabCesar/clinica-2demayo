@@ -1,13 +1,17 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import OrdenesLaboratorioList from "../laboratorio/OrdenesLaboratorioList";
 import LlenarResultadosForm from "../laboratorio/LlenarResultadosForm";
 import { BASE_URL } from "../config/config";
 
 function LaboratorioPanelPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("ordenes");
   const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const deepLinkResolvedRef = useRef(false);
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
   const [resumenPanel, setResumenPanel] = useState({
     total: 0,
@@ -16,6 +20,8 @@ function LaboratorioPanelPage() {
     hoy: 0,
     vencidas: 0,
   });
+  const [deepLinkInfo, setDeepLinkInfo] = useState(null);
+  const backTo = new URLSearchParams(location.search).get('back_to') || '';
 
   useEffect(() => {
     fetch(BASE_URL + "api_examenes_laboratorio.php", {
@@ -50,7 +56,7 @@ function LaboratorioPanelPage() {
   }, [reloadKey, activeTab]);
 
 
-  const handleSeleccionarOrden = async (orden) => {
+  const handleSeleccionarOrden = useCallback(async (orden) => {
     if (orden.estado === 'cancelada') {
       return;
     }
@@ -70,9 +76,68 @@ function LaboratorioPanelPage() {
       setOrdenSeleccionada(orden);
     }
     setActiveTab("procesar");
-  };
+  }, []);
+
+  useEffect(() => {
+    if (deepLinkResolvedRef.current) return;
+
+    const sp = new URLSearchParams(location.search);
+    const ordenId = Number(sp.get('orden_id') || sp.get('order_id') || 0);
+    const cotizacionId = Number(sp.get('cotizacion_id') || 0);
+    const modo = String(sp.get('modo') || '').toLowerCase();
+    if (ordenId <= 0 && cotizacionId <= 0) return;
+
+    deepLinkResolvedRef.current = true;
+
+    const resolverDesdeDeepLink = async () => {
+      try {
+        const res = await fetch(BASE_URL + "api_ordenes_laboratorio.php", {
+          credentials: 'include'
+        });
+        const data = await res.json();
+        const ordenes = data?.success && Array.isArray(data.ordenes) ? data.ordenes : [];
+
+        let objetivo = null;
+        if (ordenId > 0) {
+          objetivo = ordenes.find((orden) => Number(orden.id) === ordenId) || null;
+        }
+        if (!objetivo && cotizacionId > 0) {
+          objetivo = ordenes.find((orden) => Number(orden.cotizacion_id || 0) === cotizacionId && orden.estado !== 'cancelada') || null;
+        }
+        if (!objetivo && cotizacionId > 0) {
+          objetivo = ordenes.find((orden) => Number(orden.cotizacion_id || 0) === cotizacionId) || null;
+        }
+
+        if (objetivo) {
+          const estadoObjetivo = String(objetivo.estado_visual || objetivo.estado || '').toLowerCase();
+          const esCompletada = estadoObjetivo === 'completado';
+
+          if (modo === 'ver' && esCompletada) {
+            setActiveTab('ordenes');
+            setOrdenSeleccionada(null);
+            setDeepLinkInfo({
+              tipo: 'completada',
+              ordenId: objetivo.id,
+              cotizacionId: Number(objetivo.cotizacion_id || 0),
+            });
+          } else {
+            setDeepLinkInfo(null);
+            await handleSeleccionarOrden(objetivo);
+          }
+        }
+      } catch {
+        // Si falla el deep-link, el usuario puede seleccionar manualmente desde la lista.
+      }
+    };
+
+    resolverDesdeDeepLink();
+  }, [location.search, handleSeleccionarOrden]);
 
   const handleVolver = () => {
+    if (backTo) {
+      navigate(backTo);
+      return;
+    }
     setOrdenSeleccionada(null);
     setReloadKey(k => k + 1);
     setActiveTab("ordenes");
@@ -150,9 +215,19 @@ function LaboratorioPanelPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50">
+    <div
+      className="min-h-screen"
+      style={{
+        background: "linear-gradient(135deg, var(--color-primary-light) 0%, #ffffff 45%, #eef2ff 100%)",
+      }}
+    >
       {/* Header con gradiente */}
-      <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white">
+      <div
+        className="text-white"
+        style={{
+          background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)",
+        }}
+      >
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-3">
             <div className="flex items-center gap-3">
@@ -168,21 +243,21 @@ function LaboratorioPanelPage() {
             {activeTab === 'ordenes' && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 w-full lg:w-auto lg:min-w-[520px]">
                 <div className="rounded-lg bg-white/15 px-3 py-2">
-                  <div className="text-[11px] text-purple-100">Total</div>
+                  <div className="text-[11px] text-white/80">Total</div>
                   <div className="text-lg font-bold leading-tight">{resumenPanel.total}</div>
                 </div>
                 <div className="rounded-lg bg-white/15 px-3 py-2">
-                  <div className="text-[11px] text-purple-100">Pendientes</div>
+                  <div className="text-[11px] text-white/80">Pendientes</div>
                   <div className="text-lg font-bold leading-tight">{resumenPanel.pendientes}</div>
                 </div>
                 <div className="rounded-lg bg-white/15 px-3 py-2">
-                  <div className="text-[11px] text-purple-100">Completadas</div>
+                  <div className="text-[11px] text-white/80">Completadas</div>
                   <div className="text-lg font-bold leading-tight">{resumenPanel.completadas}</div>
                 </div>
                 <div className="rounded-lg bg-white/15 px-3 py-2">
-                  <div className="text-[11px] text-purple-100">Hoy</div>
+                  <div className="text-[11px] text-white/80">Hoy</div>
                   <div className="text-lg font-bold leading-tight">{resumenPanel.hoy}</div>
-                  <div className="text-[11px] text-purple-100">🚨 {resumenPanel.vencidas}</div>
+                  <div className="text-[11px] text-white/80">🚨 {resumenPanel.vencidas}</div>
                 </div>
               </div>
             )}
@@ -196,11 +271,12 @@ function LaboratorioPanelPage() {
                 disabled={tab.disabled}
                 className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all duration-200 text-sm font-medium ${
                   activeTab === tab.id
-                    ? "bg-white text-purple-600 shadow-lg"
+                    ? "bg-white shadow-lg"
                     : tab.disabled
-                    ? "text-purple-200 cursor-not-allowed opacity-50"
+                    ? "text-white/60 cursor-not-allowed opacity-50"
                     : "text-white hover:bg-white/20"
                 }`}
+                style={activeTab === tab.id ? { color: "var(--color-primary)" } : undefined}
               >
                 <span className="text-lg">{tab.icon}</span>
                 <span className="hidden sm:inline">{tab.label}</span>
@@ -213,6 +289,12 @@ function LaboratorioPanelPage() {
 
       {/* Contenido principal */}
       <div className="max-w-7xl mx-auto px-4 py-4">
+        {activeTab === 'ordenes' && deepLinkInfo?.tipo === 'completada' && (
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            La orden <strong>#{deepLinkInfo.ordenId}</strong> ya tiene resultados completos. Primero revisa la lista (vista intermedia) y luego usa <strong>Editar</strong> o <strong>Comparar</strong>.
+          </div>
+        )}
+
         {activeTab === "ordenes" && (
           <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20">
             <OrdenesLaboratorioList key={reloadKey} onSeleccionarOrden={handleSeleccionarOrden} />
@@ -227,28 +309,31 @@ function LaboratorioPanelPage() {
               className="flex items-center gap-2 px-3 py-1.5 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:bg-white transition-colors border border-white/20 text-gray-700 hover:text-gray-900"
             >
               <span>←</span>
-              <span>Volver a órdenes</span>
+              <span>{backTo ? 'Volver' : 'Volver a órdenes'}</span>
             </button>
 
             {/* Información de la orden */}
-            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-4 text-white">
+            <div
+              className="rounded-xl p-4 text-white"
+              style={{ background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)" }}
+            >
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
-                  <div className="text-purple-200 text-xs">Orden</div>
+                  <div className="text-white/80 text-xs">Orden</div>
                   <div className="text-lg font-bold leading-tight">#{ordenSeleccionada.id}</div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 col-span-2 lg:col-span-1">
-                  <div className="text-purple-200 text-xs">Paciente</div>
+                  <div className="text-white/80 text-xs">Paciente</div>
                   <div className="text-lg font-bold leading-tight line-clamp-2">
                     {ordenSeleccionada.paciente_nombre} {ordenSeleccionada.paciente_apellido}
                   </div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
-                  <div className="text-purple-200 text-xs">Consulta ID</div>
+                  <div className="text-white/80 text-xs">Consulta ID</div>
                   <div className="text-lg font-bold leading-tight">{ordenSeleccionada.consulta_id || '-'}</div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
-                  <div className="text-purple-200 text-xs">Estado</div>
+                  <div className="text-white/80 text-xs">Estado</div>
                   <div className={`text-lg font-bold leading-tight ${
                     ordenSeleccionada.estado === 'completado'
                       ? 'text-green-300'
@@ -266,7 +351,7 @@ function LaboratorioPanelPage() {
               </div>
               
               <div className="mt-3 bg-white/10 backdrop-blur-sm rounded-lg p-3">
-                <div className="text-purple-200 text-xs mb-1">Exámenes solicitados</div>
+                <div className="text-white/80 text-xs mb-1">Exámenes solicitados</div>
                 <div className="text-sm leading-6 max-h-24 overflow-y-auto pr-1">{getExamenesNombres(ordenSeleccionada.examenes)}</div>
               </div>
             </div>
