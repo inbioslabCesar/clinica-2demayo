@@ -611,7 +611,10 @@ foreach ($autoloadCandidates as $autoloadFile) {
     if (file_exists($autoloadFile)) require_once $autoloadFile;
 }
 
-$filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $row['id'] . '_' . date('Ymd') . '.pdf';
+// Format: resultados_laboratorio_[nombre_paciente]_[fecha_descarga].pdf
+// Example: resultados_laboratorio_Juan_Perez_02-04-2026.pdf
+$descarga_fecha = date('d-m-Y');
+$filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $descarga_fecha . '.pdf';
 
 if (class_exists('\Mpdf\Mpdf')) {
     try {

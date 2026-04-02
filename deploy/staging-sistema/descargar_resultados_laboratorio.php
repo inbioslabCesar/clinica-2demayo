@@ -486,7 +486,10 @@ if (file_exists($vendor)) {
             $dompdf->render();
             
             // Forzar descarga con nombre más descriptivo
-            $filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $row['id'] . '_' . date('Ymd') . '.pdf';
+// Format: resultados_laboratorio_[nombre_paciente]_[fecha_descarga].pdf
+// Example: resultados_laboratorio_Juan_Perez_02-04-2026.pdf
+$descarga_fecha = date('d-m-Y');
+$filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $descarga_fecha . '.pdf';
             $pdfOutput = $dompdf->output();
             // Limpiar buffers para evitar bytes extra que corrompan el PDF
             if (ob_get_length()) { @ob_end_clean(); }

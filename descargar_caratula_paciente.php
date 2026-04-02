@@ -243,9 +243,15 @@ try {
     }
 
     cleanOutputBuffers();
+    // Format: caratula_paciente_[nombre_paciente]_[fecha_descarga].pdf
+    // Example: caratula_paciente_Juan_Perez_02-04-2026.pdf
+    $nombre_sanitizado = preg_replace('/[^a-zA-Z0-9]/', '_', trim(($paciente['nombre'] ?? '') . ' ' . ($paciente['apellido'] ?? '')));
+    $descarga_fecha = date('d-m-Y');
+    $filename = 'caratula_paciente_' . ($nombre_sanitizado ? $nombre_sanitizado . '_' : '') . $descarga_fecha . '.pdf';
+    
     header('Content-Type: application/pdf');
     header('Content-Length: ' . strlen($pdfOutput));
-    header('Content-Disposition: attachment; filename="caratula_paciente_' . $dni . '.pdf"');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Cache-Control: post-check=0, pre-check=0', false);
     header('Pragma: no-cache');

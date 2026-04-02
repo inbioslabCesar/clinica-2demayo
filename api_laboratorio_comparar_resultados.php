@@ -599,7 +599,10 @@ if (in_array($export, ['excel', 'pdf'], true)) {
                 'margin_bottom' => 12,
             ]);
             $mpdf->WriteHTML($htmlExport);
-            $filename = 'comparacion_laboratorio_' . $slugPaciente . '_' . date('Ymd_His') . '.pdf';
+            // Format: comparacion_laboratorio_[nombre_paciente]_[fecha_descarga_con_hora].pdf
+            // Example: comparacion_laboratorio_Juan_Perez_02-04-2026_14-35-20.pdf
+            $descarga_fecha = date('d-m-Y_H-i-s');
+            $filename = 'comparacion_laboratorio_' . $slugPaciente . '_' . $descarga_fecha . '.pdf';
             $mpdf->Output($filename, \Mpdf\Output\Destination::DOWNLOAD);
             exit;
         } catch (\Throwable $e) {
