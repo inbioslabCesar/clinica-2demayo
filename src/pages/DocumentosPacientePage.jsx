@@ -172,8 +172,7 @@ function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, pu
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <a
               href={doc.url}
-              target="_blank"
-              rel="noopener noreferrer"
+              download
               className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition"
             >
               <FaDownload /> Descargar resultado PDF
