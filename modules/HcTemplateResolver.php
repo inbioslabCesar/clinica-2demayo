@@ -56,9 +56,6 @@ function hc_get_builtin_templates() {
                 'examen_fisico' => [
                     'examen_fisico' => '',
                 ],
-                'plan' => [
-                    'tratamiento' => '',
-                ],
             ],
         ],
         'ginecologia' => [
@@ -80,9 +77,6 @@ function hc_get_builtin_templates() {
                 ],
                 'examen_fisico' => [
                     'examen_fisico' => '',
-                ],
-                'plan' => [
-                    'tratamiento' => '',
                 ],
             ],
         ],
@@ -107,9 +101,6 @@ function hc_get_builtin_templates() {
                     'talla' => '',
                     'imc' => '',
                 ],
-                'plan' => [
-                    'tratamiento' => '',
-                ],
             ],
         ],
         // Plantilla especial: cuando el admin la guarda en DB, se usa para TODAS las
@@ -130,9 +121,6 @@ function hc_get_builtin_templates() {
                 ],
                 'examen_fisico' => [
                     'examen_fisico' => '',
-                ],
-                'plan' => [
-                    'tratamiento' => '',
                 ],
             ],
         ],
@@ -184,6 +172,79 @@ function hc_get_specialty_by_consulta_id($conn, $consultaId) {
     $stmt->close();
 
     return trim((string)($row['especialidad'] ?? ''));
+}
+
+function hc_column_exists_configuracion($conn, $columnName) {
+    static $cache = [];
+    $key = "col::configuracion_clinica::$columnName";
+    if (isset($cache[$key])) {
+        return $cache[$key];
+    }
+
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $table = 'configuracion_clinica';
+    $stmt->bind_param('ss', $table, $columnName);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = $res && $res->num_rows > 0;
+    $stmt->close();
+    $cache[$key] = $exists;
+    return $exists;
+}
+
+function hc_get_template_policy($conn) {
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+
+    $cache = [
+        'mode' => 'auto',
+        'single_template_id' => '',
+    ];
+
+    if (!hc_table_exists($conn, 'configuracion_clinica')) {
+        return $cache;
+    }
+
+    $hasModeCol = hc_column_exists_configuracion($conn, 'hc_template_mode');
+    $hasSingleCol = hc_column_exists_configuracion($conn, 'hc_template_single_id');
+    if (!$hasModeCol && !$hasSingleCol) {
+        return $cache;
+    }
+
+    $selectMode = $hasModeCol ? 'hc_template_mode' : 'NULL AS hc_template_mode';
+    $selectSingle = $hasSingleCol ? 'hc_template_single_id' : 'NULL AS hc_template_single_id';
+
+    $stmt = $conn->prepare("SELECT $selectMode, $selectSingle FROM configuracion_clinica ORDER BY id ASC LIMIT 1");
+    if (!$stmt) {
+        return $cache;
+    }
+
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $mode = strtolower(trim((string)($row['hc_template_mode'] ?? 'auto')));
+    if (!in_array($mode, ['auto', 'single'], true)) {
+        $mode = 'auto';
+    }
+
+    $single = trim((string)($row['hc_template_single_id'] ?? ''));
+    $single = hc_slugify_text($single);
+    if ($single === '') {
+        $single = '';
+    }
+
+    $cache = [
+        'mode' => $mode,
+        'single_template_id' => $single,
+    ];
+
+    return $cache;
 }
 
 function hc_get_template_from_db($conn, $templateId, $clinicKey, $version = '') {
@@ -282,27 +343,24 @@ function hc_resolve_template($conn, $options = []) {
     $resolvedBy = 'default';
     $detectedEspecialidad = $especialidad;
     $templateId = $templateIdExplicit;
+    $policy = hc_get_template_policy($conn);
 
     if ($templateId !== '') {
         $resolvedBy = 'explicit_template_id';
     } else {
-        // Antes de resolver por especialidad, verificar si la clinica tiene una
-        // plantilla 'default' guardada. Si existe, se usa para todas las consultas.
-        $clinicDefaultTpl = hc_get_template_from_db($conn, 'default', $clinicKey, '');
-        if (is_array($clinicDefaultTpl)) {
-            $clinicDefaultTpl['source'] = 'clinica_default';
-            return [
-                'success' => true,
-                'template' => $clinicDefaultTpl,
-                'resolution' => [
-                    'resolved_by' => 'clinica_default',
-                    'clinic_key' => $clinicKey,
-                    'especialidad_detectada' => '',
-                ],
-            ];
+        // Modo clinica: una sola plantilla para todas las HC.
+        if (($policy['mode'] ?? 'auto') === 'single') {
+            $forcedTemplateId = trim((string)($policy['single_template_id'] ?? ''));
+            if ($forcedTemplateId !== '') {
+                $templateId = $forcedTemplateId;
+                $resolvedBy = 'clinic_single_template';
+            }
         }
 
-        // Sin plantilla por defecto: resolver por especialidad del medico.
+        if ($templateId !== '') {
+            // Ya se forzo por modo single.
+        } else {
+        // Prioridad en modo auto: especialidad primero, luego plantilla default de clinica.
         if ($detectedEspecialidad === '' && $consultaId > 0) {
             $detectedEspecialidad = hc_get_specialty_by_consulta_id($conn, $consultaId);
             if ($detectedEspecialidad !== '') {
@@ -312,6 +370,7 @@ function hc_resolve_template($conn, $options = []) {
         $templateId = hc_specialty_to_template_id($detectedEspecialidad);
         if ($resolvedBy === 'default' && $detectedEspecialidad !== '') {
             $resolvedBy = 'especialidad';
+        }
         }
     }
 
@@ -325,8 +384,29 @@ function hc_resolve_template($conn, $options = []) {
                 'resolved_by' => $resolvedBy,
                 'clinic_key' => $clinicKey,
                 'especialidad_detectada' => $detectedEspecialidad,
+                'policy_mode' => ($policy['mode'] ?? 'auto'),
+                'policy_single_template_id' => ($policy['single_template_id'] ?? ''),
             ],
         ];
+    }
+
+    // Fallback 1: plantilla default de clinica cuando no se encontro la de especialidad.
+    if ($templateIdExplicit === '' && ($policy['mode'] ?? 'auto') !== 'single') {
+        $clinicDefaultTpl = hc_get_template_from_db($conn, 'default', $clinicKey, '');
+        if (is_array($clinicDefaultTpl)) {
+            $clinicDefaultTpl['source'] = 'clinica_default';
+            return [
+                'success' => true,
+                'template' => $clinicDefaultTpl,
+                'resolution' => [
+                    'resolved_by' => 'clinica_default_fallback',
+                    'clinic_key' => $clinicKey,
+                    'especialidad_detectada' => $detectedEspecialidad,
+                    'policy_mode' => ($policy['mode'] ?? 'auto'),
+                    'policy_single_template_id' => ($policy['single_template_id'] ?? ''),
+                ],
+            ];
+        }
     }
 
     $builtins = hc_get_builtin_templates();
@@ -344,6 +424,8 @@ function hc_resolve_template($conn, $options = []) {
             'resolved_by' => $resolvedBy,
             'clinic_key' => $clinicKey,
             'especialidad_detectada' => $detectedEspecialidad,
+            'policy_mode' => ($policy['mode'] ?? 'auto'),
+            'policy_single_template_id' => ($policy['single_template_id'] ?? ''),
         ],
     ];
 }

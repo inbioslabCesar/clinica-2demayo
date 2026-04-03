@@ -132,6 +132,14 @@ if ($method === 'GET') {
             ol.consulta_id
         FROM ordenes_laboratorio ol
         WHERE ol.paciente_id = ?
+           OR (
+               ol.cotizacion_id IS NOT NULL
+               AND ol.cotizacion_id IN (
+                   SELECT c2.id
+                   FROM cotizaciones c2
+                   WHERE c2.paciente_id = ?
+               )
+           )
            OR EXISTS (
                SELECT 1
                FROM documentos_externos_paciente depx
@@ -140,7 +148,7 @@ if ($method === 'GET') {
            )
         ORDER BY ol.fecha DESC
     ");
-    $stmtOrd->bind_param('ii', $pacienteId, $pacienteId);
+    $stmtOrd->bind_param('iii', $pacienteId, $pacienteId, $pacienteId);
     $stmtOrd->execute();
     $ordenes_rows = $stmtOrd->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmtOrd->close();
@@ -367,9 +375,19 @@ if ($method === 'GET') {
 
     // Lista de órdenes para el formulario de subida
     $stmtOrdList = $conn->prepare(
-        'SELECT id, fecha, examenes, estado, cotizacion_id FROM ordenes_laboratorio WHERE paciente_id = ? ORDER BY fecha DESC LIMIT 20'
+        'SELECT id, fecha, examenes, estado, cotizacion_id
+         FROM ordenes_laboratorio
+         WHERE paciente_id = ?
+            OR (
+                cotizacion_id IS NOT NULL
+                AND cotizacion_id IN (
+                    SELECT c2.id FROM cotizaciones c2 WHERE c2.paciente_id = ?
+                )
+            )
+         ORDER BY fecha DESC
+         LIMIT 20'
     );
-    $stmtOrdList->bind_param('i', $pacienteId);
+    $stmtOrdList->bind_param('ii', $pacienteId, $pacienteId);
     $stmtOrdList->execute();
     $ordenesList = array_map(function ($o) {
         $ex = json_decode((string)($o['examenes'] ?? '[]'), true);
@@ -424,11 +442,41 @@ if ($method === 'POST') {
         $ordenRow = $stmtOrden->get_result()->fetch_assoc();
         $stmtOrden->close();
 
-        if (!$ordenRow || (int)($ordenRow['paciente_id'] ?? 0) !== $pacienteId) {
+        if (!$ordenRow) {
+            echo json_encode(['success' => false, 'error' => 'La orden de laboratorio no existe']); exit;
+        }
+
+        $pacienteOrden = (int)($ordenRow['paciente_id'] ?? 0);
+        $cotizacionOrden = (int)($ordenRow['cotizacion_id'] ?? 0);
+
+        if ($pacienteOrden > 0 && $pacienteOrden !== $pacienteId) {
             echo json_encode(['success' => false, 'error' => 'La orden de laboratorio no pertenece al paciente seleccionado']); exit;
         }
 
-        $cotizacionOrden = (int)($ordenRow['cotizacion_id'] ?? 0);
+        // Compatibilidad con órdenes antiguas creadas desde consulta con paciente_id nulo.
+        if ($pacienteOrden <= 0) {
+            $ordenPertenecePaciente = false;
+            if ($cotizacionOrden > 0) {
+                $stmtCotOrden = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? AND paciente_id = ? LIMIT 1');
+                if ($stmtCotOrden) {
+                    $stmtCotOrden->bind_param('ii', $cotizacionOrden, $pacienteId);
+                    $stmtCotOrden->execute();
+                    $ordenPertenecePaciente = (bool)$stmtCotOrden->get_result()->fetch_assoc();
+                    $stmtCotOrden->close();
+                }
+            }
+            if (!$ordenPertenecePaciente) {
+                echo json_encode(['success' => false, 'error' => 'La orden de laboratorio no pertenece al paciente seleccionado']); exit;
+            }
+
+            $stmtFixOrdenPaciente = $conn->prepare('UPDATE ordenes_laboratorio SET paciente_id = ? WHERE id = ? AND (paciente_id IS NULL OR paciente_id = 0)');
+            if ($stmtFixOrdenPaciente) {
+                $stmtFixOrdenPaciente->bind_param('ii', $pacienteId, $ordenId);
+                $stmtFixOrdenPaciente->execute();
+                $stmtFixOrdenPaciente->close();
+            }
+        }
+
         if ($cotizacionId > 0 && $cotizacionOrden > 0 && $cotizacionId !== $cotizacionOrden) {
             echo json_encode(['success' => false, 'error' => 'La orden seleccionada no corresponde a la cotización indicada']); exit;
         }

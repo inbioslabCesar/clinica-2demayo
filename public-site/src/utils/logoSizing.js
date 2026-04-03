@@ -37,6 +37,15 @@ export function resolvePublicLogoSize(sizeOption) {
       footerImage: 80,
       decorative: 192,
     },
+    xxl: {
+      header: 156,
+      landingHeader: 120,
+      hero: 186,
+      feature: 96,
+      footerFrame: 124,
+      footerImage: 112,
+      decorative: 300,
+    },
   }
   return sizes[key] || sizes.md
 }

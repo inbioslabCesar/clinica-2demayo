@@ -1934,6 +1934,49 @@ function listar_eventos($conn, $cotizacionId) {
     respond(['success' => true, 'eventos' => $rows]);
 }
 
+function listar_pagos_cotizacion($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        respond(['success' => false, 'error' => 'cotizacion_id inválido'], 400);
+    }
+
+    if (!table_exists($conn, 'cotizacion_movimientos')) {
+        respond(['success' => true, 'pagos' => []]);
+    }
+
+    $hasUsuarios = table_exists($conn, 'usuarios');
+    $hasCobros = table_exists($conn, 'cobros');
+    $hasTipoPagoCobro = $hasCobros && column_exists($conn, 'cobros', 'tipo_pago');
+
+    $selectMetodoPago = $hasTipoPagoCobro ? ', c.tipo_pago AS metodo_pago' : ", NULL AS metodo_pago";
+    $joinCobros = $hasTipoPagoCobro ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
+
+    if ($hasUsuarios) {
+        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at, COALESCE(u.nombre, 'Sistema') AS usuario_nombre{$selectMetodoPago}
+                FROM cotizacion_movimientos cm
+                LEFT JOIN usuarios u ON u.id = cm.usuario_id
+                {$joinCobros}
+                WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
+                ORDER BY cm.created_at DESC, cm.id DESC";
+    } else {
+        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at{$selectMetodoPago}
+                FROM cotizacion_movimientos cm
+                {$joinCobros}
+                WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
+                ORDER BY cm.created_at DESC, cm.id DESC";
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        respond(['success' => false, 'error' => 'No se pudo preparar consulta de pagos'], 500);
+    }
+    $stmt->bind_param("i", $cotizacionId);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+
+    respond(['success' => true, 'pagos' => $rows]);
+}
+
 function resumen_diario($conn) {
     $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
     $fechaFin = $_GET['fecha_fin'] ?? $fechaInicio;
@@ -1997,6 +2040,10 @@ switch ($method) {
 
         if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'eventos' && isset($_GET['cotizacion_id'])) {
             listar_eventos($conn, (int)$_GET['cotizacion_id']);
+        }
+
+        if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'pagos' && isset($_GET['cotizacion_id'])) {
+            listar_pagos_cotizacion($conn, (int)$_GET['cotizacion_id']);
         }
 
         if (isset($_GET['paciente_id'])) {

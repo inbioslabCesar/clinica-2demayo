@@ -616,6 +616,15 @@ foreach ($autoloadCandidates as $autoloadFile) {
 $descarga_fecha = date('d-m-Y');
 $filename = 'resultados_laboratorio_' . ($paciente_nombre ? preg_replace('/[^a-zA-Z0-9]/', '_', $paciente_nombre) . '_' : '') . $descarga_fecha . '.pdf';
 
+// Evita fallos de mPDF con reportes grandes (PCRE backtracking/recursion limits).
+@ini_set('pcre.backtrack_limit', '10000000');
+@ini_set('pcre.recursion_limit', '10000000');
+
+$mpdfTempDir = __DIR__ . '/tmp/mpdf';
+if (!is_dir($mpdfTempDir)) {
+    @mkdir($mpdfTempDir, 0775, true);
+}
+
 if (class_exists('\Mpdf\Mpdf')) {
     try {
         $mpdf = new \Mpdf\Mpdf([
@@ -626,6 +635,7 @@ if (class_exists('\Mpdf\Mpdf')) {
             'margin_right' => 8,
             'margin_top' => 66,
             'margin_bottom' => 54,
+            'tempDir' => $mpdfTempDir,
         ]);
 
         $mpdf->SetHTMLHeader($headerHtml);
@@ -644,7 +654,39 @@ if (class_exists('\Mpdf\Mpdf')) {
         flush();
         exit;
     } catch (Exception $e) {
-        // fallback HTML
+        $logDir = __DIR__ . '/tmp';
+        if (!is_dir($logDir)) {
+            @mkdir($logDir, 0775, true);
+        }
+        @file_put_contents($logDir . '/mpdf_error.log', date('Y-m-d H:i:s') . ' First mPDF error: ' . $e->getMessage() . PHP_EOL, FILE_APPEND);
+
+        // Segundo intento con configuración mínima para evitar fallback HTML por errores de layout/fuente.
+        try {
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'utf-8',
+                'format' => 'A4',
+                'tempDir' => $mpdfTempDir,
+            ]);
+
+            $mpdf->SetHTMLHeader($headerHtml);
+            $mpdf->SetHTMLFooter($footerHtml);
+            $mpdf->WriteHTML($bodyCss, \Mpdf\HTMLParserMode::HEADER_CSS);
+            $mpdf->WriteHTML($bodyHtml, \Mpdf\HTMLParserMode::HTML_BODY);
+
+            $pdfOutput = $mpdf->Output('', 'S');
+            if (ob_get_length()) { @ob_end_clean(); }
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Content-Length: ' . strlen($pdfOutput));
+            header('Cache-Control: private, max-age=0, must-revalidate');
+            header('Pragma: public');
+            echo $pdfOutput;
+            flush();
+            exit;
+        } catch (Exception $e2) {
+            @file_put_contents($logDir . '/mpdf_error.log', date('Y-m-d H:i:s') . ' Second mPDF error: ' . $e2->getMessage() . PHP_EOL, FILE_APPEND);
+            // fallback HTML
+        }
     }
 }
 

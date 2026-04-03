@@ -59,6 +59,7 @@ export default function PublicFooter({ configuracion, sistemaUrl, logoSize }) {
   const fallbackLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`
   const configuredLogoSrc = resolvePublicUrl(cfg.logo_url)
   const [logoFailed, setLogoFailed] = useState(false)
+  const [logoIsWide, setLogoIsWide] = useState(true)
   const logoSrc = !logoFailed && configuredLogoSrc ? configuredLogoSrc : fallbackLogoSrc
   const nombre = (cfg.nombre_clinica || '').trim() || 'Portal de Salud'
   const direccion = (cfg.direccion || '').trim()
@@ -77,14 +78,35 @@ export default function PublicFooter({ configuracion, sistemaUrl, logoSize }) {
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div
-                className="rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden"
-                style={{ width: resolvedLogoSize.footerFrame, height: resolvedLogoSize.footerFrame }}
+                className={`border border-white/30 bg-white shadow-sm flex items-center justify-center overflow-hidden ${logoIsWide ? 'rounded-2xl px-2' : 'rounded-full'}`}
+                style={{
+                  height: resolvedLogoSize.footerFrame,
+                  width: logoIsWide
+                    ? Math.min(Math.round(resolvedLogoSize.footerFrame * 1.65), 180)
+                    : resolvedLogoSize.footerFrame,
+                }}
               >
                 <img
                   src={logoSrc}
                   alt={nombre}
                   className="object-contain"
-                  style={{ width: resolvedLogoSize.footerImage, height: resolvedLogoSize.footerImage }}
+                  style={logoIsWide
+                    ? {
+                        height: Math.round(resolvedLogoSize.footerImage * 0.88),
+                        width: 'auto',
+                        maxWidth: Math.round(resolvedLogoSize.footerImage * 1.5),
+                        transform: 'scale(1.35)',
+                        transformOrigin: 'center',
+                      }
+                    : {
+                        width: resolvedLogoSize.footerImage,
+                        height: resolvedLogoSize.footerImage,
+                      }}
+                  onLoad={(e) => {
+                    const w = Number(e.currentTarget.naturalWidth || 0)
+                    const h = Number(e.currentTarget.naturalHeight || 0)
+                    if (w > 0 && h > 0) setLogoIsWide((w / h) > 1.22)
+                  }}
                   onError={() => setLogoFailed(true)}
                 />
               </div>

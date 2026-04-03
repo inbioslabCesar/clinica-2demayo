@@ -32,19 +32,15 @@ export default function CobrarCotizacionPage() {
   const [error, setError] = useState("");
   const [cotizacion, setCotizacion] = useState(null);
   const [paciente, setPaciente] = useState(null);
-  const [criterioImputacion, setCriterioImputacion] = useState(() => {
-    const saved = String(localStorage.getItem("cotizacion_criterio_imputacion") || "fifo").toLowerCase();
-    return saved === "lifo" ? "lifo" : "fifo";
-  });
+  const [pagos, setPagos] = useState([]);
+  const [montoAbonoInput, setMontoAbonoInput] = useState("");
+  const [modoCobro, setModoCobro] = useState("completo");
+  const criterioImputacion = "fifo";
   const themePrimarySoft = {
     backgroundColor: "var(--color-primary-light)",
     borderColor: "var(--color-primary-light)",
     color: "var(--color-primary-dark)",
   };
-
-  useEffect(() => {
-    localStorage.setItem("cotizacion_criterio_imputacion", criterioImputacion);
-  }, [criterioImputacion]);
 
   useEffect(() => {
     let mounted = true;
@@ -73,6 +69,15 @@ export default function CobrarCotizacionPage() {
         if (!mounted) return;
         setCotizacion(cot);
         setPaciente(dataPac.paciente);
+
+        const resPagos = await fetch(
+          `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}`,
+          { credentials: "include" }
+        );
+        const dataPagos = await resPagos.json();
+        if (mounted && dataPagos?.success) {
+          setPagos(Array.isArray(dataPagos.pagos) ? dataPagos.pagos : []);
+        }
       } catch (err) {
         if (!mounted) return;
         setError(err?.message || "Error al cargar datos de cobro");
@@ -125,11 +130,34 @@ export default function CobrarCotizacionPage() {
     return totalDetallesActivos;
   }, [cotizacion?.saldo_pendiente, totalDetallesActivos]);
 
+  useEffect(() => {
+    if (!Number.isFinite(Number(saldoPendiente)) || Number(saldoPendiente) <= 0) {
+      setMontoAbonoInput("");
+      return;
+    }
+    setMontoAbonoInput((prev) => {
+      const prevNum = Number(prev);
+      if (Number.isFinite(prevNum) && prevNum > 0) {
+        const capped = Math.min(prevNum, Number(saldoPendiente));
+        return capped.toFixed(2);
+      }
+      return Number(saldoPendiente).toFixed(2);
+    });
+  }, [saldoPendiente, cotizacion?.id]);
+
+  const montoObjetivoCobro = useMemo(() => {
+    const saldo = Math.max(0, Number(saldoPendiente || 0));
+    if (modoCobro !== "parcial") return saldo;
+    const monto = Number(montoAbonoInput);
+    if (!Number.isFinite(monto) || monto <= 0) return saldo;
+    return Math.min(monto, saldo);
+  }, [montoAbonoInput, saldoPendiente, modoCobro]);
+
   const detallesCobro = useMemo(() => {
     if (!detallesCotizacionActivos.length) return [];
 
     const totalBase = Number(totalDetallesActivos || 0);
-    const saldoObjetivo = Math.max(0, Number(saldoPendiente || 0));
+    const saldoObjetivo = Math.max(0, Number(montoObjetivoCobro || 0));
 
     if (!Number.isFinite(totalBase) || totalBase <= 0) {
       return detallesCotizacionActivos;
@@ -178,8 +206,27 @@ export default function CobrarCotizacionPage() {
       }];
     }
 
-    return pendientes;
-  }, [detallesCotizacionActivos, totalDetallesActivos, saldoPendiente, cotizacion?.total_pagado, criterioImputacion]);
+    // Si el usuario eligió un adelanto menor al saldo pendiente, recorta
+    // el cobro al monto objetivo respetando el orden FIFO/LIFO.
+    const pendientesRecortados = [];
+    let restante = Number(saldoObjetivo.toFixed(2));
+    for (const item of pendientes) {
+      if (restante <= 0) break;
+      const subtotalItem = Math.max(0, Number(item.subtotal || 0));
+      const montoAplicado = Math.min(subtotalItem, restante);
+      if (montoAplicado <= 0) continue;
+      const cantidadBase = Math.max(1, Number(item.cantidad || 1));
+      const precioAplicado = Number((montoAplicado / cantidadBase).toFixed(2));
+      pendientesRecortados.push({
+        ...item,
+        precio_unitario: precioAplicado,
+        subtotal: Number(montoAplicado.toFixed(2)),
+      });
+      restante = Number((restante - montoAplicado).toFixed(2));
+    }
+
+    return pendientesRecortados;
+  }, [detallesCotizacionActivos, totalDetallesActivos, montoObjetivoCobro, cotizacion?.total_pagado, criterioImputacion]);
 
   const totalCobro = useMemo(() => {
     return detallesCobro.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
@@ -354,19 +401,55 @@ export default function CobrarCotizacionPage() {
         <div><b>Cotización:</b> #{cotizacion.id}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
         <div><b>Saldo actual:</b> S/ {Number(cotizacion.saldo_pendiente ?? totalCobro).toFixed(2)}</div>
-        <div className="mt-2 flex items-center gap-2">
-          <label htmlFor="criterio-imputacion" className="font-semibold">Criterio de imputación:</label>
-          <select
-            id="criterio-imputacion"
-            value={criterioImputacion}
-            onChange={(e) => setCriterioImputacion(String(e.target.value || "fifo").toLowerCase())}
-            className="border rounded px-2 py-1 bg-white"
-            style={{ borderColor: "var(--color-primary-light)" }}
-          >
-            <option value="fifo">FIFO (primero antiguo)</option>
-            <option value="lifo">LIFO (primero reciente)</option>
-          </select>
+        <div className="mt-2 text-xs text-gray-700">
+          El sistema aplica el pago automáticamente de forma secuencial sobre los servicios pendientes.
         </div>
+      </div>
+
+      <div className="bg-white border rounded-xl p-4 mb-4">
+        <h3 className="font-semibold text-gray-800 mb-2">Historial de pagos por fecha</h3>
+        {pagos.length === 0 ? (
+          <p className="text-sm text-gray-500">Aún no hay pagos registrados para esta cotización.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b text-gray-600">
+                  <th className="text-left py-2 pr-4">Fecha</th>
+                  <th className="text-left py-2 pr-4">Tipo</th>
+                  <th className="text-left py-2 pr-4">Monto</th>
+                  <th className="text-left py-2 pr-4">Metodo de pago</th>
+                  <th className="text-left py-2 pr-4">Saldo</th>
+                  <th className="text-left py-2 pr-4">Usuario</th>
+                  <th className="text-left py-2">Detalle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagos.map((pago) => {
+                  const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
+                  const esDescuento = tipo === "devolucion";
+                  const fecha = pago?.created_at ? new Date(pago.created_at).toLocaleString("es-PE") : "-";
+                  const metodoPago = String(pago?.metodo_pago || "").trim();
+                  return (
+                    <tr key={pago.id} className="border-b last:border-0 align-top">
+                      <td className="py-2 pr-4 whitespace-nowrap">{fecha}</td>
+                      <td className="py-2 pr-4">{esDescuento ? "Descuento" : "Abono"}</td>
+                      <td className={`py-2 pr-4 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>
+                        {esDescuento ? "-" : "+"} S/ {Number(pago?.monto || 0).toFixed(2)}
+                      </td>
+                      <td className="py-2 pr-4 whitespace-nowrap">{metodoPago || "-"}</td>
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        S/ {Number(pago?.saldo_anterior || 0).toFixed(2)} -> S/ {Number(pago?.saldo_nuevo || 0).toFixed(2)}
+                      </td>
+                      <td className="py-2 pr-4">{pago?.usuario_nombre || `Usuario #${pago?.usuario_id || "-"}`}</td>
+                      <td className="py-2 text-gray-600">{pago?.descripcion || "-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <CobroModuloFinal
@@ -374,6 +457,14 @@ export default function CobrarCotizacionPage() {
         servicio={servicioPago}
         detalles={detallesCobro}
         total={totalCobro}
+        modoCobro={modoCobro}
+        onModoCobroChange={setModoCobro}
+        montoAbonoInput={montoAbonoInput}
+        saldoPendiente={saldoPendiente}
+        montoObjetivoCobro={montoObjetivoCobro}
+        onMontoAbonoChange={setMontoAbonoInput}
+        onSetCobrarTodo={() => setMontoAbonoInput(Number(saldoPendiente).toFixed(2))}
+        onSetCobrarMitad={() => setMontoAbonoInput((Math.max(0, Number(saldoPendiente || 0)) / 2).toFixed(2))}
         onCobroCompleto={manejarCobroCompleto}
         onCancelar={() => navigate("/cotizaciones")}
       />

@@ -332,6 +332,15 @@ switch ($method) {
                 $stmtPac->close();
                 $pacienteIdCotiz = $rowPac ? intval($rowPac['paciente_id']) : 0;
 
+                if ($pacienteIdCotiz > 0) {
+                    $stmtFixPacienteOrden = $conn->prepare('UPDATE ordenes_laboratorio SET paciente_id = ? WHERE id = ? AND (paciente_id IS NULL OR paciente_id = 0)');
+                    if ($stmtFixPacienteOrden) {
+                        $stmtFixPacienteOrden->bind_param('ii', $pacienteIdCotiz, $ordenId);
+                        $stmtFixPacienteOrden->execute();
+                        $stmtFixPacienteOrden->close();
+                    }
+                }
+
                 // Construir detalles de cotización a partir de examenes_laboratorio
                 $detallesCotiz = [];
                 $examenIdsInt  = array_map('intval', array_filter((array)$examenes, 'is_numeric'));

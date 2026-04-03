@@ -8,7 +8,16 @@ const LOGO_SIZE_OPTIONS = [
   { value: 'md', label: 'Mediano' },
   { value: 'lg', label: 'Grande' },
   { value: 'xl', label: 'Extra grande' },
+  { value: 'xxl', label: 'Extra extra grande (XXL)' },
 ];
+
+const LOGO_SHAPE_OPTIONS = [
+  { value: 'auto', label: 'Automático (detectar forma)' },
+  { value: 'round', label: 'Circular' },
+  { value: 'wide', label: 'Horizontal / ovalado' },
+];
+
+
 
 function ConfiguracionPage() {
   const normalizeLogoForSave = (value) => {
@@ -54,7 +63,10 @@ function ConfiguracionPage() {
     nombre_color: '',
     nombre_font_size: '',
     logo_size_sistema: '',
-    logo_size_publico: ''
+    logo_size_publico: '',
+    logo_shape_sistema: 'auto',
+    hc_template_mode: 'auto',
+    hc_template_single_id: '',
   });
 
   const [loading, setLoading] = useState(false);
@@ -82,7 +94,15 @@ function ConfiguracionPage() {
       if (response.ok) {
         const result = await response.json();
         if (result.success) {
-          setConfiguracion(prev => ({ ...prev, ...(result.data || {}) }));
+          const incoming = { ...(result.data || {}) };
+          const incomingSingleId = String(incoming.hc_template_single_id || '').trim();
+          const incomingMode = String(incoming.hc_template_mode || 'auto').trim().toLowerCase();
+          // Legacy fix: if old config stored "default" as single template, switch to automatic mode.
+          if (incomingMode === 'single' && incomingSingleId === 'default') {
+            incoming.hc_template_mode = 'auto';
+            incoming.hc_template_single_id = '';
+          }
+          setConfiguracion(prev => ({ ...prev, ...incoming }));
           // mostrar preview si hay logo
           if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
         } else {
@@ -219,6 +239,9 @@ function ConfiguracionPage() {
                   nombre_clinica: payload.nombre_clinica || '',
                   logo_size_sistema: payload.logo_size_sistema || '',
                   logo_size_publico: payload.logo_size_publico || '',
+                  logo_shape_sistema: payload.logo_shape_sistema || 'auto',
+                  hc_template_mode: payload.hc_template_mode || 'auto',
+                  hc_template_single_id: payload.hc_template_single_id || '',
                   updated_at: Date.now()
                 }
               }));
@@ -290,6 +313,9 @@ function ConfiguracionPage() {
                 nombre_clinica: configuracion.nombre_clinica || '',
                 logo_size_sistema: configuracion.logo_size_sistema || '',
                 logo_size_publico: configuracion.logo_size_publico || '',
+                logo_shape_sistema: configuracion.logo_shape_sistema || 'auto',
+                hc_template_mode: configuracion.hc_template_mode || 'auto',
+                hc_template_single_id: configuracion.hc_template_single_id || '',
                 updated_at: Date.now()
               }
             }));
@@ -312,6 +338,9 @@ function ConfiguracionPage() {
         nombre_clinica: configuracion.nombre_clinica || '',
         logo_size_sistema: configuracion.logo_size_sistema || '',
         logo_size_publico: configuracion.logo_size_publico || '',
+        logo_shape_sistema: configuracion.logo_shape_sistema || 'auto',
+        hc_template_mode: configuracion.hc_template_mode || 'auto',
+        hc_template_single_id: configuracion.hc_template_single_id || '',
         updated_at: Date.now()
       }
     }));
@@ -570,6 +599,40 @@ function ConfiguracionPage() {
               <p className="mt-1 text-xs text-gray-500">
                 Se aplica al logo del sidebar y la navbar del sistema.
               </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Forma del logo en el sistema
+              </label>
+              <select
+                value={configuracion.logo_shape_sistema || 'auto'}
+                onChange={(e) => manejarCambio('logo_shape_sistema', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {LOGO_SHAPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Útil si el logo trae mucho fondo transparente y la detección automática no acierta.
+              </p>
+            </div>
+
+            <div className="mb-6 rounded-lg border border-cyan-200 bg-cyan-50 p-4">
+              <p className="text-sm text-cyan-900 font-semibold">Plantillas de Historia Clinica</p>
+              <p className="text-xs text-cyan-800 mt-1">
+                Para configurar plantillas y decidir si usas una fija o automática por especialidad, ve a: Configuracion &gt; Plantillas HC.
+              </p>
+              <button
+                type="button"
+                className="mt-3 px-3 py-2 text-xs rounded-md bg-cyan-600 text-white hover:bg-cyan-700"
+                onClick={() => (window.location.href = '/configuracion/plantillas-hc')}
+              >
+                Ir a Plantillas HC
+              </button>
             </div>
 
             <div>

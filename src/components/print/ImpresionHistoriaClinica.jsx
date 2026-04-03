@@ -3,7 +3,9 @@ import { formatColegiatura, formatProfesionalName } from "../../utils/profesiona
 const ImpresionHistoriaClinica = ({ 
   paciente, 
   triaje, 
-  hc, 
+  hc,
+  fechaConsulta,
+  templateSections,
   diagnosticos,
   medicamentos,
   resultadosLaboratorio,
@@ -47,6 +49,14 @@ const ImpresionHistoriaClinica = ({
   const nivelConciencia = triaje?.nivel_conciencia || triaje?.nivelConciencia || '';
   const hidratacion = triaje?.hidratacion || triaje?.estado_hidratacion || '';
   const coloracion = triaje?.coloracion || triaje?.estado_coloracion || '';
+  const fechaConsultaValor =
+    fechaConsulta
+    || paciente?.fecha_consulta
+    || triaje?.fecha_consulta
+    || triaje?.fecha
+    || triaje?.created_at
+    || hc?.fecha_consulta
+    || "";
 
   const calcularImc = () => {
     const peso = parseFloat(triaje?.peso);
@@ -120,6 +130,81 @@ const ImpresionHistoriaClinica = ({
     </div>
   );
 
+  const formatFieldLabel = (fieldKey) => {
+    const key = String(fieldKey || '').trim();
+    if (!key) return 'Campo';
+    if (key.toLowerCase() === 'fur') return 'FUR';
+    return key.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+  };
+
+  const normalizeFieldMeta = (rawMeta = {}) => {
+    const type = String(rawMeta?.type || 'textarea').trim().toLowerCase();
+    const width = String(rawMeta?.width || 'half').trim().toLowerCase();
+    const rowsRaw = Number(rawMeta?.rows ?? 2);
+    const optionsRaw = Array.isArray(rawMeta?.options)
+      ? rawMeta.options
+      : String(rawMeta?.options || '').split(',').map((item) => item.trim()).filter(Boolean);
+
+    return {
+      type: ['text', 'textarea', 'number', 'select'].includes(type) ? type : 'textarea',
+      width: ['quarter', 'third', 'half', 'full'].includes(width) ? width : 'half',
+      rows: Number.isFinite(rowsRaw) ? Math.max(1, Math.min(8, Math.trunc(rowsRaw))) : 2,
+      options: optionsRaw,
+      breakAfter: Boolean(rawMeta?.breakAfter ?? rawMeta?.break_after ?? false),
+    };
+  };
+
+  const widthToClass = (width) => {
+    switch (width) {
+      case 'quarter':
+        return 'col-span-12 md:col-span-3';
+      case 'third':
+        return 'col-span-12 md:col-span-4';
+      case 'full':
+        return 'col-span-12';
+      case 'half':
+      default:
+        return 'col-span-12 md:col-span-6';
+    }
+  };
+
+  const widthToPrintClass = (width) => {
+    // Para impresión, usamos los estilos directos sin breakpoints
+    switch (width) {
+      case 'quarter':
+        return 'col-span-3';
+      case 'third':
+        return 'col-span-4';
+      case 'full':
+        return 'col-span-12';
+      case 'half':
+      default:
+        return 'col-span-6';
+    }
+  };
+
+  const printableSections = Object.entries(templateSections || {}).reduce((acc, [sectionKey, fields]) => {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return acc;
+    const normalizedSection = String(sectionKey || '').trim().toLowerCase();
+    // Tratamiento/plan se imprime en su bloque fijo más abajo.
+    if (normalizedSection === 'plan') return acc;
+
+    const fieldEntries = Object.entries(fields)
+      .filter(([fieldKey]) => {
+        const normalizedField = String(fieldKey || '').trim().toLowerCase();
+        return normalizedField !== 'tratamiento';
+      })
+      .map(([fieldKey, fieldMeta]) => ({
+        fieldKey,
+        meta: normalizeFieldMeta(fieldMeta),
+      }));
+
+    if (fieldEntries.length > 0) {
+      acc.push({ sectionKey, fieldEntries });
+    }
+    return acc;
+  }, []);
+
   return (
     <div className="bg-white p-8 max-w-4xl mx-auto shadow-lg print:shadow-none print:max-w-none">
       <style>{`
@@ -135,7 +220,7 @@ const ImpresionHistoriaClinica = ({
         }
       `}</style>
       {/* Encabezado de la clínica */}
-      <div className="text-center pb-4 mb-6" style={{ borderBottom: `2px solid ${configuracionClinica?.nombre_color || '#2563eb'}` }}>
+      <div className="text-center pb-2 mb-2" style={{ borderBottom: `2px solid ${configuracionClinica?.nombre_color || '#2563eb'}` }}>
         <div className="flex items-center justify-center gap-4 mb-2">
           <img 
             src={logoSrc} 
@@ -162,23 +247,23 @@ const ImpresionHistoriaClinica = ({
       </div>
 
       {/* Título del documento */}
-      <div className="text-center mb-6">
-        <h2 className="text-xl font-bold text-gray-800 border-b border-gray-300 pb-2">
+      <div className="text-center mb-2">
+        <h2 className="text-lg font-bold text-gray-800 border-b border-gray-300 pb-1">
           📋 HISTORIA CLÍNICA
         </h2>
-        <div className="flex justify-between text-sm text-gray-600 mt-2">
+        <div className="flex justify-between text-xs text-gray-600 mt-1">
           <span>Fecha: {formatearFecha(new Date())}</span>
           <span>Hora: {formatearHora(new Date())}</span>
         </div>
       </div>
 
       {/* Datos del paciente */}
-      <div className="grid grid-cols-2 gap-6 mb-6 p-4 bg-blue-50 rounded-lg border">
+      <div className="grid grid-cols-2 gap-2 mb-2 p-2 bg-blue-50 rounded-lg border">
         <div>
-          <h3 className="font-semibold text-blue-800 mb-2 border-b border-blue-200">
+          <h3 className="font-semibold text-blue-800 mb-1 border-b border-blue-200 text-xs">
             👤 DATOS DEL PACIENTE
           </h3>
-          <div className="space-y-1 text-sm">
+          <div className="space-y-0.5 text-xs">
             <p><strong>Nombre:</strong> {nombrePaciente} {apellidoPaciente}</p>
             <p><strong>DNI:</strong> {paciente?.dni}</p>
             <p><strong>Edad:</strong> {paciente?.edad} años</p>
@@ -188,46 +273,46 @@ const ImpresionHistoriaClinica = ({
         </div>
         
         <div>
-          <h3 className="font-semibold text-blue-800 mb-2 border-b border-blue-200">
+          <h3 className="font-semibold text-blue-800 mb-1 border-b border-blue-200 text-xs">
             🩺 INFORMACIÓN MÉDICA
           </h3>
-          <div className="space-y-1 text-sm">
+          <div className="space-y-0.5 text-xs">
             <p><strong>Profesional:</strong> {formatProfesionalName(medicoInfo || {})}</p>
             <p><strong>Colegiatura:</strong> {formatColegiatura(medicoInfo || {})}</p>
             {medicoInfo?.rne && <p><strong>RNE:</strong> {medicoInfo.rne}</p>}
             <p><strong>Especialidad:</strong> {medicoInfo?.especialidad}</p>
-            <p><strong>Fecha Consulta:</strong> {formatearFecha(paciente?.fecha_consulta)}</p>
+            <p><strong>Fecha Consulta:</strong> {formatearFecha(fechaConsultaValor) || "-"}</p>
           </div>
         </div>
       </div>
 
       {/* Motivo de consulta desde triaje */}
       {motivoConsulta && (
-        <div className="mb-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-          <h3 className="font-semibold text-yellow-800 mb-2 border-b border-yellow-300">
+        <div className="mb-2 p-2 bg-yellow-50 rounded-lg border border-yellow-200">
+          <h3 className="font-semibold text-yellow-800 mb-1 border-b border-yellow-300 text-xs">
             📝 MOTIVO DE CONSULTA
           </h3>
-          <p className="text-sm leading-relaxed">{motivoConsulta}</p>
+          <p className="text-xs leading-relaxed whitespace-pre-wrap break-all">{motivoConsulta}</p>
         </div>
       )}
 
       {/* Síntomas principales desde triaje */}
       {sintomasPrincipales && (
-        <div className="mb-6 p-4 bg-orange-50 rounded-lg border border-orange-200">
-          <h3 className="font-semibold text-orange-800 mb-2 border-b border-orange-300">
+        <div className="mb-2 p-2 bg-orange-50 rounded-lg border border-orange-200">
+          <h3 className="font-semibold text-orange-800 mb-1 border-b border-orange-300 text-xs">
             🩺 SÍNTOMAS PRINCIPALES
           </h3>
-          <p className="text-sm leading-relaxed">{sintomasPrincipales}</p>
+          <p className="text-xs leading-relaxed whitespace-pre-wrap break-all">{sintomasPrincipales}</p>
         </div>
       )}
 
       {/* Signos vitales del triaje */}
       {triaje && (
-        <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
-          <h3 className="font-semibold text-green-800 mb-2 border-b border-green-300">
+        <div className="mb-2 p-2 bg-green-50 rounded-lg border border-green-200">
+          <h3 className="font-semibold text-green-800 mb-1 border-b border-green-300 text-xs">
             ❤️ SIGNOS VITALES
           </h3>
-          <div className="grid grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-4 gap-2 text-xs">
             {triaje.presion_arterial && (
               <div>
                 <strong>P/A:</strong> {triaje.presion_arterial} mmHg
@@ -274,11 +359,11 @@ const ImpresionHistoriaClinica = ({
 
       {/* Estado general del triaje */}
       {(nivelConciencia || hidratacion || coloracion) && (
-        <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
-          <h3 className="font-semibold text-purple-800 mb-2 border-b border-purple-300">
+        <div className="mb-2 p-2 bg-purple-50 rounded-lg border border-purple-200">
+          <h3 className="font-semibold text-purple-800 mb-1 border-b border-purple-300 text-xs">
             👤 ESTADO GENERAL
           </h3>
-          <div className="grid grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-3 gap-2 text-xs">
             {nivelConciencia && (
               <div>
                 <strong>Conciencia:</strong> {nivelConciencia}
@@ -298,65 +383,43 @@ const ImpresionHistoriaClinica = ({
         </div>
       )}
 
-      {/* Anamnesis */}
-      <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
-        <h3 className="font-semibold text-purple-800 mb-3 border-b border-purple-300">
-          🔍 ANAMNESIS
-        </h3>
-        
-        <div className="grid grid-cols-3 gap-4 mb-4 text-sm">
-          {hc.tiempo_enfermedad && (
-            <div>
-              <strong>Tiempo de Enfermedad:</strong>
-              <p className="mt-1 p-2 bg-white rounded border">{hc.tiempo_enfermedad}</p>
-            </div>
-          )}
-          {hc.forma_inicio && (
-            <div>
-              <strong>Forma de Inicio:</strong>
-              <p className="mt-1 p-2 bg-white rounded border">{hc.forma_inicio}</p>
-            </div>
-          )}
-          {hc.curso && (
-            <div>
-              <strong>Curso:</strong>
-              <p className="mt-1 p-2 bg-white rounded border">{hc.curso}</p>
-            </div>
-          )}
-        </div>
+      {/* Secciones dinámicas según plantilla HC */}
+      {printableSections.length > 0 ? (
+        printableSections.map(({ sectionKey, fieldEntries }) => {
+          const sectionLabel = formatFieldLabel(sectionKey);
+          const fieldsWithData = fieldEntries.filter(({ fieldKey }) => String(hc?.[fieldKey] ?? '').trim() !== '');
+          if (fieldsWithData.length === 0) return null;
 
-        {hc.descripcion_general && (
-          <div className="text-sm">
-            <strong>Descripción General:</strong>
-            <p className="mt-1 p-2 bg-white rounded border">{hc.descripcion_general}</p>
-          </div>
-        )}
-      </div>
-
-      {/* Antecedentes */}
-      {hc.antecedentes && (
-        <div className="mb-6 p-4 bg-orange-50 rounded-lg border border-orange-200">
-          <h3 className="font-semibold text-orange-800 mb-2 border-b border-orange-300">
-            📚 ANTECEDENTES
-          </h3>
-          <p className="text-sm leading-relaxed p-2 bg-white rounded border">{hc.antecedentes}</p>
-        </div>
-      )}
-
-      {/* Examen físico */}
-      {hc.examen_fisico && (
-        <div className="mb-6 p-4 bg-teal-50 rounded-lg border border-teal-200">
-          <h3 className="font-semibold text-teal-800 mb-2 border-b border-teal-300">
-            🔬 EXAMEN FÍSICO
-          </h3>
-          <p className="text-sm leading-relaxed p-2 bg-white rounded border">{hc.examen_fisico}</p>
-        </div>
+          return (
+            <div key={sectionKey} className="mb-2 p-2 bg-purple-50 rounded-lg border border-purple-200">
+              <h3 className="font-semibold text-purple-800 mb-1.5 border-b border-purple-300 text-xs">
+                🔍 {sectionLabel.toUpperCase()}
+              </h3>
+              <div className="grid grid-cols-12 gap-1.5 text-xs">
+                {fieldsWithData.flatMap(({ fieldKey, meta }) => {
+                  const nodes = [
+                    <div key={`${sectionKey}_${fieldKey}`} className={widthToPrintClass(meta.width)}>
+                    <strong className="text-xs">{formatFieldLabel(fieldKey)}:</strong>
+                    <p className="mt-0.5 p-1 bg-white rounded border whitespace-pre-wrap break-all text-xs">{hc[fieldKey]}</p>
+                    </div>
+                  ];
+                  if (meta.breakAfter) {
+                    nodes.push(<div key={`${sectionKey}_${fieldKey}_break`} className="col-span-12 h-0" />);
+                  }
+                  return nodes;
+                })}
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <SeccionVacia titulo="🔍 ANAMNESIS Y EXAMEN FÍSICO" mensaje="No hay campos de plantilla con datos para imprimir" />
       )}
 
       {/* Diagnósticos */}
       {diagnosticos && diagnosticos.length > 0 ? (
-        <div className="mb-6 p-4 bg-red-50 rounded-lg border border-red-200 seccion-diagnosticos">
-          <h3 className="font-semibold text-red-800 mb-2 border-b border-red-300">
+        <div className="mb-2 p-2 bg-red-50 rounded-lg border border-red-200 seccion-diagnosticos">
+          <h3 className="font-semibold text-red-800 mb-1 border-b border-red-300 text-xs">
             🎯 DIAGNÓSTICOS CIE-10
           </h3>
           <div className="bg-white rounded border border-red-100 p-2 text-xs leading-tight space-y-1">
@@ -379,18 +442,18 @@ const ImpresionHistoriaClinica = ({
 
       {/* Tratamiento */}
       {hc.tratamiento && (
-        <div className="mb-6 p-4 bg-indigo-50 rounded-lg border border-indigo-200">
-          <h3 className="font-semibold text-indigo-800 mb-2 border-b border-indigo-300">
+        <div className="mb-2 p-2 bg-indigo-50 rounded-lg border border-indigo-200">
+          <h3 className="font-semibold text-indigo-800 mb-1 border-b border-indigo-300 text-xs">
             💊 PLAN DE TRATAMIENTO
           </h3>
-          <p className="text-sm leading-relaxed p-2 bg-white rounded border">{hc.tratamiento}</p>
+          <p className="text-xs leading-relaxed p-1 bg-white rounded border whitespace-pre-wrap break-all">{hc.tratamiento}</p>
         </div>
       )}
 
       {/* Receta Médica */}
       {medicamentos && medicamentos.length > 0 ? (
-        <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200 seccion-medicamentos">
-          <h3 className="font-semibold text-green-800 mb-2 border-b border-green-300">
+        <div className="mb-2 p-2 bg-green-50 rounded-lg border border-green-200 seccion-medicamentos">
+          <h3 className="font-semibold text-green-800 mb-1 border-b border-green-300 text-xs">
             💉 RECETA MÉDICA
           </h3>
           <div className="bg-white rounded border border-green-100 p-2 text-xs leading-tight space-y-1">
@@ -427,15 +490,15 @@ const ImpresionHistoriaClinica = ({
       {/* Exámenes de Laboratorio Solicitados (solo si no existen resultados) */}
       {resultadosConDatos.length === 0 && (
         ordenesLaboratorio && ordenesLaboratorio.length > 0 ? (
-          <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 seccion-laboratorio">
-            <h3 className="font-semibold text-blue-800 mb-2 border-b border-blue-300">
+          <div className="mb-2 p-2 bg-blue-50 rounded-lg border border-blue-200 seccion-laboratorio">
+            <h3 className="font-semibold text-blue-800 mb-1 border-b border-blue-300 text-xs">
               🔬 EXÁMENES DE LABORATORIO SOLICITADOS
             </h3>
-            <div className="space-y-3">
+            <div className="space-y-1">
               {ordenesLaboratorio.map((orden, ordenIndex) => (
-                <div key={ordenIndex} className="p-3 bg-white rounded-lg border border-blue-100">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded">
+                <div key={ordenIndex} className="p-1 bg-white rounded-lg border border-blue-100">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="inline-block px-1.5 py-0.5 bg-blue-100 text-blue-800 text-xs font-semibold rounded">
                       Orden #{orden.id || ordenIndex + 1}
                     </span>
                     <span className="text-xs text-gray-500">
@@ -444,16 +507,16 @@ const ImpresionHistoriaClinica = ({
                   </div>
                   
                   {orden.examenes && orden.examenes.length > 0 ? (
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       {orden.examenes.map((examen, examenIndex) => (
-                        <div key={examenIndex} className="flex items-center gap-3 p-2 bg-blue-50 rounded border-l-4 border-blue-300">
-                          <span className="w-5 h-5 bg-blue-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                        <div key={examenIndex} className="flex items-center gap-1 p-1 bg-blue-50 rounded border-l-4 border-blue-300">
+                          <span className="w-4 h-4 bg-blue-500 text-white text-xs font-bold rounded-full flex items-center justify-center flex-shrink-0">
                             {examenIndex + 1}
                           </span>
                           <div className="flex-1">
-                            <p className="font-medium text-sm text-gray-900">{examen.nombre}</p>
+                            <p className="font-medium text-xs text-gray-900">{examen.nombre}</p>
                             {examen.descripcion && (
-                              <p className="text-xs text-gray-600 mt-1">{examen.descripcion}</p>
+                              <p className="text-xs text-gray-600 mt-0.5">{examen.descripcion}</p>
                             )}
                           </div>
                           <div className="text-xs">

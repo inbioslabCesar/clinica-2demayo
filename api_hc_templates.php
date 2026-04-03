@@ -54,7 +54,49 @@ function hc_templates_normalize_sections($sections) {
         foreach ($fields as $fieldKey => $fieldDefault) {
             $fKey = trim((string)$fieldKey);
             if ($fKey === '') continue;
-            $sectionFields[$fKey] = is_scalar($fieldDefault) ? (string)$fieldDefault : '';
+
+            $normalized = [
+                'type' => 'textarea',
+                'width' => 'half',
+                'rows' => 2,
+                'options' => [],
+                'break_after' => false,
+            ];
+
+            if (is_array($fieldDefault)) {
+                $rawType = strtolower(trim((string)($fieldDefault['type'] ?? 'textarea')));
+                if (in_array($rawType, ['text', 'textarea', 'number', 'select'], true)) {
+                    $normalized['type'] = $rawType;
+                }
+
+                $rawWidth = strtolower(trim((string)($fieldDefault['width'] ?? 'half')));
+                if (in_array($rawWidth, ['quarter', 'third', 'half', 'full'], true)) {
+                    $normalized['width'] = $rawWidth;
+                }
+
+                $rows = (int)($fieldDefault['rows'] ?? 2);
+                if ($rows < 1) $rows = 1;
+                if ($rows > 8) $rows = 8;
+                $normalized['rows'] = $rows;
+
+                $rawOptions = $fieldDefault['options'] ?? [];
+                if (is_string($rawOptions)) {
+                    $rawOptions = explode(',', $rawOptions);
+                }
+                if (is_array($rawOptions)) {
+                    $options = [];
+                    foreach ($rawOptions as $option) {
+                        $opt = trim((string)$option);
+                        if ($opt !== '') $options[] = $opt;
+                    }
+                    $normalized['options'] = array_values(array_unique($options));
+                }
+
+                $rawBreak = $fieldDefault['break_after'] ?? ($fieldDefault['breakAfter'] ?? false);
+                $normalized['break_after'] = filter_var($rawBreak, FILTER_VALIDATE_BOOLEAN);
+            }
+
+            $sectionFields[$fKey] = $normalized;
         }
 
         if (!empty($sectionFields)) {

@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { BASE_URL } from "../config/config";
 
 const DEFAULT_TEMPLATE_OPTIONS = [
-  { id: "default", nombre: "Por defecto (todas las especialidades)" },
+  { id: "default", nombre: "Plantilla base (fallback)" },
   { id: "medicina_general", nombre: "Medicina General" },
   { id: "ginecologia", nombre: "Ginecologia" },
   { id: "pediatria", nombre: "Pediatria" },
 ];
 
 const DEFAULT_FIELDS_TEXT =
-  "anamnesis.tiempo_enfermedad\nanamnesis.forma_inicio\nanamnesis.curso\ngineco_obstetricos.fur\ngineco_obstetricos.gestas\ngineco_obstetricos.partos\ngineco_obstetricos.cesareas\nexamen_fisico.examen_fisico\nplan.tratamiento";
+  "anamnesis.tiempo_enfermedad\nanamnesis.forma_inicio\nanamnesis.curso\ngineco_obstetricos.fur\ngineco_obstetricos.gestas\ngineco_obstetricos.partos\ngineco_obstetricos.cesareas\nexamen_fisico.examen_fisico";
+
+const EXCLUDED_TEMPLATE_SECTION_KEYS = new Set(["plan"]);
+const EXCLUDED_TEMPLATE_FIELD_KEYS = new Set(["tratamiento"]);
 
 let localIdCounter = 0;
 
@@ -38,8 +41,32 @@ function humanizeKey(key) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function createFieldDraft(title = "Nuevo campo") {
-  return { id: createLocalId("field"), title };
+function normalizeFieldMeta(rawMeta = {}) {
+  const allowedTypes = new Set(["text", "textarea", "number", "select"]);
+  const allowedWidths = new Set(["quarter", "third", "half", "full"]);
+
+  const rawType = String(rawMeta?.type || "textarea").trim().toLowerCase();
+  const rawWidth = String(rawMeta?.width || "half").trim().toLowerCase();
+  const rowsRaw = Number(rawMeta?.rows ?? 2);
+
+  const optionsRaw = Array.isArray(rawMeta?.options)
+    ? rawMeta.options
+    : String(rawMeta?.options || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+  return {
+    type: allowedTypes.has(rawType) ? rawType : "textarea",
+    width: allowedWidths.has(rawWidth) ? rawWidth : "half",
+    rows: Number.isFinite(rowsRaw) ? Math.max(1, Math.min(8, Math.trunc(rowsRaw))) : 2,
+    options: Array.from(new Set(optionsRaw.map((opt) => String(opt).trim()).filter(Boolean))),
+    breakAfter: Boolean(rawMeta?.breakAfter ?? rawMeta?.break_after ?? false),
+  };
+}
+
+function createFieldDraft(title = "Nuevo campo", rawMeta = {}) {
+  return { id: createLocalId("field"), title, ...normalizeFieldMeta(rawMeta) };
 }
 
 function createSectionDraft(title = "Nueva seccion") {
@@ -75,20 +102,40 @@ function linesToSections(rawText) {
     const fieldKey = String(fieldRaw || "").trim().toLowerCase();
     if (!sectionKey || !fieldKey) return;
     if (!sections[sectionKey]) sections[sectionKey] = {};
-    sections[sectionKey][fieldKey] = "";
+    sections[sectionKey][fieldKey] = normalizeFieldMeta({});
   });
 
   return sections;
+}
+
+function sanitizeTemplateSections(sections = {}) {
+  return Object.entries(sections || {}).reduce((accumulator, [sectionRaw, fields]) => {
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) return accumulator;
+
+    const sectionKey = String(sectionRaw || "").trim().toLowerCase();
+    if (!sectionKey || EXCLUDED_TEMPLATE_SECTION_KEYS.has(sectionKey)) return accumulator;
+
+    const cleanFields = Object.entries(fields).reduce((fieldAccumulator, [fieldRaw, fieldMeta]) => {
+      const fieldKey = String(fieldRaw || "").trim().toLowerCase();
+      if (!fieldKey || EXCLUDED_TEMPLATE_FIELD_KEYS.has(fieldKey)) return fieldAccumulator;
+      fieldAccumulator[fieldKey] = normalizeFieldMeta(fieldMeta);
+      return fieldAccumulator;
+    }, {});
+
+    if (Object.keys(cleanFields).length > 0) {
+      accumulator[sectionKey] = cleanFields;
+    }
+    return accumulator;
+  }, {});
 }
 
 function sectionsToBuilder(sections = {}) {
   return Object.entries(sections || {}).reduce((accumulator, [sectionKey, fields]) => {
     if (!fields || typeof fields !== "object" || Array.isArray(fields)) return accumulator;
 
-    const fieldDrafts = Object.keys(fields).map((fieldKey) => ({
-      id: createLocalId("field"),
-      title: humanizeKey(fieldKey),
-    }));
+    const fieldDrafts = Object.entries(fields).map(([fieldKey, fieldMeta]) =>
+      createFieldDraft(humanizeKey(fieldKey), fieldMeta)
+    );
 
     accumulator.push({
       id: createLocalId("section"),
@@ -108,7 +155,14 @@ function builderToSections(builderSections = []) {
     (section.fields || []).forEach((field, fieldIndex) => {
       const fieldKey = normalizeKeySegment(field.title, `campo_${fieldIndex + 1}`);
       if (!uniqueFields[fieldKey]) {
-        uniqueFields[fieldKey] = "";
+        const normalizedMeta = normalizeFieldMeta(field);
+        uniqueFields[fieldKey] = {
+          type: normalizedMeta.type,
+          width: normalizedMeta.width,
+          rows: normalizedMeta.rows,
+          options: normalizedMeta.options,
+          break_after: normalizedMeta.breakAfter,
+        };
       }
     });
 
@@ -172,7 +226,11 @@ function moveItem(items, fromIndex, toIndex) {
 }
 
 export default function PlantillasHCPage() {
-  const [loadingList, setLoadingList] = useState(true);
+  const [_loadingList, setLoadingList] = useState(true);
+  const [sessionUsuario] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('usuario') || 'null'); } catch { return null; }
+  });
+  const isAdmin = sessionUsuario?.rol === 'administrador';
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
@@ -193,6 +251,12 @@ export default function PlantillasHCPage() {
   const [advancedMode, setAdvancedMode] = useState(false);
   const [rawDirty, setRawDirty] = useState(false);
   const [isDraftTemplate, setIsDraftTemplate] = useState(false);
+  
+  const [hcTemplateSingleId, setHcTemplateSingleId] = useState('');
+  const [hcTemplateSingleIdDraft, setHcTemplateSingleIdDraft] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [hcSelectorOpen, setHcSelectorOpen] = useState(false);
+  const [fullClinicConfig, setFullClinicConfig] = useState(null);
 
   const builtInIds = useMemo(
     () => new Set(DEFAULT_TEMPLATE_OPTIONS.map((item) => item.id)),
@@ -204,20 +268,134 @@ export default function PlantillasHCPage() {
     [builderSections]
   );
 
-  const previewLines = useMemo(() => {
-    const rawLines = sectionToLineEntries(templateSections);
-    return rawLines ? rawLines.split("\n") : [];
-  }, [templateSections]);
-
   const sectionCount = builderSections.length;
   const fieldCount = builderSections.reduce(
     (total, section) => total + (section.fields?.length || 0),
     0
   );
 
+  const widthToPreviewClass = (width) => {
+    switch (String(width || "half")) {
+      case "quarter":
+        return "col-span-12 md:col-span-3";
+      case "third":
+        return "col-span-12 md:col-span-4";
+      case "full":
+        return "col-span-12";
+      case "half":
+      default:
+        return "col-span-12 md:col-span-6";
+    }
+  };
+
+  const previewSampleValue = (field, fieldKey) => {
+    const label = field.title || humanizeKey(fieldKey);
+    const type = String(field.type || "textarea").toLowerCase();
+    if (type === "number") return "120";
+    if (type === "select") return field.options?.[0] || "";
+    if (type === "text") return `Ejemplo ${label}`;
+    return `Texto de ejemplo para ${label}.`;
+  };
+
+  const hcFixedTemplateOptions = useMemo(() => {
+    return (templateOptions || []).filter((item) => item.id && item.id !== 'default');
+  }, [templateOptions]);
+
   const setStatusMessage = (text, type = "info") => {
     setMessage(text);
     setMessageType(type);
+  };
+
+  const loadHcTemplateConfig = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        setFullClinicConfig(data.data);
+        const incoming = data.data;
+        const incomingSingleId = String(incoming.hc_template_single_id || '').trim();
+        const incomingMode = String(incoming.hc_template_mode || 'auto').trim().toLowerCase();
+        // Legacy fix: if old config stored "default" as single template, switch to automatic mode.
+        if (incomingMode === 'single' && incomingSingleId === 'default') {
+          setHcTemplateSingleId('');
+          setHcTemplateSingleIdDraft('');
+          setSelectedTemplateId('');
+        } else if (incomingMode === 'single' && incomingSingleId) {
+          setHcTemplateSingleId(incomingSingleId);
+          setHcTemplateSingleIdDraft(incomingSingleId);
+          setSelectedTemplateId(incomingSingleId);
+        } else {
+          // Modo automático: limpiar editor, no precargar ninguna plantilla fija.
+          setHcTemplateSingleId('');
+          setHcTemplateSingleIdDraft('');
+          setSelectedTemplateId('');
+        }
+      }
+    } catch (err) {
+      console.error('Error cargando config HC template:', err);
+    }
+  };
+
+  const saveHcTemplateConfig = async (selectedSingleId, { silent = false } = {}) => {
+    setSavingConfig(true);
+    try {
+      const mode = selectedSingleId ? 'single' : 'auto';
+      // Usar la config guardada para mantener todos los campos
+      const payload = {
+        ...(fullClinicConfig || {}),
+        hc_template_mode: mode,
+        hc_template_single_id: selectedSingleId || '',
+      };
+      
+      const res = await fetch(`${BASE_URL}api_configuracion.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHcTemplateSingleId(selectedSingleId || '');
+        setHcTemplateSingleIdDraft(selectedSingleId || '');
+        if (!silent) {
+          setStatusMessage('Configuración de plantilla HC actualizada.', 'success');
+        }
+      } else {
+        throw new Error(data.error || 'Error al guardar');
+      }
+    } catch (err) {
+      if (!silent) {
+        setStatusMessage(`Error guardando config: ${err.message}`, 'error');
+      }
+      throw err;
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleSelectHcTemplate = (tplId) => {
+    const selectedId = String(tplId || '').trim();
+    setHcTemplateSingleIdDraft(selectedId);
+    if (selectedId) {
+      // Plantilla fija: carga esa plantilla en el editor y vista previa.
+      setSelectedTemplateId(selectedId);
+    } else {
+      // Automático: limpia el editor y muestra estado neutro.
+      setSelectedTemplateId('');
+      setTemplateId('');
+      setNombre('Automático');
+      setVersion('');
+      setSchemaVersion('2.0');
+      setBuilderSections([]);
+      setFieldsText('');
+      setRawDirty(false);
+      setIsDraftTemplate(false);
+    }
+    setHcSelectorOpen(false);
   };
 
   const loadTemplateList = useMemo(
@@ -269,7 +447,7 @@ export default function PlantillasHCPage() {
         }
 
         const tpl = data.template;
-        const sections = tpl.sections || {};
+        const sections = sanitizeTemplateSections(tpl.sections || {});
         setTemplateId(tpl.id || selectedTemplateValue);
         setSelectedTemplateId(tpl.id || selectedTemplateValue);
         setNombre(tpl.nombre || selectedTemplateValue);
@@ -292,10 +470,24 @@ export default function PlantillasHCPage() {
   }, [loadTemplateList]);
 
   useEffect(() => {
+    loadHcTemplateConfig();
+  }, []);
+
+  useEffect(() => {
     if (!selectedTemplateId || isDraftTemplate) return;
     try { localStorage.setItem("hcPlantillaSeleccionada", selectedTemplateId); } catch (ignored) { void ignored; }
     loadTemplate(selectedTemplateId);
   }, [selectedTemplateId, isDraftTemplate, loadTemplate]);
+
+  // Cuando se carga config y es automático, limpiar selección de editor.
+  useEffect(() => {
+    if (hcTemplateSingleIdDraft === '' && selectedTemplateId === '') {
+      setNombre('Automático');
+      setTemplateId('');
+      setBuilderSections([]);
+      setFieldsText('');
+    }
+  }, [hcTemplateSingleIdDraft, selectedTemplateId]);
 
   useEffect(() => {
     if (rawDirty) return;
@@ -320,6 +512,10 @@ export default function PlantillasHCPage() {
 
   const moveSection = (sectionIndex, direction) => {
     setBuilderSections((prev) => moveItem(prev, sectionIndex, sectionIndex + direction));
+  };
+
+  const moveSectionTo = (fromIndex, toIndex) => {
+    setBuilderSections((prev) => moveItem(prev, fromIndex, toIndex));
   };
 
   const addField = (sectionId) => {
@@ -370,8 +566,35 @@ export default function PlantillasHCPage() {
     );
   };
 
+  const moveFieldTo = (sectionId, fromIndex, toIndex) => {
+    setBuilderSections((prev) =>
+      prev.map((section) => {
+        if (section.id !== sectionId) return section;
+        return {
+          ...section,
+          fields: moveItem(section.fields, fromIndex, toIndex),
+        };
+      })
+    );
+  };
+
+  const updateFieldConfig = (sectionId, fieldId, patch) => {
+    setBuilderSections((prev) =>
+      prev.map((section) => {
+        if (section.id !== sectionId) return section;
+        return {
+          ...section,
+          fields: section.fields.map((field) => {
+            if (field.id !== fieldId) return field;
+            return { ...field, ...patch };
+          }),
+        };
+      })
+    );
+  };
+
   const handleApplyRawText = () => {
-    const parsedSections = linesToSections(fieldsText);
+    const parsedSections = sanitizeTemplateSections(linesToSections(fieldsText));
     const nextBuilder = sectionsToBuilder(parsedSections);
     const validationErrors = validateBuilderSections(nextBuilder);
 
@@ -400,14 +623,16 @@ export default function PlantillasHCPage() {
 
     try {
       const draftBuilder =
-        advancedMode && rawDirty ? sectionsToBuilder(linesToSections(fieldsText)) : builderSections;
+        advancedMode && rawDirty
+          ? sectionsToBuilder(sanitizeTemplateSections(linesToSections(fieldsText)))
+          : builderSections;
       const validationErrors = validateBuilderSections(draftBuilder);
 
       if (validationErrors.length > 0) {
         throw new Error(validationErrors[0]);
       }
 
-      const sections = builderToSections(draftBuilder);
+      const sections = sanitizeTemplateSections(builderToSections(draftBuilder));
       if (Object.keys(sections).length === 0) {
         throw new Error("Debes agregar al menos una seccion con campos.");
       }
@@ -447,6 +672,29 @@ export default function PlantillasHCPage() {
     }
   };
 
+  const handleApplyUsageConfig = async () => {
+    const selectedConfigId = String(hcTemplateSingleIdDraft || '').trim();
+    const persistedConfigId = String(hcTemplateSingleId || '').trim();
+    if (selectedConfigId === persistedConfigId) {
+      setStatusMessage('No hay cambios pendientes en la aplicación de plantillas.', 'info');
+      return;
+    }
+
+    const modeText = selectedConfigId
+      ? `Plantilla fija: ${selectedConfigId}`
+      : 'Automático por especialidad';
+    const confirmed = window.confirm(
+      `Se aplicará esta configuración para nuevas consultas del sistema:\n\n${modeText}\n\n¿Deseas continuar?`
+    );
+    if (!confirmed) return;
+
+    try {
+      await saveHcTemplateConfig(selectedConfigId);
+    } catch (err) {
+      void err;
+    }
+  };
+
   const handleCreateCustom = () => {
     const ts = new Date();
     const stamp = `${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, "0")}${String(
@@ -456,7 +704,7 @@ export default function PlantillasHCPage() {
     ).padStart(2, "0")}`;
     const newId = `plantilla_${stamp}`;
     const defaultSections = linesToSections(
-      "motivo_consulta.descripcion\nanamnesis.tiempo_enfermedad\nexamen_fisico.examen_general\nplan.tratamiento"
+      "motivo_consulta.descripcion\nanamnesis.tiempo_enfermedad\nexamen_fisico.examen_general"
     );
 
     setSelectedTemplateId(newId);
@@ -555,21 +803,68 @@ export default function PlantillasHCPage() {
                   </div>
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="md:col-span-2">
-                      <label className="mb-1 block text-sm font-semibold text-slate-700">Plantilla</label>
-                      <select
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-slate-800 shadow-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-                        value={selectedTemplateId}
-                        onChange={(e) => setSelectedTemplateId(e.target.value)}
-                        disabled={loadingList}
-                      >
-                        {templateOptions.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.nombre} ({item.id})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {isAdmin && (
+                      <div className="md:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                        <p className="mb-2 text-xs font-semibold text-emerald-700">Aplicacion en consultas</p>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setHcSelectorOpen((prev) => !prev)}
+                            className="w-full rounded-xl border border-emerald-300 bg-white px-3 py-2.5 text-left text-sm text-slate-800 shadow-sm transition hover:bg-emerald-50"
+                            disabled={saving || savingConfig}
+                          >
+                            <span className="font-medium">
+                              {hcTemplateSingleIdDraft
+                                ? `Plantilla fija: ${hcTemplateSingleIdDraft}`
+                                : 'Automatico por especialidad'}
+                            </span>
+                            <span className="float-right text-emerald-700">▾</span>
+                          </button>
+
+                          {hcSelectorOpen && (
+                            <div className="absolute z-20 mt-2 max-h-72 w-full overflow-auto rounded-xl border border-emerald-300 bg-white shadow-lg">
+                              <label className="flex cursor-pointer items-center gap-3 border-b border-emerald-100 px-3 py-2 hover:bg-emerald-50">
+                                <input
+                                  type="checkbox"
+                                  checked={!hcTemplateSingleIdDraft}
+                                  onChange={() => handleSelectHcTemplate('')}
+                                  className="h-4 w-4 text-emerald-600"
+                                />
+                                <span className="text-sm font-medium text-slate-800">Automatico por especialidad</span>
+                              </label>
+
+                              {hcFixedTemplateOptions.map((item) => {
+                                const isChecked = hcTemplateSingleIdDraft === item.id;
+                                return (
+                                  <label
+                                    key={item.id}
+                                    className="flex cursor-pointer items-center gap-3 border-b border-emerald-100 px-3 py-2 last:border-b-0 hover:bg-emerald-50"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => handleSelectHcTemplate(isChecked ? '' : item.id)}
+                                      className="h-4 w-4 text-emerald-600"
+                                    />
+                                    <span className="text-sm text-slate-800">{item.nombre} ({item.id})</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                        <p className="mt-2 text-xs text-emerald-700">
+                          {savingConfig
+                            ? 'Guardando configuracion...'
+                            : hcTemplateSingleIdDraft
+                              ? `Se aplicara siempre: ${hcTemplateSingleIdDraft}`
+                              : 'Se aplicara automaticamente por especialidad'}
+                          {hcTemplateSingleIdDraft !== hcTemplateSingleId
+                            ? ' (cambio pendiente: presiona Aplicar uso en el sistema)'
+                            : ''}
+                        </p>
+                      </div>
+                    )}
 
                     <div>
                       <label className="mb-1 block text-sm font-semibold text-slate-700">ID tecnico</label>
@@ -630,13 +925,13 @@ export default function PlantillasHCPage() {
                   {templateId === "default" && (
                     <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
                       <p className="text-sm font-semibold text-emerald-900">
-                        Plantilla por defecto activa
+                        Plantilla base (fallback) activa
                       </p>
                       <p className="mt-1 text-sm text-emerald-800/80">
-                        Si guardas esta plantilla, el sistema la usara para <strong>todas las consultas</strong> sin importar la especialidad del medico. Para volver al modo por especialidad, elimina esta plantilla de la base de datos o dejala sin guardar.
+                        Esta plantilla se usa solo cuando no existe una plantilla por especialidad para la consulta. Si hay plantilla de la especialidad, siempre tendra prioridad.
                       </p>
                       <ul className="mt-3 space-y-1 text-xs text-emerald-700">
-                        <li>• Prioridad: <strong>Por defecto</strong> &gt; Por especialidad &gt; Medicina general</li>
+                        <li>• Prioridad: <strong>Por especialidad</strong> &gt; Plantilla base (fallback) &gt; Medicina general</li>
                         <li>• Solo aplica cuando <em>no</em> hay un template_id explicito en la HC ya guardada.</li>
                       </ul>
                     </div>
@@ -653,7 +948,7 @@ export default function PlantillasHCPage() {
                         Secciones y campos sugeridos
                       </h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        Escribe titulos legibles y el sistema generara las claves tecnicas automaticamente.
+                        Define tipo, ancho y opciones de cada campo. Tambien puedes arrastrar con el mouse para reordenar.
                       </p>
                     </div>
 
@@ -697,6 +992,18 @@ export default function PlantillasHCPage() {
                         <div
                           key={section.id}
                           className="overflow-hidden rounded-3xl border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] shadow-sm"
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/hc-section-index", String(sectionIndex));
+                            e.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const fromIndex = Number(e.dataTransfer.getData("text/hc-section-index"));
+                            if (!Number.isInteger(fromIndex) || fromIndex === sectionIndex) return;
+                            moveSectionTo(fromIndex, sectionIndex);
+                          }}
                         >
                           <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
                             <div className="flex-1">
@@ -712,6 +1019,7 @@ export default function PlantillasHCPage() {
                               <p className="mt-2 text-xs text-slate-500">
                                 Clave generada: <span className="font-mono text-slate-700">{sectionKeyPreview}</span>
                               </p>
+                              <p className="mt-1 text-xs text-slate-400">Arrastra con el mouse para reordenar secciones.</p>
                             </div>
 
                             <div className="flex flex-wrap gap-2">
@@ -759,6 +1067,28 @@ export default function PlantillasHCPage() {
                                 <div
                                   key={field.id}
                                   className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 lg:grid-cols-[1fr_auto]"
+                                  draggable
+                                  onDragStart={(e) => {
+                                    e.dataTransfer.setData(
+                                      "text/hc-field",
+                                      JSON.stringify({ sectionId: section.id, fieldIndex })
+                                    );
+                                    e.dataTransfer.effectAllowed = "move";
+                                  }}
+                                  onDragOver={(e) => e.preventDefault()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    const raw = e.dataTransfer.getData("text/hc-field");
+                                    if (!raw) return;
+                                    try {
+                                      const payload = JSON.parse(raw);
+                                      if (payload.sectionId !== section.id) return;
+                                      if (payload.fieldIndex === fieldIndex) return;
+                                      moveFieldTo(section.id, payload.fieldIndex, fieldIndex);
+                                    } catch {
+                                      // ignore invalid drag payload
+                                    }
+                                  }}
                                 >
                                   <div>
                                     <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -775,6 +1105,88 @@ export default function PlantillasHCPage() {
                                     <p className="mt-2 text-xs text-slate-500">
                                       Clave generada: <span className="font-mono text-slate-700">{sectionKeyPreview}.{fieldKeyPreview}</span>
                                     </p>
+
+                                    <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+                                      <div>
+                                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tipo</label>
+                                        <select
+                                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
+                                          value={field.type || "textarea"}
+                                          onChange={(e) => updateFieldConfig(section.id, field.id, { type: e.target.value })}
+                                        >
+                                          <option value="text">Texto corto</option>
+                                          <option value="textarea">Texto largo</option>
+                                          <option value="number">Numero</option>
+                                          <option value="select">Lista desplegable</option>
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Ancho</label>
+                                        <select
+                                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
+                                          value={field.width || "half"}
+                                          onChange={(e) => updateFieldConfig(section.id, field.id, { width: e.target.value })}
+                                        >
+                                          <option value="quarter">Corto (1/4)</option>
+                                          <option value="third">Medio (1/3)</option>
+                                          <option value="half">Normal (1/2)</option>
+                                          <option value="full">Ancho completo</option>
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Filas</label>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={8}
+                                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
+                                          value={field.rows || 2}
+                                          onChange={(e) =>
+                                            updateFieldConfig(section.id, field.id, {
+                                              rows: Math.max(1, Math.min(8, Number(e.target.value) || 2)),
+                                            })
+                                          }
+                                          disabled={(field.type || "textarea") !== "textarea"}
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Opciones</label>
+                                        <input
+                                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
+                                          value={Array.isArray(field.options) ? field.options.join(", ") : ""}
+                                          onChange={(e) =>
+                                            updateFieldConfig(section.id, field.id, {
+                                              options: e.target.value
+                                                .split(",")
+                                                .map((item) => item.trim())
+                                                .filter(Boolean),
+                                            })
+                                          }
+                                          placeholder="Ej: Leve, Moderado, Severo"
+                                          disabled={(field.type || "textarea") !== "select"}
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Distribucion</label>
+                                        <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700">
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(field.breakAfter)}
+                                            onChange={(e) =>
+                                              updateFieldConfig(section.id, field.id, {
+                                                breakAfter: e.target.checked,
+                                              })
+                                            }
+                                          />
+                                          Cortar fila despues
+                                        </label>
+                                      </div>
+                                    </div>
+                                    <p className="mt-2 text-xs text-slate-400">Arrastra con el mouse para reordenar campos dentro de la seccion.</p>
                                   </div>
 
                                   <div className="flex flex-wrap items-start gap-2 lg:w-[220px] lg:justify-end">
@@ -850,6 +1262,16 @@ export default function PlantillasHCPage() {
                   >
                     {saving ? "Guardando..." : "Guardar plantilla"}
                   </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={handleApplyUsageConfig}
+                      disabled={saving || savingConfig || hcTemplateSingleIdDraft === hcTemplateSingleId}
+                      className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingConfig ? 'Aplicando...' : 'Aplicar uso en el sistema'}
+                    </button>
+                  )}
                   {message && (
                     <div
                       className={`flex min-h-[48px] items-center rounded-xl border px-4 py-3 text-sm ${messageClasses}`}
@@ -865,58 +1287,142 @@ export default function PlantillasHCPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
                     Vista previa
                   </p>
-                  <h2 className="mt-2 text-xl font-bold text-slate-800">Como quedara la estructura</h2>
+                  <h2 className="mt-2 text-xl font-bold text-slate-800">Como se vera el formulario</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Esta vista resume la plantilla tal como sera interpretada por el resolutor de HC.
+                    Previsualizacion en tiempo real con tipos de campo y anchos, similar a la pantalla de HC. Tambien puedes arrastrar campos y secciones desde aqui.
                   </p>
 
                   <div className="mt-5 space-y-4">
                     {builderSections.map((section, sectionIndex) => {
-                      const sectionKey = normalizeKeySegment(
-                        section.title,
-                        `seccion_${sectionIndex + 1}`
-                      );
-
+                      const sectionTitle = section.title || `Seccion ${sectionIndex + 1}`;
+                      const sectionKey = normalizeKeySegment(section.title, `seccion_${sectionIndex + 1}`);
                       return (
-                        <div key={section.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                          <div className="flex items-center justify-between gap-3">
+                        <div
+                          key={section.id}
+                          className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/hc-section-index", String(sectionIndex));
+                            e.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const fromIndex = Number(e.dataTransfer.getData("text/hc-section-index"));
+                            if (!Number.isInteger(fromIndex) || fromIndex === sectionIndex) return;
+                            moveSectionTo(fromIndex, sectionIndex);
+                          }}
+                        >
+                          <div className="mb-3 flex items-center justify-between gap-3">
                             <div>
-                              <p className="text-sm font-semibold text-slate-800">
-                                {section.title || `Seccion ${sectionIndex + 1}`}
-                              </p>
+                              <p className="text-sm font-semibold text-slate-800">{sectionTitle}</p>
                               <p className="font-mono text-xs text-slate-500">{sectionKey}</p>
+                              <p className="text-[11px] text-slate-400">Arrastra esta tarjeta para reordenar la seccion.</p>
                             </div>
                             <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
                               {section.fields.length} campo(s)
                             </span>
                           </div>
 
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {section.fields.map((field, fieldIndex) => (
-                              <span
-                                key={field.id}
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700"
-                              >
-                                {normalizeKeySegment(field.title, `campo_${fieldIndex + 1}`)}
-                              </span>
-                            ))}
+                          <div className="grid grid-cols-12 gap-2">
+                            {(section.fields || []).map((field, fieldIndex) => {
+                              const normalizedField = normalizeFieldMeta(field);
+                              const fieldKey = normalizeKeySegment(field.title, `campo_${fieldIndex + 1}`);
+                              const label = field.title || humanizeKey(fieldKey);
+                              const sampleValue = previewSampleValue(field, fieldKey);
+
+                              return [
+                                  <div
+                                    key={field.id}
+                                    className={widthToPreviewClass(normalizedField.width)}
+                                    draggable
+                                    onDragStart={(e) => {
+                                      e.dataTransfer.setData(
+                                        "text/hc-field",
+                                        JSON.stringify({ sectionId: section.id, fieldIndex })
+                                      );
+                                      e.dataTransfer.effectAllowed = "move";
+                                    }}
+                                    onDragOver={(e) => e.preventDefault()}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      const raw = e.dataTransfer.getData("text/hc-field");
+                                      if (!raw) return;
+                                      try {
+                                        const payload = JSON.parse(raw);
+                                        if (payload.sectionId !== section.id) return;
+                                        if (payload.fieldIndex === fieldIndex) return;
+                                        moveFieldTo(section.id, payload.fieldIndex, fieldIndex);
+                                      } catch {
+                                        // ignore invalid drag payload
+                                      }
+                                    }}
+                                  >
+                                    <label className="mb-1 block text-xs font-semibold text-slate-700">{label}</label>
+                                    {normalizedField.type === "select" ? (
+                                      <select
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
+                                        value={sampleValue}
+                                        disabled
+                                        readOnly
+                                      >
+                                        {normalizedField.options.length === 0 && <option value="">Sin opciones</option>}
+                                        {normalizedField.options.map((opt) => (
+                                          <option key={`${field.id}_${opt}`} value={opt}>
+                                            {opt}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    ) : normalizedField.type === "number" ? (
+                                      <input
+                                        type="number"
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
+                                        value={sampleValue}
+                                        readOnly
+                                      />
+                                    ) : normalizedField.type === "text" ? (
+                                      <input
+                                        type="text"
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
+                                        value={sampleValue}
+                                        readOnly
+                                      />
+                                    ) : (
+                                      <textarea
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
+                                        rows={normalizedField.rows}
+                                        value={sampleValue}
+                                        readOnly
+                                      />
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateFieldConfig(section.id, field.id, {
+                                          breakAfter: !field.breakAfter,
+                                        })
+                                      }
+                                      className={`mt-1 rounded-md px-2 py-1 text-[11px] font-semibold ${
+                                        field.breakAfter
+                                          ? "bg-emerald-100 text-emerald-800"
+                                          : "bg-slate-100 text-slate-600"
+                                      }`}
+                                    >
+                                      {field.breakAfter ? "Corte activo" : "Sin corte"}
+                                    </button>
+                                  </div>,
+                                  field.breakAfter ? <div key={`${field.id}_break`} className="col-span-12 h-0" /> : null,
+                                ];
+                            })}
                           </div>
                         </div>
                       );
                     })}
-                  </div>
-                </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-slate-950 p-5 text-slate-100 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200">
-                    Salida tecnica
-                  </p>
-                  <h2 className="mt-2 text-xl font-bold">Formato serializado</h2>
-                  <div className="mt-4 max-h-[420px] overflow-auto rounded-2xl border border-white/10 bg-black/25 p-4 font-mono text-sm leading-7">
-                    {previewLines.length > 0 ? (
-                      previewLines.map((line) => <div key={line}>{line}</div>)
-                    ) : (
-                      <div className="text-slate-400">Sin campos configurados.</div>
+                    {builderSections.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+                        Agrega secciones y campos para ver la previsualizacion mejorada.
+                      </div>
                     )}
                   </div>
                 </div>

@@ -338,12 +338,15 @@ switch ($method) {
                 dea.tamano
              FROM documentos_externos_paciente dep
              INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
-             INNER JOIN ordenes_laboratorio ol ON ol.id = dep.orden_id
-             WHERE ol.consulta_id = ? AND LOWER(TRIM(dep.tipo)) = "laboratorio"
+             WHERE LOWER(TRIM(dep.tipo)) = "laboratorio"
+               AND (
+                 dep.orden_id IN (SELECT id FROM ordenes_laboratorio WHERE consulta_id = ?)
+                 OR dep.cotizacion_id IN (SELECT cotizacion_id FROM ordenes_laboratorio WHERE consulta_id = ? AND cotizacion_id IS NOT NULL)
+               )
              ORDER BY dep.fecha DESC, dep.id DESC, dea.id ASC'
         );
         if ($stmtDocs) {
-            $stmtDocs->bind_param('i', $consulta_id);
+            $stmtDocs->bind_param('ii', $consulta_id, $consulta_id);
             $stmtDocs->execute();
             $rowsDocs = $stmtDocs->get_result()->fetch_all(MYSQLI_ASSOC);
             $stmtDocs->close();

@@ -3,7 +3,22 @@ import CobroDescuento from './CobroDescuento';
 import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
 
-function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar, detalles, total }) {
+function CobroModulo({
+  paciente,
+  servicio,
+  onCobroCompleto,
+  onCancelar,
+  detalles,
+  total,
+  modoCobro,
+  onModoCobroChange,
+  montoAbonoInput,
+  saldoPendiente,
+  montoObjetivoCobro,
+  onMontoAbonoChange,
+  onSetCobrarTodo,
+  onSetCobrarMitad,
+}) {
         // ...existing code...
         const [motivo, setMotivo] = useState('');
     // Estados para descuento
@@ -272,6 +287,12 @@ if (tipoDescuento === 'porcentaje') {
     }
     const numeroOrden = tipoConsulta === 'programada' ? (consulta.numero_orden || 'N/A') : '';
     const logoSrc = clinicBrand.logo || '/2demayo.svg';
+    const esCobroCotizacion = Number(servicio?.cotizacion_id || 0) > 0 && Number.isFinite(Number(saldoPendiente));
+    const saldoAnteriorCot = Math.max(0, Number(saldoPendiente || 0));
+    const abonoAplicadoCot = Math.max(0, Number(datosComprobante?.total || 0));
+    const descuentoAplicadoCot = Math.max(0, Number(datosComprobante?.monto_descuento || 0));
+    const saldoRestanteCot = Math.max(0, saldoAnteriorCot - abonoAplicadoCot - descuentoAplicadoCot);
+    const esAdelantoCot = esCobroCotizacion && saldoRestanteCot > 0;
 
     // Determinar si el servicio es consulta médica
     const esConsultaMedica = consulta.key === 'consulta';
@@ -337,6 +358,13 @@ if (tipoDescuento === 'porcentaje') {
             <p style="color: #d97706;"><strong>DESCUENTO:</strong> -S/ ${datosComprobante.monto_descuento.toFixed(2)} (${datosComprobante.tipo_descuento === 'porcentaje' ? datosComprobante.valor_descuento + '%' : 'Monto fijo'})</p>
           ` : ''}
         <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
+        ${esCobroCotizacion ? `
+          <p><strong>Cotización:</strong> #${Number(servicio?.cotizacion_id || 0)}</p>
+          <p><strong>Tipo de aplicación:</strong> ${esAdelantoCot ? 'Adelanto' : 'Pago completo'}</p>
+          <p><strong>Abono aplicado hoy:</strong> S/ ${abonoAplicadoCot.toFixed(2)}</p>
+          ${descuentoAplicadoCot > 0 ? `<p><strong>Descuento aplicado:</strong> S/ ${descuentoAplicadoCot.toFixed(2)}</p>` : ''}
+          <p><strong>Saldo restante:</strong> S/ ${saldoRestanteCot.toFixed(2)}</p>
+        ` : ''}
         <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
         <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
         <hr>
@@ -420,6 +448,60 @@ if (tipoDescuento === 'porcentaje') {
         {/* Columna derecha: Detalle, descuento, pago, acción */}
         <div className="space-y-6 flex flex-col justify-between h-full">
           <div className="bg-blue-50 p-5 rounded-2xl border border-blue-100 shadow-sm">
+            {typeof onMontoAbonoChange === 'function' && (
+              <div className="mb-4 p-3 rounded-xl border border-blue-200 bg-white">
+                <h5 className="font-semibold text-blue-800 mb-2">Forma de cobro</h5>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => typeof onModoCobroChange === 'function' && onModoCobroChange('completo')}
+                    className={`px-3 py-2 rounded border whitespace-nowrap ${modoCobro === 'completo' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50'}`}
+                  >
+                    Cobro completo (automático)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => typeof onModoCobroChange === 'function' && onModoCobroChange('parcial')}
+                    className={`px-3 py-2 rounded border whitespace-nowrap ${modoCobro === 'parcial' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50'}`}
+                  >
+                    Adelanto (monto manual)
+                  </button>
+                </div>
+
+                {modoCobro === 'parcial' && (
+                  <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
+                    <input
+                      id="monto-abono-modulo"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={montoAbonoInput ?? ''}
+                      onChange={(e) => onMontoAbonoChange(e.target.value)}
+                      className="border rounded px-3 py-2 bg-white w-full sm:w-40"
+                      placeholder="0.00"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => typeof onSetCobrarMitad === 'function' && onSetCobrarMitad()}
+                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 whitespace-nowrap"
+                    >
+                      Mitad
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => typeof onSetCobrarTodo === 'function' && onSetCobrarTodo()}
+                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 whitespace-nowrap"
+                    >
+                      Máximo pendiente
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-2 text-xs text-gray-600 rounded-md bg-blue-50 px-2 py-1">
+                  {modoCobro === 'parcial' ? 'Adelanto de hoy:' : 'Cobro automático de hoy:'} S/ {Number(montoObjetivoCobro || 0).toFixed(2)} de un saldo pendiente de S/ {Number(saldoPendiente || 0).toFixed(2)}.
+                </div>
+              </div>
+            )}
             <h4 className="font-semibold mb-2 text-blue-700 flex items-center gap-2 text-lg"><span className="text-blue-400">🧾</span> Detalle del Servicio</h4>
             {detallesCobro.map((detalle, index) => {
               let precio = detalle.subtotal;

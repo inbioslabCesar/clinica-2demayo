@@ -349,26 +349,22 @@ export default function CotizacionesPage() {
                 ));
                 const cotizacionPagada = ["pagado", "completado"].includes(estadoRow);
                 const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
-                const puedeSubirResultadoReferencia = cotizacionPagada
-                  && servicios.includes("laboratorio")
-                  && tieneLaboratorioReferencia
-                  && Number(row.paciente_id || 0) > 0;
                 const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
-                const puedeProcesarLaboratorioInterno = cotizacionPagada
+                const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada
                   && servicios.includes("laboratorio")
-                  && !tieneLaboratorioReferencia
                   && Number(row.paciente_id || 0) > 0;
-                const puedeAbrirLaboratorio = puedeSubirResultadoReferencia || puedeProcesarLaboratorioInterno || tieneResultadosLaboratorio;
-                const tituloResultadoReferencia = encodeURIComponent(`Resultado laboratorio referencia - Cot. #${row.id}`);
+                const puedeAbrirLaboratorio = puedeGestionarLaboratorioDesdeCotizacion || tieneResultadosLaboratorio;
                 const ordenLaboratorioId = Number(row.orden_laboratorio_id || 0);
                 const ordenQuery = ordenLaboratorioId > 0 ? `&orden_id=${ordenLaboratorioId}` : "";
-                const tituloResultadoInterno = encodeURIComponent(`Resultado laboratorio interno - Cot. #${row.id}`);
-                const laboratorioUrl = puedeSubirResultadoReferencia
-                  ? `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&abrir=1&tipo=laboratorio&titulo=${tituloResultadoReferencia}&back_to=/cotizaciones`
-                  : `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&tipo=laboratorio&titulo=${tituloResultadoInterno}&back_to=/cotizaciones`;
-                const laboratorioTitulo = puedeSubirResultadoReferencia
-                  ? (tieneResultadosLaboratorio ? "Ver resultados de laboratorio" : "Subir resultado de laboratorio de referencia")
-                  : (tieneResultadosLaboratorio ? "Abrir documentos y luego editar en panel" : "Abrir documentos y luego procesar en panel");
+                const tituloResultado = encodeURIComponent(
+                  tieneLaboratorioReferencia
+                    ? `Resultado laboratorio referencia - Cot. #${row.id}`
+                    : `Resultado laboratorio - Cot. #${row.id}`
+                );
+                const laboratorioUrl = `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&abrir=1&tipo=laboratorio&titulo=${tituloResultado}&back_to=/cotizaciones`;
+                const laboratorioTitulo = tieneResultadosLaboratorio
+                  ? "Ver resultados de laboratorio"
+                  : "Gestionar resultados de laboratorio";
                 return (
                   <tr key={row.id} className="border-t align-top">
                     <td className="px-3 py-2 font-semibold">#{row.id}</td>

@@ -101,113 +101,59 @@ function Dashboard({ usuario }) {
           <div className="absolute bottom-0 left-0 w-20 h-20 bg-white/5 rounded-full translate-y-10 -translate-x-10"></div>
           
           <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex items-center justify-center w-11 h-11 bg-white/20 rounded-xl backdrop-blur-sm">
-                <Icon iconName="Hospital" className="text-xl text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold drop-shadow-lg leading-tight">
-                  ¡Bienvenido, {usuario?.nombre} {usuario?.apellido || ""}!
-                </h1>
-                <p className="text-sm sm:text-base text-white/90 mt-1">
-                  {formatearFecha()}
-                </p>
-              </div>
-            </div>
-            <p className="text-sm sm:text-base text-white/95 font-medium">
-              Panel de Control{clinicName ? ` - ${clinicName}` : ''}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Tarjetas de Estadísticas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-        <div className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-300 border"
-          style={{ borderColor: "var(--color-primary-light)" }}>
-          <div className="flex items-center justify-between mb-2">
-            <div
-              className="flex items-center justify-center w-10 h-10 rounded-lg"
-              style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
-            >
-              <Icon iconName="People" className="text-lg text-white" />
-            </div>
-            <div className="text-right">
-              <p className="text-xl font-bold text-gray-800 leading-tight">{estadisticas.pacientesHoy}</p>
-              <p className="text-xs text-gray-500">Hoy</p>
-            </div>
-          </div>
-          <h3 className="text-base font-semibold text-gray-800 mb-1">Pacientes Atendidos</h3>
-          <p className="text-xs text-gray-600">En el dia de hoy</p>
-        </div>
-
-        <div className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-300 border"
-          style={{ borderColor: "var(--color-primary-light)" }}>
-          <div className="flex items-center justify-between mb-2">
-            <div
-              className="flex items-center justify-center w-10 h-10 rounded-lg"
-              style={{ background: "linear-gradient(135deg, var(--color-secondary), var(--color-accent))" }}
-            >
-              <Icon iconName="Health" className="text-lg text-white" />
-            </div>
-            <div className="text-right">
-              <p className="text-xl font-bold text-gray-800 leading-tight">{estadisticas.consultasHoy}</p>
-              <p className="text-xs text-gray-500">Hoy</p>
-            </div>
-          </div>
-          <h3 className="text-base font-semibold text-gray-800 mb-1">Consultas Medicas</h3>
-          <p className="text-xs text-gray-600">En el dia de hoy</p>
-        </div>
-
-        <div className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-300 border sm:col-span-2 lg:col-span-1"
-          style={{ borderColor: "var(--color-primary-light)" }}>
-          <div className="flex items-center justify-between mb-2">
-            <div
-              className="flex items-center justify-center w-10 h-10 rounded-lg"
-              style={{ background: "linear-gradient(135deg, var(--color-accent), var(--color-primary))" }}
-            >
-              <Icon iconName="Contact" className="text-lg text-white" />
-            </div>
-            <div className="text-right">
-              <p className="text-xl font-bold text-gray-800 leading-tight">{estadisticas.totalPacientes}</p>
-              <p className="text-xs text-gray-500">Total</p>
-            </div>
-          </div>
-          <h3 className="text-base font-semibold text-gray-800 mb-1">Pacientes Registrados</h3>
-          <p className="text-xs text-gray-600">En la base de datos</p>
-        </div>
-      </div>
-
-      {/* Última Historia Clínica */}
-      {ultimaHC && (
-        <div className="mb-4">
-          <div className="bg-white rounded-xl p-3 shadow-sm border" style={{ borderColor: "var(--color-primary-light)" }}>
-            <div className="flex items-center gap-3 mb-2">
-              <div
-                className="flex items-center justify-center w-9 h-9 rounded-lg"
-                style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-secondary))" }}
-              >
-                <Icon iconName="DocumentSearch" className="text-base text-white" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-gray-800">Ultima Historia Clinica</h3>
-                <p className="text-xs text-gray-600">Registro mas reciente</p>
-              </div>
-            </div>
-            <div className="rounded-lg p-2 border" style={{ background: "var(--color-primary-light)", borderColor: "var(--color-primary-light)" }}>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              {/* Nombre y fecha */}
               <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center w-7 h-7 rounded-md bg-white/80">
-                  <Icon iconName="NumberField" className="text-sm" style={{ color: "var(--color-secondary)" }} />
+                <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-xl backdrop-blur-sm flex-shrink-0">
+                  <Icon iconName="Hospital" className="text-lg text-white" />
                 </div>
-                <span className="text-base font-mono font-bold" style={{ color: "var(--color-secondary)" }}>{ultimaHC}</span>
-                <span className="text-xs px-2 py-1 rounded-full bg-white/80" style={{ color: "var(--color-secondary)" }}>
-                  HC #{ultimaHC}
-                </span>
+                <div>
+                  <h1 className="text-xl sm:text-2xl font-bold drop-shadow-lg leading-tight">
+                    ¡Bienvenido, {usuario?.nombre} {usuario?.apellido || ""}!
+                  </h1>
+                  <p className="text-xs text-white/80">
+                    {formatearFecha()} &mdash; Panel de Control{clinicName ? ` · ${clinicName}` : ''}
+                  </p>
+                </div>
+              </div>
+
+              {/* Mini-stats inline */}
+              <div className="flex flex-wrap gap-2 sm:gap-2 mt-1 sm:mt-0">
+                <div className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition rounded-lg px-2.5 py-1.5">
+                  <Icon iconName="People" className="text-sm text-white/80" />
+                  <div>
+                    <p className="text-base font-bold text-white leading-none">{estadisticas.pacientesHoy}</p>
+                    <p className="text-[10px] text-white/70 leading-none">Atendidos hoy</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition rounded-lg px-2.5 py-1.5">
+                  <Icon iconName="Health" className="text-sm text-white/80" />
+                  <div>
+                    <p className="text-base font-bold text-white leading-none">{estadisticas.consultasHoy}</p>
+                    <p className="text-[10px] text-white/70 leading-none">Consultas hoy</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition rounded-lg px-2.5 py-1.5">
+                  <Icon iconName="Contact" className="text-sm text-white/80" />
+                  <div>
+                    <p className="text-base font-bold text-white leading-none">{estadisticas.totalPacientes}</p>
+                    <p className="text-[10px] text-white/70 leading-none">Pacientes</p>
+                  </div>
+                </div>
+                {ultimaHC && (
+                  <div className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition rounded-lg px-2.5 py-1.5">
+                    <Icon iconName="DocumentSearch" className="text-sm text-white/80" />
+                    <div>
+                      <p className="text-base font-bold text-white leading-none font-mono">{ultimaHC}</p>
+                      <p className="text-[10px] text-white/70 leading-none">Última HC</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Módulo de Recepción Modernizado */}
       <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">

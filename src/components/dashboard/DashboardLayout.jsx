@@ -20,6 +20,7 @@ function resolveSystemLogoSize(sizeOption) {
     md: { sidebarFrame: 64, sidebarImage: 48, navbarImage: 40 },
     lg: { sidebarFrame: 80, sidebarImage: 60, navbarImage: 52 },
     xl: { sidebarFrame: 96, sidebarImage: 72, navbarImage: 64 },
+    xxl: { sidebarFrame: 112, sidebarImage: 84, navbarImage: 74 },
   };
   return sizes[key] || sizes.md;
 }
@@ -27,16 +28,17 @@ function resolveSystemLogoSize(sizeOption) {
 function readBrandCache() {
   try {
     const raw = sessionStorage.getItem(BRAND_STORAGE_KEY);
-    if (!raw) return { nombre: "", logo_url: "", logo_size_sistema: "", updated_at: 0 };
+    if (!raw) return { nombre: "", logo_url: "", logo_size_sistema: "", logo_shape_sistema: "auto", updated_at: 0 };
     const parsed = JSON.parse(raw);
     return {
       nombre: String(parsed?.nombre || "").trim(),
       logo_url: String(parsed?.logo_url || "").trim(),
       logo_size_sistema: String(parsed?.logo_size_sistema || "").trim(),
+      logo_shape_sistema: String(parsed?.logo_shape_sistema || "auto").trim(),
       updated_at: Number(parsed?.updated_at || 0),
     };
   } catch {
-    return { nombre: "", logo_url: "", logo_size_sistema: "", updated_at: 0 };
+    return { nombre: "", logo_url: "", logo_size_sistema: "", logo_shape_sistema: "auto", updated_at: 0 };
   }
 }
 
@@ -46,6 +48,7 @@ function writeBrandCache(partial) {
     nombre: typeof partial?.nombre === "string" ? partial.nombre : prev.nombre,
     logo_url: typeof partial?.logo_url === "string" ? partial.logo_url : prev.logo_url,
     logo_size_sistema: typeof partial?.logo_size_sistema === "string" ? partial.logo_size_sistema : prev.logo_size_sistema,
+    logo_shape_sistema: typeof partial?.logo_shape_sistema === "string" ? partial.logo_shape_sistema : prev.logo_shape_sistema,
     updated_at: Number(partial?.updated_at || Date.now()),
   };
   sessionStorage.setItem(BRAND_STORAGE_KEY, JSON.stringify(next));
@@ -76,7 +79,69 @@ function resolveLogoUrl(logoPath, versionToken) {
   return `${url}${url.includes("?") ? "&" : "?"}v=${v}`;
 }
 
-function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSize }) {
+async function detectLogoIsWide(imageSrc) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const naturalW = Number(img.naturalWidth || 0);
+        const naturalH = Number(img.naturalHeight || 0);
+        if (naturalW <= 0 || naturalH <= 0) {
+          resolve(true);
+          return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = naturalW;
+        canvas.height = naturalH;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        if (!ctx) {
+          resolve((naturalW / naturalH) > 1.25);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, naturalW, naturalH).data;
+
+        let minX = naturalW;
+        let minY = naturalH;
+        let maxX = -1;
+        let maxY = -1;
+
+        for (let y = 0; y < naturalH; y++) {
+          for (let x = 0; x < naturalW; x++) {
+            const alpha = data[(y * naturalW + x) * 4 + 3];
+            if (alpha > 12) {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+
+        if (maxX < minX || maxY < minY) {
+          resolve((naturalW / naturalH) > 1.25);
+          return;
+        }
+
+        const visibleW = maxX - minX + 1;
+        const visibleH = maxY - minY + 1;
+        resolve((visibleW / visibleH) > 1.18);
+      } catch {
+        const w = Number(img.naturalWidth || 1);
+        const h = Number(img.naturalHeight || 1);
+        resolve((w / h) > 1.25);
+      }
+    };
+
+    img.onerror = () => resolve(true);
+    img.src = imageSrc || '/2demayo.svg';
+  });
+}
+
+function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSize, logoIsWide }) {
   // Sidebar fijo en PC (md+), drawer en móvil/tablet
   return (
     <>
@@ -96,16 +161,33 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
         <div className="flex flex-col h-full min-h-0">
           <div className="flex flex-col items-center py-6 text-white rounded-b-2xl mx-2 mb-4 shadow-lg" style={{ background: 'linear-gradient(to bottom right, var(--color-sidebar-from), var(--color-sidebar-via), var(--color-sidebar-to))' }}>
             <div className="relative">
-              <div className="absolute inset-0 bg-white/20 rounded-full blur-md"></div>
+              <div className={`absolute inset-0 bg-white/20 blur-md ${logoIsWide ? 'rounded-2xl' : 'rounded-full'}`}></div>
               <div
-                className="relative bg-white rounded-full shadow-lg ring-4 ring-white/30 flex items-center justify-center"
-                style={{ width: logoSize.sidebarFrame, height: logoSize.sidebarFrame }}
+                className={`relative bg-white shadow-lg ring-4 ring-white/30 flex items-center justify-center ${logoIsWide ? 'rounded-2xl px-3' : 'rounded-full'}`}
+                style={{
+                  height: logoSize.sidebarFrame,
+                  width: logoIsWide ? Math.min(Math.round(logoSize.sidebarFrame * 1.55), 180) : logoSize.sidebarFrame,
+                  maxWidth: logoIsWide ? 180 : logoSize.sidebarFrame,
+                }}
               >
                 <img 
                   src={logoSrc || "/2demayo.svg"}
                   alt="Logo" 
                   className="relative object-contain"
-                  style={{ width: logoSize.sidebarImage, height: logoSize.sidebarImage }}
+                  style={logoIsWide
+                    ? {
+                        height: Math.round(logoSize.sidebarFrame * 0.62),
+                        width: 'auto',
+                        maxWidth: Math.round(logoSize.sidebarFrame * 1.35),
+                        transform: 'scale(1.65)',
+                        transformOrigin: 'center',
+                      }
+                    : {
+                        width: logoSize.sidebarImage,
+                        height: logoSize.sidebarImage,
+                        transform: 'scale(1.9)',
+                        transformOrigin: 'center',
+                      }}
                   onError={e => { e.target.onerror = null; e.target.src = '/2demayo.svg'; }} 
                 />
               </div>
@@ -161,20 +243,37 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
   );
 }
 
-function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize }) {
+function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize, logoIsWide }) {
   // Botón hamburguesa a la derecha en móvil/tablet
   return (
     <header className="flex items-center justify-between px-6 py-3 shadow text-white" style={{ backgroundColor: 'var(--color-navbar-bg)' }}>
       <div className="flex items-center gap-3">
         <div
-          className="bg-white rounded-full p-1 shadow flex items-center justify-center"
-          style={{ width: logoSize.navbarImage + 8, height: logoSize.navbarImage + 8 }}
+          className={`bg-white shadow flex items-center justify-center ${logoIsWide ? 'rounded-xl px-2 py-1' : 'rounded-full p-1'}`}
+          style={{
+            height: logoSize.navbarImage + 10,
+            width: logoIsWide ? Math.min(logoSize.navbarImage + 44, 132) : logoSize.navbarImage + 10,
+            maxWidth: logoIsWide ? 132 : logoSize.navbarImage + 10,
+          }}
         >
           <img
             src={logoSrc || "/2demayo.svg"}
             alt="Logo"
             className="object-contain"
-            style={{ width: logoSize.navbarImage, height: logoSize.navbarImage }}
+            style={logoIsWide
+              ? {
+                  height: Math.round(logoSize.navbarImage * 0.9),
+                  width: 'auto',
+                  maxWidth: Math.round(logoSize.navbarImage * 1.4),
+                  transform: 'scale(1.55)',
+                  transformOrigin: 'center',
+                }
+              : {
+                  width: logoSize.navbarImage,
+                  height: logoSize.navbarImage,
+                  transform: 'scale(1.7)',
+                  transformOrigin: 'center',
+                }}
           />
         </div>
         <span className="text-xl font-bold drop-shadow">{clinicName || "Sistema Clínico"}</span>
@@ -201,7 +300,26 @@ function DashboardLayout({ usuario, onLogout, children }) {
   );
   const [clinicName, setClinicName] = useState(cachedBrand.nombre || "");
   const [logoSizeSistema, setLogoSizeSistema] = useState(cachedBrand.logo_size_sistema || "");
+  const [logoShapeSistema, setLogoShapeSistema] = useState(cachedBrand.logo_shape_sistema || "auto");
+  const [logoIsWide, setLogoIsWide] = useState(true);
   const systemLogoSize = resolveSystemLogoSize(logoSizeSistema);
+  const effectiveLogoIsWide = logoShapeSistema === 'wide' ? true : logoShapeSistema === 'round' ? false : logoIsWide;
+
+  useEffect(() => {
+    let mounted = true;
+    detectLogoIsWide(logoSrc)
+      .then((isWide) => {
+        if (!mounted) return;
+        setLogoIsWide(Boolean(isWide));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setLogoIsWide(true);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [logoSrc]);
 
   useEffect(() => {
     let mounted = true;
@@ -217,6 +335,14 @@ function DashboardLayout({ usuario, onLogout, children }) {
       const normalized = String(sizeOption || "").trim().toLowerCase();
       setLogoSizeSistema(normalized);
       writeBrandCache({ logo_size_sistema: normalized });
+    };
+
+    const applyLogoShape = (shapeOption) => {
+      if (!mounted) return;
+      const normalized = String(shapeOption || 'auto').trim().toLowerCase();
+      const safeShape = ['auto', 'round', 'wide'].includes(normalized) ? normalized : 'auto';
+      setLogoShapeSistema(safeShape);
+      writeBrandCache({ logo_shape_sistema: safeShape });
     };
 
     const applyName = (name) => {
@@ -241,6 +367,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
         applyLogo(cfg.logo_url, cfg.updated_at || Date.now());
         applyName(cfg.nombre_clinica);
         applyLogoSize(cfg.logo_size_sistema);
+        applyLogoShape(cfg.logo_shape_sistema);
       } catch {
         // keep fallback
       }
@@ -251,6 +378,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
       applyLogo(detail.logo_url || "", detail.updated_at || Date.now());
       applyName(detail.nombre_clinica);
       applyLogoSize(detail.logo_size_sistema);
+      applyLogoShape(detail.logo_shape_sistema);
     };
 
     loadConfigLogo();
@@ -286,7 +414,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
   return (
     <div className="min-h-screen flex flex-col bg-blue-50 overflow-x-hidden">
       {/* Navbar at the top */}
-      <Navbar usuario={usuario} onMenu={() => setSidebarOpen(true)} logoSrc={logoSrc} clinicName={clinicName} logoSize={systemLogoSize} />
+      <Navbar usuario={usuario} onMenu={() => setSidebarOpen(true)} logoSrc={logoSrc} clinicName={clinicName} logoSize={systemLogoSize} logoIsWide={effectiveLogoIsWide} />
       <div className="flex flex-1 max-w-full">
         {/* Sidebar for navigation (fijo en PC, drawer en móvil/tablet) */}
         <Sidebar 
@@ -297,6 +425,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
           logoSrc={logoSrc}
           clinicName={clinicName}
           logoSize={systemLogoSize}
+          logoIsWide={effectiveLogoIsWide}
         />
         <main className="flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto">
           {children}

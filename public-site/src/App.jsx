@@ -232,7 +232,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
                 src={publicLogoSrc}
                 alt={safeClinicName || 'Portal de Salud'}
                 className="object-contain shrink-0"
-                style={{ width: logoSize.header, height: logoSize.header }}
+                style={{ height: logoSize.header, width: 'auto', maxWidth: logoSize.header * 5 }}
               />
               <div className="leading-tight">
                 <div className="font-semibold" style={{ color: configuracion?.nombre_color || 'var(--color-primary, #E85D8E)', fontSize: configuracion?.nombre_font_size || undefined }}>{safeClinicName || 'Portal de Salud'}</div>
@@ -373,7 +373,7 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
               src={publicLogoSrc}
               alt={safeClinicName}
               className="object-contain shrink-0"
-              style={{ width: logoSize.landingHeader, height: logoSize.landingHeader }}
+              style={{ height: logoSize.landingHeader, width: 'auto', maxWidth: logoSize.landingHeader * 5 }}
             />
             <div className="hidden sm:block leading-tight">
               <span className="font-bold" style={{ color: configuracion?.nombre_color || 'var(--color-primary, #E85D8E)', fontSize: configuracion?.nombre_font_size || undefined }}>{safeClinicName || 'Portal de Salud'}</span>

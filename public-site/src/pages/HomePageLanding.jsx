@@ -48,7 +48,7 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
         {/* Left: text */}
         <div className="text-center md:text-left">
           <div className="flex items-center gap-3 justify-center md:justify-start mb-4">
-            <img src={publicLogoSrc} alt="Logo" className="object-contain" style={{ width: logoSize.hero, height: logoSize.hero }} />
+            <img src={publicLogoSrc} alt="Logo" className="object-contain" style={{ height: logoSize.hero, width: 'auto', maxWidth: logoSize.hero * 5.2 }} />
           </div>
           <h1 className="font-bold" style={{ color: nombreColor || 'var(--color-primary, #E85D8E)', fontSize: nombreFontSize || undefined }}>
             {clinicName || 'Portal de Salud'}
@@ -142,7 +142,7 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
             </div>
           ) : (
             <div className="rounded-3xl shadow-2xl w-full md:max-w-[820px] h-[320px] sm:h-[360px] md:h-[480px] lg:h-[540px] xl:h-[580px] flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--color-primary-light), var(--color-accent, #A084DC)30)' }}>
-              <img src={publicLogoSrc} alt="Logo" className="object-contain opacity-50" style={{ width: logoSize.decorative, height: logoSize.decorative }} />
+              <img src={publicLogoSrc} alt="Logo" className="object-contain opacity-50" style={{ height: logoSize.decorative, width: 'auto', maxWidth: logoSize.decorative * 5.2 }} />
             </div>
           )}
         </div>

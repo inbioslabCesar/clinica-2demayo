@@ -78,6 +78,7 @@ export default function DetalleCotizacionPage() {
   const [error, setError] = useState("");
   const [cotizacion, setCotizacion] = useState(null);
   const [paciente, setPaciente] = useState(null);
+  const [pagos, setPagos] = useState([]);
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
     logo: "",
@@ -123,9 +124,16 @@ export default function DetalleCotizacionPage() {
           historia_clinica: String(cot?.historia_clinica || ""),
         };
 
+        const resPagos = await fetch(
+          `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}`,
+          { credentials: "include" }
+        );
+        const dataPagos = await resPagos.json();
+
         if (!mounted) return;
         setCotizacion(cot);
         setPaciente(pacienteData);
+        setPagos(dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : []);
       } catch (err) {
         if (!mounted) return;
         setError(err?.message || "No se pudo cargar el detalle de la cotizacion");
@@ -358,6 +366,16 @@ export default function DetalleCotizacionPage() {
         <p style="margin:4px 0;"><strong>Total neto:</strong> S/ ${Number(cotizacion?.total || 0).toFixed(2)}</p>
         <p style="margin:4px 0;"><strong>Pagado:</strong> S/ ${Number(cotizacion?.total_pagado || 0).toFixed(2)}</p>
         <p style="margin:4px 0;"><strong>Saldo:</strong> S/ ${Number(cotizacion?.saldo_pendiente || 0).toFixed(2)}</p>
+        ${pagos.length > 0 ? `
+          <hr>
+          <p style="margin:4px 0;"><strong>HISTORIAL DE PAGOS</strong></p>
+          ${pagos.map((p) => {
+            const fechaPago = p?.created_at ? new Date(p.created_at).toLocaleString("es-PE") : "-";
+            const tipoMov = String(p?.tipo_movimiento || "abono").toLowerCase() === "devolucion" ? "Descuento" : "Abono";
+            const metodo = String(p?.metodo_pago || "").trim() || "-";
+            return `<p style="margin:2px 0;">${escapeHtml(fechaPago)} | ${escapeHtml(tipoMov)} S/ ${Number(p?.monto || 0).toFixed(2)} | ${escapeHtml(metodo)} | Saldo S/ ${Number(p?.saldo_nuevo || 0).toFixed(2)}</p>`;
+          }).join("")}
+        ` : ""}
         <hr>
         <div style="text-align:center; font-size:11px;">Gracias por su preferencia</div>
         <div style="text-align:center; font-size:10px; margin-top:2px;">Conserve este ticket</div>
@@ -535,6 +553,50 @@ export default function DetalleCotizacionPage() {
                   <td className="px-3 py-2 text-right font-semibold">S/ {Number(d.subtotal_neto || d.subtotal || 0).toFixed(2)}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 overflow-x-auto border border-gray-200 rounded-lg">
+          <div className="px-3 py-2 bg-gray-100 text-sm font-semibold text-gray-800">Historial de pagos por fecha</div>
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Tipo</th>
+                <th className="px-3 py-2 text-left">Monto</th>
+                <th className="px-3 py-2 text-left">Metodo de pago</th>
+                <th className="px-3 py-2 text-left">Saldo</th>
+                <th className="px-3 py-2 text-left">Usuario</th>
+                <th className="px-3 py-2 text-left">Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagos.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-6 text-center text-gray-500">No hay pagos registrados para esta cotizacion.</td>
+                </tr>
+              ) : pagos.map((pago) => {
+                const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
+                const esDescuento = tipo === "devolucion";
+                const fecha = pago?.created_at ? new Date(pago.created_at).toLocaleString("es-PE") : "-";
+                const metodoPago = String(pago?.metodo_pago || "").trim();
+                return (
+                  <tr key={pago.id} className="border-t align-top">
+                    <td className="px-3 py-2 whitespace-nowrap">{fecha}</td>
+                    <td className="px-3 py-2">{esDescuento ? "Descuento" : "Abono"}</td>
+                    <td className={`px-3 py-2 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>
+                      {esDescuento ? "-" : "+"} S/ {Number(pago?.monto || 0).toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{metodoPago || "-"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      S/ {Number(pago?.saldo_anterior || 0).toFixed(2)} -&gt; S/ {Number(pago?.saldo_nuevo || 0).toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2">{pago?.usuario_nombre || `Usuario #${pago?.usuario_id || "-"}`}</td>
+                    <td className="px-3 py-2 text-gray-600">{pago?.descripcion || "-"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -3,9 +3,15 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
 function normalize_logo_size_option($value) {
-    $allowed = ['sm', 'md', 'lg', 'xl'];
+    $allowed = ['sm', 'md', 'lg', 'xl', 'xxl'];
     $normalized = strtolower(trim((string)($value ?? '')));
     return in_array($normalized, $allowed, true) ? $normalized : null;
+}
+
+function normalize_logo_shape_option($value) {
+    $allowed = ['auto', 'round', 'wide'];
+    $normalized = strtolower(trim((string)($value ?? 'auto')));
+    return in_array($normalized, $allowed, true) ? $normalized : 'auto';
 }
 
 // Verificar que el usuario esté autenticado (usuario normal o médico)
@@ -28,7 +34,7 @@ if ($method !== 'GET') {
         exit;
     }
 
-    $usuario_rol = $_SESSION['usuario']['rol'];
+    $usuario_rol = trim((string)($_SESSION['usuario']['rol'] ?? ''));
     
     // Verificar si el usuario es administrador para operaciones de escritura
     if ($usuario_rol !== 'administrador') {
@@ -49,6 +55,9 @@ try {
         'nombre_font_size' => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_font_size VARCHAR(10) DEFAULT NULL",
         'logo_size_sistema' => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_sistema VARCHAR(10) DEFAULT NULL",
         'logo_size_publico' => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_publico VARCHAR(10) DEFAULT NULL",
+        'logo_shape_sistema' => "ALTER TABLE configuracion_clinica ADD COLUMN logo_shape_sistema VARCHAR(10) DEFAULT 'auto'",
+        'hc_template_mode' => "ALTER TABLE configuracion_clinica ADD COLUMN hc_template_mode VARCHAR(20) DEFAULT 'auto'",
+        'hc_template_single_id' => "ALTER TABLE configuracion_clinica ADD COLUMN hc_template_single_id VARCHAR(100) DEFAULT NULL",
     ];
     foreach ($autoColumns as $col => $ddl) {
         $chk = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
@@ -88,7 +97,10 @@ try {
                     'nombre_color' => null,
                     'nombre_font_size' => null,
                     'logo_size_sistema' => null,
-                    'logo_size_publico' => null
+                    'logo_size_publico' => null,
+                    'logo_shape_sistema' => 'auto',
+                    'hc_template_mode' => 'auto',
+                    'hc_template_single_id' => null,
                 ];
             }
             
@@ -118,6 +130,15 @@ try {
             }
             $logoSizeSistema = normalize_logo_size_option($input['logo_size_sistema'] ?? null);
             $logoSizePublico = normalize_logo_size_option($input['logo_size_publico'] ?? null);
+            $logoShapeSistema = normalize_logo_shape_option($input['logo_shape_sistema'] ?? 'auto');
+            $hcTemplateMode = strtolower(trim((string)($input['hc_template_mode'] ?? 'auto')));
+            if (!in_array($hcTemplateMode, ['auto', 'single'], true)) {
+                $hcTemplateMode = 'auto';
+            }
+            $hcTemplateSingleId = trim((string)($input['hc_template_single_id'] ?? ''));
+            if ($hcTemplateSingleId === '') {
+                $hcTemplateSingleId = null;
+            }
             
             // Validar datos requeridos
             $required_fields = ['nombre_clinica', 'direccion', 'telefono', 'email'];
@@ -151,7 +172,8 @@ try {
                         celular = ?, google_maps_embed = ?,
                         slogan = ?, slogan_color = ?,
                         nombre_color = ?, nombre_font_size = ?,
-                        logo_size_sistema = ?, logo_size_publico = ?,
+                        logo_size_sistema = ?, logo_size_publico = ?, logo_shape_sistema = ?,
+                        hc_template_mode = ?, hc_template_single_id = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = (SELECT id FROM (SELECT id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1) AS temp)
                 ");
@@ -179,7 +201,10 @@ try {
                     $input['nombre_color'] ?? null,
                     $input['nombre_font_size'] ?? null,
                     $logoSizeSistema,
-                    $logoSizePublico
+                    $logoSizePublico,
+                    $logoShapeSistema,
+                    $hcTemplateMode,
+                    $hcTemplateSingleId
                 ]);
                 
                 echo json_encode([
@@ -193,8 +218,9 @@ try {
                     (nombre_clinica, direccion, telefono, email, horario_atencion, logo_url, website, ruc,
                      especialidades, mision, vision, valores, director_general, jefe_enfermeria, contacto_emergencias,
                      celular, google_maps_embed, slogan, slogan_color, nombre_color, nombre_font_size,
-                     logo_size_sistema, logo_size_publico)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     logo_size_sistema, logo_size_publico, logo_shape_sistema,
+                     hc_template_mode, hc_template_single_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $stmt->execute([
@@ -220,7 +246,10 @@ try {
                     $input['nombre_color'] ?? null,
                     $input['nombre_font_size'] ?? null,
                     $logoSizeSistema,
-                    $logoSizePublico
+                    $logoSizePublico,
+                    $logoShapeSistema,
+                    $hcTemplateMode,
+                    $hcTemplateSingleId
                 ]);
                 
                 echo json_encode([

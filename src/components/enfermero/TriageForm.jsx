@@ -62,8 +62,6 @@ function TriageForm({ consulta, initialData, onGuardar, onCancelar }) {
         <input name="peso" value={form.peso} onChange={handleChange} placeholder="Peso (kg)" className="border rounded px-2 py-1" />
         <input name="talla" value={form.talla} onChange={handleChange} placeholder="Talla (cm)" className="border rounded px-2 py-1" />
       </div>
-      <textarea name="motivo" value={form.motivo} onChange={handleChange} placeholder="Motivo de consulta" className="border rounded px-2 py-1 w-full" />
-      <textarea name="sintomas" value={form.sintomas} onChange={handleChange} placeholder="Síntomas principales" className="border rounded px-2 py-1 w-full" />
       <div className="grid grid-cols-3 gap-2">
         <select name="nivel_conciencia" value={form.nivel_conciencia} onChange={handleChange} className="border rounded px-2 py-1">
           <option value="Alerta">Alerta</option>

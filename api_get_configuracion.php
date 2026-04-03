@@ -41,7 +41,10 @@ try {
             'nombre_color' => null,
             'nombre_font_size' => null,
             'logo_size_sistema' => null,
-            'logo_size_publico' => null
+            'logo_size_publico' => null,
+            'logo_shape_sistema' => 'auto',
+            'hc_template_mode' => 'auto',
+            'hc_template_single_id' => null,
         ];
     }
     

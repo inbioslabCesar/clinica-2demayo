@@ -37,6 +37,7 @@ function HistoriaClinicaPage() {
   const [resultadosLab, setResultadosLab] = useState([]);
   const [ordenesLab, setOrdenesLab] = useState([]);
   const [usuarioSesion, setUsuarioSesion] = useState(null);
+  const [fechaConsulta, setFechaConsulta] = useState("");
   useEffect(() => {
     const usuarioRaw = sessionStorage.getItem("usuario");
     if (usuarioRaw) {
@@ -210,6 +211,7 @@ function HistoriaClinicaPage() {
         if (!cancelled) {
           setMedicoInfo(null);
           setFirmaMedico(null);
+          setFechaConsulta("");
         }
         return;
       }
@@ -223,6 +225,14 @@ function HistoriaClinicaPage() {
         const consulta = Array.isArray(data?.consultas) ? data.consultas[0] : null;
 
         if (consulta) {
+          const fechaRaw = String(
+            consulta.fecha_consulta
+            || consulta.fecha
+            || consulta.created_at
+            || consulta.fecha_hora
+            || ""
+          ).trim();
+
           const medicoConsulta = {
             id: consulta.medico_id || null,
             nombre: consulta.medico_nombre || '',
@@ -240,6 +250,7 @@ function HistoriaClinicaPage() {
           if (!cancelled) {
             setMedicoInfo(medicoConsulta);
             setFirmaMedico(medicoConsulta.firma || null);
+            setFechaConsulta(fechaRaw);
           }
           return;
         }
@@ -256,6 +267,7 @@ function HistoriaClinicaPage() {
           setMedicoInfo(null);
           setFirmaMedico(null);
         }
+        setFechaConsulta("");
       }
     };
 
@@ -444,6 +456,13 @@ function HistoriaClinicaPage() {
             const datos = { ...hc, diagnosticos, receta: hc.receta };
             if (!proxima.programar) {
               delete datos.proxima_cita;
+            }
+            // Incluir información de la plantilla para mantener el diseño al imprimir
+            if (hcTemplateMeta?.id) {
+              datos.template = {
+                id: hcTemplateMeta.id,
+                version: hcTemplateMeta.version || ''
+              };
             }
 
             const res = await fetch(`${BASE_URL}api_historia_clinica.php`, {
@@ -819,6 +838,8 @@ function HistoriaClinicaPage() {
             paciente={paciente}
             triaje={triaje}
             hc={hc}
+            fechaConsulta={fechaConsulta}
+            templateSections={hcTemplateMeta?.sections || {}}
             diagnosticos={diagnosticos}
             medicamentos={hc.receta}
             resultadosLaboratorio={resultadosLab}
