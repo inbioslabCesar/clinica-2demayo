@@ -40,6 +40,7 @@ jobs:
           port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-backend.json
+          timeout: 90
           exclude: |
             **/.git*
             **/.github/**
@@ -52,6 +53,8 @@ jobs:
             **/src/**
             **/tests/**
             **/docs/**
+            **/tmp/**
+            **/uploads/**
             **/*.log
             **/.env
             **/.env.*
@@ -85,6 +88,7 @@ jobs:
           port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-sistema-build.json
+          timeout: 90
 
       - name: Publicar landing (dist-public -> /public_html)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -98,4 +102,5 @@ jobs:
           port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-landing-build.json
+          timeout: 90
 
