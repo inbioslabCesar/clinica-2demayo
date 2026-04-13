@@ -29,12 +29,28 @@ jobs:
       - name: Build frontend (sistema + landing)
         run: npm run build
 
+      - name: Verificar conectividad SFTP
+        id: sftp_probe
+        env:
+          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
+        run: |
+          if nc -z -w 8 "$SFTP_HOST" "$SFTP_PORT"; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+            echo "SFTP accesible, se usara despliegue por SSH."
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "SFTP no accesible desde el runner, se activara fallback FTP."
+          fi
+
       - name: Instalar utilidades SFTP
+        if: steps.sftp_probe.outputs.reachable == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y sshpass rsync
 
       - name: Publicar backend PHP en /public_html/sistema (SFTP)
+        if: steps.sftp_probe.outputs.reachable == 'true'
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -68,6 +84,7 @@ jobs:
             ./ "$SFTP_USER@$SFTP_HOST:/public_html/sistema/"
 
       - name: Publicar build de sistema (dist -> /public_html/sistema)
+        if: steps.sftp_probe.outputs.reachable == 'true'
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -79,6 +96,7 @@ jobs:
             ./dist/ "$SFTP_USER@$SFTP_HOST:/public_html/sistema/"
 
       - name: Publicar landing (dist-public -> /public_html)
+        if: steps.sftp_probe.outputs.reachable == 'true'
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -88,4 +106,82 @@ jobs:
           sshpass -p "$SFTP_PASS" rsync -az --mkpath \
             -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
             ./dist-public/ "$SFTP_USER@$SFTP_HOST:/public_html/"
+
+      - name: Publicar backend PHP en /public_html/sistema (FTP fallback)
+        if: steps.sftp_probe.outputs.reachable != 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/sistema/
+          protocol: ftp
+          port: 21
+          dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state-backend.json
+          timeout: 120
+          exclude: |
+            **/.git*
+            **/.github/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.idea/**
+            **/dist/**
+            **/dist-public/**
+            **/public-site/**
+            **/src/**
+            **/tests/**
+            **/docs/**
+            **/tmp/**
+            **/uploads/**
+            **/*.log
+            **/.env
+            **/.env.*
+            **/config.php
+            **/config/instance.local.php
+            **/config/instances/*.php
+            !config/instances/clinic.example.php
+            !config/instances/sistema_clinica2demayo_com.php
+            !config/instances/www_clinica2demayo_com.php
+            !config/instances/clinica2demayo_com.php
+            !config/instances/sistema_cardiovidaiquitos_com.php
+            !config/instances/www_cardiovidaiquitos_com.php
+            !config/instances/cardiovidaiquitos_com.php
+            !config/instances/sistema_femcarepucallpa_com.php
+            !config/instances/www_femcarepucallpa_com.php
+            !config/instances/femcarepucallpa_com.php
+            **/clinica-config/**
+            **/backup/**
+            **/*.sql
+            **/*.sql.backup
+
+      - name: Publicar build de sistema (dist -> /public_html/sistema) (FTP fallback)
+        if: steps.sftp_probe.outputs.reachable != 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/sistema/
+          local-dir: ./dist/
+          protocol: ftp
+          port: 21
+          dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state-sistema-build.json
+          timeout: 120
+
+      - name: Publicar landing (dist-public -> /public_html) (FTP fallback)
+        if: steps.sftp_probe.outputs.reachable != 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/
+          local-dir: ./dist-public/
+          protocol: ftp
+          port: 21
+          dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state-landing-build.json
+          timeout: 120
 
