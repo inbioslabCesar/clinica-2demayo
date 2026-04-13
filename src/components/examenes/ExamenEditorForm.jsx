@@ -28,10 +28,16 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
     try {
       if (!data) return [];
       if (typeof data === 'string') {
-        const parsed = JSON.parse(data);
+        let parsed = JSON.parse(data);
+        if (typeof parsed === 'string') {
+          parsed = JSON.parse(parsed);
+        }
         if (Array.isArray(parsed)) items = parsed;
+        else if (parsed && typeof parsed === 'object') items = [parsed];
       } else if (Array.isArray(data)) {
         items = data;
+      } else if (data && typeof data === 'object') {
+        items = [data];
       }
     } catch (e) {
       console.error('Error parsing valores_referenciales:', e);

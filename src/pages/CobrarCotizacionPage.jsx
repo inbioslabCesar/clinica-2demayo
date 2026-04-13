@@ -49,35 +49,55 @@ export default function CobrarCotizacionPage() {
       setLoading(true);
       setError("");
       try {
-        const resCot = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, {
-          credentials: "include",
-        });
-        const dataCot = await resCot.json();
+        const cacheBuster = Date.now();
+        const [dataCot, dataPagos] = await Promise.all([
+          fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
+            credentials: "include",
+            cache: "no-store",
+          }).then((res) => res.json()),
+          fetch(
+            `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
+            {
+              credentials: "include",
+              cache: "no-store",
+            }
+          ).then((res) => res.json()),
+        ]);
+
         if (!dataCot?.success || !dataCot?.cotizacion) {
           throw new Error(dataCot?.error || "No se pudo cargar la cotización");
         }
 
         const cot = dataCot.cotizacion;
-        const resPac = await fetch(`${BASE_URL}api_pacientes.php?id=${cot.paciente_id}`, {
-          credentials: "include",
-        });
-        const dataPac = await resPac.json();
-        if (!dataPac?.success || !dataPac?.paciente) {
-          throw new Error(dataPac?.error || "No se pudo cargar el paciente");
-        }
+        const nombreTemporal = String(cot?.nombre || "").trim();
+        const apellidoTemporal = String(cot?.apellido || "").trim();
+        const nombreCompletoTemporal = `${nombreTemporal} ${apellidoTemporal}`.trim();
+        const pacienteCotizacion = {
+          id: Number(cot?.paciente_id || 0) || null,
+          nombre: nombreCompletoTemporal || "Particular",
+          apellido: "",
+          dni: String(cot?.dni || "").trim(),
+          historia_clinica: String(cot?.historia_clinica || "").trim(),
+        };
 
         if (!mounted) return;
-        setCotizacion(cot);
-        setPaciente(dataPac.paciente);
-
-        const resPagos = await fetch(
-          `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}`,
-          { credentials: "include" }
-        );
-        const dataPagos = await resPagos.json();
-        if (mounted && dataPagos?.success) {
-          setPagos(Array.isArray(dataPagos.pagos) ? dataPagos.pagos : []);
+        const pagosEmbebidos = Array.isArray(cot?.pagos) ? cot.pagos : null;
+        const pagosEndpoint = dataPagos?.success && Array.isArray(dataPagos.pagos) ? dataPagos.pagos : [];
+        
+        // Preferencia: usar pagosEmbebidos si viene en la respuesta de cotizacion (no es null)
+        // Fallback: si no hay embebidos pero endpoint tiene datos, usarlos
+        let pagosFinal = [];
+        if (pagosEmbebidos !== null) {
+          // pagosEmbebidos fue devuelto (desde api_cotizaciones con cotizacion_id), úsalo
+          pagosFinal = pagosEmbebidos;
+        } else if (pagosEndpoint && Array.isArray(pagosEndpoint) && pagosEndpoint.length > 0) {
+          // Si no hay embebidos pero endpoint tiene datos, usa endpoint
+          pagosFinal = pagosEndpoint;
         }
+        
+        setCotizacion(cot);
+        setPaciente(pacienteCotizacion);
+        setPagos(pagosFinal);
       } catch (err) {
         if (!mounted) return;
         setError(err?.message || "Error al cargar datos de cobro");
@@ -125,10 +145,37 @@ export default function CobrarCotizacionPage() {
   }, [detallesCotizacionActivos]);
 
   const saldoPendiente = useMemo(() => {
+    const estadoCot = String(cotizacion?.estado || "").toLowerCase();
     const saldo = Number(cotizacion?.saldo_pendiente);
-    if (Number.isFinite(saldo) && saldo > 0) return saldo;
-    return totalDetallesActivos;
-  }, [cotizacion?.saldo_pendiente, totalDetallesActivos]);
+    if (Number.isFinite(saldo)) {
+      const saldoNormalizado = Math.max(0, saldo);
+      if (saldoNormalizado > 0) return saldoNormalizado;
+
+      // Compatibilidad: recuperar cotizaciones antiguas o inconsistentes
+      // que quedaron en pendiente/parcial con saldo en cero.
+      if (saldoNormalizado === 0 && ["pendiente", "parcial"].includes(estadoCot)) {
+        const totalCotizacion = Number(cotizacion?.total);
+        const totalPagado = Number(cotizacion?.total_pagado);
+        if (Number.isFinite(totalCotizacion) && totalCotizacion > 0) {
+          const saldoEstimado = Number.isFinite(totalPagado)
+            ? Math.max(0, totalCotizacion - totalPagado)
+            : Math.max(0, totalCotizacion);
+          if (saldoEstimado > 0) return saldoEstimado;
+        }
+        if (totalDetallesActivos > 0) return Math.max(0, totalDetallesActivos);
+      }
+
+      return 0;
+    }
+
+    const totalCotizacion = Number(cotizacion?.total);
+    const totalPagado = Number(cotizacion?.total_pagado);
+    if (Number.isFinite(totalCotizacion) && Number.isFinite(totalPagado)) {
+      return Math.max(0, totalCotizacion - totalPagado);
+    }
+
+    return Math.max(0, totalDetallesActivos);
+  }, [cotizacion?.saldo_pendiente, cotizacion?.total, cotizacion?.total_pagado, totalDetallesActivos]);
 
   useEffect(() => {
     if (!Number.isFinite(Number(saldoPendiente)) || Number(saldoPendiente) <= 0) {
@@ -242,49 +289,30 @@ export default function CobrarCotizacionPage() {
     };
   }, [cotizacion?.id, detallesCobro]);
 
-  const registrarAbono = async (cobroId, cobroResumen = null) => {
-    let montoAbono = totalCobro;
-    const montoDescuento = Math.max(0, Number(cobroResumen?.monto_descuento || 0));
+  const recargarCotizacion = async () => {
     try {
-      const resCob = await fetch(`${BASE_URL}api_cobros.php?cobro_id=${Number(cobroId)}`, {
-        credentials: "include",
-      });
-      const dataCob = await resCob.json();
-      const montoCobrado = Number(dataCob?.cobro?.total);
-      if (dataCob?.success && Number.isFinite(montoCobrado) && montoCobrado > 0) {
-        montoAbono = montoCobrado;
-      } else if (Number.isFinite(Number(cobroResumen?.total_cobrado)) && Number(cobroResumen.total_cobrado) > 0) {
-        montoAbono = Number(cobroResumen.total_cobrado);
+      const cacheBuster = Date.now();
+      const res = await fetch(
+        `${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacion?.id)}&_t=${cacheBuster}`,
+        {
+          credentials: "include",
+          cache: "no-store",
+        }
+      );
+      const data = await res.json();
+      if (data?.success && data?.cotizacion) {
+        setCotizacion(data.cotizacion);
       }
-    } catch {
-      if (Number.isFinite(Number(cobroResumen?.total_cobrado)) && Number(cobroResumen.total_cobrado) > 0) {
-        montoAbono = Number(cobroResumen.total_cobrado);
-      }
-    }
-
-    const resAbono = await fetch(`${BASE_URL}api_cotizaciones.php`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accion: "registrar_abono",
-        cotizacion_id: Number(cotizacion?.id),
-        cobro_id: Number(cobroId),
-        monto: Number(montoAbono),
-        monto_descuento: montoDescuento,
-        descripcion: `Abono desde vista Cobrar Cotización #${cotizacion?.id}`,
-      }),
-    });
-
-    const dataAbono = await resAbono.json();
-    if (!dataAbono?.success) {
-      throw new Error(dataAbono?.error || "No se pudo registrar el abono de la cotización");
+    } catch (err) {
+      console.error("Error recargando cotización:", err);
     }
   };
 
   const manejarCobroCompleto = async (cobroId, _servicio, cobroResumen) => {
     try {
-      await registrarAbono(cobroId, cobroResumen);
+      // El backend ya sincroniza la cotización en CobroModule::procesarCobro()
+      // Recargar desde servidor para mostrar estado actualizado
+      await recargarCotizacion();
 
       // Si la cotización incluye una consulta médica, crear el registro en la tabla
       // de consultas para que aparezca en el panel del médico.
@@ -439,7 +467,7 @@ export default function CobrarCotizacionPage() {
                       </td>
                       <td className="py-2 pr-4 whitespace-nowrap">{metodoPago || "-"}</td>
                       <td className="py-2 pr-4 whitespace-nowrap">
-                        S/ {Number(pago?.saldo_anterior || 0).toFixed(2)} -> S/ {Number(pago?.saldo_nuevo || 0).toFixed(2)}
+                        S/ {Number(pago?.saldo_anterior || 0).toFixed(2)} {"->"} S/ {Number(pago?.saldo_nuevo || 0).toFixed(2)}
                       </td>
                       <td className="py-2 pr-4">{pago?.usuario_nombre || `Usuario #${pago?.usuario_id || "-"}`}</td>
                       <td className="py-2 text-gray-600">{pago?.descripcion || "-"}</td>

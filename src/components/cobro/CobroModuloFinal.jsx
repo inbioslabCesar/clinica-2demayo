@@ -9,7 +9,7 @@ function CobroModulo({
   onCobroCompleto,
   onCancelar,
   detalles,
-  total,
+  total: _total,
   modoCobro,
   onModoCobroChange,
   montoAbonoInput,
@@ -33,7 +33,9 @@ function CobroModulo({
     fetch(`${BASE_URL}api_caja_actual.php`, { credentials: 'include' })
       .then(res => res.json())
       .then(data => {
-        if (data.success && data.caja && data.caja.usuario_id === usuario.id) {
+        const usuarioSesionId = Number(usuario?.id || 0);
+        const usuarioCajaId = Number(data?.caja?.usuario_id || 0);
+        if (data.success && data.caja && usuarioSesionId > 0 && usuarioCajaId === usuarioSesionId) {
           setCajaActual(data.caja);
         } else {
           setCajaActual(null);
@@ -51,13 +53,15 @@ function CobroModulo({
   // const [tarifas, setTarifas] = useState([]); // Eliminado: no se usa
   const [tipoCobertura, setTipoCobertura] = useState('particular');
   const [tipoPago, setTipoPago] = useState('efectivo');
-  const [observaciones, setObservaciones] = useState('');
+  const [observaciones] = useState('');
   const [loading, setLoading] = useState(false);
   const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '', direccion: '', telefono: '', celular: '', ruc: '', email: '' });
 
   const nombrePaciente = String(paciente?.nombre || paciente?.nombres || '').trim();
   const apellidoPaciente = String(paciente?.apellido || paciente?.apellidos || '').trim();
   const nombrePacienteCompleto = `${nombrePaciente} ${apellidoPaciente}`.trim();
+  const dniPaciente = String(paciente?.dni || '').trim();
+  const historiaClinicaPaciente = String(paciente?.historia_clinica || '').trim();
 
   // Cargar tarifas solo si no se reciben detalles por props
   useEffect(() => {
@@ -161,9 +165,9 @@ if (tipoDescuento === 'porcentaje') {
       Swal.fire('Error', 'No hay servicios para cobrar', 'error');
       return;
     }
-    // Validar datos completos del paciente
-    if (!paciente || !nombrePacienteCompleto || !paciente.dni || !paciente.historia_clinica) {
-      Swal.fire('Error', 'Faltan datos completos del paciente (nombre, DNI o historia clínica)', 'error');
+    // Validar datos mínimos del paciente/particular
+    if (!paciente || !nombrePacienteCompleto) {
+      Swal.fire('Error', 'Falta identificar al paciente o particular para el cobro.', 'error');
       return;
     }
 
@@ -187,10 +191,11 @@ if (tipoDescuento === 'porcentaje') {
         setErrorDescuento('');
       }
       const cobroData = {
-        paciente_id: paciente.id,
+        paciente_id: paciente.id || null,
         usuario_id: usuario.id,
         usuario_nombre: usuario.nombre || '',
         paciente_nombre: nombrePacienteCompleto,
+        paciente_dni: dniPaciente,
         total: Math.max(montoOriginal - descuento, 0),
         monto_original: montoOriginal,
         monto_descuento: descuento,
@@ -201,6 +206,7 @@ if (tipoDescuento === 'porcentaje') {
         detalles: detallesCobro,
         servicio: String(servicio.key),
         servicio_info: { key: String(servicio.key), label: servicio.label },
+        cotizacion_id: Number(servicio?.cotizacion_id || 0) || null,
         motivo: descuento > 0 ? motivo : ''
       };
       const response = await fetch(`${BASE_URL}api_cobros.php`, {
@@ -214,7 +220,7 @@ if (tipoDescuento === 'porcentaje') {
       let result;
       try {
         result = await response.json();
-      } catch (e) {
+      } catch {
         const text = await response.text();
         Swal.fire('Error', 'Respuesta inesperada del servidor: ' + text, 'error');
         setLoading(false);
@@ -263,7 +269,7 @@ if (tipoDescuento === 'porcentaje') {
       } else {
         Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
       }
-    } catch (error) {
+    } catch {
       // Eliminado log de error en producción
       Swal.fire('Error', 'Error de conexión con el servidor', 'error');
     } finally {
@@ -276,31 +282,90 @@ if (tipoDescuento === 'porcentaje') {
     const fechaHora = new Date().toLocaleString('es-PE');
     const nombreCompleto = nombrePacienteCompleto;
     const consulta = datosComprobante.servicio_info || {};
-    const tipoConsulta = consulta.tipo_consulta || '';
-    let horaConsulta = consulta.hora || '';
-    let fechaConsulta = consulta.fecha || '';
+    const detalleConsulta = Array.isArray(datosComprobante.detalles)
+      ? datosComprobante.detalles.find((d) => String(d.servicio_tipo || '').toLowerCase() === 'consulta') || datosComprobante.detalles[0]
+      : null;
+    const consultaId = Number(consulta.consulta_id || servicio?.consulta_id || detalleConsulta?.consulta_id || 0);
+    let consultaVinculada = null;
+    if (consultaId > 0) {
+      try {
+        const resConsulta = await fetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaId}`, {
+          credentials: 'include',
+        });
+        const dataConsulta = await resConsulta.json();
+        if (dataConsulta?.success && Array.isArray(dataConsulta.consultas) && dataConsulta.consultas.length > 0) {
+          consultaVinculada = dataConsulta.consultas[0] || null;
+        }
+      } catch {
+        consultaVinculada = null;
+      }
+    }
+
+    const tipoConsultaRaw = String(
+      consultaVinculada?.tipo_consulta
+      || consulta.tipo_consulta
+      || detalleConsulta?.tipo_consulta
+      || ''
+    ).toLowerCase();
+    const tipoConsulta = tipoConsultaRaw === 'programada'
+      ? 'Programada'
+      : tipoConsultaRaw === 'espontanea'
+        ? 'Espontanea'
+        : (tipoConsultaRaw ? tipoConsultaRaw.charAt(0).toUpperCase() + tipoConsultaRaw.slice(1) : 'No especificada');
+
+    let horaConsulta = String(consultaVinculada?.hora || consulta.hora || detalleConsulta?.hora || '').slice(0, 5);
+    let fechaConsulta = String(consultaVinculada?.fecha || consulta.fecha || detalleConsulta?.fecha || '').slice(0, 10);
     if (!horaConsulta && Array.isArray(datosComprobante.detalles) && datosComprobante.detalles.length > 0) {
       horaConsulta = datosComprobante.detalles[0].hora || '';
     }
     if (!fechaConsulta && Array.isArray(datosComprobante.detalles) && datosComprobante.detalles.length > 0) {
       fechaConsulta = datosComprobante.detalles[0].fecha || '';
     }
-    const numeroOrden = tipoConsulta === 'programada' ? (consulta.numero_orden || 'N/A') : '';
+    const fechaConsultaFmt = /^\d{4}-\d{2}-\d{2}$/.test(fechaConsulta)
+      ? (() => {
+          const [y, m, d] = fechaConsulta.split('-');
+          return `${d}/${m}/${y}`;
+        })()
+      : fechaConsulta;
+    const numeroOrden = tipoConsultaRaw === 'programada' ? (consulta.numero_orden || consultaVinculada?.numero_orden || 'N/A') : '';
     const logoSrc = clinicBrand.logo || '/2demayo.svg';
-    const esCobroCotizacion = Number(servicio?.cotizacion_id || 0) > 0 && Number.isFinite(Number(saldoPendiente));
-    const saldoAnteriorCot = Math.max(0, Number(saldoPendiente || 0));
-    const abonoAplicadoCot = Math.max(0, Number(datosComprobante?.total || 0));
-    const descuentoAplicadoCot = Math.max(0, Number(datosComprobante?.monto_descuento || 0));
-    const saldoRestanteCot = Math.max(0, saldoAnteriorCot - abonoAplicadoCot - descuentoAplicadoCot);
-    const esAdelantoCot = esCobroCotizacion && saldoRestanteCot > 0;
+    const cotizacionId = Number(servicio?.cotizacion_id || 0);
+    const tieneSaldoPendiente = Number.isFinite(Number(saldoPendiente)) && Number(saldoPendiente) > 0;
+    const esCobroCotizacion = cotizacionId > 0 && tieneSaldoPendiente;
+    const saldoAnteriorCobro = Math.max(0, Number(saldoPendiente || 0));
+    const abonoAplicadoCobro = Math.max(0, Number(datosComprobante?.total || 0));
+    const descuentoAplicadoCobro = Math.max(0, Number(datosComprobante?.monto_descuento || 0));
+    const saldoRestanteCobro = Math.max(0, saldoAnteriorCobro - abonoAplicadoCobro - descuentoAplicadoCobro);
+    const esAdelantoCobro = tieneSaldoPendiente && (modoCobro === 'parcial' || saldoRestanteCobro > 0);
+    const mostrarResumenSaldo = tieneSaldoPendiente && (esCobroCotizacion || esAdelantoCobro);
 
     // Determinar si el servicio es consulta médica
     const esConsultaMedica = consulta.key === 'consulta';
 
-    // Buscar médico en los detalles si existe, si no usar el del servicio
+    // Buscar profesional en consulta vinculada/detalles/servicio
     let nombreMedico = '';
+    let abreviaturaProfesional = String(
+      consultaVinculada?.medico_abreviatura_profesional
+      || consulta.medico_abreviatura_profesional
+      || detalleConsulta?.medico_abreviatura_profesional
+      || ''
+    ).trim();
+
+    if (consultaVinculada) {
+      const desdeConsulta = String(
+        consultaVinculada.medico_nombre_completo
+        || `${consultaVinculada.medico_nombre || ''} ${consultaVinculada.medico_apellido || ''}`
+      ).trim();
+      if (desdeConsulta) {
+        nombreMedico = desdeConsulta;
+      }
+    }
+
     if (Array.isArray(datosComprobante.detalles)) {
       for (const d of datosComprobante.detalles) {
+        if (!abreviaturaProfesional) {
+          abreviaturaProfesional = String(d.medico_abreviatura_profesional || '').trim();
+        }
         const medicoCompleto = String(
           d.medico_nombre_completo
           || `${d.medico_nombre || ''} ${d.medico_apellido || ''}`
@@ -323,6 +388,12 @@ if (tipoDescuento === 'porcentaje') {
     if (!nombreMedico && datosComprobante.servicio_info && datosComprobante.servicio_info.medico_nombre) {
       nombreMedico = datosComprobante.servicio_info.medico_nombre;
     }
+    if (!abreviaturaProfesional) {
+      abreviaturaProfesional = 'Dr(a).';
+    }
+    const nombreProfesional = nombreMedico
+      ? (nombreMedico.toLowerCase().startsWith(abreviaturaProfesional.toLowerCase()) ? nombreMedico : `${abreviaturaProfesional} ${nombreMedico}`)
+      : '';
 
     const comprobante = `
       <div style="text-align: left; font-family: monospace;">
@@ -340,13 +411,13 @@ if (tipoDescuento === 'porcentaje') {
         <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
         <p>Fecha: ${fechaHora}</p>
         <p>Paciente: ${nombreCompleto}</p>
-        <p>DNI: ${paciente.dni}</p>
-        <p>H.C.: ${paciente.historia_clinica}</p>
-        ${esConsultaMedica ? `<p>Tipo de consultas: ${tipoConsulta === 'programada' ? 'Programada' : 'Espontánea'}</p>` : ''}
-        ${esConsultaMedica && tipoConsulta === 'programada' ? `<p>Fecha de consulta: ${fechaConsulta}</p>` : ''}
-        ${esConsultaMedica ? `<p>Hora de consulta: ${horaConsulta}</p>` : ''}
-        ${esConsultaMedica && tipoConsulta === 'programada' ? `<p>N° Orden de llegada: ${numeroOrden}</p>` : ''}
-        ${nombreMedico ? `<p>Médico: ${nombreMedico}</p>` : ''}
+        <p>DNI: ${dniPaciente || '-'}</p>
+        <p>H.C.: ${historiaClinicaPaciente || '-'}</p>
+        ${esConsultaMedica ? `<p>Tipo de consulta: ${tipoConsulta}</p>` : ''}
+        ${esConsultaMedica ? `<p>Fecha de consulta: ${fechaConsultaFmt || 'No registrada'}</p>` : ''}
+        ${esConsultaMedica ? `<p>Hora de consulta: ${horaConsulta || 'No registrada'}</p>` : ''}
+        ${esConsultaMedica && tipoConsultaRaw === 'programada' ? `<p>N° Orden de llegada: ${numeroOrden}</p>` : ''}
+        ${nombreProfesional ? `<p>Profesional: ${nombreProfesional}</p>` : ''}
         <hr>
         <p><strong>DETALLE:</strong></p>
         ${datosComprobante.detalles.map(d => {
@@ -358,12 +429,13 @@ if (tipoDescuento === 'porcentaje') {
             <p style="color: #d97706;"><strong>DESCUENTO:</strong> -S/ ${datosComprobante.monto_descuento.toFixed(2)} (${datosComprobante.tipo_descuento === 'porcentaje' ? datosComprobante.valor_descuento + '%' : 'Monto fijo'})</p>
           ` : ''}
         <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
-        ${esCobroCotizacion ? `
-          <p><strong>Cotización:</strong> #${Number(servicio?.cotizacion_id || 0)}</p>
-          <p><strong>Tipo de aplicación:</strong> ${esAdelantoCot ? 'Adelanto' : 'Pago completo'}</p>
-          <p><strong>Abono aplicado hoy:</strong> S/ ${abonoAplicadoCot.toFixed(2)}</p>
-          ${descuentoAplicadoCot > 0 ? `<p><strong>Descuento aplicado:</strong> S/ ${descuentoAplicadoCot.toFixed(2)}</p>` : ''}
-          <p><strong>Saldo restante:</strong> S/ ${saldoRestanteCot.toFixed(2)}</p>
+        ${mostrarResumenSaldo ? `
+          ${esCobroCotizacion ? `<p><strong>Cotización:</strong> #${cotizacionId}</p>` : ''}
+          <p><strong>Tipo de aplicación:</strong> ${esAdelantoCobro ? 'Adelanto' : 'Pago completo'}</p>
+          <p><strong>Saldo anterior:</strong> S/ ${saldoAnteriorCobro.toFixed(2)}</p>
+          <p><strong>Abono aplicado hoy:</strong> S/ ${abonoAplicadoCobro.toFixed(2)}</p>
+          ${descuentoAplicadoCobro > 0 ? `<p><strong>Descuento aplicado:</strong> S/ ${descuentoAplicadoCobro.toFixed(2)}</p>` : ''}
+          <p><strong>Saldo pendiente:</strong> S/ ${saldoRestanteCobro.toFixed(2)}</p>
         ` : ''}
         <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
         <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
@@ -418,7 +490,7 @@ if (tipoDescuento === 'porcentaje') {
           <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 shadow-sm">
             <h4 className="font-semibold mb-2 text-gray-700 flex items-center gap-2 text-lg"><span className="text-blue-500">👤</span> Paciente</h4>
             <div className="text-lg lg:text-xl font-bold">{nombrePacienteCompleto || '-'}</div>
-            <div className="text-base text-gray-600">DNI: {paciente.dni} | H.C.: {paciente.historia_clinica}</div>
+            <div className="text-base text-gray-600">DNI: {dniPaciente || '-'} | H.C.: {historiaClinicaPaciente || '-'}</div>
           </div>
           <div>
             <label className="block font-semibold mb-2">Tipo de Cobertura:</label>

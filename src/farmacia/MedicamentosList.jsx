@@ -1,5 +1,5 @@
 import MovimientosModal from "./MovimientosModal";
-import { FaInfoCircle, FaEdit, FaHistory, FaLock } from "react-icons/fa";
+import { FaInfoCircle, FaEdit, FaHistory, FaLock, FaPills, FaVial, FaCalendarAlt, FaExclamationTriangle } from "react-icons/fa";
 import { FaTrash } from "react-icons/fa";
 import MedicamentoForm from "./MedicamentoForm";
 // ...hooks de filtro de fecha solo dentro de la función...
@@ -10,6 +10,126 @@ import { useEffect, useState } from "react";
 import { BASE_URL } from "../config/config";
 import useUsuarioLogueado from "../hooks/useUsuarioLogueado";
 import Swal from "sweetalert2";
+
+const CRITICAL_STOCK = 5;
+const LOW_STOCK_MAX = 15;
+const EXPIRY_RED_DAYS = 30;
+const EXPIRY_ORANGE_DAYS = 90;
+
+function getDiasVencimiento(fechaVencimiento) {
+  if (!fechaVencimiento) return null;
+  const hoy = new Date();
+  const venc = new Date(fechaVencimiento);
+  return Math.ceil((venc - hoy) / (1000 * 60 * 60 * 24));
+}
+
+function getNivelAlerta({ stock, diasVencimiento }) {
+  if (
+    Number(stock) < CRITICAL_STOCK ||
+    (typeof diasVencimiento === "number" && diasVencimiento < EXPIRY_RED_DAYS)
+  ) {
+    return "red";
+  }
+  if (
+    (Number(stock) >= CRITICAL_STOCK && Number(stock) <= LOW_STOCK_MAX) ||
+    (typeof diasVencimiento === "number" && diasVencimiento < EXPIRY_ORANGE_DAYS)
+  ) {
+    return "orange";
+  }
+  return "green";
+}
+
+function formatStockLabel(stock, unitsPorCaja) {
+  const total = Math.max(0, Number(stock) || 0);
+  const porCaja = Math.max(1, Number(unitsPorCaja) || 1);
+  const cajas = Math.floor(total / porCaja);
+  const unidades = total % porCaja;
+
+  if (cajas > 0 && unidades > 0) {
+    return `Cajas: ${cajas} | Unidades: ${unidades}`;
+  }
+  if (cajas > 0 && unidades === 0) {
+    return `${cajas === 1 ? "1 Caja" : `${cajas} Cajas`} (${total} und)`;
+  }
+  return `${total} ${total === 1 ? "unidad" : "unidades"}`;
+}
+
+// Componente Badge para Stock
+const StockBadge = ({ stock, unitsPorCaja = 30, fechaVencimiento }) => {
+  const diasVencimiento = getDiasVencimiento(fechaVencimiento);
+  const nivel = getNivelAlerta({ stock, diasVencimiento });
+  const label = formatStockLabel(stock, unitsPorCaja);
+
+  const stylesByNivel = {
+    green: {
+      bg: "bg-green-100",
+      text: "text-green-800",
+      border: "#16a34a",
+      icon: "✅",
+    },
+    orange: {
+      bg: "bg-orange-100",
+      text: "text-orange-800",
+      border: "#ea580c",
+      icon: "⚠️",
+    },
+    red: {
+      bg: "bg-red-100",
+      text: "text-red-800",
+      border: "#dc2626",
+      icon: "🚨",
+    },
+  };
+
+  const style = stylesByNivel[nivel];
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 ${style.bg} ${style.text} px-2.5 py-1 rounded-full text-[10px] md:text-xs font-semibold border transition-all duration-200`}
+      style={{ borderColor: style.border, opacity: 0.95 }}
+      title={label}
+    >
+      <span>{style.icon}</span>
+      <span>{label}</span>
+    </span>
+  );
+};
+
+// Componente Badge para Vencimiento
+const VencimientoBadge = ({ fechaVencimiento, stock }) => {
+  if (!fechaVencimiento) {
+    return <span className="text-xs text-gray-500 px-2 py-1">-</span>;
+  }
+  const diff = getDiasVencimiento(fechaVencimiento);
+  const nivel = getNivelAlerta({ stock, diasVencimiento: diff });
+
+  let bgColor = "bg-green-100";
+  let textColor = "text-green-800";
+  let icon = "✅";
+  let label = `Vence en ${diff}d`;
+
+  if (nivel === "red") {
+    bgColor = "bg-red-100";
+    textColor = "text-red-800";
+    icon = diff < 0 ? "❌" : "🚨";
+    label = diff < 0 ? "Vencido" : `Vence en ${diff}d`;
+  } else if (nivel === "orange") {
+    bgColor = "bg-orange-100";
+    textColor = "text-orange-800";
+    icon = "⚠️";
+  }
+  
+  return (
+    <span className={`inline-flex items-center gap-1 ${bgColor} ${textColor} px-2.5 py-1 rounded-full text-[10px] md:text-xs font-semibold border transition-all duration-200`}
+          style={{
+            borderColor: bgColor === "bg-green-100" ? "#16a34a" : bgColor === "bg-red-100" ? "#dc2626" : "#ea580c",
+            opacity: 0.95
+          }}>
+      <span className="text-[10px]">{icon}</span>
+      <span>{label}</span>
+    </span>
+  );
+};
 
 export default function MedicamentosList() {
     const [deleteLoading, setDeleteLoading] = useState(false);
@@ -186,8 +306,8 @@ export default function MedicamentosList() {
   };
 
   return (
-  <div className="w-full mx-auto px-0 sm:px-4 md:px-8 lg:px-16 xl:px-32 2xl:px-0 py-10">
-      <div className="text-center mb-8">
+  <div className="w-full h-full mx-auto px-2 sm:px-3 md:px-4 lg:px-6 xl:px-10 2xl:px-12 py-6 max-w-full">
+      <div className="text-center mb-6">
         <h1 className="text-4xl font-bold text-transparent bg-clip-text mb-2" style={themeTextGradient}>
           💊 
           
@@ -280,121 +400,125 @@ export default function MedicamentosList() {
         </div>
       )}
       {!loading && !error && (
-        <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 rounded-lg">
-          <table className="w-full bg-white border border-gray-200 rounded-lg text-xs sm:text-sm md:text-base">
+        <div className="w-full overflow-x-auto md:overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-100 rounded-xl shadow-lg border border-gray-100 bg-white">
+          <table className="w-full min-w-max md:w-full bg-white rounded-xl text-xs sm:text-xs md:text-[11px] lg:text-[12px]">
             <thead>
-              <tr className="text-white" style={themeGradient}>
-                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Código
+              <tr className="text-white font-bold uppercase tracking-wide" style={themeGradient}>
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="flex items-center gap-0.5 md:gap-1"><FaPills size={12} /> Código</span>
                 </th>
-                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Nombre
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap min-w-[160px] md:min-w-[200px]" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="flex items-center gap-0.5 md:gap-1"><FaVial size={12} /> Medicamento</span>
                 </th>
-                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider sm:hidden" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Acciones
+                <th className="py-3 px-1.5 md:px-2 border-b text-center text-[9px] font-semibold uppercase tracking-wide sm:hidden md:hidden" style={{ borderColor: "var(--color-primary-light)" }}>
+                  Act.
                 </th>
-                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider hidden md:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Presentación
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-[10px] font-semibold uppercase tracking-wide hidden lg:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="xl:hidden text-[9px]">Pres.</span>
+                  <span className="hidden xl:inline">Presentación</span>
                 </th>
-                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider hidden lg:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Concentración
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-[10px] font-semibold uppercase tracking-wide hidden 2xl:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="text-[9px]">Concent.</span>
                 </th>
-                <th className="py-3 px-4 border-b text-xs font-semibold uppercase tracking-wider hidden xl:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Laboratorio
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-[10px] font-semibold uppercase tracking-wide hidden 2xl:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  Lab.
                 </th>
-                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden md:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Stock
+                <th className="py-3 px-2 md:px-2 lg:px-3 border-b text-center text-[10px] font-semibold uppercase tracking-wide hidden lg:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="flex items-center justify-center gap-0.5"><FaPills size={11} /> Stock</span>
                 </th>
-                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Vencimiento
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-center text-[10px] font-semibold uppercase tracking-wide hidden lg:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="flex items-center justify-center gap-0.5"><FaCalendarAlt size={11} /> Venc.</span>
                 </th>
-                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Precio Compra (S/)
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-right text-[10px] font-semibold uppercase tracking-wide hidden xl:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="text-[9px]\">P.Compra</span>
                 </th>
-                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Margen (%)
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-right text-[10px] font-semibold uppercase tracking-wide hidden xl:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="text-[9px]\">Margen%</span>
                 </th>
-                <th className="py-3 px-4 border-b text-right text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Precio Venta (S/)
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-right text-[10px] font-semibold uppercase tracking-wide hidden xl:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="text-[9px]\">P.Venta</span>
                 </th>
-                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Estado
+                <th className="py-3 px-2 md:px-3 lg:px-4 border-b text-center text-[10px] font-semibold uppercase tracking-wide hidden xl:table-cell whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  <span className="text-[9px]\">Estado</span>
                 </th>
-                <th className="py-3 px-4 border-b text-center text-xs font-semibold uppercase tracking-wider hidden sm:table-cell" style={{ borderColor: "var(--color-primary-light)" }}>
-                  Acciones
+                <th className="py-3 px-1.5 md:px-2 border-b text-center text-[10px] font-semibold uppercase tracking-wide table-cell md:table-cell w-auto whitespace-nowrap" style={{ borderColor: "var(--color-primary-light)" }}>
+                  Act.
                 </th>
               </tr>
             </thead>
             <tbody>
               {medicamentosPaginados.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-4 text-gray-400">
+                  <td colSpan={8} className="text-center py-8 text-gray-400">
                     No hay medicamentos registrados
                   </td>
                 </tr>
               ) : (
                 medicamentosPaginados.map((m, index) => {
                   // Colores alternados para las filas
-                  let rowClass = index % 2 === 0 ? "bg-white" : "bg-gray-50";
+                  let rowClass = index % 2 === 0 ? "bg-white hover:bg-blue-50" : "bg-gray-50 hover:bg-blue-50";
 
                   // Resaltado de vencimiento (override de colores alternados si es necesario)
                   let vencClass = "";
                   if (m.fecha_vencimiento) {
-                    const hoy = new Date();
-                    const venc = new Date(m.fecha_vencimiento);
-                    const diff = (venc - hoy) / (1000 * 60 * 60 * 24);
-                    if (diff < 0) {
-                      vencClass = "bg-red-100 border-l-4 border-red-500";
+                    const diff = getDiasVencimiento(m.fecha_vencimiento);
+                    if (diff < EXPIRY_RED_DAYS) {
+                      vencClass = "bg-red-50 border-l-4 border-red-500";
                       rowClass = ""; // Override row colors for urgency
-                    } else if (diff < 90) {
-                      vencClass = "bg-orange-100 border-l-4 border-orange-500";
+                    } else if (diff < EXPIRY_ORANGE_DAYS) {
+                      vencClass = "bg-yellow-50 border-l-4 border-orange-500";
                       rowClass = ""; // Override row colors for warning
                     }
                   }
                   return (
                     <tr
                       key={m.id}
-                      className={`transition-colors duration-200 hover:shadow-sm ${rowClass} ${vencClass}`}
+                      className={`transition-all duration-200 border-b border-gray-100 hover:shadow-sm ${rowClass} ${vencClass} group`}
                       style={{
                         ...(rowClass ? { "--tw-bg-opacity": 1 } : {}),
                       }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = "var(--color-primary-light)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = "";
-                      }}
                     >
-                      <td className="py-3 px-4 border-b border-gray-200 font-medium text-gray-900">
-                        {m.codigo}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 font-medium text-gray-900 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-0.5 md:gap-1 bg-blue-50 px-2 md:px-2.5 py-0.5 rounded-full font-mono text-[9px] md:text-[10px] font-bold text-blue-700">
+                          <FaPills size={10} />
+                          {m.codigo}
+                        </span>
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 font-semibold text-gray-800">
-                        {m.nombre}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 font-semibold text-gray-800 line-clamp-2">
+                        <div className="flex items-start gap-1.5 md:gap-2">
+                          <span className="text-base md:text-lg mt-0.5 flex-shrink-0">💊</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs md:text-sm font-bold text-gray-900 break-words line-clamp-2 leading-snug">
+                              {m.nombre}
+                            </div>
+                            <div className="text-[8px] md:text-xs text-gray-500 mt-0.5">
+                              {m.presentacion && <span>{m.presentacion}</span>}
+                              {m.concentracion && <span> · {m.concentracion}</span>}
+                            </div>
+                          </div>
+                        </div>
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-center sm:hidden flex flex-row gap-2 justify-center">
+                      <td className="py-2.5 px-1 md:px-1.5 border-b border-gray-100 text-center sm:hidden md:hidden flex flex-row gap-0.5 justify-center">
                         <button
                           onClick={() => setDetalleMed(m)}
-                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
-                          style={primarySoftButtonStyle}
+                          className="p-1.5 border border-gray-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-blue-100"
                           title="Ver detalles"
                         >
-                          <FaInfoCircle size={16} />
+                          <FaInfoCircle size={12} className="text-blue-600" />
                         </button>
                         <button
                           onClick={() => handleEdit(m)}
-                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
-                          style={primarySoftButtonStyle}
+                          className="p-1.5 border border-gray-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-green-100"
                           title="Editar"
                         >
-                          <FaEdit size={16} />
+                          <FaEdit size={12} className="text-green-600" />
                         </button>
                         <button
                           onClick={() => setMovimientosMed(m)}
-                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
-                          style={primarySoftButtonStyle}
+                          className="p-1.5 border border-gray-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-purple-100"
                           title="Historial"
                         >
-                          <FaHistory size={16} />
+                          <FaHistory size={12} className="text-purple-600" />
                         </button>
                         {m.estado !== "cuarentena" && (
                           <button
@@ -403,77 +527,88 @@ export default function MedicamentosList() {
                               setShowCuarentena(true);
                               setMotivoCuarentena("");
                             }}
-                            className="p-2 text-yellow-600 hover:text-white hover:bg-yellow-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                            className="p-1.5 border border-yellow-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-yellow-100"
                             title="Cuarentena"
                           >
-                            <FaLock size={16} />
+                            <FaLock size={12} className="text-yellow-600" />
                           </button>
                         )}
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 hidden md:table-cell">
-                        {m.presentacion}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 hidden lg:table-cell text-gray-700 whitespace-nowrap">
+                        <span className="text-[9px] md:text-[10px] bg-gray-100 px-2 py-0.5 rounded-md">{m.presentacion || "-"}</span>
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 hidden lg:table-cell">
-                        {m.concentracion}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 hidden 2xl:table-cell text-gray-700 whitespace-nowrap">
+                        <span className="text-[9px] md:text-[10px] bg-gray-100 px-2 py-0.5 rounded-md">{m.concentracion || "-"}</span>
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 hidden xl:table-cell">
-                        {m.laboratorio}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 hidden 2xl:table-cell text-gray-700 text-[9px] md:text-[10px] whitespace-nowrap">
+                        {m.laboratorio || "-"}
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-right font-medium text-gray-700 hidden md:table-cell">
-                        {m.stock}
+                      <td className="py-2.5 px-2 md:px-2 lg:px-3 border-b border-gray-100 text-center font-medium text-gray-700 hidden lg:table-cell whitespace-nowrap">
+                        <StockBadge
+                          stock={Number(m.stock || 0)}
+                          unitsPorCaja={Number(m.unidades_por_caja || 30)}
+                          fechaVencimiento={m.fecha_vencimiento}
+                        />
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-center hidden sm:table-cell">
-                        {m.fecha_vencimiento
-                          ? new Date(m.fecha_vencimiento).toLocaleDateString()
-                          : "-"}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 text-center hidden lg:table-cell whitespace-nowrap">
+                        <VencimientoBadge
+                          fechaVencimiento={m.fecha_vencimiento}
+                          stock={Number(m.stock || 0)}
+                        />
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-right font-mono text-sm hidden sm:table-cell">
-                        {m.precio_compra !== undefined
-                          ? Number(m.precio_compra).toFixed(2)
-                          : "-"}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 text-right font-mono text-[9px] md:text-[10px] text-gray-800 font-semibold hidden xl:table-cell whitespace-nowrap">
+                        <span className="bg-green-50 px-2 py-0.5 rounded-md font-bold text-green-700">
+                          S/ {m.precio_compra !== undefined ? Number(m.precio_compra).toFixed(2) : "-"}
+                        </span>
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-right hidden sm:table-cell">
-                        {m.margen_ganancia !== undefined
-                          ? Number(m.margen_ganancia).toFixed(1)
-                          : "-"}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 text-right text-[9px] md:text-[10px] text-gray-800 font-semibold hidden xl:table-cell whitespace-nowrap">
+                        <span className="bg-blue-50 px-2 py-0.5 rounded-md text-blue-700">
+                          {m.margen_ganancia !== undefined ? Number(m.margen_ganancia).toFixed(1) : "-"}%
+                        </span>
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-right font-semibold text-green-700 font-mono text-sm hidden sm:table-cell">
-                        {m.precio_compra !== undefined &&
-                        m.margen_ganancia !== undefined
-                          ? (
-                              Number(m.precio_compra) +
-                              (Number(m.precio_compra) *
-                                Number(m.margen_ganancia)) /
-                                100
-                            ).toFixed(2)
-                          : "-"}
+                      <td className="py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 text-right font-semibold text-green-700 font-mono text-[9px] md:text-[10px] hidden xl:table-cell whitespace-nowrap">
+                        <span className="bg-green-100 px-2 py-0.5 rounded-md text-green-900 font-bold">
+                          S/ {m.precio_compra !== undefined && m.margen_ganancia !== undefined
+                            ? (Number(m.precio_compra) + (Number(m.precio_compra) * Number(m.margen_ganancia)) / 100).toFixed(2)
+                            : "-"}
+                        </span>
                       </td>
                       <td
                         className={
-                          "py-3 px-4 border-b border-gray-200 hidden sm:table-cell font-medium text-center " +
+                          "py-2.5 px-2 md:px-3 lg:px-4 border-b border-gray-100 hidden xl:table-cell font-semibold text-center rounded-md whitespace-nowrap " +
                           (m.estado === "cuarentena"
-                            ? "bg-yellow-200 text-yellow-900 font-bold"
-                            : "")
+                            ? "bg-yellow-200 text-yellow-900"
+                            : m.estado === "activo"
+                            ? "text-green-700"
+                            : "text-gray-700")
                         }
                       >
-                        {m.estado === "cuarentena" ? "CUARENTENA" : m.estado}
+                        {m.estado === "cuarentena" ? (
+                          <span className="inline-flex items-center gap-0.5 bg-yellow-100 px-2 py-0.5 rounded-full text-[8px] md:text-[9px] font-bold">
+                            <FaExclamationTriangle size={10} />
+                            CUARENTENA
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 text-[8px] md:text-[9px] font-semibold">
+                            {m.estado === "activo" && <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>}
+                            {m.estado}
+                          </span>
+                        )}
                       </td>
-                      <td className="py-3 px-4 border-b border-gray-200 text-center gap-2 justify-center hidden sm:table-cell">
+                      <td className="py-2.5 px-1 md:px-1.5 border-b border-gray-100 text-center gap-0.5 justify-center flex table-cell md:table-cell whitespace-nowrap">
                         <button
                           onClick={() => handleEdit(m)}
-                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
-                          style={primarySoftButtonStyle}
+                          className="p-1.5 border border-gray-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-green-100"
                           title="Editar"
                         >
-                          <FaEdit size={16} />
+                          <FaEdit size={12} className="text-green-600" />
                         </button>
                         <button
                           onClick={() => setMovimientosMed(m)}
-                          className="p-2 border rounded-md transition-all duration-200 transform hover:scale-105"
-                          style={primarySoftButtonStyle}
+                          className="p-1.5 border border-gray-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-purple-100"
                           title="Historial"
                         >
-                          <FaHistory size={16} />
+                          <FaHistory size={12} className="text-purple-600" />
                         </button>
                         {m.estado !== "cuarentena" && (
                           <button
@@ -482,19 +617,19 @@ export default function MedicamentosList() {
                               setShowCuarentena(true);
                               setMotivoCuarentena("");
                             }}
-                            className="p-2 text-yellow-600 hover:text-white hover:bg-yellow-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                            className="p-1.5 border border-yellow-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-yellow-100"
                             title="Cuarentena"
                           >
-                            <FaLock size={16} />
+                            <FaLock size={12} className="text-yellow-600" />
                           </button>
                         )}
                         <button
                           onClick={() => handleDelete(m)}
-                          className="p-2 text-red-600 hover:text-white hover:bg-red-600 rounded-md transition-all duration-200 transform hover:scale-105"
+                          className="p-1.5 border border-red-300 rounded-lg transition-all duration-200 transform hover:scale-110 hover:bg-red-100"
                           title="Eliminar"
                           disabled={deleteLoading}
                         >
-                          <FaTrash size={16} />
+                          <FaTrash size={12} className="text-red-600" />
                         </button>
                       </td>
                     </tr>

@@ -7,16 +7,36 @@ require_once __DIR__ . '/auth_check.php';
 // --- Lógica principal ---
 require_once "config.php";
 
+function decode_valores_referenciales_any($raw) {
+    if ($raw === null || $raw === '') return [];
+
+    $value = $raw;
+    for ($i = 0; $i < 3; $i++) {
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                break;
+            }
+            $value = $decoded;
+            continue;
+        }
+        break;
+    }
+
+    if (!is_array($value)) return [];
+
+    // Compatibilidad: algunos registros antiguos guardaron un solo objeto.
+    if (isset($value['nombre']) || isset($value['titulo']) || isset($value['tipo']) || isset($value['referencias'])) {
+        return [$value];
+    }
+
+    return $value;
+}
+
 // Helper: normalizar valores_referenciales recibidos desde frontend
 function normalize_valores_referenciales($raw) {
     if (!$raw) return json_encode([] , JSON_UNESCAPED_UNICODE);
-    if (is_string($raw)) {
-        $parsed = json_decode($raw, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            return json_encode([], JSON_UNESCAPED_UNICODE);
-        }
-        $raw = $parsed;
-    }
+    $raw = decode_valores_referenciales_any($raw);
     if (!is_array($raw)) return json_encode([], JSON_UNESCAPED_UNICODE);
     $items = [];
     foreach ($raw as $idx => $it) {
@@ -73,8 +93,7 @@ switch ($method) {
             // Decodificar y normalizar el campo JSON si existe
             $raw = [];
             if (isset($row['valores_referenciales']) && $row['valores_referenciales']) {
-                $decoded = json_decode($row['valores_referenciales'], true);
-                if (is_array($decoded)) { $raw = $decoded; }
+                $raw = decode_valores_referenciales_any($row['valores_referenciales']);
             }
             // Normalización robusta: garantizar nombre/tipo y estructura de referencias
             $items = [];

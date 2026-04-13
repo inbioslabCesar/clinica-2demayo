@@ -50,7 +50,7 @@ function normalizeImageUrl($url) {
 
 try {
     try {
-        $stmt = $pdo->query("SELECT id, titulo, subtitulo, imagen_url, imagen_fija_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden FROM public_banners WHERE activo = 1 ORDER BY orden ASC, id DESC");
+        $stmt = $pdo->query("SELECT id, titulo, subtitulo, imagen_url, imagen_fija_url, imagen_conocenos_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden FROM public_banners WHERE activo = 1 ORDER BY orden ASC, id DESC");
         $banners = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e2) {
         // Compatibilidad si aún no se ejecutaron algunas migraciones
@@ -61,6 +61,7 @@ try {
             foreach ($banners as &$b2) {
                 $b2['overlay_blanco'] = 1;
                 $b2['texto_lado'] = 'left';
+                $b2['imagen_conocenos_url'] = null;
                 $b2['titulo_color'] = null;
                 $b2['subtitulo_color'] = null;
                 $b2['titulo_tamano'] = 'lg';
@@ -74,6 +75,7 @@ try {
     foreach ($banners as &$b) {
         $b['imagen_url'] = normalizeImageUrl($b['imagen_url'] ?? '');
         $b['imagen_fija_url'] = normalizeImageUrl($b['imagen_fija_url'] ?? '');
+        $b['imagen_conocenos_url'] = normalizeImageUrl($b['imagen_conocenos_url'] ?? '');
         $b['overlay_blanco'] = isset($b['overlay_blanco']) ? intval($b['overlay_blanco']) : 1;
         $b['texto_lado'] = (($b['texto_lado'] ?? 'left') === 'right') ? 'right' : 'left';
         $b['titulo_color'] = isset($b['titulo_color']) ? trim((string)$b['titulo_color']) : '';

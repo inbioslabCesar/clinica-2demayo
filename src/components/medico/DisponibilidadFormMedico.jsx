@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import Calendar from "react-calendar";
+import Swal from "sweetalert2";
 import "react-calendar/dist/Calendar.css";
 import "./DisponibilidadFormMedico.custom.css";
 
@@ -14,18 +15,25 @@ function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
   const fechasRegistradas = new Set(bloquesGuardados.map(bloque => bloque.fecha));
 
   // Selección de fechas múltiples
+  // Convierte un objeto Date al string YYYY-MM-DD usando la zona horaria LOCAL del navegador.
   const toLocalYMD = (date) => {
-    const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return d.toISOString().slice(0, 10);
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  // Parsea un string YYYY-MM-DD como fecha LOCAL (sin desplazamiento UTC).
+  const parseLocalDate = (dateString) => {
+    const [y, m, d] = dateString.split('-').map(Number);
+    return new Date(y, m - 1, d);
   };
 
   // Función para verificar si una fecha ya pasó
   const esFechaPasada = (dateString) => {
     const hoy = new Date();
-    const fechaComparar = new Date(dateString);
-    // Comparar solo las fechas, ignorando la hora
     hoy.setHours(0, 0, 0, 0);
-    fechaComparar.setHours(0, 0, 0, 0);
+    const fechaComparar = parseLocalDate(dateString);
     return fechaComparar < hoy;
   };
   const handleDateChange = (date) => {
@@ -98,6 +106,15 @@ function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
     Object.entries(bloques).forEach(([fecha, arr]) => {
       arr.forEach(b => bloquesArray.push({ fecha, ...b }));
     });
+    const bloqueInvalido = bloquesArray.find((b) => String(b.hora_inicio || "") >= String(b.hora_fin || ""));
+    if (bloqueInvalido) {
+      Swal.fire({
+        icon: "warning",
+        title: "Horario inválido",
+        text: `En ${bloqueInvalido.fecha} la hora inicio debe ser menor que la hora fin.`,
+      });
+      return;
+    }
     if (onSave) onSave(bloquesArray);
   };
 
@@ -108,7 +125,7 @@ function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
         <label className="block mb-1 font-semibold">Selecciona fechas:</label>
         <Calendar
           onChange={handleDateChange}
-          value={selectedDates.length === 1 ? new Date(selectedDates[0]) : selectedDates.map(f => new Date(f))}
+          value={selectedDates.length === 1 ? parseLocalDate(selectedDates[0]) : selectedDates.map(f => parseLocalDate(f))}
           selectRange={false}
           minDetail="month"
           maxDetail="month"

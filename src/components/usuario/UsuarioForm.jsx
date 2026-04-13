@@ -136,6 +136,14 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
       {esEdicion && (
         <div className="text-xs text-gray-500 md:col-span-2">Deja la contraseña vacía para no cambiarla.</div>
       )}
+      {form.rol === "administrador" && (
+        <div className="md:col-span-2 border rounded p-3 bg-green-50">
+          <div className="text-sm font-semibold text-green-800 mb-1">✅ Acceso completo</div>
+          <div className="text-xs text-green-700">
+            El administrador tiene acceso a todos los módulos y vistas del sistema. No requiere configuración de privilegios.
+          </div>
+        </div>
+      )}
       {form.rol === "recepcionista" && (
         <div className="md:col-span-2 border rounded p-3 bg-blue-50">
           <div className="text-sm font-semibold mb-2">Privilegios de recepcionista</div>

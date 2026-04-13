@@ -83,6 +83,7 @@ function formatFecha(str) {
 function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, puedeProcesarLaboratorio, onAbrirLaboratorio }) {
   const [lightbox, setLightbox] = useState(null);
   const cfg = TIPO_CONFIG[doc.tipo] || TIPO_CONFIG.otro;
+  const ordenCancelada = String(doc?.orden_estado || doc?.estado || '').toLowerCase() === 'cancelada';
 
   return (
     <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col transition hover:shadow-md ${doc.estado === "pendiente" ? "opacity-80" : ""}`}>
@@ -115,7 +116,11 @@ function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, pu
           )}
         </div>
         {/* Estado */}
-        {doc.estado === "disponible" ? (
+        {ordenCancelada ? (
+          <span className="flex items-center gap-1 text-[11px] text-red-500 font-semibold whitespace-nowrap">
+            <FaTimes className="text-red-400" /> Cancelada
+          </span>
+        ) : doc.estado === "disponible" ? (
           <span className="flex items-center gap-1 text-[11px] text-green-600 font-semibold whitespace-nowrap">
             <FaCheckCircle className="text-green-500" /> Disponible
           </span>

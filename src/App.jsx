@@ -123,6 +123,43 @@ function RouteErrorBoundary({ children }) {
   return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
 }
 
+function RequireCajaAbierta({ children }) {
+  const location = useLocation();
+  const [estado, setEstado] = useState({ loading: true, abierta: true });
+
+  useEffect(() => {
+    let activo = true;
+    const verificar = async () => {
+      try {
+        const r = await fetch('/api_caja_estado.php', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        const data = await r.json();
+        const abierta = Boolean(data?.success) && String(data?.estado || '').toLowerCase() === 'abierta';
+        if (activo) setEstado({ loading: false, abierta });
+      } catch {
+        // Fail-open para no romper flujo por un fallo temporal de red.
+        if (activo) setEstado({ loading: false, abierta: true });
+      }
+    };
+    verificar();
+    return () => {
+      activo = false;
+    };
+  }, [location.key]);
+
+  if (estado.loading) {
+    return <div className="p-8 text-center">Validando estado de caja...</div>;
+  }
+
+  if (!estado.abierta) {
+    return <Navigate to="/contabilidad" replace />;
+  }
+
+  return children;
+}
+
 function hydrateUsuario(rawUsuario) {
   if (!rawUsuario || typeof rawUsuario !== "object") return null;
   return {
@@ -155,7 +192,7 @@ function App() {
 
   // Logout sin render intermedio para evitar parpadeo visual
   const handleLogout = () => {
-    fetch("/policlinico-2demayo/api_logout.php", {
+    fetch("/api_logout.php", {
       method: "POST",
       credentials: "include",
       keepalive: true,
@@ -167,6 +204,55 @@ function App() {
     sessionStorage.removeItem("medico");
     window.location.replace("/");
   };
+
+  useEffect(() => {
+    let activo = true;
+
+    const validarSesionBackend = async () => {
+      try {
+        const r = await fetch("/api_auth_status.php", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const data = await r.json().catch(() => null);
+        const autenticado = Boolean(data?.success) && Boolean(data?.authenticated);
+
+        if (!autenticado && activo) {
+          sessionStorage.removeItem("usuario");
+          sessionStorage.removeItem("medico");
+          setUsuario(null);
+          return;
+        }
+
+        if (autenticado && activo && data?.usuario && typeof data.usuario === "object") {
+          setUsuario(hydrateUsuario(data.usuario));
+          return;
+        }
+
+        if (autenticado && activo) {
+          const usuarioFromBackend = {
+            id: data?.usuario_id ?? null,
+            nombre: data?.nombre ?? "",
+            rol: data?.rol ?? "",
+            usuario: typeof data?.usuario === "string" ? data.usuario : "",
+            permisos: Array.isArray(data?.permisos) ? data.permisos : [],
+          };
+          setUsuario(hydrateUsuario(usuarioFromBackend));
+        }
+      } catch {
+        if (activo) {
+          sessionStorage.removeItem("usuario");
+          sessionStorage.removeItem("medico");
+          setUsuario(null);
+        }
+      }
+    };
+
+    validarSesionBackend();
+    return () => {
+      activo = false;
+    };
+  }, []);
 
   useEffect(() => {
     // Si cambia el usuario, sincronizar sessionStorage
@@ -181,6 +267,31 @@ function App() {
       }
     }
   }, [usuario]);
+
+  useEffect(() => {
+    const handleUsuarioSessionUpdated = (event) => {
+      const detail = event?.detail;
+      if (detail && typeof detail === "object") {
+        setUsuario(hydrateUsuario(detail));
+        return;
+      }
+
+      // Fallback defensivo: recargar desde sessionStorage si no llega detail.
+      try {
+        const rawUsuario = sessionStorage.getItem("usuario");
+        if (rawUsuario) {
+          setUsuario(hydrateUsuario(JSON.parse(rawUsuario)));
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener("usuario-session-updated", handleUsuarioSessionUpdated);
+    return () => {
+      window.removeEventListener("usuario-session-updated", handleUsuarioSessionUpdated);
+    };
+  }, []);
 
   const getHomeByRole = (rol) => {
     switch (rol) {
@@ -366,14 +477,14 @@ function App() {
                   />
                 </>
               )}
-              {(usuario?.rol === "químico" || usuario?.rol === "quimico" || usuario?.rol === "recepcionista") && (
+              {(usuario?.rol === "químico" || usuario?.rol === "quimico" || usuario?.rol === "recepcionista" || usuario?.rol === "administrador") && (
                 <>
                   <Route
                     path="/medicamentos"
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["químico", "quimico", "recepcionista"]}
+                        rolesPermitidos={["químico", "quimico", "recepcionista", "administrador"]}
                         permisosRequeridos={["ver_modulo_quimico"]}
                       >
                         <MedicamentosList />
@@ -385,10 +496,10 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["químico", "quimico", "recepcionista"]}
+                        rolesPermitidos={["químico", "quimico", "recepcionista", "administrador"]}
                         permisosRequeridos={["ver_modulo_quimico"]}
                       >
-                        <FarmaciaCotizadorPage />
+                        <FarmaciaCotizadorPage usuario={usuario} />
                       </ProtectedRoute>
                     }
                   />
@@ -397,7 +508,7 @@ function App() {
                     element={
                       <ProtectedRoute
                         usuario={usuario}
-                        rolesPermitidos={["químico", "quimico", "recepcionista"]}
+                        rolesPermitidos={["químico", "quimico", "recepcionista", "administrador"]}
                         permisosRequeridos={["ver_modulo_quimico"]}
                       >
                         <FarmaciaVentasPage />
@@ -691,7 +802,7 @@ function App() {
                         rolesPermitidos={["administrador", "recepcionista"]}
                         permisosRequeridos={["ver_cotizaciones"]}
                       >
-                        <FarmaciaCotizadorPage />
+                        <FarmaciaCotizadorPage usuario={usuario} />
                       </ProtectedRoute>
                     }
                   />
@@ -811,7 +922,9 @@ function App() {
                         rolesPermitidos={["administrador", "recepcionista"]}
                         permisosRequeridos={["ver_contabilidad"]}
                       >
-                        <CerrarCajaView />
+                        <RequireCajaAbierta>
+                          <CerrarCajaView />
+                        </RequireCajaAbierta>
                       </ProtectedRoute>
                     }
                   />

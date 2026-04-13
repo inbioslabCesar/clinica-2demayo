@@ -58,8 +58,31 @@ function normalizeImageUrl($url) {
 
 try {
     if ($method === 'GET') {
-        $stmt = $pdo->query("SELECT id, titulo, descripcion, precio, icono, imagen_url, orden, activo FROM public_servicios ORDER BY orden ASC, id DESC");
-        $servicios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        try {
+            $stmt = $pdo->query("SELECT id, titulo, descripcion, precio, icono, imagen_url, tipo, imagen_shape, imagen_tipo, orden, activo FROM public_servicios ORDER BY orden ASC, id DESC");
+            $servicios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            // Fallback si las columnas no existen
+            try {
+                $stmt = $pdo->query("SELECT id, titulo, descripcion, precio, icono, imagen_url, tipo, orden, activo FROM public_servicios ORDER BY orden ASC, id DESC");
+                $servicios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($servicios as &$s) {
+                    $s['imagen_shape'] = 'rounded';
+                    $s['imagen_tipo'] = 'normal';
+                }
+                unset($s);
+            } catch (PDOException $e2) {
+                // Fallback si ni tipo existe
+                $stmt = $pdo->query("SELECT id, titulo, descripcion, precio, icono, imagen_url, orden, activo FROM public_servicios ORDER BY orden ASC, id DESC");
+                $servicios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($servicios as &$s) {
+                    $s['tipo'] = 'clasico';
+                    $s['imagen_shape'] = 'rounded';
+                    $s['imagen_tipo'] = 'normal';
+                }
+                unset($s);
+            }
+        }
         foreach ($servicios as &$s) {
             $s['imagen_url'] = normalizeImageUrl($s['imagen_url'] ?? '');
         }
@@ -75,6 +98,18 @@ try {
         $precio = $data['precio'] ?? null;
         $icono = $data['icono'] ?? null;
         $imagenUrl = $data['imagen_url'] ?? null;
+        $tipo = trim((string)($data['tipo'] ?? 'clasico'));
+        if (!in_array($tipo, ['clasico', 'premium'], true)) {
+            $tipo = 'clasico';
+        }
+        $imagenShape = trim((string)($data['imagen_shape'] ?? 'rounded'));
+        if (!in_array($imagenShape, ['square', 'rounded', 'circle'], true)) {
+            $imagenShape = 'rounded';
+        }
+        $imagenTipo = trim((string)($data['imagen_tipo'] ?? 'normal'));
+        if (!in_array($imagenTipo, ['normal', 'overlay'], true)) {
+            $imagenTipo = 'normal';
+        }
         $orden = isset($data['orden']) ? intval($data['orden']) : 0;
         $activo = isset($data['activo']) ? intval((bool)$data['activo']) : 1;
 
@@ -84,8 +119,19 @@ try {
             exit;
         }
 
-        $stmt = $pdo->prepare("INSERT INTO public_servicios (titulo, descripcion, precio, icono, imagen_url, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $orden, $activo]);
+        try {
+            $stmt = $pdo->prepare("INSERT INTO public_servicios (titulo, descripcion, precio, icono, imagen_url, tipo, imagen_shape, imagen_tipo, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $tipo, $imagenShape, $imagenTipo, $orden, $activo]);
+        } catch (PDOException $e) {
+            // Fallback si las nuevas columnas no existen
+            try {
+                $stmt = $pdo->prepare("INSERT INTO public_servicios (titulo, descripcion, precio, icono, imagen_url, tipo, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $tipo, $orden, $activo]);
+            } catch (PDOException $e2) {
+                $stmt = $pdo->prepare("INSERT INTO public_servicios (titulo, descripcion, precio, icono, imagen_url, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $orden, $activo]);
+            }
+        }
         echo json_encode(['success' => true, 'id' => intval($pdo->lastInsertId())]);
         exit;
     }
@@ -104,6 +150,18 @@ try {
         $precio = $data['precio'] ?? null;
         $icono = $data['icono'] ?? null;
         $imagenUrl = $data['imagen_url'] ?? null;
+        $tipo = trim((string)($data['tipo'] ?? 'clasico'));
+        if (!in_array($tipo, ['clasico', 'premium'], true)) {
+            $tipo = 'clasico';
+        }
+        $imagenShape = trim((string)($data['imagen_shape'] ?? 'rounded'));
+        if (!in_array($imagenShape, ['square', 'rounded', 'circle'], true)) {
+            $imagenShape = 'rounded';
+        }
+        $imagenTipo = trim((string)($data['imagen_tipo'] ?? 'normal'));
+        if (!in_array($imagenTipo, ['normal', 'overlay'], true)) {
+            $imagenTipo = 'normal';
+        }
         $orden = isset($data['orden']) ? intval($data['orden']) : 0;
         $activo = isset($data['activo']) ? intval((bool)$data['activo']) : 1;
 
@@ -113,8 +171,19 @@ try {
             exit;
         }
 
-        $stmt = $pdo->prepare("UPDATE public_servicios SET titulo=?, descripcion=?, precio=?, icono=?, imagen_url=?, orden=?, activo=? WHERE id=?");
-        $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $orden, $activo, $id]);
+        try {
+            $stmt = $pdo->prepare("UPDATE public_servicios SET titulo=?, descripcion=?, precio=?, icono=?, imagen_url=?, tipo=?, imagen_shape=?, imagen_tipo=?, orden=?, activo=? WHERE id=?");
+            $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $tipo, $imagenShape, $imagenTipo, $orden, $activo, $id]);
+        } catch (PDOException $e) {
+            // Fallback si las nuevas columnas no existen
+            try {
+                $stmt = $pdo->prepare("UPDATE public_servicios SET titulo=?, descripcion=?, precio=?, icono=?, imagen_url=?, tipo=?, orden=?, activo=? WHERE id=?");
+                $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $tipo, $orden, $activo, $id]);
+            } catch (PDOException $e2) {
+                $stmt = $pdo->prepare("UPDATE public_servicios SET titulo=?, descripcion=?, precio=?, icono=?, imagen_url=?, orden=?, activo=? WHERE id=?");
+                $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $orden, $activo, $id]);
+            }
+        }
         echo json_encode(['success' => true]);
         exit;
     }

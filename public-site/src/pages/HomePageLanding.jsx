@@ -1,20 +1,19 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getServicios, getOfertas, getBanners, PUBLIC_API_BASE } from '../api/publicApi'
+import { getServicios, getOfertas, getBanners } from '../api/publicApi'
 import ServiceIcon from '../components/ServiceIcon'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
-
-function resolveImgUrl(path) {
-  if (!path) return ''
-  if (/^https?:\/\//i.test(path)) return path
-  return (PUBLIC_API_BASE + path.replace(/^\/+/, '')).replace(/\s+/g, '')
-}
+import { sanitizeFontSize, sanitizeHexColor } from '../utils/branding'
+import { resolvePublicAssetUrl } from '../utils/publicAssetUrl'
 
 /* ── Hero Section ── */
 function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slogan, sloganColor, nombreColor, nombreFontSize, logoSize }) {
   const [activeIdx, setActiveIdx] = useState(0)
   const [loadedByIdx, setLoadedByIdx] = useState({})
   const count = banners.length
+  const safeNombreColor = sanitizeHexColor(nombreColor, 'var(--color-primary, #E85D8E)')
+  const safeNombreFontSize = sanitizeFontSize(nombreFontSize, undefined)
+  const safeSloganColor = sanitizeHexColor(sloganColor, 'var(--color-secondary, #3A4FA3)')
 
   useEffect(() => {
     setActiveIdx(0)
@@ -50,11 +49,11 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
           <div className="flex items-center gap-3 justify-center md:justify-start mb-4">
             <img src={publicLogoSrc} alt="Logo" className="object-contain" style={{ height: logoSize.hero, width: 'auto', maxWidth: logoSize.hero * 5.2 }} />
           </div>
-          <h1 className="font-bold" style={{ color: nombreColor || 'var(--color-primary, #E85D8E)', fontSize: nombreFontSize || undefined }}>
+          <h1 className="font-bold" style={{ color: safeNombreColor, fontSize: safeNombreFontSize }}>
             {clinicName || 'Portal de Salud'}
           </h1>
           {slogan && (
-            <p className="mt-2 text-xl font-medium" style={{ color: sloganColor || 'var(--color-secondary, #3A4FA3)' }}>
+            <p className="mt-2 text-xl font-medium" style={{ color: safeSloganColor }}>
               {slogan}
             </p>
           )}
@@ -94,7 +93,7 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
               </div>
               {banners.map((b, i) => {
                 const srcPath = b?.imagen_url || b?.imagen_fija_url || ''
-                const src = srcPath ? resolveImgUrl(srcPath) : null
+                const src = srcPath ? resolvePublicAssetUrl(srcPath) : null
                 if (!src) return null
                 return (
                   <React.Fragment key={b.id || i}>
@@ -187,7 +186,20 @@ function ServicesSection({ servicios, loading }) {
 
 /* ── About Section ── */
 function AboutSection({ clinicName, banner }) {
-  const aboutImg = banner?.imagen_url ? resolveImgUrl(banner.imagen_url) : null
+  const imageCandidates = [
+    banner?.imagen_conocenos_url || '',
+    banner?.imagen_fija_url || '',
+    banner?.imagen_url || '',
+  ].map((x) => String(x || '').trim()).filter(Boolean)
+
+  const uniqueCandidates = Array.from(new Set(imageCandidates))
+  const [aboutImgIndex, setAboutImgIndex] = useState(0)
+
+  useEffect(() => {
+    setAboutImgIndex(0)
+  }, [banner?.id, uniqueCandidates.length])
+
+  const aboutImg = uniqueCandidates[aboutImgIndex] ? resolvePublicAssetUrl(uniqueCandidates[aboutImgIndex]) : null
   return (
     <section className="py-16 px-4 bg-gray-50/50">
       <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-10 items-center">
@@ -212,7 +224,17 @@ function AboutSection({ clinicName, banner }) {
         </div>
         <div className="flex justify-center">
           {aboutImg ? (
-            <img src={aboutImg} alt="Nosotros" className="rounded-3xl shadow-xl max-h-[400px] object-cover w-full" />
+            <img
+              src={aboutImg}
+              alt="Nosotros"
+              className="rounded-3xl shadow-xl max-h-[400px] object-cover w-full"
+              onError={() => {
+                setAboutImgIndex((prev) => {
+                  if (prev + 1 < uniqueCandidates.length) return prev + 1
+                  return prev
+                })
+              }}
+            />
           ) : (
             <div className="rounded-3xl shadow-xl w-full h-72 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200">
               <span className="text-gray-400 text-lg">Imagen no disponible</span>
@@ -427,7 +449,7 @@ export default function HomePageLanding({
     return () => { cancelled = true }
   }, [])
 
-  const aboutBanner = banners[1] || banners[0] || null
+  const aboutBanner = banners.find((b) => (b?.imagen_conocenos_url || '').trim() !== '') || banners[1] || banners[0] || null
 
   return (
     <div className="-mt-28">

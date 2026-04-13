@@ -51,6 +51,7 @@ export default function QuoteCartPanel() {
         fecha: item.consultaFecha,
         hora: item.consultaHora,
         tipo_consulta: item.consultaTipoConsulta || "programada",
+        origen_creacion: "cotizador",
       }),
     });
     const data = await res.json();
@@ -158,7 +159,9 @@ export default function QuoteCartPanel() {
 
   const registrarCotizacionCarrito = async (irACobro = false) => {
     if (saving) return;
-    if (!cart.patientId || cart.items.length === 0) {
+    const pacienteRegistradoId = Number(cart.patientId || 0);
+    const pacienteNombre = String(cart.patientName || '').trim() || 'Particular';
+    if (cart.items.length === 0) {
       await Swal.fire("Atencion", "El carrito no tiene paciente o items validos.", "info");
       return;
     }
@@ -174,7 +177,7 @@ export default function QuoteCartPanel() {
       const resumenServicios = Array.from(new Set(detalles.map((d) => String(d.servicio_tipo || "otros"))));
       const confirm = await Swal.fire({
         title: irACobro ? "Registrar y cobrar cotización" : "Registrar nueva cotización",
-        text: `Paciente #${Number(cart.patientId)} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}`,
+        text: `${pacienteRegistradoId > 0 ? `Paciente #${pacienteRegistradoId}` : pacienteNombre} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}`,
         icon: "question",
         showCancelButton: true,
         confirmButtonText: irACobro ? "Registrar y cobrar" : "Registrar cotización",
@@ -199,6 +202,15 @@ export default function QuoteCartPanel() {
           const consultaId = await crearConsultaDesdeCarrito(cartItem);
           detalles[i].consulta_id = consultaId;
           detalles[i].medico_id = Number(cartItem.consultaMedicoId);
+        }
+
+        if (String(d.servicio_tipo).toLowerCase() === "consulta") {
+          detalles[i].consulta_id = Number(detalles[i].consulta_id || cartItem?.consultaId || 0);
+          detalles[i].medico_id = Number(detalles[i].medico_id || cartItem?.consultaMedicoId || 0);
+
+          if (Number(detalles[i].consulta_id || 0) <= 0) {
+            throw new Error("La consulta del carrito no tiene una atencion vinculada. Vuelve a agregar la consulta antes de registrar la cotizacion.");
+          }
         }
       }
 
@@ -225,7 +237,8 @@ export default function QuoteCartPanel() {
         cotizacionIdDestino = Number(editingCotizacionId);
       } else {
         payload = {
-          paciente_id: Number(cart.patientId),
+          paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : null,
+          paciente_nombre: pacienteNombre,
           total: Number(total || 0),
           detalles,
           observaciones: "Cotizacion unificada creada desde carrito global",

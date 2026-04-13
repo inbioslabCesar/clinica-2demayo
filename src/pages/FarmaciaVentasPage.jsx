@@ -56,7 +56,7 @@ export default function FarmaciaVentasPage() {
   const verDetalle = (venta) => {
     setDetalleVenta(venta);
     setModalOpen(true);
-    fetch(`${BASE_URL}api_cotizaciones_farmacia.php?cotizacion_id=${venta.id}`, { credentials: "include" })
+    fetch(`${BASE_URL}api_cotizaciones_farmacia.php?cotizacion_id=${venta.id}&source=${venta.source || "legacy"}`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         setDetalles(data.cotizacion?.detalles || []);
@@ -70,8 +70,8 @@ export default function FarmaciaVentasPage() {
     const doc = new jsPDF();
     doc.text("Ventas de Farmacia", 14, 14);
     autoTable(doc, {
-      head: [["Fecha", "Paciente", "DNI", "Usuario", "Total", "Estado"]],
-      body: ventas.map(v => [v.fecha, v.paciente_nombre || "-", v.paciente_dni || "-", v.usuario_nombre || v.usuario_id, v.total, v.estado]),
+      head: [["Fecha", "Referencia", "Paciente", "DNI", "Vendido por", "Total", "Estado"]],
+      body: ventas.map(v => [v.fecha, v.referencia || "-", v.paciente_nombre || "-", v.paciente_dni || "-", v.usuario_nombre || v.usuario_id, v.total, v.estado]),
     });
     doc.save("ventas_farmacia.pdf");
   };
@@ -81,9 +81,10 @@ export default function FarmaciaVentasPage() {
     const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(ventas.map(v => ({
       Fecha: v.fecha,
+      Referencia: v.referencia || "-",
       Paciente: v.paciente_nombre || "-",
       DNI: v.paciente_dni || "-",
-      Usuario: v.usuario_nombre || v.usuario_id,
+      "Vendido por": v.usuario_nombre || v.usuario_id,
       Total: v.total,
       Estado: v.estado
     })));
@@ -95,7 +96,7 @@ export default function FarmaciaVentasPage() {
   return (
     <div className="max-w-5xl mx-auto p-6 bg-white rounded-xl shadow-lg mt-8">
       <h2 className="text-2xl font-bold mb-4" style={{ color: "var(--color-secondary)" }}>Ventas de Farmacia</h2>
-      <div className="flex gap-4 mb-4 items-center">
+      <div className="flex flex-wrap gap-4 mb-4 items-center">
         <label className="text-sm">Mostrar:
           <select value={tamanoPagina} onChange={e => { setTamanoPagina(Number(e.target.value)); setPagina(1); }} className="ml-2 border rounded px-2 py-1">
             <option value={3}>3</option>
@@ -123,36 +124,64 @@ export default function FarmaciaVentasPage() {
         <div className="text-center text-gray-500 py-8">No hay ventas registradas.</div>
       ) : (
         <>
-          <table className="w-full text-sm border">
-            <thead>
-              <tr style={{ background: "var(--color-primary-light)" }}>
-                <th className="p-2">Fecha</th>
-                <th className="p-2">Paciente</th>
-                <th className="p-2">DNI</th>
-                <th className="p-2">Usuario</th>
-                <th className="p-2">Total</th>
-                <th className="p-2">Estado</th>
-                <th className="p-2">Detalle</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ventas.map(v => (
-                <tr key={v.id} className="border-b">
-                  <td className="p-2">{v.fecha}</td>
-                  <td className="p-2">{v.paciente_nombre || v.paciente_nombre || "-"}</td>
-                  <td className="p-2">{v.paciente_dni || "-"}</td>
-                  <td className="p-2">{v.usuario_nombre || v.usuario_id}</td>
-                  <td className="p-2 font-bold" style={{ color: "var(--color-secondary)" }}>S/ {v.total}</td>
-                  <td className="p-2">{v.estado}</td>
-                  <td className="p-2">
-                    <button className="px-2 py-1 rounded" style={{ background: "var(--color-primary-light)", color: "var(--color-secondary)" }} onClick={() => verDetalle(v)}>Ver</button>
-                  </td>
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-sm border min-w-[820px]">
+              <thead>
+                <tr style={{ background: "var(--color-primary-light)" }}>
+                  <th className="p-2">Fecha</th>
+                  <th className="p-2">Referencia</th>
+                  <th className="p-2">Paciente</th>
+                  <th className="p-2">DNI</th>
+                  <th className="p-2">Vendido por</th>
+                  <th className="p-2">Total</th>
+                  <th className="p-2">Estado</th>
+                  <th className="p-2">Detalle</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {ventas.map(v => (
+                  <tr key={`${v.source}-${v.id}`} className="border-b">
+                    <td className="p-2">{v.fecha}</td>
+                    <td className="p-2 font-medium">{v.referencia || "-"}</td>
+                    <td className="p-2">{v.paciente_nombre || "-"}</td>
+                    <td className="p-2">{v.paciente_dni || "-"}</td>
+                    <td className="p-2">{v.usuario_nombre || v.usuario_id}</td>
+                    <td className="p-2 font-bold" style={{ color: "var(--color-secondary)" }}>S/ {v.total}</td>
+                    <td className="p-2 capitalize">{v.estado}</td>
+                    <td className="p-2">
+                      <button className="px-2 py-1 rounded" style={{ background: "var(--color-primary-light)", color: "var(--color-secondary)" }} onClick={() => verDetalle(v)}>Ver</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-3 md:hidden">
+            {ventas.map(v => (
+              <div key={`${v.source}-${v.id}`} className="border rounded-lg p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-sm">{v.paciente_nombre || "-"}</div>
+                    <div className="text-xs text-gray-500">{v.fecha}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold" style={{ color: "var(--color-secondary)" }}>S/ {v.total}</div>
+                    <div className="text-xs text-gray-500">{v.referencia || "-"}</div>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-1 text-sm text-gray-700">
+                  <div><b>DNI:</b> {v.paciente_dni || "-"}</div>
+                  <div><b>Vendido por:</b> {v.usuario_nombre || v.usuario_id}</div>
+                  <div><b>Estado:</b> <span className="capitalize">{v.estado}</span></div>
+                </div>
+                <button className="mt-3 w-full px-3 py-2 rounded" style={{ background: "var(--color-primary-light)", color: "var(--color-secondary)" }} onClick={() => verDetalle(v)}>Ver detalle</button>
+              </div>
+            ))}
+          </div>
+
           {/* Paginación */}
-          <div className="flex justify-between items-center mt-4">
+          <div className="flex flex-wrap justify-between items-center gap-3 mt-4">
             <span className="text-sm">Página {pagina} de {Math.max(1, Math.ceil(totalVentas / tamanoPagina))}</span>
             <div className="flex gap-2">
               <button className="px-2 py-1 bg-gray-200 rounded" disabled={pagina === 1} onClick={() => setPagina(pagina - 1)}>Anterior</button>
@@ -169,32 +198,35 @@ export default function FarmaciaVentasPage() {
               <button className="absolute top-2 right-2 text-gray-500 text-xl" onClick={() => setModalOpen(false)}>✕</button>
             <h3 className="text-xl font-bold mb-2" style={{ color: "var(--color-secondary)" }}>Detalle de Venta</h3>
             <div className="mb-2 text-sm text-gray-700">
+              <div><b>Referencia:</b> {detalleVenta.referencia || "-"}</div>
               <div><b>Paciente:</b> {detalleVenta.paciente_nombre || "-"}</div>
               <div><b>DNI:</b> {detalleVenta.paciente_dni || "-"}</div>
-              <div><b>Usuario:</b> {detalleVenta.usuario_nombre || detalleVenta.usuario_id}</div>
+              <div><b>Vendido por:</b> {detalleVenta.usuario_nombre || detalleVenta.usuario_id}</div>
               <div><b>Fecha:</b> {detalleVenta.fecha}</div>
               <div><b>Total:</b> S/ {detalleVenta.total}</div>
             </div>
-            <table className="w-full text-sm border mb-2">
-              <thead>
-                <tr style={{ background: "var(--color-primary-light)" }}>
-                  <th className="p-2">Medicamento</th>
-                  <th className="p-2">Cantidad</th>
-                  <th className="p-2">Precio Unitario</th>
-                  <th className="p-2">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detalles.map(d => (
-                  <tr key={d.id}>
-                    <td className="p-2">{d.descripcion}</td>
-                    <td className="p-2">{d.cantidad}</td>
-                    <td className="p-2">S/ {d.precio_unitario}</td>
-                    <td className="p-2">S/ {d.subtotal}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border mb-2 min-w-[520px]">
+                <thead>
+                  <tr style={{ background: "var(--color-primary-light)" }}>
+                    <th className="p-2">Medicamento</th>
+                    <th className="p-2">Cantidad</th>
+                    <th className="p-2">Precio Unitario</th>
+                    <th className="p-2">Subtotal</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {detalles.map((d, index) => (
+                    <tr key={d.id || `${d.descripcion}-${index}`}>
+                      <td className="p-2">{d.descripcion}</td>
+                      <td className="p-2">{d.cantidad}</td>
+                      <td className="p-2">S/ {d.precio_unitario}</td>
+                      <td className="p-2">S/ {d.subtotal}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

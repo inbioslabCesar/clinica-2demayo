@@ -8,6 +8,7 @@ const emptyForm = {
   subtitulo: '',
   imagen_url: '',
   imagen_fija_url: '',
+  imagen_conocenos_url: '',
   overlay_blanco: true,
   texto_lado: 'left',
   titulo_color: '',
@@ -26,6 +27,7 @@ export default function WebBannersCrudPage() {
   const [editingId, setEditingId] = useState(null)
   const [imagenFiles, setImagenFiles] = useState([])
   const [imagenFijaFile, setImagenFijaFile] = useState(null)
+  const [imagenConocenosFile, setImagenConocenosFile] = useState(null)
 
   const endpoint = useMemo(() => `${BASE_URL}api_web_banners.php`, [])
   const uploadEndpoint = useMemo(() => `${BASE_URL}api_web_banners_upload.php`, [])
@@ -53,6 +55,7 @@ export default function WebBannersCrudPage() {
     setForm(emptyForm)
     setImagenFiles([])
     setImagenFijaFile(null)
+    setImagenConocenosFile(null)
     setOpen(true)
   }
 
@@ -63,6 +66,7 @@ export default function WebBannersCrudPage() {
       subtitulo: item.subtitulo || '',
       imagen_url: item.imagen_url || '',
       imagen_fija_url: item.imagen_fija_url || '',
+      imagen_conocenos_url: item.imagen_conocenos_url || '',
       overlay_blanco: item.overlay_blanco === 0 ? false : true,
       texto_lado: item.texto_lado === 'right' ? 'right' : 'left',
       titulo_color: item.titulo_color || '',
@@ -74,6 +78,7 @@ export default function WebBannersCrudPage() {
     })
     setImagenFiles([])
     setImagenFijaFile(null)
+    setImagenConocenosFile(null)
     setOpen(true)
   }
 
@@ -130,11 +135,35 @@ export default function WebBannersCrudPage() {
     return data?.url || ''
   }
 
+  async function uploadImagenConocenosIfNeeded() {
+    if (!imagenConocenosFile) return ''
+
+    const name = (imagenConocenosFile?.name || '').toLowerCase()
+    if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp'))) {
+      throw new Error('La imagen de Conocenos debe ser PNG, JPG o WEBP')
+    }
+
+    const fd = new FormData()
+    fd.append('imagen', imagenConocenosFile)
+
+    const r = await fetch(uploadEndpoint, {
+      method: 'POST',
+      body: fd,
+      credentials: 'include',
+    })
+    const data = await r.json().catch(() => null)
+    if (!r.ok || !data?.success) {
+      throw new Error(data?.error || 'No se pudo subir la imagen de Conocenos')
+    }
+    return data?.url || ''
+  }
+
   async function save(e) {
     e.preventDefault()
     try {
       const uploadedUrls = await uploadImagenesIfNeeded()
       const uploadedFijaUrl = await uploadImagenFijaIfNeeded()
+      const uploadedConocenosUrl = await uploadImagenConocenosIfNeeded()
 
       const basePayload = {
         ...form,
@@ -153,6 +182,7 @@ export default function WebBannersCrudPage() {
         const payload = { ...basePayload, id: editingId }
         if (uploadedUrls[0]) payload.imagen_url = uploadedUrls[0]
         if (uploadedFijaUrl) payload.imagen_fija_url = uploadedFijaUrl
+        if (uploadedConocenosUrl) payload.imagen_conocenos_url = uploadedConocenosUrl
         if (!payload.imagen_url) throw new Error('La imagen es requerida')
 
         const r = await fetch(endpoint, {
@@ -176,6 +206,7 @@ export default function WebBannersCrudPage() {
             ...basePayload,
             imagen_url: urlsToUse[i],
             imagen_fija_url: uploadedFijaUrl ? uploadedFijaUrl : basePayload.imagen_fija_url,
+            imagen_conocenos_url: uploadedConocenosUrl ? uploadedConocenosUrl : basePayload.imagen_conocenos_url,
             orden: basePayload.orden + i,
             titulo: (basePayload.titulo || '').trim() ? basePayload.titulo : suggestedTitle,
           }
@@ -194,6 +225,7 @@ export default function WebBannersCrudPage() {
       setOpen(false)
       setImagenFiles([])
       setImagenFijaFile(null)
+      setImagenConocenosFile(null)
       await load()
       Swal.fire('Listo', editingId ? 'Guardado correctamente' : 'Banners creados correctamente', 'success')
     } catch (e2) {
@@ -267,6 +299,13 @@ export default function WebBannersCrudPage() {
                         </a>
                       </div>
                     ) : null}
+                    {it.imagen_conocenos_url ? (
+                      <div>
+                        <a className="text-xs text-blue-700 hover:underline" href={it.imagen_conocenos_url} target="_blank" rel="noreferrer">
+                          Ver imagen (Conocenos)
+                        </a>
+                      </div>
+                    ) : null}
                   </td>
                   <td className="p-2">{it.orden ?? 0}</td>
                   <td className="p-2">{it.activo ? 'Sí' : 'No'}</td>
@@ -320,6 +359,16 @@ export default function WebBannersCrudPage() {
           </div>
 
           <div className="md:col-span-2">
+            <label className="block text-sm font-semibold">Imagen Conocenos URL (opcional)</label>
+            <input
+              className="w-full border rounded px-3 py-2"
+              value={form.imagen_conocenos_url}
+              onChange={(e) => setForm((f) => ({ ...f, imagen_conocenos_url: e.target.value }))}
+              placeholder="Se llenara automaticamente al subir"
+            />
+          </div>
+
+          <div className="md:col-span-2">
             <label className="block text-sm font-semibold">Subir imagen (PNG, JPG o WEBP)</label>
             <input
               className="w-full"
@@ -337,6 +386,12 @@ export default function WebBannersCrudPage() {
                 ? 'Si seleccionas una imagen, se subirá y reemplazará la URL.'
                 : 'Puedes seleccionar varias imágenes: se crearán varios banners automáticamente.'}
             </p>
+            <p className="text-xs text-blue-700 mt-1">
+              Medida recomendada para carrusel: 1920 x 680 px (relación 2.8:1). Mínimo sugerido: 1600 x 560 px.
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Consejo: coloca texto o rostros en la zona central para evitar recortes en pantallas anchas.
+            </p>
           </div>
 
           <div className="md:col-span-2">
@@ -351,6 +406,21 @@ export default function WebBannersCrudPage() {
               }}
             />
             <p className="text-xs text-gray-600 mt-1">Esta imagen se usará en la sección fija de la Home.</p>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold">Subir imagen de Conocenos (opcional)</label>
+            <input
+              className="w-full"
+              type="file"
+              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+              onChange={(e) => {
+                const file = (e.target.files && e.target.files[0]) || null
+                setImagenConocenosFile(file)
+              }}
+            />
+            <p className="text-xs text-gray-600 mt-1">Esta imagen se usara en la seccion Conocenos de las landings clasica y premium.</p>
+            <p className="text-xs text-blue-700 mt-1">Medida recomendada: 1600 x 1000 px (relacion 8:5). Minimo sugerido: 1200 x 750 px.</p>
           </div>
 
           <div>

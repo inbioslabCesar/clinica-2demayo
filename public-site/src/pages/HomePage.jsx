@@ -6,6 +6,8 @@ import ServiceIcon from '../components/ServiceIcon'
 import CountUpNumber from '../components/CountUpNumber'
 import VerticalOffersSlider from '../components/VerticalOffersSlider'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
+import { sanitizeFontSize, sanitizeHexColor } from '../utils/branding'
+import { resolvePublicAssetUrl } from '../utils/publicAssetUrl'
 
 function clampIndex(value, length) {
   if (length <= 0) return 0
@@ -15,6 +17,9 @@ function clampIndex(value, length) {
 export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`, clinicName = 'Portal de Salud', configuracion, logoSize }) {
 
   const resolvedLogoSize = logoSize || resolvePublicLogoSize(configuracion?.logo_size_publico)
+  const brandNameColor = sanitizeHexColor(configuracion?.nombre_color, 'var(--color-primary, #E85D8E)')
+  const brandNameFontSize = sanitizeFontSize(configuracion?.nombre_font_size, undefined)
+  const sloganColor = sanitizeHexColor(configuracion?.slogan_color, 'var(--color-secondary, #3A4FA3)')
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -31,7 +36,7 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
       id: x.id,
       title: x.titulo || '',
       subtitle: x.subtitulo || '',
-      imageSrc: x.imagen_url,
+      imageSrc: resolvePublicAssetUrl(x.imagen_url || x.imagen_fija_url || ''),
       showWhiteOverlay: x.overlay_blanco === 0 ? false : true,
       textSide: x.texto_lado === 'right' ? 'right' : 'left',
       titleColor: x.titulo_color || null,
@@ -41,6 +46,28 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
       imageAlt: x.titulo || 'Banner',
     }))
   }, [loading, banners])
+
+  const conocenosBanner = useMemo(() => {
+    if (!Array.isArray(banners) || banners.length === 0) return null
+    return banners.find((b) => (b?.imagen_conocenos_url || '').trim() !== '') || banners[0]
+  }, [banners])
+
+  const conocenosImageCandidates = useMemo(() => {
+    const list = [
+      conocenosBanner?.imagen_conocenos_url || '',
+      conocenosBanner?.imagen_fija_url || '',
+      conocenosBanner?.imagen_url || '',
+    ].map((x) => resolvePublicAssetUrl(x)).filter(Boolean)
+    return Array.from(new Set(list))
+  }, [conocenosBanner])
+
+  const [conocenosImageIndex, setConocenosImageIndex] = useState(0)
+
+  useEffect(() => {
+    setConocenosImageIndex(0)
+  }, [conocenosBanner?.id, conocenosImageCandidates.length])
+
+  const conocenosImageSrc = conocenosImageCandidates[conocenosImageIndex] || ''
 
   const [ubicacionQuery, setUbicacionQuery] = useState('')
   const [ubicacionError, setUbicacionError] = useState('')
@@ -321,18 +348,18 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
         <div className="max-w-[1900px] mx-auto px-1 sm:px-1">
           <HeroCarousel
             className="rounded-3x1 border-0 bg-transparent backdrop-blur-0"
-            heightClassName="h-[40vh] min-h-[160px] sm:min-h-[300px] lg:min-h-[800px] max-h-[1000px]"
+            heightClassName="h-[32vh] min-h-[190px] sm:h-[38vh] sm:min-h-[280px] lg:h-[44vh] lg:min-h-[420px] xl:h-[52vh] xl:min-h-[520px] max-h-[640px]"
             slides={heroSlides}
           />
         </div>
       </div>
 
       <section className="rounded-2xl border bg-white p-6">
-        <h1 className="text-3xl font-bold" style={{ color: configuracion?.nombre_color || 'var(--color-primary, #E85D8E)', fontSize: configuracion?.nombre_font_size || undefined }}>
+        <h1 className="text-3xl font-bold" style={{ color: brandNameColor, fontSize: brandNameFontSize }}>
           {clinicName || 'Bienvenido'}
         </h1>
         {configuracion?.slogan && (
-          <p className="mt-1 text-lg font-medium" style={{ color: configuracion.slogan_color || 'var(--color-secondary, #3A4FA3)' }}>
+          <p className="mt-1 text-lg font-medium" style={{ color: sloganColor }}>
             {configuracion.slogan}
           </p>
         )}
@@ -434,14 +461,20 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-4 sm:p-6">
         <div className="grid md:grid-cols-2 gap-6 items-stretch">
           <div className="relative overflow-hidden rounded-2xl border min-h-[320px]" style={{ background: 'linear-gradient(to bottom right, var(--color-login-from, #0f172a), var(--color-secondary, #2563eb))' }}>
-            {banners?.[0]?.imagen_url || banners?.[0]?.imagen_fija_url ? (
+            {conocenosImageSrc ? (
               <img
-                src={banners[0].imagen_fija_url || banners[0].imagen_url}
-                alt={banners[0].titulo || clinicName}
+                src={conocenosImageSrc}
+                alt={conocenosBanner.titulo || clinicName}
                 className="absolute inset-0 h-full w-full object-cover"
                 loading="eager"
                 fetchPriority="high"
                 decoding="async"
+                onError={() => {
+                  setConocenosImageIndex((prev) => {
+                    if (prev + 1 < conocenosImageCandidates.length) return prev + 1
+                    return prev
+                  })
+                }}
               />
             ) : null}
             <div aria-hidden className="absolute inset-0 bg-gradient-to-r from-black/40 via-black/10 to-transparent" />

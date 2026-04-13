@@ -2,6 +2,35 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function construir_filtro_busqueda_pacientes(string $busqueda): array {
+    $busqueda = trim($busqueda);
+    if ($busqueda === '') {
+        return ['', [], ''];
+    }
+
+    $busquedaUpper = strtoupper($busqueda);
+
+    // Búsqueda exacta por historia clínica completa: aprovecha mejor el índice.
+    if (preg_match('/^HC\d+$/i', $busquedaUpper)) {
+        return ['WHERE historia_clinica = ?', [$busquedaUpper], 's'];
+    }
+
+    // Si es numérico, priorizar DNI exacto o prefijo de historia clínica.
+    if (preg_match('/^\d+$/', $busqueda)) {
+        if (strlen($busqueda) >= 8) {
+            return ['WHERE dni = ?', [$busqueda], 's'];
+        }
+        return ['WHERE dni LIKE ? OR historia_clinica LIKE ?', ["{$busqueda}%", "HC{$busqueda}%"], 'ss'];
+    }
+
+    $busquedaLike = "%$busqueda%";
+    return [
+        "WHERE nombre LIKE ? OR apellido LIKE ? OR CONCAT(nombre, ' ', apellido) LIKE ?",
+        [$busquedaLike, $busquedaLike, $busquedaLike],
+        'sss'
+    ];
+}
+
 // Función para generar el próximo número de historia clínica
 function generarProximaHistoriaClinica($conn) {
     // Obtener el último número de HC de la base de datos
@@ -186,15 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Filtro de búsqueda
     $busqueda = isset($_GET['busqueda']) ? trim($_GET['busqueda']) : '';
-    $where = '';
-    $params = [];
-    $types = '';
-    if ($busqueda !== '') {
-        $where = "WHERE nombre LIKE ? OR apellido LIKE ? OR dni LIKE ? OR historia_clinica LIKE ? OR CONCAT(nombre, ' ', apellido) LIKE ?";
-        $busquedaLike = "%$busqueda%";
-        $params = [$busquedaLike, $busquedaLike, $busquedaLike, $busquedaLike, $busquedaLike];
-        $types = 'sssss';
-    }
+    [$where, $params, $types] = construir_filtro_busqueda_pacientes($busqueda);
 
     // Obtener el total de pacientes filtrados
     if ($where) {

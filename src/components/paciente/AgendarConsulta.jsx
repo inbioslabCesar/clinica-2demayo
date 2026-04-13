@@ -20,6 +20,9 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const navigate = useNavigate();
   const qs = new URLSearchParams(location.search);
   const cotizacionIdNum = Number(cotizacionId || qs.get("cotizacion_id") || 0);
+  const origenFlujo = String(qs.get("origen") || "");
+  const accionFlujo = String(qs.get("accion") || "");
+  const backTo = String(qs.get("back_to") || "");
   const hasEditIntent = Boolean(isEditIntent || consultaId || (qs.get("modo") === "editar" && cotizacionIdNum > 0));
   const [resolvedConsultaId, setResolvedConsultaId] = useState(Number(consultaId || 0));
   const consultaIdNum = Number(resolvedConsultaId || 0);
@@ -59,8 +62,32 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const [cargandoConsultaEdicion, setCargandoConsultaEdicion] = useState(false);
   const [consultasDisponibles, setConsultasDisponibles] = useState([]);
   const [modoAgregarConsulta, setModoAgregarConsulta] = useState(false);
+  const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
+
+  const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal) => {
+    if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
+
+    const observacionBase = `Cita reprogramada para ${fecha} ${String(hora || "").slice(0, 5)}.`;
+    const response = await fetch(`${BASE_URL}api_recordatorios_citas.php`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        consulta_id: Number(consultaIdFinal),
+        estado: "pendiente",
+        observacion: observacionBase,
+        fecha_proximo_contacto: "",
+      }),
+    });
+
+    const result = await response.json();
+    if (!result?.success) {
+      throw new Error(result?.error || "No se pudo sincronizar el recordatorio tras reprogramar");
+    }
+    return { ok: true };
+  };
 
   useEffect(() => {
     const fromProp = Number(consultaId || 0);
@@ -170,6 +197,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   };
 
   const registrarAbonoCotizacion = async (cotizacionId, cobroId, monto) => {
+    const usuarioSesion = JSON.parse(sessionStorage.getItem("usuario") || "{}");
+    const usuarioId = Number(usuarioSesion?.id || 0);
     const response = await fetch(`${BASE_URL}api_cotizaciones.php`, {
       method: "POST",
       credentials: "include",
@@ -177,6 +206,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       body: JSON.stringify({
         accion: "registrar_abono",
         cotizacion_id: Number(cotizacionId),
+        usuario_id: usuarioId > 0 ? usuarioId : undefined,
         cobro_id: Number(cobroId),
         monto: Number(monto),
         descripcion: `Abono por cobro de consulta #${consultaCreada?.id || ""}`.trim(),
@@ -229,16 +259,21 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   useEffect(() => {
     // Cargar médicos y tarifas, luego filtrar
     Promise.all([
-      fetch(BASE_URL + "api_medicos.php").then(r => r.json()),
-      fetch(BASE_URL + "api_tarifas.php").then(r => r.json())
+      fetch(BASE_URL + "api_medicos.php", { credentials: "include" }).then(r => r.json()),
+      fetch(BASE_URL + "api_tarifas.php", { credentials: "include" }).then(r => r.json())
     ]).then(([medicosData, tarifasData]) => {
-      const medicosList = medicosData.medicos || [];
+      const medicosList = Array.isArray(medicosData?.medicos) ? medicosData.medicos : [];
       setMedicos(medicosList);
-      const tarifasConsultaFiltradas = (tarifasData.tarifas || []).filter(t => t.servicio_tipo === "consulta" && t.activo === 1 && t.medico_id);
+      const tarifasConsultaFiltradas = (Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : [])
+        .filter(t => t.servicio_tipo === "consulta" && Number(t.activo) === 1 && t.medico_id);
       setTarifasConsulta(tarifasConsultaFiltradas);
       const idsMedicosConTarifa = tarifasConsultaFiltradas.map(t => String(t.medico_id));
       const filtrados = medicosList.filter(m => idsMedicosConTarifa.includes(String(m.id)));
-      setMedicosConTarifa(filtrados);
+      setMedicosConTarifa(filtrados.length > 0 ? filtrados : medicosList);
+    }).catch(() => {
+      setMedicos([]);
+      setTarifasConsulta([]);
+      setMedicosConTarifa([]);
     });
   }, []);
 
@@ -478,6 +513,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
           fecha,
           hora,
           tipo_consulta: tipoConsulta || "programada",
+            origen_creacion: "cotizador",
         }),
       });
       const dataConsulta = await resConsulta.json();
@@ -560,6 +596,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
             fecha,
             hora,
             tipo_consulta: tipoConsulta,
+            origen_creacion: "cotizador",
           }),
         });
         const dataCrear = await resCrear.json();
@@ -591,7 +628,12 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
           confirmButtonText: "Aceptar",
           confirmButtonColor: "#2563eb",
         });
-        navigate(cotizacionIdNum > 0 ? "/cotizaciones" : "/lista-consultas");
+        try {
+          await sincronizarRecordatorioPostReprogramacion(consultaFinalId);
+        } catch {
+          // No bloquear la navegación principal por falla de sincronización de recordatorio.
+        }
+        navigate(backTo || (cotizacionIdNum > 0 ? "/cotizaciones" : "/lista-consultas"));
         return;
       }
 
@@ -629,7 +671,18 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
         confirmButtonColor: "#2563eb",
       });
 
-      navigate(cotizacionIdNum > 0 ? "/cotizaciones" : "/lista-consultas");
+      try {
+        await sincronizarRecordatorioPostReprogramacion(consultaIdNum);
+      } catch (e) {
+        await MySwal.fire({
+          icon: "warning",
+          title: "Consulta reprogramada con observación",
+          text: e?.message || "No se pudo sincronizar el recordatorio automáticamente.",
+          confirmButtonText: "Entendido",
+        });
+      }
+
+      navigate(backTo || (cotizacionIdNum > 0 ? "/cotizaciones" : "/lista-consultas"));
     } catch (error) {
       setMsg(error?.message || "Error al actualizar la consulta");
     } finally {
@@ -641,11 +694,13 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     if (tipoConsulta !== "espontanea") return true;
 
     const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
+    const usuarioSesionId = Number(usuario?.id || 0);
     let cajaAbierta = null;
     try {
       const cajaRes = await fetch(BASE_URL + "api_caja_actual.php", { credentials: "include" });
       const cajaData = await cajaRes.json();
-      if (cajaData.success && cajaData.caja && cajaData.caja.usuario_id === usuario.id) {
+      const usuarioCajaId = Number(cajaData?.caja?.usuario_id || 0);
+      if (cajaData.success && cajaData.caja && usuarioSesionId > 0 && usuarioCajaId === usuarioSesionId) {
         cajaAbierta = cajaData.caja;
       }
     } catch {
@@ -720,19 +775,17 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     setProcessingAction(accion);
     try {
       const { consultaInfo, detalleConsulta, total } = await crearConsultaYDetalle();
+      const cotizacionId = await registrarCotizacionConsulta(
+        consultaInfo,
+        detalleConsulta,
+        total
+      );
 
       setDetallesConsulta([detalleConsulta]);
       setTotalConsulta(total);
-      setConsultaCreada({ ...consultaInfo, cotizacion_id: null });
+      setConsultaCreada({ ...consultaInfo, cotizacion_id: cotizacionId });
 
       if (accion === "cotizar") {
-        const cotizacionId = await registrarCotizacionConsulta(
-          consultaInfo,
-          detalleConsulta,
-          total
-        );
-
-        setConsultaCreada({ ...consultaInfo, cotizacion_id: cotizacionId });
         setMsg("");
 
         await MySwal.fire({
@@ -857,6 +910,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
             consultaFecha: fecha,
             consultaHora: hora,
             consultaTipoConsulta: tipoConsulta,
+            consultaId: consultaIdNum > 0 ? Number(consultaIdNum) : null,
           },
         ],
       });
@@ -874,7 +928,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     }
   };
 
-  const manejarCobroCompleto = async (cobroId, _servicio) => {
+  const manejarCobroCompleto = async (cobroId, _servicio, cobroResumen = null) => {
     setMostrarCobro(false);
 
     let cotizacionId = consultaCreada?.cotizacion_id
@@ -883,19 +937,14 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     let errorCotizacion = null;
 
     try {
-      if (!cotizacionId) {
-        const detalle = detallesConsulta[0];
-        if (detalle) {
-          cotizacionId = await registrarCotizacionConsulta(
-            consultaCreada,
-            detalle,
-            totalConsulta
-          );
-        }
-      }
-
       if (cotizacionId) {
-        const montoCobrado = await obtenerMontoCobro(cobroId, totalConsulta);
+        const montoResumen = Number(cobroResumen?.total_cobrado);
+        const montoFallback = Number.isFinite(montoResumen) && montoResumen > 0
+          ? montoResumen
+          : totalConsulta;
+        const montoCobrado = montoFallback > 0
+          ? montoFallback
+          : await obtenerMontoCobro(cobroId, totalConsulta);
         if (montoCobrado > 0) {
           await registrarAbonoCotizacion(cotizacionId, cobroId, montoCobrado);
         }

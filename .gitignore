@@ -19,6 +19,10 @@ config.php
 .env.local
 .env.production
 .env.development
+config/instance.local.php
+config/instances/*.php
+!config/instances/clinic.example.php
+clinica-config/
 
 # Database and sensitive files
 debug_session*.txt

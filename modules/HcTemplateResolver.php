@@ -1,23 +1,25 @@
 <?php
 
-function hc_table_exists($conn, $table) {
-    static $cache = [];
-    $key = "tbl::$table";
-    if (isset($cache[$key])) {
-        return $cache[$key];
-    }
+if (!function_exists('hc_table_exists')) {
+    function hc_table_exists($conn, $table) {
+        static $cache = [];
+        $key = "tbl::$table";
+        if (isset($cache[$key])) {
+            return $cache[$key];
+        }
 
-    $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
-    if (!$stmt) {
-        return false;
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        $cache[$key] = $exists;
+        return $exists;
     }
-    $stmt->bind_param('s', $table);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $exists = $res && $res->num_rows > 0;
-    $stmt->close();
-    $cache[$key] = $exists;
-    return $exists;
 }
 
 function hc_slugify_text($value) {
@@ -35,6 +37,33 @@ function hc_slugify_text($value) {
     $value = preg_replace('/[^a-z0-9]+/', '_', $value);
     $value = preg_replace('/_+/', '_', $value);
     return trim((string)$value, '_');
+}
+
+function hc_specialty_match_key($value) {
+    $slug = hc_slugify_text($value);
+    if ($slug === '') return '';
+
+    $rules = [
+        '/ologia$/' => 'olog',
+        '/ologo$/' => 'olog',
+        '/ologa$/' => 'olog',
+        '/iatria$/' => 'iatr',
+        '/iatra$/' => 'iatr',
+        '/ismo$/' => 'ism',
+        '/ista$/' => 'ist',
+        '/ico$/' => 'ic',
+        '/ica$/' => 'ic',
+    ];
+
+    foreach ($rules as $pattern => $replacement) {
+        $reduced = preg_replace($pattern, $replacement, $slug);
+        if (is_string($reduced) && $reduced !== $slug && strlen($reduced) >= 5) {
+            $slug = $reduced;
+            break;
+        }
+    }
+
+    return $slug;
 }
 
 function hc_get_builtin_templates() {
@@ -138,6 +167,73 @@ function hc_specialty_to_template_id($specialty) {
         return 'pediatria';
     }
     return 'medicina_general';
+}
+
+function hc_find_template_id_by_specialty($conn, $specialty, $clinicKey = '') {
+    $slug = hc_slugify_text($specialty);
+    $slugKey = hc_specialty_match_key($specialty);
+    if ($slug === '' || !hc_table_exists($conn, 'hc_templates')) {
+        return '';
+    }
+
+    $hasClinicCol = hc_column_exists_hc_templates($conn, 'clinic_key');
+    $sql = 'SELECT template_id, nombre' . ($hasClinicCol ? ', clinic_key' : ', NULL AS clinic_key') . ' FROM hc_templates WHERE activo = 1';
+
+    $stmt = null;
+    if ($hasClinicCol && $clinicKey !== '') {
+        $sql .= ' AND (clinic_key = ? OR clinic_key IS NULL OR clinic_key = "")';
+        $sql .= ' ORDER BY (clinic_key = ?) DESC, id DESC';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return '';
+        }
+        $stmt->bind_param('ss', $clinicKey, $clinicKey);
+    } else {
+        $sql .= ' ORDER BY id DESC';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return '';
+        }
+    }
+
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $bestTemplateId = '';
+    $bestScore = -1;
+
+    while ($row = $res->fetch_assoc()) {
+        $tplId = trim((string)($row['template_id'] ?? ''));
+        if ($tplId === '') {
+            continue;
+        }
+
+        $tplSlug = hc_slugify_text($tplId);
+        $nameSlug = hc_slugify_text($row['nombre'] ?? '');
+        $tplKey = hc_specialty_match_key($tplId);
+        $nameKey = hc_specialty_match_key($row['nombre'] ?? '');
+        $score = 0;
+
+        if ($tplSlug === $slug) {
+            $score = 100;
+        } elseif ($nameSlug === $slug) {
+            $score = 95;
+        } elseif ($slugKey !== '' && ($tplKey === $slugKey || $nameKey === $slugKey)) {
+            $score = 92;
+        } elseif ($nameSlug !== '' && strpos($nameSlug, $slug) !== false) {
+            $score = 80;
+        } elseif ($tplSlug !== '' && strpos($tplSlug, $slug) !== false) {
+            $score = 70;
+        }
+
+        if ($score > $bestScore) {
+            $bestScore = $score;
+            $bestTemplateId = $tplId;
+        }
+    }
+
+    $stmt->close();
+    return $bestScore > 0 ? $bestTemplateId : '';
 }
 
 function hc_guess_clinic_key($conn) {
@@ -367,7 +463,10 @@ function hc_resolve_template($conn, $options = []) {
                 $resolvedBy = 'consulta_especialidad';
             }
         }
-        $templateId = hc_specialty_to_template_id($detectedEspecialidad);
+        $templateId = hc_find_template_id_by_specialty($conn, $detectedEspecialidad, $clinicKey);
+        if ($templateId === '') {
+            $templateId = hc_specialty_to_template_id($detectedEspecialidad);
+        }
         if ($resolvedBy === 'default' && $detectedEspecialidad !== '') {
             $resolvedBy = 'especialidad';
         }

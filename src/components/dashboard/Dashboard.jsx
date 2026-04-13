@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import RecepcionModulo from "../cobro/RecepcionModulo";
 import { BASE_URL } from "../../config/config";
 import { Icon } from '@fluentui/react';
+import QuickAccessNav from "../comunes/QuickAccessNav";
 
 function Dashboard({ usuario }) {
   const [ultimaHC, setUltimaHC] = useState(null);
@@ -154,6 +155,9 @@ function Dashboard({ usuario }) {
           </div>
         </div>
       </div>
+
+      {/* Accesos rápidos */}
+      <QuickAccessNav keys={["pacientes", "recordatorios", "listaConsultas", "cotizaciones", "reporteCaja"]} className="mb-4" />
 
       {/* Módulo de Recepción Modernizado */}
       <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">

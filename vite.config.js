@@ -11,7 +11,8 @@ export default defineConfig({
     proxy: {
       '/api_': {
         target: 'http://localhost/clinica-2demayo',
-        changeOrigin: true,
+        // Keep original host (e.g. *.devtunnels.ms) so PHP emits a valid session cookie domain.
+        changeOrigin: false,
         secure: false,
       }
     }

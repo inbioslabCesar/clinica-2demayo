@@ -70,6 +70,69 @@ function limpiarDescripcionConsulta(descripcion) {
   return raw;
 }
 
+function clavePagoServicio(tipo, servicioId) {
+  return `${normalizarServicio(tipo)}:${Number(servicioId || 0)}`;
+}
+
+function construirPagosFallbackDesdeCobros(cotizacion, cobros) {
+  const detalles = Array.isArray(cotizacion?.detalles) ? cotizacion.detalles : [];
+  const detallesActivos = detalles.filter(
+    (d) => String(d?.estado_item || "activo").toLowerCase() !== "eliminado" && Number(d?.cantidad || 0) > 0
+  );
+  const clavesCotizacion = new Set(
+    detallesActivos.map((d) => clavePagoServicio(d?.servicio_tipo, d?.servicio_id))
+  );
+
+  if (clavesCotizacion.size === 0) return [];
+
+  const totalCotizacion = Math.max(0, Number(cotizacion?.total || 0));
+  if (totalCotizacion <= 0) return [];
+
+  const cobrosRelacionados = (Array.isArray(cobros) ? cobros : [])
+    .filter((cobro) => {
+      const detallesCobro = Array.isArray(cobro?.detalles) ? cobro.detalles : [];
+      return detallesCobro.some((detalle) => clavesCotizacion.has(clavePagoServicio(detalle?.servicio_tipo, detalle?.servicio_id)));
+    })
+    .sort((a, b) => {
+      const fechaA = new Date(a?.fecha_cobro || 0).getTime();
+      const fechaB = new Date(b?.fecha_cobro || 0).getTime();
+      if (fechaA !== fechaB) return fechaA - fechaB;
+      return Number(a?.id || 0) - Number(b?.id || 0);
+    });
+
+  let acumulado = 0;
+  const salida = [];
+
+  for (const cobro of cobrosRelacionados) {
+    const montoCobro = Math.max(0, Number(cobro?.total || 0));
+    const saldoAnterior = Math.max(0, Number((totalCotizacion - acumulado).toFixed(2)));
+    const montoAplicado = Math.min(montoCobro, saldoAnterior);
+    if (montoAplicado <= 0) continue;
+
+    acumulado = Number((acumulado + montoAplicado).toFixed(2));
+    const saldoNuevo = Math.max(0, Number((totalCotizacion - acumulado).toFixed(2)));
+
+    salida.push({
+      id: `fallback-${cobro?.id || salida.length}`,
+      cobro_id: Number(cobro?.id || 0),
+      tipo_movimiento: "abono",
+      monto: montoAplicado,
+      saldo_anterior: saldoAnterior,
+      saldo_nuevo: saldoNuevo,
+      descripcion: `Abono detectado desde cobro #${cobro?.id || "-"}`,
+      usuario_id: Number(cobro?.usuario_id || 0),
+      usuario_nombre: cobro?.usuario_nombre || "Sistema",
+      metodo_pago: cobro?.tipo_pago || "",
+      created_at: cobro?.fecha_cobro || null,
+      fallback: true,
+    });
+
+    if (saldoNuevo <= 0) break;
+  }
+
+  return salida.reverse();
+}
+
 export default function DetalleCotizacionPage() {
   const navigate = useNavigate();
   const { cotizacionId } = useParams();
@@ -107,8 +170,10 @@ export default function DetalleCotizacionPage() {
       setLoading(true);
       setError("");
       try {
-        const resCot = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, {
+        const cacheBuster = Date.now();
+        const resCot = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
           credentials: "include",
+          cache: "no-store",
         });
         const dataCot = await resCot.json();
         if (!dataCot?.success || !dataCot?.cotizacion) {
@@ -124,16 +189,38 @@ export default function DetalleCotizacionPage() {
           historia_clinica: String(cot?.historia_clinica || ""),
         };
 
-        const resPagos = await fetch(
-          `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}`,
-          { credentials: "include" }
-        );
-        const dataPagos = await resPagos.json();
+        const pagosEmbebidos = Array.isArray(cot?.pagos) ? cot.pagos : null;
+
+        let pagosCargados = Array.isArray(pagosEmbebidos) ? pagosEmbebidos : null;
+        if (!Array.isArray(pagosCargados) || pagosCargados.length === 0) {
+          const resPagos = await fetch(
+            `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
+            {
+              credentials: "include",
+              cache: "no-store",
+            }
+          );
+          const dataPagos = await resPagos.json();
+          pagosCargados = dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [];
+        }
+
+        if ((!Array.isArray(pagosCargados) || pagosCargados.length === 0) && pacienteData.id > 0) {
+          const resCobros = await fetch(
+            `${BASE_URL}api_cobros.php?paciente_id=${Number(pacienteData.id)}&_t=${cacheBuster}`,
+            {
+              credentials: "include",
+              cache: "no-store",
+            }
+          );
+          const dataCobros = await resCobros.json();
+          const cobrosPaciente = dataCobros?.success && Array.isArray(dataCobros?.cobros) ? dataCobros.cobros : [];
+          pagosCargados = construirPagosFallbackDesdeCobros(cot, cobrosPaciente);
+        }
 
         if (!mounted) return;
         setCotizacion(cot);
         setPaciente(pacienteData);
-        setPagos(dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : []);
+        setPagos(Array.isArray(pagosCargados) ? pagosCargados : []);
       } catch (err) {
         if (!mounted) return;
         setError(err?.message || "No se pudo cargar el detalle de la cotizacion");
@@ -276,6 +363,16 @@ export default function DetalleCotizacionPage() {
 
     return salida;
   }, [detallesActivos, descuentoAplicado, totalItemsBruto]);
+
+  const pagosRender = useMemo(() => {
+    if (Array.isArray(pagos) && pagos.length > 0) {
+      return pagos;
+    }
+    if (Array.isArray(cotizacion?.pagos) && cotizacion.pagos.length > 0) {
+      return cotizacion.pagos;
+    }
+    return [];
+  }, [pagos, cotizacion?.pagos]);
 
   const estado = String(cotizacion?.estado || "").toLowerCase();
   const puedeEditar = estado !== "anulada";
@@ -572,11 +669,11 @@ export default function DetalleCotizacionPage() {
               </tr>
             </thead>
             <tbody>
-              {pagos.length === 0 ? (
+              {pagosRender.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-3 py-6 text-center text-gray-500">No hay pagos registrados para esta cotizacion.</td>
                 </tr>
-              ) : pagos.map((pago) => {
+              ) : pagosRender.map((pago) => {
                 const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
                 const esDescuento = tipo === "devolucion";
                 const fecha = pago?.created_at ? new Date(pago.created_at).toLocaleString("es-PE") : "-";

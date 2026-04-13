@@ -6,6 +6,7 @@ export default function ResultadosLaboratorioPage() {
   const { consultaId } = useParams();
   const [resultados, setResultados] = useState([]);
   const [documentosExternos, setDocumentosExternos] = useState([]);
+  const [referenciadosPendientes, setReferenciados] = useState([]);
   const [examenes, setExamenes] = useState([]);
   const [archivoVisor, setArchivoVisor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,6 +31,7 @@ export default function ResultadosLaboratorioPage() {
         if (resLab.success) {
           setResultados(resLab.resultados || []);
           setDocumentosExternos(resLab.documentos_externos || []);
+          setReferenciados(resLab.examenes_referenciados_pendientes || []);
           setError("");
         } else {
           setError(resLab.error || "No hay resultados");
@@ -324,6 +326,34 @@ export default function ResultadosLaboratorioPage() {
         </div>
       )}
 
+      {!loading && !error && referenciadosPendientes.length > 0 && (
+        <div className="mt-8 border-2 border-amber-200 rounded-xl p-5 bg-gradient-to-r from-amber-50 to-yellow-50 shadow">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xl">⏳</span>
+            <h3 className="text-base font-bold text-amber-800">Resultados de Laboratorio Externo — En Proceso</h3>
+          </div>
+          <p className="text-sm text-amber-700 mb-4">
+            Los siguientes exámenes fueron derivados a un laboratorio externo. Los resultados aún no han sido subidos al sistema.
+          </p>
+          <div className="space-y-2">
+            {referenciadosPendientes.map((item, i) => (
+              <div key={i} className="flex items-center gap-3 bg-white border border-amber-200 rounded-lg px-4 py-3">
+                <span className="text-lg">🧪</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{item.descripcion || "Examen referenciado"}</p>
+                  {item.laboratorio && (
+                    <p className="text-xs text-amber-600 font-medium mt-0.5">🏥 {item.laboratorio}</p>
+                  )}
+                </div>
+                <span className="flex-shrink-0 text-xs bg-amber-100 text-amber-700 border border-amber-300 font-semibold px-2.5 py-1 rounded-full whitespace-nowrap">
+                  Pendiente de subida
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {!loading && !error && documentosExternos.length > 0 && (
         <div className="mt-8 border-2 border-blue-200 rounded-xl p-5 bg-gradient-to-r from-blue-50 to-indigo-50 shadow">
           <div className="flex items-center gap-2 mb-4">
@@ -335,8 +365,13 @@ export default function ResultadosLaboratorioPage() {
               <div key={doc.documento_id} className="bg-white border border-blue-200 rounded-lg p-3">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
                   <div>
-                    <p className="font-semibold text-blue-900">{doc.titulo || `Documento #${doc.documento_id}`}</p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-base font-bold text-blue-800 leading-snug">
+                      {doc.titulo || `Documento #${doc.documento_id}`}
+                    </p>
+                    {doc.descripcion && (
+                      <p className="text-sm text-indigo-700 font-medium mt-0.5">📝 {doc.descripcion}</p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
                       Orden #{doc.orden_id || "-"} · {doc.fecha ? new Date(doc.fecha).toLocaleString('es-ES') : "Sin fecha"}
                     </p>
                   </div>

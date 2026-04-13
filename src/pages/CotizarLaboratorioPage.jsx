@@ -16,6 +16,65 @@ export default function CotizarLaboratorioPage() {
     const normalized = String(value ?? "").trim().toLowerCase();
     return normalized === "1" || normalized === "true" || normalized === "si" || normalized === "sí" || normalized === "yes";
   };
+  const normalizeDerivacionConfig = (raw) => {
+    const derivado = asBool(raw?.derivado);
+    if (!derivado) {
+      return {
+        derivado: false,
+        tipo: "",
+        valor: "",
+        laboratorio: "",
+      };
+    }
+
+    const tipoRaw = raw?.tipo ?? raw?.tipo_derivacion ?? "";
+    const valorRaw = raw?.valor ?? raw?.valor_derivacion ?? "";
+    const valorNum = valorRaw === "" || valorRaw === null || valorRaw === undefined ? "" : Number(valorRaw);
+
+    return {
+      derivado: true,
+      tipo: String(tipoRaw || "").trim().toLowerCase(),
+      valor: Number.isFinite(valorNum) ? valorNum : "",
+      laboratorio: String(raw?.laboratorio ?? raw?.laboratorio_referencia ?? "").trim(),
+    };
+  };
+  const sameDerivacionConfig = (leftRaw, rightRaw) => {
+    const left = normalizeDerivacionConfig(leftRaw);
+    const right = normalizeDerivacionConfig(rightRaw);
+
+    if (left.derivado !== right.derivado) return false;
+    if (!left.derivado) return true;
+
+    return (
+      left.tipo === right.tipo
+      && left.laboratorio.trim().toLowerCase() === right.laboratorio.trim().toLowerCase()
+      && Number(left.valor || 0) === Number(right.valor || 0)
+    );
+  };
+  const validarDerivaciones = (ids) => {
+    for (const rawId of ids) {
+      const exId = Number(rawId);
+      const derivacion = normalizeDerivacionConfig(derivaciones[exId]);
+      if (!derivacion.derivado) continue;
+
+      const examen = examenes.find((item) => Number(item.id) === exId);
+      const nombre = examen?.nombre || `Examen #${exId}`;
+      if (!derivacion.laboratorio) {
+        return `El examen "${nombre}" requiere laboratorio de referencia.`;
+      }
+      if (!["monto", "porcentaje"].includes(derivacion.tipo)) {
+        return `El examen "${nombre}" requiere elegir monto fijo o porcentaje.`;
+      }
+      if (derivacion.valor === "" || !Number.isFinite(Number(derivacion.valor)) || Number(derivacion.valor) < 0) {
+        return `El examen "${nombre}" requiere un valor de derivación válido.`;
+      }
+      if (derivacion.tipo === "porcentaje" && Number(derivacion.valor) > 100) {
+        return `El porcentaje de derivación para "${nombre}" no puede ser mayor a 100.`;
+      }
+    }
+
+    return "";
+  };
 
   // Estado para configuración de derivación por examen
   const [derivaciones, setDerivaciones] = useState({}); // { [examenId]: { derivado: bool, tipo: 'monto'|'porcentaje', valor: number, laboratorio: string } }
@@ -223,18 +282,26 @@ export default function CotizarLaboratorioPage() {
         const nextTipo = it.tipo_derivacion || "";
         const nextValor = it.valor_derivacion ?? "";
         const nextLaboratorio = it.laboratorio_referencia || "";
+        // IMPORTANTE: Solo considerar como "realmente derivado" si hay laboratorio_referencia
+        const hasLabReference = String(nextLaboratorio).trim() !== '';
+        const realDerivado = nextDerivado && hasLabReference;
 
         if (!countsMap[exId]) {
           countsMap[exId] = {
             cantidad: 0,
-            derivado: nextDerivado,
-            tipo: nextTipo,
-            valor: nextValor,
-            laboratorio: nextLaboratorio,
+            derivado: realDerivado,
+            tipo: realDerivado ? nextTipo : "",
+            valor: realDerivado ? nextValor : "",
+            laboratorio: realDerivado ? nextLaboratorio : "",
           };
         } else {
           // Si existe más de una línea para el mismo examen, conservar la configuración derivada más completa.
-          countsMap[exId].derivado = countsMap[exId].derivado || nextDerivado;
+          if (realDerivado && !countsMap[exId].derivado) {
+            countsMap[exId].derivado = true;
+            countsMap[exId].tipo = nextTipo;
+            countsMap[exId].valor = nextValor;
+            countsMap[exId].laboratorio = nextLaboratorio;
+          }
           if (!countsMap[exId].tipo && nextTipo) countsMap[exId].tipo = nextTipo;
           if ((countsMap[exId].valor === "" || countsMap[exId].valor === null || countsMap[exId].valor === undefined) && (nextValor !== "" && nextValor !== null && nextValor !== undefined)) {
             countsMap[exId].valor = nextValor;
@@ -278,6 +345,12 @@ export default function CotizarLaboratorioPage() {
       ...Object.keys(preloadedLab || {}).map(Number)
     ]);
 
+    const errorDerivacion = validarDerivaciones(Array.from(allIds).filter((exId) => seleccionados.includes(Number(exId))));
+    if (errorDerivacion) {
+      Swal.fire('Atención', errorDerivacion, 'warning');
+      return;
+    }
+
     const itemsToAdd = [];
     const reductions = [];
 
@@ -285,29 +358,36 @@ export default function CotizarLaboratorioPage() {
       const exId = Number(exIdNum);
       const isSelected = seleccionados.includes(exId);
       const preQty = Number(preloadedLab[exId]?.cantidad || 0);
+      const deriv = normalizeDerivacionConfig(derivaciones[exId] || {});
+      const prevDeriv = normalizeDerivacionConfig(preloadedLab[exId] || {});
+      const metadataChanged = preQty > 0 && isSelected && !sameDerivacionConfig(deriv, prevDeriv);
       // Laboratorio usa checkbox (no hay control de cantidad).
       // Si el examen ya existía en el cobro y sigue seleccionado, NO debemos reducir su cantidad
       // (p.ej. si estaba duplicado en BD con cantidad>1). Solo reducimos cuando el usuario desmarca.
       const desiredQty = isSelected ? Math.max(preQty, 1) : 0;
       const diff = desiredQty - preQty;
-      if (diff > 0) {
-        const deriv = derivaciones[exId] || {};
+      if (diff > 0 || metadataChanged) {
         const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exId && t.activo === 1);
         const ex = examenes.find(e => Number(e.id) === exId);
         const precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+        const qtyToAdd = metadataChanged ? Math.max(preQty, 1) : diff;
         itemsToAdd.push({
           servicio_id: exId,
           descripcion: ex?.nombre || "Examen",
-          cantidad: diff,
+          cantidad: qtyToAdd,
           precio_unitario: precio,
-          subtotal: precio * diff,
-          derivado: asBool(deriv.derivado),
+          subtotal: precio * qtyToAdd,
+          derivado: deriv.derivado,
           tipo_derivacion: deriv.tipo || "",
           valor_derivacion: deriv.valor || 0,
           laboratorio_referencia: deriv.laboratorio || ""
         });
-      } else if (diff < 0) {
+      }
+      if (diff < 0 || metadataChanged) {
         reductions.push({ servicio_id: exId, cantidad_eliminar: Math.abs(diff) });
+        if (metadataChanged) {
+          reductions[reductions.length - 1].cantidad_eliminar = Math.max(preQty, 1);
+        }
       }
     });
 
@@ -580,6 +660,12 @@ export default function CotizarLaboratorioPage() {
       return;
     }
 
+    const errorDerivacion = validarDerivaciones(seleccionados);
+    if (errorDerivacion) {
+      Swal.fire('Atención', errorDerivacion, 'warning');
+      return;
+    }
+
     const seleccionadosParaCarrito = isEditingCotizacion
       ? seleccionados.filter((exId) => Number(preloadedLab[exId]?.cantidad || 0) <= 0)
       : seleccionados;
@@ -673,6 +759,12 @@ export default function CotizarLaboratorioPage() {
       return;
     }
 
+    const errorDerivacion = validarDerivaciones(seleccionados);
+    if (errorDerivacion) {
+      Swal.fire('Atención', errorDerivacion, 'warning');
+      return;
+    }
+
     let limpiarCarritoAlFinal = false;
     const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
     const esMismoPacienteCarrito = Number(cart?.patientId || 0) === Number(pacienteId || 0);
@@ -729,12 +821,24 @@ export default function CotizarLaboratorioPage() {
 
       const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
       if (!data?.success && cotizacionId && noEditable) {
+        const confirmAdenda = await Swal.fire({
+          title: 'Cotización ya pagada',
+          text: `La cotización #${Number(cotizacionId)} no se puede editar directamente. ¿Deseas crear una adenda nueva con estos cambios?`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Sí, crear adenda',
+          cancelButtonText: 'No, cancelar',
+        });
+        if (!confirmAdenda.isConfirmed) {
+          setMensaje('Operación cancelada. No se creó ninguna adenda.');
+          return;
+        }
         const payloadAdenda = {
           accion: 'adenda',
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
-          motivo: 'Adenda automática desde cotizador de Laboratorio (cotización pagada)'
+          motivo: 'Adenda confirmada por usuario desde cotizador de Laboratorio (cotización pagada)'
         };
         const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
           method: 'POST',

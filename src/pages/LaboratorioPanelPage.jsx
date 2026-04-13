@@ -34,7 +34,7 @@ function LaboratorioPanelPage() {
   useEffect(() => {
     if (activeTab !== 'ordenes') return;
 
-    fetch(BASE_URL + "api_ordenes_laboratorio.php", {
+    fetch(BASE_URL + "api_ordenes_laboratorio.php?solo_visibles_panel=1", {
       credentials: 'include'
     })
       .then(res => res.json())
@@ -57,9 +57,6 @@ function LaboratorioPanelPage() {
 
 
   const handleSeleccionarOrden = useCallback(async (orden) => {
-    if (orden.estado === 'cancelada') {
-      return;
-    }
     try {
       const idBusqueda = orden.id;
       const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
@@ -91,7 +88,7 @@ function LaboratorioPanelPage() {
 
     const resolverDesdeDeepLink = async () => {
       try {
-        const res = await fetch(BASE_URL + "api_ordenes_laboratorio.php", {
+        const res = await fetch(BASE_URL + "api_ordenes_laboratorio.php?solo_visibles_panel=1", {
           credentials: 'include'
         });
         const data = await res.json();

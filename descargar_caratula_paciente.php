@@ -27,6 +27,25 @@ function findCaratulaBackgroundPath() {
     return null;
 }
 
+function findConfiguredCaratulaBackgroundPath($conn) {
+    $sql = "SELECT caratula_fondo_url FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1";
+    $res = $conn->query($sql);
+    if (!$res) return null;
+    $row = $res->fetch_assoc();
+    if (!$row) return null;
+
+    $raw = trim((string)($row['caratula_fondo_url'] ?? ''));
+    if ($raw === '') return null;
+
+    $raw = str_replace('\\\\', '/', $raw);
+    $candidate = __DIR__ . '/' . ltrim($raw, '/');
+    if (is_file($candidate)) {
+        return $candidate;
+    }
+
+    return null;
+}
+
 function printable($value, $fallback = '-') {
     $v = trim((string)($value ?? ''));
     return $v === '' ? $fallback : $v;
@@ -56,7 +75,7 @@ if (!$paciente) {
     exit;
 }
 
-$backgroundImageFile = findCaratulaBackgroundPath();
+$backgroundImageFile = findConfiguredCaratulaBackgroundPath($conn) ?: findCaratulaBackgroundPath();
 
 $hc = h(printable($paciente['historia_clinica'] ?? ('HC' . str_pad((string)$paciente['id'], 4, '0', STR_PAD_LEFT))));
 $fechaHc = h(printable($paciente['fecha_hc'] ?? ''));

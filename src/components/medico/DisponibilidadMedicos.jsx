@@ -62,11 +62,14 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     // (Eliminadas las declaraciones duplicadas)
   useEffect(() => {
     Promise.all([
-      fetch(`${BASE_URL}api_medicos.php`).then(r => r.json()),
-      fetch(`${BASE_URL}api_consultas.php`, { credentials: 'include' }).then(r => r.json())
+      fetch(`${BASE_URL}api_medicos.php`, { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
+      fetch(`${BASE_URL}api_consultas.php?_t=${refreshKey}`, { credentials: 'include', cache: 'no-store' }).then(r => r.json())
     ]).then(([m, c]) => {
-      setMedicos(m.medicos || []);
-      setConsultas(c.consultas || []);
+      setMedicos(Array.isArray(m?.medicos) ? m.medicos : []);
+      setConsultas(Array.isArray(c?.consultas) ? c.consultas : []);
+    }).catch(() => {
+      setMedicos([]);
+      setConsultas([]);
     });
   }, [refreshKey]);
 
@@ -194,7 +197,9 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
                     const horaInicio = normalizeHHMM(bloque.hora_inicio);
                     const horaFinNorm = normalizeHHMM(bloque.hora_fin);
                     const agendadas = consultas.filter(c => {
-                      const mismaFecha = bloque.fecha ? c.fecha === bloque.fecha : true;
+                      const mismaFecha = bloque.fecha
+                        ? normalizeDateYMD(c.fecha) === normalizeDateYMD(bloque.fecha)
+                        : true;
                       const horaConsulta = normalizeHHMM(c.hora);
                       return (
                         c.medico_id == medico.id &&

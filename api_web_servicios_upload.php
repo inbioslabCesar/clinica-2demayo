@@ -42,11 +42,12 @@ $mime = $finfo->file($tmpPath);
 $allowed = [
     'image/png' => 'png',
     'image/jpeg' => 'jpg',
+    'image/webp' => 'webp',
 ];
 
 if (!isset($allowed[$mime])) {
     http_response_code(400);
-    echo json_encode(['success' => false, 'error' => 'Formato no permitido. Solo PNG o JPG']);
+    echo json_encode(['success' => false, 'error' => 'Formato no permitido. Solo PNG, JPG o WebP']);
     exit;
 }
 

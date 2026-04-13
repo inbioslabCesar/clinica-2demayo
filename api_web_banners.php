@@ -56,11 +56,17 @@ function normalizeImageUrl($url) {
     return $url;
 }
 
+function tableHasColumn($pdo, $table, $column) {
+    $stmt = $pdo->prepare("SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1");
+    $stmt->execute([$table, $column]);
+    return (bool)$stmt->fetchColumn();
+}
+
 try {
     if ($method === 'GET') {
         try {
             try {
-                $stmt = $pdo->query("SELECT id, titulo, subtitulo, imagen_url, imagen_fija_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden, activo FROM public_banners ORDER BY orden ASC, id DESC");
+                $stmt = $pdo->query("SELECT id, titulo, subtitulo, imagen_url, imagen_fija_url, imagen_conocenos_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden, activo FROM public_banners ORDER BY orden ASC, id DESC");
                 $banners = $stmt->fetchAll(PDO::FETCH_ASSOC);
             } catch (PDOException $e2) {
                 // Compatibilidad si aún no se ejecutaron algunas migraciones
@@ -71,6 +77,7 @@ try {
                     foreach ($banners as &$b2) {
                         $b2['overlay_blanco'] = 1;
                         $b2['texto_lado'] = 'left';
+                        $b2['imagen_conocenos_url'] = null;
                         $b2['titulo_color'] = null;
                         $b2['subtitulo_color'] = null;
                         $b2['titulo_tamano'] = 'lg';
@@ -84,6 +91,7 @@ try {
             foreach ($banners as &$b) {
                 $b['imagen_url'] = normalizeImageUrl($b['imagen_url'] ?? '');
                 $b['imagen_fija_url'] = normalizeImageUrl($b['imagen_fija_url'] ?? '');
+                $b['imagen_conocenos_url'] = normalizeImageUrl($b['imagen_conocenos_url'] ?? '');
                 $b['overlay_blanco'] = isset($b['overlay_blanco']) ? intval($b['overlay_blanco']) : 1;
                 $b['texto_lado'] = (($b['texto_lado'] ?? 'left') === 'right') ? 'right' : 'left';
                 $b['titulo_color'] = isset($b['titulo_color']) ? trim((string)$b['titulo_color']) : '';
@@ -118,6 +126,7 @@ try {
         $subtitulo = isset($data['subtitulo']) ? trim((string)$data['subtitulo']) : null;
         $imagenUrl = trim((string)($data['imagen_url'] ?? ''));
         $imagenFijaUrl = trim((string)($data['imagen_fija_url'] ?? ''));
+        $imagenConocenosUrl = trim((string)($data['imagen_conocenos_url'] ?? ''));
         $overlayBlanco = isset($data['overlay_blanco']) ? intval((bool)$data['overlay_blanco']) : 1;
         $textoLado = (($data['texto_lado'] ?? 'left') === 'right') ? 'right' : 'left';
         $tituloColor = trim((string)($data['titulo_color'] ?? ''));
@@ -138,10 +147,16 @@ try {
         }
 
         if ($imagenFijaUrl === '') $imagenFijaUrl = null;
+        if ($imagenConocenosUrl === '') $imagenConocenosUrl = null;
 
         try {
-            $stmt = $pdo->prepare("INSERT INTO public_banners (titulo, subtitulo, imagen_url, imagen_fija_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$titulo, $subtitulo, $imagenUrl, $imagenFijaUrl, $overlayBlanco, $textoLado, $tituloColor, $subtituloColor, $tituloTamano, $subtituloTamano, $orden, $activo]);
+            if (tableHasColumn($pdo, 'public_banners', 'imagen_conocenos_url')) {
+                $stmt = $pdo->prepare("INSERT INTO public_banners (titulo, subtitulo, imagen_url, imagen_fija_url, imagen_conocenos_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$titulo, $subtitulo, $imagenUrl, $imagenFijaUrl, $imagenConocenosUrl, $overlayBlanco, $textoLado, $tituloColor, $subtituloColor, $tituloTamano, $subtituloTamano, $orden, $activo]);
+            } else {
+                $stmt = $pdo->prepare("INSERT INTO public_banners (titulo, subtitulo, imagen_url, imagen_fija_url, overlay_blanco, texto_lado, titulo_color, subtitulo_color, titulo_tamano, subtitulo_tamano, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$titulo, $subtitulo, $imagenUrl, $imagenFijaUrl, $overlayBlanco, $textoLado, $tituloColor, $subtituloColor, $tituloTamano, $subtituloTamano, $orden, $activo]);
+            }
         } catch (PDOException $e2) {
             // Compatibilidad si aún no se ejecutaron algunas migraciones
             $msg = $e2->getMessage() ?? '';
@@ -169,6 +184,7 @@ try {
         $subtitulo = isset($data['subtitulo']) ? trim((string)$data['subtitulo']) : null;
         $imagenUrl = trim((string)($data['imagen_url'] ?? ''));
         $imagenFijaUrl = trim((string)($data['imagen_fija_url'] ?? ''));
+        $imagenConocenosUrl = trim((string)($data['imagen_conocenos_url'] ?? ''));
         $overlayBlanco = isset($data['overlay_blanco']) ? intval((bool)$data['overlay_blanco']) : 1;
         $textoLado = (($data['texto_lado'] ?? 'left') === 'right') ? 'right' : 'left';
         $tituloColor = trim((string)($data['titulo_color'] ?? ''));
@@ -189,10 +205,16 @@ try {
         }
 
         if ($imagenFijaUrl === '') $imagenFijaUrl = null;
+        if ($imagenConocenosUrl === '') $imagenConocenosUrl = null;
 
         try {
-            $stmt = $pdo->prepare("UPDATE public_banners SET titulo=?, subtitulo=?, imagen_url=?, imagen_fija_url=?, overlay_blanco=?, texto_lado=?, titulo_color=?, subtitulo_color=?, titulo_tamano=?, subtitulo_tamano=?, orden=?, activo=? WHERE id=?");
-            $stmt->execute([$titulo, $subtitulo, $imagenUrl, $imagenFijaUrl, $overlayBlanco, $textoLado, $tituloColor, $subtituloColor, $tituloTamano, $subtituloTamano, $orden, $activo, $id]);
+            if (tableHasColumn($pdo, 'public_banners', 'imagen_conocenos_url')) {
+                $stmt = $pdo->prepare("UPDATE public_banners SET titulo=?, subtitulo=?, imagen_url=?, imagen_fija_url=?, imagen_conocenos_url=?, overlay_blanco=?, texto_lado=?, titulo_color=?, subtitulo_color=?, titulo_tamano=?, subtitulo_tamano=?, orden=?, activo=? WHERE id=?");
+                $stmt->execute([$titulo, $subtitulo, $imagenUrl, $imagenFijaUrl, $imagenConocenosUrl, $overlayBlanco, $textoLado, $tituloColor, $subtituloColor, $tituloTamano, $subtituloTamano, $orden, $activo, $id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE public_banners SET titulo=?, subtitulo=?, imagen_url=?, imagen_fija_url=?, overlay_blanco=?, texto_lado=?, titulo_color=?, subtitulo_color=?, titulo_tamano=?, subtitulo_tamano=?, orden=?, activo=? WHERE id=?");
+                $stmt->execute([$titulo, $subtitulo, $imagenUrl, $imagenFijaUrl, $overlayBlanco, $textoLado, $tituloColor, $subtituloColor, $tituloTamano, $subtituloTamano, $orden, $activo, $id]);
+            }
         } catch (PDOException $e2) {
             // Compatibilidad si aún no se ejecutaron algunas migraciones
             $msg = $e2->getMessage() ?? '';

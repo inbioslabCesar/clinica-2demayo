@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
+import QuickAccessNav from "../components/comunes/QuickAccessNav";
 // Lazy loading de librerías pesadas para exportar
 
 export default function ListaConsultasPage() {
@@ -104,6 +105,7 @@ export default function ListaConsultasPage() {
       <h1 className="text-2xl font-bold mb-6 text-center">
         Lista de Consultas
       </h1>
+      <QuickAccessNav keys={["pacientes", "recordatorios", "cotizaciones", "reporteCaja"]} />
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <label className="text-sm">Filas por página:</label>
         <select

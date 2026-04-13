@@ -3,7 +3,7 @@ import Swal from 'sweetalert2'
 import { BASE_URL } from '../config/config'
 import Modal from '../components/comunes/Modal.jsx'
 
-const emptyForm = { titulo: '', descripcion: '', precio: '', icono: '', orden: 0, activo: true }
+const emptyForm = { titulo: '', descripcion: '', precio: '', icono: '', orden: 0, activo: true, tipo: 'clasico', imagen_shape: 'rounded', imagen_tipo: 'normal' }
 
 export default function WebServiciosCrudPage() {
   const [loading, setLoading] = useState(true)
@@ -51,6 +51,9 @@ export default function WebServiciosCrudPage() {
       imagen_url: item.imagen_url || '',
       orden: item.orden ?? 0,
       activo: item.activo ? true : false,
+      tipo: item.tipo || 'clasico',
+      imagen_shape: item.imagen_shape || 'rounded',
+      imagen_tipo: item.imagen_tipo || 'normal',
     })
     setImagenFile(null)
     setOpen(true)
@@ -60,8 +63,8 @@ export default function WebServiciosCrudPage() {
     if (!imagenFile) return null
 
     const name = (imagenFile.name || '').toLowerCase()
-    if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg'))) {
-      throw new Error('La imagen debe ser PNG o JPG')
+    if (!(name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp'))) {
+      throw new Error('La imagen debe ser PNG, JPG o WebP')
     }
 
     const fd = new FormData()
@@ -154,8 +157,8 @@ export default function WebServiciosCrudPage() {
             <thead className="bg-gray-100">
               <tr>
                 <th className="p-2 text-left">Título</th>
-                <th className="p-2 text-left">Precio</th>
-                <th className="p-2 text-left">Orden</th>
+                <th className="p-2 text-left">Forma</th>
+                <th className="p-2 text-left">Imagen</th>
                 <th className="p-2 text-left">Activo</th>
                 <th className="p-2 text-left">Acciones</th>
               </tr>
@@ -164,8 +167,16 @@ export default function WebServiciosCrudPage() {
               {items.map((it) => (
                 <tr key={it.id} className="border-t">
                   <td className="p-2">{it.titulo}</td>
-                  <td className="p-2">{it.precio ?? ''}</td>
-                  <td className="p-2">{it.orden ?? 0}</td>
+                  <td className="p-2">
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                      {it.imagen_shape === 'square' ? '◻' : it.imagen_shape === 'circle' ? '●' : '◐'}
+                    </span>
+                  </td>
+                  <td className="p-2">
+                    <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                      {it.imagen_tipo === 'overlay' ? 'Overlay' : 'Normal'}
+                    </span>
+                  </td>
                   <td className="p-2">{it.activo ? 'Sí' : 'No'}</td>
                   <td className="p-2 flex gap-2">
                     <button className="px-3 py-1 rounded bg-yellow-500 text-white" onClick={() => openEdit(it)}>
@@ -221,11 +232,11 @@ export default function WebServiciosCrudPage() {
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-semibold">Subir imagen (PNG o JPG)</label>
+            <label className="block text-sm font-semibold">Subir imagen (PNG, JPG o WebP)</label>
             <input
               className="w-full"
               type="file"
-              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+              accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
               onChange={(e) => setImagenFile(e.target.files?.[0] || null)}
             />
             <p className="text-xs text-gray-600 mt-1">
@@ -233,8 +244,29 @@ export default function WebServiciosCrudPage() {
             </p>
           </div>
           <div>
-            <label className="block text-sm font-semibold">Orden</label>
-            <input className="w-full border rounded px-3 py-2" type="number" value={form.orden} onChange={(e) => setForm((f) => ({ ...f, orden: e.target.value }))} />
+            <label className="block text-sm font-semibold">Forma de Imagen</label>
+            <select className="w-full border rounded px-3 py-2" value={form.imagen_shape || 'rounded'} onChange={(e) => setForm((f) => ({ ...f, imagen_shape: e.target.value }))}>
+              <option value="square">Cuadrada</option>
+              <option value="rounded">Redondeada</option>
+              <option value="circle">Circular</option>
+            </select>
+            <p className="text-xs text-gray-600 mt-1">Forma de las esquinas de la imagen.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold">Tipo de Imagen</label>
+            <select className="w-full border rounded px-3 py-2" value={form.imagen_tipo || 'normal'} onChange={(e) => setForm((f) => ({ ...f, imagen_tipo: e.target.value }))}>
+              <option value="normal">Normal</option>
+              <option value="overlay">Con Overlay</option>
+            </select>
+            <p className="text-xs text-gray-600 mt-1">Efecto de presentación de la imagen.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold">Tipo de Layout</label>
+            <select className="w-full border rounded px-3 py-2" value={form.tipo || 'clasico'} onChange={(e) => setForm((f) => ({ ...f, tipo: e.target.value }))}>
+              <option value="clasico">Clásico</option>
+              <option value="premium">Premium</option>
+            </select>
+            <p className="text-xs text-gray-600 mt-1">Define cómo se mostrará en la landing web.</p>
           </div>
           <div className="md:col-span-2 flex items-center gap-2">
             <input type="checkbox" checked={!!form.activo} onChange={(e) => setForm((f) => ({ ...f, activo: e.target.checked }))} />

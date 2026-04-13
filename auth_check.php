@@ -7,8 +7,15 @@ if ($isLocal) {
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-if ($method === 'GET') {
-    // Permitir acceso público a operaciones GET (lectura)
+$scriptName = basename($_SERVER['SCRIPT_NAME'] ?? '');
+$publicGetEndpoints = [
+    'api_public_banners.php',
+    'api_public_ofertas.php',
+    'api_public_servicios.php',
+];
+
+if ($method === 'GET' && in_array($scriptName, $publicGetEndpoints, true)) {
+    // Solo rutas públicas explícitas pueden resolverse sin sesión.
     return;
 }
 
@@ -30,6 +37,7 @@ if (isset($_SESSION['usuario'])) {
                           strpos($_SERVER['SCRIPT_NAME'], 'api_movimientos_honorarios.php') !== false;
     $isConsultas = strpos($_SERVER['SCRIPT_NAME'], 'api_consultas.php') !== false;
     $isDisponibilidadMedicos = strpos($_SERVER['SCRIPT_NAME'], 'api_disponibilidad_medicos.php') !== false;
+    $isTarifas = strpos($_SERVER['SCRIPT_NAME'], 'api_tarifas.php') !== false;
     $isOrdenesLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_laboratorio.php') !== false;
     $isResultadosLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_resultados_laboratorio.php') !== false;
     $isTriaje = strpos($_SERVER['SCRIPT_NAME'], 'api_triaje.php') !== false;
@@ -74,6 +82,16 @@ if (isset($_SESSION['usuario'])) {
         $rolesPermitidos[] = 'medico';
     }
     if ($isConsultas || $isDisponibilidadMedicos || $isOrdenesLaboratorio || $isResultadosLaboratorio) {
+        $rolesPermitidos[] = 'medico';
+    }
+    // Enfermería necesita consultar listado de consultas para el módulo de triaje.
+    // Se limita a lectura GET de api_consultas.php.
+    if ($isConsultas && $method === 'GET') {
+        $rolesPermitidos[] = 'enfermero';
+    }
+    // Medicos pueden consultar tarifas para solicitar/cotizar servicios de imagen,
+    // pero la gestion (POST/PUT/DELETE) sigue restringida por rol.
+    if ($isTarifas && $method === 'GET') {
         $rolesPermitidos[] = 'medico';
     }
     if ($isTriaje) {

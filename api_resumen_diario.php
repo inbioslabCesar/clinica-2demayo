@@ -39,9 +39,9 @@ try {
     }
     error_log('Egreso honorarios: ' . $egreso_honorarios);
 
-    // Egreso operativo (otros egresos, excluyendo honorarios médicos)
+    // Egreso operativo (otros egresos, excluyendo honorarios médicos y liquidaciones de laboratorio)
     $egreso_operativo = 0.0;
-    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE created_at >= ? AND created_at < ? AND usuario_id = ? AND tipo_egreso != "honorario_medico"');
+    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE created_at >= ? AND created_at < ? AND usuario_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
     $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
     $tmp_operativo = $stmt->fetchColumn();
     if ($tmp_operativo !== false && $tmp_operativo !== null) {
@@ -117,12 +117,12 @@ try {
             $egresoLabRef = $stmtLabRef->fetchColumn();
             $caja['egreso_lab_ref'] = $egresoLabRef ? floatval($egresoLabRef) : 0.0;
             // Egreso operativo por caja
-            $stmtOperativo = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+            $stmtOperativo = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
             $stmtOperativo->execute([$caja['id']]);
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
             // DEBUG: Obtener los egresos operativos por caja
-            $stmtDebugOperativo = $pdo->prepare('SELECT * FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+            $stmtDebugOperativo = $pdo->prepare('SELECT * FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
             $stmtDebugOperativo->execute([$caja['id']]);
             $caja['debug_egresos_operativos'] = $stmtDebugOperativo->fetchAll(PDO::FETCH_ASSOC);
             // Ganancia por caja
@@ -151,7 +151,7 @@ try {
             $stmtLabRef->execute([$caja['id']]);
             $egresoLabRef = $stmtLabRef->fetchColumn();
             $caja['egreso_lab_ref'] = $egresoLabRef ? floatval($egresoLabRef) : 0.0;
-            $stmtOperativo = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+            $stmtOperativo = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
             $stmtOperativo->execute([$caja['id']]);
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;

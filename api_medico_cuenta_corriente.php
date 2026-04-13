@@ -2,6 +2,14 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function horas_disponibilidad_sql(): string {
+    return "CASE
+        WHEN TIME_TO_SEC(hora_fin) > TIME_TO_SEC(hora_inicio)
+            THEN (TIME_TO_SEC(hora_fin) - TIME_TO_SEC(hora_inicio)) / 3600.0
+        ELSE 0
+    END";
+}
+
 function ensure_medico_finanzas_tables($conn) {
     $conn->query("CREATE TABLE IF NOT EXISTS medico_condiciones_pago (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -148,9 +156,10 @@ if ($method === 'GET') {
     $devengadoHoraPeriodo   = 0.0;
 
     if ($esModalidadHora) {
+        $horasExpr = horas_disponibilidad_sql();
         // Total histórico (sin límite de periodo, solo hasta hoy)
         $stmtHT = $conn->prepare(
-            "SELECT COALESCE(SUM((TIME_TO_SEC(hora_fin) - TIME_TO_SEC(hora_inicio)) / 3600.0), 0) AS horas
+            "SELECT COALESCE(SUM($horasExpr), 0) AS horas
              FROM disponibilidad_medicos
              WHERE medico_id = ? AND fecha <= ?"
         );
@@ -161,7 +170,7 @@ if ($method === 'GET') {
 
         // Del periodo actual hasta hoy
         $stmtHP = $conn->prepare(
-            "SELECT COALESCE(SUM((TIME_TO_SEC(hora_fin) - TIME_TO_SEC(hora_inicio)) / 3600.0), 0) AS horas
+            "SELECT COALESCE(SUM($horasExpr), 0) AS horas
              FROM disponibilidad_medicos
              WHERE medico_id = ? AND fecha >= ? AND fecha <= ?"
         );
@@ -225,7 +234,7 @@ if ($method === 'GET') {
     if ($esModalidadHora) {
         $stmtBloq = $conn->prepare(
             "SELECT fecha, hora_inicio, hora_fin,
-                    ROUND((TIME_TO_SEC(hora_fin) - TIME_TO_SEC(hora_inicio)) / 3600.0, 2) AS horas
+                    ROUND($horasExpr, 2) AS horas
              FROM disponibilidad_medicos
              WHERE medico_id = ? AND fecha BETWEEN ? AND ?
              ORDER BY fecha ASC"
@@ -390,10 +399,11 @@ if ($method === 'POST') {
     $condFullStmt->close();
 
     if (($condFull['modalidad_pago'] ?? 'acto') === 'hora') {
+        $horasExpr = horas_disponibilidad_sql();
         $montoHora = floatval($condFull['monto_hora'] ?? 0);
         $todayStr  = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
         $stmtHoras = $conn->prepare(
-            "SELECT COALESCE(SUM((TIME_TO_SEC(hora_fin) - TIME_TO_SEC(hora_inicio)) / 3600.0), 0) AS horas
+            "SELECT COALESCE(SUM($horasExpr), 0) AS horas
              FROM disponibilidad_medicos WHERE medico_id = ? AND fecha >= ? AND fecha <= ?"
         );
         $stmtHoras->bind_param('iss', $medicoId, $periodoInicio, $todayStr);

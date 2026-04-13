@@ -1,6 +1,8 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { getBanners } from '../api/publicApi'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
+import { resolvePublicAssetUrl } from '../utils/publicAssetUrl'
 
 export default function ConocenosPage({
   clinicName = 'Portal de Salud',
@@ -8,6 +10,42 @@ export default function ConocenosPage({
   logoSize,
 }) {
   const resolvedLogoSize = logoSize || resolvePublicLogoSize()
+  const [banners, setBanners] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      try {
+        const b = await getBanners()
+        if (!cancelled) setBanners(Array.isArray(b) ? b : [])
+      } catch {
+        if (!cancelled) setBanners([])
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [])
+
+  const conocenosBanner = useMemo(() => {
+    if (!Array.isArray(banners) || banners.length === 0) return null
+    return banners.find((b) => (b?.imagen_conocenos_url || '').trim() !== '') || banners[0]
+  }, [banners])
+
+  const imageCandidates = useMemo(() => {
+    const list = [
+      conocenosBanner?.imagen_conocenos_url || '',
+      conocenosBanner?.imagen_fija_url || '',
+      conocenosBanner?.imagen_url || '',
+    ].map((x) => resolvePublicAssetUrl(x)).filter(Boolean)
+    return Array.from(new Set(list))
+  }, [conocenosBanner])
+
+  const [imageIndex, setImageIndex] = useState(0)
+  useEffect(() => {
+    setImageIndex(0)
+  }, [conocenosBanner?.id, imageCandidates.length])
+
+  const conocenosImage = imageCandidates[imageIndex] || ''
   const cards = [
     {
       title: 'Nuestra Misión',
@@ -67,7 +105,21 @@ export default function ConocenosPage({
               className="rounded-3xl shadow-xl w-full h-72 flex items-center justify-center overflow-hidden"
               style={{ background: 'linear-gradient(135deg, var(--color-primary-light, #fce7f3), var(--color-accent, #e0c3fc)30)' }}
             >
-              <img src={publicLogoSrc} alt="Logo" className="object-contain opacity-60" style={{ width: resolvedLogoSize.decorative, height: resolvedLogoSize.decorative }} />
+              {conocenosImage ? (
+                <img
+                  src={conocenosImage}
+                  alt="Equipo de la clinica"
+                  className="h-full w-full object-cover"
+                  onError={() => {
+                    setImageIndex((prev) => {
+                      if (prev + 1 < imageCandidates.length) return prev + 1
+                      return prev
+                    })
+                  }}
+                />
+              ) : (
+                <img src={publicLogoSrc} alt="Logo" className="object-contain opacity-60" style={{ width: resolvedLogoSize.decorative, height: resolvedLogoSize.decorative }} />
+              )}
             </div>
           </div>
         </div>

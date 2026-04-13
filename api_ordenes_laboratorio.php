@@ -116,6 +116,38 @@ if (!function_exists('is_result_value_meaningful')) {
     }
 }
 
+if (!function_exists('decode_valores_referenciales_any')) {
+    function decode_valores_referenciales_any($raw)
+    {
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+
+        $value = $raw;
+        for ($i = 0; $i < 3; $i++) {
+            if (is_string($value)) {
+                $decoded = json_decode($value, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    break;
+                }
+                $value = $decoded;
+                continue;
+            }
+            break;
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        if (isset($value['nombre']) || isset($value['titulo']) || isset($value['tipo']) || isset($value['referencias'])) {
+            return [$value];
+        }
+
+        return $value;
+    }
+}
+
 if (!function_exists('calculate_exam_progress_summary')) {
     function calculate_exam_progress_summary($resultadosJson, $examenesIds, $examenesDetalle = null)
     {
@@ -433,6 +465,7 @@ switch ($method) {
         $filtro_alerta = isset($_GET['filtro_alerta']) ? strtolower(trim((string)$_GET['filtro_alerta'])) : '';
         $resumen_alertas = isset($_GET['resumen_alertas']) && intval($_GET['resumen_alertas']) === 1;
         $usePagination = isset($_GET['paginated']) && intval($_GET['paginated']) === 1;
+        $solo_visibles_panel = isset($_GET['solo_visibles_panel']) && intval($_GET['solo_visibles_panel']) === 1;
         $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
         $limit = isset($_GET['limit']) ? max(1, intval($_GET['limit'])) : 10;
         $limit = min($limit, 50);
@@ -462,10 +495,14 @@ switch ($method) {
                 LEFT JOIN consultas c ON o.consulta_id = c.id 
                 LEFT JOIN pacientes p ON c.paciente_id = p.id 
                 LEFT JOIN pacientes p2 ON o.paciente_id = p2.id 
+                LEFT JOIN cotizaciones ct ON o.cotizacion_id = ct.id
                 LEFT JOIN medicos m ON c.medico_id = m.id 
                 WHERE 1=1";
         $params = [];
         $types = '';
+        if ($solo_visibles_panel) {
+            $sql .= " AND (o.cotizacion_id IS NULL OR o.cotizacion_id = 0 OR LOWER(COALESCE(ct.estado, '')) = 'pagado')";
+        }
         if ($estado) {
             $sql .= ' AND o.estado = ?';
             $params[] = $estado;
@@ -515,8 +552,12 @@ switch ($method) {
                 LEFT JOIN consultas c ON o.consulta_id = c.id
                 LEFT JOIN pacientes p ON c.paciente_id = p.id
                 LEFT JOIN pacientes p2 ON o.paciente_id = p2.id
+                LEFT JOIN cotizaciones ct ON o.cotizacion_id = ct.id
                 LEFT JOIN medicos m ON c.medico_id = m.id
                 WHERE 1=1";
+        if ($solo_visibles_panel) {
+            $sqlCount .= " AND (o.cotizacion_id IS NULL OR o.cotizacion_id = 0 OR LOWER(COALESCE(ct.estado, '')) = 'pagado')";
+        }
         if ($estado) {
             $sqlCount .= ' AND o.estado = ?';
         }
@@ -588,7 +629,7 @@ switch ($method) {
         $normalizarValoresReferenciales = function ($examen) {
             $items = [];
             if (!empty($examen['valores_referenciales'])) {
-                $decoded = json_decode($examen['valores_referenciales'], true);
+                $decoded = decode_valores_referenciales_any($examen['valores_referenciales']);
                 if (is_array($decoded)) {
                     foreach ($decoded as $idx => $it) {
                         if (!is_array($it)) continue;

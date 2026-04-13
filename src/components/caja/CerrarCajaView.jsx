@@ -21,64 +21,227 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
   let explicacionDiferencia = "";
   const diferencia = (datos.monto_contado !== undefined ? parseFloat(datos.monto_contado) : 0) - total_egresos;
   if (diferencia < 0) {
-    explicacionDiferencia = "<div style='color:red;font-weight:bold;margin-top:8px;'>No hay efectivo suficiente, egreso cubierto por Yape, Plin, transferencia, o se quedó debiendo tal egreso.</div>";
+    explicacionDiferencia = "<div class='t-warning'>No hay efectivo suficiente; el egreso fue cubierto por Yape, Plin, transferencia o quedó pendiente.</div>";
   }
   // Recibo compacto tipo etiquetera
   const clinicName = String(clinicBrand?.name || 'MI CLINICA').trim();
   const logoHtml = clinicBrand?.logo
-    ? `<div style="text-align:center;margin-bottom:6px;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="height:44px;object-fit:contain;" /></div>`
+    ? `<div style="text-align:center;margin:0 0 8px 0;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="display:block;height:52px;max-width:160px;object-fit:contain;margin:0 auto;" /></div>`
     : '';
   const sloganHtml = clinicBrand?.slogan
-    ? `<p style="text-align:center;margin:0 0 6px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>`
+    ? `<p style="text-align:center;margin:0 0 8px 0;font-style:italic;font-size:11px;line-height:1.25;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>`
     : '';
-  const recibo = `
-    <div style="font-family: monospace; font-size: 18px; width: 320px;">
+  const printModeKey = "cierreCaja.printMode";
+  const lastResolvedPrintModeKey = "cierreCaja.lastResolvedPrintMode";
+  const getStoredPrintMode = () => {
+    try {
+      const mode = window.localStorage.getItem(printModeKey);
+      if (mode === "auto" || mode === "termica" || mode === "a4") return mode;
+    } catch (_) {
+      // ignore storage errors
+    }
+    return "auto";
+  };
+  const getAutoResolvedMode = () => {
+    try {
+      const last = window.localStorage.getItem(lastResolvedPrintModeKey);
+      if (last === "termica" || last === "a4") return last;
+    } catch (_) {
+      // ignore storage errors
+    }
+    return "termica";
+  };
+  const storePrintModes = (selectedMode, resolvedMode) => {
+    try {
+      window.localStorage.setItem(printModeKey, selectedMode);
+      window.localStorage.setItem(lastResolvedPrintModeKey, resolvedMode);
+    } catch (_) {
+      // ignore storage errors
+    }
+  };
+
+  const cierreId = Number(datos.caja_id || 0);
+  const payloadQr = [
+    `CIERRE:${cierreId || "-"}`,
+    `FECHA:${datos.fecha || "-"}`,
+    `USUARIO:${datos.usuario_nombre || "-"}`,
+    `APERTURA:${(datos.monto_apertura || 0).toFixed(2)}`,
+    `EFECTIVO:${total_efectivo.toFixed(2)}`,
+    `EGRESOS:${total_egresos.toFixed(2)}`,
+  ].join("|");
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(payloadQr)}`;
+
+  const construirRecibo = (printMode = "termica") => {
+    const esA4 = printMode === "a4";
+    const estilosRecibo = `
+    <style>
+      .ticket-cierre {
+        width: ${esA4 ? "720px" : "320px"};
+        margin: 0 auto;
+        padding: ${esA4 ? "14px 18px" : "10px 12px"};
+        box-sizing: border-box;
+        font-family: "Courier New", "Lucida Console", monospace;
+        color: #1f2937;
+        font-size: ${esA4 ? "14px" : "13px"};
+        line-height: 1.3;
+      }
+      .ticket-cierre .t-center { text-align: center; }
+      .ticket-cierre .t-title {
+        margin: 0 0 8px 0;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+      }
+      .ticket-cierre .t-subtitle {
+        margin: 0 0 10px 0;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .ticket-cierre .t-hr {
+        border: 0;
+        border-top: 1px dashed #6b7280;
+        margin: 8px 0;
+      }
+      .ticket-cierre .t-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin: ${esA4 ? "2px 0" : "1px 0"};
+      }
+      .ticket-cierre .t-row .label { font-weight: 700; white-space: nowrap; }
+      .ticket-cierre .t-row .value { text-align: right; }
+      .ticket-cierre .t-section {
+        margin-top: 6px;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.4px;
+      }
+      .ticket-cierre .t-note {
+        margin-top: 8px;
+        white-space: pre-line;
+        font-size: 12px;
+      }
+      .ticket-cierre .t-warning {
+        margin-top: 8px;
+        color: #b91c1c;
+        font-weight: 700;
+        font-size: 12px;
+      }
+      .ticket-cierre .t-footer {
+        margin-top: 10px;
+        text-align: center;
+        font-size: 11px;
+        color: #4b5563;
+      }
+      .ticket-cierre .t-qr {
+        margin-top: 10px;
+        text-align: center;
+      }
+      .ticket-cierre .t-qr img {
+        width: 92px;
+        height: 92px;
+        object-fit: contain;
+      }
+      .ticket-cierre .t-qr-caption {
+        margin-top: 4px;
+        font-size: 11px;
+        color: #4b5563;
+      }
+      @media print {
+        body { margin: 0; }
+        @page {
+          size: ${esA4 ? "A4 portrait" : "auto"};
+          margin: ${esA4 ? "10mm" : "2mm"};
+        }
+        .ticket-cierre {
+          width: ${esA4 ? "190mm" : "76mm"};
+          margin: 0;
+          padding: ${esA4 ? "6mm" : "3mm"};
+          font-size: ${esA4 ? "13px" : "12px"};
+        }
+      }
+    </style>
+  `;
+
+    return `
+    ${estilosRecibo}
+    <div class="ticket-cierre">
       ${logoHtml}
-      <h3 style="text-align:center;margin:0 0 4px 0;${clinicBrand?.nombre_color ? 'color:' + clinicBrand.nombre_color + ';' : ''}">${clinicName}</h3>
+      <h3 class="t-center t-title" style="${clinicBrand?.nombre_color ? 'color:' + clinicBrand.nombre_color + ';' : ''}">${clinicName}</h3>
       ${sloganHtml}
-      <h3 style="text-align:center;margin-bottom:8px;">🧾 Cierre de Caja</h3>
-      <hr>
-      <div><b>Usuario:</b> ${datos.usuario_nombre || "-"}</div>
-      <div><b>Rol:</b> ${datos.usuario_rol || "-"}</div>
-      <div><b>Fecha:</b> ${datos.fecha || "-"}</div>
-      <div><b>Apertura:</b> S/ ${(datos.monto_apertura||0).toFixed(2)}</div>
-      <div><b>Hora apertura:</b> ${datos.hora_apertura || "-"}</div>
-      <div><b>Hora cierre:</b> ${datos.hora_cierre || "-"}</div>
-      <hr>
-      <div><b>Ingresos por tipo:</b></div>
-      <ul style="margin-left:10px;">
-        <li>Efectivo: S/ ${total_efectivo.toFixed(2)}</li>
-        <li>Yape: S/ ${total_yape.toFixed(2)}</li>
-        <li>Plin: S/ ${total_plin.toFixed(2)}</li>
-        <li>Tarjeta: S/ ${total_tarjetas.toFixed(2)}</li>
-        <li>Transferencia: S/ ${total_transferencias.toFixed(2)}</li>
-      </ul>
-      <div><b>Egresos:</b></div>
-      <ul style="margin-left:10px;">
-        <li>Honorarios Médicos: S/ ${egreso_honorarios.toFixed(2)}</li>
-        <li>Lab. Referencia: S/ ${egreso_lab_ref.toFixed(2)}</li>
-        <li>Operativo: S/ ${egreso_operativo.toFixed(2)}</li>
-        <li style="color:purple;"><b>Egresos cubiertos por Yape/Transferencias:</b> S/ ${egreso_electronico.toFixed(2)}</li>
-        <li><b>Total egresos:</b> S/ ${total_egresos.toFixed(2)}</li>
-      </ul>
-      <div><b>Ocurrencias:</b></div>
-      <div style="white-space:pre-line;">${datos.observaciones || ""}</div>
+      <h4 class="t-center t-subtitle">CIERRE DE CAJA</h4>
+      <hr class="t-hr" />
+
+      <div class="t-row"><span class="label">Usuario</span><span class="value">${datos.usuario_nombre || "-"}</span></div>
+      <div class="t-row"><span class="label">Rol</span><span class="value">${datos.usuario_rol || "-"}</span></div>
+      <div class="t-row"><span class="label">Fecha</span><span class="value">${datos.fecha || "-"}</span></div>
+      <div class="t-row"><span class="label">Apertura</span><span class="value">S/ ${(datos.monto_apertura||0).toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Hora apertura</span><span class="value">${datos.hora_apertura || "-"}</span></div>
+      <div class="t-row"><span class="label">Hora cierre</span><span class="value">${datos.hora_cierre || "-"}</span></div>
+
+      <hr class="t-hr" />
+      <div class="t-section">Ingresos por tipo</div>
+      <div class="t-row"><span class="label">Efectivo</span><span class="value">S/ ${total_efectivo.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Yape</span><span class="value">S/ ${total_yape.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Plin</span><span class="value">S/ ${total_plin.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Tarjeta</span><span class="value">S/ ${total_tarjetas.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Transferencia</span><span class="value">S/ ${total_transferencias.toFixed(2)}</span></div>
+
+      <hr class="t-hr" />
+      <div class="t-section">Egresos</div>
+      <div class="t-row"><span class="label">Honorarios medicos</span><span class="value">S/ ${egreso_honorarios.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Lab. referencia</span><span class="value">S/ ${egreso_lab_ref.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Operativo</span><span class="value">S/ ${egreso_operativo.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Yape/Transferencias</span><span class="value">S/ ${egreso_electronico.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Total egresos</span><span class="value">S/ ${total_egresos.toFixed(2)}</span></div>
+
+      <hr class="t-hr" />
+      <div class="t-section">Ocurrencias</div>
+      <div class="t-note">${datos.observaciones || "Sin observaciones"}</div>
       ${explicacionDiferencia}
-      <hr>
-      <div style="text-align:center;font-size:12px;margin-top:8px;">Conserve este recibo para archivo</div>
+      <hr class="t-hr" />
+      <div class="t-qr">
+        <img src="${qrSrc}" alt="QR auditoria cierre" />
+        <div class="t-qr-caption">Auditoria: CIERRE #${cierreId || "-"}</div>
+      </div>
+      <div class="t-footer">Conserve este recibo para archivo</div>
+    </div>
+  `;
+  };
+
+  const storedMode = getStoredPrintMode();
+  const previewMode = storedMode === "auto" ? getAutoResolvedMode() : storedMode;
+  const reciboPreview = construirRecibo(previewMode);
+  const selectorModo = `
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb;text-align:left;font-size:13px;">
+      <label for="ticket-print-mode" style="font-weight:600;display:block;margin-bottom:4px;">Modo de impresion</label>
+      <select id="ticket-print-mode" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;">
+        <option value="auto" ${storedMode === "auto" ? "selected" : ""}>Auto (usa ultimo modo)</option>
+        <option value="termica" ${storedMode === "termica" ? "selected" : ""}>Termica 80mm</option>
+        <option value="a4" ${storedMode === "a4" ? "selected" : ""}>A4</option>
+      </select>
     </div>
   `;
   Swal.fire({
     title: 'Cierre de Caja Procesado ✅',
-    html: recibo,
+    html: `${reciboPreview}${selectorModo}`,
     icon: 'success',
     confirmButtonText: 'Imprimir Recibo',
     showCancelButton: true,
     cancelButtonText: 'Solo Continuar'
   }).then((result) => {
     if (result.isConfirmed) {
+      const selector = Swal.getHtmlContainer()?.querySelector("#ticket-print-mode");
+      const selectedMode = selector?.value === "a4" || selector?.value === "termica" || selector?.value === "auto"
+        ? selector.value
+        : storedMode;
+      const resolvedMode = selectedMode === "auto" ? getAutoResolvedMode() : selectedMode;
+      storePrintModes(selectedMode, resolvedMode);
+      const recibo = construirRecibo(resolvedMode);
       const ventanaImpresion = window.open('', '_blank');
-      ventanaImpresion.document.write(recibo);
+      ventanaImpresion.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Cierre de Caja</title></head><body>${recibo}</body></html>`);
       ventanaImpresion.document.close();
       ventanaImpresion.print();
     }
@@ -95,11 +258,40 @@ export default function CerrarCajaView() {
   const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '' });
   const navigate = useNavigate();
 
+  const verificarCajaAbierta = async ({ mostrarMensaje = false } = {}) => {
+    try {
+      const r = await fetch('/api_caja_estado.php', {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      const data = await r.json();
+      const abierta = Boolean(data?.success) && String(data?.estado || '').toLowerCase() === 'abierta';
+      if (!abierta && mostrarMensaje) {
+        await Swal.fire({
+          icon: 'info',
+          title: 'Caja ya cerrada',
+          text: 'No puedes acceder a cierre de caja porque la caja actual ya esta cerrada.',
+          confirmButtonText: 'Entendido'
+        });
+      }
+      return abierta;
+    } catch (_) {
+      return false;
+    }
+  };
+
   useEffect(() => {
     // Obtener resumen de caja actual
     async function fetchResumen() {
       setLoading(true);
       try {
+        const abierta = await verificarCajaAbierta();
+        if (!abierta) {
+          setError('No hay caja abierta para cerrar');
+          navigate('/contabilidad', { replace: true });
+          return;
+        }
+
         const resp = await fetch("/api_resumen_diario.php", { credentials: "include" });
         const data = await resp.json();
         if (data.success) {
@@ -115,7 +307,19 @@ export default function CerrarCajaView() {
       }
     }
     fetchResumen();
-  }, []);
+  }, [navigate]);
+
+  useEffect(() => {
+    // Evita acceso por BFCache (atras/adelante del navegador) cuando la caja ya fue cerrada.
+    const onPageShow = async () => {
+      const abierta = await verificarCajaAbierta();
+      if (!abierta) {
+        navigate('/contabilidad', { replace: true });
+      }
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [navigate]);
 
   useEffect(() => {
     let mounted = true;
@@ -179,6 +383,12 @@ export default function CerrarCajaView() {
       });
     }
     try {
+      const abierta = await verificarCajaAbierta({ mostrarMensaje: true });
+      if (!abierta) {
+        navigate('/contabilidad', { replace: true });
+        return;
+      }
+
       const resp = await fetch("/api_cerrar_caja.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -200,6 +410,8 @@ export default function CerrarCajaView() {
           ...resumen,
           observaciones,
           monto_contado: montoContado,
+          caja_id: data.caja_id,
+          fecha: data.fecha || resumen?.fecha || new Date().toISOString().slice(0, 10),
           egreso_electronico: egresoElectronicoManual,
           hora_cierre: data.hora_cierre || new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
           usuario_nombre: data.usuario_nombre || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).nombre : ''),

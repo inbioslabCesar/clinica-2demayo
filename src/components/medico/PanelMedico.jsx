@@ -150,10 +150,10 @@ function PanelMedico() {
   // Función para verificar si una fecha ya pasó
   const esFechaPasada = (dateString) => {
     const hoy = new Date();
-    const fechaComparar = new Date(dateString);
-    // Comparar solo las fechas, ignorando la hora
     hoy.setHours(0, 0, 0, 0);
-    fechaComparar.setHours(0, 0, 0, 0);
+    // Parsear como fecha LOCAL para evitar desplazamiento UTC en zonas negativas
+    const [y, m, d] = dateString.split('-').map(Number);
+    const fechaComparar = new Date(y, m - 1, d);
     return fechaComparar < hoy;
   };
 

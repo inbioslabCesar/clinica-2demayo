@@ -284,11 +284,14 @@ if ($method === 'GET') {
             'descripcion' => null,
             'fecha'       => $row['resultado_fecha'] ?? $row['orden_fecha'],
             'orden_id'      => (int)$row['orden_id'],
+            'orden_estado'  => (string)($row['orden_estado'] ?? ''),
             'cobro_id'      => $row['cobro_id'] ? (int)$row['cobro_id'] : null,
             'cotizacion_id' => $row['cotizacion_id'] ? (int)$row['cotizacion_id'] : null,
             'resultado_id'  => $row['resultado_id'] ? (int)$row['resultado_id'] : null,
             'examenes'    => $examenes,
-            'estado'      => $tieneResultado ? 'disponible' : 'pendiente',
+            'estado'      => (strtolower((string)($row['orden_estado'] ?? '')) === 'cancelada')
+                ? 'cancelada'
+                : ($tieneResultado ? 'disponible' : 'pendiente'),
             'url'         => $tieneResultado
                 ? ($baseUrl . 'descargar_resultados_laboratorio.php?id=' . $row['resultado_id'])
                 : null,

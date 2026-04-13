@@ -174,6 +174,7 @@ export default function HeroCarousel({
               const isCurrentVisible = realIndex === activeIndex
               const shouldPrioritizeImage = isInitiallyVisible || isCurrentVisible
               const textSide = (s.textSide || 'left') === 'right' ? 'right' : 'left'
+              const hasText = !!(s.title || s.subtitle)
               const titleStyle = s.titleColor ? { color: s.titleColor } : undefined
               const subtitleStyle = s.subtitleColor ? { color: s.subtitleColor } : undefined
 
@@ -187,7 +188,7 @@ export default function HeroCarousel({
                     <img
                       src={s.imageSrc}
                       alt={s.imageAlt || s.title || 'Banner'}
-                      className="absolute inset-0 h-full w-full object-contain sm:object-cover"
+                      className="absolute inset-0 h-full w-full object-contain bg-slate-100"
                       loading={shouldPrioritizeImage ? 'eager' : 'lazy'}
                       fetchPriority={shouldPrioritizeImage ? 'high' : 'auto'}
                       decoding="async"
@@ -204,7 +205,7 @@ export default function HeroCarousel({
                     />
                   )}
 
-                  {s.showWhiteOverlay === false ? null : textSide === 'right' ? (
+                  {s.showWhiteOverlay === false || !hasText ? null : textSide === 'right' ? (
                     <div className="absolute inset-y-0 right-0 w-[70%] sm:w-[58%] bg-gradient-to-l from-white via-white/85 to-transparent" />
                   ) : (
                     <div className="absolute inset-y-0 left-0 w-[70%] sm:w-[58%] bg-gradient-to-r from-white via-white/85 to-transparent" />

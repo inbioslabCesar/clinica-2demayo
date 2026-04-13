@@ -362,7 +362,18 @@ export default function PlantillasHCPage() {
         setHcTemplateSingleId(selectedSingleId || '');
         setHcTemplateSingleIdDraft(selectedSingleId || '');
         if (!silent) {
-          setStatusMessage('Configuración de plantilla HC actualizada.', 'success');
+          const protection = data?.hc_protection || null;
+          const pinnedNow = Number(protection?.pinned_now || 0);
+          const evaluated = Number(protection?.evaluated || 0);
+          const unresolved = Number(protection?.unresolved || 0);
+          if (protection?.policy_changed) {
+            setStatusMessage(
+              `Configuración de plantilla HC actualizada. HC protegidas: ${pinnedNow}/${evaluated} fijadas.${unresolved > 0 ? ` Sin resolver: ${unresolved}.` : ''}`,
+              'success'
+            );
+          } else {
+            setStatusMessage('Configuración de plantilla HC actualizada.', 'success');
+          }
         }
       } else {
         throw new Error(data.error || 'Error al guardar');

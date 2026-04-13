@@ -4,6 +4,15 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
 
+function disponibilidad_horario_valido($horaInicio, $horaFin): bool {
+    $inicio = trim((string)$horaInicio);
+    $fin = trim((string)$horaFin);
+    if ($inicio === '' || $fin === '') {
+        return false;
+    }
+    return $inicio < $fin;
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
@@ -204,6 +213,11 @@ switch ($method) {
                 $ok = false;
                 continue;
             }
+            if (!disponibilidad_horario_valido($hora_inicio, $hora_fin)) {
+                echo json_encode(['success' => false, 'error' => 'La hora inicio debe ser anterior a la hora fin en cada bloque']);
+                $stmt->close();
+                exit;
+            }
             $stmt->bind_param('isss', $medico_id, $fecha, $hora_inicio, $hora_fin);
             if (!$stmt->execute()) {
                 $ok = false;
@@ -221,6 +235,10 @@ switch ($method) {
         $hora_fin = $data['hora_fin'] ?? null;
         if (!$id || !$fecha || !$hora_inicio || !$hora_fin) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
+            exit;
+        }
+        if (!disponibilidad_horario_valido($hora_inicio, $hora_fin)) {
+            echo json_encode(['success' => false, 'error' => 'La hora inicio debe ser anterior a la hora fin']);
             exit;
         }
         if ($esSesionMedico) {

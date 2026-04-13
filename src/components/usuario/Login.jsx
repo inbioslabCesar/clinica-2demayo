@@ -5,8 +5,53 @@ import { BASE_URL, SECURITY_CONFIG } from "../../config/config";
 import { Icon } from '@fluentui/react';
 import { normalizePermisos } from "../../config/recepcionPermisos";
 
+const LOGIN_BRAND_CACHE_KEY = 'login_brand_cache_v1';
+const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
+
+function toAbsoluteLogoUrl(rawLogo) {
+  const raw = String(rawLogo || '').trim();
+  if (!raw) return '';
+  if (/^(https?:\/\/|data:|blob:)/i.test(raw)) return raw;
+  return `${String(BASE_URL || '').replace(/\/+$/, '')}/${raw.replace(/^\/+/, '')}`;
+}
+
+function readCachedBrand() {
+  try {
+    const raw = sessionStorage.getItem(LOGIN_BRAND_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const clinicName = String(parsed?.clinicName || '').trim();
+    const logoSrc = String(parsed?.logoSrc || '').trim();
+    if (!clinicName && !logoSrc) return null;
+    return { clinicName, logoSrc };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedBrand(brand) {
+  try {
+    sessionStorage.setItem(LOGIN_BRAND_CACHE_KEY, JSON.stringify({
+      clinicName: String(brand?.clinicName || '').trim(),
+      logoSrc: String(brand?.logoSrc || '').trim(),
+      ts: Date.now(),
+    }));
+  } catch {
+    // ignore cache write issues
+  }
+}
+
+function preloadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(src);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
 function applyFavicon(iconHref) {
-  const href = String(iconHref || '').trim() || '/2demayo.svg';
+  const href = String(iconHref || '').trim() || FALLBACK_LOGO_SRC;
   let link = document.querySelector("link[rel='icon']");
   if (!link) {
     link = document.createElement('link');
@@ -17,13 +62,14 @@ function applyFavicon(iconHref) {
 }
 
 function Login({ onLogin }) {
+  const cachedBrand = readCachedBrand();
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [logoSrc, setLogoSrc] = useState('/2demayo.svg');
-  const [clinicName, setClinicName] = useState('');
+  const [logoSrc, setLogoSrc] = useState(cachedBrand?.logoSrc || '');
+  const [clinicName, setClinicName] = useState(cachedBrand?.clinicName || '');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -39,16 +85,41 @@ function Login({ onLogin }) {
         if (!mounted || !data?.success) return;
         const cfg = data.data || {};
         const configuredName = String(cfg.nombre_clinica || '').trim();
-        if (configuredName) setClinicName(configuredName);
+        if (configuredName && mounted) {
+          setClinicName(configuredName);
+        }
+
         const raw = String(cfg.logo_url || '').trim();
-        if (!raw) return;
-        const absolute = /^(https?:\/\/|data:|blob:)/i.test(raw)
-          ? raw
-          : `${String(BASE_URL || '').replace(/\/+$/, '')}/${raw.replace(/^\/+/, '')}`;
-        const v = encodeURIComponent(String(cfg.updated_at || Date.now()));
-        setLogoSrc(`${absolute}${absolute.includes('?') ? '&' : '?'}v=${v}`);
+        const absolute = toAbsoluteLogoUrl(raw);
+        let resolvedLogo = '';
+
+        if (absolute) {
+          const versionBase = String(cfg.updated_at || cfg.config_updated_at || '').trim();
+          const versionToken = versionBase ? encodeURIComponent(versionBase) : '';
+          const candidate = versionToken
+            ? `${absolute}${absolute.includes('?') ? '&' : '?'}v=${versionToken}`
+            : absolute;
+
+          try {
+            await preloadImage(candidate);
+            resolvedLogo = candidate;
+          } catch {
+            resolvedLogo = '';
+          }
+        }
+
+        if (mounted) {
+          setLogoSrc((prev) => (prev === resolvedLogo ? prev : resolvedLogo));
+        }
+
+        writeCachedBrand({
+          clinicName: configuredName,
+          logoSrc: resolvedLogo,
+        });
       } catch {
-        // keep fallback logo
+        if (mounted) {
+          setLogoSrc('');
+        }
       }
     };
     loadLogo();
@@ -248,12 +319,18 @@ function Login({ onLogin }) {
           <div className="text-center mb-8">
             <div className="relative mx-auto w-20 h-20 mb-6">
               <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full blur-lg opacity-60"></div>
-              <img 
-                src={logoSrc}
-                alt="Logo clínica" 
-                className="relative w-20 h-20 object-contain bg-white/90 rounded-full p-3 shadow-lg ring-4 ring-white/30" 
-                onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = '/2demayo.svg'; }}
-              />
+              {logoSrc ? (
+                <img 
+                  src={logoSrc}
+                  alt="Logo clínica" 
+                  className="relative w-20 h-20 object-contain bg-white/90 rounded-full p-3 shadow-lg ring-4 ring-white/30"
+                  onError={() => setLogoSrc('')}
+                />
+              ) : (
+                <div className="relative w-20 h-20 bg-white/90 rounded-full shadow-lg ring-4 ring-white/30 flex items-center justify-center">
+                  <Icon iconName="Hospital" className="text-3xl text-violet-600" />
+                </div>
+              )}
             </div>
             <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">
               {clinicName}

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
+import Swal from "sweetalert2";
+import QuickAccessNav from "../components/comunes/QuickAccessNav";
 
 const ESTADOS_GESTION = [
   { value: "", label: "Todos" },
@@ -56,6 +58,84 @@ function diasParaCita(fecha) {
   return Math.floor(ms / 86400000);
 }
 
+function estadoLabel(estado) {
+  switch (estado) {
+    case "contactado":
+      return "Contactado";
+    case "confirmado":
+      return "Confirmado";
+    case "no_contesta":
+      return "No contesta";
+    case "reprogramar":
+      return "Reprogramar";
+    case "cancelado":
+      return "Cancelado";
+    default:
+      return "Pendiente";
+  }
+}
+
+
+
+
+
+
+
+
+function consultaAtendidaEnHC(item) {
+  return Number(item?.hc_tiene_registro || 0) === 1;
+}
+
+function esConsultaHcProxima(item) {
+  return String(item?.origen_consulta || "") === "hc_proxima";
+}
+
+function tipoConsultaLabel(item) {
+  const tipo = String(item?.tipo_consulta || "").toLowerCase();
+  if (tipo === "programada") return "Programada";
+  if (tipo === "espontanea") return "Espontanea";
+  return tipo ? `${tipo.charAt(0).toUpperCase()}${tipo.slice(1)}` : "Sin tipo";
+}
+
+function tipoConsultaBadge(item) {
+  const tipo = String(item?.tipo_consulta || "").toLowerCase();
+  if (tipo === "programada") {
+    return "bg-sky-100 text-sky-700 border-sky-200";
+  }
+  if (tipo === "espontanea") {
+    return "bg-orange-100 text-orange-700 border-orange-200";
+  }
+  return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+function obtenerPrioridad(item) {
+  const dias = diasParaCita(item?.fecha);
+  const estado = String(item?.estado_gestion || "pendiente");
+  const sinTelefono = !String(item?.paciente_telefono || "").trim();
+
+  if (consultaAtendidaEnHC(item)) {
+    return { nivel: "atendido", etiqueta: "Atendido", orden: 4, badge: "bg-violet-100 text-violet-700 border-violet-200" };
+  }
+
+  if (estado === "confirmado" || estado === "cancelado") {
+    return { nivel: "resuelto", etiqueta: "Resuelto", orden: 5, badge: "bg-emerald-100 text-emerald-700 border-emerald-200" };
+  }
+
+  if (dias === 0 && ["pendiente", "no_contesta"].includes(estado)) {
+    return { nivel: "critico", etiqueta: "Critico", orden: 0, badge: "bg-rose-100 text-rose-700 border-rose-200" };
+  }
+
+  if ((dias === 1 && ["pendiente", "no_contesta"].includes(estado)) || (sinTelefono && estado !== "confirmado")) {
+    return { nivel: "alto", etiqueta: "Alto", orden: 1, badge: "bg-amber-100 text-amber-700 border-amber-200" };
+  }
+
+  if (["pendiente", "contactado", "no_contesta", "reprogramar"].includes(estado)) {
+    return { nivel: "normal", etiqueta: "Normal", orden: 2, badge: "bg-sky-100 text-sky-700 border-sky-200" };
+  }
+
+  return { nivel: "bajo", etiqueta: "Bajo", orden: 3, badge: "bg-slate-100 text-slate-700 border-slate-200" };
+}
+
 export default function RecordatoriosCitasPage() {
   const navigate = useNavigate();
 
@@ -67,8 +147,11 @@ export default function RecordatoriosCitasPage() {
 
   const [dias, setDias] = useState(30);
   const [estadoGestion, setEstadoGestion] = useState("");
+  const [origenConsulta, setOrigenConsulta] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [soloSinGestion, setSoloSinGestion] = useState(false);
+  const [vistaRapida, setVistaRapida] = useState("todas");
+  const [filaActivaId, setFilaActivaId] = useState(null);
 
   const cargar = async () => {
     setLoading(true);
@@ -77,6 +160,7 @@ export default function RecordatoriosCitasPage() {
       const params = new URLSearchParams({
         dias: String(dias),
         estado_gestion: estadoGestion,
+        origen_consulta: origenConsulta,
         busqueda: busqueda.trim(),
         solo_sin_gestion: soloSinGestion ? "1" : "0",
       });
@@ -98,22 +182,131 @@ export default function RecordatoriosCitasPage() {
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dias, estadoGestion, soloSinGestion]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion]);
 
   const pendientesUrgentes = useMemo(
     () => items.filter((item) => {
       const d = diasParaCita(item.fecha);
-      return d !== null && d <= 1 && ["pendiente", "no_contesta"].includes(item.estado_gestion);
+      return d !== null && d <= 1 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
     }).length,
     [items]
   );
 
+  const metricas = useMemo(() => {
+    const urgentes = items.filter((item) => {
+      const d = diasParaCita(item.fecha);
+      return d !== null && d <= 1 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
+    }).length;
+    const hoy = items.filter((item) => diasParaCita(item.fecha) === 0).length;
+    const sinTelefono = items.filter((item) => !String(item.paciente_telefono || "").trim()).length;
+    const confirmadas = items.filter((item) => item.estado_gestion === "confirmado").length;
+    const atendidas = items.filter((item) => consultaAtendidaEnHC(item)).length;
+    return { urgentes, hoy, sinTelefono, confirmadas, atendidas };
+  }, [items]);
+
+  const itemsVista = useMemo(() => {
+    if (vistaRapida === "criticos") {
+      return items.filter((item) => {
+        const d = diasParaCita(item.fecha);
+        return d === 0 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
+      });
+    }
+    if (vistaRapida === "urgentes") {
+      return items.filter((item) => {
+        const d = diasParaCita(item.fecha);
+        return d !== null && d <= 1 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
+      });
+    }
+    if (vistaRapida === "sin_telefono") {
+      return items.filter((item) => !String(item.paciente_telefono || "").trim());
+    }
+    if (vistaRapida === "confirmadas") {
+      return items.filter((item) => item.estado_gestion === "confirmado");
+    }
+    if (vistaRapida === "atendidas") {
+      return items.filter((item) => consultaAtendidaEnHC(item));
+    }
+    return items;
+  }, [items, vistaRapida]);
+
+  const itemsPriorizados = useMemo(() => {
+    const enriched = itemsVista.map((item) => {
+      const prioridad = obtenerPrioridad(item);
+      const diasRestantes = diasParaCita(item.fecha);
+      return { ...item, prioridad, diasRestantes };
+    });
+
+    enriched.sort((a, b) => {
+      if (a.prioridad.orden !== b.prioridad.orden) {
+        return a.prioridad.orden - b.prioridad.orden;
+      }
+
+      const da = Number.isFinite(a.diasRestantes) ? a.diasRestantes : 999;
+      const db = Number.isFinite(b.diasRestantes) ? b.diasRestantes : 999;
+      if (da !== db) return da - db;
+
+      const fa = `${a.fecha || ""} ${String(a.hora || "").slice(0, 5)}`;
+      const fb = `${b.fecha || ""} ${String(b.hora || "").slice(0, 5)}`;
+      return fa.localeCompare(fb);
+    });
+
+    return enriched;
+  }, [itemsVista]);
+
+  const resumenPrioridad = useMemo(() => {
+    const resumen = { critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 };
+    itemsPriorizados.forEach((i) => {
+      const key = i.prioridad?.nivel || "normal";
+      resumen[key] = (resumen[key] || 0) + 1;
+    });
+    return resumen;
+  }, [itemsPriorizados]);
+
+  const siguienteLlamada = useMemo(
+    () => itemsPriorizados.find((item) => !["confirmado", "cancelado"].includes(String(item.estado_gestion || "")) && !consultaAtendidaEnHC(item)) || null,
+    [itemsPriorizados]
+  );
+
+  const enfocarSiguienteLlamada = () => {
+    if (!siguienteLlamada) return;
+    setFilaActivaId(siguienteLlamada.id);
+    const el = document.getElementById(`rc-row-${siguienteLlamada.id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
   const guardarGestion = async (item, estado) => {
-    const observacion = window.prompt("Observacion (opcional):", item.observacion || "") ?? "";
-    const proximo =
-      estado === "no_contesta"
-        ? (window.prompt("Proximo contacto (YYYY-MM-DD HH:mm, opcional):", "") ?? "")
-        : "";
+    const requiereProximo = estado === "no_contesta" || estado === "reprogramar";
+    const modal = await Swal.fire({
+      title: `Registrar gestion: ${estadoLabel(estado)}`,
+      html: `
+        <div style="display:flex;flex-direction:column;gap:10px;text-align:left;">
+          <label style="font-size:12px;font-weight:600;color:#334155;">Observacion</label>
+          <textarea id="rc_obs" class="swal2-textarea" style="margin:0;width:100%;" placeholder="Detalle breve de la gestion">${item.observacion || ""}</textarea>
+          ${requiereProximo ? `
+            <label style="font-size:12px;font-weight:600;color:#334155;">Proximo contacto (opcional)</label>
+            <input id="rc_next" type="datetime-local" class="swal2-input" style="margin:0;width:100%;" />
+          ` : ""}
+        </div>
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Guardar",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const obsEl = document.getElementById("rc_obs");
+        const nextEl = document.getElementById("rc_next");
+        const observacion = obsEl ? String(obsEl.value || "").trim() : "";
+        const proximo = nextEl ? String(nextEl.value || "").trim() : "";
+        return { observacion, proximo };
+      },
+    });
+
+    if (!modal.isConfirmed) return false;
+
+    const observacion = String(modal.value?.observacion || "");
+    const proximo = String(modal.value?.proximo || "");
 
     setSavingId(item.id);
     setMensaje("");
@@ -144,6 +337,30 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const crearCotizacion = async (item) => {
+    if (item.cotizacion_id) {
+      navigate(`/cobrar-cotizacion/${item.cotizacion_id}`);
+      return;
+    }
+    setSavingId(item.id);
+    setMensaje("");
+    try {
+      const res = await fetch(`${BASE_URL}api_recordatorios_citas.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "crear_cotizacion", consulta_id: item.id }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "No se pudo crear la cotización");
+      navigate(`/cobrar-cotizacion/${data.cotizacion_id}`);
+    } catch (err) {
+      setError(err.message || "Error al registrar cobro");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen p-4 sm:p-6" style={{ background: "linear-gradient(145deg, #f8fafc, #eef2ff)" }}>
       <div className="mx-auto max-w-7xl space-y-5">
@@ -160,7 +377,9 @@ export default function RecordatoriosCitasPage() {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+          <QuickAccessNav keys={["pacientes", "recordatorios", "listaConsultas", "cotizaciones", "reporteCaja"]} className="mt-4" />
+
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-6">
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Horizonte</label>
               <select
@@ -185,6 +404,20 @@ export default function RecordatoriosCitasPage() {
                 {ESTADOS_GESTION.map((item) => (
                   <option key={item.value || "all"} value={item.value}>{item.label}</option>
                 ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Origen</label>
+              <select
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                value={origenConsulta}
+                onChange={(e) => setOrigenConsulta(e.target.value)}
+              >
+                <option value="">Todos</option>
+                <option value="agendada">Agendada</option>
+                <option value="hc_proxima">HC proxima</option>
+                <option value="cotizador">Cotizador</option>
               </select>
             </div>
 
@@ -226,11 +459,80 @@ export default function RecordatoriosCitasPage() {
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{mensaje}</div>
         )}
 
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <button
+            type="button"
+            onClick={() => setVistaRapida("urgentes")}
+            className={`rounded-xl border px-4 py-3 text-left ${vistaRapida === "urgentes" ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-white"}`}
+          >
+            <div className="text-xs text-slate-500">Urgentes</div>
+            <div className="text-xl font-bold text-rose-700">{metricas.urgentes}</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setVistaRapida("todas")}
+            className={`rounded-xl border px-4 py-3 text-left ${vistaRapida === "todas" ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-white"}`}
+          >
+            <div className="text-xs text-slate-500">Citas hoy</div>
+            <div className="text-xl font-bold text-sky-700">{metricas.hoy}</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setVistaRapida("sin_telefono")}
+            className={`rounded-xl border px-4 py-3 text-left ${vistaRapida === "sin_telefono" ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}
+          >
+            <div className="text-xs text-slate-500">Sin telefono</div>
+            <div className="text-xl font-bold text-amber-700">{metricas.sinTelefono}</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setVistaRapida("confirmadas")}
+            className={`rounded-xl border px-4 py-3 text-left ${vistaRapida === "confirmadas" ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}
+          >
+            <div className="text-xs text-slate-500">Confirmadas</div>
+            <div className="text-xl font-bold text-emerald-700">{metricas.confirmadas}</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setVistaRapida(vistaRapida === "atendidas" ? "todas" : "atendidas")}
+            className={`rounded-xl border px-4 py-3 text-left ${vistaRapida === "atendidas" ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-white"}`}
+          >
+            <div className="text-xs text-slate-500">Atendidas HC</div>
+            <div className="text-xl font-bold text-violet-700">{metricas.atendidas}</div>
+          </button>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-700 flex flex-wrap gap-3">
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Critico: {resumenPrioridad.critico}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Alto: {resumenPrioridad.alto}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-sky-500" /> Normal: {resumenPrioridad.normal}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-500" /> Bajo: {resumenPrioridad.bajo}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-violet-500" /> Atendido: {resumenPrioridad.atendido}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Resuelto: {resumenPrioridad.resuelto}</span>
+          <button
+            type="button"
+            onClick={() => setVistaRapida(vistaRapida === "criticos" ? "todas" : "criticos")}
+            className={`ml-auto rounded-lg border px-3 py-1.5 text-xs font-semibold ${vistaRapida === "criticos" ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+          >
+            {vistaRapida === "criticos" ? "Ver todas" : "Solo criticos"}
+          </button>
+          <button
+            type="button"
+            onClick={enfocarSiguienteLlamada}
+            disabled={!siguienteLlamada}
+            className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={siguienteLlamada ? `Siguiente: Cita #${siguienteLlamada.id}` : "No hay citas pendientes"}
+          >
+            Siguiente llamada
+          </button>
+        </div>
+
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
                 <th className="p-3 text-left">Cita</th>
+                <th className="p-3 text-left">Prioridad</th>
                 <th className="p-3 text-left">Paciente</th>
                 <th className="p-3 text-left">Medico</th>
                 <th className="p-3 text-left">Estado gestion</th>
@@ -242,17 +544,26 @@ export default function RecordatoriosCitasPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
+                  <td colSpan={8} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
                 </tr>
-              ) : items.length === 0 ? (
+              ) : itemsPriorizados.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-5 text-center text-slate-500">No hay citas por gestionar en este rango.</td>
+                  <td colSpan={8} className="p-5 text-center text-slate-500">No hay citas para la vista seleccionada.</td>
                 </tr>
               ) : (
-                items.map((item) => {
-                  const diasRestantes = diasParaCita(item.fecha);
+                itemsPriorizados.map((item) => {
+                  const diasRestantes = item.diasRestantes;
+                  const esHcProxima = esConsultaHcProxima(item);
+                  const esControl = Number(item?.es_control || 0) === 1;
+                  const esTipoProgramada = String(item?.tipo_consulta || "").toLowerCase() === "programada";
+                  const mostrarBadgeTipo = !(esHcProxima && esTipoProgramada);
+                  const estadoCotizacion = String(item?.cotizacion_estado || "").toLowerCase();
+                  const cotizacionPagada = estadoCotizacion === "pagado" || estadoCotizacion === "pagada";
+                  const puedeRegistrarCobro = !item.cotizacion_id
+                    && !esControl
+                    && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);
                   return (
-                    <tr key={item.id} className="border-t border-slate-100 align-top hover:bg-slate-50/70">
+                    <tr id={`rc-row-${item.id}`} key={item.id} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item.id ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
                       <td className="p-3">
                         <div className="font-semibold text-slate-800">#{item.id}</div>
                         <div className="text-xs text-slate-600">{formatFechaHora(item.fecha, item.hora)}</div>
@@ -265,23 +576,69 @@ export default function RecordatoriosCitasPage() {
                         </div>
                       </td>
                       <td className="p-3">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${item.prioridad.badge}`}>
+                          {item.prioridad.etiqueta}
+                        </span>
+                      </td>
+                      <td className="p-3">
                         <div className="font-semibold text-slate-800">{item.paciente_nombre} {item.paciente_apellido}</div>
                         <div className="text-xs text-slate-600">DNI: {item.paciente_dni || "-"}</div>
                         <div className="text-xs text-slate-600">Tel: {item.paciente_telefono || "Sin telefono"}</div>
+                        <div className="mt-1">
+                          {mostrarBadgeTipo && (
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tipoConsultaBadge(item)}`}>
+                              {tipoConsultaLabel(item)}
+                            </span>
+                          )}
+                          {esHcProxima && (
+                            <span className="ml-1 inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                              HC proxima
+                            </span>
+                          )}
+                          {esControl && (
+                            <span className="ml-1 inline-flex rounded-full border border-sky-200 bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                              Sin costo
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 text-slate-700">{item.medico_nombre} {item.medico_apellido}</td>
                       <td className="p-3">
                         <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${estadoBadgeClasses(item.estado_gestion)}`}>
-                          {item.estado_gestion}
+                          {estadoLabel(item.estado_gestion)}
                         </span>
                         <div className="mt-1 text-xs text-slate-500">
                           Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
                         </div>
+                        {puedeRegistrarCobro && (
+                          <div className="mt-1">
+                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                              ⏳ Por cobrar
+                            </span>
+                          </div>
+                        )}
+                        {cotizacionPagada && (
+                          <div className="mt-1">
+                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              ✅ Cotizacion pagada
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="p-3 text-slate-700">{item.intentos || 0}</td>
                       <td className="p-3 text-xs text-slate-600">{item.observacion || "-"}</td>
                       <td className="p-3">
                         <div className="flex flex-wrap gap-2">
+                          {puedeRegistrarCobro && (
+                            <button
+                              type="button"
+                              onClick={() => crearCotizacion(item)}
+                              disabled={savingId === item.id}
+                              className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                            >
+                              💰 Registrar Cobro
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => guardarGestion(item, "contactado")}
@@ -311,7 +668,14 @@ export default function RecordatoriosCitasPage() {
                             onClick={async () => {
                               const ok = await guardarGestion(item, "reprogramar");
                               if (!ok) return;
-                              navigate(`/agendar-consulta?paciente_id=${Number(item.paciente_id || 0)}&consulta_id=${Number(item.id || 0)}`);
+                              const params = new URLSearchParams({
+                                paciente_id: String(Number(item.paciente_id || 0)),
+                                consulta_id: String(Number(item.id || 0)),
+                                origen: "recordatorios",
+                                accion: "reprogramar",
+                                back_to: "/recordatorios-citas",
+                              });
+                              navigate(`/agendar-consulta?${params.toString()}`);
                             }}
                             disabled={savingId === item.id}
                             className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"

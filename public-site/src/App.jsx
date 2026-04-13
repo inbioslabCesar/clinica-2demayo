@@ -8,10 +8,12 @@ import OfertasPage from './pages/OfertasPage.jsx'
 import PublicFooter from './components/PublicFooter.jsx'
 import { getConfiguracion, PUBLIC_API_BASE } from './api/publicApi.js'
 import { resolvePublicLogoSize } from './utils/logoSizing.js'
+import { sanitizeFontSize, sanitizeHexColor } from './utils/branding.js'
 
 const PUBLIC_BRAND_CACHE_KEY = 'public_brand_cache'
 const PUBLIC_THEME_CACHE_KEY = 'public_theme_cache'
 const PUBLIC_CONFIG_CACHE_KEY = 'public_config_cache'
+const FALLBACK_PUBLIC_LOGO = `${import.meta.env.BASE_URL}2demayo.svg`
 
 function readStorageValue(key) {
   try {
@@ -73,15 +75,16 @@ function writeConfigCache(cfg) {
 function readPublicBrandCache() {
   try {
     const raw = readStorageValue(PUBLIC_BRAND_CACHE_KEY)
-    if (!raw) return { nombre: '', logo_url: '', updated_at: 0 }
+    if (!raw) return { nombre: '', logo_url: '', updated_at: '', resolved_logo_src: '' }
     const parsed = JSON.parse(raw)
     return {
       nombre: String(parsed?.nombre || '').trim(),
       logo_url: String(parsed?.logo_url || '').trim(),
-      updated_at: Number(parsed?.updated_at || 0),
+      updated_at: String(parsed?.updated_at || '').trim(),
+      resolved_logo_src: String(parsed?.resolved_logo_src || '').trim(),
     }
   } catch {
-    return { nombre: '', logo_url: '', updated_at: 0 }
+    return { nombre: '', logo_url: '', updated_at: '', resolved_logo_src: '' }
   }
 }
 
@@ -90,9 +93,19 @@ function writePublicBrandCache(partial) {
   const next = {
     nombre: typeof partial?.nombre === 'string' ? partial.nombre : prev.nombre,
     logo_url: typeof partial?.logo_url === 'string' ? partial.logo_url : prev.logo_url,
-    updated_at: Number(partial?.updated_at || Date.now()),
+    updated_at: typeof partial?.updated_at === 'string' ? partial.updated_at : prev.updated_at,
+    resolved_logo_src: typeof partial?.resolved_logo_src === 'string' ? partial.resolved_logo_src : prev.resolved_logo_src,
   }
   writeStorageValue(PUBLIC_BRAND_CACHE_KEY, JSON.stringify(next))
+}
+
+function preloadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(src)
+    img.onerror = reject
+    img.src = src
+  })
 }
 
 // Apply cached theme as early as possible to avoid first-paint color flash.
@@ -102,7 +115,7 @@ if (BOOTSTRAP_PUBLIC_THEME) {
 }
 
 function applyFavicon(iconHref) {
-  const fallback = `${import.meta.env.BASE_URL}2demayo.svg`
+  const fallback = FALLBACK_PUBLIC_LOGO
   const href = (iconHref || '').trim() || fallback
   let link = document.querySelector("link[rel='icon']")
   if (!link) {
@@ -114,11 +127,11 @@ function applyFavicon(iconHref) {
 }
 
 function resolvePublicLogoUrl(logoPath, versionToken) {
-  const fallback = `${import.meta.env.BASE_URL}2demayo.svg`
+  const fallback = FALLBACK_PUBLIC_LOGO
   const raw = (logoPath || '').trim()
   if (!raw) return fallback
   let url = raw
-  if (!/^https?:\/\//i.test(raw)) {
+  if (!/^(https?:\/\/|data:|blob:)/i.test(raw)) {
     url = (PUBLIC_API_BASE + raw.replace(/^\/+/, '')).replace(/\s+/g, '')
   }
   const v = encodeURIComponent(String(versionToken || ''))
@@ -126,10 +139,21 @@ function resolvePublicLogoUrl(logoPath, versionToken) {
   return `${url}${url.includes('?') ? '&' : '?'}v=${v}`
 }
 
+function normalizeThemePayload(rawTheme) {
+  if (!rawTheme || typeof rawTheme !== 'object') return null
+  return rawTheme
+}
+
 function getDefaultSistemaUrl() {
   const hostname = window.location.hostname
   if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost:5173/'
-  return 'https://sistema.clinica2demayo.com/'
+
+  const normalizedHost = hostname.replace(/^www\./i, '')
+  if (/^sistema\./i.test(normalizedHost)) {
+    return `${window.location.protocol}//${normalizedHost}/`
+  }
+
+  return `https://sistema.${normalizedHost}/`
 }
 
 const SISTEMA_URL = ((import.meta.env.VITE_SISTEMA_URL || getDefaultSistemaUrl()) + '').replace(/\/+$/, '') + '/'
@@ -139,7 +163,7 @@ function NavItem({ to, children }) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `px-3 py-2 rounded-lg text-xl font-semibold transition-colors ${
+        `px-3 py-1.5 rounded-lg text-base font-semibold transition-colors ${
           isActive ? '' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
         }`
       }
@@ -157,7 +181,7 @@ function MobileNavItem({ to, children, onClick }) {
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `block w-full px-4 py-3 rounded-xl text-lg font-semibold transition-colors ${
+        `block w-full px-4 py-2.5 rounded-xl text-base font-semibold transition-colors ${
           isActive ? '' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
         }`
       }
@@ -192,6 +216,9 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const safeClinicName = String(clinicName || '').trim()
+  const brandNameColor = sanitizeHexColor(configuracion?.nombre_color, 'var(--color-primary, #E85D8E)')
+  const brandNameFontSize = sanitizeFontSize(configuracion?.nombre_font_size, 'clamp(1.05rem,1.6vw,1.5rem)')
+  const sloganColor = sanitizeHexColor(configuracion?.slogan_color, 'var(--color-secondary, #3A4FA3)')
 
   useEffect(() => {
     const routeLabel = location.pathname === '/servicios'
@@ -225,8 +252,8 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
       <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-white/10" />
 
       <div className="relative">
-        <header className="fixed top-0 inset-x-0 z-50 border-b border-white/30 bg-white/80 backdrop-blur">
-          <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+        <header className="sticky top-0 inset-x-0 z-50 border-b border-white/30 bg-white/80 backdrop-blur">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
             <Link to="/" className="flex items-center gap-3">
               <img
                 src={publicLogoSrc}
@@ -235,13 +262,13 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
                 style={{ height: logoSize.header, width: 'auto', maxWidth: logoSize.header * 5 }}
               />
               <div className="leading-tight">
-                <div className="font-semibold" style={{ color: configuracion?.nombre_color || 'var(--color-primary, #E85D8E)', fontSize: configuracion?.nombre_font_size || undefined }}>{safeClinicName || 'Portal de Salud'}</div>
-                <div className="text-sm" style={{ color: configuracion?.slogan_color || 'var(--color-secondary)' }}>{configuracion?.slogan || 'Servicios y ofertas'}</div>
+                <div className="font-semibold" style={{ color: brandNameColor, fontSize: brandNameFontSize || 'clamp(1.05rem,1.6vw,1.5rem)' }}>{safeClinicName || 'Portal de Salud'}</div>
+                <div className="text-xs sm:text-sm" style={{ color: sloganColor }}>{configuracion?.slogan || 'Servicios y ofertas'}</div>
               </div>
             </Link>
 
             <div className="flex items-center gap-2">
-              <nav className="hidden md:flex items-center gap-2">
+              <nav className="hidden md:flex items-center gap-1">
                 <NavItem to="/">Inicio</NavItem>
                 <NavItem to="/conocenos">Conócenos</NavItem>
                 <NavItem to="/servicios">Servicios</NavItem>
@@ -250,7 +277,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
 
               <a
                 href={SISTEMA_URL}
-                className="px-4 py-2 rounded-lg text-white text-xl font-semibold hover:opacity-90 transition-colors"
+                className="px-3.5 py-2 rounded-lg text-white text-sm sm:text-base font-semibold hover:opacity-90 transition-colors"
                 style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
                 rel="noopener noreferrer"
               >
@@ -316,7 +343,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
 
               <a
                 href={SISTEMA_URL}
-                className="block w-full text-center px-4 py-3 rounded-xl text-white text-lg font-semibold hover:opacity-90 transition-colors"
+                className="block w-full text-center px-4 py-2.5 rounded-xl text-white text-base font-semibold hover:opacity-90 transition-colors"
                 style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
                 rel="noopener noreferrer"
                 onClick={() => setMobileOpen(false)}
@@ -327,7 +354,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
           </aside>
         </div>
 
-        <main className="max-w-6xl mx-auto px-4 pt-28 pb-8">
+        <main className="max-w-6xl mx-auto px-4 pt-6 pb-8">
           <Routes>
             <Route path="/" element={<HomePage sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
             <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
@@ -347,6 +374,9 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const safeClinicName = String(clinicName || '').trim()
+  const brandNameColor = sanitizeHexColor(configuracion?.nombre_color, 'var(--color-primary, #E85D8E)')
+  const brandNameFontSize = sanitizeFontSize(configuracion?.nombre_font_size, '1.25rem')
+  const sloganColor = sanitizeHexColor(configuracion?.slogan_color, 'var(--color-secondary, #3A4FA3)')
 
   useEffect(() => {
     const labels = { '/': 'Inicio', '/servicios': 'Servicios', '/ofertas': 'Ofertas', '/conocenos': 'Conócenos' }
@@ -376,9 +406,9 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
               style={{ height: logoSize.landingHeader, width: 'auto', maxWidth: logoSize.landingHeader * 5 }}
             />
             <div className="hidden sm:block leading-tight">
-              <span className="font-bold" style={{ color: configuracion?.nombre_color || 'var(--color-primary, #E85D8E)', fontSize: configuracion?.nombre_font_size || undefined }}>{safeClinicName || 'Portal de Salud'}</span>
+              <span className="font-bold" style={{ color: brandNameColor, fontSize: brandNameFontSize }}>{safeClinicName || 'Portal de Salud'}</span>
               {configuracion?.slogan && (
-                <div className="text-xs font-medium" style={{ color: configuracion.slogan_color || 'var(--color-secondary, #3A4FA3)' }}>{configuracion.slogan}</div>
+                <div className="text-xs font-medium" style={{ color: sloganColor }}>{configuracion.slogan}</div>
               )}
             </div>
           </Link>
@@ -471,57 +501,118 @@ export default function App() {
   const [configuracion, setConfiguracion] = useState(cachedConfig)
   const [clinicName, setClinicName] = useState(cachedBrand.nombre || cachedConfig?.nombre_clinica || '')
   const [publicLayout, setPublicLayout] = useState(cachedTheme?.tema_public_layout || 'classic')
-  const logoPath = (configuracion?.logo_url ?? cachedBrand.logo_url)
-  const logoVersion = (configuracion?.updated_at ?? cachedBrand.updated_at ?? Date.now())
-  const publicLogoSrc = resolvePublicLogoUrl(logoPath, logoVersion)
+  const [publicLogoSrc, setPublicLogoSrc] = useState(() => {
+    if (cachedBrand.resolved_logo_src) return cachedBrand.resolved_logo_src
+    return resolvePublicLogoUrl(cachedBrand.logo_url, cachedBrand.updated_at)
+  })
   const publicLogoSize = resolvePublicLogoSize(configuracion?.logo_size_publico)
 
   useEffect(() => {
     let cancelled = false
-    getConfiguracion()
-      .then((cfg) => {
+
+    const loadTheme = async () => {
+      try {
+        const separator = 'api_tema.php'.includes('?') ? '&' : '?'
+        const response = await fetch(`${PUBLIC_API_BASE}api_tema.php${separator}_t=${Date.now()}`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        })
+        const data = await response.json().catch(() => null)
+        if (cancelled || !response.ok || !data?.success || !data?.tema) return
+        const theme = normalizeThemePayload(data.tema)
+        if (!theme) return
+        applyPublicThemeToDom(theme)
+        writePublicThemeCache(theme)
+        setPublicLayout(theme.tema_public_layout || 'classic')
+      } catch {
+        // Keep current theme if refresh fails.
+      }
+    }
+
+    const loadConfig = async () => {
+      try {
+        const cfg = await getConfiguracion()
         if (cancelled) return
+
         setConfiguracion(cfg)
         writeConfigCache(cfg)
+
         const nombre = String(cfg?.nombre_clinica || '').trim()
-        if (nombre) {
-          setClinicName(nombre)
+        if (nombre) setClinicName(nombre)
+
+        const logoRaw = String(cfg?.logo_url || '').trim()
+        const logoVersion = String(cfg?.updated_at || cfg?.config_updated_at || '').trim()
+        let resolvedLogo = resolvePublicLogoUrl(logoRaw, logoVersion)
+
+        if (logoRaw) {
+          try {
+            await preloadImage(resolvedLogo)
+          } catch {
+            resolvedLogo = FALLBACK_PUBLIC_LOGO
+          }
+        }
+
+        if (!cancelled) {
+          setPublicLogoSrc((prev) => (prev === resolvedLogo ? prev : resolvedLogo))
           writePublicBrandCache({
             nombre,
-            logo_url: String(cfg?.logo_url || ''),
-            updated_at: cfg?.updated_at || Date.now(),
+            logo_url: logoRaw,
+            updated_at: logoVersion,
+            resolved_logo_src: resolvedLogo,
           })
         }
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled && !cachedConfig) setConfiguracion(null)
-      })
+      }
+    }
 
-    // Load theme
-    fetch(PUBLIC_API_BASE + 'api_tema.php')
-      .then(r => r.json())
-      .then(data => {
-        if (!cancelled && data?.success && data.tema) {
-          applyPublicThemeToDom(data.tema)
-          writePublicThemeCache(data.tema)
-          setPublicLayout(data.tema.tema_public_layout || 'classic')
-        }
-      })
-      .catch(() => {})
+    const refreshPublicBranding = () => {
+      loadConfig()
+      loadTheme()
+    }
+
+    refreshPublicBranding()
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshPublicBranding()
+      }
+    }
+
+    const handleWindowFocus = () => {
+      refreshPublicBranding()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
 
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleWindowFocus)
     }
   }, [])
 
   const Shell = publicLayout === 'landing' ? AppShellLanding : AppShell
 
-  const celular = (configuracion?.celular || '').replace(/\D/g, '')
+  // Normalizar número a E.164 para wa.me (sin +, solo dígitos con código de país)
+  function normalizePhone(raw) {
+    let digits = String(raw || '').replace(/\D/g, '')
+    if (!digits) return ''
+    // Quitar cero inicial de marcado local (ej. 0980... → 980...)
+    if (digits.startsWith('0')) digits = digits.slice(1)
+    // Si tiene 9 dígitos y empieza con 9 → número peruano sin código de país → agregar 51
+    if (digits.length === 9 && digits.startsWith('9')) digits = '51' + digits
+    return digits
+  }
+
+  const celular = normalizePhone(configuracion?.celular)
 
   return (
     <BrowserRouter>
       <Shell configuracion={configuracion} clinicName={clinicName} publicLogoSrc={publicLogoSrc} logoSize={publicLogoSize} />
-      {celular && <WhatsAppButton phone={celular} />}
+      {celular.length >= 10 && <WhatsAppButton phone={celular} />}
     </BrowserRouter>
   )
 }

@@ -20,9 +20,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const cargarConsultas = async () => {
     if (!medicoId) return;
     setLoading(true);
+    setMsg("");
     try {
       const params = new URLSearchParams({
-        medico_id: String(medicoId),
         page: String(page),
         per_page: String(rowsPerPage),
       });
@@ -32,6 +32,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
 
       const response = await fetch(`${BASE_URL}api_consultas.php?${params.toString()}`, { credentials: "include" });
       const data = await response.json();
+
+      if (!data?.success) {
+        setConsultas([]);
+        setStats({ total: 0, pendientes: 0, emergencias: 0 });
+        setTotalRows(0);
+        setMsg(data?.error || "No se pudieron cargar las consultas");
+        return;
+      }
 
       setConsultas(data.consultas || []);
       setStats(data.stats || { total: 0, pendientes: 0, emergencias: 0 });
@@ -107,6 +115,24 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     }
   };
 
+  const formatDateTime = (dateTimeStr) => {
+    if (!dateTimeStr) return '';
+    try {
+      const normalized = String(dateTimeStr).replace(' ', 'T');
+      const d = new Date(normalized);
+      if (Number.isNaN(d.getTime())) return String(dateTimeStr);
+      return d.toLocaleString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return String(dateTimeStr);
+    }
+  };
+
   // Funciones para colores y iconos de estado
   const getEstadoColor = (estado) => {
     switch (estado?.toLowerCase()) {
@@ -140,6 +166,25 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       default:
         return '📋 ';
     }
+  };
+
+  const getEstadoVisual = (consulta) => {
+    const estado = String(consulta?.estado || '').trim().toLowerCase();
+    const hcCompletada = estado === 'completada' || estado === 'completado';
+
+    if (hcCompletada) {
+      return {
+        label: 'Completada',
+        icon: '✅ ',
+        className: 'bg-green-100 text-green-800 border-green-200'
+      };
+    }
+
+    return {
+      label: 'Falta atender',
+      icon: '⏳ ',
+      className: 'bg-amber-100 text-amber-800 border-amber-200'
+    };
   };
 
   const getClasificacionColor = (clasificacion) => {
@@ -213,22 +258,145 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     };
   };
 
+  const getAgendaMeta = (consulta) => {
+    const esReprogramada = Number(consulta?.es_reprogramada || 0) === 1 || Boolean(consulta?.reprogramada_en);
+    if (esReprogramada) {
+      return {
+        label: 'Reprogramada',
+        icon: '🔁',
+        className: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200'
+      };
+    }
+    return {
+      label: 'Normal',
+      icon: '🗓️',
+      className: 'bg-slate-100 text-slate-700 border-slate-200'
+    };
+  };
+
+  const getOrigenConsultaMeta = (consulta) => {
+    const origen = String(consulta?.origen_creacion || '').trim().toLowerCase();
+    const hcOrigenId = Number(consulta?.hc_origen_id || 0);
+    if (origen === 'hc_proxima' || hcOrigenId > 0) {
+      return {
+        visible: true,
+        label: 'HC proxima',
+        icon: '🧾',
+        className: 'bg-indigo-100 text-indigo-800 border-indigo-200'
+      };
+    }
+    return {
+      visible: false,
+      label: '',
+      icon: '',
+      className: ''
+    };
+  };
+
+  // NUEVO: Función para obtener estilo y estado del cobro (falta_cancelar)
+  const getEstadoCobro = (consulta) => {
+    const estado = String(consulta?.estado || '').toLowerCase().trim();
+    const esControl = Number(consulta?.es_control || 0) === 1;
+
+    // Una consulta ya completada nunca debe aparecer bloqueada, independientemente
+    // de su origen o estado de cotización.
+    if (estado === 'completada' || estado === 'completado') {
+      return { faltaPagar: false, label: null, rowClass: '', badgeClass: '' };
+    }
+
+    if (esControl) {
+      return {
+        faltaPagar: false,
+        label: '🆓 Sin costo',
+        rowClass: '',
+        badgeClass: 'bg-sky-100 text-sky-800 border-sky-200'
+      };
+    }
+
+    const estadoCotizacion = String(consulta?.cotizacion_estado || '').toLowerCase().trim();
+    const cotizacionId = Number(consulta?.cotizacion_id || 0);
+    const tieneCotizacion = cotizacionId > 0;
+    const esHcProxima = Number(consulta?.hc_origen_id || 0) > 0
+      || String(consulta?.origen_creacion || '').toLowerCase().trim() === 'hc_proxima';
+    const cotizacionPagada = estadoCotizacion === 'pagado' || estadoCotizacion === 'pagada';
+
+    if (esHcProxima && !cotizacionPagada && !tieneCotizacion) {
+      return {
+        faltaPagar: true,
+        label: '⏳ Por cobrar',
+        rowClass: 'opacity-50 cursor-not-allowed',
+        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200'
+      };
+    }
+
+    if (tieneCotizacion && !cotizacionPagada) {
+      return {
+        faltaPagar: true,
+        label: '⏳ Pago pendiente',
+        rowClass: 'opacity-50 cursor-not-allowed',
+        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200'
+      };
+    }
+
+    if (estado === 'falta_cancelar' && !cotizacionPagada) {
+      return {
+        faltaPagar: true,
+        label: '⏳ Por cobrar',
+        rowClass: 'opacity-50 cursor-not-allowed',
+        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200'
+      };
+    }
+
+    if (cotizacionPagada) {
+      return {
+        faltaPagar: false,
+        label: '✅ Cotizacion pagada',
+        rowClass: '',
+        badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200'
+      };
+    }
+
+    return {
+      faltaPagar: false,
+      label: null,
+      rowClass: '',
+      badgeClass: ''
+    };
+  };
+
   const themeGradientMain = "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)";
 
   return (
     <div className="w-full px-2 sm:px-4 lg:max-w-7xl lg:mx-auto">
-      {/* Panel de filtros con estilo moderno */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-6 mb-4 sm:mb-8 border border-white/50">
-        <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
-          <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center" style={{ background: themeGradientMain }}>
-            <svg className="w-3 h-3 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+      {/* Panel compacto: cabecera + resumen + filtros */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
+        <div className="flex flex-col gap-3 sm:gap-4 mb-3 sm:mb-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center" style={{ background: themeGradientMain }}>
+              <svg className="w-3 h-3 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-800">🔍 Mis Consultas: filtros y resumen</h3>
           </div>
-          <h3 className="text-base sm:text-lg font-semibold text-gray-800">🔍 Filtros</h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+            <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: themeGradientMain }}>
+              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Total consultas</p>
+              <p className="text-lg sm:text-xl font-bold leading-tight">{stats.total}</p>
+            </div>
+            <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: "linear-gradient(90deg, var(--color-secondary) 0%, var(--color-accent) 100%)" }}>
+              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Pendientes</p>
+              <p className="text-lg sm:text-xl font-bold leading-tight">{stats.pendientes}</p>
+            </div>
+            <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: "linear-gradient(90deg, var(--color-accent) 0%, var(--color-primary) 100%)" }}>
+              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Emergencias</p>
+              <p className="text-lg sm:text-xl font-bold leading-tight">{stats.emergencias}</p>
+            </div>
+          </div>
         </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           {/* Búsqueda general */}
           <div className="col-span-full lg:col-span-2">
             <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Búsqueda general</label>
@@ -243,7 +411,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                 value={busqueda}
                 onChange={e => { setBusqueda(e.target.value); setPage(1); }}
                 placeholder="Buscar por nombre, HC o DNI..."
-                className="pl-8 sm:pl-10 w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+                className="pl-8 sm:pl-10 w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
                 onFocus={(e) => {
                   e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
                 }}
@@ -259,7 +427,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               type="date"
               value={fechaDesde}
               onChange={e => { setFechaDesde(e.target.value); setPage(1); }}
-              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+              className="w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
               onFocus={(e) => {
                 e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
               }}
@@ -273,7 +441,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               type="date"
               value={fechaHasta}
               onChange={e => { setFechaHasta(e.target.value); setPage(1); }}
-              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm border border-gray-300 rounded-lg sm:rounded-xl focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+              className="w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
               onFocus={(e) => {
                 e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
               }}
@@ -283,10 +451,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
         
         {/* Botón limpiar filtros */}
         {(busqueda || fechaDesde || fechaHasta) && (
-          <div className="mt-3 sm:mt-4 flex justify-center sm:justify-end">
+          <div className="mt-2 sm:mt-3 flex justify-center sm:justify-end">
             <button 
               onClick={() => { setBusqueda(""); setFechaDesde(""); setFechaHasta(""); setPage(1); }}
-              className="inline-flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-all duration-200 hover:scale-105 text-sm"
+              className="inline-flex items-center gap-1 sm:gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-all duration-200 hover:scale-105 text-sm"
             >
               <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -295,51 +463,6 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
             </button>
           </div>
         )}
-      </div>
-
-      {/* Estadísticas rápidas */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 mb-4 sm:mb-8">
-        <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl" style={{ background: themeGradientMain }}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-white/80 text-xs sm:text-sm font-medium">Total Consultas</p>
-              <p className="text-2xl sm:text-3xl font-bold">{stats.total}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            </div>
-          </div>
-        </div>
-        
-        <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl" style={{ background: "linear-gradient(90deg, var(--color-secondary) 0%, var(--color-accent) 100%)" }}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-white/80 text-xs sm:text-sm font-medium">Pendientes</p>
-              <p className="text-2xl sm:text-3xl font-bold">{stats.pendientes}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-          </div>
-        </div>
-        
-        <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-xl" style={{ background: "linear-gradient(90deg, var(--color-accent) 0%, var(--color-primary) 100%)" }}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-white/80 text-xs sm:text-sm font-medium">Emergencias</p>
-              <p className="text-2xl sm:text-3xl font-bold">{stats.emergencias}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-lg sm:rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Leyenda rápida de tipo de consulta */}
@@ -353,6 +476,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
         </span>
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-gray-100 text-gray-700 border-gray-200 font-medium">
           🩺 Consulta
+        </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 font-medium">
+          🔁 Reprogramada
         </span>
       </div>
 
@@ -386,29 +512,37 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               <table className="w-full">
                 <thead style={{ background: themeGradientMain }}>
                   <tr>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">👤 Paciente</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">🏥 HC / DNI</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">📅 Fecha</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">⏰ Hora</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">📊 Estado</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">🚨 Clasificación</th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-white">🩺 Acciones</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">👤 Paciente</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">🔁 Tipo agenda</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">🏥 HC / DNI</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">📅 Fecha</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">⏰ Hora</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">📊 Estado</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">🚨 Clasificación</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">🩺 Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {consultasPaginadas.map((consulta, index) => {
                     const esFilaPar = index % 2 === 0;
                     const tipoMeta = getTipoConsultaMeta(consulta);
+                    const agendaMeta = getAgendaMeta(consulta);
+                    const origenMeta = getOrigenConsultaMeta(consulta);
+                    const estadoVisual = getEstadoVisual(consulta);
                     const esProgramada = tipoMeta.label === 'Programada';
+                    const estadoCobro = getEstadoCobro(consulta);
+                    const accionesBloqueadas = estadoCobro.faltaPagar;
+                    const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
                     
                     return (
                       <tr
                         key={consulta.id}
                         className={`${
                           esProgramada ? 'bg-cyan-50/70' : (esFilaPar ? 'bg-white/60' : 'bg-blue-50/40')
-                        } hover:bg-blue-100/60 transition-all duration-200 hover:shadow-lg transform hover:-translate-y-0.5`}
+                        } ${estadoCobro.rowClass} hover:bg-blue-100/60 transition-all duration-200 hover:shadow-lg transform hover:-translate-y-0.5`}
+                        title={estadoCobro.faltaPagar ? 'Esta cita está pendiente de pago. No se puede editar hasta que se registre el pago.' : ''}
                       >
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
                               <span className="text-white font-semibold text-sm">
@@ -423,12 +557,31 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${tipoMeta.className}`}>
                                   {tipoMeta.icon} {tipoMeta.label}
                                 </span>
+                                {origenMeta.visible && (
+                                  <span className={`ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${origenMeta.className}`}>
+                                    {origenMeta.icon} {origenMeta.label}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
                         </td>
+
+                        <td className="px-3 py-3">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${agendaMeta.className}`}
+                            title={agendaMeta.label === 'Reprogramada' && consulta?.reprogramada_en ? `Reprogramada el ${formatDateTime(consulta.reprogramada_en)}` : ''}
+                          >
+                            {agendaMeta.icon} {agendaMeta.label}
+                          </span>
+                          {agendaMeta.label === 'Reprogramada' && consulta?.reprogramada_en && (
+                            <div className="mt-1 text-[11px] text-fuchsia-700 font-medium">
+                              {formatDateTime(consulta.reprogramada_en)}
+                            </div>
+                          )}
+                        </td>
                         
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -443,7 +596,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                           </div>
                         </td>
                         
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
                             <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -454,7 +607,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                           </div>
                         </td>
                         
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
                             <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -465,36 +618,53 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                           </div>
                         </td>
                         
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${getEstadoColor(consulta.estado)}`}>
-                            {getEstadoIcon(consulta.estado)}
-                            {consulta.estado || 'Sin estado'}
-                          </span>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-col gap-2">
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${estadoVisual.className}`}>
+                              {estadoVisual.icon}
+                              {estadoVisual.label}
+                            </span>
+                            {estadoCobro.label && (
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${estadoCobro.badgeClass} w-fit`}>
+                                {estadoCobro.label}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${getClasificacionColor(consulta.clasificacion)}`}>
                             {getClasificacionIcon(consulta.clasificacion)}
                             {consulta.clasificacion || 'Sin clasificar'}
                           </span>
                         </td>
                         
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             {/* Botones de acción desktop */}
                             {consulta.estado === 'pendiente' && !consulta.clasificacion && (
                               <>
                                 <button
                                   onClick={() => actualizarEstado(consulta.id, 'completada')}
-                                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md"
-                                  title="Completar consulta"
+                                  disabled={accionesBloqueadas}
+                                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-medium transition-all duration-200 shadow-md ${
+                                    accionesBloqueadas
+                                      ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-60'
+                                      : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white hover:scale-105'
+                                  }`}
+                                  title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Completar consulta'}
                                 >
                                   <span className="text-sm">✔️</span>
                                 </button>
                                 <button
                                   onClick={() => actualizarEstado(consulta.id, 'cancelada')}
-                                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md"
-                                  title="Cancelar consulta"
+                                  disabled={accionesBloqueadas}
+                                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-medium transition-all duration-200 shadow-md ${
+                                    accionesBloqueadas
+                                      ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-60'
+                                      : 'bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white hover:scale-105'
+                                  }`}
+                                  title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Cancelar consulta'}
                                 >
                                   <span className="text-sm">✖️</span>
                                 </button>
@@ -503,8 +673,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                             
                             <button
                               onClick={() => navigate(`/historia-clinica/${consulta.paciente_id}/${consulta.id}`)}
-                              className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md"
-                              title="Ver Historia Clínica"
+                              disabled={accionesBloqueadas}
+                              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-medium transition-all duration-200 ${
+                                accionesBloqueadas
+                                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-50'
+                                  : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white hover:scale-105 shadow-md'
+                              }`}
+                              title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Ver Historia Clínica'}
                             >
                               <span className="text-sm">📖</span>
                             </button>
@@ -512,7 +687,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                             {onIniciarConsulta && (
                               <button
                                 onClick={() => onIniciarConsulta(consulta)}
-                                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md"
+                                disabled={accionesBloqueadas}
+                                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 shadow-md ${
+                                  accionesBloqueadas
+                                    ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-60'
+                                    : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white hover:scale-105'
+                                }`}
+                                title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Iniciar consulta'}
                               >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -524,7 +705,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                             {onVerDetalle && (
                               <button
                                 onClick={() => onVerDetalle(consulta)}
-                                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md"
+                                disabled={accionesBloqueadas}
+                                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 shadow-md ${
+                                  accionesBloqueadas
+                                    ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-60'
+                                    : 'bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white hover:scale-105'
+                                }`}
+                                title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Ver detalle'}
                               >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -547,13 +734,20 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
           <div className="lg:hidden space-y-3 sm:space-y-4">
             {consultasPaginadas.map((consulta) => {
               const tipoMeta = getTipoConsultaMeta(consulta);
+              const agendaMeta = getAgendaMeta(consulta);
+              const origenMeta = getOrigenConsultaMeta(consulta);
+              const estadoVisual = getEstadoVisual(consulta);
               const esProgramada = tipoMeta.label === 'Programada';
+              const estadoCobro = getEstadoCobro(consulta);
+              const accionesBloqueadas = estadoCobro.faltaPagar;
+              const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
               return (
               <div
                 key={consulta.id}
+                  title={estadoCobro.faltaPagar ? 'Esta cita está pendiente de pago' : ''}
                 className={`backdrop-blur-sm rounded-xl shadow-lg border p-4 hover:shadow-xl transition-all duration-200 hover:scale-[1.02] ${
                   esProgramada ? 'bg-cyan-50/80 border-cyan-200/70' : 'bg-white/80 border-white/50'
-                }`}
+                  } ${estadoCobro.rowClass}`}
               >
                 {/* Header de la tarjeta con paciente */}
                 <div className="flex items-center gap-3 mb-3">
@@ -570,6 +764,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${tipoMeta.className}`}>
                         {tipoMeta.icon} {tipoMeta.label}
                       </span>
+                      {origenMeta.visible && (
+                        <span className={`ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${origenMeta.className}`}>
+                          {origenMeta.icon} {origenMeta.label}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -596,10 +795,27 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
 
                 {/* Estados */}
                 <div className="flex flex-wrap gap-2 mb-4">
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getEstadoColor(consulta.estado)}`}>
-                    {getEstadoIcon(consulta.estado)}
-                    {consulta.estado || 'Sin estado'}
+                  <span
+                    className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${agendaMeta.className}`}
+                    title={agendaMeta.label === 'Reprogramada' && consulta?.reprogramada_en ? `Reprogramada el ${formatDateTime(consulta.reprogramada_en)}` : ''}
+                  >
+                    {agendaMeta.icon}
+                    {agendaMeta.label}
                   </span>
+                  {agendaMeta.label === 'Reprogramada' && consulta?.reprogramada_en && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200">
+                      {formatDateTime(consulta.reprogramada_en)}
+                    </span>
+                  )}
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${estadoVisual.className}`}>
+                    {estadoVisual.icon}
+                    {estadoVisual.label}
+                  </span>
+                  {estadoCobro.label && (
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${estadoCobro.badgeClass}`}>
+                      {estadoCobro.label}
+                    </span>
+                  )}
                   <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getClasificacionColor(consulta.clasificacion)}`}>
                     {getClasificacionIcon(consulta.clasificacion)}
                     {consulta.clasificacion || 'Sin clasificar'}
@@ -612,14 +828,26 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                     <>
                       <button
                         onClick={() => actualizarEstado(consulta.id, 'completada')}
-                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg font-medium transition-all duration-200 text-sm"
+                        disabled={accionesBloqueadas}
+                        title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Completar consulta'}
+                        className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
+                          accionesBloqueadas
+                            ? 'bg-gray-400 text-gray-200 cursor-not-allowed opacity-60'
+                            : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white'
+                        }`}
                       >
                         <span>✔️</span>
                         <span className="hidden sm:inline">Completar</span>
                       </button>
                       <button
                         onClick={() => actualizarEstado(consulta.id, 'cancelada')}
-                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-lg font-medium transition-all duration-200 text-sm"
+                        disabled={accionesBloqueadas}
+                        title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Cancelar consulta'}
+                        className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
+                          accionesBloqueadas
+                            ? 'bg-gray-400 text-gray-200 cursor-not-allowed opacity-60'
+                            : 'bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white'
+                        }`}
                       >
                         <span>✖️</span>
                         <span className="hidden sm:inline">Cancelar</span>
@@ -629,7 +857,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                   
                   <button
                     onClick={() => navigate(`/historia-clinica/${consulta.paciente_id}/${consulta.id}`)}
-                    className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg font-medium transition-all duration-200 text-sm"
+                    disabled={accionesBloqueadas}
+                    title={accionesBloqueadas ? tituloAccionesBloqueadas : ''}
+                      className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
+                        accionesBloqueadas
+                          ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white'
+                      }`}
                   >
                     <span>📖</span>
                     <span className="hidden sm:inline">Historia</span>
@@ -638,7 +872,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                   {onIniciarConsulta && (
                     <button
                       onClick={() => onIniciarConsulta(consulta)}
-                      className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg font-medium transition-all duration-200 text-sm"
+                      disabled={accionesBloqueadas}
+                      title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Iniciar consulta'}
+                      className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
+                        accionesBloqueadas
+                          ? 'bg-gray-400 text-gray-200 cursor-not-allowed opacity-60'
+                          : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white'
+                      }`}
                     >
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -650,7 +890,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                   {onVerDetalle && (
                     <button
                       onClick={() => onVerDetalle(consulta)}
-                      className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white rounded-lg font-medium transition-all duration-200 text-sm"
+                      disabled={accionesBloqueadas}
+                      title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Ver detalle'}
+                      className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
+                        accionesBloqueadas
+                          ? 'bg-gray-400 text-gray-200 cursor-not-allowed opacity-60'
+                          : 'bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white'
+                      }`}
                     >
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />

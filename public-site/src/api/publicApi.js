@@ -1,15 +1,24 @@
 function getDefaultApiBase() {
   const hostname = window.location.hostname
   if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost/clinica-2demayo/'
-  return 'https://sistema.clinica2demayo.com/'
+
+  const normalizedHost = hostname.replace(/^www\./i, '')
+  if (/^sistema\./i.test(normalizedHost)) {
+    return `${window.location.protocol}//${normalizedHost}/`
+  }
+
+  return `https://sistema.${normalizedHost}/`
 }
 
 export const PUBLIC_API_BASE = (import.meta.env.VITE_PUBLIC_API_BASE || getDefaultApiBase()).replace(/\/+$/, '/')
 
 async function fetchJson(path) {
-  const response = await fetch(PUBLIC_API_BASE + path, {
+  const separator = path.includes('?') ? '&' : '?'
+  const url = `${PUBLIC_API_BASE}${path}${separator}_t=${Date.now()}`
+  const response = await fetch(url, {
     method: 'GET',
     headers: { 'Accept': 'application/json' },
+    cache: 'no-store',
   })
   const data = await response.json().catch(() => null)
   if (!response.ok) {

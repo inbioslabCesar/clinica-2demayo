@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import TabsApoyoDiagnostico from "../components/examenes/TabsApoyoDiagnostico";
@@ -19,7 +19,11 @@ const DEFAULT_PROXIMA_CITA = {
   hora: "",
   medico_id: "",
   consulta_id: null,
+  es_control: false,
 };
+const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita"]);
+const HC_PREV_EXCLUDED_SECTIONS = new Set(["plan", "tratamiento", "receta"]);
+const HC_PREVIAS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function HistoriaClinicaPage() {
   const { pacienteId, consultaId } = useParams();
@@ -38,6 +42,21 @@ function HistoriaClinicaPage() {
   const [ordenesLab, setOrdenesLab] = useState([]);
   const [usuarioSesion, setUsuarioSesion] = useState(null);
   const [fechaConsulta, setFechaConsulta] = useState("");
+  const [consultaActual, setConsultaActual] = useState(null);
+  const [historiasPrevias, setHistoriasPrevias] = useState([]);
+  const [indiceHistoriaPrevia, setIndiceHistoriaPrevia] = useState(0);
+  const [hcAnterior, setHcAnterior] = useState(null);
+  const [hcAnteriorError, setHcAnteriorError] = useState("");
+  const [hcAnteriorLoading, setHcAnteriorLoading] = useState(false);
+  const [drawerHistorialAbierto, setDrawerHistorialAbierto] = useState(false);
+  const [mostrarHcAnterior, setMostrarHcAnterior] = useState(false);
+  const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
+  const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
+  const [mostrarBurbujaAsistente, setMostrarBurbujaAsistente] = useState(false);
+  const [configApariencia, setConfigApariencia] = useState({
+    color_primario: '#3B82F6',
+    avatar_activo: null
+  });
   useEffect(() => {
     const usuarioRaw = sessionStorage.getItem("usuario");
     if (usuarioRaw) {
@@ -49,6 +68,27 @@ function HistoriaClinicaPage() {
     } else {
       setUsuarioSesion(null);
     }
+  }, []);
+  useEffect(() => {
+    // Cargar configuración de apariencia (avatar y color)
+    fetch(`${BASE_URL}api_configuracion_apariencia.php`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' }
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.data) {
+          setConfigApariencia({
+            color_primario: data.data.color_primario || '#3B82F6',
+            avatar_activo: data.data.avatar_activo || null
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('Error loading appearance config:', err);
+        // Usar valores por defecto
+      });
   }, []);
   useEffect(() => {
     if (!consultaId) return;
@@ -83,6 +123,76 @@ function HistoriaClinicaPage() {
       minute: "2-digit",
     });
   };
+
+  const formatearFechaCorta = (rawValue) => {
+    if (!rawValue) return "-";
+    const parsed = new Date(String(rawValue).replace(" ", "T"));
+    if (Number.isNaN(parsed.getTime())) return String(rawValue);
+    return parsed.toLocaleDateString("es-PE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  };
+
+  const extraerTextoDiagnostico = (dx) => {
+    if (!dx) return "";
+    if (typeof dx === "string") return dx;
+    if (typeof dx !== "object") return "";
+    const codigo = String(dx.codigo || dx.cie10 || dx.cie10_codigo || "").trim();
+    const descripcion = String(dx.descripcion || dx.diagnostico || dx.nombre || "").trim();
+    if (codigo && descripcion) return `${codigo} - ${descripcion}`;
+    return descripcion || codigo;
+  };
+
+  const formatFieldLabel = (fieldKey) => {
+    if (!fieldKey) return "Campo";
+    if (String(fieldKey).toLowerCase() === "fur") return "FUR";
+    return String(fieldKey)
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  };
+
+  const extraerValorVisible = (raw) => {
+    if (raw == null) return "";
+    if (typeof raw === "string") return raw.trim();
+    if (typeof raw === "number") return Number.isFinite(raw) ? String(raw) : "";
+    if (typeof raw === "boolean") return raw ? "Si" : "No";
+    if (Array.isArray(raw)) {
+      const values = raw
+        .map((item) => {
+          if (typeof item === "string") return item.trim();
+          if (typeof item === "number") return String(item);
+          return "";
+        })
+        .filter(Boolean);
+      return values.join(", ");
+    }
+    return "";
+  };
+
+  const obtenerTextoDesdeCampos = (datos, aliases = [], keyPattern = null) => {
+    if (!datos || typeof datos !== "object") return "";
+
+    for (const key of aliases) {
+      const raw = datos[key];
+      if (typeof raw === "string" && raw.trim() !== "") {
+        return raw.trim();
+      }
+    }
+
+    if (keyPattern instanceof RegExp) {
+      const entries = Object.entries(datos);
+      for (const [key, value] of entries) {
+        if (!keyPattern.test(String(key))) continue;
+        if (typeof value === "string" && value.trim() !== "") {
+          return value.trim();
+        }
+      }
+    }
+
+    return "";
+  };
   const [paciente, setPaciente] = useState(null);
   const [triaje, setTriaje] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -99,9 +209,13 @@ function HistoriaClinicaPage() {
   });
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
+  const [mostrarModalGuardado, setMostrarModalGuardado] = useState(false);
+  const [mensajeModalGuardado, setMensajeModalGuardado] = useState("");
+  const [bloqueoGuardadoHasta, setBloqueoGuardadoHasta] = useState(0);
   const [diagnosticos, setDiagnosticos] = useState([]);
   const [hcTemplateMeta, setHcTemplateMeta] = useState(null);
   const [hcTemplateResolution, setHcTemplateResolution] = useState(null);
+  const bloqueoGuardadoActivo = Date.now() < bloqueoGuardadoHasta;
   useEffect(() => {
     if (!consultaId) return;
     const templateQuery = HC_TEMPLATE_ENGINE_READ ? '&include_template=1' : '';
@@ -248,6 +362,7 @@ function HistoriaClinicaPage() {
           };
 
           if (!cancelled) {
+            setConsultaActual(consulta);
             setMedicoInfo(medicoConsulta);
             setFirmaMedico(medicoConsulta.firma || null);
             setFechaConsulta(fechaRaw);
@@ -260,6 +375,7 @@ function HistoriaClinicaPage() {
 
       const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
       if (!cancelled) {
+        setConsultaActual(null);
         if (medicoSession) {
           setMedicoInfo(medicoSession);
           setFirmaMedico(medicoSession.firma || null);
@@ -277,6 +393,338 @@ function HistoriaClinicaPage() {
       cancelled = true;
     };
   }, [consultaId]);
+
+  useEffect(() => {
+    const hcOrigenId = Number(consultaActual?.hc_origen_id || 0);
+    if (hcOrigenId <= 0) {
+      setHistoriasPrevias([]);
+      setIndiceHistoriaPrevia(0);
+      setHcAnterior(null);
+      setHcAnteriorError("");
+      setDrawerHistorialAbierto(false);
+      setMostrarHcAnterior(false);
+      return;
+    }
+
+    let cancelled = false;
+    setHcAnteriorError("");
+
+    const cacheKey = `hc_previas_chain_v1_${consultaId}`;
+    let cacheHit = false;
+    try {
+      const raw = sessionStorage.getItem(cacheKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const ageMs = Date.now() - Number(parsed?.timestamp || 0);
+        const sameOrigen = Number(parsed?.hc_origen_id || 0) === hcOrigenId;
+        if (sameOrigen && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
+          const chain = parsed.chain;
+          setHistoriasPrevias(chain);
+          setIndiceHistoriaPrevia(0);
+          setHcAnterior(chain[0] || null);
+          setHcAnteriorError(chain.length === 0 ? 'No hay historias clínicas previas encadenadas.' : '');
+          setHcAnteriorLoading(false);
+          cacheHit = true;
+        }
+      }
+    } catch {
+      // Cache inválido: continuar con fetch normal.
+    }
+
+    if (!cacheHit) {
+      setHcAnteriorLoading(true);
+    }
+
+    const cargarHcAnterior = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1`, { credentials: 'include' });
+        const data = await res.json();
+        if (cancelled) return;
+        const chain = Array.isArray(data.historias_previas) ? data.historias_previas : [];
+        if (data.success || chain.length > 0) {
+          setHistoriasPrevias(chain);
+          setIndiceHistoriaPrevia(0);
+          setHcAnterior(chain[0] || null);
+          setHcAnteriorError("");
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify({
+              timestamp: Date.now(),
+              hc_origen_id: hcOrigenId,
+              chain,
+            }));
+          } catch {
+            // Ignorar error de storage y continuar.
+          }
+          if (chain.length === 0) {
+            setHcAnteriorError('No hay historias clínicas previas encadenadas.');
+          }
+        } else {
+          setHistoriasPrevias([]);
+          setIndiceHistoriaPrevia(0);
+          setHcAnterior(null);
+          setHcAnteriorError(data.error || 'No se pudo cargar la HC anterior');
+        }
+      } catch {
+        if (cancelled) return;
+        setHistoriasPrevias([]);
+        setIndiceHistoriaPrevia(0);
+        setHcAnterior(null);
+        setHcAnteriorError('Error al cargar la HC anterior');
+      } finally {
+        if (!cancelled) setHcAnteriorLoading(false);
+      }
+    };
+
+    cargarHcAnterior();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [consultaActual?.hc_origen_id, consultaId]);
+
+  useEffect(() => {
+    if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) {
+      setHcAnterior(null);
+      setIndiceHistoriaPrevia(0);
+      return;
+    }
+
+    setIndiceHistoriaPrevia((prev) => {
+      const next = Math.max(0, Math.min(prev, historiasPrevias.length - 1));
+      setHcAnterior(historiasPrevias[next] || null);
+      return next;
+    });
+  }, [historiasPrevias]);
+
+  useEffect(() => {
+    if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) {
+      setHcAnterior(null);
+      return;
+    }
+    const safeIndex = Math.max(0, Math.min(indiceHistoriaPrevia, historiasPrevias.length - 1));
+    setHcAnterior(historiasPrevias[safeIndex] || null);
+  }, [indiceHistoriaPrevia, historiasPrevias]);
+
+  const totalHistoriasPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
+  useEffect(() => {
+    if (readOnly) return;
+    if (Number(consultaActual?.hc_origen_id || 0) <= 0) return;
+    if (totalHistoriasPrevias <= 0) return;
+
+    const welcomeKey = "hc_asistente_burbuja_bienvenida_v1";
+    const wasShown = localStorage.getItem(welcomeKey) === "1";
+    if (wasShown) return;
+
+    const timer = window.setTimeout(() => {
+      setMostrarBurbujaAsistente(true);
+      localStorage.setItem(welcomeKey, "1");
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [consultaActual?.hc_origen_id, totalHistoriasPrevias, readOnly]);
+
+  const irHistoriaAnterior = () => {
+    if (totalHistoriasPrevias <= 0) return;
+    setIndiceHistoriaPrevia((prev) => Math.min(prev + 1, totalHistoriasPrevias - 1));
+  };
+  const irHistoriaSiguiente = () => {
+    if (totalHistoriasPrevias <= 0) return;
+    setIndiceHistoriaPrevia((prev) => Math.max(prev - 1, 0));
+  };
+  const adjuntosDocumentos = Array.isArray(hcAnterior?.adjuntos) ? hcAnterior.adjuntos : [];
+  const adjuntosArchivos = adjuntosDocumentos.flatMap((doc, docIndex) => {
+    const archivos = Array.isArray(doc?.archivos) ? doc.archivos : [];
+    return archivos.map((archivo, index) => ({
+      ...archivo,
+      _docTitulo: String(doc?.titulo || doc?.descripcion || `Documento ${docIndex + 1}`).trim(),
+      _docTipo: String(doc?.tipo || '').trim(),
+      _docIndex: docIndex,
+      _index: index,
+    }));
+  });
+  const adjuntosImagenes = adjuntosArchivos.filter((a) => {
+    const kind = String(a?.kind || '').toLowerCase();
+    const mime = String(a?.mime_type || '').toLowerCase();
+    return kind === 'imagen' || mime.startsWith('image/');
+  });
+  const adjuntosPdf = adjuntosArchivos.filter((a) => {
+    const kind = String(a?.kind || '').toLowerCase();
+    const mime = String(a?.mime_type || '').toLowerCase();
+    return kind === 'pdf' || mime === 'application/pdf' || String(a?.nombre_original || '').toLowerCase().endsWith('.pdf');
+  });
+  const apoyoDiagnosticoPrevio = hcAnterior?.apoyo_diagnostico || null;
+  const apoyoLaboratorio = apoyoDiagnosticoPrevio?.laboratorio || null;
+  const apoyoEcografia = apoyoDiagnosticoPrevio?.ecografia || null;
+  const laboratorioDisponible = Boolean(apoyoLaboratorio?.has_resultados);
+  const ecografiaDisponible = Boolean(apoyoEcografia?.has_resultados) && Number(apoyoEcografia?.ultima_orden_id || 0) > 0;
+  const fuenteLaboratorioLabel = (() => {
+    const resultados = Number(apoyoLaboratorio?.resultados || 0);
+    const documentos = Number(apoyoLaboratorio?.documentos || 0);
+    if (resultados > 0 && documentos > 0) return 'Interno + adjuntos externos';
+    if (resultados > 0) return 'Resultados internos';
+    if (documentos > 0) return 'Adjuntos externos';
+    return 'Sin fuente';
+  })();
+  const fuenteEcografiaLabel = ecografiaDisponible ? 'Visor de imágenes' : 'Sin fuente';
+
+  const abrirRecursoHistorialPrevio = (targetPath) => {
+    const path = String(targetPath || '').trim();
+    if (!path) return;
+    window.open(path, '_blank', 'noopener,noreferrer');
+  };
+  const importarDiagnosticoDesdeAnterior = () => {
+    if (readOnly) return;
+    const nuevos = Array.isArray(hcAnterior?.datos?.diagnosticos) ? hcAnterior.datos.diagnosticos : [];
+    if (nuevos.length === 0) return;
+
+    setMostrarImportarDiagnosticoModal(true);
+  };
+
+  const ejecutarImportacionDiagnostico = (modo) => {
+    const nuevos = Array.isArray(hcAnterior?.datos?.diagnosticos) ? hcAnterior.datos.diagnosticos : [];
+    if (nuevos.length === 0) {
+      setMostrarImportarDiagnosticoModal(false);
+      return;
+    }
+
+    if (modo === 'replace') {
+      setDiagnosticos(nuevos);
+      setMsg('Diagnóstico importado (reemplazado) desde HC previa.');
+      setMostrarImportarDiagnosticoModal(false);
+      return;
+    }
+
+    if (modo === 'append') {
+      setDiagnosticos((actuales) => {
+        const base = Array.isArray(actuales) ? actuales : [];
+        const key = (dx) => {
+          if (typeof dx === 'string') return dx.trim().toLowerCase();
+          if (!dx || typeof dx !== 'object') return '';
+          return `${String(dx.codigo || dx.cie10 || '').trim().toLowerCase()}|${String(dx.nombre || dx.descripcion || dx.diagnostico || '').trim().toLowerCase()}`;
+        };
+        const existentes = new Set(base.map(key).filter(Boolean));
+        const merged = [...base];
+        nuevos.forEach((dx) => {
+          const k = key(dx);
+          if (!k || existentes.has(k)) return;
+          existentes.add(k);
+          merged.push(dx);
+        });
+        return merged;
+      });
+      setMsg('Diagnóstico importado (agregado) desde HC previa.');
+      setMostrarImportarDiagnosticoModal(false);
+    }
+  };
+
+  const diagnosticosPrevios = Array.isArray(hcAnterior?.datos?.diagnosticos)
+    ? hcAnterior.datos.diagnosticos.map(extraerTextoDiagnostico).filter(Boolean)
+    : [];
+  const diagnosticosPreviosDetalle = Array.isArray(hcAnterior?.datos?.diagnosticos)
+    ? hcAnterior.datos.diagnosticos.map((dx, index) => {
+        if (typeof dx === "string") {
+          return {
+            key: `dx-prev-${index}`,
+            codigo: "",
+            nombre: dx.trim(),
+            tipo: "",
+            observaciones: "",
+          };
+        }
+
+        if (!dx || typeof dx !== "object") {
+          return {
+            key: `dx-prev-${index}`,
+            codigo: "",
+            nombre: "",
+            tipo: "",
+            observaciones: "",
+          };
+        }
+
+        return {
+          key: String(dx.id || `dx-prev-${index}`),
+          codigo: String(dx.codigo || dx.cie10 || dx.cie10_codigo || "").trim(),
+          nombre: String(dx.nombre || dx.descripcion || dx.diagnostico || "").trim(),
+          tipo: String(dx.tipo || "").trim(),
+          observaciones: String(dx.observaciones || "").trim(),
+        };
+      }).filter((item) => item.codigo || item.nombre || item.tipo || item.observaciones)
+    : [];
+  const datosHcAnterior = hcAnterior?.datos && typeof hcAnterior.datos === "object" ? hcAnterior.datos : {};
+  const recetaPrevia = Array.isArray(datosHcAnterior?.receta) ? datosHcAnterior.receta : [];
+  const tratamientoPrevio = obtenerTextoDesdeCampos(datosHcAnterior, [
+    "tratamiento",
+    "plan_tratamiento",
+    "manejo",
+    "indicaciones",
+  ], /tratamiento|manejo|indicaciones/i);
+  const antecedentesPrevios = obtenerTextoDesdeCampos(datosHcAnterior, [
+    "antecedentes",
+    "antecedentes_personales",
+    "antecedentes_patologicos",
+    "antecedente",
+  ], /anteced/i);
+  const examenFisicoPrevio = obtenerTextoDesdeCampos(datosHcAnterior, [
+    "examen_fisico",
+    "examen_general",
+    "examen",
+    "evaluacion_fisica",
+  ], /examen|exploracion|evaluacion/i);
+  const templateAnteriorSections = hcAnterior?.template?.sections && typeof hcAnterior.template.sections === "object"
+    ? hcAnterior.template.sections
+    : null;
+  const existeCampoAntecedentesEnTemplateAnterior = templateAnteriorSections
+    ? Object.values(templateAnteriorSections).some((sectionFields) => {
+        if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return false;
+        return Object.keys(sectionFields).some((fieldKey) => /anteced/i.test(String(fieldKey)));
+      })
+    : false;
+  const existeCampoExamenEnTemplateAnterior = templateAnteriorSections
+    ? Object.values(templateAnteriorSections).some((sectionFields) => {
+        if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return false;
+        return Object.keys(sectionFields).some((fieldKey) => /examen|exploracion|evaluacion/i.test(String(fieldKey)));
+      })
+    : false;
+  const seccionesPreviasDinamicas = templateAnteriorSections
+    ? Object.entries(templateAnteriorSections).reduce((acc, [sectionKey, sectionFields]) => {
+        if (HC_PREV_EXCLUDED_SECTIONS.has(sectionKey)) return acc;
+        if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return acc;
+
+        const campos = Object.keys(sectionFields).reduce((fieldAcc, fieldKey) => {
+          if (HC_PREV_EXCLUDED_FIELDS.has(fieldKey)) return fieldAcc;
+          const valor = extraerValorVisible(datosHcAnterior[fieldKey]);
+          if (!valor) return fieldAcc;
+          fieldAcc.push({ fieldKey, label: formatFieldLabel(fieldKey), value: valor });
+          return fieldAcc;
+        }, []);
+
+        if (campos.length > 0) {
+          acc.push({ sectionKey, label: formatFieldLabel(sectionKey), fields: campos });
+        }
+        return acc;
+      }, [])
+    : [];
+  const tieneCampoAntecedentesEnSeccionesPrevias = seccionesPreviasDinamicas.some((section) =>
+    section.fields.some((field) => /anteced/i.test(String(field.fieldKey)))
+  );
+  const tieneCampoExamenEnSeccionesPrevias = seccionesPreviasDinamicas.some((section) =>
+    section.fields.some((field) => /examen|exploracion|evaluacion/i.test(String(field.fieldKey)))
+  );
+  const mostrarAntecedentesPrevios = (Boolean(antecedentesPrevios) || existeCampoAntecedentesEnTemplateAnterior)
+    && !tieneCampoAntecedentesEnSeccionesPrevias;
+  const mostrarExamenFisicoPrevio = (Boolean(examenFisicoPrevio) || existeCampoExamenEnTemplateAnterior)
+    && !tieneCampoExamenEnSeccionesPrevias;
+  const camposPreviosFallback = seccionesPreviasDinamicas.length === 0
+    ? Object.entries(datosHcAnterior).reduce((acc, [fieldKey, rawValue]) => {
+        if (HC_PREV_EXCLUDED_FIELDS.has(fieldKey)) return acc;
+        const value = extraerValorVisible(rawValue);
+        if (!value) return acc;
+        acc.push({ fieldKey, label: formatFieldLabel(fieldKey), value });
+        return acc;
+      }, [])
+    : [];
+
   if (loading) return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/50 flex flex-col items-center gap-4">
@@ -412,6 +860,7 @@ function HistoriaClinicaPage() {
             </p>
           </div>
         )}
+
         {HC_TEMPLATE_ENGINE_READ && hcTemplateMeta && (
           <div className="mb-6 p-4 rounded-2xl border bg-indigo-50/80 border-indigo-200 backdrop-blur-sm">
             <p className="text-sm font-medium text-indigo-800">
@@ -445,6 +894,11 @@ function HistoriaClinicaPage() {
           onSubmit={async (e) => {
             e.preventDefault();
             if (readOnly) return;
+            if (guardando) return;
+            if (Date.now() < bloqueoGuardadoHasta) {
+              setMsg("Ya se guardo hace un momento. Espera un instante para evitar duplicados.");
+              return;
+            }
             const proxima = hc.proxima_cita || DEFAULT_PROXIMA_CITA;
             if (proxima.programar && (!proxima.fecha || !proxima.hora)) {
               setMsg("Para programar próxima cita debes indicar fecha y hora.");
@@ -453,33 +907,56 @@ function HistoriaClinicaPage() {
 
             setGuardando(true);
             setMsg("");
-            const datos = { ...hc, diagnosticos, receta: hc.receta };
-            if (!proxima.programar) {
-              delete datos.proxima_cita;
-            }
-            // Incluir información de la plantilla para mantener el diseño al imprimir
-            if (hcTemplateMeta?.id) {
-              datos.template = {
-                id: hcTemplateMeta.id,
-                version: hcTemplateMeta.version || ''
-              };
-            }
+            try {
+              const datos = { ...hc, diagnosticos, receta: hc.receta };
+              if (!proxima.programar) {
+                delete datos.proxima_cita;
+              }
+              // Incluir información de la plantilla para mantener el diseño al imprimir
+              if (hcTemplateMeta?.id) {
+                datos.template = {
+                  id: hcTemplateMeta.id,
+                  version: hcTemplateMeta.version || ''
+                };
+              }
 
-            const res = await fetch(`${BASE_URL}api_historia_clinica.php`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ consulta_id: consultaId, datos }),
-              credentials: "include"
-            });
-            const data = await res.json();
-            setGuardando(false);
-            setMsg(
-              data.success
-                ? (data.proxima_cita?.consulta_id
-                  ? `Guardado correctamente. Próxima cita registrada #${data.proxima_cita.consulta_id}.`
-                  : "Guardado correctamente")
-                : data.error || "Error al guardar"
-            );
+              const res = await fetch(`${BASE_URL}api_historia_clinica.php`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ consulta_id: consultaId, datos }),
+                credentials: "include"
+              });
+              const data = await res.json();
+
+              if (data.success) {
+                const proximaInfo = data.proxima_cita || null;
+                const fechaProxima = String(proximaInfo?.fecha || "").trim();
+                const horaProxima = String(proximaInfo?.hora || "").trim();
+                const referenciaId = Number(proximaInfo?.consulta_id || 0);
+                const referenciaTexto = referenciaId > 0 ? ` (ref. interna ${referenciaId})` : "";
+
+                let successMsg = "Historia clínica guardada correctamente.";
+                if (proximaInfo) {
+                  if (fechaProxima && horaProxima) {
+                    successMsg = `Historia clínica guardada. Próxima cita programada para ${fechaProxima} a las ${horaProxima}${referenciaTexto}.`;
+                  } else if (fechaProxima) {
+                    successMsg = `Historia clínica guardada. Próxima cita programada para ${fechaProxima}${referenciaTexto}.`;
+                  } else {
+                    successMsg = `Historia clínica guardada. Próxima cita programada${referenciaTexto}.`;
+                  }
+                }
+                setBloqueoGuardadoHasta(Date.now() + 2500);
+                setMensajeModalGuardado(successMsg);
+                setMostrarModalGuardado(true);
+                setMsg(successMsg);
+              } else {
+                setMsg(data.error || "Error al guardar");
+              }
+            } catch {
+              setMsg("Error de conexión al guardar");
+            } finally {
+              setGuardando(false);
+            }
           }}
           className="space-y-6"
         >
@@ -567,9 +1044,31 @@ function HistoriaClinicaPage() {
             </div>
 
             <div className="space-y-4">
-              <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+              <label
+                className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 cursor-pointer transition-all ${
+                  Boolean(hc.proxima_cita?.programar)
+                    ? "border-cyan-400 bg-cyan-50/80"
+                    : "border-slate-300 bg-white"
+                } ${readOnly ? "opacity-70 cursor-not-allowed" : "hover:border-cyan-300"}`}
+              >
+                <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                  <span
+                    className={`h-5 w-5 rounded-md border-2 flex items-center justify-center ${
+                      Boolean(hc.proxima_cita?.programar)
+                        ? "border-cyan-600 bg-cyan-600 text-white"
+                        : "border-slate-400 bg-white"
+                    }`}
+                  >
+                    {Boolean(hc.proxima_cita?.programar) ? "✓" : ""}
+                  </span>
+                  <span>Programar próxima cita al guardar esta HC</span>
+                </div>
+                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${Boolean(hc.proxima_cita?.programar) ? "bg-cyan-100 text-cyan-800" : "bg-slate-100 text-slate-600"}`}>
+                  {Boolean(hc.proxima_cita?.programar) ? "Activado" : "Desactivado"}
+                </span>
                 <input
                   type="checkbox"
+                  className="sr-only"
                   checked={Boolean(hc.proxima_cita?.programar)}
                   onChange={(e) =>
                     setHc((current) => ({
@@ -584,11 +1083,50 @@ function HistoriaClinicaPage() {
                   }
                   disabled={readOnly}
                 />
-                Programar próxima cita al guardar esta HC
               </label>
 
               {Boolean(hc.proxima_cita?.programar) && (
                 <>
+                  <label
+                    className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 cursor-pointer transition-all ${
+                      Boolean(hc.proxima_cita?.es_control)
+                        ? "border-emerald-400 bg-emerald-50/80"
+                        : "border-slate-300 bg-white"
+                    } ${readOnly ? "opacity-70 cursor-not-allowed" : "hover:border-emerald-300"}`}
+                  >
+                    <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                      <span
+                        className={`h-5 w-5 rounded-md border-2 flex items-center justify-center ${
+                          Boolean(hc.proxima_cita?.es_control)
+                            ? "border-emerald-600 bg-emerald-600 text-white"
+                            : "border-slate-400 bg-white"
+                        }`}
+                      >
+                        {Boolean(hc.proxima_cita?.es_control) ? "✓" : ""}
+                      </span>
+                      <span>Cita de control (sin cobro, se agenda habilitada)</span>
+                    </div>
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${Boolean(hc.proxima_cita?.es_control) ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
+                      {Boolean(hc.proxima_cita?.es_control) ? "Control" : "Normal"}
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={Boolean(hc.proxima_cita?.es_control)}
+                      onChange={(e) =>
+                        setHc((current) => ({
+                          ...current,
+                          proxima_cita: {
+                            ...DEFAULT_PROXIMA_CITA,
+                            ...(current.proxima_cita || {}),
+                            es_control: e.target.checked,
+                          },
+                        }))
+                      }
+                      disabled={readOnly}
+                    />
+                  </label>
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-sm font-semibold text-slate-700 mb-1">Fecha</label>
@@ -673,7 +1211,7 @@ function HistoriaClinicaPage() {
                 <button
                   type="submit"
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none text-sm whitespace-nowrap"
-                  disabled={guardando || readOnly}
+                  disabled={guardando || readOnly || bloqueoGuardadoActivo}
                 >
                   {readOnly ? (
                     <>
@@ -686,6 +1224,13 @@ function HistoriaClinicaPage() {
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       <span>Guardando...</span>
+                    </>
+                  ) : bloqueoGuardadoActivo ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>Guardado reciente</span>
                     </>
                   ) : (
                     <>
@@ -831,6 +1376,533 @@ function HistoriaClinicaPage() {
           </div>
         </form>
       </div>
+
+      {mostrarModalGuardado && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/45 flex items-center justify-center px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 p-5">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 h-9 w-9 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-semibold text-slate-800">Guardado exitoso</h3>
+                <p className="mt-1 text-sm text-slate-600">{mensajeModalGuardado || "Los datos se guardaron correctamente."}</p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setMostrarModalGuardado(false)}
+                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drawer lateral de historial de HC previas */}
+      {Number(consultaActual?.hc_origen_id || 0) > 0 && (
+        <>
+          <div
+            className={`fixed inset-0 z-40 bg-slate-900/40 transition-opacity duration-300 ${drawerHistorialAbierto ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            onClick={() => setDrawerHistorialAbierto(false)}
+          />
+          <aside
+            className={`fixed top-0 right-0 z-50 h-screen w-full sm:w-[92vw] lg:w-[40vw] bg-slate-50 border-l border-slate-200 shadow-2xl transition-transform duration-300 ${drawerHistorialAbierto ? 'translate-x-0' : 'translate-x-full'}`}
+            aria-hidden={!drawerHistorialAbierto}
+          >
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/95 backdrop-blur px-4 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">Historial Clínico Previo</p>
+                <button
+                  type="button"
+                  onClick={() => setDrawerHistorialAbierto(false)}
+                  className="w-8 h-8 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  title="Cerrar historial"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={irHistoriaSiguiente}
+                  className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs hover:bg-slate-100 disabled:opacity-50"
+                  disabled={hcAnteriorLoading || totalHistoriasPrevias <= 1 || indiceHistoriaPrevia <= 0}
+                >
+                  ◀
+                </button>
+                <p className="text-xs text-slate-700 flex-1 text-center font-medium">
+                  {totalHistoriasPrevias > 0
+                    ? `Consulta del ${formatearFechaCorta(hcAnterior?.fecha_consulta || hcAnterior?.fecha_registro)} - Paso ${indiceHistoriaPrevia + 1} de ${totalHistoriasPrevias}`
+                    : 'Sin historias previas'}
+                </p>
+                <button
+                  type="button"
+                  onClick={irHistoriaAnterior}
+                  className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs hover:bg-slate-100 disabled:opacity-50"
+                  disabled={hcAnteriorLoading || totalHistoriasPrevias <= 1 || indiceHistoriaPrevia >= (totalHistoriasPrevias - 1)}
+                >
+                  ▶
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMostrarHcAnterior((v) => !v)}
+                  className="px-2 py-1 rounded-lg bg-amber-600 text-white text-xs hover:bg-amber-700"
+                  disabled={hcAnteriorLoading || (!hcAnterior && !hcAnteriorError)}
+                >
+                  {mostrarHcAnterior ? 'Ocultar detalle' : 'Ver detalle'}
+                </button>
+                <button
+                  type="button"
+                  onClick={importarDiagnosticoDesdeAnterior}
+                  className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-50"
+                  disabled={readOnly || hcAnteriorLoading || diagnosticosPreviosDetalle.length === 0}
+                  title={readOnly ? 'No disponible en solo lectura' : 'Importar diagnóstico al formulario actual'}
+                >
+                  Importar diagnóstico
+                </button>
+              </div>
+            </div>
+
+            <div className="h-[calc(100vh-122px)] overflow-y-auto px-4 py-4">
+              {hcAnteriorLoading && (
+                <p className="text-xs text-slate-700">Cargando resumen de la HC anterior...</p>
+              )}
+
+              {!hcAnteriorLoading && hcAnteriorError && (
+                <p className="text-xs text-red-700">{hcAnteriorError}</p>
+              )}
+
+              {!hcAnteriorLoading && !hcAnterior && !hcAnteriorError && (
+                <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
+                  No hay historias clínicas previas encadenadas para mostrar en este paciente/consulta.
+                </div>
+              )}
+
+              {!hcAnteriorLoading && hcAnterior?.datos && (
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-700">
+                    <div>
+                      <span className="font-semibold">Fecha HC previa:</span>{' '}
+                      {formatearFechaCorta(hcAnterior?.fecha_registro)}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Consulta origen:</span>{' '}
+                      #{Number(hcAnterior?.consulta_id || 0)}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 text-xs text-slate-800">
+                    <p className="font-semibold">Diagnóstico previo</p>
+                    <p className="mt-1 text-slate-700">
+                      {diagnosticosPrevios.length > 0 ? diagnosticosPrevios[0] : 'Sin diagnóstico registrado'}
+                    </p>
+                  </div>
+
+                  <div className="mt-3 text-xs text-slate-800">
+                    <p className="font-semibold">Tratamiento previo</p>
+                    <p className="mt-1 text-slate-700 whitespace-pre-wrap">
+                      {tratamientoPrevio || 'Sin tratamiento registrado'}
+                    </p>
+                  </div>
+
+                  {mostrarHcAnterior && (
+                    <div className="mt-4 space-y-3 border-t border-slate-100 pt-3">
+                      {diagnosticosPreviosDetalle.length > 0 && (
+                        <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                          <p className="font-semibold">Diagnósticos previos (detalle)</p>
+                          <div className="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                            <table className="min-w-full divide-y divide-slate-200">
+                              <thead className="bg-slate-100">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Código</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Diagnóstico</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Tipo</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Observaciones</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {diagnosticosPreviosDetalle.map((dx) => (
+                                  <tr key={dx.key} className="align-top">
+                                    <td className="px-3 py-2 text-slate-700">{dx.codigo || '-'}</td>
+                                    <td className="px-3 py-2 text-slate-800">{dx.nombre || '-'}</td>
+                                    <td className="px-3 py-2 text-slate-700">{dx.tipo || '-'}</td>
+                                    <td className="px-3 py-2 text-slate-700 whitespace-pre-wrap">{dx.observaciones || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {mostrarExamenFisicoPrevio && (
+                        <div className="text-xs text-slate-800">
+                          <p className="font-semibold">Examen físico previo</p>
+                          <p className="mt-1 text-slate-700 whitespace-pre-wrap">
+                            {examenFisicoPrevio || 'Sin examen físico registrado'}
+                          </p>
+                        </div>
+                      )}
+
+                      {recetaPrevia.length > 0 && (
+                        <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                          <p className="font-semibold">Receta previa</p>
+                          <div className="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                            <table className="min-w-full divide-y divide-slate-200">
+                              <thead className="bg-slate-100">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Medicamento</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Dosis</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Frecuencia</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-slate-700">Duración</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {recetaPrevia.map((item, index) => {
+                                  const nombre = String(item?.nombre || item?.medicamento || item?.descripcion || '').trim();
+                                  const codigo = String(item?.codigo || '').trim();
+                                  const dosis = String(item?.dosis || '').trim();
+                                  const frecuencia = String(item?.frecuencia || '').trim();
+                                  const duracion = String(item?.duracion || '').trim();
+                                  const observaciones = String(item?.observaciones || '').trim();
+
+                                  return (
+                                    <Fragment key={`receta-previa-${index}`}>
+                                      <tr key={`receta-previa-row-${index}`} className="align-top">
+                                        <td className="px-3 py-2 text-slate-800">
+                                          <div className="font-medium">{nombre || `Medicamento ${index + 1}`}</div>
+                                          {codigo && <div className="text-slate-500">Código: {codigo}</div>}
+                                        </td>
+                                        <td className="px-3 py-2 text-slate-700">{dosis || '-'}</td>
+                                        <td className="px-3 py-2 text-slate-700">{frecuencia || '-'}</td>
+                                        <td className="px-3 py-2 text-slate-700">{duracion || '-'}</td>
+                                      </tr>
+                                      {observaciones && (
+                                        <tr key={`receta-previa-obs-${index}`} className="bg-slate-50">
+                                          <td colSpan={4} className="px-3 py-2 text-slate-600 whitespace-pre-wrap">
+                                            <span className="font-medium text-slate-700">Observaciones:</span> {observaciones}
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </Fragment>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="font-semibold">Apoyo diagnóstico previo</p>
+                        <div className="mt-2 space-y-2">
+                          <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-2 py-2">
+                            <div>
+                              <p className="font-medium text-slate-800">Laboratorio</p>
+                              <p className="mt-0.5 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                                Fuente: {fuenteLaboratorioLabel}
+                              </p>
+                              <p className="text-[11px] text-slate-600">
+                                {laboratorioDisponible
+                                  ? `Resultados/documentos detectados (${Number(apoyoLaboratorio?.resultados || 0)} resultados, ${Number(apoyoLaboratorio?.documentos || 0)} adjuntos)`
+                                  : 'No hay resultados disponibles'}
+                              </p>
+                            </div>
+                            {laboratorioDisponible ? (
+                              <button
+                                type="button"
+                                onClick={() => abrirRecursoHistorialPrevio(apoyoLaboratorio?.target || `/resultados-laboratorio/${Number(apoyoLaboratorio?.consulta_id || hcAnterior?.consulta_id || 0)}`)}
+                                className="shrink-0 px-2 py-1 rounded bg-emerald-600 text-white text-[11px] hover:bg-emerald-700"
+                              >
+                                Ver resultados
+                              </button>
+                            ) : (
+                              <span className="shrink-0 text-[11px] text-slate-400">Sin datos</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-2 py-2">
+                            <div>
+                              <p className="font-medium text-slate-800">Ecografía</p>
+                              <p className="mt-0.5 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                                Fuente: {fuenteEcografiaLabel}
+                              </p>
+                              <p className="text-[11px] text-slate-600">
+                                {ecografiaDisponible
+                                  ? `Archivos detectados (${Number(apoyoEcografia?.archivos || 0)})`
+                                  : 'No hay resultados disponibles'}
+                              </p>
+                            </div>
+                            {ecografiaDisponible ? (
+                              <button
+                                type="button"
+                                onClick={() => abrirRecursoHistorialPrevio(apoyoEcografia?.target || `/visor-imagen/${Number(apoyoEcografia?.ultima_orden_id || 0)}`)}
+                                className="shrink-0 px-2 py-1 rounded bg-violet-600 text-white text-[11px] hover:bg-violet-700"
+                              >
+                                Abrir visor
+                              </button>
+                            ) : (
+                              <span className="shrink-0 text-[11px] text-slate-400">Sin datos</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {(adjuntosImagenes.length > 0 || adjuntosPdf.length > 0) && (
+                        <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                          <p className="font-semibold">Exámenes y adjuntos</p>
+
+                          {adjuntosImagenes.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-[11px] font-medium text-slate-700 mb-2">Imágenes</p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {adjuntosImagenes.map((archivo, index) => (
+                                  <button
+                                    key={`adj-img-${archivo.archivo_id || index}`}
+                                    type="button"
+                                    onClick={() => setPreviewAdjuntoImagen({
+                                      url: archivo.url,
+                                      nombre: archivo.nombre_original || `Imagen ${index + 1}`,
+                                      titulo: archivo._docTitulo,
+                                    })}
+                                    className="rounded-lg border border-slate-200 bg-white p-1 hover:bg-slate-100 text-left"
+                                  >
+                                    <img
+                                      src={archivo.url}
+                                      alt={archivo.nombre_original || `Imagen ${index + 1}`}
+                                      className="w-full h-20 object-cover rounded"
+                                    />
+                                    <p className="mt-1 text-[10px] text-slate-600 truncate" title={archivo._docTitulo}>{archivo._docTitulo}</p>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {adjuntosPdf.length > 0 && (
+                            <div className="mt-3">
+                              <p className="text-[11px] font-medium text-slate-700 mb-2">Documentos PDF</p>
+                              <div className="space-y-2">
+                                {adjuntosPdf.map((archivo, index) => (
+                                  <div key={`adj-pdf-${archivo.archivo_id || index}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2">
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-medium text-slate-800 truncate">{archivo.nombre_original || `Documento ${index + 1}`}</p>
+                                      <p className="text-[10px] text-slate-500 truncate">{archivo._docTitulo}</p>
+                                    </div>
+                                    <a
+                                      href={archivo.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="px-2 py-1 rounded bg-slate-700 text-white text-[10px] hover:bg-slate-800 whitespace-nowrap"
+                                    >
+                                      Ver PDF
+                                    </a>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {hcAnterior?.template?.nombre && (
+                        <div className="text-xs text-slate-700 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          Plantilla origen: <span className="font-semibold">{hcAnterior.template.nombre}</span>
+                          {hcAnterior?.template?.version ? ` • Versión ${hcAnterior.template.version}` : ''}
+                        </div>
+                      )}
+
+                      {seccionesPreviasDinamicas.map((section) => (
+                        <div key={`prev-section-${section.sectionKey}`} className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                          <p className="font-semibold">{section.label}</p>
+                          <div className="mt-2 space-y-2">
+                            {section.fields.map((field) => (
+                              <div key={`prev-field-${section.sectionKey}-${field.fieldKey}`}>
+                                <p className="font-medium text-slate-700">{field.label}</p>
+                                <p className="mt-0.5 text-slate-600 whitespace-pre-wrap">{field.value}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+
+                      {seccionesPreviasDinamicas.length === 0 && camposPreviosFallback.length > 0 && (
+                        <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                          <p className="font-semibold">Campos registrados</p>
+                          <div className="mt-2 space-y-2">
+                            {camposPreviosFallback.map((field) => (
+                              <div key={`prev-fallback-${field.fieldKey}`}>
+                                <p className="font-medium text-slate-700">{field.label}</p>
+                                <p className="mt-0.5 text-slate-600 whitespace-pre-wrap">{field.value}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </aside>
+        </>
+      )}
+
+      {/* Modal visor de imagen de adjunto */}
+      {previewAdjuntoImagen && (
+        <div className="fixed inset-0 z-[70] bg-slate-900/80 flex items-center justify-center p-4" onClick={() => setPreviewAdjuntoImagen(null)}>
+          <div className="relative max-w-5xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setPreviewAdjuntoImagen(null)}
+              className="absolute -top-10 right-0 w-8 h-8 rounded-full bg-white text-slate-800 shadow hover:bg-slate-100"
+              title="Cerrar visor"
+            >
+              ✕
+            </button>
+            <div className="bg-white rounded-xl overflow-hidden border border-slate-200 shadow-2xl">
+              <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
+                <p className="text-xs font-medium text-slate-800 truncate">{previewAdjuntoImagen.titulo || previewAdjuntoImagen.nombre}</p>
+                <p className="text-[11px] text-slate-600 truncate">{previewAdjuntoImagen.nombre}</p>
+              </div>
+              <div className="bg-black flex items-center justify-center max-h-[78vh] overflow-auto">
+                <img
+                  src={previewAdjuntoImagen.url}
+                  alt={previewAdjuntoImagen.nombre}
+                  className="max-w-full max-h-[78vh] object-contain"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de importación de diagnóstico */}
+      {mostrarImportarDiagnosticoModal && (
+        <div className="fixed inset-0 z-[75] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setMostrarImportarDiagnosticoModal(false)}>
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-200">
+              <p className="text-sm font-semibold text-slate-900">Importar diagnóstico desde HC previa</p>
+              <p className="text-xs text-slate-600 mt-1">
+                Elige cómo quieres llevar el diagnóstico de la historia seleccionada al formulario actual.
+              </p>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <button
+                type="button"
+                onClick={() => ejecutarImportacionDiagnostico('replace')}
+                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Reemplazar diagnóstico actual
+              </button>
+              <button
+                type="button"
+                onClick={() => ejecutarImportacionDiagnostico('append')}
+                className="w-full rounded-xl bg-slate-800 px-4 py-3 text-sm font-medium text-white hover:bg-slate-900"
+              >
+                Agregar al diagnóstico actual
+              </button>
+              <button
+                type="button"
+                onClick={() => setMostrarImportarDiagnosticoModal(false)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Botón flotante del Asistente de Historial Clínico */}
+      {Number(consultaActual?.hc_origen_id || 0) > 0 && (
+        <div className="fixed bottom-6 right-6 lg:bottom-8 lg:right-8 z-30">
+          {mostrarBurbujaAsistente && (
+            <div
+              className="absolute bottom-full right-0 mb-4 w-[280px] max-w-[82vw] rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-9 text-slate-700 shadow-2xl"
+              style={{ animation: 'assistant-bubble-in 220ms ease-out' }}
+            >
+              <button
+                type="button"
+                onClick={() => setMostrarBurbujaAsistente(false)}
+                className="absolute right-2 top-2 h-6 w-6 rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Cerrar bienvenida"
+                title="Cerrar"
+              >
+                ×
+              </button>
+              <p className="text-[13px] leading-5">
+                Hola, ¿cómo estás? Soy tu asistente médico. ¿En qué puedo ayudarte hoy?
+              </p>
+              <div className="absolute -bottom-2 right-6 h-4 w-4 rotate-45 border-b border-r border-slate-200 bg-white" />
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerHistorialAbierto(true);
+              setMostrarBurbujaAsistente(false);
+            }}
+            className="group relative flex items-center justify-center w-16 h-16 lg:w-20 lg:h-20 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-110 active:scale-95"
+            style={{ backgroundColor: configApariencia.color_primario }}
+            title="Ver Historial Previo"
+          >
+            {/* Avatar o icono */}
+            {configApariencia.avatar_activo?.url ? (
+              <img
+                src={`${BASE_URL}${configApariencia.avatar_activo.url}`}
+                alt="Asistente"
+                className="w-full h-full rounded-full object-cover border-2 border-white scale-110"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  const fallback = e.currentTarget.parentElement?.querySelector('.avatar-fallback');
+                  if (fallback) fallback.style.display = 'flex';
+                }}
+              />
+            ) : null}
+            <span
+              className="avatar-fallback text-white text-2xl lg:text-4xl items-center justify-center"
+              style={{ display: configApariencia.avatar_activo?.url ? 'none' : 'flex' }}
+            >
+              👤
+            </span>
+
+            {/* Tooltip */}
+            <div className="absolute bottom-full right-0 mb-2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none shadow-lg">
+              Ver Historial Previo
+            </div>
+
+            {/* Badge con contador */}
+            {totalHistoriasPrevias > 0 && (
+              <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center border-2 border-white shadow">
+                {totalHistoriasPrevias}
+              </div>
+            )}
+          </button>
+
+          {/* Pulse animation */}
+          <style>{`
+            @keyframes assistant-bubble-in {
+              from { opacity: 0; transform: translateY(8px) scale(0.98); }
+              to { opacity: 1; transform: translateY(0) scale(1); }
+            }
+            @keyframes pulse-float {
+              0%, 100% { transform: scale(1); }
+              50% { transform: scale(1.05); }
+            }
+            .animate-pulse-float {
+              animation: pulse-float 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            }
+          `}</style>
+        </div>
+      )}
+
       {/* Componente oculto para impresión de Historia Clínica */}
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printRef}>

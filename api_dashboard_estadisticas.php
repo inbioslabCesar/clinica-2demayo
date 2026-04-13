@@ -98,24 +98,35 @@ try {
         FROM cajas c
         LEFT JOIN usuarios u ON c.usuario_id = u.id
         WHERE c.estado = 'cerrada' AND u.rol IN ('administrador','recepcionista')
-          AND MONTH(c.fecha) = MONTH(CURDATE()) AND YEAR(c.fecha) = YEAR(CURDATE())
+          AND c.fecha >= :inicioMes AND c.fecha < :inicioMesSiguiente
         GROUP BY c.usuario_id, u.nombre, u.rol
         ORDER BY ingresos DESC";
-    $ranking = $pdo->query($sqlRanking)->fetchAll(PDO::FETCH_ASSOC);
+    $stmtRanking = $pdo->prepare($sqlRanking);
+    $stmtRanking->execute([
+        ':inicioMes' => $inicioMes,
+        ':inicioMesSiguiente' => $inicioMesSiguiente,
+    ]);
+    $ranking = $stmtRanking->fetchAll(PDO::FETCH_ASSOC);
 
-    // Servicios más vendidos usando el campo descripcion (JSON) de cobros_detalle
+    // Servicios más vendidos agrupando primero en SQL para no cargar todas las filas del mes en PHP.
     $sqlServicios = "SELECT 
         cd.servicio_tipo, 
         cd.servicio_id, 
         cd.descripcion,
-        cd.cantidad, 
-        cd.subtotal
+        SUM(cd.cantidad) AS cantidad_total, 
+        SUM(cd.subtotal) AS monto_total
     FROM cobros_detalle cd
     INNER JOIN cobros c ON cd.cobro_id = c.id
-    WHERE MONTH(c.fecha_cobro) = MONTH(CURDATE()) AND YEAR(c.fecha_cobro) = YEAR(CURDATE()) AND c.estado = 'pagado'";
-    $serviciosRaw = $pdo->query($sqlServicios)->fetchAll(PDO::FETCH_ASSOC);
+    WHERE c.fecha_cobro >= :inicioMes AND c.fecha_cobro < :inicioMesSiguiente AND c.estado = 'pagado'
+    GROUP BY cd.servicio_tipo, cd.servicio_id, cd.descripcion";
+    $stmtServicios = $pdo->prepare($sqlServicios);
+    $stmtServicios->execute([
+        ':inicioMes' => $inicioMes,
+        ':inicioMesSiguiente' => $inicioMesSiguiente,
+    ]);
+    $serviciosRaw = $stmtServicios->fetchAll(PDO::FETCH_ASSOC);
 
-    // Agrupar por nombre y tipo, sumando cantidad y monto
+    // Consolidar descripciones equivalentes después del parseo de JSON.
     $serviciosAgrupados = [];
     foreach ($serviciosRaw as $s) {
         $desc = json_decode($s['descripcion'], true);
@@ -136,8 +147,8 @@ try {
                 'monto_total' => 0
             ];
         }
-        $serviciosAgrupados[$key]['cantidad_total'] += floatval($s['cantidad']);
-        $serviciosAgrupados[$key]['monto_total'] += floatval($s['subtotal']);
+        $serviciosAgrupados[$key]['cantidad_total'] += floatval($s['cantidad_total']);
+        $serviciosAgrupados[$key]['monto_total'] += floatval($s['monto_total']);
     }
     // Convertir a array y ordenar por monto_total DESC, cantidad_total DESC
     $servicios = array_values($serviciosAgrupados);
@@ -151,10 +162,15 @@ try {
     // Tendencias de ingresos (por día del mes) usando ganancia_dia (ganancia neta)
     $sqlTendencias = "SELECT DATE(fecha) as fecha, SUM(ganancia_dia) as total
         FROM cajas
-        WHERE estado = 'cerrada' AND MONTH(fecha) = MONTH(CURDATE()) AND YEAR(fecha) = YEAR(CURDATE())
+        WHERE estado = 'cerrada' AND fecha >= :inicioMes AND fecha < :inicioMesSiguiente
         GROUP BY DATE(fecha)
         ORDER BY fecha ASC";
-    $tendencias = $pdo->query($sqlTendencias)->fetchAll(PDO::FETCH_ASSOC);
+    $stmtTendencias = $pdo->prepare($sqlTendencias);
+    $stmtTendencias->execute([
+        ':inicioMes' => $inicioMes,
+        ':inicioMesSiguiente' => $inicioMesSiguiente,
+    ]);
+    $tendencias = $stmtTendencias->fetchAll(PDO::FETCH_ASSOC);
 
     echo json_encode([
         'success' => true,

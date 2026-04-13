@@ -18,6 +18,45 @@ function input_json() {
     return is_array($data) ? $data : [];
 }
 
+function extraer_paciente_temporal_desde_observaciones($observaciones) {
+    $texto = trim((string)$observaciones);
+    if ($texto === '' || stripos($texto, '[PARTICULAR]') === false) {
+        return ['nombre' => '', 'dni' => ''];
+    }
+
+    $nombre = '';
+    $dni = '';
+    if (preg_match('/Nombre=([^;]+)/i', $texto, $m)) {
+        $nombre = trim((string)($m[1] ?? ''));
+    }
+    if (preg_match('/DNI=([^;]+)/i', $texto, $m)) {
+        $dni = trim((string)($m[1] ?? ''));
+    }
+
+    return ['nombre' => $nombre, 'dni' => $dni];
+}
+
+function aplicar_fallback_paciente_temporal(&$row) {
+    $nombre = trim((string)($row['nombre'] ?? ''));
+    $apellido = trim((string)($row['apellido'] ?? ''));
+    $dni = trim((string)($row['dni'] ?? ''));
+
+    if ($nombre !== '' || $apellido !== '' || $dni !== '') {
+        return;
+    }
+
+    $temp = extraer_paciente_temporal_desde_observaciones($row['observaciones'] ?? '');
+    $nombreTemp = trim((string)($temp['nombre'] ?? ''));
+    $dniTemp = trim((string)($temp['dni'] ?? ''));
+
+    $row['nombre'] = $nombreTemp !== '' ? $nombreTemp : 'Particular';
+    $row['apellido'] = '';
+    $row['dni'] = $dniTemp;
+    if (!isset($row['historia_clinica']) || trim((string)$row['historia_clinica']) === '') {
+        $row['historia_clinica'] = '';
+    }
+}
+
 function get_user_id_from_session() {
     if (isset($_SESSION['usuario']) && isset($_SESSION['usuario']['id'])) {
         return (int)$_SESSION['usuario']['id'];
@@ -29,29 +68,40 @@ function get_user_id_from_session() {
 }
 
 function table_exists($conn, $table) {
-    static $cache = [];
-    $key = "tbl::$table";
-    if (isset($cache[$key])) return $cache[$key];
-    $stmt = $conn->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1");
-    if (!$stmt) return false;
-    $stmt->bind_param("s", $table);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $cache[$key] = $res && $res->num_rows > 0;
-    return $cache[$key];
+    static $cache = null;
+    if ($cache === null) {
+        $cache = [];
+        $res = $conn->query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $name = (string)($row['TABLE_NAME'] ?? '');
+                if ($name !== '') {
+                    $cache[$name] = true;
+                }
+            }
+        }
+    }
+    return isset($cache[$table]);
 }
 
 function column_exists($conn, $table, $column) {
     static $cache = [];
-    $key = "col::$table::$column";
-    if (isset($cache[$key])) return $cache[$key];
-    $stmt = $conn->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1");
-    if (!$stmt) return false;
-    $stmt->bind_param("ss", $table, $column);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $cache[$key] = $res && $res->num_rows > 0;
-    return $cache[$key];
+    if (!isset($cache[$table])) {
+        $cache[$table] = [];
+        $stmt = $conn->prepare("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?");
+        if (!$stmt) return false;
+        $stmt->bind_param("s", $table);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $name = (string)($row['COLUMN_NAME'] ?? '');
+            if ($name !== '') {
+                $cache[$table][$name] = true;
+            }
+        }
+        $stmt->close();
+    }
+    return isset($cache[$table][$column]);
 }
 
 function obtener_medico_desde_consulta($conn, $consultaId) {
@@ -122,7 +172,16 @@ function resolver_consulta_referente_por_cotizacion($conn, $cotizacionId) {
     $cotizacionId = (int)$cotizacionId;
     if ($cotizacionId <= 0) return 0;
 
-    $stmtCot = $conn->prepare("SELECT paciente_id, fecha, observaciones FROM cotizaciones WHERE id = ? LIMIT 1");
+    $whereDetalleActivo = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND estado_item <> 'eliminado'"
+        : '';
+
+    $hasCreatedAtCot = column_exists($conn, 'cotizaciones', 'created_at');
+    $hasFechaCot = column_exists($conn, 'cotizaciones', 'fecha');
+    $selectFechaRef = $hasCreatedAtCot && $hasFechaCot
+        ? 'COALESCE(NULLIF(created_at, ""), NULLIF(fecha, ""))'
+        : ($hasCreatedAtCot ? 'created_at' : ($hasFechaCot ? 'fecha' : 'NULL'));
+    $stmtCot = $conn->prepare("SELECT paciente_id, {$selectFechaRef} AS fecha_ref, observaciones FROM cotizaciones WHERE id = ? LIMIT 1");
     if (!$stmtCot) return 0;
     $stmtCot->bind_param("i", $cotizacionId);
     $stmtCot->execute();
@@ -130,16 +189,113 @@ function resolver_consulta_referente_por_cotizacion($conn, $cotizacionId) {
     $stmtCot->close();
     if (!$cot) return 0;
 
+    $pacienteId = (int)($cot['paciente_id'] ?? 0);
+    $fechaRefRaw = trim((string)($cot['fecha_ref'] ?? ''));
+    $fechaRefDia = $fechaRefRaw !== '' ? substr($fechaRefRaw, 0, 10) : '';
+
     $obs = trim((string)($cot['observaciones'] ?? ''));
     if ($obs !== '' && preg_match('/consulta\s*#\s*(\d+)/i', $obs, $m)) {
         $idObs = (int)($m[1] ?? 0);
         if ($idObs > 0) return $idObs;
     }
 
+    if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+        $stmtDet = $conn->prepare(
+            "SELECT consulta_id
+             FROM cotizaciones_detalle
+             WHERE cotizacion_id = ?
+               AND consulta_id IS NOT NULL
+               AND consulta_id > 0{$whereDetalleActivo}
+             ORDER BY CASE WHEN LOWER(TRIM(servicio_tipo)) = 'consulta' THEN 0 ELSE 1 END, id ASC
+             LIMIT 1"
+        );
+        if ($stmtDet) {
+            $stmtDet->bind_param("i", $cotizacionId);
+            $stmtDet->execute();
+            $rowDet = $stmtDet->get_result()->fetch_assoc();
+            $stmtDet->close();
+            $idDet = (int)($rowDet['consulta_id'] ?? 0);
+            if ($idDet > 0) return $idDet;
+        }
+    }
+
+    if (table_exists($conn, 'cotizacion_movimientos') && table_exists($conn, 'honorarios_medicos_movimientos')) {
+        $stmtHon = $conn->prepare("SELECT hm.consulta_id, hm.medico_id
+                                   FROM cotizacion_movimientos cm
+                                   INNER JOIN honorarios_medicos_movimientos hm ON hm.cobro_id = cm.cobro_id
+                                   WHERE cm.cotizacion_id = ?
+                                   ORDER BY hm.id DESC LIMIT 1");
+        if ($stmtHon) {
+            $stmtHon->bind_param("i", $cotizacionId);
+            $stmtHon->execute();
+            $rowHon = $stmtHon->get_result()->fetch_assoc();
+            $stmtHon->close();
+
+            $consultaHon = (int)($rowHon['consulta_id'] ?? 0);
+            if ($consultaHon > 0) return $consultaHon;
+
+            $medicoHon = (int)($rowHon['medico_id'] ?? 0);
+            if ($pacienteId > 0) {
+                if ($fechaRefDia !== '') {
+                    if ($medicoHon > 0) {
+                        $stmtConsDiaMed = $conn->prepare("SELECT id FROM consultas WHERE paciente_id = ? AND medico_id = ? AND fecha = ? ORDER BY id DESC LIMIT 1");
+                        if ($stmtConsDiaMed) {
+                            $stmtConsDiaMed->bind_param("iis", $pacienteId, $medicoHon, $fechaRefDia);
+                            $stmtConsDiaMed->execute();
+                            $rowConsDiaMed = $stmtConsDiaMed->get_result()->fetch_assoc();
+                            $stmtConsDiaMed->close();
+                            $idDiaMed = (int)($rowConsDiaMed['id'] ?? 0);
+                            if ($idDiaMed > 0) return $idDiaMed;
+                        }
+                    }
+
+                    $stmtConsDia = $conn->prepare("SELECT id FROM consultas WHERE paciente_id = ? AND fecha = ? ORDER BY id DESC LIMIT 1");
+                    if ($stmtConsDia) {
+                        $stmtConsDia->bind_param("is", $pacienteId, $fechaRefDia);
+                        $stmtConsDia->execute();
+                        $rowConsDia = $stmtConsDia->get_result()->fetch_assoc();
+                        $stmtConsDia->close();
+                        $idDia = (int)($rowConsDia['id'] ?? 0);
+                        if ($idDia > 0) return $idDia;
+                    }
+                }
+
+                if ($medicoHon > 0) {
+                    $stmtConsMed = $conn->prepare("SELECT id FROM consultas WHERE paciente_id = ? AND medico_id = ? ORDER BY id DESC LIMIT 1");
+                    if ($stmtConsMed) {
+                        $stmtConsMed->bind_param("ii", $pacienteId, $medicoHon);
+                        $stmtConsMed->execute();
+                        $rowConsMed = $stmtConsMed->get_result()->fetch_assoc();
+                        $stmtConsMed->close();
+                        $idConsMed = (int)($rowConsMed['id'] ?? 0);
+                        if ($idConsMed > 0) return $idConsMed;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback final incondicional: buscar consulta por paciente + fecha directamente,
+    // sin depender de la cadena de honorarios.
+    if ($pacienteId > 0 && $fechaRefDia !== '') {
+        $stmtDirect = $conn->prepare("SELECT id FROM consultas WHERE paciente_id = ? AND fecha = ? ORDER BY id DESC LIMIT 1");
+        if ($stmtDirect) {
+            $stmtDirect->bind_param("is", $pacienteId, $fechaRefDia);
+            $stmtDirect->execute();
+            $rowDirect = $stmtDirect->get_result()->fetch_assoc();
+            $stmtDirect->close();
+            $idDirect = (int)($rowDirect['id'] ?? 0);
+            if ($idDirect > 0) return $idDirect;
+        }
+    }
+
     return 0;
 }
 
-function cargar_detalles_cotizacion($conn, $cotizacionId) {
+function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
+    $cotizacionIds = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), fn($id) => $id > 0)));
+    if (empty($cotizacionIds)) return [];
+
     $hasMedicoId = column_exists($conn, 'cotizaciones_detalle', 'medico_id');
     $hasConsultaId = column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
     $select = 'cd.*';
@@ -165,75 +321,128 @@ function cargar_detalles_cotizacion($conn, $cotizacionId) {
         $select .= ", TRIM(CONCAT(COALESCE(mc.nombre, ''), ' ', COALESCE(mc.apellido, ''))) AS medico_nombre_completo";
     }
 
-    $sql = "SELECT {$select} FROM cotizaciones_detalle cd{$join} WHERE cd.cotizacion_id = ?";
+    $placeholders = implode(',', array_fill(0, count($cotizacionIds), '?'));
+    $sql = "SELECT {$select} FROM cotizaciones_detalle cd{$join} WHERE cd.cotizacion_id IN ($placeholders)";
     if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
         $sql .= " AND cd.estado_item <> 'eliminado'";
     }
-    $sql .= " ORDER BY cd.id ASC";
+    $sql .= " ORDER BY cd.cotizacion_id ASC, cd.id ASC";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("i", $cotizacionId);
+    $stmt->bind_param(str_repeat('i', count($cotizacionIds)), ...$cotizacionIds);
     $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    if (empty($rows)) return $rows;
+    $stmt->close();
+    if (empty($rows)) return [];
 
-    $consultaFallbackId = 0;
+    $consultaFallbackIdPorCotizacion = [];
     $medicoCachePorConsulta = [];
     $medicoCachePorTarifa = [];
+    $rowsPorCotizacion = [];
 
-    foreach ($rows as &$row) {
+    foreach ($rows as $row) {
+        $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
         $tipo = strtolower(trim((string)($row['servicio_tipo'] ?? '')));
         if ($tipo === 'rayos x' || $tipo === 'rayos_x') {
             $tipo = 'rayosx';
         }
 
         $medicoCompleto = trim((string)($row['medico_nombre_completo'] ?? ''));
-        if ($medicoCompleto !== '') continue;
+        if ($medicoCompleto === '') {
+            $medico = null;
 
-        $medico = null;
-
-        if ($tipo === 'consulta') {
-            // Priorizar médico explícito del texto descriptivo para evitar cruces
-            // cuando no existen columnas de vínculo (consulta_id/medico_id) en detalles.
-            $desdeDescripcion = extraer_medico_desde_descripcion_consulta($row['descripcion'] ?? '');
-            if ($desdeDescripcion !== '') {
-                $row['medico_nombre_completo'] = $desdeDescripcion;
-                $row['medico_nombre'] = $desdeDescripcion;
-                $row['medico_apellido'] = '';
-                continue;
+            if ($tipo === 'consulta') {
+                // Priorizar médico explícito del texto descriptivo para evitar cruces
+                // cuando no existen columnas de vínculo (consulta_id/medico_id) en detalles.
+                $desdeDescripcion = extraer_medico_desde_descripcion_consulta($row['descripcion'] ?? '');
+                if ($desdeDescripcion !== '') {
+                    $row['medico_nombre_completo'] = $desdeDescripcion;
+                    $row['medico_nombre'] = $desdeDescripcion;
+                    $row['medico_apellido'] = '';
+                } else {
+                    $consultaId = (int)($row['consulta_id'] ?? 0);
+                    if ($consultaId <= 0) {
+                        if (!isset($consultaFallbackIdPorCotizacion[$cotizacionId])) {
+                            $consultaFallbackIdPorCotizacion[$cotizacionId] = resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
+                        }
+                        $consultaId = $consultaFallbackIdPorCotizacion[$cotizacionId];
+                    }
+                    if ($consultaId > 0) {
+                        if (!isset($medicoCachePorConsulta[$consultaId])) {
+                            $medicoCachePorConsulta[$consultaId] = obtener_medico_desde_consulta($conn, $consultaId);
+                        }
+                        $medico = $medicoCachePorConsulta[$consultaId];
+                    }
+                }
+            } elseif ($tipo === 'ecografia' || $tipo === 'rayosx') {
+                $tarifaId = (int)($row['servicio_id'] ?? 0);
+                if ($tarifaId > 0) {
+                    if (!isset($medicoCachePorTarifa[$tarifaId])) {
+                        $medicoCachePorTarifa[$tarifaId] = obtener_medico_desde_tarifa($conn, $tarifaId);
+                    }
+                    $medico = $medicoCachePorTarifa[$tarifaId];
+                }
             }
 
-            $consultaId = (int)($row['consulta_id'] ?? 0);
-            if ($consultaId <= 0) {
-                if ($consultaFallbackId <= 0) {
-                    $consultaFallbackId = resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
-                }
-                $consultaId = $consultaFallbackId;
-            }
-            if ($consultaId > 0) {
-                if (!isset($medicoCachePorConsulta[$consultaId])) {
-                    $medicoCachePorConsulta[$consultaId] = obtener_medico_desde_consulta($conn, $consultaId);
-                }
-                $medico = $medicoCachePorConsulta[$consultaId];
-            }
-        } elseif ($tipo === 'ecografia' || $tipo === 'rayosx') {
-            $tarifaId = (int)($row['servicio_id'] ?? 0);
-            if ($tarifaId > 0) {
-                if (!isset($medicoCachePorTarifa[$tarifaId])) {
-                    $medicoCachePorTarifa[$tarifaId] = obtener_medico_desde_tarifa($conn, $tarifaId);
-                }
-                $medico = $medicoCachePorTarifa[$tarifaId];
+            if ($medico) {
+                $row['medico_nombre'] = $medico['nombre'];
+                $row['medico_apellido'] = $medico['apellido'];
+                $row['medico_nombre_completo'] = $medico['completo'];
             }
         }
 
-        if (!$medico) continue;
-
-        $row['medico_nombre'] = $medico['nombre'];
-        $row['medico_apellido'] = $medico['apellido'];
-        $row['medico_nombre_completo'] = $medico['completo'];
+        if (!isset($rowsPorCotizacion[$cotizacionId])) {
+            $rowsPorCotizacion[$cotizacionId] = [];
+        }
+        $rowsPorCotizacion[$cotizacionId][] = $row;
     }
-    unset($row);
 
-    return $rows;
+    return $rowsPorCotizacion;
+}
+
+function cargar_detalles_cotizacion($conn, $cotizacionId) {
+    $detallesPorCotizacion = cargar_detalles_cotizaciones($conn, [(int)$cotizacionId]);
+    return $detallesPorCotizacion[(int)$cotizacionId] ?? [];
+}
+
+function obtener_pagos_cotizacion_rows($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return [];
+    }
+
+    if (!table_exists($conn, 'cotizacion_movimientos')) {
+        return [];
+    }
+
+    $hasUsuarios = table_exists($conn, 'usuarios');
+    $hasCobros = table_exists($conn, 'cobros');
+    $hasTipoPagoCobro = $hasCobros && column_exists($conn, 'cobros', 'tipo_pago');
+
+    $selectMetodoPago = $hasTipoPagoCobro ? ', c.tipo_pago AS metodo_pago' : ", NULL AS metodo_pago";
+    $joinCobros = $hasTipoPagoCobro ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
+
+    if ($hasUsuarios) {
+        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at, COALESCE(u.nombre, 'Sistema') AS usuario_nombre{$selectMetodoPago}
+                FROM cotizacion_movimientos cm
+                LEFT JOIN usuarios u ON u.id = cm.usuario_id
+                {$joinCobros}
+                WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
+                ORDER BY cm.created_at DESC, cm.id DESC";
+    } else {
+        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at{$selectMetodoPago}
+                FROM cotizacion_movimientos cm
+                {$joinCobros}
+                WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
+                ORDER BY cm.created_at DESC, cm.id DESC";
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param("i", $cotizacionId);
+    $stmt->execute();
+    return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 }
 
 function obtener_cotizacion($conn, $cotizacionId) {
@@ -241,7 +450,7 @@ function obtener_cotizacion($conn, $cotizacionId) {
         SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica,
                COALESCE(u.nombre, 'Sistema') as usuario_nombre
         FROM cotizaciones c
-        JOIN pacientes p ON c.paciente_id = p.id
+        LEFT JOIN pacientes p ON c.paciente_id = p.id
         LEFT JOIN usuarios u ON c.usuario_id = u.id
         WHERE c.id = ?
     ");
@@ -249,7 +458,18 @@ function obtener_cotizacion($conn, $cotizacionId) {
     $stmt->execute();
     $cot = $stmt->get_result()->fetch_assoc();
     if (!$cot) return null;
+    aplicar_fallback_paciente_temporal($cot);
     $cot['detalles'] = cargar_detalles_cotizacion($conn, $cotizacionId);
+    $cot['pagos'] = obtener_pagos_cotizacion_rows($conn, $cotizacionId);
+    $cot['consulta_ref_id'] = resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
+
+    $consultaRef = (int)($cot['consulta_ref_id'] ?? 0);
+    if ($consultaRef > 0) {
+        $med = obtener_medico_desde_consulta($conn, $consultaRef);
+        $cot['medico_solicitante'] = $med && !empty($med['completo']) ? $med['completo'] : '';
+    } else {
+        $cot['medico_solicitante'] = '';
+    }
     return $cot;
 }
 
@@ -430,12 +650,132 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
     }
 }
 
+function descontar_stock_farmacia_desde_detalles($conn, $cotizacionId, $detalles, $usuarioId) {
+    if (!table_exists($conn, 'medicamentos')) {
+        return;
+    }
+
+    $puedeLogMov = table_exists($conn, 'movimientos_medicamento');
+
+    foreach ((array)$detalles as $detalle) {
+        $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+        if ($servicioTipo !== 'farmacia') {
+            continue;
+        }
+
+        $medicamentoId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : 0;
+        $cantidad = max(1, (int)($detalle['cantidad'] ?? 1));
+        $descripcion = strtolower(trim((string)($detalle['descripcion'] ?? '')));
+        if ($medicamentoId <= 0 || $cantidad <= 0) {
+            continue;
+        }
+
+        $stmtMed = $conn->prepare("SELECT nombre, stock, unidades_por_caja FROM medicamentos WHERE id = ? FOR UPDATE");
+        if (!$stmtMed) {
+            throw new Exception('No se pudo validar stock de medicamentos');
+        }
+        $stmtMed->bind_param('i', $medicamentoId);
+        $stmtMed->execute();
+        $med = $stmtMed->get_result()->fetch_assoc();
+        if (!$med) {
+            throw new Exception('Medicamento no encontrado ID: ' . $medicamentoId);
+        }
+
+        $esCaja = strpos($descripcion, '(caja)') !== false;
+        $unidadesPorCaja = max(1, (int)($med['unidades_por_caja'] ?? 1));
+        $unidadesDescontar = $esCaja ? ($cantidad * $unidadesPorCaja) : $cantidad;
+        $stockActual = (int)($med['stock'] ?? 0);
+        if ($stockActual < $unidadesDescontar) {
+            throw new Exception('Stock insuficiente para ' . (string)($med['nombre'] ?? ('ID ' . $medicamentoId)) . '. Disponible: ' . $stockActual . ', solicitado: ' . $unidadesDescontar);
+        }
+
+        $stmtUpd = $conn->prepare("UPDATE medicamentos SET stock = stock - ? WHERE id = ?");
+        if (!$stmtUpd) {
+            throw new Exception('No se pudo actualizar stock de medicamentos');
+        }
+        $stmtUpd->bind_param('ii', $unidadesDescontar, $medicamentoId);
+        $stmtUpd->execute();
+        if ($stmtUpd->affected_rows <= 0) {
+            throw new Exception('No se pudo descontar stock para medicamento ID: ' . $medicamentoId);
+        }
+
+        if ($puedeLogMov) {
+            $tag = '[RESERVA_STOCK_COTIZACION cotizacion_id=' . (int)$cotizacionId . ' medicamento_id=' . (int)$medicamentoId . ']';
+            $tipoMov = $esCaja ? 'reserva_caja' : 'reserva_unidad';
+            $obs = 'Reserva de stock por cotización #' . (int)$cotizacionId . ' en envío a recepción ' . $tag;
+            $stmtMov = $conn->prepare("INSERT INTO movimientos_medicamento (medicamento_id, tipo_movimiento, cantidad, observaciones, usuario_id, fecha_hora) VALUES (?, ?, ?, ?, ?, NOW())");
+            if ($stmtMov) {
+                $stmtMov->bind_param('isisi', $medicamentoId, $tipoMov, $unidadesDescontar, $obs, $usuarioId);
+                $stmtMov->execute();
+            }
+        }
+    }
+}
+
 function total_detalles($detalles) {
     $sum = 0;
     foreach ($detalles as $d) {
         $sum += isset($d['subtotal']) ? (float)$d['subtotal'] : ((float)($d['precio_unitario'] ?? 0) * (int)($d['cantidad'] ?? 1));
     }
     return round($sum, 2);
+}
+
+function normalizar_detalle_entrada_cotizacion($detalle) {
+    if (!is_array($detalle)) {
+        return [];
+    }
+
+    $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? $detalle['serviceType'] ?? 'procedimiento')));
+    $servicioId = isset($detalle['servicio_id'])
+        ? (int)$detalle['servicio_id']
+        : (isset($detalle['serviceId']) ? (int)$detalle['serviceId'] : 0);
+    $descripcion = (string)($detalle['descripcion'] ?? $detalle['description'] ?? '');
+    $cantidad = isset($detalle['cantidad']) ? (int)$detalle['cantidad'] : (isset($detalle['quantity']) ? (int)$detalle['quantity'] : 1);
+    $precioUnitario = isset($detalle['precio_unitario'])
+        ? (float)$detalle['precio_unitario']
+        : (isset($detalle['unitPrice']) ? (float)$detalle['unitPrice'] : 0);
+    $subtotal = isset($detalle['subtotal']) ? (float)$detalle['subtotal'] : ($precioUnitario * max(1, $cantidad));
+
+    $tipoDerivacion = trim((string)($detalle['tipo_derivacion'] ?? $detalle['tipoDerivacion'] ?? ''));
+    $valorDerivacionRaw = $detalle['valor_derivacion'] ?? $detalle['valorDerivacion'] ?? null;
+    $laboratorioReferencia = trim((string)($detalle['laboratorio_referencia'] ?? $detalle['laboratorioReferencia'] ?? ''));
+
+    $derivadoExplicito = $detalle['derivado'] ?? $detalle['isDerivado'] ?? null;
+    $derivado = es_valor_verdadero($derivadoExplicito);
+    
+    // IMPORTANTE: derivado SOLO es válido si hay laboratorio_referencia
+    // Si no hay laboratorio_referencia, derivado DEBE ser false (incluso si vino como true)
+    if ($servicioTipo === 'laboratorio') {
+        if ($laboratorioReferencia === '') {
+            // Sin laboratorio, NO puede ser derivado
+            $derivado = false;
+        } else {
+            // Con laboratorio, SÍ debe ser derivado (auto-derive si no está marcado)
+            $derivado = true;
+        }
+    }
+
+    $normalizado = $detalle;
+    $normalizado['servicio_tipo'] = $servicioTipo;
+    $normalizado['servicio_id'] = $servicioId;
+    $normalizado['descripcion'] = $descripcion;
+    $normalizado['cantidad'] = max(1, $cantidad);
+    $normalizado['precio_unitario'] = $precioUnitario;
+    $normalizado['subtotal'] = round((float)$subtotal, 2);
+    $normalizado['derivado'] = $derivado;
+    $normalizado['tipo_derivacion'] = $derivado ? strtolower($tipoDerivacion) : '';
+    $normalizado['valor_derivacion'] = $derivado ? (float)($valorDerivacionRaw ?? 0) : 0;
+    $normalizado['laboratorio_referencia'] = $derivado ? $laboratorioReferencia : '';
+
+    return $normalizado;
+}
+
+function normalizar_detalles_entrada_cotizacion($detalles) {
+    $items = [];
+    foreach ((array)$detalles as $detalle) {
+        $items[] = normalizar_detalle_entrada_cotizacion($detalle);
+    }
+    return $items;
 }
 
 function cotizacion_tiene_servicio_laboratorio($conn, $cotizacionId) {
@@ -849,28 +1189,39 @@ function cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId) {
 function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $pacienteId, array $detalles) {
     if (!table_exists($conn, 'ordenes_laboratorio')) return;
 
-    // Recolectar exámenes NO derivados (los derivados van a laboratorio_referencia_movimientos)
+    // Mantener una sola orden interna por cotización con todos los exámenes de laboratorio,
+    // incluso los derivados, para permitir carga documental y de resultados en panel.
     $examIds = [];
     foreach ($detalles as $det) {
         if (strtolower(trim((string)($det['servicio_tipo'] ?? ''))) !== 'laboratorio') continue;
-        if (!empty($det['derivado'])) continue;
         $sId = intval($det['servicio_id'] ?? 0);
         if ($sId > 0) $examIds[] = $sId;
     }
+    $examIds = array_values(array_unique($examIds));
     if (empty($examIds)) return;
 
-    // Si ya existe una orden para esta cotización, no duplicar
+    // Si ya existe una orden para esta cotización, actualizarla y reactivarla si quedó cancelada.
     $chkCol = $conn->query("SHOW COLUMNS FROM ordenes_laboratorio LIKE 'cotizacion_id'");
     if ($chkCol && $chkCol->num_rows > 0) {
-        $stmtChk = $conn->prepare("SELECT id FROM ordenes_laboratorio WHERE cotizacion_id = ? LIMIT 1");
+        $stmtChk = $conn->prepare("SELECT id FROM ordenes_laboratorio WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1");
         if ($stmtChk) {
             $stmtChk->bind_param("i", $cotizacionId);
             $stmtChk->execute();
             $exists = $stmtChk->get_result()->fetch_assoc();
             $stmtChk->close();
-            if ($exists) return;
+            $json = json_encode($examIds);
+            if (!empty($exists['id'])) {
+                $ordenId = (int)$exists['id'];
+                $stmtUpd = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                if ($stmtUpd) {
+                    $stmtUpd->bind_param("sii", $json, $pacienteId, $ordenId);
+                    $stmtUpd->execute();
+                    $stmtUpd->close();
+                }
+                return;
+            }
         }
-        $json = json_encode(array_values($examIds));
+        $json = json_encode($examIds);
         $stmt = $conn->prepare("INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id) VALUES (?, ?, ?)");
         if ($stmt) {
             $stmt->bind_param("isi", $cotizacionId, $json, $pacienteId);
@@ -878,7 +1229,7 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
             $stmt->close();
         }
     } else {
-        $json = json_encode(array_values($examIds));
+        $json = json_encode($examIds);
         $stmt = $conn->prepare("INSERT INTO ordenes_laboratorio (examenes, paciente_id) VALUES (?, ?)");
         if ($stmt) {
             $stmt->bind_param("si", $json, $pacienteId);
@@ -986,18 +1337,61 @@ function registrar_cotizacion($conn, $data) {
     $usuarioSesion = get_user_id_from_session();
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : $usuarioSesion;
 
-    if (!isset($data['paciente_id']) || !$usuarioId || !isset($data['detalles']) || !is_array($data['detalles']) || empty($data['detalles'])) {
+    if (!$usuarioId || !isset($data['detalles']) || !is_array($data['detalles']) || empty($data['detalles'])) {
         respond(['success' => false, 'error' => 'Datos incompletos'], 400);
     }
 
-    $pacienteId = (int)$data['paciente_id'];
-    $observaciones = $data['observaciones'] ?? '';
-    $total = isset($data['total']) ? (float)$data['total'] : total_detalles($data['detalles']);
+    $detalles = normalizar_detalles_entrada_cotizacion($data['detalles'] ?? []);
+    if (empty($detalles)) {
+        respond(['success' => false, 'error' => 'No hay detalles válidos para registrar'], 400);
+    }
+
+    $pacienteId = isset($data['paciente_id']) ? (int)$data['paciente_id'] : 0;
+    $pacienteNombreTmp = trim((string)($data['paciente_nombre'] ?? ''));
+    $pacienteDniTmp = trim((string)($data['paciente_dni'] ?? ''));
+    $observaciones = trim((string)($data['observaciones'] ?? ''));
+    if ($pacienteId <= 0) {
+        $metaParticular = '[PARTICULAR]';
+        if ($pacienteNombreTmp !== '') $metaParticular .= ' Nombre=' . $pacienteNombreTmp . ';';
+        if ($pacienteDniTmp !== '') $metaParticular .= ' DNI=' . $pacienteDniTmp . ';';
+        $observaciones = trim($metaParticular . ' ' . $observaciones);
+    }
+    $total = isset($data['total']) ? (float)$data['total'] : total_detalles($detalles);
+    $hasSaldoV2 = column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente');
+    $hasFechaVencimiento = column_exists($conn, 'cotizaciones', 'fecha_vencimiento');
+    $origen = strtolower(trim((string)($data['origen'] ?? '')));
+    $vencimientoHorasRaw = isset($data['vencimiento_horas']) ? (int)$data['vencimiento_horas'] : 0;
+    $vencimientoHoras = $vencimientoHorasRaw > 0 ? min(720, $vencimientoHorasRaw) : 0;
+    if ($vencimientoHoras <= 0 && $origen === 'farmacia') {
+        $vencimientoHoras = 24;
+    }
+    $fechaVencimiento = null;
+    if ($hasFechaVencimiento && $vencimientoHoras > 0) {
+        $fechaVencimiento = date('Y-m-d H:i:s', strtotime("+{$vencimientoHoras} hours"));
+    }
 
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (?, ?, ?, 'pendiente', ?)");
-        $stmt->bind_param("iids", $pacienteId, $usuarioId, $total, $observaciones);
+        if ($hasSaldoV2) {
+            if ($hasFechaVencimiento) {
+                $stmt = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, total_pagado, saldo_pendiente, estado, observaciones, fecha_vencimiento) VALUES (?, ?, ?, 0, ?, 'pendiente', ?, ?)");
+                $stmt->bind_param("iiddss", $pacienteId, $usuarioId, $total, $total, $observaciones, $fechaVencimiento);
+            } else {
+                $stmt = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, total_pagado, saldo_pendiente, estado, observaciones) VALUES (?, ?, ?, 0, ?, 'pendiente', ?)");
+                $stmt->bind_param("iidds", $pacienteId, $usuarioId, $total, $total, $observaciones);
+            }
+        } else {
+            if ($hasFechaVencimiento) {
+                $stmt = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones, fecha_vencimiento) VALUES (?, ?, ?, 'pendiente', ?, ?)");
+                $stmt->bind_param("iidss", $pacienteId, $usuarioId, $total, $observaciones, $fechaVencimiento);
+            } else {
+                $stmt = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (?, ?, ?, 'pendiente', ?)");
+                $stmt->bind_param("iids", $pacienteId, $usuarioId, $total, $observaciones);
+            }
+        }
+        if (!$stmt) {
+            throw new Exception('No se pudo preparar el registro de cotización');
+        }
         $stmt->execute();
         $cotizacionId = (int)$conn->insert_id;
 
@@ -1008,18 +1402,24 @@ function registrar_cotizacion($conn, $data) {
             $stmtNum->execute();
         }
 
-        if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+        if ($hasSaldoV2) {
             $stmtSaldo = $conn->prepare("UPDATE cotizaciones SET total_pagado = 0, saldo_pendiente = ? WHERE id = ?");
+            if (!$stmtSaldo) {
+                throw new Exception('No se pudo preparar la inicialización de saldo');
+            }
             $stmtSaldo->bind_param("di", $total, $cotizacionId);
-            $stmtSaldo->execute();
+            if (!$stmtSaldo->execute()) {
+                throw new Exception('No se pudo inicializar el saldo de la cotización');
+            }
         }
 
-        insertar_detalles_cotizacion($conn, $cotizacionId, $data['detalles'], $usuarioId, null);
-        registrar_movimientos_lab_ref_desde_cotizacion($conn, $pacienteId, $data['detalles'], $usuarioId, $cotizacionId);
-        crear_ordenes_lab_cotizacion($conn, $cotizacionId, $pacienteId, $data['detalles']);
+        insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, null);
+        descontar_stock_farmacia_desde_detalles($conn, $cotizacionId, $detalles, $usuarioId);
+        registrar_movimientos_lab_ref_desde_cotizacion($conn, $pacienteId, $detalles, $usuarioId, $cotizacionId);
+        crear_ordenes_lab_cotizacion($conn, $cotizacionId, $pacienteId, $detalles);
         insertar_evento_cotizacion($conn, $cotizacionId, 'creada', $usuarioId, 'Creación de cotización', [
             'total' => $total,
-            'items' => count($data['detalles'])
+            'items' => count($detalles)
         ], 1);
 
         $conn->commit();
@@ -1027,6 +1427,7 @@ function registrar_cotizacion($conn, $data) {
             'success' => true,
             'cotizacion_id' => $cotizacionId,
             'numero_comprobante' => sprintf("Q%06d", $cotizacionId),
+            'fecha_vencimiento' => $fechaVencimiento,
             'message' => 'Cotización registrada exitosamente'
         ]);
     } catch (Exception $e) {
@@ -1040,7 +1441,7 @@ function editar_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
     $motivo = trim((string)($data['motivo'] ?? 'Edición de cotización'));
-    $detalles = $data['detalles'] ?? [];
+    $detalles = normalizar_detalles_entrada_cotizacion($data['detalles'] ?? []);
 
     if (!$cotizacionId || !$usuarioId || !is_array($detalles) || empty($detalles)) {
         respond(['success' => false, 'error' => 'Datos incompletos para editar'], 400);
@@ -1078,6 +1479,9 @@ function editar_cotizacion($conn, $data) {
 
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivo);
         sincronizar_movimientos_lab_ref_en_edicion_cotizacion($conn, (int)$cot['paciente_id'], $detallesAntes, $detalles, $usuarioId, $cotizacionId);
+
+        // Mantener la orden de laboratorio activa aunque existan derivaciones externas.
+        crear_ordenes_lab_cotizacion($conn, $cotizacionId, (int)$cot['paciente_id'], $detalles);
 
         $nuevoTotal = total_detalles($detalles);
         if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
@@ -1143,8 +1547,17 @@ function crear_adenda_cotizacion($conn, $data) {
         $observacionesBase = $data['observaciones'] ?? '';
         $obs = trim("ADENDA de #{$cotizacionId}. {$observacionesBase}");
 
-        $stmtNew = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (?, ?, ?, 'pendiente', ?)");
-        $stmtNew->bind_param("iids", $base['paciente_id'], $usuarioId, $total, $obs);
+        $hasSaldoV2 = column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente');
+        if ($hasSaldoV2) {
+            $stmtNew = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, total_pagado, saldo_pendiente, estado, observaciones) VALUES (?, ?, ?, 0, ?, 'pendiente', ?)");
+            $stmtNew->bind_param("iidds", $base['paciente_id'], $usuarioId, $total, $total, $obs);
+        } else {
+            $stmtNew = $conn->prepare("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (?, ?, ?, 'pendiente', ?)");
+            $stmtNew->bind_param("iids", $base['paciente_id'], $usuarioId, $total, $obs);
+        }
+        if (!$stmtNew) {
+            throw new Exception('No se pudo preparar la adenda');
+        }
         $stmtNew->execute();
         $nuevaId = (int)$conn->insert_id;
 
@@ -1155,7 +1568,7 @@ function crear_adenda_cotizacion($conn, $data) {
             $stmtNum->execute();
         }
 
-        if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+        if ($hasSaldoV2) {
             if (column_exists($conn, 'cotizaciones', 'cotizacion_padre_id') && column_exists($conn, 'cotizaciones', 'es_adenda')) {
                 $stmtSaldo = $conn->prepare("UPDATE cotizaciones SET total_pagado = 0, saldo_pendiente = ?, cotizacion_padre_id = ?, es_adenda = 1 WHERE id = ?");
                 $stmtSaldo->bind_param("dii", $total, $cotizacionId, $nuevaId);
@@ -1163,7 +1576,9 @@ function crear_adenda_cotizacion($conn, $data) {
                 $stmtSaldo = $conn->prepare("UPDATE cotizaciones SET total_pagado = 0, saldo_pendiente = ? WHERE id = ?");
                 $stmtSaldo->bind_param("di", $total, $nuevaId);
             }
-            $stmtSaldo->execute();
+            if (!$stmtSaldo || !$stmtSaldo->execute()) {
+                throw new Exception('No se pudo inicializar el saldo de la adenda');
+            }
         } elseif (column_exists($conn, 'cotizaciones', 'cotizacion_padre_id') && column_exists($conn, 'cotizaciones', 'es_adenda')) {
             $stmtPadre = $conn->prepare("UPDATE cotizaciones SET cotizacion_padre_id = ?, es_adenda = 1 WHERE id = ?");
             $stmtPadre->bind_param("ii", $cotizacionId, $nuevaId);
@@ -1338,21 +1753,56 @@ function registrar_abono_cotizacion($conn, $data) {
         respond(['success' => false, 'error' => 'Datos incompletos para registrar abono'], 400);
     }
 
-    if (!column_exists($conn, 'cotizaciones', 'total_pagado') || !column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
-        respond(['success' => false, 'error' => 'La estructura de saldo no está disponible. Ejecuta la migración v2.'], 409);
-    }
+    $hasSaldoV2 = column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente');
 
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare("SELECT id, paciente_id, total, total_pagado, saldo_pendiente FROM cotizaciones WHERE id = ? FOR UPDATE");
+        $sqlCot = $hasSaldoV2
+            ? "SELECT id, paciente_id, total, total_pagado, saldo_pendiente FROM cotizaciones WHERE id = ? FOR UPDATE"
+            : "SELECT id, paciente_id, total, estado FROM cotizaciones WHERE id = ? FOR UPDATE";
+        $stmt = $conn->prepare($sqlCot);
         $stmt->bind_param("i", $cotizacionId);
         $stmt->execute();
         $cot = $stmt->get_result()->fetch_assoc();
         if (!$cot) throw new Exception('Cotización no encontrada');
 
         $total = (float)$cot['total'];
-        $pagadoActual = (float)$cot['total_pagado'];
-        $saldoAnterior = (float)$cot['saldo_pendiente'];
+        $estadoActual = strtolower((string)($cot['estado'] ?? 'pendiente'));
+        $pagadoActual = $hasSaldoV2 ? (float)$cot['total_pagado'] : 0;
+        $saldoAnterior = $hasSaldoV2 ? (float)$cot['saldo_pendiente'] : max(0, $total);
+
+        if ($hasSaldoV2 && table_exists($conn, 'cotizacion_movimientos') && $cobroId) {
+            $stmtDup = $conn->prepare("SELECT id FROM cotizacion_movimientos WHERE cotizacion_id = ? AND cobro_id = ? AND tipo_movimiento = 'abono' LIMIT 1");
+            if ($stmtDup) {
+                $stmtDup->bind_param("ii", $cotizacionId, $cobroId);
+                $stmtDup->execute();
+                $movExistente = $stmtDup->get_result()->fetch_assoc();
+                if ($movExistente) {
+                    $conn->commit();
+                    respond([
+                        'success' => true,
+                        'message' => 'El abono ya estaba aplicado para este cobro',
+                        'monto_aplicado' => 0,
+                        'descuento_aplicado' => 0,
+                        'total_cotizacion' => $total,
+                        'estado' => $estadoActual,
+                        'total_pagado' => $pagadoActual,
+                        'saldo_pendiente' => $saldoAnterior,
+                        'legacy_mode' => false,
+                        'already_applied' => true
+                    ]);
+                }
+            }
+        }
+        if ($hasSaldoV2 && $saldoAnterior <= 0 && $total > 0 && $estadoActual !== 'pagado' && $pagadoActual <= 0) {
+            // Recuperar cotizaciones antiguas o mal inicializadas con saldo en cero.
+            $saldoAnterior = $total;
+            $stmtRepair = $conn->prepare("UPDATE cotizaciones SET total_pagado = 0, saldo_pendiente = ? WHERE id = ?");
+            if ($stmtRepair) {
+                $stmtRepair->bind_param("di", $saldoAnterior, $cotizacionId);
+                $stmtRepair->execute();
+            }
+        }
         $montoAplicado = min($monto, $saldoAnterior);
         if ($montoAplicado <= 0) {
             throw new Exception('La cotización no tiene saldo pendiente para aplicar abono');
@@ -1365,15 +1815,22 @@ function registrar_abono_cotizacion($conn, $data) {
         }
 
         $totalAjustado = max(0, $total - $montoDescuentoAplicado);
-        $pagadoNuevo = min($totalAjustado, $pagadoActual + $montoAplicado);
-        $saldoNuevo = max(0, $totalAjustado - $pagadoNuevo);
-        $nuevoEstado = $saldoNuevo <= 0 ? 'pagado' : 'parcial';
-
-        $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
-        $stmtUp->bind_param("dddsi", $totalAjustado, $pagadoNuevo, $saldoNuevo, $nuevoEstado, $cotizacionId);
+        if ($hasSaldoV2) {
+            $pagadoNuevo = min($totalAjustado, $pagadoActual + $montoAplicado);
+            $saldoNuevo = max(0, $totalAjustado - $pagadoNuevo);
+            $nuevoEstado = $saldoNuevo <= 0 ? 'pagado' : 'parcial';
+            $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
+            $stmtUp->bind_param("dddsi", $totalAjustado, $pagadoNuevo, $saldoNuevo, $nuevoEstado, $cotizacionId);
+        } else {
+            $pagadoNuevo = min($totalAjustado, $montoAplicado);
+            $saldoNuevo = max(0, $saldoAnterior - $montoAplicado - $montoDescuentoAplicado);
+            $nuevoEstado = $saldoNuevo <= 0 ? 'pagado' : 'pendiente';
+            $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
+            $stmtUp->bind_param("dsi", $totalAjustado, $nuevoEstado, $cotizacionId);
+        }
         $stmtUp->execute();
 
-        if (table_exists($conn, 'cotizacion_movimientos')) {
+        if ($hasSaldoV2 && table_exists($conn, 'cotizacion_movimientos')) {
             $tipoMov = 'abono';
             $stmtMov = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             $stmtMov->bind_param("iisdddsi", $cotizacionId, $cobroId, $tipoMov, $montoAplicado, $saldoAnterior, $saldoNuevo, $descripcion, $usuarioId);
@@ -1389,35 +1846,66 @@ function registrar_abono_cotizacion($conn, $data) {
             }
         }
 
-        insertar_evento_cotizacion($conn, $cotizacionId, 'cobro_registrado', $usuarioId, $descripcion, [
-            'monto' => $montoAplicado,
-            'monto_solicitado' => $monto,
-            'descuento_solicitado' => $montoDescuentoSolicitado,
-            'descuento_aplicado' => $montoDescuentoAplicado,
-            'total_anterior' => $total,
-            'total_nuevo' => $totalAjustado,
-            'saldo_anterior' => $saldoAnterior,
-            'saldo_nuevo' => $saldoNuevo,
-            'estado' => $nuevoEstado,
-            'cobro_id' => $cobroId
-        ], 1);
+        $conn->commit();
 
-        if ($nuevoEstado === 'pagado') {
-            $detallesCotizacion = cargar_detalles_cotizacion($conn, $cotizacionId);
-            $pacienteIdCot = (int)($cot['paciente_id'] ?? 0);
-            crear_ordenes_imagen_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion);
+        // Eventos y órdenes son efectos secundarios: no deben revertir el abono ya aplicado.
+        try {
+            insertar_evento_cotizacion($conn, $cotizacionId, 'cobro_registrado', $usuarioId, $descripcion, [
+                'monto' => $montoAplicado,
+                'monto_solicitado' => $monto,
+                'descuento_solicitado' => $montoDescuentoSolicitado,
+                'descuento_aplicado' => $montoDescuentoAplicado,
+                'total_anterior' => $total,
+                'total_nuevo' => $totalAjustado,
+                'saldo_anterior' => $saldoAnterior,
+                'saldo_nuevo' => $saldoNuevo,
+                'estado' => $nuevoEstado,
+                'cobro_id' => $cobroId
+            ], 1);
+
+            if ($nuevoEstado === 'pagado') {
+                $detallesCotizacion = cargar_detalles_cotizacion($conn, $cotizacionId);
+                $pacienteIdCot = (int)($cot['paciente_id'] ?? 0);
+                crear_ordenes_imagen_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion);
+                
+                // NUEVO: Actualizar estado de consultas relacionadas si vienen de próxima cita
+                // Si la cotización tiene detalles con consulta_id, cambiar estado de 'falta_cancelar' a 'pendiente'
+                if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+                    $stmtConsultas = $conn->prepare("SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0");
+                    if ($stmtConsultas) {
+                        $stmtConsultas->bind_param('i', $cotizacionId);
+                        $stmtConsultas->execute();
+                        $resConsultas = $stmtConsultas->get_result();
+                        while ($rowConsulta = $resConsultas->fetch_assoc()) {
+                            $consultaId = (int)($rowConsulta['consulta_id'] ?? 0);
+                            if ($consultaId > 0) {
+                                // Cambiar estado de 'falta_cancelar' a 'pendiente'
+                                $stmtUpd = $conn->prepare("UPDATE consultas SET estado = 'pendiente' WHERE id = ? AND estado = 'falta_cancelar'");
+                                if ($stmtUpd) {
+                                    $stmtUpd->bind_param('i', $consultaId);
+                                    $stmtUpd->execute();
+                                    $stmtUpd->close();
+                                }
+                            }
+                        }
+                        $stmtConsultas->close();
+                    }
+                }
+            }
+        } catch (Throwable $postError) {
+            error_log('Post-proceso registrar_abono (no bloqueante): ' . $postError->getMessage());
         }
 
-        $conn->commit();
         respond([
             'success' => true,
-            'message' => 'Abono registrado correctamente',
+            'message' => $hasSaldoV2 ? 'Abono registrado correctamente' : 'Abono registrado en modo legacy',
             'monto_aplicado' => $montoAplicado,
             'descuento_aplicado' => $montoDescuentoAplicado,
             'total_cotizacion' => $totalAjustado,
             'estado' => $nuevoEstado,
             'total_pagado' => $pagadoNuevo,
-            'saldo_pendiente' => $saldoNuevo
+            'saldo_pendiente' => $saldoNuevo,
+            'legacy_mode' => !$hasSaldoV2
         ]);
     } catch (Exception $e) {
         $conn->rollback();
@@ -1627,12 +2115,23 @@ function crear_consulta_desde_cotizacion($conn, $data) {
     // Crear la consulta en la tabla consultas
     $hora = date('H:i:s');
     $tipoConsulta = 'programada';
-    $stmtIns = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta) VALUES (?, ?, ?, ?, ?)');
-    if (!$stmtIns) {
-        echo json_encode(['success' => false, 'error' => 'Error preparando inserción de consulta']);
-        exit;
+    $hasOrigenCreacion = column_exists($conn, 'consultas', 'origen_creacion');
+    if ($hasOrigenCreacion) {
+        $stmtIns = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, origen_creacion) VALUES (?, ?, ?, ?, ?, ?)');
+        if (!$stmtIns) {
+            echo json_encode(['success' => false, 'error' => 'Error preparando inserción de consulta']);
+            exit;
+        }
+        $origenCreacion = 'cotizador';
+        $stmtIns->bind_param('iissss', $pacienteId, $medicoId, $fechaCot, $hora, $tipoConsulta, $origenCreacion);
+    } else {
+        $stmtIns = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta) VALUES (?, ?, ?, ?, ?)');
+        if (!$stmtIns) {
+            echo json_encode(['success' => false, 'error' => 'Error preparando inserción de consulta']);
+            exit;
+        }
+        $stmtIns->bind_param('iisss', $pacienteId, $medicoId, $fechaCot, $hora, $tipoConsulta);
     }
-    $stmtIns->bind_param('iisss', $pacienteId, $medicoId, $fechaCot, $hora, $tipoConsulta);
     $ok = $stmtIns->execute();
     $nuevaConsultaId = $ok ? (int)$stmtIns->insert_id : 0;
     $stmtIns->close();
@@ -1940,41 +2439,7 @@ function listar_pagos_cotizacion($conn, $cotizacionId) {
         respond(['success' => false, 'error' => 'cotizacion_id inválido'], 400);
     }
 
-    if (!table_exists($conn, 'cotizacion_movimientos')) {
-        respond(['success' => true, 'pagos' => []]);
-    }
-
-    $hasUsuarios = table_exists($conn, 'usuarios');
-    $hasCobros = table_exists($conn, 'cobros');
-    $hasTipoPagoCobro = $hasCobros && column_exists($conn, 'cobros', 'tipo_pago');
-
-    $selectMetodoPago = $hasTipoPagoCobro ? ', c.tipo_pago AS metodo_pago' : ", NULL AS metodo_pago";
-    $joinCobros = $hasTipoPagoCobro ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
-
-    if ($hasUsuarios) {
-        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at, COALESCE(u.nombre, 'Sistema') AS usuario_nombre{$selectMetodoPago}
-                FROM cotizacion_movimientos cm
-                LEFT JOIN usuarios u ON u.id = cm.usuario_id
-                {$joinCobros}
-                WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
-                ORDER BY cm.created_at DESC, cm.id DESC";
-    } else {
-        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at{$selectMetodoPago}
-                FROM cotizacion_movimientos cm
-                {$joinCobros}
-                WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
-                ORDER BY cm.created_at DESC, cm.id DESC";
-    }
-
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        respond(['success' => false, 'error' => 'No se pudo preparar consulta de pagos'], 500);
-    }
-    $stmt->bind_param("i", $cotizacionId);
-    $stmt->execute();
-    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-
-    respond(['success' => true, 'pagos' => $rows]);
+    respond(['success' => true, 'pagos' => obtener_pagos_cotizacion_rows($conn, $cotizacionId)]);
 }
 
 function resumen_diario($conn) {
@@ -2049,9 +2514,9 @@ switch ($method) {
         if (isset($_GET['paciente_id'])) {
             $pacienteId = (int)$_GET['paciente_id'];
             $stmt = $conn->prepare("
-                SELECT c.*, p.nombre, p.apellido, COALESCE(u.nombre, 'Sistema') as usuario_nombre
+                SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica, COALESCE(u.nombre, 'Sistema') as usuario_nombre
                 FROM cotizaciones c
-                JOIN pacientes p ON c.paciente_id = p.id
+                LEFT JOIN pacientes p ON c.paciente_id = p.id
                 LEFT JOIN usuarios u ON c.usuario_id = u.id
                 WHERE c.paciente_id = ?
                 ORDER BY c.fecha DESC
@@ -2059,10 +2524,15 @@ switch ($method) {
             $stmt->bind_param("i", $pacienteId);
             $stmt->execute();
             $cotizaciones = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmt->close();
+
+            $detallesPorCotizacion = cargar_detalles_cotizaciones($conn, array_column($cotizaciones, 'id'));
 
             foreach ($cotizaciones as &$cotizacion) {
-                $cotizacion['detalles'] = cargar_detalles_cotizacion($conn, (int)$cotizacion['id']);
+                aplicar_fallback_paciente_temporal($cotizacion);
+                $cotizacion['detalles'] = $detallesPorCotizacion[(int)$cotizacion['id']] ?? [];
             }
+            unset($cotizacion);
 
             respond(['success' => true, 'cotizaciones' => $cotizaciones]);
         }
@@ -2087,6 +2557,8 @@ switch ($method) {
         $includeDetalles = isset($_GET['include_detalles']) && (string)$_GET['include_detalles'] === '1';
         $hasEstadoItem = column_exists($conn, 'cotizaciones_detalle', 'estado_item');
         $hasDerivado = column_exists($conn, 'cotizaciones_detalle', 'derivado');
+        $hasNumeroComprobante = column_exists($conn, 'cotizaciones', 'numero_comprobante');
+        $hasFechaVencimiento = column_exists($conn, 'cotizaciones', 'fecha_vencimiento');
         $hasLabCotizacion = column_exists($conn, 'ordenes_laboratorio', 'cotizacion_id');
 
         $where = [];
@@ -2111,13 +2583,26 @@ switch ($method) {
         }
         if ($q !== '') {
             $like = "%$q%";
-            $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR CAST(c.id AS CHAR) LIKE ?)";
-            $types .= 'sssss';
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
+            if ($hasNumeroComprobante) {
+                $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR c.observaciones LIKE ? OR CAST(c.id AS CHAR) LIKE ? OR c.numero_comprobante LIKE ?)";
+                    $types .= 'sssssss';
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                    $params[] = $like;
+            } else {
+                    $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR c.observaciones LIKE ? OR CAST(c.id AS CHAR) LIKE ?)";
+                    $types .= 'ssssss';
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                    $params[] = $like;
+            }
         }
 
         $whereSql = count($where) ? ('WHERE ' . implode(' AND ', $where)) : '';
@@ -2128,6 +2613,8 @@ switch ($method) {
                 c.paciente_id,
                 c.usuario_id,
                 c.fecha,
+                " . ($hasNumeroComprobante ? "c.numero_comprobante," : "NULL AS numero_comprobante,") . "
+                " . ($hasFechaVencimiento ? "c.fecha_vencimiento," : "NULL AS fecha_vencimiento,") . "
                 c.total,
                 c.total_pagado,
                 c.saldo_pendiente,
@@ -2139,7 +2626,7 @@ switch ($method) {
                 p.historia_clinica,
                 COALESCE(u.nombre, 'Sistema') as usuario_nombre
             FROM cotizaciones c
-            JOIN pacientes p ON c.paciente_id = p.id
+            LEFT JOIN pacientes p ON c.paciente_id = p.id
             LEFT JOIN usuarios u ON c.usuario_id = u.id
             $whereSql
             ORDER BY c.fecha DESC
@@ -2158,6 +2645,10 @@ switch ($method) {
         $stmt->bind_param($typesList, ...$paramsList);
         $stmt->execute();
         $cotizaciones = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        foreach ($cotizaciones as &$cotizacion) {
+            aplicar_fallback_paciente_temporal($cotizacion);
+        }
+        unset($cotizacion);
 
         // Completar campos derivados usando SOLO IDs de la página actual.
         $idsPagina = array_values(array_filter(array_map(fn($r) => (int)($r['id'] ?? 0), $cotizaciones), fn($id) => $id > 0));
@@ -2281,14 +2772,18 @@ switch ($method) {
 
             // Detectar médico solicitante (cotizaciones originadas desde HC).
             if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
-                $sqlMed = "SELECT cd.cotizacion_id, cd.consulta_id, m.nombre, m.apellido
+                                $whereDetalleActivo = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+                                        ? " AND cd.estado_item <> 'eliminado'"
+                                        : '';
+                                $sqlMed = "SELECT cd.cotizacion_id, cd.consulta_id, m.nombre, m.apellido
                            FROM cotizaciones_detalle cd
                            INNER JOIN consultas con ON con.id = cd.consulta_id
                            INNER JOIN medicos m ON m.id = con.medico_id
                            WHERE cd.cotizacion_id IN ($placeholders)
                              AND cd.consulta_id IS NOT NULL
                              AND cd.consulta_id > 0
-                           ORDER BY cd.id ASC";
+                                                         {$whereDetalleActivo}
+                                                     ORDER BY CASE WHEN LOWER(TRIM(cd.servicio_tipo)) = 'consulta' THEN 0 ELSE 1 END, cd.id ASC";
                 $stmtMed = $conn->prepare($sqlMed);
                 if ($stmtMed) {
                     $stmtMed->bind_param($typesIds, ...$idsPagina);
@@ -2311,16 +2806,11 @@ switch ($method) {
                 }
             }
 
-            // Fallback estricto: solo resolver por referencia explícita en observaciones (consulta #ID).
+            // Fallback general: resolver consulta referente con heurísticas clínicas.
             foreach ($cotizaciones as $rowCot) {
                 $cid = (int)($rowCot['id'] ?? 0);
                 if ($cid <= 0) continue;
                 if (isset($consultaRefPorCotizacion[$cid])) continue;
-
-                $obs = trim((string)($rowCot['observaciones'] ?? ''));
-                if ($obs === '' || !preg_match('/consulta\s*#\s*(\d+)/i', $obs)) {
-                    continue;
-                }
 
                 $consultaRef = resolver_consulta_referente_por_cotizacion($conn, $cid);
                 if ($consultaRef > 0) {

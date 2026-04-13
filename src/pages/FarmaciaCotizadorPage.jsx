@@ -7,7 +7,44 @@ import { useQuoteCart } from "../context/QuoteCartContext";
 import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";
 
-export default function FarmaciaCotizadorPage() {
+export default function FarmaciaCotizadorPage({ usuario }) {
+  const imprimirTicketRecepcion = ({ codigo, paciente, total, vencimiento }) => {
+    const fechaEmision = new Date().toLocaleString();
+    const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Ticket de cobro</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      .box { border: 1px dashed #666; padding: 12px; max-width: 360px; }
+      h2 { margin: 0 0 8px; font-size: 18px; }
+      .code { font-size: 28px; font-weight: 700; letter-spacing: 1px; margin: 8px 0; }
+      .row { margin: 4px 0; font-size: 14px; }
+      .muted { color: #555; font-size: 12px; margin-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>Enviar a recepcion</h2>
+      <div class="row"><strong>Codigo:</strong></div>
+      <div class="code">${codigo}</div>
+      <div class="row"><strong>Paciente:</strong> ${paciente}</div>
+      <div class="row"><strong>Total:</strong> S/ ${Number(total || 0).toFixed(2)}</div>
+      <div class="row"><strong>Vence:</strong> ${vencimiento || "No definido"}</div>
+      <div class="muted">Emitido: ${fechaEmision}</div>
+    </div>
+    <script>window.onload = function(){ window.print(); };</script>
+  </body>
+</html>`;
+
+    const w = window.open("", "_blank", "width=480,height=640");
+    if (!w) return;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  };
+
   const obtenerDetallesCotizacion = async (targetCotizacionId) => {
     const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
       credentials: "include",
@@ -31,14 +68,13 @@ export default function FarmaciaCotizadorPage() {
   const handleRegistrarVenta = async () => {
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
+    const pacienteRegistradoId = Number(pacienteId || pacienteDatos?.id || 0);
+    const nombreManualCompleto = `${manualNombres} ${manualApellidos}`.trim();
+    const pacienteNombrePayload = (pacienteDatos?.nombre || nombreManualCompleto || 'Particular').trim();
+    const pacienteDniPayload = String(pacienteDatos?.dni || manualDni || '').trim();
 
     if (!cotizacionId && seleccionados.length === 0) {
       setMensaje("Selecciona al menos un medicamento.");
-      return;
-    }
-    // Validar paciente seleccionado
-    if (!pacienteDatos || !pacienteDatos.nombre || !pacienteDatos.dni || !pacienteDatos.historia_clinica) {
-      setMensaje("Debes seleccionar o crear un paciente antes de registrar la venta.");
       return;
     }
     // Construir detalles para cotización, respetando stock disponible
@@ -82,7 +118,7 @@ export default function FarmaciaCotizadorPage() {
 
     let limpiarCarritoAlFinal = false;
     const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
-    const pacienteActualId = Number(pacienteId || pacienteDatos?.id || 0);
+    const pacienteActualId = pacienteRegistradoId;
     const esMismoPacienteCarrito = Number(cart?.patientId || 0) === pacienteActualId;
     if (cartItemsCount > 0 && esMismoPacienteCarrito) {
       const esEdicionCotizacion = Boolean(cotizacionId);
@@ -118,10 +154,14 @@ export default function FarmaciaCotizadorPage() {
           motivo: 'Edición de cotización (merge seguro) desde cotizador de Farmacia'
         }
       : {
-          paciente_id: Number(pacienteId || pacienteDatos?.id),
+          paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : null,
+          paciente_nombre: pacienteNombrePayload,
+          paciente_dni: pacienteDniPayload,
           total,
           detalles: detallesFinales,
-          observaciones: 'Cotización registrada desde cotizador de Farmacia'
+          observaciones: 'Cotización registrada desde cotizador de Farmacia',
+          vencimiento_horas: 24,
+          origen: 'farmacia'
         };
 
     try {
@@ -136,10 +176,92 @@ export default function FarmaciaCotizadorPage() {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
 
-      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.');
-      Swal.fire('Listo', cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.', 'success').then(async () => {
+      const numeroComprobante = String(data?.numero_comprobante || `Q${String(data?.cotizacion_id || cotizacionId || '').padStart(6, '0')}`);
+
+        // Fecha de vencimiento: preferir la que devuelve el servidor (validez de cotización).
+        // Si no existe la columna en BD (retorna null), derivar la fecha de vencimiento más
+        // próxima entre los medicamentos seleccionados (fecha_vencimiento del producto).
+        let fechaVencimientoTexto = '';
+        const fechaVencimientoRaw = String(data?.fecha_vencimiento || '').trim();
+        if (fechaVencimientoRaw) {
+          // MySQL devuelve 'YYYY-MM-DD HH:MM:SS' — reemplazar espacio por T para parse ISO correcto
+          const parsed = new Date(fechaVencimientoRaw.replace(' ', 'T'));
+          if (!isNaN(parsed.getTime())) {
+            fechaVencimientoTexto = parsed.toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' });
+          }
+        }
+        if (!fechaVencimientoTexto) {
+          // Calcular la fecha de vencimiento más próxima de los medicamentos seleccionados
+          const fechasMed = seleccionados
+            .map(mid => {
+              const med = medicamentos.find(m => String(m.id) === String(mid));
+              return med?.fecha_vencimiento ? new Date(String(med.fecha_vencimiento).replace(' ', 'T')) : null;
+            })
+            .filter(d => d && !isNaN(d.getTime()));
+          if (fechasMed.length > 0) {
+            const masProxima = fechasMed.reduce((a, b) => (a < b ? a : b));
+            fechaVencimientoTexto = masProxima.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          }
+        }
+
+      const swalOpts = (isRolQuimico && !cotizacionId)
+        ? {
+            icon: 'success',
+            title: 'Enviado a recepción',
+            html: `<div class="text-left">
+              <div><b>Código:</b> ${numeroComprobante}</div>
+              <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
+              <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
+              <div class="mt-2">El paciente puede pagar en recepción con este código.</div>
+            </div>`,
+            showDenyButton: true,
+            denyButtonText: 'Imprimir ticket',
+            confirmButtonText: 'Nueva Venta / Finalizar',
+          }
+        : {
+            icon: 'success',
+            title: cotizacionId ? 'Cotización actualizada' : 'Enviado a recepción',
+            html: cotizacionId
+              ? `<div>Cotización <b>${numeroComprobante}</b> actualizada correctamente.</div>`
+              : `<div class="text-left">
+              <div><b>Código:</b> ${numeroComprobante}</div>
+              <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
+              <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
+              <div class="mt-2">El paciente puede pagar en recepción con este código.</div>
+            </div>`,
+            showDenyButton: !cotizacionId,
+            denyButtonText: 'Imprimir ticket',
+            confirmButtonText: 'Ir a cotizaciones',
+          };
+      const dialog = await Swal.fire(swalOpts);
+
+      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : `Cotización enviada a recepción: ${numeroComprobante}`);
+
+      if (!cotizacionId && dialog.isDenied) {
+        imprimirTicketRecepcion({
+          codigo: numeroComprobante,
+          paciente: pacienteNombrePayload || 'Particular',
+          total,
+          vencimiento: fechaVencimientoTexto,
+        });
+      }
+
+      {
         if (limpiarCarritoAlFinal) {
           clearCart();
+        }
+
+        // Reset de UI post-envío para iniciar una nueva venta sin arrastre de selección.
+        setSeleccionados([]);
+        setCantidades({});
+        setTiposVenta({});
+        setPreloadedFarmacia({});
+        setPreloadedFarmaciaRaw([]);
+        setCotizacionDetallesOriginales([]);
+        try {
+          await recargarMedicamentos();
+        } catch {
+          // Si falla la recarga de stock, no bloquear el flujo de cierre exitoso.
         }
 
         if (cotizacionId) {
@@ -151,13 +273,20 @@ export default function FarmaciaCotizadorPage() {
           }
         }
         if (cotizacionId) {
-          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId || pacienteDatos?.id)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
-            state: { pacienteId: Number(pacienteId || pacienteDatos?.id), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+          setMensaje("");
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId || pacienteDatos?.id || 0)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId || pacienteDatos?.id || 0), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
           });
           return;
         }
-        navigate('/cotizaciones');
-      });
+        setMensaje("");
+        if (isRolQuimico) {
+          // Para Químico no navegar: dejar pantalla lista para nueva venta.
+          return;
+        } else {
+          navigate('/cotizaciones');
+        }
+      }
     } catch (error) {
       Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
     }
@@ -183,6 +312,11 @@ export default function FarmaciaCotizadorPage() {
   const [pacienteDatos, setPacienteDatos] = useState(null); // {dni, nombre}
   const isEditing = Boolean(new URLSearchParams(location.search).get('cobro_id'));
   const isCotizacionEditMode = Boolean(new URLSearchParams(location.search).get('cotizacion_id'));
+  const roleNormalizado = String(usuario?.rol || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const isRolQuimico = roleNormalizado === "quimico";
   const [manualDni, setManualDni] = useState("");
   const [manualNombres, setManualNombres] = useState("");
   const [manualApellidos, setManualApellidos] = useState("");
@@ -194,18 +328,22 @@ export default function FarmaciaCotizadorPage() {
   const [cajaEstado, setCajaEstado] = useState(null); // 'abierta' | 'cerrada' | null
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
 
+  const recargarMedicamentos = async () => {
+    const res = await fetch(`${BASE_URL}api_medicamentos.php`, { credentials: "include" });
+    const data = await res.json();
+    const meds = data.medicamentos || data || [];
+    setMedicamentos(meds);
+    const unidades = {};
+    meds.forEach((m) => {
+      unidades[m.id] = m.unidades_por_caja || 30;
+    });
+    setUnidadesPorCaja(unidades);
+  };
+
   useEffect(() => {
-    fetch(`${BASE_URL}api_medicamentos.php`, { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => {
-        setMedicamentos(data.medicamentos || data || []);
-        // Inicializar unidades por caja si existe el campo
-        const unidades = {};
-        (data.medicamentos || data || []).forEach((m) => {
-          unidades[m.id] = m.unidades_por_caja || 30; // default 30 si no existe
-        });
-        setUnidadesPorCaja(unidades);
-      });
+    recargarMedicamentos().catch(() => {
+      // Si falla la recarga inicial, mantener el estado actual.
+    });
   }, []);
 
   // Consultar estado de caja al entrar a la página
@@ -376,8 +514,8 @@ export default function FarmaciaCotizadorPage() {
     const cantidadAgregada = detalles.length;
 
     addItems({
-      patientId: Number(pacienteId || pacienteDatos?.id),
-      patientName: pacienteDatos?.nombre || `Paciente #${pacienteId || pacienteDatos?.id}`,
+      patientId: Number(pacienteId || pacienteDatos?.id || 0),
+      patientName: pacienteDatos?.nombre || `${manualNombres} ${manualApellidos}`.trim() || 'Particular',
       items: detalles.map((d) => ({
         serviceType: 'farmacia',
         serviceId: d.servicio_id,
@@ -966,12 +1104,12 @@ export default function FarmaciaCotizadorPage() {
           />
         )}
         {/* Botón y formulario manual solo si NO hay pacienteId en la URL (químico) */}
-        {!params.pacienteId && !pacienteId && !manualDni && !mostrarManual && busquedaIntentada && !pacienteDatos && (
+        {!params.pacienteId && !pacienteId && !mostrarManual && (
           <button
             className="mt-2 px-3 py-1 bg-yellow-100 text-yellow-800 rounded border border-yellow-300 text-sm"
             onClick={() => setMostrarManual(true)}
           >
-            Paciente no encontrado
+            Ingresar particular manualmente
           </button>
         )}
         {!params.pacienteId && mostrarManual && !pacienteId && (
@@ -980,34 +1118,32 @@ export default function FarmaciaCotizadorPage() {
               type="text"
               value={manualDni}
               onChange={(e) => setManualDni(e.target.value)}
-              placeholder="DNI"
+              placeholder="DNI (opcional)"
               className="border px-2 py-1 rounded w-32"
             />
             <input
               type="text"
               value={manualNombres}
               onChange={(e) => setManualNombres(e.target.value)}
-              placeholder="Nombres"
+              placeholder="Nombres (opcional)"
               className="border px-2 py-1 rounded w-40"
-              required
             />
             <input
               type="text"
               value={manualApellidos}
               onChange={(e) => setManualApellidos(e.target.value)}
-              placeholder="Apellidos"
+              placeholder="Apellidos (opcional)"
               className="border px-2 py-1 rounded w-40"
-              required
             />
           </div>
         )}
         {/* Mostrar paciente seleccionado */}
-        {(pacienteId || manualDni) && (
+        {(pacienteId || pacienteDatos || manualDni || manualNombres || manualApellidos) && (
           <div className="mt-2 p-2 bg-blue-50 rounded text-blue-800 text-sm">
             <span className="font-bold">Paciente:</span>{" "}
             {pacienteDatos
               ? `${pacienteDatos.nombre} (DNI: ${pacienteDatos.dni})`
-              : `${manualNombres} ${manualApellidos} (DNI: ${manualDni})`}
+              : `${`${manualNombres} ${manualApellidos}`.trim() || 'Particular'}${manualDni ? ` (DNI: ${manualDni})` : ''}`}
           </div>
         )}
       </div>
@@ -1236,16 +1372,18 @@ export default function FarmaciaCotizadorPage() {
                 </div>
                 <div className="flex gap-3 mt-4 justify-end">
                   <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
-                  <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
+                  {!isRolQuimico && (
+                    <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
+                  )}
                   {new URLSearchParams(location.search).get('cobro_id') ? (
                     <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                   ) : (
-                    <button onClick={handleRegistrarVenta} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{isCotizacionEditMode ? 'Actualizar cotización' : 'Registrar Cotización'}</button>
+                    <button onClick={handleRegistrarVenta} className="px-6 py-2 rounded font-bold bg-blue-600 text-white hover:bg-blue-700">{isCotizacionEditMode ? 'Actualizar cotización' : 'Enviar a recepción'}</button>
                   )}
                 </div>
-                {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
+                {new URLSearchParams(location.search).get('cobro_id') && cajaEstado === 'cerrada' && (
                   <div className="mt-2 flex items-center justify-end gap-2">
-                    <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder {new URLSearchParams(location.search).get('cobro_id') ? 'actualizar' : 'cotizar'}.</span>
+                    <span className="text-sm text-red-600">Caja cerrada: abre una caja para poder actualizar el cobro.</span>
                     <button onClick={() => navigate('/contabilidad')} className="text-sm bg-yellow-100 text-yellow-800 px-3 py-1 rounded border border-yellow-300 hover:bg-yellow-200">Ir a Contabilidad</button>
                   </div>
                 )}
@@ -1258,7 +1396,7 @@ export default function FarmaciaCotizadorPage() {
       {mensaje && (
         <div
           className={`mt-4 text-center font-semibold ${
-            mensaje.includes("registrada") ? "text-green-600" : "text-red-600"
+            mensaje.startsWith("Cotización") ? "text-green-600" : "text-red-600"
           }`}
         >
           {mensaje}

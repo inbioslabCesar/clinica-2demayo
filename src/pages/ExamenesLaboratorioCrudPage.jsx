@@ -122,9 +122,21 @@ export default function ExamenesLaboratorioCrudPage() {
     if (!raw) return [];
     try {
       if (typeof raw === 'string') {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) raw = parsed;
-        else return [];
+        let parsed = JSON.parse(raw);
+        // Compatibilidad: JSON doble serializado
+        if (typeof parsed === 'string') {
+          parsed = JSON.parse(parsed);
+        }
+        if (Array.isArray(parsed)) {
+          raw = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          raw = [parsed];
+        } else {
+          return [];
+        }
+      } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        // Compatibilidad: objeto único legado
+        raw = [raw];
       }
     } catch {
       // Eliminado log de error parsing valores_referenciales

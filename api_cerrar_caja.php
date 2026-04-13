@@ -72,7 +72,7 @@ if ($egreso_lab_ref === false || $egreso_lab_ref === null) {
     $egreso_lab_ref = 0;
 }
 
-$stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso != "honorario_medico"');
+$stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
 $stmt->execute([$caja_id]);
 $egreso_operativo = $stmt->fetchColumn();
 if ($egreso_operativo === false || $egreso_operativo === null) {
@@ -117,6 +117,9 @@ $stmt->execute([
 echo json_encode([
     'success' => true,
     'mensaje' => 'Caja cerrada correctamente',
+    'caja_id' => (int)$caja_id,
+    'fecha' => $fecha,
+    'hora_cierre' => date('h:i A'),
     'diferencia' => $diferencia,
     'totales' => [
         'total_efectivo' => $total_efectivo,

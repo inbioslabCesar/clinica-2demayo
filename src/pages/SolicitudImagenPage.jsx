@@ -31,12 +31,19 @@ export default function SolicitudImagenPage() {
     fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
       .then((r) => r.json())
       .then((d) => {
-        const lista = (d.tarifas ?? d ?? []).filter(
-          (t) => t.servicio_tipo === cfg.servTipo && t.activo != 0
-        );
+        if (!d?.success) {
+          setError(d?.error || `No se pudo cargar el catalogo de ${cfg.label}.`);
+          setTarifas([]);
+          return;
+        }
+        const origen = Array.isArray(d?.tarifas) ? d.tarifas : [];
+        const lista = origen.filter((t) => t.servicio_tipo === cfg.servTipo && t.activo != 0);
         setTarifas(lista);
       })
-      .catch(() => {})
+      .catch(() => {
+        setError(`Error de red al cargar el catalogo de ${cfg.label}.`);
+        setTarifas([]);
+      })
       .finally(() => setLoadingTarifas(false));
 
     // Obtener paciente_id de la consulta

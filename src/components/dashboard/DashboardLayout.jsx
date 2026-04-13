@@ -1,6 +1,6 @@
 import { Icon } from '@fluentui/react';
 import Footer from "../comunes/Footer";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
 import SidebarMedico from "../sidebar/SidebarMedico";
@@ -12,6 +12,7 @@ import SidebarAdmin from "../sidebar/SidebarAdmin";
 import QuoteCartPanel from "../cotizacion/QuoteCartPanel";
 
 const BRAND_STORAGE_KEY = "clinica_brand_cache";
+const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
 
 function resolveSystemLogoSize(sizeOption) {
   const key = String(sizeOption || "").trim().toLowerCase();
@@ -55,7 +56,7 @@ function writeBrandCache(partial) {
 }
 
 function applyFavicon(iconHref) {
-  const href = String(iconHref || '').trim() || '/2demayo.svg';
+  const href = String(iconHref || '').trim() || FALLBACK_LOGO_SRC;
   let link = document.querySelector("link[rel='icon']");
   if (!link) {
     link = document.createElement('link');
@@ -66,9 +67,8 @@ function applyFavicon(iconHref) {
 }
 
 function resolveLogoUrl(logoPath, versionToken) {
-  const fallback = "/2demayo.svg";
   const raw = String(logoPath || "").trim();
-  if (!raw) return fallback;
+  if (!raw) return "";
   let url = raw;
   if (!/^(https?:\/\/|data:|blob:)/i.test(raw)) {
     const base = String(BASE_URL || "").replace(/\/+$/, "");
@@ -81,6 +81,11 @@ function resolveLogoUrl(logoPath, versionToken) {
 
 async function detectLogoIsWide(imageSrc) {
   return new Promise((resolve) => {
+    if (!String(imageSrc || '').trim()) {
+      resolve(true);
+      return;
+    }
+
     const img = new Image();
     img.onload = () => {
       try {
@@ -137,11 +142,78 @@ async function detectLogoIsWide(imageSrc) {
     };
 
     img.onerror = () => resolve(true);
-    img.src = imageSrc || '/2demayo.svg';
+    img.src = imageSrc;
   });
 }
 
+function BrandMark({ src, alt, frameClassName, imageClassName, frameStyle, imageStyle, wide, placeholderIcon }) {
+  const [failed, setFailed] = useState(false);
+  const safeSrc = !failed ? String(src || '').trim() : '';
+
+  return (
+    <div
+      className={`${frameClassName} flex items-center justify-center`}
+      style={frameStyle}
+    >
+      {safeSrc ? (
+        <img
+          src={safeSrc}
+          alt={alt}
+          className={imageClassName}
+          style={imageStyle}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Icon iconName={placeholderIcon || 'Hospital'} className={`text-violet-600 ${wide ? 'text-3xl' : 'text-2xl'}`} />
+      )}
+    </div>
+  );
+}
+
 function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSize, logoIsWide }) {
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+  const touchEndX = useRef(null);
+  const touchEndY = useRef(null);
+
+  const isMobileViewport = () => window.innerWidth < 768;
+
+  const handleTouchStart = (event) => {
+    if (!isMobileViewport()) return;
+    const touch = event.changedTouches?.[0];
+    if (!touch) return;
+    touchStartX.current = touch.clientX;
+    touchStartY.current = touch.clientY;
+    touchEndX.current = touch.clientX;
+    touchEndY.current = touch.clientY;
+  };
+
+  const handleTouchMove = (event) => {
+    if (!isMobileViewport()) return;
+    const touch = event.changedTouches?.[0];
+    if (!touch) return;
+    touchEndX.current = touch.clientX;
+    touchEndY.current = touch.clientY;
+  };
+
+  const handleTouchEnd = () => {
+    if (!isMobileViewport()) return;
+    if (touchStartX.current === null || touchEndX.current === null) return;
+
+    const deltaX = touchStartX.current - touchEndX.current;
+    const deltaY = Math.abs((touchStartY.current ?? 0) - (touchEndY.current ?? 0));
+
+    // Cerrar drawer solo con swipe horizontal claro hacia la izquierda.
+    if (deltaX > 70 && deltaX > deltaY * 1.2) {
+      onClose();
+    }
+
+    touchStartX.current = null;
+    touchStartY.current = null;
+    touchEndX.current = null;
+    touchEndY.current = null;
+  };
+
   // Sidebar fijo en PC (md+), drawer en móvil/tablet
   return (
     <>
@@ -155,10 +227,25 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
       <aside
         className={`fixed z-50 top-0 left-0 h-full w-64 bg-white border-r shadow-lg transform transition-transform duration-200 ease-in-out
         ${open ? 'translate-x-0' : '-translate-x-full'}
-        md:translate-x-0 md:static md:flex md:flex-col md:z-10 md:h-auto md:shadow-none md:bg-white md:w-64`}
-        style={{ borderColor: 'var(--color-accent)' }}
+        h-[100dvh] overflow-y-auto overscroll-contain md:translate-x-0 md:static md:flex md:flex-col md:z-10 md:h-auto md:shadow-none md:bg-white md:w-64 md:overflow-visible`}
+        style={{ borderColor: 'var(--color-accent)', WebkitOverflowScrolling: 'touch' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         <div className="flex flex-col h-full min-h-0">
+          <div className="md:hidden sticky top-0 z-10 px-3 py-2 bg-white/95 backdrop-blur border-b border-slate-200 flex items-center justify-between">
+            <span className="text-sm font-semibold text-slate-700">Menu</span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 w-8 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors flex items-center justify-center"
+              aria-label="Cerrar menú"
+            >
+              <Icon iconName="Cancel" className="text-base" />
+            </button>
+          </div>
+
           <div className="flex flex-col items-center py-6 text-white rounded-b-2xl mx-2 mb-4 shadow-lg" style={{ background: 'linear-gradient(to bottom right, var(--color-sidebar-from), var(--color-sidebar-via), var(--color-sidebar-to))' }}>
             <div className="relative">
               <div className={`absolute inset-0 bg-white/20 blur-md ${logoIsWide ? 'rounded-2xl' : 'rounded-full'}`}></div>
@@ -170,11 +257,13 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
                   maxWidth: logoIsWide ? 180 : logoSize.sidebarFrame,
                 }}
               >
-                <img 
-                  src={logoSrc || "/2demayo.svg"}
-                  alt="Logo" 
-                  className="relative object-contain"
-                  style={logoIsWide
+                <BrandMark
+                  src={logoSrc}
+                  alt="Logo"
+                  frameClassName="relative"
+                  imageClassName="relative object-contain"
+                  frameStyle={{}}
+                  imageStyle={logoIsWide
                     ? {
                         height: Math.round(logoSize.sidebarFrame * 0.62),
                         width: 'auto',
@@ -188,14 +277,18 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
                         transform: 'scale(1.9)',
                         transformOrigin: 'center',
                       }}
-                  onError={e => { e.target.onerror = null; e.target.src = '/2demayo.svg'; }} 
+                  wide={logoIsWide}
+                  placeholderIcon="Hospital"
                 />
               </div>
             </div>
             <h5 className="text-lg font-bold text-white mt-3 text-center drop-shadow-lg">{clinicName || "Sistema Clínico"}</h5>
             <div className="w-12 h-0.5 bg-white/30 rounded-full mt-2"></div>
           </div>
-          <nav className="flex flex-col gap-3 px-4 flex-1 overflow-y-auto">
+          <nav
+            className="flex flex-col gap-3 px-4 flex-1"
+            style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+          >
             {usuario?.rol === 'medico' && <SidebarMedico onClose={onClose} />}
             {usuario?.rol === 'enfermero' && <SidebarEnfermero onClose={onClose} />}
             {usuario?.rol === 'laboratorista' && <SidebarLaboratorista onClose={onClose} />}
@@ -256,11 +349,13 @@ function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize, logoIsWide }) 
             maxWidth: logoIsWide ? 132 : logoSize.navbarImage + 10,
           }}
         >
-          <img
-            src={logoSrc || "/2demayo.svg"}
+          <BrandMark
+            src={logoSrc}
             alt="Logo"
-            className="object-contain"
-            style={logoIsWide
+            frameClassName=""
+            imageClassName="object-contain"
+            frameStyle={{}}
+            imageStyle={logoIsWide
               ? {
                   height: Math.round(logoSize.navbarImage * 0.9),
                   width: 'auto',
@@ -274,6 +369,8 @@ function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize, logoIsWide }) 
                   transform: 'scale(1.7)',
                   transformOrigin: 'center',
                 }}
+            wide={logoIsWide}
+            placeholderIcon="Hospital"
           />
         </div>
         <span className="text-xl font-bold drop-shadow">{clinicName || "Sistema Clínico"}</span>
@@ -410,6 +507,21 @@ function DashboardLayout({ usuario, onLogout, children }) {
     handleResize();
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (window.innerWidth >= 768) return undefined;
+    const prevOverflow = document.body.style.overflow;
+
+    if (sidebarOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = prevOverflow || '';
+    }
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [sidebarOpen]);
 
   return (
     <div className="min-h-screen flex flex-col bg-blue-50 overflow-x-hidden">

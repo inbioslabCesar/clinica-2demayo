@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { BASE_URL } from '../config/config.js';
+import AvatarColorConfig from '../components/admin/AvatarColorConfig.jsx';
 
 const LOGO_SIZE_OPTIONS = [
   { value: '', label: 'Predeterminado' },
@@ -16,6 +17,12 @@ const LOGO_SHAPE_OPTIONS = [
   { value: 'round', label: 'Circular' },
   { value: 'wide', label: 'Horizontal / ovalado' },
 ];
+
+const BRAND_FONT_SIZE_OPTIONS = new Set(['', '1.25rem', '1.5rem', '1.875rem', '2.25rem', '3rem']);
+
+function isValidHexColor(value) {
+  return /^#[0-9A-Fa-f]{6}$/.test(String(value || '').trim());
+}
 
 
 
@@ -65,6 +72,7 @@ function ConfiguracionPage() {
     logo_size_sistema: '',
     logo_size_publico: '',
     logo_shape_sistema: 'auto',
+    caratula_fondo_url: '',
     hc_template_mode: 'auto',
     hc_template_single_id: '',
   });
@@ -73,6 +81,7 @@ function ConfiguracionPage() {
   const [cargandoDatos, setCargandoDatos] = useState(true);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState('');
+  const [caratulaPreview, setCaratulaPreview] = useState('');
 
   // Cargar configuración al montar el componente
   useEffect(() => {
@@ -105,6 +114,7 @@ function ConfiguracionPage() {
           setConfiguracion(prev => ({ ...prev, ...incoming }));
           // mostrar preview si hay logo
           if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
+          if (result.data && result.data.caratula_fondo_url) setCaratulaPreview(result.data.caratula_fondo_url);
         } else {
           throw new Error(result.error || 'Error al cargar la configuración');
         }
@@ -168,6 +178,21 @@ function ConfiguracionPage() {
     return String(j.path);
   };
 
+  const subirArchivoCaratula = async (file) => {
+    const form = new FormData();
+    form.append('caratula', file);
+    const resp = await fetch(BASE_URL + 'api_upload_caratula.php', {
+      method: 'POST',
+      credentials: 'include',
+      body: form
+    });
+    const j = await resp.json();
+    if (!(resp.ok && j.success && j.path)) {
+      throw new Error(j.error || 'Error subiendo plantilla de carátula');
+    }
+    return String(j.path);
+  };
+
   const guardarConfiguracion = async () => {
     // Validar campos requeridos
     if (!configuracion.nombre_clinica || !configuracion.direccion || 
@@ -193,6 +218,36 @@ function ConfiguracionPage() {
       return;
     }
 
+    if (configuracion.nombre_color && !isValidHexColor(configuracion.nombre_color)) {
+      Swal.fire({
+        title: 'Error',
+        text: 'El color del nombre debe estar en formato hexadecimal, por ejemplo #E85D8E.',
+        icon: 'error',
+        confirmButtonText: 'OK'
+      });
+      return;
+    }
+
+    if (configuracion.slogan_color && !isValidHexColor(configuracion.slogan_color)) {
+      Swal.fire({
+        title: 'Error',
+        text: 'El color del eslogan debe estar en formato hexadecimal, por ejemplo #3A4FA3.',
+        icon: 'error',
+        confirmButtonText: 'OK'
+      });
+      return;
+    }
+
+    if (!BRAND_FONT_SIZE_OPTIONS.has(String(configuracion.nombre_font_size || ''))) {
+      Swal.fire({
+        title: 'Error',
+        text: 'El tamaño del nombre no es válido. Selecciona una opción de la lista.',
+        icon: 'error',
+        confirmButtonText: 'OK'
+      });
+      return;
+    }
+
     setLoading(true);
     
     try {
@@ -204,11 +259,16 @@ function ConfiguracionPage() {
         logoUrlFinal = normalizeLogoForSave(uploadedPath);
       }
 
-      const { _logo_file, ...restConfig } = configuracion;
+      const { _logo_file, _caratula_file, ...restConfig } = configuracion;
       const payload = {
         ...restConfig,
         logo_url: logoUrlFinal,
       };
+
+      if (_caratula_file) {
+        const uploadedCaratula = await subirArchivoCaratula(_caratula_file);
+        payload.caratula_fondo_url = normalizeLogoForSave(uploadedCaratula);
+      }
 
       const response = await fetch(BASE_URL + 'api_configuracion.php', {
         method: 'POST',
@@ -232,6 +292,10 @@ function ConfiguracionPage() {
           if (payload.logo_url) {
             setLogoPreview(payload.logo_url);
             setConfiguracion(prev => ({ ...prev, logo_url: payload.logo_url, _logo_file: null }));
+          }
+          if (payload.caratula_fondo_url) {
+            setCaratulaPreview(payload.caratula_fondo_url);
+            setConfiguracion(prev => ({ ...prev, caratula_fondo_url: payload.caratula_fondo_url, _caratula_file: null }));
           }
               window.dispatchEvent(new CustomEvent('clinica-config-updated', {
                 detail: {
@@ -344,6 +408,19 @@ function ConfiguracionPage() {
         updated_at: Date.now()
       }
     }));
+  };
+
+  const handleCaratulaFileChange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    setCaratulaPreview(url);
+    setConfiguracion(prev => ({ ...prev, _caratula_file: f }));
+  };
+
+  const clearCaratula = () => {
+    setConfiguracion(prev => ({ ...prev, caratula_fondo_url: '', _caratula_file: null }));
+    setCaratulaPreview('');
   };
 
   return (
@@ -552,7 +629,7 @@ function ConfiguracionPage() {
                 placeholder="https://ejemplo.com/logo.png"
               />
               <div className="flex items-center gap-2">
-                <input type="file" accept="image/*" onChange={handleFileChange} className="text-sm" />
+                <input type="file" accept="image/png,image/jpeg,image/svg+xml,.svg" onChange={handleFileChange} className="text-sm" />
                 <button
                   type="button"
                   onClick={uploadLogo}
@@ -576,6 +653,33 @@ function ConfiguracionPage() {
                     src={resolveLogoPreviewUrl(logoPreview)}
                     alt="Logo preview"
                     style={{ maxHeight: 96 }}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Plantilla de carátula de pacientes (PNG)
+              </label>
+              <div className="flex items-center gap-2">
+                <input type="file" accept="image/png,.png" onChange={handleCaratulaFileChange} className="text-sm" />
+                <button
+                  type="button"
+                  onClick={clearCaratula}
+                  className="bg-red-100 text-red-700 px-3 py-1 rounded-md hover:bg-red-200 text-sm"
+                >
+                  Eliminar
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">Esta imagen se usará como fondo al descargar la carátula del paciente.</p>
+              {caratulaPreview ? (
+                <div className="mt-3">
+                  <div className="text-xs text-gray-600 mb-1">Vista previa carátula:</div>
+                  <img
+                    src={resolveLogoPreviewUrl(caratulaPreview)}
+                    alt="Caratula preview"
+                    style={{ maxHeight: 120 }}
                   />
                 </div>
               ) : null}
@@ -690,9 +794,11 @@ function ConfiguracionPage() {
                 value={configuracion.celular || ''}
                 onChange={(e) => manejarCambio('celular', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="+51 987 654 321"
+                placeholder="51980948458"
               />
-              <p className="text-xs text-gray-500 mt-1">Este número se usará para el botón flotante de WhatsApp en la página pública.</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Ingresa con código de país sin + ni espacios: <strong>51980948458</strong> (Perú). Sin este formato, WhatsApp no abrirá correctamente en móviles.
+              </p>
             </div>
 
             <div className="md:col-span-2">
@@ -814,6 +920,9 @@ function ConfiguracionPage() {
           </div>
         </div>
       </div>
+
+      {/* Sección de Avatar y Colores */}
+      <AvatarColorConfig />
     </div>
   );
 }

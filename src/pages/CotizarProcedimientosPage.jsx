@@ -458,12 +458,24 @@ export default function CotizarProcedimientosPage() {
 
       const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
       if (!data?.success && cotizacionId && noEditable) {
+        const confirmAdenda = await Swal.fire({
+          title: 'Cotización ya pagada',
+          text: `La cotización #${Number(cotizacionId)} no se puede editar directamente. ¿Deseas crear una adenda nueva con estos cambios?`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Sí, crear adenda',
+          cancelButtonText: 'No, cancelar',
+        });
+        if (!confirmAdenda.isConfirmed) {
+          setMensaje('Operación cancelada. No se creó ninguna adenda.');
+          return;
+        }
         const payloadAdenda = {
           accion: 'adenda',
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
-          motivo: 'Adenda automática desde cotizador de Procedimientos (cotización pagada)'
+          motivo: 'Adenda confirmada por usuario desde cotizador de Procedimientos (cotización pagada)'
         };
         const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
           method: 'POST',

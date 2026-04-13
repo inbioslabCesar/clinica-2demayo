@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
+import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen } from "react-icons/fi";
 
 const SERVICIOS_IMAGEN = new Set(["rayosx", "ecografia", "tomografia"]);
@@ -24,6 +25,49 @@ function formatDateInput(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString();
+}
+
+function getVencimientoMeta(row) {
+  const fechaVencimiento = String(row?.fecha_vencimiento || "").trim();
+  const estado = String(row?.estado || "").toLowerCase();
+  if (!fechaVencimiento || !["pendiente", "parcial"].includes(estado)) return null;
+
+  const vencimiento = new Date(fechaVencimiento);
+  if (Number.isNaN(vencimiento.getTime())) return null;
+
+  const ahora = new Date();
+  if (ahora.getTime() > vencimiento.getTime()) {
+    return {
+      vencida: true,
+      label: "Vencida",
+      detail: `Venció: ${formatDateTime(fechaVencimiento)}`,
+      className: "bg-red-100 text-red-700",
+    };
+  }
+
+  const mismoDia = ahora.toDateString() === vencimiento.toDateString();
+  if (mismoDia) {
+    return {
+      vencida: false,
+      label: "Vence hoy",
+      detail: `Vence: ${formatDateTime(fechaVencimiento)}`,
+      className: "bg-amber-100 text-amber-700",
+    };
+  }
+
+  return {
+    vencida: false,
+    label: "Vigente",
+    detail: `Vence: ${formatDateTime(fechaVencimiento)}`,
+    className: "bg-emerald-100 text-emerald-700",
+  };
 }
 
 export default function CotizacionesPage() {
@@ -75,8 +119,9 @@ export default function CotizacionesPage() {
         params.set("fecha_fin", filtrosAplicados.fechaFin);
       }
 
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php?${params.toString()}`, {
+      const res = await fetch(`${BASE_URL}api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
         credentials: "include",
+        cache: "no-store",
       });
       const data = await res.json();
       if (!data?.success) {
@@ -154,6 +199,7 @@ export default function CotizacionesPage() {
     const st = String(value || "").toLowerCase();
     if (st === "pagado") return "bg-green-100 text-green-700";
     if (st === "parcial") return "bg-amber-100 text-amber-700";
+    if (st === "control") return "bg-sky-100 text-sky-700";
     if (st === "anulada") return "bg-red-100 text-red-700";
     return "bg-blue-100 text-blue-700";
   };
@@ -248,11 +294,13 @@ export default function CotizacionesPage() {
           <div className="text-sm text-gray-600">Total registros: <b>{total}</b></div>
         </div>
 
+        <QuickAccessNav keys={["pacientes", "recordatorios", "reporteCaja"]} />
+
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
           <input
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
-            placeholder="Buscar paciente, DNI, HC o ID"
+            placeholder="Buscar paciente, DNI, HC, ID o código Q"
             className="border rounded px-3 py-2 md:col-span-2"
           />
           <select
@@ -264,6 +312,7 @@ export default function CotizacionesPage() {
             <option value="pendiente">Pendiente</option>
             <option value="parcial">Parcial</option>
             <option value="pagado">Pagado</option>
+            <option value="CONTROL">CONTROL</option>
             <option value="anulada">Anulada</option>
           </select>
           <input
@@ -341,6 +390,10 @@ export default function CotizacionesPage() {
                 </tr>
               ) : rows.map((row) => {
                 const estadoRow = String(row.estado || "").toLowerCase();
+                const numeroComprobante = String(row.numero_comprobante || "").trim();
+                const vencimientoMeta = getVencimientoMeta(row);
+                const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
+                const esParticular = Number(row.paciente_id || 0) <= 0;
                 const servicios = Array.from(new Set(
                   String(row.servicios_tipos || "")
                     .split(",")
@@ -367,10 +420,22 @@ export default function CotizacionesPage() {
                   : "Gestionar resultados de laboratorio";
                 return (
                   <tr key={row.id} className="border-t align-top">
-                    <td className="px-3 py-2 font-semibold">#{row.id}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      <div>#{row.id}</div>
+                      {numeroComprobante && (
+                        <div className="text-xs font-mono text-indigo-700">{numeroComprobante}</div>
+                      )}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">{row.fecha}</td>
                     <td className="px-3 py-2">
-                      <div className="font-medium">{row.nombre} {row.apellido}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="font-medium">{row.nombre} {row.apellido}</div>
+                        {esParticular && (
+                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-100 text-orange-700">
+                            Particular
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
                     </td>
                     <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
@@ -391,9 +456,19 @@ export default function CotizacionesPage() {
                     <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.total || 0).toFixed(2)}</td>
                     <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.saldo_pendiente ?? 0).toFixed(2)}</td>
                     <td className="px-3 py-2">
-                      <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado)}`}>
-                        {row.estado}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado)}`}>
+                          {row.estado}
+                        </span>
+                        {vencimientoMeta && (
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${vencimientoMeta.className}`}
+                            title={vencimientoMeta.detail}
+                          >
+                            {vencimientoMeta.label}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-2">
@@ -416,9 +491,57 @@ export default function CotizacionesPage() {
                             <FiFileText className="text-sm" />
                           </button>
                         )}
-                        {Number(row.consulta_ref_id || 0) > 0 && Number(row.paciente_id || 0) > 0 && servicios.includes('consulta') && (
+                        {Number(row.paciente_id || 0) > 0 && servicios.includes('consulta') && (
                           <button
-                            onClick={() => navigate(`/historia-clinica-lectura/${row.paciente_id}/${row.consulta_ref_id}?back_to=/cotizaciones`)}
+                            onClick={async () => {
+                              let consultaId = Number(row.consulta_ref_id || 0);
+
+                              if (consultaId <= 0) {
+                                try {
+                                  const resRef = await fetch(
+                                    `${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
+                                    { credentials: "include", cache: "no-store" }
+                                  );
+                                  const dataRef = await resRef.json();
+                                  consultaId = Number(dataRef?.cotizacion?.consulta_ref_id || 0);
+
+                                  if (consultaId <= 0) {
+                                    const detalleConsulta = Array.isArray(dataRef?.cotizacion?.detalles)
+                                      ? dataRef.cotizacion.detalles.find((detalle) => (
+                                        String(detalle?.servicio_tipo || '').trim().toLowerCase() === 'consulta'
+                                        && Number(detalle?.consulta_id || 0) > 0
+                                      ))
+                                      : null;
+                                    consultaId = Number(detalleConsulta?.consulta_id || 0);
+                                  }
+
+                                  if (consultaId <= 0) {
+                                    const resConsulta = await fetch(
+                                      `${BASE_URL}api_consultas.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
+                                      { credentials: 'include', cache: 'no-store' }
+                                    );
+                                    const dataConsulta = await resConsulta.json();
+                                    const consultaResuelta = Array.isArray(dataConsulta?.consultas)
+                                      ? dataConsulta.consultas[0]
+                                      : null;
+                                    consultaId = Number(consultaResuelta?.id || 0);
+                                  }
+                                } catch {
+                                  consultaId = 0;
+                                }
+                              }
+
+                              if (consultaId > 0) {
+                                navigate(`/historia-clinica-lectura/${row.paciente_id}/${consultaId}?back_to=/cotizaciones`);
+                              } else {
+                                await Swal.fire({
+                                  icon: 'warning',
+                                  title: 'No se encontró la consulta asociada',
+                                  text: 'Esta cotización no tiene una atención clínica vinculada para abrir la HC en modo lectura.',
+                                  confirmButtonText: 'Aceptar',
+                                });
+                              }
+                            }}
                             className={`${actionBtnBase} bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200`}
                             title="Ver Historia Clínica"
                             aria-label="Ver Historia Clínica"
@@ -438,9 +561,10 @@ export default function CotizacionesPage() {
                         )}
                         {(String(row.estado || "").toLowerCase() === "pendiente" || String(row.estado || "").toLowerCase() === "parcial") && (
                           <button
+                            disabled={cotizacionVencida}
                             onClick={() => navigate(`/cobrar-cotizacion/${row.id}`)}
-                            className={`${actionBtnBase} bg-green-100 text-green-700 border-green-200 hover:bg-green-200`}
-                            title="Cobrar"
+                            className={`${actionBtnBase} ${cotizacionVencida ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'}`}
+                            title={cotizacionVencida ? 'Cotización vencida' : 'Cobrar'}
                             aria-label="Cobrar"
                           >
                             <FiDollarSign className="text-sm" />

@@ -86,6 +86,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     setError("");
 
     const params = new URLSearchParams();
+    params.set('solo_visibles_panel', '1');
     params.set('paginated', '1');
     params.set('page', String(page + 1));
     params.set('limit', String(rowsPerPage));
@@ -123,6 +124,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
 
   useEffect(() => {
     const params = new URLSearchParams();
+    params.set('solo_visibles_panel', '1');
     params.set('resumen_alertas', '1');
     if (fechaInicio) params.set('filtro_fecha_desde', fechaInicio);
     if (fechaFin) params.set('filtro_fecha_hasta', fechaFin);
@@ -571,15 +573,10 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => onSeleccionarOrden(orden)}
-                              disabled={estadoVisual === 'cancelada'}
-                              className={`inline-flex items-center px-3 py-1.5 text-white text-xs font-medium rounded-lg transition-all shadow-md ${
-                                estadoVisual === 'cancelada'
-                                  ? 'bg-gray-300 cursor-not-allowed'
-                                  : 'bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transform hover:scale-105'
-                              }`}
-                              title={estadoVisual === 'completado' ? 'Editar resultado' : estadoVisual === 'cancelada' ? 'Orden cancelada' : enProceso ? 'Continuar llenado' : 'Llenar resultados'}
+                              className="inline-flex items-center px-3 py-1.5 text-white text-xs font-medium rounded-lg transition-all shadow-md bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transform hover:scale-105"
+                              title={estadoVisual === 'completado' ? 'Editar resultado' : enProceso ? 'Continuar llenado' : 'Llenar resultados'}
                             >
-                              {estadoVisual === 'completado' ? '✏️ Editar' : estadoVisual === 'cancelada' ? '⛔ Cancelada' : enProceso ? '🧩 Continuar' : '📝 Procesar'}
+                              {estadoVisual === 'completado' ? '✏️ Editar' : enProceso ? '🧩 Continuar' : '📝 Procesar'}
                             </button>
                             <button
                               onClick={() => handleCompararResultados(orden)}
@@ -692,14 +689,9 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     <div className="flex gap-3">
                       <button
                         onClick={() => onSeleccionarOrden(orden)}
-                        disabled={estadoVisual === 'cancelada'}
-                        className={`flex-1 text-white py-2.5 px-4 rounded-lg transition-all font-medium text-sm shadow-md ${
-                          estadoVisual === 'cancelada'
-                            ? 'bg-gray-300 cursor-not-allowed'
-                            : 'bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 hover:shadow-lg transform hover:scale-105'
-                        }`}
+                        className="flex-1 text-white py-2.5 px-4 rounded-lg transition-all font-medium text-sm shadow-md bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 hover:shadow-lg transform hover:scale-105"
                       >
-                        {estadoVisual === 'completado' ? '✏️ Editar Resultado' : estadoVisual === 'cancelada' ? '⛔ Orden Cancelada' : enProceso ? '🧩 Continuar Orden' : '📝 Procesar Orden'}
+                        {estadoVisual === 'completado' ? '✏️ Editar Resultado' : enProceso ? '🧩 Continuar Orden' : '📝 Procesar Orden'}
                       </button>
                       <button
                         onClick={() => handleCompararResultados(orden)}

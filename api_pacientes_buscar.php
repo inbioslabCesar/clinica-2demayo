@@ -2,33 +2,67 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function columnas_busqueda_pacientes(): string {
+    return 'id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en';
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $data = json_decode(file_get_contents('php://input'), true);
     $tipo = $data['tipo'] ?? '';
-    $valor = $data['valor'] ?? '';
+    $valor = trim((string)($data['valor'] ?? ''));
     $sql = '';
     $params = [];
     $types = '';
+    $select = columnas_busqueda_pacientes();
+
+    if ($valor === '') {
+        echo json_encode(['success' => false, 'error' => 'Valor de búsqueda requerido']);
+        exit;
+    }
 
     if ($tipo === 'dni') {
-        $sql = 'SELECT * FROM pacientes WHERE dni = ?';
+        $sql = "SELECT $select FROM pacientes WHERE dni = ? LIMIT 5";
         $params[] = $valor;
         $types = 's';
     } elseif ($tipo === 'nombre') {
+        $valorUpper = strtoupper($valor);
+        if (preg_match('/^HC\d+$/i', $valorUpper)) {
+            $sql = "SELECT $select FROM pacientes WHERE historia_clinica = ? LIMIT 5";
+            $params[] = $valorUpper;
+            $types = 's';
+        } elseif (preg_match('/^\d+$/', $valor)) {
+            if (strlen($valor) >= 8) {
+                $sql = "SELECT $select FROM pacientes WHERE dni = ? LIMIT 5";
+                $params[] = $valor;
+                $types = 's';
+            } else {
+                $sql = "SELECT $select FROM pacientes WHERE dni LIKE ? OR historia_clinica LIKE ? ORDER BY id DESC LIMIT 20";
+                $params[] = "{$valor}%";
+                $params[] = "HC{$valor}%";
+                $types = 'ss';
+            }
+        } else {
         // Separar por espacios y buscar cada palabra en nombre o apellido (OR)
-        $palabras = preg_split('/\s+/', trim($valor));
-        $where = [];
-        $types = '';
-        foreach ($palabras as $palabra) {
-            $where[] = '(nombre LIKE ? OR apellido LIKE ?)';
-            $params[] = "%$palabra%";
-            $params[] = "%$palabra%";
-            $types .= 'ss';
+            $palabras = preg_split('/\s+/', $valor);
+            $where = [];
+            $types = '';
+            foreach ($palabras as $palabra) {
+                $palabra = trim($palabra);
+                if ($palabra === '') continue;
+                $where[] = '(nombre LIKE ? OR apellido LIKE ?)';
+                $params[] = "%$palabra%";
+                $params[] = "%$palabra%";
+                $types .= 'ss';
+            }
+            if (!$where) {
+                echo json_encode(['success' => false, 'error' => 'Valor de búsqueda requerido']);
+                exit;
+            }
+            $sql = "SELECT $select FROM pacientes WHERE " . implode(' OR ', $where) . ' ORDER BY id DESC LIMIT 20';
         }
-        $sql = 'SELECT * FROM pacientes WHERE ' . implode(' OR ', $where);
     } elseif ($tipo === 'historia') {
-        $sql = 'SELECT * FROM pacientes WHERE historia_clinica = ?';
-        $params[] = $valor;
+        $sql = "SELECT $select FROM pacientes WHERE historia_clinica = ? LIMIT 5";
+        $params[] = strtoupper($valor);
         $types = 's';
     } else {
         echo json_encode(['success' => false, 'error' => 'Tipo de búsqueda inválido']);

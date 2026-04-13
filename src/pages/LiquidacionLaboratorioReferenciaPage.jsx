@@ -23,7 +23,7 @@ export default function LiquidacionLaboratorioReferenciaPage() {
 
   const fetchMovimientos = () => {
     setLoading(true);
-    fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php`, { credentials: "include" })
+    fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?solo_liquidables=1`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         setMovimientos(data.movimientos || []);

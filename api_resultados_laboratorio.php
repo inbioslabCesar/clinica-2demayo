@@ -382,10 +382,45 @@ switch ($method) {
             $documentos_externos = array_values($bucket);
         }
 
+        // Exámenes derivados a laboratorio externo sin documento subido aún
+        $examenes_referenciados_pendientes = [];
+        $chkDerivadoCol = $conn->query("SHOW COLUMNS FROM cotizaciones_detalle LIKE 'derivado'");
+        if ($chkDerivadoCol && $chkDerivadoCol->num_rows > 0) {
+            $stmtRef = $conn->prepare(
+                'SELECT cd.descripcion, cd.laboratorio_referencia, cd.cotizacion_id
+                 FROM cotizaciones_detalle cd
+                 INNER JOIN ordenes_laboratorio ol ON ol.cotizacion_id = cd.cotizacion_id
+                 WHERE ol.consulta_id = ?
+                   AND COALESCE(cd.derivado, 0) = 1
+                   AND COALESCE(cd.estado_item, \'activo\') <> \'eliminado\'
+                   AND cd.cotizacion_id NOT IN (
+                       SELECT DISTINCT cotizacion_id
+                       FROM documentos_externos_paciente
+                       WHERE cotizacion_id IS NOT NULL
+                         AND LOWER(TRIM(tipo)) = \'laboratorio\'
+                   )
+                 GROUP BY cd.cotizacion_id, cd.descripcion, cd.laboratorio_referencia'
+            );
+            if ($stmtRef) {
+                $stmtRef->bind_param('i', $consulta_id);
+                $stmtRef->execute();
+                $rowsRef = $stmtRef->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmtRef->close();
+                foreach ($rowsRef as $r) {
+                    $examenes_referenciados_pendientes[] = [
+                        'descripcion'   => (string)($r['descripcion'] ?? ''),
+                        'laboratorio'   => (string)($r['laboratorio_referencia'] ?? ''),
+                        'cotizacion_id' => intval($r['cotizacion_id'] ?? 0),
+                    ];
+                }
+            }
+        }
+
         echo json_encode([
             'success' => true,
             'resultados' => $resultados,
             'documentos_externos' => $documentos_externos,
+            'examenes_referenciados_pendientes' => $examenes_referenciados_pendientes,
         ]);
         break;
     case 'POST':

@@ -13,8 +13,19 @@ function safeParse(raw) {
 }
 
 function buildItemKey(item) {
+  const serviceType = String(item.serviceType || "otros").toLowerCase();
+  const consultaKey = serviceType === "consulta"
+    ? [
+        Number(item.consultaId || 0),
+        Number(item.consultaMedicoId || 0),
+        item.consultaFecha || "",
+        item.consultaHora || "",
+        item.consultaTipoConsulta || "",
+      ].join("::")
+    : "";
+
   return [
-    item.serviceType || "otros",
+    serviceType,
     item.serviceId || "na",
     Number(item.unitPrice || 0).toFixed(2),
     item.presentation || "default",
@@ -22,6 +33,7 @@ function buildItemKey(item) {
     item.derivado ? (item.tipoDerivacion || "") : "",
     item.derivado ? Number(item.valorDerivacion || 0).toFixed(2) : "0.00",
     item.derivado ? (item.laboratorioReferencia || "") : "",
+    consultaKey,
   ].join("::");
 }
 
@@ -29,10 +41,14 @@ export function QuoteCartProvider({ children }) {
   const [cart, setCart] = useState(() => {
     const parsed = safeParse(sessionStorage.getItem(STORAGE_KEY));
     if (parsed && typeof parsed === "object" && Array.isArray(parsed.items)) {
+      const items = parsed.items.map((item) => ({
+        ...item,
+        key: buildItemKey(item || {}),
+      }));
       return {
         patientId: parsed.patientId || null,
         patientName: parsed.patientName || "",
-        items: parsed.items,
+        items,
       };
     }
     return { patientId: null, patientName: "", items: [] };
@@ -99,6 +115,12 @@ export function QuoteCartProvider({ children }) {
         if (map.has(normalized.key)) {
           const old = map.get(normalized.key);
           old.quantity = Number(old.quantity || 0) + normalized.quantity;
+          old.description = old.description || normalized.description;
+          old.consultaMedicoId = old.consultaMedicoId || normalized.consultaMedicoId || null;
+          old.consultaFecha = old.consultaFecha || normalized.consultaFecha || "";
+          old.consultaHora = old.consultaHora || normalized.consultaHora || "";
+          old.consultaTipoConsulta = old.consultaTipoConsulta || normalized.consultaTipoConsulta || "";
+          old.consultaId = old.consultaId || normalized.consultaId || null;
           map.set(normalized.key, old);
         } else {
           map.set(normalized.key, normalized);

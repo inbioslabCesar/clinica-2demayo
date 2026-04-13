@@ -78,6 +78,35 @@ function UsuarioList() {
       });
   };
 
+  const syncSesionUsuarioEditado = (usuarioEditado) => {
+    try {
+      const rawSesion = sessionStorage.getItem("usuario");
+      if (!rawSesion) return;
+
+      const sesionActual = JSON.parse(rawSesion);
+      const idSesion = Number(sesionActual?.id || 0);
+      const idEditado = Number(usuarioEditado?.id || 0);
+      if (!idSesion || !idEditado || idSesion !== idEditado) return;
+
+      const permisosActualizados = Array.isArray(usuarioEditado?.permisos)
+        ? usuarioEditado.permisos
+        : sesionActual?.permisos || [];
+
+      const sesionNueva = {
+        ...sesionActual,
+        usuario: usuarioEditado?.usuario ?? sesionActual?.usuario,
+        nombre: usuarioEditado?.nombre ?? sesionActual?.nombre,
+        rol: usuarioEditado?.rol ?? sesionActual?.rol,
+        permisos: permisosActualizados,
+      };
+
+      sessionStorage.setItem("usuario", JSON.stringify(sesionNueva));
+      window.dispatchEvent(new CustomEvent("usuario-session-updated", { detail: sesionNueva }));
+    } catch {
+      // Si falla la sincronizacion, el cambio seguira visible tras relogin.
+    }
+  };
+
   useEffect(() => {
     fetchUsuarios();
   }, []);
@@ -134,6 +163,9 @@ function UsuarioList() {
       .then(data => {
         setSaving(false);
         if (data.success) {
+          if (isEditing && editData?.id) {
+            syncSesionUsuarioEditado({ ...dataToSend, id: editData.id });
+          }
           setModalOpen(false);
           setEditData(null);
           fetchUsuarios();
