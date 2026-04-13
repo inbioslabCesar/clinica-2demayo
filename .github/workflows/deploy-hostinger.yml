@@ -29,78 +29,36 @@ jobs:
       - name: Build frontend (sistema + landing)
         run: npm run build
 
-      - name: Publicar backend PHP en /public_html/sistema
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+      - name: Publicar backend PHP en /public_html/sistema (SFTP)
+        uses: wlixcc/sftp-action@v1.2.0
         with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          host: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          port: ${{ secrets.HOSTINGER_SFTP_PORT }}
           username: ${{ secrets.HOSTINGER_FTP_USER }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: /public_html/sistema/
-          protocol: ftps
-          port: ${{ secrets.HOSTINGER_FTP_PORT }}
-          dangerous-clean-slate: false
-          state-name: .ftp-deploy-sync-state-backend.json
-          timeout: 90
-          exclude: |
-            **/.git*
-            **/.github/**
-            **/node_modules/**
-            **/.vscode/**
-            **/.idea/**
-            **/dist/**
-            **/dist-public/**
-            **/public-site/**
-            **/src/**
-            **/tests/**
-            **/docs/**
-            **/tmp/**
-            **/uploads/**
-            **/*.log
-            **/.env
-            **/.env.*
-            **/config.php
-            **/config/instance.local.php
-            **/config/instances/*.php
-            !config/instances/clinic.example.php
-            !config/instances/sistema_clinica2demayo_com.php
-            !config/instances/www_clinica2demayo_com.php
-            !config/instances/clinica2demayo_com.php
-            !config/instances/sistema_cardiovidaiquitos_com.php
-            !config/instances/www_cardiovidaiquitos_com.php
-            !config/instances/cardiovidaiquitos_com.php
-            !config/instances/sistema_femcarepucallpa_com.php
-            !config/instances/www_femcarepucallpa_com.php
-            !config/instances/femcarepucallpa_com.php
-            **/clinica-config/**
-            **/backup/**
-            **/*.sql
-            **/*.sql.backup
+          local_path: './*'
+          remote_path: '/public_html/sistema/'
+          delete: false
 
       - name: Publicar build de sistema (dist -> /public_html/sistema)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: wlixcc/sftp-action@v1.2.0
         with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          host: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          port: ${{ secrets.HOSTINGER_SFTP_PORT }}
           username: ${{ secrets.HOSTINGER_FTP_USER }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: /public_html/sistema/
-          local-dir: ./dist/
-          protocol: ftps
-          port: ${{ secrets.HOSTINGER_FTP_PORT }}
-          dangerous-clean-slate: false
-          state-name: .ftp-deploy-sync-state-sistema-build.json
-          timeout: 90
+          local_path: './dist/'
+          remote_path: '/public_html/sistema/'
+          delete: false
 
       - name: Publicar landing (dist-public -> /public_html)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: wlixcc/sftp-action@v1.2.0
         with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          host: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          port: ${{ secrets.HOSTINGER_SFTP_PORT }}
           username: ${{ secrets.HOSTINGER_FTP_USER }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: /public_html/
-          local-dir: ./dist-public/
-          protocol: ftps
-          port: ${{ secrets.HOSTINGER_FTP_PORT }}
-          dangerous-clean-slate: false
-          state-name: .ftp-deploy-sync-state-landing-build.json
-          timeout: 90
+          local_path: './dist-public/'
+          remote_path: '/public_html/'
+          delete: false
 
