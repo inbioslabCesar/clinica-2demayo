@@ -29,36 +29,63 @@ jobs:
       - name: Build frontend (sistema + landing)
         run: npm run build
 
+      - name: Instalar utilidades SFTP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass rsync
+
       - name: Publicar backend PHP en /public_html/sistema (SFTP)
-        uses: wlixcc/sftp-action@v1.2.0
-        with:
-          host: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          port: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          local_path: './*'
-          remote_path: '/public_html/sistema/'
-          delete: false
+        env:
+          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
+          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
+          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+        run: |
+          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude "node_modules/" \
+            --exclude ".vscode/" \
+            --exclude ".idea/" \
+            --exclude "dist/" \
+            --exclude "dist-public/" \
+            --exclude "public-site/" \
+            --exclude "src/" \
+            --exclude "tests/" \
+            --exclude "docs/" \
+            --exclude "tmp/" \
+            --exclude "uploads/" \
+            --exclude ".env" \
+            --exclude ".env.*" \
+            --exclude "config.php" \
+            --exclude "config/instance.local.php" \
+            --exclude "clinica-config/" \
+            --exclude "backup/" \
+            --exclude "*.log" \
+            --exclude "*.sql" \
+            --exclude "*.sql.backup" \
+            ./ "$SFTP_USER@$SFTP_HOST:/public_html/sistema/"
 
       - name: Publicar build de sistema (dist -> /public_html/sistema)
-        uses: wlixcc/sftp-action@v1.2.0
-        with:
-          host: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          port: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          local_path: './dist/'
-          remote_path: '/public_html/sistema/'
-          delete: false
+        env:
+          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
+          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
+          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+        run: |
+          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+            ./dist/ "$SFTP_USER@$SFTP_HOST:/public_html/sistema/"
 
       - name: Publicar landing (dist-public -> /public_html)
-        uses: wlixcc/sftp-action@v1.2.0
-        with:
-          host: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          port: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          local_path: './dist-public/'
-          remote_path: '/public_html/'
-          delete: false
+        env:
+          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
+          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
+          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+        run: |
+          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+            ./dist-public/ "$SFTP_USER@$SFTP_HOST:/public_html/"
 
