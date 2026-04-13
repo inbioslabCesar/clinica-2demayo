@@ -1,7 +1,9 @@
 <?php
 // Log de sesión solo en entornos locales para depuración
 $host = $_SERVER['HTTP_HOST'] ?? '';
-$isLocal = $host === 'localhost' || $host === '127.0.0.1' || strpos($host, 'localhost:') === 0;
+$hostLower = strtolower((string)$host);
+$isCodespacesHost = strpos($hostLower, '.app.github.dev') !== false || strpos($hostLower, '.preview.app.github.dev') !== false;
+$isLocal = $hostLower === 'localhost' || $hostLower === '127.0.0.1' || strpos($hostLower, 'localhost:') === 0 || $isCodespacesHost || strtolower(trim((string)(getenv('CODESPACES') ?: ''))) === 'true';
 if ($isLocal) {
     file_put_contents(__DIR__ . '/debug_session.txt', date('Y-m-d H:i:s') . "\n" . print_r($_SESSION, true) . "\n", FILE_APPEND);
 }

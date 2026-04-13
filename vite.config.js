@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const apiProxyTarget = process.env.CODESPACES
+  ? 'http://127.0.0.1:8000'
+  : 'http://localhost/clinica-2demayo'
+
 export default defineConfig({
   plugins: [react()],
   cacheDir: 'node_modules/.vite-sistema',
@@ -10,7 +14,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api_': {
-        target: 'http://localhost/clinica-2demayo',
+        target: apiProxyTarget,
         // Keep original host (e.g. *.devtunnels.ms) so PHP emits a valid session cookie domain.
         changeOrigin: false,
         secure: false,

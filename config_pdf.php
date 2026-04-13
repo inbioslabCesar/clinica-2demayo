@@ -8,8 +8,9 @@ if (!defined('DB_HOST')) define('DB_HOST', (string)$runtimeConfig['DB_HOST']);
 if (!defined('DB_NAME')) define('DB_NAME', (string)$runtimeConfig['DB_NAME']);
 if (!defined('DB_USER')) define('DB_USER', (string)$runtimeConfig['DB_USER']);
 if (!defined('DB_PASS')) define('DB_PASS', (string)$runtimeConfig['DB_PASS']);
+if (!defined('DB_PORT')) define('DB_PORT', (int)($runtimeConfig['DB_PORT'] ?? 3306));
 
-$mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+$mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int)DB_PORT);
 if ($mysqli->connect_errno) {
     error_log('Error de conexión a la base de datos: ' . $mysqli->connect_error);
     die('Error de conexión a la base de datos');

@@ -275,6 +275,38 @@ npm run build
 3. Configurar base de datos en hosting
 4. Actualizar `config.php` con credenciales de producción
 
+### Despliegue automático a Hostinger con GitHub Actions
+
+El repositorio incluye el workflow [`.github/workflows/deploy-hostinger.yml`](.github/workflows/deploy-hostinger.yml), que despliega automáticamente al hacer push a `main`.
+
+Mapeo de despliegue configurado:
+
+- `dist-public/*` -> `/public_html/` (landing)
+- `dist/*` -> `/public_html/sistema/` (frontend del sistema)
+- Archivos PHP/backend del repo -> `/public_html/sistema/`
+
+#### 1) Crear secretos en GitHub
+
+En `Settings > Secrets and variables > Actions`, crea estos secretos:
+
+- `HOSTINGER_FTP_HOST`: Host FTP de Hostinger (ejemplo: `ftp.tudominio.com`)
+- `HOSTINGER_FTP_USER`: Usuario FTP
+- `HOSTINGER_FTP_PASSWORD`: Password FTP
+- `HOSTINGER_FTP_PORT`: Puerto FTP/FTPS (normalmente `21`)
+
+#### 2) Verificar primer deploy
+
+1. Haz commit y push a `main`.
+2. Ve a `Actions` en GitHub.
+3. Revisa la ejecución `Deploy a Hostinger`.
+
+#### 3) Notas importantes
+
+- El workflow usa `dangerous-clean-slate: false`, por lo que solo sincroniza cambios sin borrar todo el hosting.
+- Se excluyen archivos sensibles como `.env`, `config.php` y configuraciones locales.
+- Si tu hosting exige FTP sin TLS, ajusta `protocol` en el workflow de `ftps` a `ftp`.
+- El workflow ejecuta `npm ci` y `npm run build` antes de subir archivos.
+
 ## 🤝 Contribución
 
 1. Fork el proyecto

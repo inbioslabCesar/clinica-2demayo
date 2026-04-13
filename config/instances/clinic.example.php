@@ -9,6 +9,7 @@
 return [
     'APP_ENV' => 'production',
     'DB_HOST' => 'localhost',
+    'DB_PORT' => 3306,
     'DB_NAME' => 'u330560936_clinicas_bd',
     'DB_USER' => 'u330560936_clinicas',
     'DB_PASS' => '41950361Cesar$',

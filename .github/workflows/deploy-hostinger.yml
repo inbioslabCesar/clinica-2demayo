@@ -1,0 +1,91 @@
+name: Deploy a Hostinger
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hostinger-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Build frontend (sistema + landing)
+        run: npm run build
+
+      - name: Publicar backend PHP en /public_html/sistema
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/sistema/
+          protocol: ftps
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.github/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.idea/**
+            **/dist/**
+            **/dist-public/**
+            **/public-site/**
+            **/src/**
+            **/tests/**
+            **/docs/**
+            **/*.log
+            **/*.tmp
+            **/*.temp
+            **/.env
+            **/.env.*
+            **/config.php
+            **/config/instance.local.php
+            **/config/instances/*.php
+            !config/instances/clinic.example.php
+            **/clinica-config/**
+            **/backup/**
+            **/*.sql
+            **/*.sql.backup
+
+      - name: Publicar build de sistema (dist -> /public_html/sistema)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/sistema/
+          local-dir: ./dist/
+          protocol: ftps
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
+          dangerous-clean-slate: false
+
+      - name: Publicar landing (dist-public -> /public_html)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/
+          local-dir: ./dist-public/
+          protocol: ftps
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
+          dangerous-clean-slate: false
+

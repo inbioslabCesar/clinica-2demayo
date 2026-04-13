@@ -56,6 +56,17 @@ if (!function_exists('db_host_to_instance_key')) {
     }
 }
 
+if (!function_exists('db_is_development_host')) {
+    function db_is_development_host($host)
+    {
+        $host = strtolower(trim((string)$host));
+        $isLocalHost = strpos($host, 'localhost') !== false || strpos($host, '127.0.0.1') !== false;
+        $isCodespacesHost = strpos($host, '.app.github.dev') !== false || strpos($host, '.preview.app.github.dev') !== false;
+        $isCodespacesEnv = strtolower(trim((string)(getenv('CODESPACES') ?: ''))) === 'true';
+        return $isLocalHost || $isCodespacesHost || $isCodespacesEnv;
+    }
+}
+
 if (!function_exists('db_read_instance_config')) {
     function db_read_instance_config($filePath)
     {
@@ -77,6 +88,7 @@ if (!function_exists('resolve_db_runtime_config')) {
         db_load_env_file($baseDir . DIRECTORY_SEPARATOR . '.env.local');
 
         $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
+        $isDevelopmentHost = db_is_development_host($host);
         $instanceFromHost = db_host_to_instance_key($host);
         $instanceFromEnv = trim((string)(getenv('CLINICA_INSTANCE') ?: ''));
         $instance = $instanceFromEnv !== '' ? db_host_to_instance_key($instanceFromEnv) : $instanceFromHost;
@@ -108,6 +120,7 @@ if (!function_exists('resolve_db_runtime_config')) {
             'DB_NAME' => getenv('DB_NAME') ?: null,
             'DB_USER' => getenv('DB_USER') ?: null,
             'DB_PASS' => getenv('DB_PASS') ?: null,
+            'DB_PORT' => getenv('DB_PORT') ?: null,
             'APP_ENV' => getenv('APP_ENV') ?: null,
         ];
 
@@ -117,9 +130,13 @@ if (!function_exists('resolve_db_runtime_config')) {
             }
         }
 
+        if (isset($config['DB_PORT']) && $config['DB_PORT'] !== '' && $config['DB_PORT'] !== null) {
+            $dbPort = (int)$config['DB_PORT'];
+            $config['DB_PORT'] = $dbPort > 0 ? $dbPort : 3306;
+        }
+
         if (empty($config['DB_HOST']) || empty($config['DB_NAME']) || empty($config['DB_USER'])) {
-            $localHost = strpos((string)$host, 'localhost') !== false || strpos((string)$host, '127.0.0.1') !== false;
-            if ($localHost) {
+            if ($isDevelopmentHost) {
                 $config['DB_HOST'] = $config['DB_HOST'] ?? 'localhost';
                 $config['DB_NAME'] = $config['DB_NAME'] ?? 'poli2demayo';
                 $config['DB_USER'] = $config['DB_USER'] ?? 'root';
@@ -132,16 +149,20 @@ if (!function_exists('resolve_db_runtime_config')) {
             }
         }
 
+        $config['DB_PORT'] = isset($config['DB_PORT']) ? (int)$config['DB_PORT'] : 3306;
+        if ($config['DB_PORT'] <= 0) {
+            $config['DB_PORT'] = 3306;
+        }
+
         $appEnv = strtolower(trim((string)($config['APP_ENV'] ?? '')));
         if ($appEnv === '') {
-            $isHttps = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
-            $isLocal = strpos((string)$host, 'localhost') !== false || strpos((string)$host, '127.0.0.1') !== false;
-            $config['APP_ENV'] = ($isHttps && !$isLocal) ? 'production' : ($isLocal ? 'development' : 'production');
+            $config['APP_ENV'] = $isDevelopmentHost ? 'development' : 'production';
         }
 
         $config['_meta'] = [
             'instance' => $instance,
             'host' => (string)$host,
+            'is_development_host' => $isDevelopmentHost,
             'loaded_file' => $loadedFile,
         ];
 

@@ -2,8 +2,14 @@
 // db.php - conexión centralizada para APIs
 require_once __DIR__ . '/config.php';
 try {
+    $dbPort = defined('DB_PORT') ? (int) DB_PORT : (int) (getenv('DB_PORT') ?: 3306);
+    $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME;
+    if ($dbPort > 0) {
+        $dsn .= ";port=" . $dbPort;
+    }
+
     $pdo = new PDO(
-        "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME,
+        $dsn,
         DB_USER,
         DB_PASS,
         [

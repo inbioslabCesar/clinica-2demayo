@@ -6,7 +6,7 @@ Este proyecto soporta múltiples instancias (una por clínica) sin tocar el núc
 
 El resolvedor en [config/db_resolver.php](config/db_resolver.php) carga configuración en este orden:
 
-1. Variables de entorno (`DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, `APP_ENV`)
+1. Variables de entorno (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`, `APP_ENV`)
 2. Archivo forzado por `CLINICA_CONFIG_FILE`
 3. `config/instance.local.php`
 4. `config/instances/<instancia>.php`
@@ -38,11 +38,18 @@ Ejemplo basado en [config/instances/clinic.example.php](config/instances/clinic.
 return [
     'APP_ENV' => 'production',
     'DB_HOST' => 'localhost',
+   'DB_PORT' => 3306,
     'DB_NAME' => 'u330560936_clinicas_bd',
     'DB_USER' => 'u330560936_clinicas',
     'DB_PASS' => 'TU_PASSWORD_AQUI',
 ];
 ```
+
+## Notes para Codespaces
+
+- Hosts con sufijos `.app.github.dev` y `.preview.app.github.dev` se tratan como entorno de desarrollo.
+- Si necesitas conectar a una BD no local, define explícitamente `DB_HOST` y `DB_PORT`.
+- El fallback existente se mantiene para no romper despliegues actuales.
 
 ## Archivos actualizados
 
