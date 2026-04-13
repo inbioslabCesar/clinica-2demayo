@@ -60,6 +60,15 @@ jobs:
             **/config/instance.local.php
             **/config/instances/*.php
             !config/instances/clinic.example.php
+            !config/instances/sistema_clinica2demayo_com.php
+            !config/instances/www_clinica2demayo_com.php
+            !config/instances/clinica2demayo_com.php
+            !config/instances/sistema_cardiovidaiquitos_com.php
+            !config/instances/www_cardiovidaiquitos_com.php
+            !config/instances/cardiovidaiquitos_com.php
+            !config/instances/sistema_femcarepucallpa_com.php
+            !config/instances/www_femcarepucallpa_com.php
+            !config/instances/femcarepucallpa_com.php
             **/clinica-config/**
             **/backup/**
             **/*.sql
