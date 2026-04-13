@@ -42,7 +42,7 @@ uploads/web/*
 temp/
 
 # Scripts administrativos (NO subir a hosting)
-admin/
+/admin/
 test_*.php
 debug_*.php
 reabrir_caja_*.php
