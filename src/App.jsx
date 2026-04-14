@@ -4,6 +4,7 @@ import ErrorBoundary from "./components/comunes/ErrorBoundary.jsx";
 import { QuoteCartProvider } from "./context/QuoteCartContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { hasPermiso, normalizePermisos } from "./config/recepcionPermisos";
+import DashboardLayout from "./components/dashboard/DashboardLayout";
 // Lazy loading para todos los componentes y páginas principales
 const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
@@ -29,7 +30,6 @@ const ContabilidadPage = lazy(() => import("./pages/ContabilidadPage.jsx"));
 const CerrarCajaView = lazy(() =>
   import("./components/caja/CerrarCajaView.jsx")
 );
-const DashboardLayout = lazy(() => import("./components/dashboard/DashboardLayout"));
 const Dashboard = lazy(() => import("./components/dashboard/Dashboard.jsx"));
 const PacientesPage = lazy(() => import("./pages/PacientesPage.jsx"));
 const UsuariosPage = lazy(() => import("./pages/UsuariosPage.jsx"));
@@ -323,11 +323,11 @@ function App() {
     <ThemeProvider>
     <QuoteCartProvider>
       <BrowserRouter>
-        {/* Suspense envuelve todo el contenido para lazy loading global */}
-        <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
-          {usuario ? (
-            <DashboardLayout usuario={usuario} onLogout={handleLogout}>
+        {usuario ? (
+          <DashboardLayout usuario={usuario} onLogout={handleLogout}>
             <RouteErrorBoundary>
+            {/* Suspense solo para el contenido de rutas: evita que desaparezca todo el layout */}
+            <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
             <Routes>
               {/* Redirigir a médicos y laboratoristas que intenten acceder a '/' */}
               <Route
@@ -1086,13 +1086,14 @@ function App() {
               <Route path="*" element={<Navigate to={getHomeByRole(usuario?.rol)} replace />} />
               {/* Puedes agregar más rutas aquí */}
             </Routes>
+            </Suspense>
             </RouteErrorBoundary>
-            </DashboardLayout>
-          ) : (
+          </DashboardLayout>
+        ) : (
+          <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
             <Login onLogin={setUsuario} />
+          </Suspense>
         )}
-        {/* Puedes agregar más rutas aquí */}
-      </Suspense>
     </BrowserRouter>
     </QuoteCartProvider>
     </ThemeProvider>

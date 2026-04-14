@@ -146,7 +146,7 @@ function normalizeThemePayload(rawTheme) {
 
 function getDefaultSistemaUrl() {
   const hostname = window.location.hostname
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost:5173/'
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return `${window.location.protocol}//${hostname}:5173/`
 
   const normalizedHost = hostname.replace(/^www\./i, '')
   if (/^sistema\./i.test(normalizedHost)) {

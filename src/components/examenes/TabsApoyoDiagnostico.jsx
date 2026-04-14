@@ -63,6 +63,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
     <div>
       {/* Botón navegar a SolicitudImagenPage */}
       <button
+        type="button"
         onClick={() => navigate(`/solicitud-imagen/${consultaId}/${tipo}`)}
         className={`mb-4 bg-${color}-600 text-white px-4 py-2 rounded hover:bg-${color}-700 transition text-sm font-semibold`}
       >
@@ -94,6 +95,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
             <div className="flex gap-1.5">
               {puedeVer(ord) && (
                 <button
+                  type="button"
                   onClick={() => navigate(`/visor-imagen/${ord.id}`)}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded-lg font-semibold transition flex items-center gap-1"
                 >
@@ -102,6 +104,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
               )}
               {ord.estado === "pendiente" && (
                 <button
+                  type="button"
                   onClick={() => handleCancelar(ord.id)}
                   className="text-xs text-red-400 hover:text-red-600 transition px-2 py-1 rounded border border-red-200 hover:border-red-400"
                 >
@@ -138,7 +141,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   // Cargar lista de exámenes para mapear IDs a nombres
   useEffect(() => {
     // Obtener catálogo de exámenes con credenciales (cookies de sesión)
-    fetch(`${BASE_URL}/api_examenes_laboratorio.php`, {
+    fetch(`${BASE_URL}api_examenes_laboratorio.php`, {
       credentials: 'include'
     })
       .then((response) => response.json())
@@ -226,19 +229,19 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   return (
     <div className="mb-4">
       <div className="flex flex-wrap gap-1 sm:gap-2 mb-2">
-        <button onClick={() => cambiarTab("laboratorio")}
+        <button type="button" onClick={() => cambiarTab("laboratorio")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "laboratorio" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🧪 <span className="hidden sm:inline">Laboratorio</span><span className="sm:hidden">Lab</span>
         </button>
-        <button onClick={() => cambiarTab("rx")}
+        <button type="button" onClick={() => cambiarTab("rx")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "rx" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           📸 <span className="hidden sm:inline">RX</span>
         </button>
-        <button onClick={() => cambiarTab("ecografia")}
+        <button type="button" onClick={() => cambiarTab("ecografia")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "ecografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🫀 <span className="hidden sm:inline">Ecografía</span><span className="sm:hidden">Eco</span>
         </button>
-        <button onClick={() => cambiarTab("tomografia")}
+        <button type="button" onClick={() => cambiarTab("tomografia")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "tomografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
         </button>
@@ -247,6 +250,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
         {tab === "laboratorio" && (
           <>
             <button
+              type="button"
               className="mb-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
               onClick={() => navigate(`/solicitud-laboratorio/${consultaId}`)}
             >
@@ -314,6 +318,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
                     </div>
                   </div>
                   <button
+                    type="button"
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg hover:shadow-xl text-sm sm:text-base"
                     onClick={() => navigate(`/resultados-laboratorio/${consultaId}`)}
                   >

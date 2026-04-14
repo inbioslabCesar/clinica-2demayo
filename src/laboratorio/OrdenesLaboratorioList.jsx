@@ -504,13 +504,19 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                   </thead>
                   <tbody>
                     {paginated.map(orden => (
+                      (() => {
+                        const consultaIdVisual = Number(orden.consulta_id || orden.consulta_id_ref || 0);
+                        const medicoNombre = String(orden.medico_nombre || '').trim();
+                        const medicoApellido = String(orden.medico_apellido || '').trim();
+                        const medicoTexto = `${medicoNombre} ${medicoApellido}`.trim() || '-';
+                        return (
                       <tr key={orden.id} className="border-b border-gray-100 hover:bg-purple-50/50 transition-colors">
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">#{orden.id}</td>
                         <td className="px-4 py-3 text-sm text-gray-900">
                           <div className="font-medium">{orden.paciente_nombre} {orden.paciente_apellido}</div>
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">
-                          {orden.consulta_id ? (
+                          {consultaIdVisual > 0 ? (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
                               Médico
                             </span>
@@ -520,8 +526,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{orden.medico_nombre} {orden.medico_apellido}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{orden.consulta_id}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{medicoTexto}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{consultaIdVisual > 0 ? consultaIdVisual : '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{formatFecha(orden.fecha)}</td>
                         <td className="px-4 py-3">
                           {(() => {
@@ -595,6 +601,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                           })()}
                         </td>
                       </tr>
+                        );
+                      })()
                     ))}
                   </tbody>
                 </table>
@@ -606,6 +614,12 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
           {viewMode === 'cards' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {paginated.map(orden => (
+                (() => {
+                  const consultaIdVisual = Number(orden.consulta_id || orden.consulta_id_ref || 0);
+                  const medicoNombre = String(orden.medico_nombre || '').trim();
+                  const medicoApellido = String(orden.medico_apellido || '').trim();
+                  const medicoTexto = `${medicoNombre} ${medicoApellido}`.trim() || '-';
+                  return (
                 <div key={orden.id} className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 hover:shadow-xl transition-all transform hover:scale-105">
                   {(() => {
                     const estadoVisual = orden.estado_visual || orden.estado;
@@ -665,13 +679,13 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     
                     <div>
                       <p className="text-xs text-gray-500 uppercase tracking-wide">Médico</p>
-                      <p className="text-sm text-gray-700">{orden.medico_nombre} {orden.medico_apellido || ''}</p>
+                      <p className="text-sm text-gray-700">{medicoTexto}</p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-xs text-gray-500 uppercase tracking-wide">Consulta</p>
-                        <p className="text-sm text-gray-700">{orden.consulta_id}</p>
+                        <p className="text-sm text-gray-700">{consultaIdVisual > 0 ? consultaIdVisual : '-'}</p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500 uppercase tracking-wide">Fecha</p>
@@ -711,6 +725,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     );
                   })()}
                 </div>
+                  );
+                })()
               ))}
             </div>
           )}

@@ -2850,7 +2850,7 @@ switch ($method) {
         $sqlCount = "
             SELECT COUNT(*) as total
             FROM cotizaciones c
-            JOIN pacientes p ON c.paciente_id = p.id
+            LEFT JOIN pacientes p ON c.paciente_id = p.id
             LEFT JOIN usuarios u ON c.usuario_id = u.id
             $whereSql
         ";

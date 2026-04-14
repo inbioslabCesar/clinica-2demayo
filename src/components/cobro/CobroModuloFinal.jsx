@@ -607,6 +607,8 @@ if (tipoDescuento === 'porcentaje') {
               valorDescuento={valorDescuento}
               setValorDescuento={setValorDescuento}
               montoOriginal={detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0)}
+              montoDescuentoOverride={descuento}
+              montoFinalOverride={totalCobro}
               errorDescuento={errorDescuento}
             />
           </div>

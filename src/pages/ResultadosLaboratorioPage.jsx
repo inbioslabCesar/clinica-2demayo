@@ -8,6 +8,7 @@ export default function ResultadosLaboratorioPage() {
   const [documentosExternos, setDocumentosExternos] = useState([]);
   const [referenciadosPendientes, setReferenciados] = useState([]);
   const [examenes, setExamenes] = useState([]);
+  const [ordenesConsulta, setOrdenesConsulta] = useState([]);
   const [archivoVisor, setArchivoVisor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -58,6 +59,17 @@ export default function ResultadosLaboratorioPage() {
         setExamenes([]);
       });
 
+    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
+      .then(res => res.json())
+      .then((resOrdenes) => {
+        if (!isMounted) return;
+        setOrdenesConsulta(Array.isArray(resOrdenes?.ordenes) ? resOrdenes.ordenes : []);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setOrdenesConsulta([]);
+      });
+
     return () => {
       isMounted = false;
     };
@@ -89,6 +101,19 @@ export default function ResultadosLaboratorioPage() {
   for (const ex of examenes) {
     idToNombre[ex.id] = ex.nombre;
     idToReferencias[ex.id] = Array.isArray(ex.valores_referenciales) ? ex.valores_referenciales : [];
+  }
+  for (const orden of ordenesConsulta) {
+    const examenesOrden = Array.isArray(orden?.examenes) ? orden.examenes : [];
+    for (const ex of examenesOrden) {
+      const examId = Number(ex?.id || 0);
+      if (examId <= 0) continue;
+      if (!idToNombre[examId] && ex?.nombre) {
+        idToNombre[examId] = ex.nombre;
+      }
+      if ((!Array.isArray(idToReferencias[examId]) || idToReferencias[examId].length === 0) && Array.isArray(ex?.valores_referenciales)) {
+        idToReferencias[examId] = ex.valores_referenciales;
+      }
+    }
   }
 
   // Obtiene el parámetro del examen por nombre

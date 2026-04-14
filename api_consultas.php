@@ -597,13 +597,19 @@ switch ($method) {
         }
 
         if ($search !== '') {
-            $where[] = '(pacientes.nombre LIKE ? OR pacientes.apellido LIKE ? OR pacientes.historia_clinica LIKE ? OR pacientes.dni LIKE ?)';
+            $where[] = '(pacientes.nombre LIKE ? OR pacientes.apellido LIKE ? OR pacientes.historia_clinica LIKE ? OR pacientes.dni LIKE ? OR medicos.nombre LIKE ? OR medicos.apellido LIKE ? OR medicos.especialidad LIKE ? OR consultas.estado LIKE ? OR consultas.tipo_consulta LIKE ? OR CAST(consultas.id AS CHAR) LIKE ?)';
             $searchLike = '%' . $search . '%';
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
-            $types .= 'ssss';
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $types .= 'ssssssssss';
         }
 
         if ($fecha_desde !== '') {
@@ -621,8 +627,8 @@ switch ($method) {
         $whereSql = count($where) ? (' WHERE ' . implode(' AND ', $where)) : '';
 
         $statsSql = 'SELECT COUNT(*) AS total, '
-            . 'SUM(CASE WHEN LOWER(TRIM(consultas.estado)) = "pendiente" THEN 1 ELSE 0 END) AS pendientes, '
-            . 'SUM(CASE WHEN LOWER(TRIM(consultas.clasificacion)) = "emergencia" THEN 1 ELSE 0 END) AS emergencias'
+            . 'SUM(CASE WHEN consultas.estado = "pendiente" THEN 1 ELSE 0 END) AS pendientes, '
+            . 'SUM(CASE WHEN consultas.clasificacion = "emergencia" THEN 1 ELSE 0 END) AS emergencias'
             . $from
             . $whereSql;
 
@@ -635,10 +641,24 @@ switch ($method) {
         $statsRow = $statsRes->fetch_assoc() ?: [];
         $statsStmt->close();
 
+        $fromData = ' FROM consultas'
+            . ' LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id'
+            . ' LEFT JOIN medicos ON consultas.medico_id = medicos.id'
+            . ' LEFT JOIN ('
+            . '   SELECT cd.consulta_id, MAX(cd.cotizacion_id) AS cotizacion_id'
+            . '   FROM cotizaciones_detalle cd'
+            . '   INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
+            . '   WHERE cd.consulta_id IS NOT NULL'
+            . '     AND cd.consulta_id > 0'
+            . '     AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada")'
+            . '   GROUP BY cd.consulta_id'
+            . ' ) cot_ref ON cot_ref.consulta_id = consultas.id'
+            . ' LEFT JOIN cotizaciones cot ON cot.id = cot_ref.cotizacion_id';
+
         $sql = 'SELECT consultas.*, pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni, medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido, medicos.especialidad AS medico_especialidad, medicos.cmp AS medico_cmp, medicos.rne AS medico_rne, medicos.firma AS medico_firma, medicos.tipo_profesional AS medico_tipo_profesional, medicos.abreviatura_profesional AS medico_abreviatura_profesional, medicos.colegio_sigla AS medico_colegio_sigla, medicos.nro_colegiatura AS medico_nro_colegiatura,'
-            . ' (SELECT cd.cotizacion_id FROM cotizaciones_detalle cd INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id WHERE cd.consulta_id = consultas.id AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada") ORDER BY cd.cotizacion_id DESC LIMIT 1) AS cotizacion_id,'
-            . ' (SELECT ct.estado FROM cotizaciones_detalle cd INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id WHERE cd.consulta_id = consultas.id AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada") ORDER BY cd.cotizacion_id DESC LIMIT 1) AS cotizacion_estado'
-            . $from
+            . ' cot_ref.cotizacion_id AS cotizacion_id,'
+            . ' cot.estado AS cotizacion_estado'
+            . $fromData
             . $whereSql
             . ' ORDER BY consultas.fecha DESC, consultas.hora DESC';
 
@@ -664,18 +684,8 @@ switch ($method) {
         }
 
         foreach ($rows as &$row) {
-            $consultaIdRow = intval($row['id'] ?? 0);
             $cotId = intval($row['cotizacion_id'] ?? 0);
             $cotEstado = trim((string)($row['cotizacion_estado'] ?? ''));
-
-            if ($consultaIdRow > 0 && $cotId <= 0) {
-                $cotId = resolver_cotizacion_id_por_consulta($conn, $consultaIdRow);
-            }
-
-            if ($cotId > 0 && $cotEstado === '') {
-                $cotEstado = obtener_estado_cotizacion_por_id($conn, $cotId);
-            }
-
             $row['cotizacion_id'] = $cotId > 0 ? $cotId : null;
             $row['cotizacion_estado'] = $cotEstado !== '' ? $cotEstado : null;
         }

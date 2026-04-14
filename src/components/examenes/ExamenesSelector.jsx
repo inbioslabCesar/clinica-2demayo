@@ -4,6 +4,17 @@ import { BASE_URL } from "../../config/config";
 // Forzar el uso de React para evitar warning de importación no usada
 const _jsx = React.createElement;
 
+function toSafeText(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  if (Array.isArray(value)) {
+    return value.map((item) => toSafeText(item, "")).filter(Boolean).join(", ");
+  }
+  if (typeof value === "object") {
+    return fallback;
+  }
+  return String(value).trim() || fallback;
+}
+
 export default function ExamenesSelector({ selected, setSelected }) {
   const [examenes, setExamenes] = useState([]);
   const [search, setSearch] = useState("");
@@ -20,11 +31,14 @@ export default function ExamenesSelector({ selected, setSelected }) {
   }, []);
 
   const filtered = useMemo(() => {
+    const query = search.toLowerCase();
     return examenes.filter(ex =>
-      ex.nombre.toLowerCase().includes(search.toLowerCase()) ||
-      (ex.metodologia && ex.metodologia.toLowerCase().includes(search.toLowerCase()))
+      toSafeText(ex?.nombre).toLowerCase().includes(query) ||
+      toSafeText(ex?.metodologia).toLowerCase().includes(query)
     );
   }, [examenes, search]);
+
+  const selectedIds = useMemo(() => new Set((selected || []).map((id) => String(id))), [selected]);
 
   useEffect(() => {
     if (filtered.length > 0) {
@@ -35,8 +49,11 @@ export default function ExamenesSelector({ selected, setSelected }) {
   }, [filtered]);
 
   const handleCheck = (id) => {
+    const normalizedId = String(id);
     setSelected(sel =>
-      sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]
+      sel.map((item) => String(item)).includes(normalizedId)
+        ? sel.filter((item) => String(item) !== normalizedId)
+        : [...sel, id]
     );
   };
 
@@ -72,16 +89,16 @@ export default function ExamenesSelector({ selected, setSelected }) {
         ) : (
           filtered.map(ex => (
             <label
-              key={ex.id}
-              className={`flex items-center gap-2 px-2 py-1 border-b last:border-b-0 cursor-pointer hover:bg-blue-50 text-xs ${highlightedId === ex.id ? 'bg-emerald-50 ring-1 ring-emerald-200' : ''}`}
+              key={String(ex?.id ?? `${toSafeText(ex?.nombre, 'sin-nombre')}-${toSafeText(ex?.metodologia)}`)}
+              className={`flex items-center gap-2 px-2 py-1 border-b last:border-b-0 cursor-pointer hover:bg-blue-50 text-xs ${String(highlightedId) === String(ex?.id) ? 'bg-emerald-50 ring-1 ring-emerald-200' : ''}`}
             >
               <input
                 type="checkbox"
-                checked={selected.includes(ex.id)}
+                checked={selectedIds.has(String(ex?.id ?? ""))}
                 onChange={() => handleCheck(ex.id)}
               />
-              <span className="font-medium">{ex.nombre}</span>
-              <span className="text-gray-400">{ex.metodologia}</span>
+              <span className="font-medium">{toSafeText(ex?.nombre, "Examen sin nombre")}</span>
+              <span className="text-gray-400">{toSafeText(ex?.metodologia)}</span>
             </label>
           ))
         )}

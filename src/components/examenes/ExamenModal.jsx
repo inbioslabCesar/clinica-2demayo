@@ -2,7 +2,40 @@
 import Modal from "../comunes/Modal";
 import ExamenEditorForm from "./ExamenEditorForm";
 
+const normalizeTipo = (tipo) =>
+  String(tipo || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const toSafeArray = (value) => (Array.isArray(value) ? value : []);
+
 export default function ExamenModal({ open, onClose, form, handleChange, handleValoresReferencialesChange, handleSubmit, editId }) {
+  const previewItems = [...toSafeArray(form?.valores_referenciales)]
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => {
+      const tipoNorm = normalizeTipo(item.tipo);
+      const isTitleLike = tipoNorm === "titulo" || tipoNorm === "subtitulo";
+
+      let nombre = String(item.nombre ?? item.titulo ?? "").trim();
+      if (nombre === "0" && isTitleLike) {
+        nombre = "";
+      }
+      if (!nombre) {
+        nombre = isTitleLike ? "Título" : `Parámetro ${index + 1}`;
+      }
+
+      return {
+        ...item,
+        tipoNorm,
+        nombre,
+        orden: Number.isFinite(Number(item.orden)) ? Number(item.orden) : index + 1,
+        referencias: Array.isArray(item.referencias) ? item.referencias : [],
+      };
+    })
+    .sort((a, b) => a.orden - b.orden);
+
   return (
     <Modal
       open={open}
@@ -94,11 +127,9 @@ export default function ExamenModal({ open, onClose, form, handleChange, handleV
                   </tr>
                 </thead>
                 <tbody>
-                  {Array.isArray(form.valores_referenciales) && form.valores_referenciales.length > 0 ? (
-                    form.valores_referenciales
-                      .sort((a, b) => (a.orden || 0) - (b.orden || 0))
-                      .map((item, idx) =>
-                        item.tipo === "Subtítulo" ? (
+                  {previewItems.length > 0 ? (
+                    previewItems.map((item, idx) =>
+                        item.tipoNorm === "subtitulo" || item.tipoNorm === "titulo" ? (
                           <tr key={idx}>
                             <td
                               colSpan={5}
@@ -128,7 +159,7 @@ export default function ExamenModal({ open, onClose, form, handleChange, handleV
                             <td className="py-2 px-2 text-center text-gray-400">[Resultado]</td>
                             <td className="py-2 px-2 text-center">{item.unidad || ""}</td>
                             <td className="py-2 px-2 text-center">
-                              {item.referencias && item.referencias.length > 0 ? (
+                              {item.referencias.length > 0 ? (
                                 <ul className="list-none p-0 m-0">
                                   {item.referencias.map((ref, rIdx) => (
                                     <li key={rIdx}>

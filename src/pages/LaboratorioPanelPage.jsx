@@ -143,6 +143,11 @@ function LaboratorioPanelPage() {
   const handleGuardadoResultados = async (saveResponse) => {
     if (!ordenSeleccionada) return;
 
+    if (backTo && saveResponse?.success) {
+      navigate(backTo);
+      return;
+    }
+
     try {
       const idBusqueda = ordenSeleccionada.id;
       const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
@@ -355,7 +360,7 @@ function LaboratorioPanelPage() {
 
             {/* Formulario de resultados */}
             <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20 p-4">
-              <LlenarResultadosForm orden={ordenSeleccionada} onVolver={handleVolver} onGuardado={handleGuardadoResultados} />
+              <LlenarResultadosForm key={ordenSeleccionada.id} orden={ordenSeleccionada} onVolver={handleVolver} onGuardado={handleGuardadoResultados} />
             </div>
           </div>
         )}

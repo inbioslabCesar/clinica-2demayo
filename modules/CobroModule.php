@@ -2,6 +2,61 @@
 // Módulo de Cobros: lógica principal para registrar cobros y detalles
 class CobroModule
 {
+    private static function toFloatFlexible($value)
+    {
+        if (is_int($value) || is_float($value)) {
+            return (float)$value;
+        }
+
+        if (is_string($value)) {
+            $normalized = str_replace(',', '.', trim($value));
+            return is_numeric($normalized) ? (float)$normalized : 0.0;
+        }
+
+        return 0.0;
+    }
+
+    private static function calcularMontoOriginalDesdeDetalles($detalles)
+    {
+        if (!is_array($detalles)) {
+            return 0.0;
+        }
+
+        $total = 0.0;
+        foreach ($detalles as $detalle) {
+            if (!is_array($detalle)) continue;
+            $subtotal = self::toFloatFlexible($detalle['subtotal'] ?? 0);
+            if ($subtotal > 0) {
+                $total += $subtotal;
+            }
+        }
+
+        return max(0.0, round($total, 2));
+    }
+
+    private static function normalizarDescuento($data, $montoOriginal)
+    {
+        $montoOriginal = max(0.0, self::toFloatFlexible($montoOriginal));
+        if ($montoOriginal <= 0) {
+            return 0.0;
+        }
+
+        $tipo = strtolower(trim((string)($data['tipo_descuento'] ?? '')));
+        $valor = self::toFloatFlexible($data['valor_descuento'] ?? 0);
+        $montoEnviado = self::toFloatFlexible($data['monto_descuento'] ?? 0);
+
+        if ($tipo === 'porcentaje') {
+            $porcentaje = min(max($valor, 0.0), 100.0);
+            return round(($montoOriginal * $porcentaje) / 100, 2);
+        }
+
+        if ($tipo === 'monto') {
+            return round(min(max($valor, 0.0), $montoOriginal), 2);
+        }
+
+        return round(min(max($montoEnviado, 0.0), $montoOriginal), 2);
+    }
+
     private static function cargarDetallesCobros($conn, $cobroIds)
     {
         $cobroIds = array_values(array_unique(array_filter(array_map('intval', $cobroIds), fn($id) => $id > 0)));
@@ -434,6 +489,18 @@ class CobroModule
                     }
                 }
             }
+
+            // Normalizar montos de cobro en backend para evitar desfaces entre UI y persistencia.
+            $montoOriginal = self::toFloatFlexible($data['monto_original'] ?? 0);
+            if ($montoOriginal <= 0) {
+                $montoOriginal = self::calcularMontoOriginalDesdeDetalles($data['detalles'] ?? []);
+            }
+            $montoDescuento = self::normalizarDescuento($data, $montoOriginal);
+            $totalCobro = max(0.0, round($montoOriginal - $montoDescuento, 2));
+
+            $data['monto_original'] = $montoOriginal;
+            $data['monto_descuento'] = $montoDescuento;
+            $data['total'] = $totalCobro;
 
             // Validar que exista una caja abierta antes de cualquier registro
             $fecha_cobro = $data['fecha'] ?? date('Y-m-d');

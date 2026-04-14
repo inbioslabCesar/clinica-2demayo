@@ -3,6 +3,36 @@ import { BASE_URL } from "../../config/config";
 
 import ExamenesSelector from "./ExamenesSelector";
 
+function toSafeText(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  if (Array.isArray(value)) {
+    return value.map((item) => toSafeText(item, "")).filter(Boolean).join(", ");
+  }
+  if (typeof value === "object") {
+    return fallback;
+  }
+  return String(value).trim() || fallback;
+}
+
+function toSafeMoney(value) {
+  const amount = Number.parseFloat(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function normalizeExam(exam, index) {
+  const rawId = exam?.id ?? `tmp-${index}`;
+  const safeId = String(rawId);
+  return {
+    ...exam,
+    safeId,
+    nombreVisible: toSafeText(exam?.nombre, "Examen sin nombre"),
+    metodologiaVisible: toSafeText(exam?.metodologia),
+    condicionVisible: toSafeText(exam?.condicion_paciente),
+    tiempoVisible: toSafeText(exam?.tiempo_resultado),
+    precioPublico: toSafeMoney(exam?.precio_publico),
+  };
+}
+
 export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true }) {
   // Calcular total cotización (precio público)
   // Preparado para usar precio convenio en el futuro
@@ -21,8 +51,11 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   }, []);
 
   // Declarar seleccionados después de los estados
-  const seleccionados = examenesDisponibles.filter(ex => examenes.includes(ex.id));
-  const totalPublico = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_publico) || 0), 0);
+  const selectedIds = new Set((examenes || []).map((id) => String(id)));
+  const seleccionados = examenesDisponibles
+    .filter((ex) => selectedIds.has(String(ex?.id ?? "")))
+    .map((ex, index) => normalizeExam(ex, index));
+  const totalPublico = seleccionados.reduce((acc, ex) => acc + ex.precioPublico, 0);
   // Preparado para usar precio convenio en el futuro
   // const totalConvenio = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_convenio) || 0), 0);
 
@@ -99,7 +132,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
             </div>
             <div className="max-h-96 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-3">
               {seleccionados.map(ex => (
-                <div key={ex.id} className="bg-white rounded-lg p-3 border border-blue-100 shadow-sm">
+                <div key={ex.safeId} className="bg-white rounded-lg p-3 border border-blue-100 shadow-sm">
                   <div className="flex items-start gap-3">
                     <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
                       <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -107,27 +140,27 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
                       </svg>
                     </div>
                     <div className="flex-1">
-                      <h4 className="font-medium text-blue-900">{ex.nombre}</h4>
+                      <h4 className="font-medium text-blue-900">{ex.nombreVisible}</h4>
                       {mostrarPrecios && (
-                        <div className="text-sm text-green-700 font-semibold mt-1">Precio público: S/ {parseFloat(ex.precio_publico).toFixed(2)}</div>
+                        <div className="text-sm text-green-700 font-semibold mt-1">Precio público: S/ {ex.precioPublico.toFixed(2)}</div>
                       )}
                       {/* Futuro: <div className="text-xs text-blue-700">Precio convenio: S/ {parseFloat(ex.precio_convenio).toFixed(2)}</div> */}
-                      {(ex.condicion_paciente || ex.tiempo_resultado) && (
+                      {(ex.condicionVisible || ex.tiempoVisible) && (
                         <div className="mt-1 space-y-1">
-                          {ex.condicion_paciente && (
+                          {ex.condicionVisible && (
                             <div className="flex items-center gap-1">
                               <svg className="w-3 h-3 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
                                 <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                               </svg>
-                              <span className="text-xs text-amber-700 font-medium">{ex.condicion_paciente}</span>
+                              <span className="text-xs text-amber-700 font-medium">{ex.condicionVisible}</span>
                             </div>
                           )}
-                          {ex.tiempo_resultado && (
+                          {ex.tiempoVisible && (
                             <div className="flex items-center gap-1">
                               <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                               </svg>
-                              <span className="text-xs text-gray-600">⏱️ {ex.tiempo_resultado}</span>
+                              <span className="text-xs text-gray-600">⏱️ {ex.tiempoVisible}</span>
                             </div>
                           )}
                         </div>
@@ -218,7 +251,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         {cotizResult && (
           <div className="rounded-lg p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm">
             <p className="font-bold">Cotización: {cotizResult.numero_comprobante}</p>
-            <p>Total: S/ {parseFloat(cotizResult.total).toFixed(2)} — pendiente de pago en recepción</p>
+            <p>Total: S/ {toSafeMoney(cotizResult.total).toFixed(2)} — pendiente de pago en recepción</p>
           </div>
         )}
       </form>

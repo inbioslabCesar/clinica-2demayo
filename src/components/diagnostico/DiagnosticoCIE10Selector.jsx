@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { BASE_URL } from "../../config/config.js";
 
 export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos }) {
   const [busqueda, setBusqueda] = useState("");
@@ -16,7 +17,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
     setCargando(true);
     const buscarCodigos = async () => {
       try {
-        const response = await fetch(`http://localhost/clinica-2demayo/api_cie10.php?buscar=${encodeURIComponent(busqueda)}&limite=15`);
+        const response = await fetch(`${BASE_URL}api_cie10.php?buscar=${encodeURIComponent(busqueda)}&limite=15`);
         const data = await response.json();
         
         if (data.success) {

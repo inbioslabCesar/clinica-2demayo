@@ -1,4 +1,5 @@
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
+import { BASE_URL } from "../../config/config.js";
 
 const ImpresionHistoriaClinica = ({ 
   paciente, 
@@ -19,9 +20,7 @@ const ImpresionHistoriaClinica = ({
     const raw = String(rawValue || '').trim();
     if (!raw) return '/2demayo.svg';
     if (/^(https?:\/\/|data:|blob:)/i.test(raw)) return raw;
-    const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-    const base = isProduction ? (window.location.origin.replace(/\/+$/, '') + '/') : 'http://localhost/clinica-2demayo/';
-    return `${base}${raw.replace(/^\/+/, '')}`;
+    return `${BASE_URL}${raw.replace(/^\/+/, '')}`;
   };
 
   const logoSrc = resolveLogoUrl(configuracionClinica?.logo_url);

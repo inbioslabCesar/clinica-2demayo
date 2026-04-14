@@ -81,75 +81,54 @@ if ($method === 'GET') {
 
     $dias = rc_parse_positive_int($_GET['dias'] ?? 30, 30);
     if ($dias > 90) $dias = 90;
+    $page = rc_parse_positive_int($_GET['page'] ?? 0, 0);
+    $perPage = rc_parse_positive_int($_GET['per_page'] ?? 0, 0);
+    $usarPaginacion = ($page > 0 && $perPage > 0);
+    if ($usarPaginacion && $perPage > 100) $perPage = 100;
 
     $estadoGestion = trim((string)($_GET['estado_gestion'] ?? ''));
     $busqueda = trim((string)($_GET['busqueda'] ?? ''));
     $soloSinGestion = ((string)($_GET['solo_sin_gestion'] ?? '0') === '1');
     $origenConsulta = trim((string)($_GET['origen_consulta'] ?? ''));
 
-    $sql = "SELECT
-                c.id,
-                c.paciente_id,
-                c.medico_id,
-                c.fecha,
-                c.hora,
-                c.estado AS estado_consulta,
-                c.es_control,
-                c.hc_origen_id,
-                c.tipo_consulta,
-                                COALESCE(NULLIF(TRIM(c.origen_creacion), ''), CASE
-                                        WHEN c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0 THEN 'hc_proxima'
-                                        WHEN EXISTS(
-                                                SELECT 1
-                                                FROM cotizaciones_detalle cdx
-                                                INNER JOIN cotizaciones ctx ON ctx.id = cdx.cotizacion_id
-                                                WHERE cdx.consulta_id = c.id
-                                                    AND ctx.estado <> 'anulado'
-                                                LIMIT 1
-                                        ) THEN 'cotizador'
-                                        ELSE 'agendada'
-                                END) AS origen_consulta,
-                EXISTS(
-                    SELECT 1 FROM historia_clinica hcx WHERE hcx.consulta_id = c.id LIMIT 1
-                ) AS hc_tiene_registro,
-                (
-                    SELECT MAX(hcy.fecha_registro)
-                    FROM historia_clinica hcy
-                    WHERE hcy.consulta_id = c.id
-                ) AS hc_ultima_actualizacion,
-                p.nombre AS paciente_nombre,
-                p.apellido AS paciente_apellido,
-                p.dni AS paciente_dni,
-                p.telefono AS paciente_telefono,
-                m.nombre AS medico_nombre,
-                m.apellido AS medico_apellido,
-                COALESCE(rc.estado, 'pendiente') AS estado_gestion,
-                COALESCE(rc.observacion, '') AS observacion,
-                rc.fecha_proximo_contacto,
-                rc.fecha_ultimo_contacto,
-                COALESCE(rc.intentos, 0) AS intentos,
-                rc.updated_at AS gestion_updated_at
-            FROM consultas c
+    $from = " FROM consultas c
             INNER JOIN pacientes p ON p.id = c.paciente_id
             INNER JOIN medicos m ON m.id = c.medico_id
             LEFT JOIN recordatorios_consultas rc ON rc.consulta_id = c.id
-            WHERE c.estado IN ('pendiente', 'falta_cancelar', 'completada')
-              AND c.fecha >= CURDATE()
-              AND c.fecha <= DATE_ADD(CURDATE(), INTERVAL ? DAY)";
+            LEFT JOIN (
+                SELECT h.consulta_id, MAX(h.fecha_registro) AS hc_ultima_actualizacion, 1 AS hc_tiene_registro
+                FROM historia_clinica h
+                GROUP BY h.consulta_id
+            ) hc ON hc.consulta_id = c.id
+            LEFT JOIN (
+                SELECT cd.consulta_id, MAX(cd.cotizacion_id) AS cotizacion_id
+                FROM cotizaciones_detalle cd
+                INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id
+                WHERE cd.consulta_id IS NOT NULL
+                  AND cd.consulta_id > 0
+                  AND ct.estado NOT IN ('anulado', 'anulada')
+                GROUP BY cd.consulta_id
+            ) cot_ref ON cot_ref.consulta_id = c.id
+            LEFT JOIN cotizaciones cot ON cot.id = cot_ref.cotizacion_id";
 
+    $where = [
+        "c.estado IN ('pendiente', 'falta_cancelar', 'completada')",
+        'c.fecha >= CURDATE()',
+        'c.fecha <= DATE_ADD(CURDATE(), INTERVAL ? DAY)'
+    ];
     $types = 'i';
     $params = [$dias];
 
     if ($estadoGestion !== '') {
-        $sql .= ' AND COALESCE(rc.estado, \'pendiente\') = ?';
+        $where[] = 'COALESCE(rc.estado, \'pendiente\') = ?';
         $types .= 's';
         $params[] = $estadoGestion;
     }
 
     if (in_array($origenConsulta, ['agendada', 'cotizador', 'hc_proxima'], true)) {
-        $sql .= ' AND COALESCE(NULLIF(TRIM(c.origen_creacion), ""), CASE'
+        $where[] = 'COALESCE(NULLIF(TRIM(c.origen_creacion), ""), CASE'
               . ' WHEN c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0 THEN "hc_proxima"'
-              . ' WHEN EXISTS(SELECT 1 FROM cotizaciones_detalle cdf INNER JOIN cotizaciones ctf ON ctf.id = cdf.cotizacion_id WHERE cdf.consulta_id = c.id AND ctf.estado <> "anulado" LIMIT 1) THEN "cotizador"'
+              . ' WHEN cot_ref.cotizacion_id IS NOT NULL THEN "cotizador"'
               . ' ELSE "agendada"'
               . ' END) = ?';
         $types .= 's';
@@ -157,11 +136,11 @@ if ($method === 'GET') {
     }
 
     if ($soloSinGestion) {
-        $sql .= " AND (rc.id IS NULL OR rc.estado IN ('pendiente', 'no_contesta'))";
+        $where[] = "(rc.id IS NULL OR rc.estado IN ('pendiente', 'no_contesta'))";
     }
 
     if ($busqueda !== '') {
-        $sql .= " AND (
+        $where[] = "(
             CONCAT_WS(' ', p.nombre, p.apellido) LIKE ?
             OR CONCAT_WS(' ', m.nombre, m.apellido) LIKE ?
             OR p.dni LIKE ?
@@ -177,7 +156,71 @@ if ($method === 'GET') {
         $params[] = $like;
     }
 
-    $sql .= ' ORDER BY c.fecha ASC, c.hora ASC, c.id ASC';
+    $whereSql = ' WHERE ' . implode(' AND ', $where);
+
+    $countSql = 'SELECT COUNT(*) AS total' . $from . $whereSql;
+    $stmtCount = $conn->prepare($countSql);
+    if (!$stmtCount) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'No se pudo preparar conteo de recordatorios']);
+        exit;
+    }
+    $stmtCount->bind_param($types, ...$params);
+    $stmtCount->execute();
+    $countRow = $stmtCount->get_result()->fetch_assoc() ?: [];
+    $stmtCount->close();
+    $totalItems = (int)($countRow['total'] ?? 0);
+
+    $sql = "SELECT
+                c.id,
+                c.paciente_id,
+                c.medico_id,
+                c.fecha,
+                c.hora,
+                c.estado AS estado_consulta,
+                c.es_control,
+                c.hc_origen_id,
+                c.tipo_consulta,
+                COALESCE(NULLIF(TRIM(c.origen_creacion), ''), CASE
+                    WHEN c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0 THEN 'hc_proxima'
+                    WHEN cot_ref.cotizacion_id IS NOT NULL THEN 'cotizador'
+                    ELSE 'agendada'
+                END) AS origen_consulta,
+                COALESCE(hc.hc_tiene_registro, 0) AS hc_tiene_registro,
+                hc.hc_ultima_actualizacion,
+                p.nombre AS paciente_nombre,
+                p.apellido AS paciente_apellido,
+                p.dni AS paciente_dni,
+                p.telefono AS paciente_telefono,
+                m.nombre AS medico_nombre,
+                m.apellido AS medico_apellido,
+                COALESCE(rc.estado, 'pendiente') AS estado_gestion,
+                COALESCE(rc.observacion, '') AS observacion,
+                rc.fecha_proximo_contacto,
+                rc.fecha_ultimo_contacto,
+                COALESCE(rc.intentos, 0) AS intentos,
+                rc.updated_at AS gestion_updated_at,
+                CASE
+                    WHEN c.estado = 'falta_cancelar' OR (c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0) THEN cot_ref.cotizacion_id
+                    ELSE NULL
+                END AS cotizacion_id,
+                CASE
+                    WHEN c.estado = 'falta_cancelar' OR (c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0) THEN cot.estado
+                    ELSE NULL
+                END AS cotizacion_estado"
+            . $from
+            . $whereSql
+            . ' ORDER BY c.fecha ASC, c.hora ASC, c.id ASC';
+
+    $paramsList = $params;
+    $typesList = $types;
+    if ($usarPaginacion) {
+        $offset = ($page - 1) * $perPage;
+        $sql .= ' LIMIT ? OFFSET ?';
+        $typesList .= 'ii';
+        $paramsList[] = $perPage;
+        $paramsList[] = $offset;
+    }
 
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
@@ -186,7 +229,7 @@ if ($method === 'GET') {
         exit;
     }
 
-    $stmt->bind_param($types, ...$params);
+    $stmt->bind_param($typesList, ...$paramsList);
     $stmt->execute();
     $res = $stmt->get_result();
 
@@ -217,44 +260,29 @@ if ($method === 'GET') {
             'fecha_ultimo_contacto' => $row['fecha_ultimo_contacto'],
             'intentos' => (int)($row['intentos'] ?? 0),
             'gestion_updated_at' => $row['gestion_updated_at'],
+            'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
+            'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
         ];
     }
     $stmt->close();
 
-    // Enriquecer con cotizacion_id si existe para items de origen HC o falta_cancelar
-    foreach ($items as &$item) {
-        $esOrigenHc = ((int)($item['hc_origen_id'] ?? 0) > 0);
-        if ($item['estado_consulta'] === 'falta_cancelar' || $esOrigenHc) {
-            $stmtCot = $conn->prepare(
-                'SELECT cd.cotizacion_id, ct.estado AS cotizacion_estado FROM cotizaciones_detalle cd'
-                . ' INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
-                . ' WHERE cd.consulta_id = ? AND ct.estado NOT IN ("anulado", "anulada")'
-                . ' ORDER BY cd.cotizacion_id DESC LIMIT 1'
-            );
-            if ($stmtCot) {
-                $stmtCot->bind_param('i', $item['id']);
-                $stmtCot->execute();
-                $rowCot = $stmtCot->get_result()->fetch_assoc();
-                $stmtCot->close();
-                $item['cotizacion_id'] = $rowCot ? (int)$rowCot['cotizacion_id'] : null;
-                $item['cotizacion_estado'] = $rowCot ? (string)($rowCot['cotizacion_estado'] ?? '') : null;
-            } else {
-                $item['cotizacion_id'] = null;
-                $item['cotizacion_estado'] = null;
-            }
-        } else {
-            $item['cotizacion_id'] = null;
-            $item['cotizacion_estado'] = null;
-        }
-    }
-    unset($item);
-
-    echo json_encode([
+    $response = [
         'success' => true,
         'dias' => $dias,
         'count' => count($items),
+        'total' => $totalItems,
         'items' => $items,
-    ]);
+    ];
+    if ($usarPaginacion) {
+        $response['pagination'] = [
+            'page' => $page,
+            'per_page' => $perPage,
+            'total' => $totalItems,
+            'total_pages' => max(1, (int)ceil($totalItems / $perPage)),
+        ];
+    }
+
+    echo json_encode($response);
     exit;
 }
 

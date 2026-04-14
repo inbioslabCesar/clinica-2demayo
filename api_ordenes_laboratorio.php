@@ -483,20 +483,29 @@ switch ($method) {
             : "0";
 
         $sql = "SELECT o.*, 
-                    IFNULL(p2.id, p.id) AS paciente_id_ref,
-                    IFNULL(p2.nombre, p.nombre) AS paciente_nombre, 
-                    IFNULL(p2.apellido, p.apellido) AS paciente_apellido, 
-                    IFNULL(p2.sexo, p.sexo) AS paciente_sexo,
-                    IFNULL(p2.edad, p.edad) AS paciente_edad,
+                    COALESCE(o.consulta_id, cd_ref.consulta_ref_id) AS consulta_id_ref,
+                    IFNULL(p2.id, IFNULL(p.id, p_ref.id)) AS paciente_id_ref,
+                    IFNULL(p2.nombre, IFNULL(p.nombre, p_ref.nombre)) AS paciente_nombre, 
+                    IFNULL(p2.apellido, IFNULL(p.apellido, p_ref.apellido)) AS paciente_apellido, 
+                    IFNULL(p2.sexo, IFNULL(p.sexo, p_ref.sexo)) AS paciente_sexo,
+                    IFNULL(p2.edad, IFNULL(p.edad, p_ref.edad)) AS paciente_edad,
                     m.nombre AS medico_nombre, 
                     m.apellido AS medico_apellido,
                     $derivadoExpr AS tiene_derivados
                 FROM ordenes_laboratorio o 
                 LEFT JOIN consultas c ON o.consulta_id = c.id 
+                LEFT JOIN (
+                    SELECT cotizacion_id, MAX(consulta_id) AS consulta_ref_id
+                    FROM cotizaciones_detalle
+                    WHERE consulta_id IS NOT NULL AND consulta_id > 0
+                    GROUP BY cotizacion_id
+                ) cd_ref ON cd_ref.cotizacion_id = o.cotizacion_id
+                LEFT JOIN consultas c_ref ON c_ref.id = cd_ref.consulta_ref_id
                 LEFT JOIN pacientes p ON c.paciente_id = p.id 
+                LEFT JOIN pacientes p_ref ON c_ref.paciente_id = p_ref.id
                 LEFT JOIN pacientes p2 ON o.paciente_id = p2.id 
                 LEFT JOIN cotizaciones ct ON o.cotizacion_id = ct.id
-                LEFT JOIN medicos m ON c.medico_id = m.id 
+                LEFT JOIN medicos m ON m.id = COALESCE(c.medico_id, c_ref.medico_id)
                 WHERE 1=1";
         $params = [];
         $types = '';
@@ -542,7 +551,7 @@ switch ($method) {
             $types .= 'ssssss';
         }
         if ($esSesionMedico) {
-            $sql .= ' AND c.medico_id = ?';
+            $sql .= ' AND COALESCE(c.medico_id, c_ref.medico_id) = ?';
             $params[] = $medicoSesionId;
             $types .= 'i';
         }
@@ -550,10 +559,18 @@ switch ($method) {
         $sqlCount = "SELECT COUNT(*) AS total
                 FROM ordenes_laboratorio o
                 LEFT JOIN consultas c ON o.consulta_id = c.id
+                LEFT JOIN (
+                    SELECT cotizacion_id, MAX(consulta_id) AS consulta_ref_id
+                    FROM cotizaciones_detalle
+                    WHERE consulta_id IS NOT NULL AND consulta_id > 0
+                    GROUP BY cotizacion_id
+                ) cd_ref ON cd_ref.cotizacion_id = o.cotizacion_id
+                LEFT JOIN consultas c_ref ON c_ref.id = cd_ref.consulta_ref_id
                 LEFT JOIN pacientes p ON c.paciente_id = p.id
+                LEFT JOIN pacientes p_ref ON c_ref.paciente_id = p_ref.id
                 LEFT JOIN pacientes p2 ON o.paciente_id = p2.id
                 LEFT JOIN cotizaciones ct ON o.cotizacion_id = ct.id
-                LEFT JOIN medicos m ON c.medico_id = m.id
+                LEFT JOIN medicos m ON m.id = COALESCE(c.medico_id, c_ref.medico_id)
                 WHERE 1=1";
         if ($solo_visibles_panel) {
             $sqlCount .= " AND (o.cotizacion_id IS NULL OR o.cotizacion_id = 0 OR LOWER(COALESCE(ct.estado, '')) = 'pagado')";
@@ -581,7 +598,7 @@ switch ($method) {
             )';
         }
         if ($esSesionMedico) {
-            $sqlCount .= ' AND c.medico_id = ?';
+            $sqlCount .= ' AND COALESCE(c.medico_id, c_ref.medico_id) = ?';
         }
 
         $totalRegistros = 0;

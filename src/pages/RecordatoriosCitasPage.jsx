@@ -152,6 +152,8 @@ export default function RecordatoriosCitasPage() {
   const [soloSinGestion, setSoloSinGestion] = useState(false);
   const [vistaRapida, setVistaRapida] = useState("todas");
   const [filaActivaId, setFilaActivaId] = useState(null);
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
   const cargar = async () => {
     setLoading(true);
@@ -183,6 +185,10 @@ export default function RecordatoriosCitasPage() {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dias, estadoGestion, origenConsulta, soloSinGestion]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage]);
 
   const pendientesUrgentes = useMemo(
     () => items.filter((item) => {
@@ -267,13 +273,30 @@ export default function RecordatoriosCitasPage() {
     [itemsPriorizados]
   );
 
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(itemsPriorizados.length / rowsPerPage)),
+    [itemsPriorizados.length, rowsPerPage]
+  );
+
+  const itemsPaginados = useMemo(() => {
+    const start = (page - 1) * rowsPerPage;
+    return itemsPriorizados.slice(start, start + rowsPerPage);
+  }, [itemsPriorizados, page, rowsPerPage]);
+
   const enfocarSiguienteLlamada = () => {
     if (!siguienteLlamada) return;
-    setFilaActivaId(siguienteLlamada.id);
-    const el = document.getElementById(`rc-row-${siguienteLlamada.id}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const idx = itemsPriorizados.findIndex((item) => item.id === siguienteLlamada.id);
+    if (idx >= 0) {
+      const targetPage = Math.floor(idx / rowsPerPage) + 1;
+      setPage(targetPage);
     }
+    setFilaActivaId(siguienteLlamada.id);
+    window.setTimeout(() => {
+      const el = document.getElementById(`rc-row-${siguienteLlamada.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 50);
   };
 
   const guardarGestion = async (item, estado) => {
@@ -551,7 +574,7 @@ export default function RecordatoriosCitasPage() {
                   <td colSpan={8} className="p-5 text-center text-slate-500">No hay citas para la vista seleccionada.</td>
                 </tr>
               ) : (
-                itemsPriorizados.map((item) => {
+                itemsPaginados.map((item) => {
                   const diasRestantes = item.diasRestantes;
                   const esHcProxima = esConsultaHcProxima(item);
                   const esControl = Number(item?.es_control || 0) === 1;
@@ -691,6 +714,51 @@ export default function RecordatoriosCitasPage() {
             </tbody>
           </table>
         </div>
+
+        {!loading && itemsPriorizados.length > 0 && (
+          <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3 text-slate-600">
+              <span>
+                Mostrando {itemsPaginados.length} de {itemsPriorizados.length} registro(s)
+              </span>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filas</label>
+                <select
+                  value={rowsPerPage}
+                  onChange={(e) => setRowsPerPage(Number(e.target.value))}
+                  className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={30}>30</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={page === 1}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Anterior
+              </button>
+              <span className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
+                Pagina {page} de {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={page === totalPages}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

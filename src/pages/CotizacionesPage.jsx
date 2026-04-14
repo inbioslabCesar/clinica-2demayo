@@ -74,6 +74,7 @@ export default function CotizacionesPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const autoAnularRef = useRef(false);
+  const abortRef = useRef(null);
 
   const actionBtnBase = "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-transform hover:scale-105";
   const themeGradient = {
@@ -106,6 +107,10 @@ export default function CotizacionesPage() {
   });
 
   const cargar = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -122,6 +127,7 @@ export default function CotizacionesPage() {
       const res = await fetch(`${BASE_URL}api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
         credentials: "include",
         cache: "no-store",
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!data?.success) {
@@ -130,14 +136,24 @@ export default function CotizacionesPage() {
       setRows(Array.isArray(data.cotizaciones) ? data.cotizaciones : []);
       setTotal(Number(data.total || 0));
     } catch (error) {
+      if (error?.name === "AbortError") return;
       Swal.fire("Error", error?.message || "No se pudo cargar la lista", "error");
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [filtrosAplicados, limit, page]);
 
   useEffect(() => {
     cargar();
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
   }, [cargar]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);

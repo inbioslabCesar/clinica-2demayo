@@ -15,35 +15,49 @@ export default function ListaConsultasPage() {
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaDebounced, setBusquedaDebounced] = useState("");
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setBusquedaDebounced(busqueda.trim());
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [busqueda]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError("");
     const params = new URLSearchParams({
       page,
-      limit: rowsPerPage,
-      busqueda: busqueda.trim(),
-      fechaDesde,
-      fechaHasta
+      per_page: rowsPerPage,
+      search: busquedaDebounced,
+      fecha_desde: fechaDesde,
+      fecha_hasta: fechaHasta
     });
     fetch(`${BASE_URL}api_consultas.php?${params.toString()}`, {
-      credentials: "include"
+      credentials: "include",
+      signal: controller.signal,
     })
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
           setConsultas(data.consultas || []);
-          setTotalRows(data.total || 0);
+          setTotalRows(data.pagination?.total || data.total || 0);
         } else {
           setError(data.error || "Error al cargar consultas");
         }
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
+
+    return () => controller.abort();
+  }, [page, rowsPerPage, busquedaDebounced, fechaDesde, fechaHasta]);
 
   // Filtrar por rango de fecha y búsqueda dinámica
   // Los datos ya vienen filtrados y paginados del backend
@@ -58,8 +72,8 @@ export default function ListaConsultasPage() {
         ID: c.id,
         Fecha: c.fecha?.slice(0, 16).replace("T", " "),
         Paciente: c.paciente_nombre + " " + c.paciente_apellido,
-        Medico: c.medico_nombre,
-        Motivo: c.motivo,
+        Medico: c.medico_nombre + " " + c.medico_apellido,
+        Especialidad: c.medico_especialidad || "",
         Estado: c.estado,
       }))
     );
@@ -83,13 +97,13 @@ export default function ListaConsultasPage() {
     const doc = new jsPDF();
     doc.text("Lista de Consultas", 14, 10);
     autoTable(doc, {
-      head: [["ID", "Fecha", "Paciente", "Médico", "Motivo", "Estado"]],
+      head: [["ID", "Fecha", "Paciente", "Médico", "Especialidad", "Estado"]],
       body: consultas.map((c) => [
         c.id,
         c.fecha?.slice(0, 16).replace("T", " "),
         c.paciente_nombre + " " + c.paciente_apellido,
-        c.medico_nombre,
-        c.motivo,
+        c.medico_nombre + " " + c.medico_apellido,
+        c.medico_especialidad || "",
         c.estado,
       ]),
       startY: 18,
@@ -101,144 +115,247 @@ export default function ListaConsultasPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-6 text-center">
-        Lista de Consultas
-      </h1>
-      <QuickAccessNav keys={["pacientes", "recordatorios", "cotizaciones", "reporteCaja"]} />
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <label className="text-sm">Filas por página:</label>
-        <select
-          value={rowsPerPage}
-          onChange={(e) => {
-            setRowsPerPage(Number(e.target.value));
-            setPage(1);
-          }}
-          className="border rounded px-2 py-1"
-        >
-          <option value={3}>3</option>
-          <option value={5}>5</option>
-          <option value={10}>10</option>
-          <option value={25}>25</option>
-        </select>
-        <input
-          type="text"
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar por paciente, médico, motivo, estado o ID..."
-          className="border rounded px-2 py-1 min-w-[180px]"
-        />
-        <label className="text-sm">Desde:</label>
-        <input
-          type="date"
-          value={fechaDesde}
-          onChange={(e) => setFechaDesde(e.target.value)}
-          className="border rounded px-2 py-1"
-        />
-        <label className="text-sm">Hasta:</label>
-        <input
-          type="date"
-          value={fechaHasta}
-          onChange={(e) => setFechaHasta(e.target.value)}
-          className="border rounded px-2 py-1"
-        />
-        {(fechaDesde || fechaHasta || busqueda) && (
-          <button
-            onClick={() => {
-              setFechaDesde("");
-              setFechaHasta("");
-              setBusqueda("");
-            }}
-            className="text-blue-600 underline ml-2"
-          >
-            Limpiar filtro
-          </button>
-        )}
-        <button
-          onClick={exportarExcel}
-          className="bg-green-600 text-white px-3 py-1 rounded font-semibold text-xs hover:bg-green-700 transition-all"
-        >
-          Exportar Excel
-        </button>
-        <button
-          onClick={exportarPDF}
-          className="bg-red-600 text-white px-3 py-1 rounded font-semibold text-xs hover:bg-red-700 transition-all"
-        >
-          Exportar PDF
-        </button>
+    <div className="mx-auto w-full max-w-6xl space-y-4 p-3 md:p-4">
+      <div
+        className="rounded-2xl border px-4 py-5 shadow-sm md:px-6"
+        style={{
+          borderColor: "var(--color-primary-light)",
+          background: "linear-gradient(120deg, var(--color-primary-light), #ffffff, color-mix(in srgb, var(--color-accent) 18%, white))",
+        }}
+      >
+        <h1 className="text-center text-2xl font-extrabold tracking-tight md:text-3xl" style={{ color: "var(--color-primary-dark)" }}>
+          Lista de Consultas
+        </h1>
+        <p className="mt-1 text-center text-sm" style={{ color: "color-mix(in srgb, var(--color-primary-dark) 70%, #334155)" }}>
+          Seguimiento de atenciones por paciente, médico y estado
+        </p>
       </div>
+
+      <QuickAccessNav keys={["pacientes", "recordatorios", "cotizaciones", "reporteCaja"]} />
+
+      <div className="rounded-2xl border bg-white p-3 shadow-sm md:p-4" style={{ borderColor: "var(--color-primary-light)" }}>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <div className="xl:col-span-1">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-primary-dark)" }}>
+              Filas
+            </label>
+            <select
+              value={rowsPerPage}
+              onChange={(e) => {
+                setRowsPerPage(Number(e.target.value));
+                setPage(1);
+              }}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value={3}>3</option>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+            </select>
+          </div>
+
+          <div className="xl:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-primary-dark)" }}>
+              Busqueda
+            </label>
+            <input
+              type="text"
+              value={busqueda}
+              onChange={(e) => {
+                setBusqueda(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Paciente, medico, especialidad, estado o ID"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="xl:col-span-1">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-primary-dark)" }}>
+              Desde
+            </label>
+            <input
+              type="date"
+              value={fechaDesde}
+              onChange={(e) => {
+                setFechaDesde(e.target.value);
+                setPage(1);
+              }}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="xl:col-span-1">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-primary-dark)" }}>
+              Hasta
+            </label>
+            <input
+              type="date"
+              value={fechaHasta}
+              onChange={(e) => {
+                setFechaHasta(e.target.value);
+                setPage(1);
+              }}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-end gap-2 xl:col-span-1">
+            {(fechaDesde || fechaHasta || busqueda) && (
+              <button
+                onClick={() => {
+                  setFechaDesde("");
+                  setFechaHasta("");
+                  setBusqueda("");
+                  setPage(1);
+                }}
+                className="w-full rounded-lg border px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
+                style={{ borderColor: "var(--color-primary-light)", backgroundColor: "color-mix(in srgb, var(--color-primary-light) 65%, white)" }}
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={exportarExcel}
+            className="rounded-lg px-3 py-2 text-xs font-semibold text-white transition"
+            style={{ backgroundColor: "var(--color-secondary)" }}
+          >
+            Exportar Excel
+          </button>
+          <button
+            onClick={exportarPDF}
+            className="rounded-lg px-3 py-2 text-xs font-semibold text-white transition"
+            style={{ backgroundColor: "var(--color-primary)" }}
+          >
+            Exportar PDF
+          </button>
+        </div>
+      </div>
+
       {loading ? (
-        <div className="text-center">Cargando...</div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-600 shadow-sm">
+          Cargando consultas...
+        </div>
       ) : error ? (
-        <div className="text-center text-red-600">{error}</div>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-center text-rose-700 shadow-sm">
+          {error}
+        </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-xs md:text-sm border bg-white rounded shadow">
-            <thead className="bg-blue-100">
-              <tr>
-                <th className="p-2 w-12 text-center">ID</th>
-                <th className="p-2">Fecha</th>
-                <th className="p-2">Paciente</th>
-                <th className="p-2">Médico</th>
-                <th className="p-2">Motivo</th>
-                <th className="p-2">Estado</th>
-                <th className="p-2 text-center">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {consultas.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center p-4">
-                    No hay consultas registradas
-                  </td>
-                </tr>
-              ) : (
-                pagedConsultas.map((c) => (
-                  <tr key={c.id} className="border-b hover:bg-blue-50">
-                    <td className="p-2 w-12 text-center">{c.id}</td>
-                    <td className="p-2">
-                      {c.fecha?.slice(0, 16).replace("T", " ")}
-                    </td>
-                    <td className="p-2">
-                      {c.paciente_nombre} {c.paciente_apellido}
-                    </td>
-                    <td className="p-2">{c.medico_nombre}</td>
-                    <td className="p-2">{c.motivo}</td>
-                    <td className="p-2">{c.estado}</td>
-                    <td className="p-2 text-center">
-                      <button
-                        onClick={() =>
-                          navigate(`/agendar-consulta?paciente_id=${Number(c.paciente_id || 0)}&consulta_id=${Number(c.id || 0)}`)
-                        }
-                        className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-blue-700 transition-colors"
-                      >
-                        Editar
-                      </button>
-                    </td>
+        <div className="space-y-3">
+          <div className="overflow-hidden rounded-2xl border bg-white shadow-sm" style={{ borderColor: "var(--color-primary-light)" }}>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs md:text-sm">
+                <thead className="text-white" style={{ backgroundColor: "var(--color-primary)" }}>
+                  <tr>
+                    <th className="px-3 py-3 text-left font-semibold">ID</th>
+                    <th className="px-3 py-3 text-left font-semibold">Fecha</th>
+                    <th className="px-3 py-3 text-left font-semibold">Paciente</th>
+                    <th className="px-3 py-3 text-left font-semibold">Medico</th>
+                    <th className="px-3 py-3 text-left font-semibold">Estado</th>
+                    <th className="px-3 py-3 text-center font-semibold">Acciones</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          {/* Controles de paginación */}
-          <div className="flex justify-end items-center gap-2 mt-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="px-2 py-1 rounded bg-gray-200 disabled:opacity-50"
-            >
-              Anterior
-            </button>
-            <span className="text-sm">
-              Página {page} de {totalPages}
+                </thead>
+                <tbody>
+                  {consultas.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-8 text-center text-slate-500">
+                        No hay consultas registradas
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedConsultas.map((c) => (
+                      <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-3 py-3 font-semibold" style={{ color: "var(--color-primary-dark)" }}>{c.id}</td>
+                        <td className="px-3 py-3 text-slate-600">{c.fecha?.slice(0, 16).replace("T", " ")}</td>
+                        <td className="px-3 py-3 font-medium text-slate-700">
+                          {c.paciente_nombre} {c.paciente_apellido}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-col gap-1">
+                            <span
+                              className="inline-block w-fit rounded-full px-3 py-1 text-xs font-semibold"
+                              style={{ backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}
+                            >
+                              {c.medico_nombre} {c.medico_apellido}
+                            </span>
+                            {c.medico_especialidad && (
+                              <span
+                                className="inline-block w-fit rounded-full px-3 py-1 text-xs font-medium"
+                                style={{
+                                  backgroundColor: "color-mix(in srgb, var(--color-accent) 18%, white)",
+                                  color: "var(--color-secondary)",
+                                }}
+                              >
+                                {c.medico_especialidad}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
+                              c.estado === "completada"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : c.estado === "cancelada"
+                                  ? "bg-rose-100 text-rose-800"
+                                  : c.estado === "falta_cancelar"
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "text-slate-700"
+                            }`}
+                            style={c.estado === "pendiente" ? { backgroundColor: "color-mix(in srgb, var(--color-secondary) 16%, white)", color: "var(--color-secondary)" } : undefined}
+                          >
+                            {c.estado}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <button
+                            onClick={() =>
+                              navigate(`/agendar-consulta?paciente_id=${Number(c.paciente_id || 0)}&consulta_id=${Number(c.id || 0)}`)
+                            }
+                            className="rounded-md px-3 py-1.5 text-xs font-semibold text-white transition"
+                            style={{ backgroundColor: "var(--color-primary)" }}
+                          >
+                            Editar
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-2xl border bg-white p-3 shadow-sm md:flex-row md:items-center md:justify-between" style={{ borderColor: "var(--color-primary-light)" }}>
+            <span className="text-xs text-slate-600 md:text-sm">
+              Mostrando {consultas.length} registro(s) de {totalRows}
             </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="px-2 py-1 rounded bg-gray-200 disabled:opacity-50"
-            >
-              Siguiente
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Anterior
+              </button>
+              <span
+                className="rounded-md px-3 py-1.5 text-sm font-semibold"
+                style={{ backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}
+              >
+                Pagina {page} de {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Siguiente
+              </button>
+            </div>
           </div>
         </div>
       )}

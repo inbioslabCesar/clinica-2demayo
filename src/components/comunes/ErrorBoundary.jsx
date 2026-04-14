@@ -15,17 +15,23 @@ class ErrorBoundary extends React.Component {
 
     const message = String(error?.message || "");
     const stack = String(error?.stack || "");
-    const isViteOptimizeDepsError =
+    const isAssetLoadError =
       message.includes("Outdated Optimize Dep") ||
       message.includes("Failed to fetch dynamically imported module") ||
+      message.includes("Loading chunk") ||
+      message.includes("ChunkLoadError") ||
+      message.includes("Importing a module script failed") ||
+      message.includes("Failed to load module script") ||
+      message.includes("Unable to preload CSS") ||
+      message.includes("dynamically imported") ||
       stack.includes("/node_modules/.vite/deps/");
 
-    if (isViteOptimizeDepsError && typeof window !== "undefined") {
+    if (isAssetLoadError && typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      const retries = Number(url.searchParams.get("_viteRetry") || "0");
+      const retries = Number(url.searchParams.get("_assetRetry") || "0");
 
       if (retries < 2) {
-        url.searchParams.set("_viteRetry", String(retries + 1));
+        url.searchParams.set("_assetRetry", String(retries + 1));
         url.searchParams.set("_v", String(Date.now()));
         window.location.replace(url.toString());
         return;
