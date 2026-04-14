@@ -4,7 +4,7 @@
 -- =========================================
 
 -- TABLA 1: liquidaciones_medicos (FALTA)
-CREATE TABLE liquidaciones_medicos (
+-CREATE TABLE liquidaciones_medicos (
     id INT PRIMARY KEY AUTO_INCREMENT,
     medico_id INT NOT NULL,
     periodo_desde DATE NOT NULL,

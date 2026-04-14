@@ -12,6 +12,7 @@ dist-ssr
 dist-public
 build
 *.local
+public/assets/
 
 # Environment and config files
 config.php
