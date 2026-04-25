@@ -1,4 +1,4 @@
-name: Deploy a Hostinger (test)
+name: Deploy a Hostinger
 
 on:
   push:
@@ -29,25 +29,48 @@ jobs:
       - name: Build frontend (sistema + landing)
         run: npm run build
 
+      - name: Validar secrets requeridos
+        env:
+          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
+          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
+          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SFTP_HOST" ]] || { echo "Falta secret HOSTINGER_SFTP_HOST"; exit 1; }
+          [[ -n "$SFTP_PORT" ]] || { echo "Falta secret HOSTINGER_SFTP_PORT"; exit 1; }
+          [[ -n "$SFTP_USER" ]] || { echo "Falta secret HOSTINGER_FTP_USER"; exit 1; }
+          [[ -n "$SFTP_PASS" ]] || { echo "Falta secret HOSTINGER_FTP_PASSWORD"; exit 1; }
+
       - name: Verificar conectividad SFTP
         id: sftp_probe
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
         run: |
-          if nc -z -w 8 "$SFTP_HOST" "$SFTP_PORT"; then
-            echo "reachable=true" >> "$GITHUB_OUTPUT"
-            echo "SFTP accesible, se usara despliegue por SSH."
-          else
-            echo "reachable=false" >> "$GITHUB_OUTPUT"
-            echo "SFTP no accesible desde el runner, se activara fallback FTP."
-          fi
+          set -euo pipefail
+          reachable=false
+          for intento in 1 2 3; do
+            if nc -z -w 8 "$SFTP_HOST" "$SFTP_PORT"; then
+              reachable=true
+              echo "SFTP accesible en intento $intento"
+              break
+            fi
+            echo "SFTP no accesible en intento $intento"
+          done
+          echo "reachable=$reachable" >> "$GITHUB_OUTPUT"
 
       - name: Instalar utilidades SFTP
         if: steps.sftp_probe.outputs.reachable == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y sshpass rsync
+
+      - name: Abortar si SFTP no es accesible
+        if: steps.sftp_probe.outputs.reachable != 'true'
+        run: |
+          echo "No hay conectividad SFTP al host/puerto configurado. Se cancela el deploy para evitar errores parciales."
+          exit 1
 
       - name: Publicar backend PHP en /public_html/sistema (SFTP)
         if: steps.sftp_probe.outputs.reachable == 'true'
@@ -57,31 +80,42 @@ jobs:
           SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            --exclude "node_modules/" \
-            --exclude ".vscode/" \
-            --exclude ".idea/" \
-            --exclude "dist/" \
-            --exclude "dist-public/" \
-            --exclude "public-site/" \
-            --exclude "src/" \
-            --exclude "tests/" \
-            --exclude "docs/" \
-            --exclude "tmp/" \
-            --exclude "uploads/" \
-            --exclude ".env" \
-            --exclude ".env.*" \
-            --exclude "config.php" \
-            --exclude "config/instance.local.php" \
-            --exclude "clinica-config/" \
-            --exclude "backup/" \
-            --exclude "*.log" \
-            --exclude "*.sql" \
-            --exclude "*.sql.backup" \
-            ./ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
+          set -euo pipefail
+          for intento in 1 2 3; do
+            if sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+              -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+              --exclude ".git/" \
+              --exclude ".github/" \
+              --exclude "node_modules/" \
+              --exclude ".vscode/" \
+              --exclude ".idea/" \
+              --exclude "dist/" \
+              --exclude "dist-public/" \
+              --exclude "public-site/" \
+              --exclude "src/" \
+              --exclude "tests/" \
+              --exclude "docs/" \
+              --exclude "tmp/" \
+              --exclude "uploads/" \
+              --exclude ".env" \
+              --exclude ".env.*" \
+              --exclude "config.php" \
+              --exclude "config/instance.local.php" \
+              --exclude "clinica-config/" \
+              --exclude "backup/" \
+              --exclude "*.log" \
+              --exclude "*.sql" \
+              --exclude "*.sql.backup" \
+              ./ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"; then
+              echo "Backend publicado en intento $intento"
+              break
+            fi
+            if [[ "$intento" -eq 3 ]]; then
+              echo "Fallo publicacion backend tras 3 intentos"
+              exit 1
+            fi
+            echo "Reintentando backend... ($intento/3)"
+          done
 
       - name: Publicar build de sistema (dist -> /public_html/sistema)
         if: steps.sftp_probe.outputs.reachable == 'true'
@@ -91,9 +125,20 @@ jobs:
           SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist/ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
+          set -euo pipefail
+          for intento in 1 2 3; do
+            if sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+              -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+              ./dist/ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"; then
+              echo "Build sistema publicado en intento $intento"
+              break
+            fi
+            if [[ "$intento" -eq 3 ]]; then
+              echo "Fallo publicacion build sistema tras 3 intentos"
+              exit 1
+            fi
+            echo "Reintentando build sistema... ($intento/3)"
+          done
 
       - name: Publicar landing (dist-public -> /public_html)
         if: steps.sftp_probe.outputs.reachable == 'true'
@@ -103,85 +148,18 @@ jobs:
           SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist-public/ "$SFTP_USER@$SFTP_HOST:public_html/"
-
-      - name: Publicar backend PHP en /public_html/sistema (FTP fallback)
-        if: steps.sftp_probe.outputs.reachable != 'true'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: /public_html/sistema/
-          protocol: ftp
-          port: ${{ secrets.HOSTINGER_FTP_PORT }}
-          dangerous-clean-slate: false
-          state-name: .ftp-deploy-sync-state-backend.json
-          timeout: 120
-          exclude: |
-            **/.git*
-            **/.github/**
-            **/node_modules/**
-            **/.vscode/**
-            **/.idea/**
-            **/dist/**
-            **/dist-public/**
-            **/public-site/**
-            **/src/**
-            **/tests/**
-            **/docs/**
-            **/tmp/**
-            **/uploads/**
-            **/*.log
-            **/.env
-            **/.env.*
-            **/config.php
-            **/config/instance.local.php
-            **/config/instances/*.php
-            !config/instances/clinic.example.php
-            !config/instances/sistema_clinica2demayo_com.php
-            !config/instances/www_clinica2demayo_com.php
-            !config/instances/clinica2demayo_com.php
-            !config/instances/sistema_cardiovidaiquitos_com.php
-            !config/instances/www_cardiovidaiquitos_com.php
-            !config/instances/cardiovidaiquitos_com.php
-            !config/instances/sistema_femcarepucallpa_com.php
-            !config/instances/www_femcarepucallpa_com.php
-            !config/instances/femcarepucallpa_com.php
-            **/clinica-config/**
-            **/backup/**
-            **/*.sql
-            **/*.sql.backup
-
-      - name: Publicar build de sistema (dist -> /public_html/sistema) (FTP fallback)
-        if: steps.sftp_probe.outputs.reachable != 'true'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: /public_html/sistema/
-          local-dir: ./dist/
-          protocol: ftp
-          port: ${{ secrets.HOSTINGER_FTP_PORT }}
-          dangerous-clean-slate: false
-          state-name: .ftp-deploy-sync-state-sistema-build.json
-          timeout: 120
-
-      - name: Publicar landing (dist-public -> /public_html) (FTP fallback)
-        if: steps.sftp_probe.outputs.reachable != 'true'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: /public_html/
-          local-dir: ./dist-public/
-          protocol: ftp
-          port: ${{ secrets.HOSTINGER_FTP_PORT }}
-          dangerous-clean-slate: false
-          state-name: .ftp-deploy-sync-state-landing-build.json
-          timeout: 120
+          set -euo pipefail
+          for intento in 1 2 3; do
+            if sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+              -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+              ./dist-public/ "$SFTP_USER@$SFTP_HOST:public_html/"; then
+              echo "Landing publicada en intento $intento"
+              break
+            fi
+            if [[ "$intento" -eq 3 ]]; then
+              echo "Fallo publicacion landing tras 3 intentos"
+              exit 1
+            fi
+            echo "Reintentando landing... ($intento/3)"
+          done
 
