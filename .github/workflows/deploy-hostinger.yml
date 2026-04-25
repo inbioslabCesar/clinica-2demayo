@@ -29,145 +29,88 @@ jobs:
       - name: Build frontend (sistema + landing)
         run: npm run build
 
-      - name: Validar secrets requeridos
+      - name: Validar secrets FTP requeridos
         env:
           FTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           FTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
           FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          [[ -n "$FTP_HOST" ]] || { echo "Falta secret HOSTINGER_SFTP_HOST"; exit 1; }
+          [[ -n "$FTP_HOST" ]] || { echo "Falta secret HOSTINGER_SFTP_HOST (usado como host FTP)"; exit 1; }
           [[ -n "$FTP_USER" ]] || { echo "Falta secret HOSTINGER_FTP_USER"; exit 1; }
           [[ -n "$FTP_PASS" ]] || { echo "Falta secret HOSTINGER_FTP_PASSWORD"; exit 1; }
 
-      - name: Verificar conectividad FTP
-        id: ftp_probe
-        env:
-          FTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-        run: |
-          set -euo pipefail
-          reachable=false
-          for intento in 1 2 3; do
-            if nc -z -w 8 "$FTP_HOST" 21; then
-              reachable=true
-              echo "FTP accesible en intento $intento"
-              break
-            fi
-            echo "FTP no accesible en intento $intento"
-          done
-          echo "reachable=$reachable" >> "$GITHUB_OUTPUT"
-
-      - name: Abortar si FTP no es accesible
-        if: steps.ftp_probe.outputs.reachable != 'true'
-        run: |
-          echo "No hay conectividad FTP al puerto 21. Se cancela el deploy."
-          exit 1
-
-      - name: Instalar lftp
-        if: steps.ftp_probe.outputs.reachable == 'true'
-        run: sudo apt-get update && sudo apt-get install -y lftp
-
       - name: Publicar backend PHP en /public_html/sistema (FTP)
-        if: steps.ftp_probe.outputs.reachable == 'true'
-        env:
-          FTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          FTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          # Crear archivo de comandos lftp para backend
-          cat > /tmp/ftp_backend.txt <<'EOF'
-          set ftp:ssl-allow no
-          mirror -R \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            --exclude "node_modules/" \
-            --exclude ".vscode/" \
-            --exclude ".idea/" \
-            --exclude "dist/" \
-            --exclude "dist-public/" \
-            --exclude "public-site/" \
-            --exclude "src/" \
-            --exclude "tests/" \
-            --exclude "docs/" \
-            --exclude "tmp/" \
-            --exclude "uploads/" \
-            --exclude ".env" \
-            --exclude ".env.*" \
-            --exclude "config.php" \
-            --exclude "config/instance.local.php" \
-            --exclude "clinica-config/" \
-            --exclude "backup/" \
-            --exclude "*.log" \
-            --exclude "*.sql" \
-            --exclude "*.sql.backup" \
-            ./ /public_html/sistema/
-          quit
-          EOF
-          
-          for intento in 1 2 3; do
-            if lftp -u "$FTP_USER","$FTP_PASS" -e "$(cat /tmp/ftp_backend.txt)" "ftp://$FTP_HOST"; then
-              echo "Backend publicado en intento $intento"
-              break
-            fi
-            if [[ "$intento" -eq 3 ]]; then
-              echo "ERROR: Fallo publicacion backend tras 3 intentos"
-              exit 1
-            fi
-            echo "Reintentando backend (intento $intento/3)..."
-            sleep 5
-          done
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/sistema/
+          protocol: ftp
+          port: 21
+          dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state-backend.json
+          timeout: 120
+          exclude: |
+            **/.git*
+            **/.github/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.idea/**
+            **/dist/**
+            **/dist-public/**
+            **/public-site/**
+            **/src/**
+            **/tests/**
+            **/docs/**
+            **/tmp/**
+            **/uploads/**
+            **/*.log
+            **/.env
+            **/.env.*
+            **/config.php
+            **/config/instance.local.php
+            **/config/instances/*.php
+            !config/instances/clinic.example.php
+            !config/instances/sistema_clinica2demayo_com.php
+            !config/instances/www_clinica2demayo_com.php
+            !config/instances/clinica2demayo_com.php
+            !config/instances/sistema_cardiovidaiquitos_com.php
+            !config/instances/www_cardiovidaiquitos_com.php
+            !config/instances/cardiovidaiquitos_com.php
+            !config/instances/sistema_femcarepucallpa_com.php
+            !config/instances/www_femcarepucallpa_com.php
+            !config/instances/femcarepucallpa_com.php
+            **/clinica-config/**
+            **/backup/**
+            **/*.sql
+            **/*.sql.backup
 
-      - name: Publicar build de sistema (dist -> /public_html/sistema)
-        if: steps.ftp_probe.outputs.reachable == 'true'
-        env:
-          FTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          FTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          cat > /tmp/ftp_dist.txt <<'EOF'
-          set ftp:ssl-allow no
-          mirror -R ./dist/ /public_html/sistema/
-          quit
-          EOF
-          
-          for intento in 1 2 3; do
-            if lftp -u "$FTP_USER","$FTP_PASS" -e "$(cat /tmp/ftp_dist.txt)" "ftp://$FTP_HOST"; then
-              echo "Build sistema publicado en intento $intento"
-              break
-            fi
-            if [[ "$intento" -eq 3 ]]; then
-              echo "ERROR: Fallo publicacion build sistema tras 3 intentos"
-              exit 1
-            fi
-            echo "Reintentando build sistema (intento $intento/3)..."
-            sleep 5
-          done
+      - name: Publicar build de sistema (dist -> /public_html/sistema) (FTP)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/sistema/
+          local-dir: ./dist/
+          protocol: ftp
+          port: 21
+          dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state-sistema-build.json
+          timeout: 120
 
-      - name: Publicar landing (dist-public -> /public_html)
-        if: steps.ftp_probe.outputs.reachable == 'true'
-        env:
-          FTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          FTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          cat > /tmp/ftp_landing.txt <<'EOF'
-          set ftp:ssl-allow no
-          mirror -R ./dist-public/ /public_html/
-          quit
-          EOF
-          
-          for intento in 1 2 3; do
-            if lftp -u "$FTP_USER","$FTP_PASS" -e "$(cat /tmp/ftp_landing.txt)" "ftp://$FTP_HOST"; then
-              echo "Landing publicada en intento $intento"
-              break
-            fi
-            if [[ "$intento" -eq 3 ]]; then
-              echo "ERROR: Fallo publicacion landing tras 3 intentos"
-              exit 1
-            fi
-            echo "Reintentando landing (intento $intento/3)..."
-            sleep 5
-          done
+      - name: Publicar landing (dist-public -> /public_html) (FTP)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: /public_html/
+          local-dir: ./dist-public/
+          protocol: ftp
+          port: 21
+          dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state-landing-build.json
+          timeout: 120
