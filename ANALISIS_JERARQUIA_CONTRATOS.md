@@ -449,3 +449,7 @@ Actualmente **nacen sueltas**, se vinculan POST-SAVE mediante lógica implícita
 
 **Fin del Análisis Técnico**  
 Listo para implementación cuando sea requerido.
+
+---
+
+Nota de prueba de despliegue: commit de verificación de GitHub Actions (2026-04-25).
