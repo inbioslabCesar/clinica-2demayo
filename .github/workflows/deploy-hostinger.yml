@@ -1,4 +1,4 @@
-name: Deploy a Hostinger
+name: Deploy a Hostinger (test)
 
 on:
   push:
@@ -116,7 +116,7 @@ jobs:
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           server-dir: /public_html/sistema/
           protocol: ftp
-          port: 21
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-backend.json
           timeout: 120
