@@ -56,7 +56,7 @@ jobs:
           printf "commit=%s\ndate=%s\n" "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist-public/deploy_version.txt
           printf "commit=%s\ndate=%s\n" "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > deploy_version_backend.txt
 
-      - name: Publicar backend PHP en sistema (SFTP)
+      - name: Publicar backend PHP (SFTP, rutas candidatas)
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -64,37 +64,44 @@ jobs:
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            --exclude "node_modules/" \
-            --exclude ".vscode/" \
-            --exclude ".idea/" \
-            --exclude "dist/" \
-            --exclude "dist-public/" \
-            --exclude "public-site/" \
-            --exclude "src/" \
-            --exclude "tests/" \
-            --exclude "docs/" \
-            --exclude "tmp/" \
-            --exclude "uploads/" \
-            --exclude ".env" \
-            --exclude ".env.*" \
-            --exclude "config.php" \
-            --exclude "config/instance.local.php" \
-            --exclude "clinica-config/" \
-            --exclude "backup/" \
-            --exclude "*.log" \
-            --exclude "*.sql" \
-            --exclude "*.sql.backup" \
-            ./ "$SFTP_USER@$SFTP_HOST:sistema/"
+          ok_backend=0
+          for target in "sistema/" "public_html/sistema/"; do
+            echo "Intentando backend en: $target"
+            if sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+              -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+              --exclude ".git/" \
+              --exclude ".github/" \
+              --exclude "node_modules/" \
+              --exclude ".vscode/" \
+              --exclude ".idea/" \
+              --exclude "dist/" \
+              --exclude "dist-public/" \
+              --exclude "public-site/" \
+              --exclude "src/" \
+              --exclude "tests/" \
+              --exclude "docs/" \
+              --exclude "tmp/" \
+              --exclude "uploads/" \
+              --exclude ".env" \
+              --exclude ".env.*" \
+              --exclude "config.php" \
+              --exclude "config/instance.local.php" \
+              --exclude "clinica-config/" \
+              --exclude "backup/" \
+              --exclude "*.log" \
+              --exclude "*.sql" \
+              --exclude "*.sql.backup" \
+              ./ "$SFTP_USER@$SFTP_HOST:$target"; then
+              ok_backend=1
+              sshpass -p "$SFTP_PASS" rsync -az --mkpath \
+                -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+                ./deploy_version_backend.txt "$SFTP_USER@$SFTP_HOST:${target}deploy_version_backend.txt" || true
+            fi
+          done
 
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./deploy_version_backend.txt "$SFTP_USER@$SFTP_HOST:sistema/deploy_version_backend.txt"
+          [ "$ok_backend" -eq 1 ] || { echo "No se pudo publicar backend en ninguna ruta candidata"; exit 1; }
 
-      - name: Publicar build de sistema (dist -> sistema)
+      - name: Publicar build de sistema (dist, rutas candidatas)
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -102,11 +109,19 @@ jobs:
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist/ "$SFTP_USER@$SFTP_HOST:sistema/"
+          ok_sistema=0
+          for target in "sistema/" "public_html/sistema/"; do
+            echo "Intentando frontend sistema en: $target"
+            if sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
+              -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+              ./dist/ "$SFTP_USER@$SFTP_HOST:$target"; then
+              ok_sistema=1
+            fi
+          done
 
-      - name: Publicar landing (dist-public -> root)
+          [ "$ok_sistema" -eq 1 ] || { echo "No se pudo publicar dist en ninguna ruta candidata"; exit 1; }
+
+      - name: Publicar landing (dist-public, rutas candidatas)
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -114,6 +129,14 @@ jobs:
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist-public/ "$SFTP_USER@$SFTP_HOST:./"
+          ok_landing=0
+          for target in "./" "public_html/"; do
+            echo "Intentando landing en: $target"
+            if sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
+              -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+              ./dist-public/ "$SFTP_USER@$SFTP_HOST:$target"; then
+              ok_landing=1
+            fi
+          done
+
+          [ "$ok_landing" -eq 1 ] || { echo "No se pudo publicar dist-public en ninguna ruta candidata"; exit 1; }
