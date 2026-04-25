@@ -6,4 +6,5 @@ return [
     'DB_NAME' => 'u330560936_bd2DeMayo',
     'DB_USER' => 'u330560936_user2DeMayo',
     'DB_PASS' => '2025-10-20Clinica2demayo',
+    'ASISTENTE_KB_PASSWORD' => 'KBclinica2026',
 ];

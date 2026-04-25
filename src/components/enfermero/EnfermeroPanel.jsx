@@ -1,11 +1,13 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import TriageList from "./TriageList";
 import { Icon } from '@fluentui/react';
+import TratamientosList from "./TratamientosList";
 
 // Panel principal para enfermero: navegación entre Triage, Tratamientos y Hospitalización
 function EnfermeroPanel() {
   const [tab, setTab] = useState("triage");
+  const STORAGE_KEY = "enfermero_panel_tab";
 
   const tabs = [
     {
@@ -30,6 +32,17 @@ function EnfermeroPanel() {
       description: "Control de hospitalización"
     }
   ];
+
+  useEffect(() => {
+    const savedTab = localStorage.getItem(STORAGE_KEY);
+    if (savedTab && tabs.some((t) => t.key === savedTab)) {
+      setTab(savedTab);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, tab);
+  }, [tab]);
 
   const getTabStyle = (isActive) => {
     if (isActive) {
@@ -120,7 +133,7 @@ function EnfermeroPanel() {
       </div>
 
       {/* Contenido de las tabs */}
-      <div className="max-w-7xl mx-auto">
+      <div className={`${tab === "tratamientos" ? "max-w-[92rem]" : "max-w-7xl"} mx-auto`}>
         {tab === "triage" && (
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
             <div
@@ -160,13 +173,7 @@ function EnfermeroPanel() {
               </div>
             </div>
             <div className="p-6">
-              <div className="text-center py-12">
-                <div className="flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mx-auto mb-4">
-                  <Icon iconName="Health" className="text-4xl text-blue-600" />
-                </div>
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">Módulo en Desarrollo</h3>
-                <p className="text-gray-600">La gestión de tratamientos estará disponible próximamente</p>
-              </div>
+              <TratamientosList activo={tab === "tratamientos"} />
             </div>
           </div>
         )}

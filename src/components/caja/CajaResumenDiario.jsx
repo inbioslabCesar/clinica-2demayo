@@ -2,6 +2,7 @@ import React from "react";
 
 export default function CajaResumenDiario({ resumen }) {
   // ...existing code...
+  const tipoIngresoLabel = (tipo) => String(tipo || "").replace(/_/g, " ").toUpperCase();
   const hasPositive = (val) => val !== undefined && val !== null && parseFloat(val) > 0;
   const Check = () => (
     <svg
@@ -82,7 +83,7 @@ export default function CajaResumenDiario({ resumen }) {
           {resumen.por_servicio && resumen.por_servicio.length > 0 ? (
             resumen.por_servicio.map((serv, idx) => (
               <div key={idx} className="rounded-2xl shadow-lg bg-white border-t-4 border-purple-400 p-4 flex flex-col items-center gap-2 hover:scale-[1.03] transition-all">
-                <span className="font-bold text-purple-700 text-md flex items-center">{serv.tipo_ingreso.toUpperCase()} {parseFloat(serv.total_servicio) > 0 && (<span className="ml-2 text-green-600"><Check /></span>)}</span>
+                <span className="font-bold text-purple-700 text-md flex items-center">{tipoIngresoLabel(serv.tipo_ingreso)} {parseFloat(serv.total_servicio) > 0 && (<span className="ml-2 text-green-600"><Check /></span>)}</span>
                 <div className="text-2xl font-extrabold text-purple-600 drop-shadow">S/ {parseFloat(serv.total_servicio).toFixed(2)}</div>
               </div>
             ))

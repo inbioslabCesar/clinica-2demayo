@@ -8,6 +8,7 @@ import PacienteForm from "../paciente-list/PacienteListForm.jsx";
 function RecepcionModulo({ onPacienteRegistrado }) {
   const [paciente, setPaciente] = useState(null);
   const [showRegistro, setShowRegistro] = useState(false);
+  const [registroInicial, setRegistroInicial] = useState({});
 
   const hayPacienteSeleccionado = Boolean(paciente && paciente.id);
 
@@ -15,6 +16,18 @@ function RecepcionModulo({ onPacienteRegistrado }) {
   const handleNuevaBusqueda = () => {
     setPaciente(null);
     setShowRegistro(false);
+    setRegistroInicial({});
+  };
+
+  const handleNoEncontrado = (payload = {}) => {
+    const tipoBusqueda = String(payload?.tipo || "").toLowerCase();
+    const valorBusqueda = String(payload?.valor || "").trim();
+    const esDocumento = tipoBusqueda === "dni" || tipoBusqueda === "carnet_extranjeria";
+    const dniSugerido = esDocumento ? valorBusqueda : "";
+    const tipoDocumentoSugerido = tipoBusqueda === "carnet_extranjeria" ? "carnet_extranjeria" : "dni";
+
+    setRegistroInicial(dniSugerido ? { dni: dniSugerido, tipo_documento: tipoDocumentoSugerido } : {});
+    setShowRegistro(true);
   };
 
   // Callback para cuando se registra un paciente
@@ -54,7 +67,7 @@ function RecepcionModulo({ onPacienteRegistrado }) {
 
       <PacienteListSearch 
         onPacienteEncontrado={setPaciente}
-        onNoEncontrado={() => setShowRegistro(true)}
+        onNoEncontrado={handleNoEncontrado}
         onNuevaBusqueda={handleNuevaBusqueda}
       />
 
@@ -68,7 +81,7 @@ function RecepcionModulo({ onPacienteRegistrado }) {
       {showRegistro && !paciente && (
         <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="mb-3 text-sm font-semibold text-amber-900">Paciente no encontrado. Registrelo para continuar con la cotizacion.</p>
-          <PacienteForm initialData={{}} onRegistroExitoso={handleRegistroExitoso} />
+          <PacienteForm initialData={registroInicial} onRegistroExitoso={handleRegistroExitoso} />
         </div>
       )}
     </div>

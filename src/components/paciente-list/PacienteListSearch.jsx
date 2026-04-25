@@ -4,6 +4,7 @@ import { BASE_URL } from "../../config/config";
 
 const TIPO_META = {
   dni: { label: "DNI", placeholder: "Ej: 71609118" },
+  carnet_extranjeria: { label: "Carnet de Extranjeria", placeholder: "Ej: 001234567890" },
   nombre: { label: "Nombre y Apellido", placeholder: "Ej: Juan Perez" },
   historia: { label: "Historia Clinica", placeholder: "Ej: HC000937" },
 };
@@ -40,11 +41,21 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
       } else {
         setResultados([]);
         setNoEncontrado(true);
-        onNoEncontrado();
+        if (onNoEncontrado) {
+          onNoEncontrado({
+            tipo,
+            valor: String(busqueda || "").trim(),
+          });
+        }
       }
     } catch {
       setResultados([]);
-      onNoEncontrado();
+      if (onNoEncontrado) {
+        onNoEncontrado({
+          tipo,
+          valor: String(busqueda || "").trim(),
+        });
+      }
     }
     setBuscando(false);
   };
@@ -89,6 +100,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
           className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-900"
         >
           <option value="dni">DNI</option>
+          <option value="carnet_extranjeria">Carnet de Extranjeria</option>
           <option value="nombre">Nombre y Apellido</option>
           <option value="historia">Historia Clinica</option>
         </select>
@@ -126,7 +138,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
           <ul className="space-y-2">
             {resultados.length === 1 ? (
               <li key={resultados[0].id} className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
-                {resultados[0].nombre} {resultados[0].apellido} | DNI: {resultados[0].dni} | HC: {resultados[0].historia_clinica}
+                {resultados[0].nombre} {resultados[0].apellido} | {tipoActual.label}: {resultados[0].dni} | HC: {resultados[0].historia_clinica}
               </li>
             ) : (
               resultados.map((p) => (
@@ -139,7 +151,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
                       onPacienteEncontrado(p);
                     }}
                   >
-                    {p.nombre} {p.apellido} | DNI: {p.dni} | HC: {p.historia_clinica}
+                    {p.nombre} {p.apellido} | {tipoActual.label}: {p.dni} | HC: {p.historia_clinica}
                   </button>
                 </li>
               ))

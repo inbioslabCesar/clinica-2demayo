@@ -15,12 +15,29 @@ export default function CotizarEcografiaPage() {
     const [seleccionados, setSeleccionados] = useState([]);
     const [cantidades, setCantidades] = useState({});
     const [mensaje, setMensaje] = useState("");
+    const [coverageByTarifa, setCoverageByTarifa] = useState({});
+    const [coverageStatusByTarifa, setCoverageStatusByTarifa] = useState({});
     const [preloadedCounts, setPreloadedCounts] = useState({}); // {tarifaId: cantidad}
     const [cajaEstado, setCajaEstado] = useState(null);
     const [pendingEcoItems, setPendingEcoItems] = useState([]); // items pendientes para mapear contra tarifas
     const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
     const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
     const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+
+    const getLimaDate = () => {
+      const now = new Date();
+      const partes = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Lima',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).formatToParts(now);
+
+      const year = partes.find((p) => p.type === 'year')?.value;
+      const month = partes.find((p) => p.type === 'month')?.value;
+      const day = partes.find((p) => p.type === 'day')?.value;
+      return `${year}-${month}-${day}`;
+    };
 
     // Filtrar tarifas por búsqueda
     const tarifasFiltradas = tarifas.filter(tarifa => {
@@ -34,7 +51,17 @@ export default function CotizarEcografiaPage() {
         texto.includes(busqueda.toLowerCase()) ||
         doctor.includes(busqueda.toLowerCase())
       );
+    }).sort((a, b) => {
+      const aContrato = String(coverageByTarifa[Number(a.id)]?.origen_cobro || '') === 'contrato';
+      const bContrato = String(coverageByTarifa[Number(b.id)]?.origen_cobro || '') === 'contrato';
+      if (aContrato !== bContrato) return aContrato ? -1 : 1;
+      return String(a.descripcion || a.nombre || '').localeCompare(String(b.descripcion || b.nombre || ''));
     });
+
+  const getCoberturaTarifa = (tarifaId) => coverageByTarifa[Number(tarifaId)] || null;
+  const getDisplayPrice = (tarifa) => String(getCoberturaTarifa(tarifa?.id)?.origen_cobro || '') === 'contrato'
+    ? 0
+    : Number(tarifa?.precio_particular || 0);
 
   useEffect(() => {
     fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
@@ -63,6 +90,73 @@ export default function CotizarEcografiaPage() {
       });
     // Eliminado log de depuración
   }, [pacienteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const cargarCoberturas = async () => {
+      if (!pacienteId || tarifas.length === 0) {
+        if (!cancelled) {
+          setCoverageByTarifa({});
+          setCoverageStatusByTarifa({});
+        }
+        return;
+      }
+
+      const fechaRef = getLimaDate();
+      const tarifaIds = tarifas.map((tarifa) => Number(tarifa.id)).filter((id) => id > 0);
+      const statusPending = Object.fromEntries(tarifaIds.map((id) => [id, 'pending']));
+      if (!cancelled) {
+        setCoverageStatusByTarifa(statusPending);
+      }
+
+      try {
+        const res = await fetch(
+          `${BASE_URL}api_contratos.php?accion=validar_cobertura_lote&paciente_id=${Number(pacienteId)}&servicio_tipo=ecografia&cantidad=1&fecha_ref=${encodeURIComponent(fechaRef)}&servicio_ids=${encodeURIComponent(tarifaIds.join(','))}`,
+          { credentials: 'include' }
+        );
+        const data = await res.json();
+        if (!cancelled && data?.success && data?.coberturas && typeof data.coberturas === 'object') {
+          const coverage = {};
+          const doneStatus = {};
+          tarifaIds.forEach((id) => {
+            coverage[id] = data.coberturas[String(id)] || null;
+            doneStatus[id] = 'done';
+          });
+          setCoverageByTarifa(coverage);
+          setCoverageStatusByTarifa(doneStatus);
+          return;
+        }
+      } catch {
+        // fallback abajo
+      }
+
+      const entries = await Promise.all(
+        tarifas.map(async (tarifa) => {
+          try {
+            const tarifaId = Number(tarifa.id);
+            const res = await fetch(
+              `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=ecografia&servicio_id=${tarifaId}&cantidad=1&fecha_ref=${encodeURIComponent(fechaRef)}`,
+              { credentials: 'include' }
+            );
+            const data = await res.json();
+            return [tarifaId, data?.cobertura || null];
+          } catch {
+            return [Number(tarifa.id), null];
+          }
+        })
+      );
+
+      if (!cancelled) {
+        const doneStatus = Object.fromEntries(entries.map(([id]) => [id, 'done']));
+        setCoverageByTarifa(Object.fromEntries(entries));
+        setCoverageStatusByTarifa(doneStatus);
+      }
+    };
+
+    cargarCoberturas();
+    return () => { cancelled = true; };
+  }, [pacienteId, tarifas]);
 
   // Consultar estado de caja al entrar
   useEffect(() => {
@@ -181,12 +275,13 @@ export default function CotizarEcografiaPage() {
       if (diff > 0) {
         const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
         if (!tarifa) return;
+        const precioNeto = getDisplayPrice(tarifa);
         itemsToAdd.push({
           servicio_id: Number(tid),
           descripcion: tarifa.descripcion || tarifa.nombre,
           cantidad: diff,
-          precio_unitario: tarifa.precio_particular,
-          subtotal: tarifa.precio_particular * diff,
+          precio_unitario: precioNeto,
+          subtotal: precioNeto * diff,
           medico_id: tarifa.medico_id || "",
           especialidad: tarifa.especialidad || ""
         });
@@ -341,7 +436,7 @@ export default function CotizarEcografiaPage() {
     return seleccionados.reduce((total, tid) => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
       const cantidad = cantidades[tid] || 1;
-      return tarifa ? total + tarifa.precio_particular * cantidad : total;
+      return tarifa ? total + getDisplayPrice(tarifa) * cantidad : total;
     }, 0);
   };
 
@@ -363,8 +458,8 @@ export default function CotizarEcografiaPage() {
         servicio_id: tid,
         descripcion,
         cantidad,
-        precio_unitario: tarifa.precio_particular,
-        subtotal: tarifa.precio_particular * cantidad,
+        precio_unitario: getDisplayPrice(tarifa),
+        subtotal: getDisplayPrice(tarifa) * cantidad,
         medico_id: tarifa.medico_id || "",
         medico_nombre,
         especialidad: tarifa.especialidad || "",
@@ -451,7 +546,7 @@ export default function CotizarEcografiaPage() {
     return [...detallesNoEcografia, ...detallesEcografia];
   };
 
-  const cotizar = async () => {
+  const cotizar = async ({ irACobro = false } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos una ecografía.");
       return;
@@ -507,11 +602,13 @@ export default function CotizarEcografiaPage() {
 
     try {
       let data;
+      const fechaRef = getLimaDate();
+      const payloadConFecha = { ...payload, fecha_ref: fechaRef };
       const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payloadConFecha)
       });
       data = await res.json();
 
@@ -534,6 +631,7 @@ export default function CotizarEcografiaPage() {
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
+          fecha_ref: fechaRef,
           motivo: 'Adenda confirmada por usuario desde cotizador de Ecografía (cotización pagada)'
         };
         const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
@@ -560,6 +658,10 @@ export default function CotizarEcografiaPage() {
       Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
         if (limpiarCarritoAlFinal) {
           clearCart();
+        }
+        if (irACobro && cotizacionDestino > 0) {
+          navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
+          return;
         }
         if (cotizacionDestino > 0 && cotizacionId) {
           try {
@@ -656,6 +758,13 @@ export default function CotizarEcografiaPage() {
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
                       <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
                       <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
+                      {coverageStatusByTarifa[Number(tarifa.id)] === 'pending' ? (
+                        <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
+                      ) : String(getCoberturaTarifa(tarifa.id)?.origen_cobro || '') === 'contrato' ? (
+                        <div className="text-xs text-green-700 mt-1 font-semibold">Cubierta hoy por contrato</div>
+                      ) : (
+                        <div className="text-xs text-amber-700 mt-1">Se cobrara si la seleccionas</div>
+                      )}
                     </div>
                     {seleccionados.includes(Number(tarifa.id)) ? (
                       <>
@@ -700,7 +809,7 @@ export default function CotizarEcografiaPage() {
                     <li key={tid} className="py-2 flex justify-between items-center">
                       <span>{tarifa.descripcion || tarifa.nombre}</span>
                       <span>{cantidad} estudio(s)</span>
-                      <span className="font-bold text-green-700">S/ {(tarifa.precio_particular * cantidad).toFixed(2)}</span>
+                      <span className="font-bold text-green-700">S/ {(getDisplayPrice(tarifa) * cantidad).toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}
@@ -723,13 +832,22 @@ export default function CotizarEcografiaPage() {
                   <span>🔄</span>Actualizar cobro
                 </button>
               ) : (
-                <button
-                  onClick={cotizar}
-                  disabled={cajaEstado === 'cerrada'}
-                  className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                >
-                  {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar Cotización'}
-                </button>
+                <>
+                  <button
+                    onClick={() => cotizar()}
+                    disabled={cajaEstado === 'cerrada'}
+                    className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                  >
+                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}
+                  </button>
+                  <button
+                    onClick={() => cotizar({ irACobro: true })}
+                    disabled={cajaEstado === 'cerrada'}
+                    className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                  >
+                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}
+                  </button>
+                </>
               )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">

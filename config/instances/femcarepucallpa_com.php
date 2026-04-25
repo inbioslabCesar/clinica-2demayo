@@ -6,4 +6,5 @@ return [
     'DB_NAME' => 'u330560936_femcare_bd',
     'DB_USER' => 'u330560936_femcare',
     'DB_PASS' => '06_04_2026_Femcare$',
+    'ASISTENTE_KB_PASSWORD' => 'KBfemcare2026',
 ];

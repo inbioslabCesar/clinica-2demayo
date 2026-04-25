@@ -560,6 +560,9 @@ switch ($method) {
         $search = isset($_GET['search']) ? trim($_GET['search']) : '';
         $fecha_desde = isset($_GET['fecha_desde']) ? trim($_GET['fecha_desde']) : '';
         $fecha_hasta = isset($_GET['fecha_hasta']) ? trim($_GET['fecha_hasta']) : '';
+        $solo_activas = isset($_GET['solo_activas'])
+            ? in_array(strtolower(trim((string)$_GET['solo_activas'])), ['1', 'true', 'si', 'sí', 'yes'], true)
+            : false;
         $usar_paginacion = ($page > 0 && $per_page > 0);
         if ($usar_paginacion && $per_page > 100) {
             $per_page = 100;
@@ -624,6 +627,10 @@ switch ($method) {
             $types .= 's';
         }
 
+        if ($solo_activas) {
+            $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'completada')";
+        }
+
         $whereSql = count($where) ? (' WHERE ' . implode(' AND ', $where)) : '';
 
         $statsSql = 'SELECT COUNT(*) AS total, '
@@ -650,6 +657,7 @@ switch ($method) {
             . '   INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
             . '   WHERE cd.consulta_id IS NOT NULL'
             . '     AND cd.consulta_id > 0'
+            . '     AND LOWER(TRIM(cd.servicio_tipo)) = \'consulta\''
             . '     AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada")'
             . '   GROUP BY cd.consulta_id'
             . ' ) cot_ref ON cot_ref.consulta_id = consultas.id'

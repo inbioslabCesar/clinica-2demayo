@@ -10,6 +10,7 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
   const total_plin = totalesBackend?.total_plin ?? datos.total_plin ?? 0;
   const total_tarjetas = totalesBackend?.total_tarjetas ?? datos.total_tarjetas ?? 0;
   const total_transferencias = totalesBackend?.total_transferencias ?? datos.total_transferencias ?? 0;
+  const total_contratos_abono = totalesBackend?.total_contratos_abono ?? 0;
   // Egresos
   const egreso_honorarios = totalesBackend?.egreso_honorarios ?? datos.egreso_honorarios ?? 0;
   const egreso_lab_ref = totalesBackend?.egreso_lab_ref ?? datos.egreso_lab_ref ?? 0;
@@ -188,6 +189,11 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
       <div class="t-row"><span class="label">Plin</span><span class="value">S/ ${total_plin.toFixed(2)}</span></div>
       <div class="t-row"><span class="label">Tarjeta</span><span class="value">S/ ${total_tarjetas.toFixed(2)}</span></div>
       <div class="t-row"><span class="label">Transferencia</span><span class="value">S/ ${total_transferencias.toFixed(2)}</span></div>
+      ${total_contratos_abono > 0 ? `
+      <hr class="t-hr" />
+      <div class="t-section">Desglose contratos</div>
+      <div class="t-row"><span class="label">Abonos contratos</span><span class="value">S/ ${total_contratos_abono.toFixed(2)}</span></div>
+      ` : ''}
 
       <hr class="t-hr" />
       <div class="t-section">Egresos</div>
@@ -496,6 +502,19 @@ export default function CerrarCajaView() {
               );
             })}
           </div>
+          {(() => {
+            const montoAbono = parseFloat(resumen?.total_contratos_abono || 0);
+            if (montoAbono <= 0) return null;
+            return (
+              <div className="mt-3 flex gap-3">
+                <div className="rounded-xl shadow-lg bg-white border-t-4 border-teal-400 px-4 py-3 flex flex-col items-center gap-1 w-full sm:w-[160px] transition-all hover:scale-105">
+                  <span className="font-bold text-teal-700 text-sm truncate">CONTRATO ABONO</span>
+                  <span className="text-base text-teal-600 font-mono">S/ {montoAbono.toFixed(2)}</span>
+                  <span className="text-xs text-gray-500">incluido en totales</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
         <div className="flex flex-col gap-4 mb-6">
           <div className="bg-yellow-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">

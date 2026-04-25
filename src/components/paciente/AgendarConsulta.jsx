@@ -33,6 +33,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const [medicos, setMedicos] = useState([]);
   const [medicosConTarifa, setMedicosConTarifa] = useState([]);
   const [tarifasConsulta, setTarifasConsulta] = useState([]);
+  const [coverageByTarifa, setCoverageByTarifa] = useState({});
   const [medicoId, setMedicoId] = useState("");
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
   // Inicializar fecha con la fecha actual de Lima
@@ -136,9 +137,19 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     return tarifa;
   };
 
+  const getCoberturaTarifaConsulta = (tarifaId) => coverageByTarifa[Number(tarifaId)] || null;
+
+  const getPrecioConsultaNeto = (tarifa) => {
+    const cobertura = getCoberturaTarifaConsulta(tarifa?.id);
+    if (String(cobertura?.origen_cobro || "") === "contrato") {
+      return 0;
+    }
+    return Number(tarifa?.precio_particular || 0);
+  };
+
   const construirDetalleConsulta = (tarifa, consultaInfo) => {
-    const precio = parseFloat(tarifa.precio_particular) || 0;
-    if (precio <= 0) {
+    const precio = getPrecioConsultaNeto(tarifa);
+    if (!Number.isFinite(precio) || precio < 0) {
       throw new Error("La tarifa de consulta no tiene un precio válido");
     }
 
@@ -274,8 +285,46 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       setMedicos([]);
       setTarifasConsulta([]);
       setMedicosConTarifa([]);
+      setCoverageByTarifa({});
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const cargarCoberturaConsulta = async () => {
+      const tarifas = Array.isArray(tarifasConsulta) ? tarifasConsulta : [];
+      if (!pacienteId || tarifas.length === 0 || !fecha) {
+        if (!cancelled) setCoverageByTarifa({});
+        return;
+      }
+
+      const entradas = await Promise.all(
+        tarifas.map(async (tarifa) => {
+          const tarifaId = Number(tarifa?.id || 0);
+          if (tarifaId <= 0) return [tarifaId, null];
+          try {
+            const res = await fetch(
+              `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=consulta&servicio_id=${tarifaId}&cantidad=1&fecha_ref=${encodeURIComponent(String(fecha))}`,
+              { credentials: "include" }
+            );
+            const data = await res.json();
+            return [tarifaId, data?.cobertura || null];
+          } catch {
+            return [tarifaId, null];
+          }
+        })
+      );
+
+      if (!cancelled) {
+        const sane = entradas.filter(([id]) => Number(id) > 0);
+        setCoverageByTarifa(Object.fromEntries(sane));
+      }
+    };
+
+    cargarCoberturaConsulta();
+    return () => { cancelled = true; };
+  }, [pacienteId, tarifasConsulta, fecha]);
 
   // Cargar horarios disponibles cuando se selecciona médico y fecha
   useEffect(() => {
@@ -496,8 +545,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     setMsg("");
     try {
       const tarifa = await obtenerTarifaConsulta(medicoId);
-      const precio = Number(tarifa?.precio_particular || 0);
-      if (!Number.isFinite(precio) || precio <= 0) {
+      const precio = getPrecioConsultaNeto(tarifa);
+      if (!Number.isFinite(precio) || precio < 0) {
         throw new Error("La tarifa de consulta no tiene un precio válido");
       }
 
@@ -785,6 +834,26 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       setTotalConsulta(total);
       setConsultaCreada({ ...consultaInfo, cotizacion_id: cotizacionId });
 
+      if (accion === "cobrar" && Number(total) <= 0) {
+        setMsg("");
+        await MySwal.fire({
+          icon: "success",
+          title: "Consulta agendada",
+          html: `
+            <div class="text-left">
+              <p><strong>Consulta ID:</strong> ${consultaInfo.id}</p>
+              <p><strong>Cotización ID:</strong> ${cotizacionId}</p>
+              <p><strong>Total:</strong> S/ 0.00</p>
+              <p>La consulta quedó registrada sin cobro manual.</p>
+            </div>
+          `,
+          confirmButtonText: "Aceptar",
+          confirmButtonColor: "#2563eb",
+        });
+        navigate(backTo || "/lista-consultas");
+        return;
+      }
+
       if (accion === "cotizar") {
         setMsg("");
 
@@ -865,8 +934,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
 
     try {
       const tarifa = await obtenerTarifaConsulta(medicoId);
-      const precio = Number(tarifa?.precio_particular || 0);
-      if (!Number.isFinite(precio) || precio <= 0) {
+      const precio = getPrecioConsultaNeto(tarifa);
+      if (!Number.isFinite(precio) || precio < 0) {
         throw new Error("La tarifa de consulta no tiene un precio válido");
       }
 
@@ -1170,6 +1239,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
             setTipoConsulta={setTipoConsulta}
             medicos={medicosConTarifa}
             tarifas={tarifasConsulta}
+            coverageByTarifa={coverageByTarifa}
             medicoId={medicoId}
             setMedicoId={setMedicoId}
             fecha={fecha}

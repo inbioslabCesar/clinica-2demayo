@@ -14,7 +14,7 @@ export class SecurityUtils {
         const protocol = window.location.protocol;
         
         // Permitir localhost en desarrollo
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
             return { isValid: true, context: 'development' };
         }
         

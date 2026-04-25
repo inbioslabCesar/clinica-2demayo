@@ -79,6 +79,11 @@ export default function QuoteCartPanel() {
         tipo_derivacion: derivado ? String(it.tipoDerivacion || "") : "",
         valor_derivacion: derivado ? Number(it.valorDerivacion || 0) : 0,
         laboratorio_referencia: derivado ? String(it.laboratorioReferencia || "") : "",
+        paquete_id: Number(it.packageId || 0) || null,
+        paquete_codigo: String(it.packageCode || ""),
+        paquete_tipo: String(it.packageType || ""),
+        componentes: Array.isArray(it.componentes) ? it.componentes : [],
+        cotizacion_id: Number(it.cotizacionId || 0) || null,
       };
       if (esConsulta) {
         detalle.medico_id = Number(it.consultaMedicoId || 0);
@@ -97,7 +102,9 @@ export default function QuoteCartPanel() {
     const tipoDeriv = String(d?.tipo_derivacion || "").toLowerCase();
     const valorDeriv = Number(d?.valor_derivacion || 0).toFixed(2);
     const labRef = String(d?.laboratorio_referencia || "").trim().toLowerCase();
-    return [servicio, servicioId, descripcion, precio, derivado ? "1" : "0", tipoDeriv, valorDeriv, labRef].join("::");
+    const paqueteId = Number(d?.paquete_id || 0);
+    const paqueteTipo = String(d?.paquete_tipo || "").toLowerCase();
+    return [servicio, servicioId, descripcion, precio, derivado ? "1" : "0", tipoDeriv, valorDeriv, labRef, paqueteId, paqueteTipo].join("::");
   };
 
   const normalizarDetalle = (d) => {
@@ -115,6 +122,10 @@ export default function QuoteCartPanel() {
       tipo_derivacion: d?.derivado ? String(d?.tipo_derivacion || "") : "",
       valor_derivacion: d?.derivado ? Number(d?.valor_derivacion || 0) : 0,
       laboratorio_referencia: d?.derivado ? String(d?.laboratorio_referencia || "") : "",
+      paquete_id: Number(d?.paquete_id || 0) || null,
+      paquete_codigo: String(d?.paquete_codigo || ""),
+      paquete_tipo: String(d?.paquete_tipo || ""),
+      componentes: Array.isArray(d?.componentes) ? d.componentes : [],
     };
   };
 

@@ -1,0 +1,120 @@
+﻿=== TABLAS FALTANTES EN PROD ===
+config_apariencia
+cotizacion_eventos
+cotizacion_farmacia_vinculos
+cotizacion_item_ajustes
+cotizacion_movimientos
+documentos_externos_archivos
+documentos_externos_paciente
+hc_templates
+historia_clinica_backups
+honorarios_por_cobrar
+inventario_consumos_examen
+inventario_examen_recetas
+inventario_items
+inventario_lotes
+inventario_movimientos
+inventario_transferencias
+inventario_transferencias_detalle
+medico_adelantos
+medico_condiciones_pago
+ordenes_imagen
+ordenes_imagen_archivos
+recordatorios_consultas
+tratamientos_ejecucion_diaria
+tratamientos_ejecucion_dosis
+tratamientos_ejecucion_eventos
+tratamientos_enfermeria
+tratamientos_enfermeria_items
+vw_cotizaciones_resumen_diario
+
+=== DIFERENCIAS DE COLUMNAS (TABLAS COMUNES) ===
+[atenciones]
+  * columnas distintas: estado, fecha, id, observaciones, paciente_id, servicio, usuario_id
+[cajas]
+  * columnas distintas: created_at, diferencia, egreso_electronico, egreso_honorarios, egreso_lab_ref, egreso_operativo, estado, id, monto_apertura, monto_contado, observaciones_apertura, observaciones_cierre, total_efectivo, total_egresos, total_otros, total_plin, total_tarjetas, total_transferencias, total_yape, turno, updated_at, usuario_id
+[cie10]
+  * columnas distintas: activo, actualizado_en, categoria, codigo, creado_en, descripcion, id, nombre, subcategoria
+[cierre_caja_detalle]
+  * columnas distintas: caja_id, diferencia_efectivo, diferencia_otros, diferencia_tarjetas, diferencia_total, diferencia_transferencias, efectivo_contado, efectivo_sistema, fecha_cierre, id, observaciones, otros_contado, otros_sistema, tarjetas_contado, tarjetas_sistema, transferencias_contado, transferencias_sistema, usuario_cierre_id
+[cobros]
+  * columnas distintas: estado, fecha_cobro, id, observaciones, paciente_id, tipo_pago, turno, usuario_id
+[cobros_detalle]
+  * columnas distintas: cantidad, cobro_id, descripcion, id, servicio_id, servicio_tipo
+[configuracion_clinica]
+  + columnas nuevas: caratula_fondo_url, celular, google_maps_embed, hc_template_mode, hc_template_single_id, logo_laboratorio_size_pdf, logo_laboratorio_url, logo_shape_sistema, logo_size_publico, logo_size_sistema, nombre_color, nombre_font_size, slogan, slogan_color, tema_accent, tema_login_from, tema_login_to, tema_login_via, tema_navbar_bg, tema_preset, tema_primary, tema_primary_dark, tema_primary_light, tema_public_layout, tema_secondary, tema_sidebar_from, tema_sidebar_to, tema_sidebar_via
+  * columnas distintas: contacto_emergencias, created_at, direccion, director_general, email, especialidades, horario_atencion, id, jefe_enfermeria, logo_url, mision, nombre_clinica, ruc, telefono, updated_at, valores, vision, website
+[configuracion_honorarios_medicos]
+  * columnas distintas: activo, created_at, especialidad, id, medico_id, observaciones, tarifa_id, tipo_servicio, updated_at, vigencia_desde
+[consultas]
+  + columnas nuevas: es_control, es_reprogramada, hc_origen_id, origen_creacion, reprogramada_en
+  * columnas distintas: clasificacion, cobro_id, estado, id, medico_id, paciente_id, tipo_consulta, triaje_realizado
+[cotizaciones]
+  + columnas nuevas: anulado_en, anulado_por, cotizacion_padre_id, es_adenda, motivo_anulacion, numero_comprobante, saldo_pendiente, total_pagado, updated_at, version_actual
+  * columnas distintas: estado, fecha, id, observaciones, paciente_id, usuario_id
+[cotizaciones_detalle]
+  + columnas nuevas: consulta_id, derivado, detalle_padre_id, editado_en, editado_por, estado_item, laboratorio_referencia, medico_id, motivo_edicion, tipo_derivacion, valor_derivacion, version_item
+  * columnas distintas: cantidad, cotizacion_id, descripcion, id, servicio_id, servicio_tipo
+[cotizaciones_farmacia]
+  * columnas distintas: estado, fecha, id, observaciones, paciente_dni, paciente_id, paciente_nombre, usuario_id
+[cotizaciones_farmacia_detalle]
+  * columnas distintas: cantidad, cotizacion_id, descripcion, id, medicamento_id
+[descuentos_aplicados]
+  * columnas distintas: cobro_id, created_at, id, motivo, paciente_id, paciente_nombre, servicio, tipo_descuento, usuario_id, usuario_nombre
+[disponibilidad_medicos]
+  * columnas distintas: dia_semana, id, medico_id
+[egresos]
+  * columnas distintas: caja_id, categoria, concepto, created_at, descripcion, estado, honorario_movimiento_id, id, liquidacion_id, medico_id, metodo_pago, observaciones, responsable, tipo, tipo_egreso, turno, updated_at, usuario_id
+[examenes_laboratorio]
+  * columnas distintas: activo, categoria, condicion_paciente, creado_en, id, metodologia, nombre, preanalitica, tiempo_resultado, tipo_frasco, tipo_tubo, valores_referenciales
+[historia_clinica]
+  * columnas distintas: consulta_id, datos, fecha_registro, id
+[honorarios_medicos_movimientos]
+  * columnas distintas: caja_id, cobro_id, consulta_id, created_at, descripcion, estado_pago_medico, id, liquidacion_id, medico_id, metodo_pago_medico, observaciones, paciente_id, tarifa_id, tipo_precio, tipo_servicio, turno
+[ingresos]
+  * columnas distintas: area, caja_id, descripcion, id, tipo_pago, usuario_id
+[ingresos_diarios]
+  * columnas distintas: area, caja_id, cobrado_por, descripcion, fecha_hora, honorario_movimiento_id, id, liquidado_por, metodo_pago, paciente_id, paciente_nombre, referencia_id, referencia_tabla, tipo_ingreso, turno, usuario_id
+[laboratorio_referencia_movimientos]
+  + columnas nuevas: cotizacion_id
+  * columnas distintas: caja_id, cobrado_por, cobro_id, created_at, estado, examen_id, hora_cobro, hora_liquidacion, id, laboratorio, liquidado_por, observaciones, paciente_id, tipo, turno_cobro, turno_liquidacion
+[liquidaciones_medicos]
+  * columnas distintas: created_at, descuentos, estado, id, medico_id, metodo_pago, observaciones, updated_at, usuario_aprobacion, usuario_pago
+[log_eliminaciones]
+  * columnas distintas: caja_id, cobro_id, cobros_detalle_id, fecha_hora, id, item_json, motivo, paciente_id, servicio_tipo, usuario_id
+[log_reaperturas]
+  * columnas distintas: caja_id, datos_cierre_anterior, fecha_reapertura, id, motivo, usuario_id, usuario_nombre
+[medicamentos]
+  * columnas distintas: codigo, concentracion, estado, fecha_actualizacion, fecha_registro, id, laboratorio, margen_ganancia, motivo_cuarentena, nombre, precio_compra, presentacion, stock, unidades_por_caja
+[medicos]
+  + columnas nuevas: abreviatura_profesional, colegio_sigla, nro_colegiatura, tipo_profesional
+  * columnas distintas: apellido, cmp, email, especialidad, firma, id, nombre, password, rne, rol
+[metodos_pago]
+  * columnas distintas: activo, codigo, created_at, descripcion, id, nombre, orden_visualizacion, requiere_referencia, updated_at
+[movimientos_medicamento]
+  * columnas distintas: cantidad, fecha_hora, id, medicamento_id, medico_id, observaciones, tipo_movimiento, usuario_id
+[ordenes_laboratorio]
+  + columnas nuevas: carga_anticipada, cotizacion_id
+  * columnas distintas: cobro_id, consulta_id, estado, examenes, fecha, id, paciente_id
+[pacientes]
+  * columnas distintas: apellido, creado_en, direccion, dni, edad, edad_unidad, email, historia_clinica, id, nombre, procedencia, sexo, telefono, tipo_seguro
+[public_banners]
+  + columnas nuevas: imagen_conocenos_url
+  * columnas distintas: activo, actualizado_en, creado_en, id, imagen_fija_url, imagen_url, orden, overlay_blanco, subtitulo, subtitulo_color, subtitulo_tamano, texto_lado, titulo, titulo_color, titulo_tamano
+[public_ofertas]
+  * columnas distintas: activo, actualizado_en, creado_en, descripcion, id, imagen_url, orden, titulo
+[public_servicios]
+  + columnas nuevas: imagen_shape, imagen_tipo, tipo
+  * columnas distintas: activo, actualizado_en, creado_en, descripcion, icono, id, imagen_url, orden, titulo
+[resultados_laboratorio]
+  + columnas nuevas: firmado_por_usuario_id
+  * columnas distintas: consulta_id, fecha, id, orden_id, resultados, tipo_examen
+[seguros]
+  * columnas distintas: id, numero, paciente_id, tipo
+[tarifas]
+  * columnas distintas: activo, created_at, descripcion, id, medico_id, servicio_id, servicio_tipo, updated_at
+[triaje]
+  * columnas distintas: consulta_id, datos, fecha_registro, id
+[usuarios]
+  + columnas nuevas: cargo_firma, colegiatura_numero, colegiatura_tipo, firma_reportes, permisos
+  * columnas distintas: activo, creado_en, dni, id, nombre, password, profesion, rol, usuario

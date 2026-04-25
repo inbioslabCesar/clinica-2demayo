@@ -17,6 +17,7 @@ try {
             PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8"
         ]
     );
+    $pdo->exec("SET time_zone = '-05:00'");
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode(["success" => false, "error" => "Error de conexión a la base de datos"]);

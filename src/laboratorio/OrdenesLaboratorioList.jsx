@@ -38,6 +38,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   const [estadoFiltro, setEstadoFiltro] = useState(() => sessionStorage.getItem(STORAGE_ESTADO_KEY) || "");
   const [filtroAlertaEstado, setFiltroAlertaEstado] = useState(() => sessionStorage.getItem(STORAGE_ALERTA_KEY) || "");
   const [resumenAlertas, setResumenAlertas] = useState({ vencido: 0, por_vencer: 0, en_tiempo: 0 });
+  const [catalogoExamenesCargado, setCatalogoExamenesCargado] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -72,18 +73,42 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
 
   useEffect(() => {
     // Cargar lista de exámenes disponibles para mapear IDs a nombres
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     fetch(BASE_URL + "api_examenes_laboratorio.php", {
-      credentials: 'include'
+      credentials: 'include',
+      signal: controller.signal,
     })
       .then(res => res.json())
       .then(data => {
-        setExamenesDisponibles(data.examenes || []);
+        if (data?.success && Array.isArray(data.examenes)) {
+          setExamenesDisponibles(data.examenes);
+        } else {
+          setExamenesDisponibles([]);
+        }
+      })
+      .catch(() => {
+        // Si falla catálogo no bloqueamos la UI; la lista igual puede renderizar por ID.
+        setExamenesDisponibles([]);
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
+        setCatalogoExamenesCargado(true);
       });
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, []);
 
   useEffect(() => {
     setLoading(true);
     setError("");
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     const params = new URLSearchParams();
     params.set('solo_visibles_panel', '1');
@@ -97,7 +122,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     if (filtroAlertaEstado) params.set('filtro_alerta', filtroAlertaEstado);
 
     fetch(BASE_URL + 'api_ordenes_laboratorio.php?' + params.toString(), {
-      credentials: 'include'
+      credentials: 'include',
+      signal: controller.signal,
     })
       .then(res => res.json())
       .then(data => {
@@ -113,6 +139,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
         setInitialLoaded(true);
       })
       .catch((err) => {
+        if (err?.name === 'AbortError') return;
         setError("Error de conexión con el servidor");
         setOrdenes([]);
         setTotalOrdenes(0);
@@ -120,9 +147,17 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
         setInitialLoaded(true);
         console.error('Error al cargar órdenes:', err);
       });
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro, filtroAlertaEstado, page, rowsPerPage]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     const params = new URLSearchParams();
     params.set('solo_visibles_panel', '1');
     params.set('resumen_alertas', '1');
@@ -132,7 +167,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     if (estadoFiltro) params.set('estado', estadoFiltro);
 
     fetch(BASE_URL + 'api_ordenes_laboratorio.php?' + params.toString(), {
-      credentials: 'include'
+      credentials: 'include',
+      signal: controller.signal,
     })
       .then(res => res.json())
       .then(data => {
@@ -145,6 +181,11 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       .catch(() => {
         setResumenAlertas({ vencido: 0, por_vencer: 0, en_tiempo: 0 });
       });
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro]);
 
   // Ya viene paginado y ordenado desde el backend.
@@ -244,7 +285,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   // porque la generación devolvía datos inconsistentes en algunos casos. Las
   // descargas deben realizarse desde los módulos de Administración/Recepción.
 
-  if ((!initialLoaded && loading) || examenesDisponibles.length === 0) {
+  if ((!initialLoaded && loading) || !catalogoExamenesCargado) {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="flex items-center gap-3 text-purple-600">

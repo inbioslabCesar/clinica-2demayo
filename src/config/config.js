@@ -1,11 +1,15 @@
 // src/config/config.js
 // Detectar automáticamente el entorno
-const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+const isProduction = !localHosts.has(window.location.hostname);
 
 // URL base automática según el entorno
-export const BASE_URL = isProduction 
-    ? (window.location.origin.replace(/\/+$/, '') + '/')
-    : "http://localhost/clinica-2demayo/";
+// En desarrollo con Vite usar URL relativa para que el proxy '/api_' evite CORS.
+export const BASE_URL = import.meta.env.DEV
+    ? '/'
+    : (isProduction
+        ? (window.location.origin.replace(/\/+$/, '') + '/')
+        : "http://127.0.0.1/clinica-2demayo/");
 
 // Configuración de seguridad
 export const SECURITY_CONFIG = {
@@ -13,7 +17,7 @@ export const SECURITY_CONFIG = {
     requireHTTPS: window.location.protocol === 'https:',
     
     // Validar que estamos en un entorno seguro antes de enviar credenciales
-    isSecureContext: window.isSecureContext || window.location.hostname === 'localhost',
+    isSecureContext: window.isSecureContext || localHosts.has(window.location.hostname),
     
     // Longitud mínima de contraseña (desactivada)
     minPasswordLength: 0,

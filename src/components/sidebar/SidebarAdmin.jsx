@@ -44,12 +44,28 @@ export default function SidebarAdmin({ onClose }) {
           <span>Gestión de Tarifas</span>
         </Link>
         <Link
+          to="/paquetes-perfiles"
+          className="py-2.5 px-3 rounded-lg text-blue-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300"
+          onClick={onClose}
+        >
+          <Icon iconName="Product" className="text-lg text-blue-600" />
+          <span>Paquetes y Perfiles</span>
+        </Link>
+        <Link
           to="/cotizaciones"
           className="py-2.5 px-3 rounded-lg text-fuchsia-700 hover:bg-gradient-to-r hover:from-fuchsia-50 hover:to-purple-100 font-medium flex items-center gap-3 transition-all duration-300"
           onClick={onClose}
         >
           <Icon iconName="Paste" className="text-lg text-fuchsia-600" />
           <span>Cotizaciones</span>
+        </Link>
+        <Link
+          to="/contratos"
+          className="py-2.5 px-3 rounded-lg text-emerald-700 hover:bg-gradient-to-r hover:from-emerald-50 hover:to-teal-100 font-medium flex items-center gap-3 transition-all duration-300"
+          onClick={onClose}
+        >
+          <Icon iconName="ClipboardList" className="text-lg text-emerald-600" />
+          <span>Contratos</span>
         </Link>
         <Link
           to="/reabrir-caja"

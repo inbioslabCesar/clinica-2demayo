@@ -171,12 +171,21 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const getEstadoVisual = (consulta) => {
     const estado = String(consulta?.estado || '').trim().toLowerCase();
     const hcCompletada = estado === 'completada' || estado === 'completado';
+    const cancelada = estado === 'cancelada' || estado === 'cancelado';
 
     if (hcCompletada) {
       return {
         label: 'Completada',
         icon: '✅ ',
         className: 'bg-green-100 text-green-800 border-green-200'
+      };
+    }
+
+    if (cancelada) {
+      return {
+        label: 'Cancelada',
+        icon: '❌ ',
+        className: 'bg-red-100 text-red-800 border-red-200'
       };
     }
 
@@ -318,7 +327,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     const tieneCotizacion = cotizacionId > 0;
     const esHcProxima = Number(consulta?.hc_origen_id || 0) > 0
       || String(consulta?.origen_creacion || '').toLowerCase().trim() === 'hc_proxima';
-    const cotizacionPagada = estadoCotizacion === 'pagado' || estadoCotizacion === 'pagada';
+    const cotizacionPagada = estadoCotizacion === 'pagado' || estadoCotizacion === 'pagada' || estadoCotizacion === 'control';
 
     if (esHcProxima && !cotizacionPagada && !tieneCotizacion) {
       return {

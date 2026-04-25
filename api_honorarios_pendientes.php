@@ -24,6 +24,7 @@ try {
 $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
 $turno = isset($_GET['turno']) ? $_GET['turno'] : null;
 $estado = isset($_GET['estado']) ? $_GET['estado'] : 'pendiente';
+$incluirAnuladas = isset($_GET['incluir_anuladas']) && intval($_GET['incluir_anuladas']) === 1;
 
 
 $where = "WHERE 1=1";
@@ -39,6 +40,28 @@ if ($medico_id) {
 if ($turno) {
     $where .= " AND h.turno = :turno";
     $params[':turno'] = $turno;
+}
+
+if (!$incluirAnuladas) {
+        if ($hasCotizacionMovimientos) {
+                $where .= " AND NOT EXISTS (
+                                                SELECT 1
+                                                FROM cotizacion_movimientos cmx
+                                                INNER JOIN cotizaciones cx ON cx.id = cmx.cotizacion_id
+                                                WHERE cmx.cobro_id = h.cobro_id
+                                                    AND LOWER(TRIM(COALESCE(cx.estado, ''))) = 'anulada'
+                                        )";
+        }
+
+        if ($hasHonorariosPorCobrar) {
+                $where .= " AND NOT EXISTS (
+                                                SELECT 1
+                                                FROM honorarios_por_cobrar hpcx
+                                                INNER JOIN cotizaciones cx2 ON cx2.id = hpcx.cotizacion_id
+                                                WHERE hpcx.honorario_movimiento_id_final = h.id
+                                                    AND LOWER(TRIM(COALESCE(cx2.estado, ''))) = 'anulada'
+                                        )";
+        }
 }
 
 // Logging input parameters

@@ -285,6 +285,32 @@ Mapeo de despliegue configurado:
 - `dist/*` -> `/public_html/sistema/` (frontend del sistema)
 - Archivos PHP/backend del repo -> `/public_html/sistema/`
 
+Checklist operativo de producción:
+
+1. Ejecutar `npm run lint` y `npm run build` antes de publicar.
+2. Verificar que `dist/` exista con `index.html`, `assets/` y `uploads/`.
+3. Verificar que `dist-public/` exista con `index.html`, `assets/`, `.htaccess`, `robots.txt` y `sitemap.xml`.
+4. Confirmar que `config.php` de producción ya exista en Hostinger, porque el workflow no lo sube.
+5. Confirmar que el backend PHP se publique en `/public_html/sistema/` y la landing en `/public_html/`.
+
+Qué sí se publica:
+
+- PHP/backend del repositorio hacia `/public_html/sistema/`.
+- Build Vite del sistema desde `dist/` hacia `/public_html/sistema/`.
+- Landing pública desde `dist-public/` hacia `/public_html/`.
+
+Qué no debe subirse manualmente:
+
+- `src/`, `public-site/`, `node_modules/`, `.git/`, `.github/`, `.vscode/`.
+- `deploy/`, `docs/`, `tmp/`, `dist/` duplicado fuera de su destino y `dist-public/` duplicado fuera de su destino.
+- `.env`, `.env.*`, `config.php` local, backups, logs y archivos `*.sql`.
+
+Exclusiones críticas del workflow:
+
+- No publica `config.php`, `uploads/`, `src/`, `public-site/`, `node_modules/`, `docs/`, `tmp/` ni archivos SQL.
+- El workflow usa SFTP si el puerto responde; si no, cae a FTP como fallback.
+- `dangerous-clean-slate: false` evita borrado total del hosting, así que los archivos persistentes del servidor se conservan.
+
 #### 1) Crear secretos en GitHub
 
 En `Settings > Secrets and variables > Actions`, crea estos secretos:

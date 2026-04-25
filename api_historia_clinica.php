@@ -4,6 +4,17 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/HcTemplateResolver.php';
+$tphPath = __DIR__ . '/tratamientos_programacion_helper.php';
+if (!is_file($tphPath)) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Falta archivo requerido: tratamientos_programacion_helper.php',
+        'detail' => 'Despliegue incompleto en servidor. Subir tratamientos_programacion_helper.php al directorio /sistema/.',
+    ]);
+    exit;
+}
+require_once $tphPath;
 
 function hc_actor_label() {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -49,6 +60,53 @@ function hc_normalizar_hora($horaRaw) {
         $hora .= ':00';
     }
     return $hora;
+}
+
+function hc_normalizar_tipo_diagnostico($tipoRaw) {
+    $tipo = mb_strtolower(trim((string)$tipoRaw), 'UTF-8');
+    if ($tipo === '') {
+        return 'principal';
+    }
+
+    $map = [
+        'principal' => 'principal',
+        'primario' => 'principal',
+        'secundario' => 'secundario',
+        'secundaria' => 'secundario',
+        'presuntivo' => 'presuntivo',
+        'presuntiva' => 'presuntivo',
+        'definitivo' => 'definitivo',
+        'definitiva' => 'definitivo',
+    ];
+
+    return $map[$tipo] ?? 'secundario';
+}
+
+function hc_sanitizar_diagnosticos($datos) {
+    if (!is_array($datos) || !isset($datos['diagnosticos']) || !is_array($datos['diagnosticos'])) {
+        return $datos;
+    }
+
+    $normalizados = [];
+    foreach ($datos['diagnosticos'] as $item) {
+        if (is_string($item)) {
+            $texto = trim($item);
+            if ($texto !== '') {
+                $normalizados[] = $texto;
+            }
+            continue;
+        }
+
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $item['tipo'] = hc_normalizar_tipo_diagnostico($item['tipo'] ?? 'principal');
+        $normalizados[] = $item;
+    }
+
+    $datos['diagnosticos'] = $normalizados;
+    return $datos;
 }
 
 function hc_obtener_tarifa_consulta($conn, $medicoId) {
@@ -508,6 +566,315 @@ function hc_programar_proxima_cita($conn, $consultaIdActual, $proximaData, $hcOr
     ];
 }
 
+// ============================================================
+// CADENA CLINICA: resolver nodo padre canonico
+// ============================================================
+
+/**
+ * Dado el hc_id de la HC recien guardada (nodo actual), resuelve:
+ * - hc_parent_id: ultima HC ejecutada del mismo contrato/agenda o por hc_origen_id
+ * - hc_root_id:   raiz de la cadena
+ * - chain_depth:  profundidad del nodo
+ * - contrato_paciente_id / agenda_contrato_id: contexto contrato si aplica
+ *
+ * No lanza excepciones; si algo falla devuelve null para no interrumpir el guardado.
+ */
+function hc_resolver_parent_canonico($conn, $hcId, $consultaId) {
+    $hcId      = (int)$hcId;
+    $consultaId = (int)$consultaId;
+    if ($hcId <= 0 || $consultaId <= 0) return null;
+
+    // 1. Leer contexto de la consulta actual
+    $stmtC = $conn->prepare(
+        'SELECT paciente_id, medico_id, fecha, hc_origen_id FROM consultas WHERE id = ? LIMIT 1'
+    );
+    if (!$stmtC) return null;
+    $stmtC->bind_param('i', $consultaId);
+    $stmtC->execute();
+    $consulta = $stmtC->get_result()->fetch_assoc();
+    $stmtC->close();
+    if (!$consulta) return null;
+
+    $pacienteId  = (int)($consulta['paciente_id'] ?? 0);
+    $hcOrigenId  = (int)($consulta['hc_origen_id'] ?? 0);
+    $fechaActual = (string)($consulta['fecha'] ?? '');
+
+    // 2. Intentar vincular con agenda_contrato (evento ejecutado en esta consulta)
+    $contratoPacienteId  = 0;
+    $agendaContratoId    = 0;
+    $stmtAg = $conn->prepare(
+        'SELECT id, contrato_paciente_id FROM agenda_contrato WHERE consulta_id = ? LIMIT 1'
+    );
+    if ($stmtAg) {
+        $stmtAg->bind_param('i', $consultaId);
+        $stmtAg->execute();
+        $ag = $stmtAg->get_result()->fetch_assoc();
+        $stmtAg->close();
+        if ($ag) {
+            $agendaContratoId   = (int)($ag['id'] ?? 0);
+            $contratoPacienteId = (int)($ag['contrato_paciente_id'] ?? 0);
+        }
+    }
+
+    // 3. Resolver parent
+    $parentHcId = 0;
+
+    // 3a. Si viene de proxima cita de HC anterior → hc_origen_id almacena consultas.id del evento padre
+    //     (normalización canónica: hc_origen_id es siempre consultas.id, nunca historia_clinica.id).
+    //     Buscamos la HC cuya consulta_id coincida con hc_origen_id.
+    if ($hcOrigenId > 0) {
+        $stmtP = $conn->prepare('SELECT id FROM historia_clinica WHERE consulta_id = ? LIMIT 1');
+        if ($stmtP) {
+            $stmtP->bind_param('i', $hcOrigenId);
+            $stmtP->execute();
+            $rP = $stmtP->get_result()->fetch_assoc();
+            $stmtP->close();
+            $candidato = (int)($rP['id'] ?? 0);
+            if ($candidato > 0 && $candidato !== $hcId) {
+                $parentHcId = $candidato;
+            }
+        }
+    }
+
+    // 3b. Si viene de contrato y no hay parent aun, buscar ultima HC del mismo contrato
+    //     con fecha anterior a la actual (ultimo nodo ejecutado en la cadena)
+    if ($parentHcId <= 0 && $contratoPacienteId > 0) {
+        $stmtLast = $conn->prepare(
+            'SELECT h.id
+             FROM historia_clinica h
+             INNER JOIN consultas c ON c.id = h.consulta_id
+             INNER JOIN agenda_contrato ag ON ag.consulta_id = c.id
+             WHERE ag.contrato_paciente_id = ?
+               AND h.id != ?
+               AND h.chain_status != ?
+               AND (c.fecha < ? OR (c.fecha = ? AND h.id < ?))
+             ORDER BY c.fecha DESC, h.id DESC
+             LIMIT 1'
+        );
+        if ($stmtLast) {
+            $anulada = 'anulada';
+            $stmtLast->bind_param(
+                'iisssi',
+                $contratoPacienteId,
+                $hcId,
+                $anulada,
+                $fechaActual, $fechaActual, $hcId
+            );
+            $stmtLast->execute();
+            $rLast = $stmtLast->get_result()->fetch_assoc();
+            $stmtLast->close();
+            if ($rLast) $parentHcId = (int)($rLast['id'] ?? 0);
+        }
+    }
+
+    // 4. Resolver root y depth a partir del parent
+    $rootHcId   = $hcId;    // por defecto es raiz de si mismo
+    $chainDepth = 0;
+    if ($parentHcId > 0 && $parentHcId !== $hcId) {
+        $stmtPar = $conn->prepare(
+            'SELECT hc_root_id, chain_depth FROM historia_clinica WHERE id = ? LIMIT 1'
+        );
+        if ($stmtPar) {
+            $stmtPar->bind_param('i', $parentHcId);
+            $stmtPar->execute();
+            $rPar = $stmtPar->get_result()->fetch_assoc();
+            $stmtPar->close();
+            if ($rPar) {
+                $rootHcId   = (int)($rPar['hc_root_id'] ?? 0) > 0
+                    ? (int)$rPar['hc_root_id']
+                    : $parentHcId;
+                $chainDepth = (int)($rPar['chain_depth'] ?? 0) + 1;
+            }
+        }
+    }
+
+    return [
+        'hc_parent_id'        => $parentHcId > 0 ? $parentHcId : null,
+        'hc_root_id'          => $rootHcId,
+        'chain_depth'         => $chainDepth,
+        'contrato_paciente_id'=> $contratoPacienteId > 0 ? $contratoPacienteId : null,
+        'agenda_contrato_id'  => $agendaContratoId > 0 ? $agendaContratoId : null,
+    ];
+}
+
+/**
+ * Persiste los campos de cadena en historia_clinica para el nodo dado.
+ * Solo actualiza si la columna hc_parent_id existe (migración 18 aplicada).
+ * Silencia errores para no interrumpir el guardado principal.
+ */
+function hc_actualizar_cadena_hc($conn, $hcId, $consultaId) {
+    $hcId = (int)$hcId;
+    if ($hcId <= 0) return;
+
+    // Verificar que la migración 18 fue aplicada
+    $chk = $conn->query("SHOW COLUMNS FROM historia_clinica LIKE 'hc_parent_id'");
+    if (!$chk || $chk->num_rows === 0) return;
+
+    $cadena = hc_resolver_parent_canonico($conn, $hcId, $consultaId);
+    if (!is_array($cadena)) return;
+
+    $parentId    = $cadena['hc_parent_id'];
+    $rootId      = (int)($cadena['hc_root_id'] ?? $hcId);
+    $depth       = (int)($cadena['chain_depth'] ?? 0);
+    $contratoId  = $cadena['contrato_paciente_id'];
+    $agendaId    = $cadena['agenda_contrato_id'];
+
+    $stmt = $conn->prepare(
+        'UPDATE historia_clinica
+         SET hc_parent_id        = ?,
+             hc_root_id          = ?,
+             chain_depth         = ?,
+             contrato_paciente_id= ?,
+             agenda_contrato_id  = ?,
+             updated_seq         = updated_seq + 1
+         WHERE id = ? LIMIT 1'
+    );
+    if (!$stmt) return;
+    $stmt->bind_param('iiiiii', $parentId, $rootId, $depth, $contratoId, $agendaId, $hcId);
+    $stmt->execute();
+    $stmt->close();
+}
+
+/**
+ * Al guardar la HC de la consulta actual (consulta_id_actual), busca en agenda_contrato
+ * el evento inmediatamente siguiente del mismo contrato que ya tenga una consulta asignada
+ * y cuya consulta aún tenga hc_origen_id = 0 o NULL.
+ * En ese caso actualiza esa consulta para que hc_origen_id = consulta_id_actual,
+ * cerrando el timing gap que ocurre cuando el contrato programó el evento B antes de
+ * que la HC de A existiera.
+ */
+function hc_retrovincular_siguiente_evento_contrato($conn, $consultaIdActual) {
+    $consultaIdActual = (int)$consultaIdActual;
+    if ($consultaIdActual <= 0) return;
+
+    // Verificar que agenda_contrato existe
+    $chk = $conn->query("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'agenda_contrato' LIMIT 1");
+    if (!$chk || $chk->num_rows === 0) return;
+
+    // Obtener fecha y contrato_paciente_id del evento actual
+    $stmtSelf = $conn->prepare(
+        'SELECT ag.id AS evento_id, ag.contrato_paciente_id, ag.fecha_programada
+         FROM agenda_contrato ag
+         WHERE ag.consulta_id = ?
+         LIMIT 1'
+    );
+    if (!$stmtSelf) return;
+    $stmtSelf->bind_param('i', $consultaIdActual);
+    $stmtSelf->execute();
+    $self = $stmtSelf->get_result()->fetch_assoc();
+    $stmtSelf->close();
+
+    if (!$self) return;
+
+    $contratoPacienteId = (int)($self['contrato_paciente_id'] ?? 0);
+    $eventoActualId     = (int)($self['evento_id'] ?? 0);
+    $fechaActual        = (string)($self['fecha_programada'] ?? '');
+    if ($contratoPacienteId <= 0 || $eventoActualId <= 0 || $fechaActual === '') return;
+
+    // Buscar el evento siguiente del mismo contrato con consulta asignada
+    $stmtNext = $conn->prepare(
+        'SELECT ag.consulta_id
+         FROM agenda_contrato ag
+         WHERE ag.contrato_paciente_id = ?
+           AND ag.id <> ?
+           AND ag.consulta_id IS NOT NULL
+           AND ag.consulta_id > 0
+           AND (ag.fecha_programada > ? OR (ag.fecha_programada = ? AND ag.id > ?))
+         ORDER BY ag.fecha_programada ASC, ag.id ASC
+         LIMIT 1'
+    );
+    if (!$stmtNext) return;
+    $stmtNext->bind_param('iissi', $contratoPacienteId, $eventoActualId, $fechaActual, $fechaActual, $eventoActualId);
+    $stmtNext->execute();
+    $next = $stmtNext->get_result()->fetch_assoc();
+    $stmtNext->close();
+
+    $consultaIdSiguiente = (int)($next['consulta_id'] ?? 0);
+    if ($consultaIdSiguiente <= 0 || $consultaIdSiguiente === $consultaIdActual) return;
+
+    // Solo actualizar si hc_origen_id aún no apunta al nodo correcto
+    $stmtUpd = $conn->prepare(
+        'UPDATE consultas
+         SET hc_origen_id = ?,
+             origen_creacion = CASE WHEN origen_creacion IN ("contrato_agenda", "agendada", "") OR origen_creacion IS NULL THEN "hc_proxima" ELSE origen_creacion END
+         WHERE id = ?
+           AND (hc_origen_id IS NULL OR hc_origen_id = 0 OR hc_origen_id <> ?)
+         LIMIT 1'
+    );
+    if (!$stmtUpd) return;
+    $stmtUpd->bind_param('iii', $consultaIdActual, $consultaIdSiguiente, $consultaIdActual);
+    $stmtUpd->execute();
+    $stmtUpd->close();
+}
+
+/**
+ * Para el GET de HC: resuelve si la consulta actual pertenece a un contrato y si
+ * tiene un evento siguiente programado. Devuelve los datos del próximo evento
+ * para que el frontend pueda pre-activar la sección "Próxima cita" sin esperar
+ * el guardado manual del médico.
+ */
+function hc_resolver_proxima_cita_contrato($conn, $consultaId) {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0) return null;
+
+    $chk = $conn->query("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'agenda_contrato' LIMIT 1");
+    if (!$chk || $chk->num_rows === 0) return null;
+
+    // Obtener el evento actual y su contrato
+    $stmtSelf = $conn->prepare(
+        'SELECT ag.id AS evento_id, ag.contrato_paciente_id, ag.fecha_programada
+         FROM agenda_contrato ag
+         WHERE ag.consulta_id = ?
+         LIMIT 1'
+    );
+    if (!$stmtSelf) return null;
+    $stmtSelf->bind_param('i', $consultaId);
+    $stmtSelf->execute();
+    $self = $stmtSelf->get_result()->fetch_assoc();
+    $stmtSelf->close();
+    if (!$self) return null;
+
+    $contratoPacienteId = (int)($self['contrato_paciente_id'] ?? 0);
+    $eventoActualId     = (int)($self['evento_id'] ?? 0);
+    $fechaActual        = (string)($self['fecha_programada'] ?? '');
+    if ($contratoPacienteId <= 0 || $eventoActualId <= 0 || $fechaActual === '') return null;
+
+    // Buscar el siguiente evento con consulta ya asignada
+    $stmtNext = $conn->prepare(
+        'SELECT ag.consulta_id, ag.fecha_programada,
+                c.medico_id, c.es_control
+         FROM agenda_contrato ag
+         INNER JOIN consultas c ON c.id = ag.consulta_id
+         WHERE ag.contrato_paciente_id = ?
+           AND ag.id <> ?
+           AND ag.consulta_id IS NOT NULL
+           AND ag.consulta_id > 0
+           AND (ag.fecha_programada > ? OR (ag.fecha_programada = ? AND ag.id > ?))
+         ORDER BY ag.fecha_programada ASC, ag.id ASC
+         LIMIT 1'
+    );
+    if (!$stmtNext) return null;
+    $stmtNext->bind_param('iissi', $contratoPacienteId, $eventoActualId, $fechaActual, $fechaActual, $eventoActualId);
+    $stmtNext->execute();
+    $next = $stmtNext->get_result()->fetch_assoc();
+    $stmtNext->close();
+    if (!$next) return null;
+
+    $fechaProg    = (string)($next['fecha_programada'] ?? '');
+    $fechaSolo    = strlen($fechaProg) >= 10 ? substr($fechaProg, 0, 10) : $fechaProg;
+    $horaSolo     = strlen($fechaProg) >= 16 ? substr($fechaProg, 11, 5) : '00:00';
+
+    return [
+        'consulta_id'        => (int)($next['consulta_id'] ?? 0),
+        'fecha'              => $fechaSolo,
+        'hora'               => $horaSolo,
+        'medico_id'          => (int)($next['medico_id'] ?? 0),
+        'es_control'         => (int)($next['es_control'] ?? 1) === 1,
+        'origen'             => 'contrato_agenda',
+        'contrato_paciente_id' => $contratoPacienteId,
+    ];
+}
+
 function hc_bool_query_param($key, $default = false) {
     if (!isset($_GET[$key])) return $default;
     $raw = strtolower(trim((string)$_GET[$key]));
@@ -872,52 +1239,122 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
     $consultaActual = hc_get_consulta_meta($conn, $consultaIdActual);
     if (!$consultaActual) return [];
 
-    $currentRef = (int)($consultaActual['hc_origen_id'] ?? 0);
-    if ($currentRef <= 0) return [];
+    // Obtener la HC del nodo actual para intentar usar hc_parent_id
+    $stmtSelf = $conn->prepare(
+        'SELECT id, hc_parent_id, hc_root_id, chain_depth, chain_status, contrato_paciente_id, agenda_contrato_id
+         FROM historia_clinica WHERE consulta_id = ? LIMIT 1'
+    );
+    $selfHcRow = null;
+    if ($stmtSelf) {
+        $stmtSelf->bind_param('i', $consultaIdActual);
+        $stmtSelf->execute();
+        $selfHcRow = $stmtSelf->get_result()->fetch_assoc();
+        $stmtSelf->close();
+    }
 
-    $visited = [];
+    // Estrategia 1: usar hc_parent_id si la migracion 18 esta aplicada
+    $useNewChain = $selfHcRow !== null && isset($selfHcRow['hc_parent_id']);
+
     $historial = [];
-    $depth = 0;
+    $visited   = [];
+    $depth     = 0;
 
-    while ($currentRef > 0 && $depth < $maxDepth) {
-        if (isset($visited[$currentRef])) {
-            break;
+    if ($useNewChain) {
+        // Caminar hacia atras por hc_parent_id
+        $currentParentId = (int)($selfHcRow['hc_parent_id'] ?? 0);
+
+        while ($currentParentId > 0 && $depth < $maxDepth) {
+            if (isset($visited[$currentParentId])) break;
+            $visited[$currentParentId] = true;
+
+            $stmtHcP = $conn->prepare(
+                'SELECT id, consulta_id, datos, fecha_registro,
+                        hc_parent_id, hc_root_id, chain_depth, chain_status,
+                        contrato_paciente_id, agenda_contrato_id
+                 FROM historia_clinica WHERE id = ? LIMIT 1'
+            );
+            if (!$stmtHcP) break;
+            $stmtHcP->bind_param('i', $currentParentId);
+            $stmtHcP->execute();
+            $hcRow = $stmtHcP->get_result()->fetch_assoc();
+            $stmtHcP->close();
+            if (!$hcRow) break;
+
+            $hcId      = (int)($hcRow['id'] ?? 0);
+            $consultaId = (int)($hcRow['consulta_id'] ?? 0);
+            $datos     = json_decode((string)($hcRow['datos'] ?? '{}'), true);
+            if (!is_array($datos)) $datos = [];
+
+            [$templateMeta, $templateResolution] = hc_resolve_template_for_hc($conn, $consultaId, $datos);
+            $consultaMeta = hc_get_consulta_meta($conn, $consultaId);
+            $adjuntos     = hc_get_adjuntos_por_consulta($conn, $consultaId, $baseUrl);
+
+            $historial[] = [
+                'hc_id'               => $hcId,
+                'consulta_id'         => $consultaId,
+                'fecha_registro'      => (string)($hcRow['fecha_registro'] ?? ''),
+                'fecha_consulta'      => (string)($consultaMeta['fecha'] ?? ''),
+                'hora_consulta'       => (string)($consultaMeta['hora'] ?? ''),
+                'datos'               => $datos,
+                'template'            => $templateMeta,
+                'template_resolution' => $templateResolution,
+                'adjuntos'            => $adjuntos,
+                'resolved_by'         => 'hc_parent_id',
+                'chain_depth'         => (int)($hcRow['chain_depth'] ?? 0),
+                'chain_status'        => (string)($hcRow['chain_status'] ?? 'activa'),
+                'hc_root_id'          => (int)($hcRow['hc_root_id'] ?? 0),
+                'contrato_paciente_id'=> (int)($hcRow['contrato_paciente_id'] ?? 0) ?: null,
+                'agenda_contrato_id'  => (int)($hcRow['agenda_contrato_id'] ?? 0) ?: null,
+            ];
+
+            $currentParentId = (int)($hcRow['hc_parent_id'] ?? 0);
+            $depth++;
         }
-        $visited[$currentRef] = true;
+    } else {
+        // Estrategia 2 (legacy): caminar por hc_origen_id
+        $currentRef = (int)($consultaActual['hc_origen_id'] ?? 0);
 
-        $hcRow = hc_get_hc_row_resolved($conn, $currentRef);
-        if (!$hcRow) break;
+        while ($currentRef > 0 && $depth < $maxDepth) {
+            if (isset($visited[$currentRef])) break;
+            $visited[$currentRef] = true;
 
-        $hcId = (int)($hcRow['id'] ?? 0);
-        $consultaId = (int)($hcRow['consulta_id'] ?? 0);
-        $datos = json_decode((string)($hcRow['datos'] ?? '{}'), true);
-        if (!is_array($datos)) $datos = [];
+            $hcRow = hc_get_hc_row_resolved($conn, $currentRef);
+            if (!$hcRow) break;
 
-        [$templateMeta, $templateResolution] = hc_resolve_template_for_hc($conn, $consultaId, $datos);
-        $consultaMeta = hc_get_consulta_meta($conn, $consultaId);
-        $adjuntos = hc_get_adjuntos_por_consulta($conn, $consultaId, $baseUrl);
+            $hcId      = (int)($hcRow['id'] ?? 0);
+            $consultaId = (int)($hcRow['consulta_id'] ?? 0);
+            $datos     = json_decode((string)($hcRow['datos'] ?? '{}'), true);
+            if (!is_array($datos)) $datos = [];
 
-        $historial[] = [
-            'hc_id' => $hcId,
-            'consulta_id' => $consultaId,
-            'fecha_registro' => (string)($hcRow['fecha_registro'] ?? ''),
-            'fecha_consulta' => (string)($consultaMeta['fecha'] ?? ''),
-            'hora_consulta' => (string)($consultaMeta['hora'] ?? ''),
-            'datos' => $datos,
-            'template' => $templateMeta,
-            'template_resolution' => $templateResolution,
-            'adjuntos' => $adjuntos,
-            'resolved_by' => (string)($hcRow['_resolved_by'] ?? 'hc_id'),
-        ];
+            [$templateMeta, $templateResolution] = hc_resolve_template_for_hc($conn, $consultaId, $datos);
+            $consultaMeta = hc_get_consulta_meta($conn, $consultaId);
+            $adjuntos     = hc_get_adjuntos_por_consulta($conn, $consultaId, $baseUrl);
 
-        $nextRef = (int)($consultaMeta['hc_origen_id'] ?? 0);
-        if ($nextRef > 0 && $nextRef === $currentRef && $hcId > 0 && $hcId !== $currentRef) {
-            // Si venía en formato legacy consulta_id, pasar al id real para continuar la cadena.
-            $nextRef = $hcId;
+            $historial[] = [
+                'hc_id'               => $hcId,
+                'consulta_id'         => $consultaId,
+                'fecha_registro'      => (string)($hcRow['fecha_registro'] ?? ''),
+                'fecha_consulta'      => (string)($consultaMeta['fecha'] ?? ''),
+                'hora_consulta'       => (string)($consultaMeta['hora'] ?? ''),
+                'datos'               => $datos,
+                'template'            => $templateMeta,
+                'template_resolution' => $templateResolution,
+                'adjuntos'            => $adjuntos,
+                'resolved_by'         => (string)($hcRow['_resolved_by'] ?? 'hc_id'),
+                'chain_depth'         => null,
+                'chain_status'        => 'activa',
+                'hc_root_id'          => null,
+                'contrato_paciente_id'=> null,
+                'agenda_contrato_id'  => null,
+            ];
+
+            $nextRef = (int)($consultaMeta['hc_origen_id'] ?? 0);
+            if ($nextRef > 0 && $nextRef === $currentRef && $hcId > 0 && $hcId !== $currentRef) {
+                $nextRef = $hcId;
+            }
+            $currentRef = $nextRef;
+            $depth++;
         }
-
-        $currentRef = $nextRef;
-        $depth++;
     }
 
     $consultaIdsHistorial = array_values(array_unique(array_filter(array_map(function ($item) {
@@ -951,6 +1388,186 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
     unset($item);
 
     return $historial;
+}
+
+function hc_ensure_tratamientos_enfermeria_table($conn) {
+    $conn->query(
+        "CREATE TABLE IF NOT EXISTS tratamientos_enfermeria (
+            id               INT AUTO_INCREMENT PRIMARY KEY,
+            consulta_id      INT          NOT NULL COMMENT 'FK a consultas.id',
+            paciente_id      INT          NOT NULL COMMENT 'Copia desnormalizada para consultas rápidas',
+            receta_snapshot  JSON                  COMMENT 'Copia de historia_clinica.datos.receta al momento del guardado',
+            tratamiento_texto TEXT                 COMMENT 'Copia de historia_clinica.datos.tratamiento',
+            estado           ENUM('pendiente','en_ejecucion','completado','suspendido') NOT NULL DEFAULT 'pendiente',
+            version_num      INT          NOT NULL DEFAULT 1 COMMENT 'Versión incremental por consulta',
+            origen_tratamiento_id INT     NULL COMMENT 'Registro anterior del cual deriva esta versión',
+            creado_en        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            iniciado_en      DATETIME     NULL,
+            completado_en    DATETIME     NULL,
+            notas_enfermeria TEXT         NULL,
+            INDEX idx_te_estado   (estado),
+            INDEX idx_te_paciente (paciente_id),
+            INDEX idx_te_consulta_version (consulta_id, version_num),
+            CONSTRAINT fk_te_consulta FOREIGN KEY (consulta_id) REFERENCES consultas(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    // Migración compatible con instalaciones previas (idempotente).
+    $idxLegacy = $conn->query("SHOW INDEX FROM tratamientos_enfermeria WHERE Key_name = 'uk_te_consulta'");
+    if ($idxLegacy && $idxLegacy->num_rows > 0) {
+        $conn->query('ALTER TABLE tratamientos_enfermeria DROP INDEX uk_te_consulta');
+    }
+
+    $colVersion = $conn->query("SHOW COLUMNS FROM tratamientos_enfermeria LIKE 'version_num'");
+    if ($colVersion && $colVersion->num_rows === 0) {
+        $conn->query('ALTER TABLE tratamientos_enfermeria ADD COLUMN version_num INT NOT NULL DEFAULT 1');
+    }
+
+    $colOrigen = $conn->query("SHOW COLUMNS FROM tratamientos_enfermeria LIKE 'origen_tratamiento_id'");
+    if ($colOrigen && $colOrigen->num_rows === 0) {
+        $conn->query('ALTER TABLE tratamientos_enfermeria ADD COLUMN origen_tratamiento_id INT NULL');
+    }
+
+    $idxVersion = $conn->query("SHOW INDEX FROM tratamientos_enfermeria WHERE Key_name = 'idx_te_consulta_version'");
+    if ($idxVersion && $idxVersion->num_rows === 0) {
+        $conn->query('ALTER TABLE tratamientos_enfermeria ADD INDEX idx_te_consulta_version (consulta_id, version_num)');
+    }
+}
+
+function hc_ensure_tratamientos_multidia_tables($conn) {
+    tph_ensure_multidia_tables($conn);
+}
+
+function hc_parse_duracion_dias($duracionTexto) {
+    return tph_parse_duracion_dias($duracionTexto);
+}
+
+function hc_parse_dosis_por_dia($frecuenciaTexto) {
+    $norm = tph_normalize_prescripcion_item(['frecuencia' => $frecuenciaTexto], 0);
+    return (int)($norm['dosis_dia'] ?? 1);
+}
+
+function hc_rebuild_plan_multidia($conn, $tratamientoId, $receta) {
+    tph_rebuild_plan_multidia($conn, $tratamientoId, $receta);
+}
+
+function hc_upsert_tratamiento_enfermeria($conn, $consulta_id, $datos) {
+    $receta = (is_array($datos) && isset($datos['receta']) && is_array($datos['receta']))
+        ? $datos['receta']
+        : [];
+    $tratamientoTexto = is_array($datos) ? trim((string)($datos['tratamiento'] ?? '')) : '';
+
+    // Solo crear registro si hay algo de valor para enfermería
+    if (empty($receta) && $tratamientoTexto === '') {
+        return;
+    }
+
+    hc_ensure_tratamientos_enfermeria_table($conn);
+    hc_ensure_tratamientos_multidia_tables($conn);
+
+    $stmtPac = $conn->prepare('SELECT paciente_id FROM consultas WHERE id = ? LIMIT 1');
+    if (!$stmtPac) return;
+    $stmtPac->bind_param('i', $consulta_id);
+    $stmtPac->execute();
+    $rowPac = $stmtPac->get_result()->fetch_assoc();
+    $stmtPac->close();
+    $pacienteId = (int)($rowPac['paciente_id'] ?? 0);
+    if ($pacienteId <= 0) return;
+
+    $recetaJson = json_encode($receta, JSON_UNESCAPED_UNICODE);
+
+    // Buscar la última versión del tratamiento para esta consulta.
+    $stmtLast = $conn->prepare(
+        'SELECT id, estado, receta_snapshot, tratamiento_texto, version_num
+         FROM tratamientos_enfermeria
+         WHERE consulta_id = ?
+         ORDER BY version_num DESC, id DESC
+         LIMIT 1'
+    );
+    if (!$stmtLast) return;
+    $stmtLast->bind_param('i', $consulta_id);
+    $stmtLast->execute();
+    $last = $stmtLast->get_result()->fetch_assoc();
+    $stmtLast->close();
+
+    if (!$last) {
+        $stmtInsert = $conn->prepare(
+            'INSERT INTO tratamientos_enfermeria (consulta_id, paciente_id, receta_snapshot, tratamiento_texto, estado, version_num)
+             VALUES (?, ?, ?, ?, "pendiente", 1)'
+        );
+        if (!$stmtInsert) return;
+        $stmtInsert->bind_param('iiss', $consulta_id, $pacienteId, $recetaJson, $tratamientoTexto);
+        $okInsert = $stmtInsert->execute();
+        $newTratamientoId = $okInsert ? (int)$stmtInsert->insert_id : 0;
+        $stmtInsert->close();
+        if ($newTratamientoId > 0) {
+            hc_rebuild_plan_multidia($conn, $newTratamientoId, $receta);
+        }
+        return;
+    }
+
+    $lastId = (int)($last['id'] ?? 0);
+    $lastEstado = trim((string)($last['estado'] ?? ''));
+    $lastVersion = (int)($last['version_num'] ?? 1);
+    $lastReceta = (string)($last['receta_snapshot'] ?? '[]');
+    $lastTratamiento = trim((string)($last['tratamiento_texto'] ?? ''));
+    $mismoContenido = ($lastReceta === $recetaJson) && ($lastTratamiento === $tratamientoTexto);
+
+    // Si no hay cambios en la prescripción, evitar ruido de versiones.
+    if ($mismoContenido) {
+        return;
+    }
+
+    if ($lastEstado === 'pendiente') {
+        // Mientras siga pendiente se actualiza en la misma versión.
+        $stmtUpd = $conn->prepare(
+            'UPDATE tratamientos_enfermeria
+             SET receta_snapshot = ?, tratamiento_texto = ?, creado_en = CURRENT_TIMESTAMP
+             WHERE id = ? LIMIT 1'
+        );
+        if (!$stmtUpd) return;
+        $stmtUpd->bind_param('ssi', $recetaJson, $tratamientoTexto, $lastId);
+        $stmtUpd->execute();
+        $stmtUpd->close();
+        hc_rebuild_plan_multidia($conn, $lastId, $receta);
+        return;
+    }
+
+    if ($lastEstado === 'en_ejecucion') {
+        // Regla avanzada: si enfermería está aplicando y el médico edita,
+        // el tratamiento actual se suspende y se crea una nueva versión pendiente.
+        $stmtSusp = $conn->prepare(
+            'UPDATE tratamientos_enfermeria
+             SET estado = "suspendido",
+                 notas_enfermeria = CONCAT(
+                    IFNULL(NULLIF(notas_enfermeria, ""), ""),
+                    IF(IFNULL(NULLIF(notas_enfermeria, ""), "") = "", "", "\n"),
+                    "Suspendido por actualización médica de la receta: ", DATE_FORMAT(NOW(), "%Y-%m-%d %H:%i:%s")
+                 )
+             WHERE id = ? AND estado = "en_ejecucion" LIMIT 1'
+        );
+        if ($stmtSusp) {
+            $stmtSusp->bind_param('i', $lastId);
+            $stmtSusp->execute();
+            $stmtSusp->close();
+        }
+    }
+
+    $newVersion = $lastVersion + 1;
+    $stmtInsertVersion = $conn->prepare(
+        'INSERT INTO tratamientos_enfermeria
+            (consulta_id, paciente_id, receta_snapshot, tratamiento_texto, estado, version_num, origen_tratamiento_id)
+         VALUES (?, ?, ?, ?, "pendiente", ?, ?)'
+    );
+    if (!$stmtInsertVersion) return;
+    $stmtInsertVersion->bind_param('iissii', $consulta_id, $pacienteId, $recetaJson, $tratamientoTexto, $newVersion, $lastId);
+    $okVersion = $stmtInsertVersion->execute();
+    $newTratamientoId = $okVersion ? (int)$stmtInsertVersion->insert_id : 0;
+    $stmtInsertVersion->close();
+
+    if ($newTratamientoId > 0) {
+        hc_rebuild_plan_multidia($conn, $newTratamientoId, $receta);
+    }
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -1001,6 +1618,7 @@ switch ($method) {
             $historialPrevias = $includeChain
                 ? hc_get_historial_cadena_previas($conn, $targetConsultaId)
                 : null;
+            $proximaContratoEvento = hc_resolver_proxima_cita_contrato($conn, $targetConsultaId);
 
             echo json_encode([
                 'success' => true,
@@ -1012,6 +1630,7 @@ switch ($method) {
                 'template_resolution' => $templateResolution,
                 'historias_previas' => $historialPrevias,
                 'total_historias_previas' => is_array($historialPrevias) ? count($historialPrevias) : null,
+                'proxima_contrato_evento' => $proximaContratoEvento,
             ]);
         } else {
             $historialPrevias = ($includeChain && $consulta_id > 0)
@@ -1045,6 +1664,11 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
         }
+
+        if (is_array($datos)) {
+            $datos = hc_sanitizar_diagnosticos($datos);
+        }
+
         // Verificar si ya existe HC para esta consulta
         $stmt_check = $conn->prepare('SELECT id FROM historia_clinica WHERE consulta_id = ?');
         $stmt_check->bind_param('i', $consulta_id);
@@ -1082,6 +1706,16 @@ switch ($method) {
             $stmt_check->close();
             exit;
         }
+
+        // Encadenar HC: resolver parent canonico y persistir campos de cadena
+        hc_actualizar_cadena_hc($conn, $hcActualId, (int)$consulta_id);
+
+        // Retro-vincular: si esta consulta pertenece a un contrato, buscar el evento
+        // inmediatamente siguiente y actualizar su hc_origen_id al consulta_id actual.
+        // Esto resuelve el timing gap: cuando el contrato programó el evento B, la HC de A
+        // aún no existía, así que B.hc_origen_id quedó en 0. Al guardar la HC de A ahora
+        // se corrige B.hc_origen_id = A.consulta_id para que la cadena quede activa.
+        hc_retrovincular_siguiente_evento_contrato($conn, (int)$consulta_id);
 
         $proximaResultado = null;
         try {
@@ -1126,6 +1760,10 @@ switch ($method) {
         $stmt_estado->bind_param('si', $estado_completada, $consulta_id);
         $stmt_estado->execute();
         $stmt_estado->close();
+
+        // Sincronizar receta/tratamiento al panel de enfermería
+        hc_upsert_tratamiento_enfermeria($conn, (int)$consulta_id, $datos);
+
         echo json_encode([
             'success' => $ok,
             'proxima_cita' => $proximaResultado,

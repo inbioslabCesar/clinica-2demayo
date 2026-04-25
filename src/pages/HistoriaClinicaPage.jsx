@@ -1,5 +1,5 @@
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import TabsApoyoDiagnostico from "../components/examenes/TabsApoyoDiagnostico";
@@ -24,6 +24,35 @@ const DEFAULT_PROXIMA_CITA = {
 const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita"]);
 const HC_PREV_EXCLUDED_SECTIONS = new Set(["plan", "tratamiento", "receta"]);
 const HC_PREVIAS_CACHE_TTL_MS = 5 * 60 * 1000;
+const HC_DRAFT_STORAGE_PREFIX = "hc_draft_v1";
+const HC_DRAFT_TTL_MS = 72 * 60 * 60 * 1000;
+
+function buildDraftStorageKey(consultaId, pacienteId) {
+  const consulta = String(consultaId || "").trim();
+  const paciente = String(pacienteId || "").trim();
+  if (!consulta || !paciente) return "";
+  return `${HC_DRAFT_STORAGE_PREFIX}_${consulta}_${paciente}`;
+}
+
+function normalizeHistoriaData(rawDatos) {
+  const source = rawDatos && typeof rawDatos === "object" ? rawDatos : {};
+  const rawProxima = source.proxima_cita || {};
+  return {
+    ...source,
+    receta: Array.isArray(source.receta) ? source.receta : [],
+    proxima_cita: {
+      ...DEFAULT_PROXIMA_CITA,
+      ...(rawProxima && typeof rawProxima === "object" ? rawProxima : {}),
+    },
+  };
+}
+
+function buildHcSnapshot(model) {
+  const base = model && typeof model === "object" ? model : {};
+  const hc = normalizeHistoriaData(base.hc || {});
+  const diagnosticos = Array.isArray(base.diagnosticos) ? base.diagnosticos : [];
+  return JSON.stringify({ hc, diagnosticos });
+}
 
 function HistoriaClinicaPage() {
   const { pacienteId, consultaId } = useParams();
@@ -52,11 +81,6 @@ function HistoriaClinicaPage() {
   const [mostrarHcAnterior, setMostrarHcAnterior] = useState(false);
   const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
   const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
-  const [mostrarBurbujaAsistente, setMostrarBurbujaAsistente] = useState(false);
-  const [configApariencia, setConfigApariencia] = useState({
-    color_primario: '#3B82F6',
-    avatar_activo: null
-  });
   useEffect(() => {
     const usuarioRaw = sessionStorage.getItem("usuario");
     if (usuarioRaw) {
@@ -70,36 +94,22 @@ function HistoriaClinicaPage() {
     }
   }, []);
   useEffect(() => {
-    // Cargar configuración de apariencia (avatar y color)
-    fetch(`${BASE_URL}api_configuracion_apariencia.php`, {
-      method: 'GET',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' }
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.data) {
-          setConfigApariencia({
-            color_primario: data.data.color_primario || '#3B82F6',
-            avatar_activo: data.data.avatar_activo || null
-          });
-        }
-      })
-      .catch((err) => {
-        console.error('Error loading appearance config:', err);
-        // Usar valores por defecto
-      });
-  }, []);
-  useEffect(() => {
     if (!consultaId) return;
-    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
+    const noCache = `_t=${Date.now()}`;
+    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
+      credentials: 'include',
+      cache: 'no-store',
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.resultados) setResultadosLab(data.resultados);
         else setResultadosLab([]);
       })
       .catch(() => setResultadosLab([]));
-    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
+    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
+      credentials: 'include',
+      cache: 'no-store',
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.ordenes)) {
@@ -132,6 +142,31 @@ function HistoriaClinicaPage() {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
+    });
+  };
+
+  const formatearFechaConsultaActual = (fechaRaw, horaRaw = "") => {
+    const fechaTexto = String(fechaRaw || "").trim();
+    const horaTexto = String(horaRaw || "").trim();
+    if (!fechaTexto) return "-";
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fechaTexto)) {
+      const [y, m, d] = fechaTexto.split("-").map(Number);
+      const fecha = new Date(y, (m || 1) - 1, d || 1);
+      if (Number.isNaN(fecha.getTime())) return horaTexto ? `${fechaTexto} ${horaTexto}` : fechaTexto;
+      const base = fecha.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
+      return horaTexto ? `${base} ${horaTexto}` : base;
+    }
+
+    const parsed = new Date(fechaTexto.replace(" ", "T"));
+    if (Number.isNaN(parsed.getTime())) return horaTexto ? `${fechaTexto} ${horaTexto}` : fechaTexto;
+
+    return parsed.toLocaleString("es-PE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
@@ -211,39 +246,151 @@ function HistoriaClinicaPage() {
   const [msg, setMsg] = useState("");
   const [mostrarModalGuardado, setMostrarModalGuardado] = useState(false);
   const [mensajeModalGuardado, setMensajeModalGuardado] = useState("");
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [serverSnapshot, setServerSnapshot] = useState("");
   const [bloqueoGuardadoHasta, setBloqueoGuardadoHasta] = useState(0);
   const [diagnosticos, setDiagnosticos] = useState([]);
   const [hcTemplateMeta, setHcTemplateMeta] = useState(null);
   const [hcTemplateResolution, setHcTemplateResolution] = useState(null);
+  const hcRef = useRef(hc);
+  const diagnosticosRef = useRef(diagnosticos);
   const bloqueoGuardadoActivo = Date.now() < bloqueoGuardadoHasta;
+  const draftKey = useMemo(() => buildDraftStorageKey(consultaId, pacienteId), [consultaId, pacienteId]);
+
+  useEffect(() => {
+    hcRef.current = hc;
+  }, [hc]);
+
+  useEffect(() => {
+    diagnosticosRef.current = diagnosticos;
+  }, [diagnosticos]);
+
+  const persistDraftNow = useCallback(() => {
+    if (readOnly || !draftKey) return;
+    try {
+      const payload = {
+        version: 1,
+        consulta_id: String(consultaId || ""),
+        paciente_id: String(pacienteId || ""),
+        updated_at: Date.now(),
+        hc: normalizeHistoriaData(hcRef.current),
+        diagnosticos: Array.isArray(diagnosticosRef.current) ? diagnosticosRef.current : [],
+      };
+      sessionStorage.setItem(draftKey, JSON.stringify(payload));
+    } catch {
+      // Ignorar errores de storage para no bloquear el flujo clínico.
+    }
+  }, [consultaId, draftKey, pacienteId, readOnly]);
+
+  const clearDraft = useCallback(() => {
+    if (!draftKey) return;
+    try {
+      sessionStorage.removeItem(draftKey);
+    } catch {
+      // Ignorar errores de storage.
+    }
+  }, [draftKey]);
+
+  const currentSnapshot = useMemo(
+    () => buildHcSnapshot({ hc, diagnosticos }),
+    [hc, diagnosticos]
+  );
+
   useEffect(() => {
     if (!consultaId) return;
     const templateQuery = HC_TEMPLATE_ENGINE_READ ? '&include_template=1' : '';
+    setDraftHydrated(false);
     fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}${templateQuery}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
-        if (data.success && data.datos) {
-          const rawProxima = data.datos.proxima_cita || {};
-          setHc({
-            ...data.datos,
-            receta: Array.isArray(data.datos.receta) ? data.datos.receta : [],
-            proxima_cita: {
-              ...DEFAULT_PROXIMA_CITA,
-              ...(rawProxima && typeof rawProxima === "object" ? rawProxima : {}),
-            },
-          });
-          if (Array.isArray(data.datos.diagnosticos)) {
-            setDiagnosticos(data.datos.diagnosticos);
-          } else {
-            setDiagnosticos([]);
+        const fromApiHc = normalizeHistoriaData(data.success && data.datos ? data.datos : {});
+        const fromApiDiagnosticos = Array.isArray(data?.datos?.diagnosticos) ? data.datos.diagnosticos : [];
+        const apiSnapshot = buildHcSnapshot({ hc: fromApiHc, diagnosticos: fromApiDiagnosticos });
+        setServerSnapshot(apiSnapshot);
+        setHc(fromApiHc);
+        setDiagnosticos(fromApiDiagnosticos);
+
+        // Si el backend devolvió un próximo evento del contrato y la HC no tiene próxima
+        // cita definida aún, pre-activar la sección con los datos del contrato.
+        const proximaContrato = data?.proxima_contrato_evento;
+        if (!readOnly && proximaContrato && proximaContrato.consulta_id > 0) {
+          const proxExistente = fromApiHc?.proxima_cita || {};
+          const yaDefinida = Boolean(proxExistente?.programar) ||
+            String(proxExistente?.fecha || '').trim() ||
+            String(proxExistente?.hora || '').trim();
+          if (!yaDefinida) {
+            setHc((current) => {
+              const currProx = current?.proxima_cita || {};
+              if (Boolean(currProx?.programar) || String(currProx?.fecha || '').trim() || String(currProx?.hora || '').trim()) {
+                return current;
+              }
+              return {
+                ...current,
+                proxima_cita: {
+                  ...DEFAULT_PROXIMA_CITA,
+                  programar: true,
+                  consulta_id: Number(proximaContrato.consulta_id) || null,
+                  fecha: String(proximaContrato.fecha || '').slice(0, 10),
+                  hora: String(proximaContrato.hora || '').slice(0, 5),
+                  medico_id: String(proximaContrato.medico_id || ''),
+                  es_control: Boolean(proximaContrato.es_control),
+                  origen: 'contrato_agenda',
+                },
+              };
+            });
           }
         }
+
+        if (!readOnly && draftKey) {
+          try {
+            const rawDraft = sessionStorage.getItem(draftKey);
+            if (rawDraft) {
+              const parsedDraft = JSON.parse(rawDraft);
+              const ageMs = Date.now() - Number(parsedDraft?.updated_at || 0);
+              const expired = !Number.isFinite(ageMs) || ageMs < 0 || ageMs > HC_DRAFT_TTL_MS;
+              if (expired) {
+                sessionStorage.removeItem(draftKey);
+              } else {
+                const draftModel = {
+                  hc: normalizeHistoriaData(parsedDraft?.hc || {}),
+                  diagnosticos: Array.isArray(parsedDraft?.diagnosticos) ? parsedDraft.diagnosticos : [],
+                };
+                const draftSnapshot = buildHcSnapshot(draftModel);
+                if (draftSnapshot && draftSnapshot !== apiSnapshot) {
+                  setHc(normalizeHistoriaData(draftModel.hc || {}));
+                  setDiagnosticos(Array.isArray(draftModel.diagnosticos) ? draftModel.diagnosticos : []);
+                } else if (draftSnapshot === apiSnapshot) {
+                  sessionStorage.removeItem(draftKey);
+                }
+              }
+            }
+          } catch {
+            // Si el borrador está corrupto, se ignora y se continúa con backend.
+          }
+        }
+
+        setDraftHydrated(true);
         if (HC_TEMPLATE_ENGINE_READ) {
           setHcTemplateMeta(data.template || null);
           setHcTemplateResolution(data.template_resolution || null);
         }
+      })
+      .catch(() => {
+        setDraftHydrated(true);
       });
-  }, [consultaId]);
+  }, [consultaId, draftKey, readOnly]);
+
+  useEffect(() => {
+    if (readOnly || !draftHydrated || !draftKey) return;
+    const timer = window.setTimeout(() => {
+      if (serverSnapshot && currentSnapshot === serverSnapshot) {
+        clearDraft();
+        return;
+      }
+      persistDraftNow();
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [clearDraft, currentSnapshot, draftHydrated, draftKey, persistDraftNow, readOnly, serverSnapshot]);
   useEffect(() => {
     const sections = hcTemplateMeta?.sections;
     if (!sections || typeof sections !== "object") return;
@@ -281,6 +428,98 @@ function HistoriaClinicaPage() {
       };
     });
   }, [medicoInfo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hidratarProximaDesdeConsultas = async () => {
+      const actualConsultaId = Number(consultaId || 0);
+      const actualMedicoId = Number(consultaActual?.medico_id || 0);
+      const actualPacienteId = Number(pacienteId || consultaActual?.paciente_id || 0);
+      const proximaActual = hc?.proxima_cita || DEFAULT_PROXIMA_CITA;
+
+      // No pisar datos si ya existe próxima cita definida manualmente o cargada desde backend.
+      if (Boolean(proximaActual?.programar) || String(proximaActual?.fecha || '').trim() || String(proximaActual?.hora || '').trim()) {
+        return;
+      }
+
+      if (actualConsultaId <= 0 || actualPacienteId <= 0 || actualMedicoId <= 0) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}api_consultas.php?paciente_id=${actualPacienteId}&solo_activas=1`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        const consultas = Array.isArray(data?.consultas) ? data.consultas : [];
+        if (consultas.length === 0) return;
+
+        const fechaActual = String(consultaActual?.fecha || '').trim();
+        const horaActual = String(consultaActual?.hora || '').trim();
+        const tsActual = Date.parse(`${fechaActual}T${horaActual || '00:00:00'}`);
+
+        const baseCandidatas = consultas
+          .filter((c) => Number(c?.id || 0) !== actualConsultaId)
+          .filter((c) => Number(c?.medico_id || 0) === actualMedicoId)
+          .map((c) => {
+            const fecha = String(c?.fecha || '').trim();
+            const hora = String(c?.hora || '').trim();
+            const ts = Date.parse(`${fecha}T${hora || '00:00:00'}`);
+            return { c, fecha, hora, ts };
+          })
+          .filter((item) => !Number.isNaN(item.ts))
+          .filter((item) => Number.isNaN(tsActual) || item.ts >= tsActual);
+
+        // Fuente primaria: cita explícitamente encadenada a la consulta actual.
+        const candidatasVinculadas = baseCandidatas
+          .filter((item) => Number(item?.c?.hc_origen_id || 0) === actualConsultaId)
+          .sort((a, b) => a.ts - b.ts);
+
+        // Fuente secundaria: sólo si no hubo vinculada, usar agenda de contrato/hc_proxima.
+        const candidatasContrato = baseCandidatas
+          .filter((item) => {
+            const origen = String(item?.c?.origen_creacion || '').toLowerCase().trim();
+            return origen === 'contrato_agenda' || origen === 'hc_proxima';
+          })
+          .sort((a, b) => a.ts - b.ts);
+
+        const objetivo = (candidatasVinculadas[0] || candidatasContrato[0])?.c;
+        if (!objetivo || cancelled) return;
+
+        setHc((current) => {
+          const currProx = current?.proxima_cita || DEFAULT_PROXIMA_CITA;
+          if (Boolean(currProx?.programar) || String(currProx?.fecha || '').trim() || String(currProx?.hora || '').trim()) {
+            return current;
+          }
+
+          return {
+            ...current,
+            proxima_cita: {
+              ...DEFAULT_PROXIMA_CITA,
+              ...currProx,
+              programar: true,
+              consulta_id: Number(objetivo?.id || 0) || null,
+              fecha: String(objetivo?.fecha || '').slice(0, 10),
+              hora: String(objetivo?.hora || '').slice(0, 5),
+              medico_id: String(objetivo?.medico_id || actualMedicoId || ''),
+              es_control: Number(objetivo?.es_control || 0) === 1,
+              origen: String(objetivo?.origen_creacion || 'contrato_agenda'),
+            },
+          };
+        });
+      } catch {
+        // Si falla este lookup, no bloquea la apertura de HC.
+      }
+    };
+
+    hidratarProximaDesdeConsultas();
+    return () => {
+      cancelled = true;
+    };
+  }, [consultaId, consultaActual?.fecha, consultaActual?.hora, consultaActual?.medico_id, consultaActual?.paciente_id, hc?.proxima_cita, pacienteId]);
+
   useEffect(() => {
     if (!pacienteId) return;
     setLoading(true);
@@ -507,21 +746,14 @@ function HistoriaClinicaPage() {
 
   const totalHistoriasPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
   useEffect(() => {
-    if (readOnly) return;
-    if (Number(consultaActual?.hc_origen_id || 0) <= 0) return;
-    if (totalHistoriasPrevias <= 0) return;
+    const handleOpenHistoryDrawer = () => {
+      if (Number(consultaActual?.hc_origen_id || 0) <= 0) return;
+      setDrawerHistorialAbierto(true);
+    };
 
-    const welcomeKey = "hc_asistente_burbuja_bienvenida_v1";
-    const wasShown = localStorage.getItem(welcomeKey) === "1";
-    if (wasShown) return;
-
-    const timer = window.setTimeout(() => {
-      setMostrarBurbujaAsistente(true);
-      localStorage.setItem(welcomeKey, "1");
-    }, 350);
-
-    return () => window.clearTimeout(timer);
-  }, [consultaActual?.hc_origen_id, totalHistoriasPrevias, readOnly]);
+    window.addEventListener('hc-assistant-open-history-drawer', handleOpenHistoryDrawer);
+    return () => window.removeEventListener('hc-assistant-open-history-drawer', handleOpenHistoryDrawer);
+  }, [consultaActual?.hc_origen_id]);
 
   const irHistoriaAnterior = () => {
     if (totalHistoriasPrevias <= 0) return;
@@ -659,12 +891,6 @@ function HistoriaClinicaPage() {
     "manejo",
     "indicaciones",
   ], /tratamiento|manejo|indicaciones/i);
-  const antecedentesPrevios = obtenerTextoDesdeCampos(datosHcAnterior, [
-    "antecedentes",
-    "antecedentes_personales",
-    "antecedentes_patologicos",
-    "antecedente",
-  ], /anteced/i);
   const examenFisicoPrevio = obtenerTextoDesdeCampos(datosHcAnterior, [
     "examen_fisico",
     "examen_general",
@@ -674,12 +900,6 @@ function HistoriaClinicaPage() {
   const templateAnteriorSections = hcAnterior?.template?.sections && typeof hcAnterior.template.sections === "object"
     ? hcAnterior.template.sections
     : null;
-  const existeCampoAntecedentesEnTemplateAnterior = templateAnteriorSections
-    ? Object.values(templateAnteriorSections).some((sectionFields) => {
-        if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return false;
-        return Object.keys(sectionFields).some((fieldKey) => /anteced/i.test(String(fieldKey)));
-      })
-    : false;
   const existeCampoExamenEnTemplateAnterior = templateAnteriorSections
     ? Object.values(templateAnteriorSections).some((sectionFields) => {
         if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return false;
@@ -705,14 +925,9 @@ function HistoriaClinicaPage() {
         return acc;
       }, [])
     : [];
-  const tieneCampoAntecedentesEnSeccionesPrevias = seccionesPreviasDinamicas.some((section) =>
-    section.fields.some((field) => /anteced/i.test(String(field.fieldKey)))
-  );
   const tieneCampoExamenEnSeccionesPrevias = seccionesPreviasDinamicas.some((section) =>
     section.fields.some((field) => /examen|exploracion|evaluacion/i.test(String(field.fieldKey)))
   );
-  const mostrarAntecedentesPrevios = (Boolean(antecedentesPrevios) || existeCampoAntecedentesEnTemplateAnterior)
-    && !tieneCampoAntecedentesEnSeccionesPrevias;
   const mostrarExamenFisicoPrevio = (Boolean(examenFisicoPrevio) || existeCampoExamenEnTemplateAnterior)
     && !tieneCampoExamenEnSeccionesPrevias;
   const camposPreviosFallback = seccionesPreviasDinamicas.length === 0
@@ -724,6 +939,113 @@ function HistoriaClinicaPage() {
         return acc;
       }, [])
     : [];
+  const truncarTexto = (text, max = 64) => {
+    const value = String(text || "").trim();
+    if (!value) return "-";
+    if (value.length <= max) return value;
+    return `${value.slice(0, max - 1)}...`;
+  };
+  const ordenesLabActuales = Array.isArray(ordenesLab) ? ordenesLab : [];
+  const ordenesLabPendientes = ordenesLabActuales.filter((orden) => {
+    const estado = String(orden?.estado_visual || orden?.estado || '').toLowerCase();
+    return estado !== 'completado' && estado !== 'cancelado';
+  }).length;
+  const ordenesLabCompletadas = ordenesLabActuales.filter((orden) => {
+    const estado = String(orden?.estado_visual || orden?.estado || '').toLowerCase();
+    return estado === 'completado' || Number(orden?.analisis_completos || 0) > 0;
+  }).length;
+  const resultadosLabActuales = Array.isArray(resultadosLab) ? resultadosLab.length : 0;
+  const resultadosLabPrevios = Number(apoyoLaboratorio?.resultados || 0);
+  const documentosLabPrevios = Number(apoyoLaboratorio?.documentos || 0);
+  const ecoArchivosPrevios = Number(apoyoEcografia?.archivos || 0);
+  const medicamentosActuales = Array.isArray(hc?.receta) ? hc.receta.length : 0;
+  const medicamentosPrevios = Array.isArray(recetaPrevia) ? recetaPrevia.length : 0;
+
+  const resumenLaboratorioTexto = (() => {
+    if (ordenesLabCompletadas > 0 || ordenesLabPendientes > 0 || resultadosLabActuales > 0) {
+      return `${ordenesLabCompletadas} completado(s), ${ordenesLabPendientes} pendiente(s), ${resultadosLabActuales} resultado(s) cargado(s)`;
+    }
+    if (resultadosLabPrevios > 0 || documentosLabPrevios > 0) {
+      return `sin orden actual; en HC previa: ${resultadosLabPrevios} resultado(s), ${documentosLabPrevios} adjunto(s)`;
+    }
+    return 'sin registros detectados';
+  })();
+
+  const resumenEcografiaTexto = ecoArchivosPrevios > 0
+    ? `${ecoArchivosPrevios} archivo(s) en HC previa`
+    : (ecografiaDisponible ? 'con imágenes registradas' : 'sin imágenes registradas');
+
+  const resumenMedicacionTexto = (medicamentosActuales > 0 || medicamentosPrevios > 0)
+    ? `${medicamentosActuales} medicamento(s) actual(es), ${medicamentosPrevios} en HC previa`
+    : 'sin medicación registrada';
+
+  const fechaHcPreviaResumen = hcAnterior?.fecha_registro
+    ? formatearFechaCorta(hcAnterior.fecha_registro)
+    : '-';
+  const diagnosticoHcPreviaResumen = diagnosticosPrevios.length > 0
+    ? truncarTexto(diagnosticosPrevios[0], 72)
+    : 'Sin diagnóstico previo';
+  const resumenAsistenteItems = useMemo(() => ([
+    `Antecedentes HC encadenados: ${totalHistoriasPrevias}`,
+    `Ultima HC registrada: ${fechaHcPreviaResumen}`,
+    `Diagnostico previo principal: ${diagnosticoHcPreviaResumen}`,
+    `Laboratorio: ${resumenLaboratorioTexto}`,
+    `Ecografía: ${resumenEcografiaTexto}`,
+    `Medicamentos: ${resumenMedicacionTexto}`,
+    `Apoyo diagnostico previo: Lab ${laboratorioDisponible ? 'con resultados' : 'sin resultados'} · Ecografía ${ecografiaDisponible ? 'con imágenes' : 'sin imágenes'}`,
+  ]), [
+    totalHistoriasPrevias,
+    fechaHcPreviaResumen,
+    diagnosticoHcPreviaResumen,
+    resumenLaboratorioTexto,
+    resumenEcografiaTexto,
+    resumenMedicacionTexto,
+    laboratorioDisponible,
+    ecografiaDisponible,
+  ]);
+
+  useEffect(() => {
+    const payload = {
+      source: 'historia-clinica',
+      available: Number(consultaActual?.hc_origen_id || 0) > 0,
+      readOnly,
+      consultaId: Number(consultaId || 0),
+      pacienteId: Number(pacienteId || 0),
+      totalHistoriasPrevias,
+      hcAnteriorLoading,
+      hcAnteriorError,
+      resumenItems: resumenAsistenteItems,
+      canOpenHistoryDrawer: Number(consultaActual?.hc_origen_id || 0) > 0,
+    };
+
+    window.dispatchEvent(new CustomEvent('hc-assistant-context-updated', { detail: payload }));
+
+    return () => {
+      window.dispatchEvent(new CustomEvent('hc-assistant-context-updated', {
+        detail: {
+          source: 'historia-clinica',
+          available: false,
+          readOnly: false,
+          consultaId: 0,
+          pacienteId: 0,
+          totalHistoriasPrevias: 0,
+          hcAnteriorLoading: false,
+          hcAnteriorError: '',
+          resumenItems: [],
+          canOpenHistoryDrawer: false,
+        },
+      }));
+    };
+  }, [
+    consultaActual?.hc_origen_id,
+    consultaId,
+    pacienteId,
+    readOnly,
+    totalHistoriasPrevias,
+    hcAnteriorLoading,
+    hcAnteriorError,
+    resumenAsistenteItems,
+  ]);
 
   if (loading) return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
@@ -759,6 +1081,12 @@ function HistoriaClinicaPage() {
       </div>
     </div>
   );
+
+  const fechaConsultaVisible = formatearFechaConsultaActual(
+    consultaActual?.fecha_consulta || consultaActual?.fecha || consultaActual?.created_at || consultaActual?.fecha_hora || fechaConsulta,
+    consultaActual?.hora || consultaActual?.hora_consulta || ""
+  );
+
   return (
     <div className="min-h-screen py-4 sm:py-8 px-2 sm:px-4 overflow-x-hidden" style={{ background: 'linear-gradient(to bottom right, var(--color-primary-light, #eff6ff), #ffffff, var(--color-accent, #eef2ff))' }}>
       <div className="max-w-6xl mx-auto w-full">
@@ -838,6 +1166,9 @@ function HistoriaClinicaPage() {
               </svg>
             </div>
             <h2 className="text-lg font-semibold text-gray-800">👤 Información del Paciente</h2>
+          </div>
+          <div className="mb-3 text-sm text-gray-700">
+            <span className="font-semibold">Fecha de consulta:</span> {fechaConsultaVisible}
           </div>
           <DatosPaciente paciente={paciente} />
         </div>
@@ -946,6 +1277,8 @@ function HistoriaClinicaPage() {
                   }
                 }
                 setBloqueoGuardadoHasta(Date.now() + 2500);
+                setServerSnapshot(currentSnapshot);
+                clearDraft();
                 setMensajeModalGuardado(successMsg);
                 setMostrarModalGuardado(true);
                 setMsg(successMsg);
@@ -991,6 +1324,7 @@ function HistoriaClinicaPage() {
               pacienteId={pacienteId}
               resultadosLab={resultadosLab}
               ordenesLab={ordenesLab}
+              onBeforeNavigate={persistDraftNow}
             />
           </div>
           {/* Diagnósticos CIE10 */}
@@ -1046,7 +1380,7 @@ function HistoriaClinicaPage() {
             <div className="space-y-4">
               <label
                 className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 cursor-pointer transition-all ${
-                  Boolean(hc.proxima_cita?.programar)
+                  hc.proxima_cita?.programar
                     ? "border-cyan-400 bg-cyan-50/80"
                     : "border-slate-300 bg-white"
                 } ${readOnly ? "opacity-70 cursor-not-allowed" : "hover:border-cyan-300"}`}
@@ -1054,22 +1388,22 @@ function HistoriaClinicaPage() {
                 <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
                   <span
                     className={`h-5 w-5 rounded-md border-2 flex items-center justify-center ${
-                      Boolean(hc.proxima_cita?.programar)
+                      hc.proxima_cita?.programar
                         ? "border-cyan-600 bg-cyan-600 text-white"
                         : "border-slate-400 bg-white"
                     }`}
                   >
-                    {Boolean(hc.proxima_cita?.programar) ? "✓" : ""}
+                    {hc.proxima_cita?.programar ? "✓" : ""}
                   </span>
                   <span>Programar próxima cita al guardar esta HC</span>
                 </div>
-                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${Boolean(hc.proxima_cita?.programar) ? "bg-cyan-100 text-cyan-800" : "bg-slate-100 text-slate-600"}`}>
-                  {Boolean(hc.proxima_cita?.programar) ? "Activado" : "Desactivado"}
+                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${hc.proxima_cita?.programar ? "bg-cyan-100 text-cyan-800" : "bg-slate-100 text-slate-600"}`}>
+                  {hc.proxima_cita?.programar ? "Activado" : "Desactivado"}
                 </span>
                 <input
                   type="checkbox"
                   className="sr-only"
-                  checked={Boolean(hc.proxima_cita?.programar)}
+                  checked={!!hc.proxima_cita?.programar}
                   onChange={(e) =>
                     setHc((current) => ({
                       ...current,
@@ -1085,11 +1419,11 @@ function HistoriaClinicaPage() {
                 />
               </label>
 
-              {Boolean(hc.proxima_cita?.programar) && (
+              {hc.proxima_cita?.programar && (
                 <>
                   <label
                     className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 cursor-pointer transition-all ${
-                      Boolean(hc.proxima_cita?.es_control)
+                      hc.proxima_cita?.es_control
                         ? "border-emerald-400 bg-emerald-50/80"
                         : "border-slate-300 bg-white"
                     } ${readOnly ? "opacity-70 cursor-not-allowed" : "hover:border-emerald-300"}`}
@@ -1097,22 +1431,22 @@ function HistoriaClinicaPage() {
                     <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
                       <span
                         className={`h-5 w-5 rounded-md border-2 flex items-center justify-center ${
-                          Boolean(hc.proxima_cita?.es_control)
+                          hc.proxima_cita?.es_control
                             ? "border-emerald-600 bg-emerald-600 text-white"
                             : "border-slate-400 bg-white"
                         }`}
                       >
-                        {Boolean(hc.proxima_cita?.es_control) ? "✓" : ""}
+                        {hc.proxima_cita?.es_control ? "✓" : ""}
                       </span>
                       <span>Cita de control (sin cobro, se agenda habilitada)</span>
                     </div>
-                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${Boolean(hc.proxima_cita?.es_control) ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
-                      {Boolean(hc.proxima_cita?.es_control) ? "Control" : "Normal"}
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${hc.proxima_cita?.es_control ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
+                      {hc.proxima_cita?.es_control ? "Control" : "Normal"}
                     </span>
                     <input
                       type="checkbox"
                       className="sr-only"
-                      checked={Boolean(hc.proxima_cita?.es_control)}
+                      checked={!!hc.proxima_cita?.es_control}
                       onChange={(e) =>
                         setHc((current) => ({
                           ...current,
@@ -1497,6 +1831,29 @@ function HistoriaClinicaPage() {
                     </div>
                   </div>
 
+                  {/* Metadatos de cadena — solo cuando la migración 18 está aplicada */}
+                  {hcAnterior?.chain_depth != null && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+                        Nodo {Number(hcAnterior.chain_depth) + 1} de la cadena
+                      </span>
+                      {hcAnterior?.contrato_paciente_id > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                          Contrato #{hcAnterior.contrato_paciente_id}
+                        </span>
+                      )}
+                      {hcAnterior?.chain_status && hcAnterior.chain_status !== 'activa' && (
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${
+                          hcAnterior.chain_status === 'cerrada'
+                            ? 'bg-slate-50 border-slate-300 text-slate-600'
+                            : 'bg-red-50 border-red-200 text-red-700'
+                        }`}>
+                          {hcAnterior.chain_status === 'cerrada' ? 'Cadena cerrada' : 'Anulada'}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   <div className="mt-3 text-xs text-slate-800">
                     <p className="font-semibold">Diagnóstico previo</p>
                     <p className="mt-1 text-slate-700">
@@ -1820,89 +2177,6 @@ function HistoriaClinicaPage() {
         </div>
       )}
 
-      {/* Botón flotante del Asistente de Historial Clínico */}
-      {Number(consultaActual?.hc_origen_id || 0) > 0 && (
-        <div className="fixed bottom-6 right-6 lg:bottom-8 lg:right-8 z-30">
-          {mostrarBurbujaAsistente && (
-            <div
-              className="absolute bottom-full right-0 mb-4 w-[280px] max-w-[82vw] rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-9 text-slate-700 shadow-2xl"
-              style={{ animation: 'assistant-bubble-in 220ms ease-out' }}
-            >
-              <button
-                type="button"
-                onClick={() => setMostrarBurbujaAsistente(false)}
-                className="absolute right-2 top-2 h-6 w-6 rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                aria-label="Cerrar bienvenida"
-                title="Cerrar"
-              >
-                ×
-              </button>
-              <p className="text-[13px] leading-5">
-                Hola, ¿cómo estás? Soy tu asistente médico. ¿En qué puedo ayudarte hoy?
-              </p>
-              <div className="absolute -bottom-2 right-6 h-4 w-4 rotate-45 border-b border-r border-slate-200 bg-white" />
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setDrawerHistorialAbierto(true);
-              setMostrarBurbujaAsistente(false);
-            }}
-            className="group relative flex items-center justify-center w-16 h-16 lg:w-20 lg:h-20 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-110 active:scale-95"
-            style={{ backgroundColor: configApariencia.color_primario }}
-            title="Ver Historial Previo"
-          >
-            {/* Avatar o icono */}
-            {configApariencia.avatar_activo?.url ? (
-              <img
-                src={`${BASE_URL}${configApariencia.avatar_activo.url}`}
-                alt="Asistente"
-                className="w-full h-full rounded-full object-cover border-2 border-white scale-110"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                  const fallback = e.currentTarget.parentElement?.querySelector('.avatar-fallback');
-                  if (fallback) fallback.style.display = 'flex';
-                }}
-              />
-            ) : null}
-            <span
-              className="avatar-fallback text-white text-2xl lg:text-4xl items-center justify-center"
-              style={{ display: configApariencia.avatar_activo?.url ? 'none' : 'flex' }}
-            >
-              👤
-            </span>
-
-            {/* Tooltip */}
-            <div className="absolute bottom-full right-0 mb-2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none shadow-lg">
-              Ver Historial Previo
-            </div>
-
-            {/* Badge con contador */}
-            {totalHistoriasPrevias > 0 && (
-              <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center border-2 border-white shadow">
-                {totalHistoriasPrevias}
-              </div>
-            )}
-          </button>
-
-          {/* Pulse animation */}
-          <style>{`
-            @keyframes assistant-bubble-in {
-              from { opacity: 0; transform: translateY(8px) scale(0.98); }
-              to { opacity: 1; transform: translateY(0) scale(1); }
-            }
-            @keyframes pulse-float {
-              0%, 100% { transform: scale(1); }
-              50% { transform: scale(1.05); }
-            }
-            .animate-pulse-float {
-              animation: pulse-float 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-            }
-          `}</style>
-        </div>
-      )}
-
       {/* Componente oculto para impresión de Historia Clínica */}
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printRef}>
@@ -1911,6 +2185,7 @@ function HistoriaClinicaPage() {
             triaje={triaje}
             hc={hc}
             fechaConsulta={fechaConsulta}
+            fechaConsultaTexto={fechaConsultaVisible}
             templateSections={hcTemplateMeta?.sections || {}}
             diagnosticos={diagnosticos}
             medicamentos={hc.receta}

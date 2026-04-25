@@ -4,7 +4,10 @@ function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratul
   return (
     <>
       <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-4">
-        {(pacientes || []).map(p => (
+        {(pacientes || []).map(p => {
+          const contratoEstado = Number(p?.contrato_activo || 0);
+          const tieneContrato = contratoEstado > 0;
+          return (
           <div key={p.id} className="bg-gradient-to-br from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
             {/* Header con HC y acciones */}
             <div className="flex justify-between items-start mb-3">
@@ -39,6 +42,14 @@ function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratul
                     <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor">C</text>
                   </svg>
                 </button>
+                {tieneContrato && (
+                  <button onClick={() => onNavigate(`/estado-cuenta/${p.id}`)} className={contratoEstado === 2 ? "bg-emerald-600 hover:bg-emerald-700 text-white p-2 rounded-full transition-colors" : "bg-slate-500 hover:bg-slate-600 text-white p-2 rounded-full transition-colors"} title={contratoEstado === 2 ? "Estado de cuenta (contrato vigente)" : "Estado de cuenta (historial)"}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" strokeWidth="2" fill="none" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h8M8 12h8M8 16h5" />
+                    </svg>
+                  </button>
+                )}
                 <button onClick={() => onDescargarCaratula(p)} className="bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-full transition-colors" title="Descargar carátula">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -84,7 +95,7 @@ function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratul
               )}
             </div>
           </div>
-        ))}
+        )})}
       </div>
       {/* Paginación solo en móvil/tablet */}
       <div className="flex justify-end items-center gap-2 mt-4 lg:hidden">

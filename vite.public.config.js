@@ -7,9 +7,14 @@ export default defineConfig({
   plugins: [react()],
   cacheDir: 'node_modules/.vite-public',
   server: {
-    host: true,
+    host: '127.0.0.1',
     port: 5174,
     strictPort: true,
+    hmr: {
+      host: '127.0.0.1',
+      clientPort: 5174,
+      protocol: 'ws',
+    },
   },
   optimizeDeps: {
     include: [

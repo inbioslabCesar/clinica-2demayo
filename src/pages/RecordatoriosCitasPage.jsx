@@ -165,9 +165,11 @@ export default function RecordatoriosCitasPage() {
         origen_consulta: origenConsulta,
         busqueda: busqueda.trim(),
         solo_sin_gestion: soloSinGestion ? "1" : "0",
+        _t: String(Date.now()),
       });
       const res = await fetch(`${BASE_URL}api_recordatorios_citas.php?${params.toString()}`, {
         credentials: "include",
+        cache: "no-store",
       });
       const data = await res.json();
       if (!data.success) {
@@ -581,7 +583,8 @@ export default function RecordatoriosCitasPage() {
                   const esTipoProgramada = String(item?.tipo_consulta || "").toLowerCase() === "programada";
                   const mostrarBadgeTipo = !(esHcProxima && esTipoProgramada);
                   const estadoCotizacion = String(item?.cotizacion_estado || "").toLowerCase();
-                  const cotizacionPagada = estadoCotizacion === "pagado" || estadoCotizacion === "pagada";
+                  const cotizacionPagada =
+                    estadoCotizacion === "pagado" || estadoCotizacion === "pagada" || estadoCotizacion === "control";
                   const puedeRegistrarCobro = !item.cotizacion_id
                     && !esControl
                     && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);

@@ -5,7 +5,7 @@ import MedicamentoForm from "./MedicamentoForm";
 // ...hooks de filtro de fecha solo dentro de la función...
 // ...hooks de cuarentena solo dentro de la función...
 // ...existing code...
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BASE_URL } from "../config/config";
 import useUsuarioLogueado from "../hooks/useUsuarioLogueado";
@@ -132,6 +132,7 @@ const VencimientoBadge = ({ fechaVencimiento, stock }) => {
 };
 
 export default function MedicamentosList() {
+  const REQUEST_TIMEOUT_MS = 12000;
     const [deleteLoading, setDeleteLoading] = useState(false);
     const handleDelete = async (med) => {
       const confirm = await Swal.fire({
@@ -193,6 +194,8 @@ export default function MedicamentosList() {
   const [cuarentenaData, setCuarentenaData] = useState(null);
   const [motivoCuarentena, setMotivoCuarentena] = useState("");
   const [filtroCuarentena, setFiltroCuarentena] = useState(false);
+  const listAbortRef = useRef(null);
+  const listRequestIdRef = useRef(0);
 
   const themeGradient = {
     backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
@@ -208,24 +211,49 @@ export default function MedicamentosList() {
     borderColor: "var(--color-primary-light)",
   };
 
-  const fetchMedicamentos = () => {
+  const fetchMedicamentos = async () => {
+    const requestId = ++listRequestIdRef.current;
+    if (listAbortRef.current) {
+      listAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    listAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     setLoading(true);
     setError(null);
     const apiUrl = `${BASE_URL}api_medicamentos.php`;
-    fetch(apiUrl, {
-      credentials: "include",
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Error al cargar medicamentos");
-        return res.json();
-      })
-      .then(setMedicamentos)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const res = await fetch(apiUrl, {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error("Error al cargar medicamentos");
+      const data = await res.json();
+      if (requestId !== listRequestIdRef.current) return;
+      setMedicamentos(data);
+    } catch (err) {
+      if (requestId !== listRequestIdRef.current) return;
+      if (err?.name === "AbortError") {
+        setError(new Error("Tiempo de espera agotado al cargar medicamentos."));
+      } else {
+        setError(err);
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (requestId === listRequestIdRef.current) {
+        setLoading(false);
+      }
+    }
   };
 
   useEffect(() => {
     fetchMedicamentos();
+    return () => {
+      if (listAbortRef.current) {
+        listAbortRef.current.abort();
+      }
+    };
   }, []);
 
   const handleAdd = () => {
@@ -815,8 +843,8 @@ export default function MedicamentosList() {
         </div>
       )}
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl shadow-2xl p-0 max-w-5xl w-[95vw] flex items-center justify-center">
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-start justify-center z-50 overflow-y-auto p-3 sm:p-6">
+          <div className="bg-white rounded-2xl shadow-2xl p-0 max-w-5xl w-[95vw] my-auto flex items-center justify-center">
             <MedicamentoForm
               initialData={editData}
               onSave={handleSave}

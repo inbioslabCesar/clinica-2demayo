@@ -8,6 +8,22 @@ import Swal from "sweetalert2";
 // import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage({ usuario }) {
+  const FETCH_TIMEOUT_MS = 12000;
+
+  const fetchJsonWithTimeout = async (url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      return await res.json();
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
   const imprimirTicketRecepcion = ({ codigo, paciente, total, vencimiento }) => {
     const fechaEmision = new Date().toLocaleString();
     const html = `<!doctype html>
@@ -46,10 +62,9 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   };
 
   const obtenerDetallesCotizacion = async (targetCotizacionId) => {
-    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+    const data = await fetchJsonWithTimeout(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
       credentials: "include",
     });
-    const data = await res.json();
     if (!data?.success || !data?.cotizacion) {
       throw new Error(data?.error || "No se pudo cargar la cotización actual para edición");
     }
@@ -65,7 +80,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   };
 
   // Handler para registrar cotización (o editar cotización existente)
-  const handleRegistrarVenta = async () => {
+  const handleRegistrarVenta = async ({ irACobro = false } = {}) => {
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
     const pacienteRegistradoId = Number(pacienteId || pacienteDatos?.id || 0);
@@ -176,7 +191,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
 
-      const numeroComprobante = String(data?.numero_comprobante || `Q${String(data?.cotizacion_id || cotizacionId || '').padStart(6, '0')}`);
+      const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
+      const numeroComprobante = String(data?.numero_comprobante || `Q${String(cotizacionDestino || '').padStart(6, '0')}`);
 
         // Fecha de vencimiento: preferir la que devuelve el servidor (validez de cotización).
         // Si no existe la columna en BD (retorna null), derivar la fecha de vencimiento más
@@ -204,40 +220,50 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           }
         }
 
-      const swalOpts = (isRolQuimico && !cotizacionId)
-        ? {
-            icon: 'success',
-            title: 'Enviado a recepción',
-            html: `<div class="text-left">
-              <div><b>Código:</b> ${numeroComprobante}</div>
-              <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
-              <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
-              <div class="mt-2">El paciente puede pagar en recepción con este código.</div>
-            </div>`,
-            showDenyButton: true,
-            denyButtonText: 'Imprimir ticket',
-            confirmButtonText: 'Nueva Venta / Finalizar',
-          }
-        : {
-            icon: 'success',
-            title: cotizacionId ? 'Cotización actualizada' : 'Enviado a recepción',
-            html: cotizacionId
-              ? `<div>Cotización <b>${numeroComprobante}</b> actualizada correctamente.</div>`
-              : `<div class="text-left">
-              <div><b>Código:</b> ${numeroComprobante}</div>
-              <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
-              <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
-              <div class="mt-2">El paciente puede pagar en recepción con este código.</div>
-            </div>`,
-            showDenyButton: !cotizacionId,
-            denyButtonText: 'Imprimir ticket',
-            confirmButtonText: 'Ir a cotizaciones',
-          };
-      const dialog = await Swal.fire(swalOpts);
+      const debeIrDirectoACobro = !isRolQuimico && irACobro;
+      let dialog = { isDenied: false };
 
-      setMensaje(cotizacionId ? 'Cotización actualizada correctamente.' : `Cotización enviada a recepción: ${numeroComprobante}`);
+      if (!debeIrDirectoACobro) {
+        const swalOpts = (isRolQuimico && !cotizacionId)
+          ? {
+              icon: 'success',
+              title: 'Enviado a recepción',
+              html: `<div class="text-left">
+                <div><b>Código:</b> ${numeroComprobante}</div>
+                <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
+                <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
+                <div class="mt-2">El paciente puede pagar en recepción con este código.</div>
+              </div>`,
+              showDenyButton: true,
+              denyButtonText: 'Imprimir ticket',
+              confirmButtonText: 'Nueva Venta / Finalizar',
+            }
+          : {
+              icon: 'success',
+              title: cotizacionId ? 'Cotización actualizada' : 'Cotización registrada',
+              html: cotizacionId
+                ? `<div>Cotización <b>${numeroComprobante}</b> actualizada correctamente.</div>`
+                : `<div class="text-left">
+                <div><b>Código:</b> ${numeroComprobante}</div>
+                <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
+                <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
+                <div class="mt-2">Cotización registrada correctamente.</div>
+              </div>`,
+              showDenyButton: false,
+              confirmButtonText: cotizacionId ? 'Continuar' : 'Ir a cotizaciones',
+            };
+        dialog = await Swal.fire(swalOpts);
+      }
 
-      if (!cotizacionId && dialog.isDenied) {
+      setMensaje(
+        cotizacionId
+          ? 'Cotización actualizada correctamente.'
+          : isRolQuimico
+            ? `Cotización enviada a recepción: ${numeroComprobante}`
+            : `Cotización registrada: ${numeroComprobante}`
+      );
+
+      if (isRolQuimico && !cotizacionId && dialog.isDenied) {
         imprimirTicketRecepcion({
           codigo: numeroComprobante,
           paciente: pacienteNombrePayload || 'Particular',
@@ -265,6 +291,11 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         }
 
         if (cotizacionId) {
+          if (!isRolQuimico && irACobro && cotizacionDestino > 0) {
+            setMensaje("");
+            navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
+            return;
+          }
           try {
             const refrescados = await obtenerDetallesCotizacion(cotizacionId);
             setCotizacionDetallesOriginales(refrescados);
@@ -282,6 +313,9 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         setMensaje("");
         if (isRolQuimico) {
           // Para Químico no navegar: dejar pantalla lista para nueva venta.
+          return;
+        } else if (irACobro && cotizacionDestino > 0) {
+          navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
           return;
         } else {
           navigate('/cotizaciones');
@@ -329,8 +363,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
 
   const recargarMedicamentos = async () => {
-    const res = await fetch(`${BASE_URL}api_medicamentos.php`, { credentials: "include" });
-    const data = await res.json();
+    const data = await fetchJsonWithTimeout(`${BASE_URL}api_medicamentos.php`, { credentials: "include" });
     const meds = data.medicamentos || data || [];
     setMedicamentos(meds);
     const unidades = {};
@@ -348,8 +381,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
 
   // Consultar estado de caja al entrar a la página
   useEffect(() => {
-    fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' })
-      .then(r => r.json())
+    fetchJsonWithTimeout(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' })
       .then(data => {
         if (data && data.success) setCajaEstado(data.estado || 'cerrada');
         else setCajaEstado('cerrada');
@@ -360,8 +392,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   useEffect(() => {
     // Si hay pacienteId en la URL, buscar datos del paciente SIEMPRE que cambie
     if (pacienteId) {
-      fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
-        .then((r) => r.json())
+      fetchJsonWithTimeout(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
         .then((data) => {
           if (data.success && data.paciente) {
             setPacienteDatos({
@@ -374,6 +405,9 @@ export default function FarmaciaCotizadorPage({ usuario }) {
               historia_clinica: data.paciente.historia_clinica || "",
             });
           }
+        })
+        .catch(() => {
+          // Si falla la búsqueda del paciente, mantener datos existentes.
         });
     }
   }, [pacienteId]);
@@ -385,7 +419,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     const cotizacionId = paramsSearch.get("cotizacion_id");
     const loaders = [];
     if (!cotizacionId) setCotizacionDetallesOriginales([]);
-    if (cobroId) loaders.push(fetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
+    if (cobroId) loaders.push(fetchJsonWithTimeout(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null; if (!data.success || !cobro) return;
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
       const itemsFarm = [];
@@ -409,7 +443,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         setCantidades(prev => ({ ...prev, ...mapCant })); setTiposVenta(prev => ({ ...prev, ...mapTipo })); setPreloadedFarmacia(preMap);
       }
     }));
-    if (cotizacionId) loaders.push(fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(res => res.json()).then(data => {
+    if (cotizacionId) loaders.push(fetchJsonWithTimeout(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(data => {
       const cot = data.cotizacion || null; if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
       setCotizacionDetallesOriginales(detalles);
@@ -423,7 +457,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         setCantidades(prev => ({ ...prev, ...mapCant })); setTiposVenta(prev => ({ ...prev, ...mapTipo })); setPreloadedFarmacia(preMap);
       }
     }));
-    if (!loaders.length) return; Promise.all(loaders).catch(() => {});
+    if (!loaders.length) return;
+    Promise.allSettled(loaders);
   }, [location.search]);
 
   // Calcular precio de venta
@@ -1378,7 +1413,12 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                   {new URLSearchParams(location.search).get('cobro_id') ? (
                     <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                   ) : (
-                    <button onClick={handleRegistrarVenta} className="px-6 py-2 rounded font-bold bg-blue-600 text-white hover:bg-blue-700">{isCotizacionEditMode ? 'Actualizar cotización' : 'Enviar a recepción'}</button>
+                    <>
+                      <button onClick={() => handleRegistrarVenta()} className="px-6 py-2 rounded font-bold bg-blue-600 text-white hover:bg-blue-700">{isCotizacionEditMode ? 'Actualizar cotización' : (isRolQuimico ? 'Enviar a recepción' : 'Registrar cotización')}</button>
+                      {!isRolQuimico && (
+                        <button onClick={() => handleRegistrarVenta({ irACobro: true })} className="px-6 py-2 rounded font-bold bg-green-600 text-white hover:bg-green-700">{isCotizacionEditMode ? 'Actualizar y cobrar' : 'Registrar y cobrar'}</button>
+                      )}
+                    </>
                   )}
                 </div>
                 {new URLSearchParams(location.search).get('cobro_id') && cajaEstado === 'cerrada' && (

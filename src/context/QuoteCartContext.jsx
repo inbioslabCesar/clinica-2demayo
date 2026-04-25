@@ -1,8 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "quote_cart_v1";
-
-const QuoteCartContext = createContext(null);
+const QUOTE_CART_CONTEXT_KEY = "__clinica_quote_cart_context_singleton__";
+const globalScope = typeof globalThis !== "undefined" ? globalThis : window;
+const QuoteCartContext = globalScope[QUOTE_CART_CONTEXT_KEY] || createContext(null);
+if (!globalScope[QUOTE_CART_CONTEXT_KEY]) {
+  globalScope[QUOTE_CART_CONTEXT_KEY] = QuoteCartContext;
+}
 
 function safeParse(raw) {
   try {
@@ -14,6 +18,13 @@ function safeParse(raw) {
 
 function buildItemKey(item) {
   const serviceType = String(item.serviceType || "otros").toLowerCase();
+  const packageKey = ["paquete", "perfil"].includes(serviceType)
+    ? [
+        Number(item.packageId || item.serviceId || 0),
+        String(item.packageCode || ""),
+        String(item.packageType || serviceType),
+      ].join("::")
+    : "";
   const consultaKey = serviceType === "consulta"
     ? [
         Number(item.consultaId || 0),
@@ -33,6 +44,7 @@ function buildItemKey(item) {
     item.derivado ? (item.tipoDerivacion || "") : "",
     item.derivado ? Number(item.valorDerivacion || 0).toFixed(2) : "0.00",
     item.derivado ? (item.laboratorioReferencia || "") : "",
+    packageKey,
     consultaKey,
   ].join("::");
 }
@@ -109,6 +121,11 @@ export function QuoteCartProvider({ children }) {
           consultaHora: raw.consultaHora || "",
           consultaTipoConsulta: raw.consultaTipoConsulta || "",
           consultaId: raw.consultaId || null,
+          packageId: raw.packageId || null,
+          packageCode: raw.packageCode || "",
+          packageType: raw.packageType || "",
+          componentes: Array.isArray(raw.componentes) ? raw.componentes : [],
+          cotizacionId: raw.cotizacionId || null,
         };
         normalized.quantity = Math.max(1, normalized.quantity);
 

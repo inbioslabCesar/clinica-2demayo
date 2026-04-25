@@ -72,9 +72,12 @@ export default function DashboardCajaAbierta({
       rayosx: "bg-red-100 text-red-800",
       procedimiento: "bg-gray-100 text-gray-800",
       otros: "bg-indigo-100 text-indigo-800",
+      contrato_abono: "bg-teal-100 text-teal-800",
     };
     return colores[tipo] || "bg-gray-100 text-gray-800";
   };
+
+  const tipoIngresoLabel = (tipo) => String(tipo || "").replace(/_/g, " ").toUpperCase();
 
   const obtenerIconoMetodoPago = (metodo) => {
     const iconos = {
@@ -333,7 +336,7 @@ export default function DashboardCajaAbierta({
                               transaccion.tipo_ingreso
                             )}`}
                           >
-                            {transaccion.tipo_ingreso}
+                            {tipoIngresoLabel(transaccion.tipo_ingreso)}
                           </span>
                           <span className="text-sm text-gray-600">
                             {transaccion.area}

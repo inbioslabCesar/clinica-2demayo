@@ -10,6 +10,7 @@ import SidebarQuimico from "../sidebar/SidebarQuimico";
 import SidebarRecepcionista from "../sidebar/SidebarRecepcionista";
 import SidebarAdmin from "../sidebar/SidebarAdmin";
 import QuoteCartPanel from "../cotizacion/QuoteCartPanel";
+import AsistenteChatGlobal from "../asistente/AsistenteChatGlobal";
 
 const BRAND_STORAGE_KEY = "clinica_brand_cache";
 const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
@@ -546,6 +547,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
       </div>
       {/* Footer at the bottom */}
       <Footer clinicName={clinicName} />
+      <AsistenteChatGlobal usuario={usuario} placementMode="default" />
     </div>
   );
 }

@@ -1,6 +1,5 @@
 
 import { useState, useEffect } from "react";
-import { evaluate } from "mathjs";
 import { BASE_URL } from "../config/config";
 
 function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
@@ -308,8 +307,19 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     });
     if (!expr || expr.trim() === "") return "";
     try {
-      const result = evaluate(expr);
+      // Evaluador aritmetico seguro para formulas numericas basicas.
+      // Soporta: + - * / % ^ parentesis y notacion cientifica.
+      const normalizedExpr = String(expr)
+        .replace(/,/g, '.')
+        .replace(/\^/g, '**')
+        .trim();
+
+      const allowedExpr = /^[0-9+\-*/().\s%eE*]*$/;
+      if (!allowedExpr.test(normalizedExpr)) return "";
+
+      const result = Function(`"use strict"; return (${normalizedExpr});`)();
       if (typeof result === "number" && !isNaN(result)) {
+        if (!Number.isFinite(result)) return "";
         return formatWithDecimals(result, decimales);
       }
       return result;
@@ -843,6 +853,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
                           if (isTipoCampo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
                             const fieldValue = resultados[`${id}__${param.nombre}`] || "";
+                            const opcionesCampo = Array.isArray(param.opciones) ? param.opciones.filter(o => String(o).trim() !== "") : [];
                             return (
                               <div key={`campo-${idx}-${param.nombre}`} className="space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
@@ -853,14 +864,28 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                     <span className="text-xs text-gray-500 font-normal">Metodología: {param.metodologia}</span>
                                   )}
                                 </label>
-                                <input
-                                  type="text"
-                                  name={`${id}__${param.nombre}`}
-                                  value={fieldValue}
-                                  onChange={handleChange}
-                                  className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
-                                  placeholder="Ingrese el valor"
-                                />
+                                {opcionesCampo.length > 0 ? (
+                                  <select
+                                    name={`${id}__${param.nombre}`}
+                                    value={fieldValue}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                                  >
+                                    <option value="">-- Seleccione --</option>
+                                    {opcionesCampo.map((op, oi) => (
+                                      <option key={oi} value={op}>{op}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type="text"
+                                    name={`${id}__${param.nombre}`}
+                                    value={fieldValue}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                                    placeholder="Ingrese el valor"
+                                  />
+                                )}
                               </div>
                             );
                           }
@@ -918,21 +943,41 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                 </label>
                                 
                                 <div className="relative">
-                                  <input
-                                    type="text"
-                                    name={`${id}__${param.nombre}`}
-                                    value={valor}
-                                    onChange={tieneFormula ? undefined : handleChange}
-                                    readOnly={tieneFormula}
-                                    className={`w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 ${
-                                      fueraDeRango
-                                        ? 'border-red-400 bg-red-50 text-red-700 font-semibold focus:ring-2 focus:ring-red-500'
-                                        : tieneFormula
-                                        ? 'border-blue-200 bg-blue-50 text-blue-800 cursor-not-allowed'
-                                        : 'border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200'
-                                    }`}
-                                    placeholder={tieneFormula ? "Valor calculado automáticamente" : "Ingrese el valor"}
-                                  />
+                                  {(() => {
+                                    const opcionesParam = Array.isArray(param.opciones) ? param.opciones.filter(o => String(o).trim() !== '') : [];
+                                    if (!tieneFormula && opcionesParam.length > 0) {
+                                      return (
+                                        <select
+                                          name={`${id}__${param.nombre}`}
+                                          value={valor}
+                                          onChange={handleChange}
+                                          className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                                        >
+                                          <option value="">-- Seleccione --</option>
+                                          {opcionesParam.map((op, oi) => (
+                                            <option key={oi} value={op}>{op}</option>
+                                          ))}
+                                        </select>
+                                      );
+                                    }
+                                    return (
+                                      <input
+                                        type="text"
+                                        name={`${id}__${param.nombre}`}
+                                        value={valor}
+                                        onChange={tieneFormula ? undefined : handleChange}
+                                        readOnly={tieneFormula}
+                                        className={`w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 ${
+                                          fueraDeRango
+                                            ? 'border-red-400 bg-red-50 text-red-700 font-semibold focus:ring-2 focus:ring-red-500'
+                                            : tieneFormula
+                                            ? 'border-blue-200 bg-blue-50 text-blue-800 cursor-not-allowed'
+                                            : 'border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200'
+                                        }`}
+                                        placeholder={tieneFormula ? "Valor calculado automáticamente" : "Ingrese el valor"}
+                                      />
+                                    );
+                                  })()}
                                   
                                   {/* Indicador de estado */}
                                   {valor && !tieneFormula && (

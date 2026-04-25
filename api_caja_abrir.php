@@ -3,6 +3,18 @@ require_once __DIR__ . '/init_api.php';
 
 require_once 'db.php';
 
+function normalizar_turno($turno)
+{
+    $t = strtolower(trim((string)$turno));
+    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
+        return 'mañana';
+    }
+    if ($t === 'tarde' || $t === 'noche') {
+        return $t;
+    }
+    return '';
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['success' => false, 'error' => 'Método no permitido']);
     exit;
@@ -22,7 +34,7 @@ try {
     $input = json_decode(file_get_contents('php://input'), true);
     $monto_apertura = floatval($input['monto_apertura'] ?? 0);
     $observaciones = trim($input['observaciones'] ?? '');
-    $turno = isset($input['turno']) ? trim($input['turno']) : '';
+    $turno = normalizar_turno($input['turno'] ?? '');
 
     // Validaciones
     if ($monto_apertura < 0) {
@@ -30,7 +42,7 @@ try {
         exit;
     }
     if ($turno === '') {
-        echo json_encode(['success' => false, 'error' => 'Debe especificar el turno']);
+        echo json_encode(['success' => false, 'error' => 'Turno inválido. Use mañana, tarde o noche']);
         exit;
     }
 

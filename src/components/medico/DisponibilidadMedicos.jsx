@@ -63,7 +63,7 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
   useEffect(() => {
     Promise.all([
       fetch(`${BASE_URL}api_medicos.php`, { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
-      fetch(`${BASE_URL}api_consultas.php?_t=${refreshKey}`, { credentials: 'include', cache: 'no-store' }).then(r => r.json())
+      fetch(`${BASE_URL}api_consultas.php?solo_activas=1&_t=${refreshKey}`, { credentials: 'include', cache: 'no-store' }).then(r => r.json())
     ]).then(([m, c]) => {
       setMedicos(Array.isArray(m?.medicos) ? m.medicos : []);
       setConsultas(Array.isArray(c?.consultas) ? c.consultas : []);

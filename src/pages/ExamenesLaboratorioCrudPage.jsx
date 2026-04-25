@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BASE_URL } from "../config/config";
 import ExamenesStatsBar from "../components/examenes/ExamenesStatsBar";
 import ExamenesFilterBar from "../components/examenes/ExamenesFilterBar";
@@ -16,7 +16,7 @@ export default function ExamenesLaboratorioCrudPage() {
     nombre: "",
     categoria: "",
     metodologia: "",
-    valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
+    valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", opciones: [], referencias: [], formula: "" }],
     precio_publico: "",
     precio_convenio: "",
     tipo_tubo: "",
@@ -32,6 +32,8 @@ export default function ExamenesLaboratorioCrudPage() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("success");
   const [loading, setLoading] = useState(false);
+  const fetchControllerRef = useRef(null);
+  const fetchReqIdRef = useRef(0);
 
   // Funciones de exportación con lazy loading
   const handleExportPDF = async () => {
@@ -94,17 +96,59 @@ export default function ExamenesLaboratorioCrudPage() {
   };
 
   const fetchExamenes = async () => {
+    const reqId = ++fetchReqIdRef.current;
+    if (fetchControllerRef.current) {
+      fetchControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    fetchControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
     setLoading(true);
-    const res = await fetch(BASE_URL + "api_examenes_laboratorio.php", {
-      credentials: "include",
-    });
-    const data = await res.json();
-    setExamenes(data.examenes || []);
-    setLoading(false);
+    try {
+      const res = await fetch(BASE_URL + "api_examenes_laboratorio.php", {
+        credentials: "include",
+        signal: controller.signal,
+      });
+
+      const data = await res.json();
+      if (reqId !== fetchReqIdRef.current) return;
+
+      if (data?.success) {
+        setExamenes(Array.isArray(data.examenes) ? data.examenes : []);
+      } else {
+        setExamenes([]);
+        setMsg("❌ " + (data?.error || "No se pudo cargar el catálogo de exámenes"));
+        setMsgType("error");
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        if (reqId !== fetchReqIdRef.current) return;
+        setMsg("❌ La carga de exámenes tardó demasiado. Intenta nuevamente.");
+        setMsgType("error");
+      } else {
+        setMsg("❌ Error de conexión al cargar exámenes");
+        setMsgType("error");
+      }
+      if (reqId === fetchReqIdRef.current) {
+        setExamenes([]);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      if (reqId === fetchReqIdRef.current) {
+        setLoading(false);
+      }
+    }
   };
 
   useEffect(() => {
     fetchExamenes();
+    return () => {
+      if (fetchControllerRef.current) {
+        fetchControllerRef.current.abort();
+      }
+    };
   }, []);
 
   const handleChange = (e) => {
@@ -142,18 +186,37 @@ export default function ExamenesLaboratorioCrudPage() {
       // Eliminado log de error parsing valores_referenciales
       return [];
     }
-    return raw.map((it, idx) => ({
-      tipo: it.tipo || 'Parámetro',
-      nombre: it.nombre || (it.titulo || '') || `Item ${idx + 1}`,
-      metodologia: it.metodologia || '',
-      unidad: it.unidad || '',
-      referencias: Array.isArray(it.referencias) ? it.referencias : [],
-      formula: it.formula || '',
-      negrita: !!it.negrita,
-      color_texto: it.color_texto || '#000000',
-      color_fondo: it.color_fondo || '#ffffff',
-      orden: typeof it.orden === 'number' ? it.orden : idx + 1
-    }));
+    return raw.map((it, idx) => {
+      let opciones = [];
+      if (Array.isArray(it.opciones)) {
+        opciones = it.opciones
+          .map((op) => String(op ?? '').trim())
+          .filter((op) => op !== '');
+      } else if (typeof it.opciones === 'string' && it.opciones.trim() !== '') {
+        opciones = it.opciones
+          .split(/\r?\n|,/)
+          .map((op) => op.trim())
+          .filter((op) => op !== '');
+      }
+
+      return {
+        tipo: it.tipo || 'Parámetro',
+        nombre: it.nombre || (it.titulo || '') || `Item ${idx + 1}`,
+        metodologia: it.metodologia || '',
+        unidad: it.unidad || '',
+        opciones,
+        referencias: Array.isArray(it.referencias) ? it.referencias : [],
+        formula: it.formula || '',
+        negrita: !!it.negrita,
+        cursiva: !!it.cursiva,
+        alineacion: it.alineacion || 'left',
+        color_texto: it.color_texto || '#000000',
+        color_fondo: it.color_fondo || '#ffffff',
+        decimales: (it.decimales !== undefined && it.decimales !== null && it.decimales !== '' && Number.isFinite(Number(it.decimales))) ? Number(it.decimales) : null,
+        rows: (it.rows !== undefined && it.rows !== null && it.rows !== '' && Number.isFinite(Number(it.rows))) ? Number(it.rows) : null,
+        orden: typeof it.orden === 'number' ? it.orden : idx + 1
+      };
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -185,7 +248,7 @@ export default function ExamenesLaboratorioCrudPage() {
           nombre: "",
           categoria: "",
           metodologia: "",
-          valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
+          valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", opciones: [], referencias: [], formula: "" }],
           precio_publico: "",
           precio_convenio: "",
           tipo_tubo: "",
@@ -216,7 +279,7 @@ export default function ExamenesLaboratorioCrudPage() {
     setForm({
       ...ex,
       categoria: ex.categoria || "",
-      valores_referenciales: valores.length ? valores : [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
+      valores_referenciales: valores.length ? valores : [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", opciones: [], referencias: [], formula: "" }],
       titulo: ex.titulo || "",
       es_subtitulo: ex.es_subtitulo || false,
     });
@@ -230,7 +293,7 @@ export default function ExamenesLaboratorioCrudPage() {
       nombre: "",
       categoria: "",
       metodologia: "",
-      valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", referencias: [], formula: "" }],
+      valores_referenciales: [{ tipo: "Parámetro", nombre: "", metodologia: "", unidad: "", opciones: [], referencias: [], formula: "" }],
       precio_publico: "",
       precio_convenio: "",
       tipo_tubo: "",

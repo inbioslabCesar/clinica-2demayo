@@ -252,7 +252,164 @@ if (!function_exists('calculate_exam_progress_summary')) {
     }
 }
 
+if (!function_exists('ol_column_exists')) {
+    function ol_column_exists(mysqli $conn, $table, $column)
+    {
+        static $cache = [];
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        $stmt = $conn->prepare("SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1");
+        if (!$stmt) {
+            $cache[$key] = false;
+            return false;
+        }
+
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+
+        $cache[$key] = $exists;
+        return $exists;
+    }
+}
+
+if (!function_exists('ol_ensure_write_schema')) {
+    function ol_ensure_write_schema(mysqli $conn)
+    {
+        $migCols = [
+            'cotizacion_id' => 'ALTER TABLE ordenes_laboratorio ADD COLUMN cotizacion_id INT DEFAULT NULL',
+            'carga_anticipada' => 'ALTER TABLE ordenes_laboratorio ADD COLUMN carga_anticipada TINYINT(1) NOT NULL DEFAULT 0',
+        ];
+
+        foreach ($migCols as $col => $sql) {
+            if (!ol_column_exists($conn, 'ordenes_laboratorio', $col)) {
+                $conn->query($sql);
+            }
+        }
+
+        if (!ol_column_exists($conn, 'cotizaciones_detalle', 'derivado')) {
+            $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN derivado TINYINT(1) NOT NULL DEFAULT 0");
+        }
+        if (!ol_column_exists($conn, 'cotizaciones_detalle', 'tipo_derivacion')) {
+            $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN tipo_derivacion VARCHAR(50) DEFAULT NULL");
+        }
+        if (!ol_column_exists($conn, 'cotizaciones_detalle', 'valor_derivacion')) {
+            $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN valor_derivacion DECIMAL(10,2) DEFAULT NULL");
+        }
+        if (!ol_column_exists($conn, 'cotizaciones_detalle', 'laboratorio_referencia')) {
+            $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN laboratorio_referencia VARCHAR(255) DEFAULT NULL");
+        }
+    }
+}
+
+if (!function_exists('ol_log_slow_request')) {
+    function ol_log_slow_request($startedAt, $method, $context = '')
+    {
+        $ms = (microtime(true) - $startedAt) * 1000;
+        if ($ms > 400) {
+            error_log('api_ordenes_laboratorio.php lento: ' . round($ms, 1) . 'ms | metodo=' . $method . ($context ? ' | ' . $context : ''));
+        }
+    }
+}
+
+if (!function_exists('ol_consulta_requiere_filtro_estricto')) {
+    function ol_consulta_requiere_filtro_estricto(mysqli $conn, int $consultaId): bool
+    {
+        if ($consultaId <= 0) {
+            return false;
+        }
+
+        $hasHcOrigenId = ol_column_exists($conn, 'consultas', 'hc_origen_id');
+        $hasOrigenCreacion = ol_column_exists($conn, 'consultas', 'origen_creacion');
+        $hasEsControl = ol_column_exists($conn, 'consultas', 'es_control');
+        $hasAgendaContrato = ol_column_exists($conn, 'agenda_contrato', 'consulta_id');
+
+        $selectCols = [];
+        if ($hasHcOrigenId) $selectCols[] = 'hc_origen_id';
+        if ($hasOrigenCreacion) $selectCols[] = 'origen_creacion';
+        if ($hasEsControl) $selectCols[] = 'es_control';
+
+        if (empty($selectCols)) {
+            return false;
+        }
+
+        $sql = 'SELECT ' . implode(', ', $selectCols) . ' FROM consultas WHERE id = ? LIMIT 1';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $consultaId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            return false;
+        }
+
+        $hcOrigenId = $hasHcOrigenId ? intval($row['hc_origen_id'] ?? 0) : 0;
+        $origen = $hasOrigenCreacion ? strtolower(trim((string)($row['origen_creacion'] ?? ''))) : '';
+        $esControl = $hasEsControl ? intval($row['es_control'] ?? 0) : 0;
+
+        $esConsultaEncadenada =
+            $hcOrigenId > 0
+            || $esControl === 1
+            || in_array($origen, ['hc_proxima', 'contrato_agenda'], true);
+
+        if (!$esConsultaEncadenada) {
+            return false;
+        }
+
+        $hasAgendaLink = false;
+        if ($hasAgendaContrato) {
+            $stmtAg = $conn->prepare('SELECT 1 FROM agenda_contrato WHERE consulta_id = ? LIMIT 1');
+            if ($stmtAg) {
+                $stmtAg->bind_param('i', $consultaId);
+                $stmtAg->execute();
+                $ag = $stmtAg->get_result()->fetch_assoc();
+                $stmtAg->close();
+                $hasAgendaLink = (bool)$ag;
+                if ($hasAgendaLink) {
+                    return true;
+                }
+            }
+        }
+
+        // Si la consulta nace desde cotizador pero está marcada como consumo de contrato,
+        // también debe aislarse en modo estricto para evitar cruces por paciente/cotización.
+        $hasContratoDetalleLink = false;
+        if (ol_column_exists($conn, 'cotizaciones_detalle', 'consulta_id')
+            && ol_column_exists($conn, 'cotizaciones_detalle', 'contrato_paciente_id')) {
+            $sqlCd = 'SELECT 1 FROM cotizaciones_detalle WHERE consulta_id = ? AND contrato_paciente_id IS NOT NULL AND contrato_paciente_id > 0';
+            if (ol_column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
+                $sqlCd .= " AND COALESCE(estado_item, 'activo') <> 'eliminado'";
+            }
+            $sqlCd .= ' LIMIT 1';
+            $stmtCd = $conn->prepare($sqlCd);
+            if ($stmtCd) {
+                $stmtCd->bind_param('i', $consultaId);
+                $stmtCd->execute();
+                $cd = $stmtCd->get_result()->fetch_assoc();
+                $stmtCd->close();
+                $hasContratoDetalleLink = (bool)$cd;
+            }
+        }
+
+        return $hcOrigenId > 0
+            || $esControl === 1
+            || $origen === 'hc_proxima'
+            || $hasAgendaLink
+            || $hasContratoDetalleLink;
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
+$requestStartedAt = microtime(true);
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
 $medicoSesionId = intval($sessionUsuario['id'] ?? ($_SESSION['medico_id'] ?? 0));
@@ -262,25 +419,6 @@ if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
     http_response_code(401);
     echo json_encode(['success' => false, 'error' => 'No autenticado']);
     exit;
-}
-
-// ── Migraciones de columnas ───────────────────────────────────────────────────
-$migCols = [
-    'cotizacion_id'   => 'ALTER TABLE ordenes_laboratorio ADD COLUMN cotizacion_id INT DEFAULT NULL',
-    'carga_anticipada'=> 'ALTER TABLE ordenes_laboratorio ADD COLUMN carga_anticipada TINYINT(1) NOT NULL DEFAULT 0',
-];
-foreach ($migCols as $col => $sql) {
-    $chk = $conn->query("SHOW COLUMNS FROM ordenes_laboratorio LIKE '$col'");
-    if ($chk && $chk->num_rows === 0) $conn->query($sql);
-}
-
-// Migraciones en cotizaciones_detalle para soporte de derivación a lab externo
-$chkDerivado = $conn->query("SHOW COLUMNS FROM cotizaciones_detalle LIKE 'derivado'");
-if ($chkDerivado && $chkDerivado->num_rows === 0) {
-    $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN derivado TINYINT(1) NOT NULL DEFAULT 0");
-    $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN tipo_derivacion VARCHAR(50) DEFAULT NULL");
-    $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN valor_derivacion DECIMAL(10,2) DEFAULT NULL");
-    $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN laboratorio_referencia VARCHAR(255) DEFAULT NULL");
 }
 
 // ── Helper: crear cotización desde orden médica ───────────────────────────────
@@ -316,6 +454,7 @@ if (!function_exists('crearCotizacionDesdeOrden')) {
 
 switch ($method) {
     case 'POST':
+        ol_ensure_write_schema($conn);
         // Crear nueva orden de laboratorio
         $data = json_decode(file_get_contents('php://input'), true);
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
@@ -355,6 +494,9 @@ switch ($method) {
                 if (!$stmt->execute()) throw new Exception($stmt->error);
                 $stmt->close();
                 $ordenId = $conn->insert_id;
+
+                // Vincular al nodo HC activo de esta consulta
+                $conn->query("UPDATE ordenes_laboratorio ol INNER JOIN historia_clinica h ON h.consulta_id = ol.consulta_id SET ol.historia_clinica_id = h.id WHERE ol.id = $ordenId AND ol.historia_clinica_id IS NULL");
 
                 // Obtener paciente_id desde consultas
                 $stmtPac = $conn->prepare('SELECT paciente_id FROM consultas WHERE id = ? LIMIT 1');
@@ -473,11 +615,53 @@ switch ($method) {
         $filtro_fecha_desde = isset($_GET['filtro_fecha_desde']) ? trim((string)$_GET['filtro_fecha_desde']) : '';
         $filtro_fecha_hasta = isset($_GET['filtro_fecha_hasta']) ? trim((string)$_GET['filtro_fecha_hasta']) : '';
         $filtro_busqueda = isset($_GET['filtro_busqueda']) ? trim((string)$_GET['filtro_busqueda']) : '';
+        $consultaFiltroEstricto = ($consulta_id && $consulta_id > 0)
+            ? ol_consulta_requiere_filtro_estricto($conn, (int)$consulta_id)
+            : false;
+
+        // En endpoints por consulta, el médico debe ser dueño de la consulta solicitada.
+        // Esto evita exposición cruzada y permite relajar filtros por fila cuando la orden
+        // heredada no tiene medico resoluble por joins.
+        if ($esSesionMedico && $consulta_id && $consulta_id > 0) {
+            $stmtOwnerConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+            if ($stmtOwnerConsulta) {
+                $stmtOwnerConsulta->bind_param('i', $consulta_id);
+                $stmtOwnerConsulta->execute();
+                $ownerConsulta = $stmtOwnerConsulta->get_result()->fetch_assoc();
+                $stmtOwnerConsulta->close();
+                if (!$ownerConsulta || intval($ownerConsulta['medico_id'] ?? 0) !== $medicoSesionId) {
+                    http_response_code(403);
+                    echo json_encode(['success' => false, 'error' => 'No autorizado para ver órdenes de esta consulta']);
+                    break;
+                }
+            }
+        }
+
+        // Fast path: si no hay órdenes, evitar consultas/joins pesados.
+        $resQuickCount = $conn->query('SELECT COUNT(*) AS total FROM ordenes_laboratorio');
+        $totalQuick = $resQuickCount ? intval(($resQuickCount->fetch_assoc()['total'] ?? 0)) : 0;
+        if ($totalQuick === 0) {
+            if ($resumen_alertas) {
+                $payloadEmptyAlerts = ['vencido' => 0, 'por_vencer' => 0, 'en_tiempo' => 0, 'total' => 0];
+                ol_log_slow_request($requestStartedAt, 'GET', 'fast_path_empty_resumen');
+                echo json_encode($payloadEmptyAlerts);
+                break;
+            }
+
+            $payloadEmpty = ['success' => true, 'ordenes' => []];
+            if ($usePagination) {
+                $payloadEmpty['total'] = 0;
+                $payloadEmpty['page'] = $page;
+                $payloadEmpty['limit'] = $limit;
+            }
+            ol_log_slow_request($requestStartedAt, 'GET', 'fast_path_empty_list');
+            echo json_encode($payloadEmpty);
+            break;
+        }
 
         // Verificar si cotizaciones_detalle tiene columna derivado
         $hasDerivadoCol = false;
-        $chkDeriv = $conn->query("SHOW COLUMNS FROM cotizaciones_detalle LIKE 'derivado'");
-        if ($chkDeriv && $chkDeriv->num_rows > 0) $hasDerivadoCol = true;
+        $hasDerivadoCol = ol_column_exists($conn, 'cotizaciones_detalle', 'derivado');
         $derivadoExpr = $hasDerivadoCol
             ? "(SELECT IF(COUNT(*) > 0, 1, 0) FROM cotizaciones_detalle cd WHERE cd.cotizacion_id = o.cotizacion_id AND cd.derivado = 1)"
             : "0";
@@ -518,9 +702,34 @@ switch ($method) {
             $types .= 's';
         }
         if ($consulta_id) {
-            $sql .= ' AND o.consulta_id = ?';
-            $params[] = $consulta_id;
-            $types .= 'i';
+            if ($consultaFiltroEstricto) {
+                // En consultas encadenadas (contrato/control), aislar por consulta activa:
+                //   1) match directo por consulta_id
+                //   2) fallback via cotizaciones_detalle.consulta_id (cd_ref)
+                //   3) fallback via agenda_contrato para ordenes de contrato sin consulta_id escrito
+                $sql .= ' AND (o.consulta_id = ?'
+                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND cd_ref.consulta_ref_id = ?)'
+                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND EXISTS('
+                    . '   SELECT 1 FROM cotizaciones_detalle cd_ac'
+                    . '   INNER JOIN agenda_contrato ac_ol'
+                    . '       ON ac_ol.contrato_paciente_id = cd_ac.contrato_paciente_id'
+                    . '      AND LOWER(TRIM(ac_ol.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_ac.servicio_tipo)) COLLATE utf8mb4_general_ci'
+                    . '      AND ac_ol.servicio_id = cd_ac.servicio_id'
+                    . '   WHERE cd_ac.cotizacion_id = o.cotizacion_id'
+                    . '     AND cd_ac.contrato_paciente_id > 0'
+                    . '     AND ac_ol.consulta_id = ?'
+                    . ')))';
+                $params[] = $consulta_id;
+                $params[] = $consulta_id;
+                $params[] = $consulta_id;
+                $types .= 'iii';
+            } else {
+                // Compatibilidad histórica para consultas antiguas sin consulta_id en órdenes.
+                $sql .= ' AND (o.consulta_id = ? OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND o.paciente_id = (SELECT c_hc.paciente_id FROM consultas c_hc WHERE c_hc.id = ? LIMIT 1)))';
+                $params[] = $consulta_id;
+                $params[] = $consulta_id;
+                $types .= 'ii';
+            }
         }
         if ($filtro_fecha_desde !== '') {
             $sql .= ' AND DATE(o.fecha) >= ?';
@@ -550,8 +759,19 @@ switch ($method) {
             $params[] = $searchLike;
             $types .= 'ssssss';
         }
-        if ($esSesionMedico) {
-            $sql .= ' AND COALESCE(c.medico_id, c_ref.medico_id) = ?';
+        if ($esSesionMedico && !$consulta_id) {
+            // Tercer camino para ordenes de contrato sin consulta_id directo:
+            // resolver medico_id via agenda_contrato → consultas.
+            $sql .= ' AND COALESCE(c.medico_id, c_ref.medico_id,'
+                . ' (SELECT c_ag.medico_id FROM cotizaciones_detalle cd_m'
+                . '  INNER JOIN agenda_contrato ac_m'
+                . '      ON ac_m.contrato_paciente_id = cd_m.contrato_paciente_id'
+            . '     AND LOWER(TRIM(ac_m.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_m.servicio_tipo)) COLLATE utf8mb4_general_ci'
+                . '     AND ac_m.servicio_id = cd_m.servicio_id'
+                . '  INNER JOIN consultas c_ag ON c_ag.id = ac_m.consulta_id'
+                . '  WHERE cd_m.cotizacion_id = o.cotizacion_id AND cd_m.contrato_paciente_id > 0'
+                . '    AND ac_m.consulta_id > 0 LIMIT 1)'
+                . ') = ?';
             $params[] = $medicoSesionId;
             $types .= 'i';
         }
@@ -579,7 +799,22 @@ switch ($method) {
             $sqlCount .= ' AND o.estado = ?';
         }
         if ($consulta_id) {
-            $sqlCount .= ' AND o.consulta_id = ?';
+            if ($consultaFiltroEstricto) {
+                $sqlCount .= ' AND (o.consulta_id = ?'
+                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND cd_ref.consulta_ref_id = ?)'
+                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND EXISTS('
+                    . '   SELECT 1 FROM cotizaciones_detalle cd_ac'
+                    . '   INNER JOIN agenda_contrato ac_ol'
+                    . '       ON ac_ol.contrato_paciente_id = cd_ac.contrato_paciente_id'
+                    . '      AND LOWER(TRIM(ac_ol.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_ac.servicio_tipo)) COLLATE utf8mb4_general_ci'
+                    . '      AND ac_ol.servicio_id = cd_ac.servicio_id'
+                    . '   WHERE cd_ac.cotizacion_id = o.cotizacion_id'
+                    . '     AND cd_ac.contrato_paciente_id > 0'
+                    . '     AND ac_ol.consulta_id = ?'
+                    . ')))';
+            } else {
+                $sqlCount .= ' AND (o.consulta_id = ? OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND o.paciente_id = (SELECT c_hc.paciente_id FROM consultas c_hc WHERE c_hc.id = ? LIMIT 1)))';
+            }
         }
         if ($filtro_fecha_desde !== '') {
             $sqlCount .= ' AND DATE(o.fecha) >= ?';
@@ -597,8 +832,17 @@ switch ($method) {
                 OR IFNULL(m.apellido, "") LIKE ?
             )';
         }
-        if ($esSesionMedico) {
-            $sqlCount .= ' AND COALESCE(c.medico_id, c_ref.medico_id) = ?';
+        if ($esSesionMedico && !$consulta_id) {
+            $sqlCount .= ' AND COALESCE(c.medico_id, c_ref.medico_id,'
+                . ' (SELECT c_ag.medico_id FROM cotizaciones_detalle cd_m'
+                . '  INNER JOIN agenda_contrato ac_m'
+                . '      ON ac_m.contrato_paciente_id = cd_m.contrato_paciente_id'
+            . '     AND LOWER(TRIM(ac_m.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_m.servicio_tipo)) COLLATE utf8mb4_general_ci'
+                . '     AND ac_m.servicio_id = cd_m.servicio_id'
+                . '  INNER JOIN consultas c_ag ON c_ag.id = ac_m.consulta_id'
+                . '  WHERE cd_m.cotizacion_id = o.cotizacion_id AND cd_m.contrato_paciente_id > 0'
+                . '    AND ac_m.consulta_id > 0 LIMIT 1)'
+                . ') = ?';
         }
 
         $totalRegistros = 0;
@@ -941,6 +1185,7 @@ switch ($method) {
 
         $totales_alertas['total'] = intval($totales_alertas['vencido']) + intval($totales_alertas['por_vencer']) + intval($totales_alertas['en_tiempo']);
         if ($resumen_alertas) {
+            ol_log_slow_request($requestStartedAt, 'GET', 'resumen_alertas');
             echo json_encode($totales_alertas);
             exit;
         }
@@ -952,6 +1197,7 @@ switch ($method) {
             $payload['limit'] = $limit;
         }
 
+        ol_log_slow_request($requestStartedAt, 'GET', 'listado');
         echo json_encode($payload);
         break;
     default:

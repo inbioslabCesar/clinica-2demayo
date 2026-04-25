@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { BASE_URL } from "../../config/config.js";
 
 export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos }) {
@@ -7,35 +7,73 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
   const [seleccion, setSeleccion] = useState(null);
   const [detalle, setDetalle] = useState({ tipo: "principal", observaciones: "" });
   const [cargando, setCargando] = useState(false);
+  const abortRef = useRef(null);
+  const requestIdRef = useRef(0);
+  const cacheRef = useRef(new Map());
 
   useEffect(() => {
-    if (busqueda.length < 2) {
+    const termino = busqueda.trim();
+    const pareceCodigo = /^[a-z]\d/i.test(termino);
+    const minChars = pareceCodigo ? 2 : 3;
+
+    if (termino.length < minChars) {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
       setSugerencias([]);
+      setCargando(false);
+      return;
+    }
+
+    const cacheKey = termino.toLowerCase();
+    const cacheHit = cacheRef.current.get(cacheKey);
+    const cacheTTL = 90 * 1000;
+    if (cacheHit && Date.now() - cacheHit.ts < cacheTTL) {
+      setSugerencias(cacheHit.data);
+      setCargando(false);
       return;
     }
 
     setCargando(true);
     const buscarCodigos = async () => {
+      const requestId = ++requestIdRef.current;
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
-        const response = await fetch(`${BASE_URL}api_cie10.php?buscar=${encodeURIComponent(busqueda)}&limite=15`);
+        const response = await fetch(`${BASE_URL}api_cie10.php?buscar=${encodeURIComponent(termino)}&limite=15`, {
+          signal: controller.signal,
+          credentials: "include",
+        });
         const data = await response.json();
-        
-        if (data.success) {
+
+        if (requestId !== requestIdRef.current) return;
+
+        if (data.success && Array.isArray(data.data)) {
           setSugerencias(data.data);
+          cacheRef.current.set(cacheKey, { ts: Date.now(), data: data.data });
         } else {
           // Eliminado log de error en la búsqueda
           setSugerencias([]);
         }
       } catch (error) {
+        if (error?.name === "AbortError") return;
         // Eliminado log de error al buscar códigos CIE10
         setSugerencias([]);
       } finally {
+        if (requestId !== requestIdRef.current) return;
         setCargando(false);
       }
     };
 
-    const timeoutId = setTimeout(buscarCodigos, 300); // Debounce de 300ms
-    return () => clearTimeout(timeoutId);
+    const timeoutId = setTimeout(buscarCodigos, 350);
+    return () => {
+      clearTimeout(timeoutId);
+    };
   }, [busqueda]);
 
   const agregarDiagnostico = () => {
@@ -143,6 +181,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
             >
               <option value="principal">Principal</option>
               <option value="secundario">Secundario</option>
+              <option value="presuntivo">Presuntivo</option>
             </select>
             <input
               type="text"
@@ -190,6 +229,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
                       >
                         <option value="principal">Principal</option>
                         <option value="secundario">Secundario</option>
+                        <option value="presuntivo">Presuntivo</option>
                       </select>
                     </td>
                     <td className="border px-2 py-1 max-w-xs truncate" title={d.observaciones}>{d.observaciones}</td>

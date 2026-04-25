@@ -6,4 +6,5 @@ return [
     'DB_NAME' => 'u330560936_cardiovidabd',
     'DB_USER' => 'u330560936_cardiovida',
     'DB_PASS' => '41950361CesarP$',
+    'ASISTENTE_KB_PASSWORD' => 'KBcardio2026',
 ];

@@ -1,9 +1,11 @@
 import React from "react";
+import MedicoTarifaSelector from "./MedicoTarifaSelector";
 
 function FormularioAgendarConsulta({
   tipoConsulta,
   setTipoConsulta,
   tarifas,
+  coverageByTarifa = {},
   medicoId,
   setMedicoId,
   fecha,
@@ -23,7 +25,11 @@ function FormularioAgendarConsulta({
   const tarifaSeleccionada = Array.isArray(tarifas)
     ? tarifas.find((t) => String(t.medico_id) === String(medicoId))
     : null;
-  const precioConsulta = Number(tarifaSeleccionada?.precio_particular || 0);
+  const coberturaTarifa = coverageByTarifa[Number(tarifaSeleccionada?.id || 0)] || null;
+  const tieneCoberturaContrato = String(coberturaTarifa?.origen_cobro || "") === "contrato";
+  const precioBaseConsulta = Number(tarifaSeleccionada?.precio_particular || 0);
+  const precioConsulta = tieneCoberturaContrato ? 0 : precioBaseConsulta;
+  const esTarifaCubiertaPorContrato = (tarifa) => String(coverageByTarifa[Number(tarifa?.id)]?.origen_cobro || "") === "contrato";
 
   return (
     <div className="w-full flex flex-col items-stretch">
@@ -42,32 +48,26 @@ function FormularioAgendarConsulta({
             <option value="espontanea">Espontánea</option>
           </select>
         </div>
-        <label className="font-semibold mb-1" htmlFor="medico-select">
+        <label className="font-semibold mb-1">
           Médico
         </label>
-        <select
-          id="medico-select"
-          value={medicoId}
-          onChange={(e) => {
-            setMedicoId(e.target.value);
-            setHora(""); // Resetear hora cuando cambia médico
-          }}
-          className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
-          required
-        >
-          <option value="">Selecciona un médico</option>
-          {tarifas.map((tarifa, idx) => (
-            <option key={`${tarifa.medico_id}-${tarifa.tarifa_id || idx}`} value={tarifa.medico_id}>
-              {(tarifa.medico_abreviatura_profesional || 'Dr(a).')} {tarifa.medico_nombre} {tarifa.medico_apellido} — {tarifa.descripcion}
-              {Number(tarifa.precio_particular || 0) > 0 ? ` (S/ ${Number(tarifa.precio_particular).toFixed(2)})` : ""}
-            </option>
-          ))}
-        </select>
+        <MedicoTarifaSelector
+          tarifas={tarifas}
+          medicoId={medicoId}
+          setMedicoId={setMedicoId}
+          setHora={setHora}
+          coverageByTarifa={coverageByTarifa}
+        />
 
         {medicoId ? (
           <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
             <span className="font-semibold">Precio de la consulta:</span>{" "}
-            {precioConsulta > 0 ? `S/ ${precioConsulta.toFixed(2)}` : "No configurado"}
+            {precioConsulta > 0 ? `S/ ${precioConsulta.toFixed(2)}` : "S/ 0.00"}
+            {tieneCoberturaContrato ? (
+              <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                Cubierta hoy por contrato
+              </span>
+            ) : null}
           </div>
         ) : null}
 

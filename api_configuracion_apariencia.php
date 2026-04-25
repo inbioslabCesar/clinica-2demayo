@@ -49,14 +49,6 @@ try {
     // Reparar datos legacy y reforzar unicidad por clave.
     normalizarConfigApariencia($pdo);
 
-    // Insertar valores por defecto si no existen
-    $pdo->exec("INSERT IGNORE INTO config_apariencia (tipo, clave, valor, descripcion, activo, order_index) 
-        VALUES 
-          ('color', 'color_primario', '#3B82F6', 'Color primario del sistema', 1, 0),
-          ('avatar', 'avatar_medico_defecto', '', 'Avatar predefinido para médicos', 0, 1),
-          ('avatar', 'avatar_doctora_defecto', '', 'Avatar predefinido para doctoras', 0, 2),
-          ('avatar', 'avatar_asistente_defecto', '', 'Avatar predefinido para asistentes', 0, 3)");
-
     switch ($method) {
         case 'GET':
             // Obtener configuración actual de apariencia
@@ -147,11 +139,37 @@ try {
                 $avatar_clave = trim((string)($_POST['avatar_clave']));
                 $file = $_FILES['avatar'];
 
+                // Validar errores en upload
+                if ($file['error'] !== UPLOAD_ERR_OK) {
+                    $errorMsgs = [
+                        UPLOAD_ERR_INI_SIZE => 'Archivo mayor al límite ini_set',
+                        UPLOAD_ERR_FORM_SIZE => 'Archivo mayor al límite del formulario',
+                        UPLOAD_ERR_PARTIAL => 'Archivo parcialmente subido',
+                        UPLOAD_ERR_NO_FILE => 'No se subió archivo',
+                        UPLOAD_ERR_NO_TMP_DIR => 'Carpeta temporal no disponible',
+                        UPLOAD_ERR_CANT_WRITE => 'No se puede escribir en carpeta temporal',
+                    ];
+                    echo json_encode([
+                        'error' => 'Error en upload: ' . ($errorMsgs[$file['error']] ?? 'Error desconocido')
+                    ]);
+                    http_response_code(400);
+                    exit;
+                }
+
                 // Validar que el archivo sea una imagen
                 $validMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
                 if (!in_array($file['type'], $validMimes, true)) {
                     echo json_encode([
-                        'error' => 'Solo se permiten imágenes (JPG, PNG, WebP, GIF)'
+                        'error' => 'Solo se permiten imágenes (JPG, PNG, WebP, GIF). Tipo enviado: ' . $file['type']
+                    ]);
+                    http_response_code(400);
+                    exit;
+                }
+
+                // Validar que sea un archivo real (no directorio, etc)
+                if (!is_uploaded_file($file['tmp_name'])) {
+                    echo json_encode([
+                        'error' => 'Archivo no válido o no se subió correctamente'
                     ]);
                     http_response_code(400);
                     exit;
@@ -160,33 +178,45 @@ try {
                 // Crear directorio si no existe
                 $uploadDir = __DIR__ . '/uploads/avatars';
                 if (!is_dir($uploadDir)) {
-                    mkdir($uploadDir, 0755, true);
+                    if (!@mkdir($uploadDir, 0755, true)) {
+                        $error = error_get_last();
+                        echo json_encode([
+                            'error' => 'No se puede crear carpeta de upload. Verifica permisos. Detalles: ' . ($error['message'] ?? 'sin detalles')
+                        ]);
+                        http_response_code(500);
+                        exit;
+                    }
+                }
+
+                // Validar permiso de escritura
+                if (!is_writable($uploadDir)) {
+                    echo json_encode([
+                        'error' => 'La carpeta de upload no tiene permisos de escritura. Ruta: ' . $uploadDir
+                    ]);
+                    http_response_code(500);
+                    exit;
                 }
 
                 // Generar nombre único para el archivo
-                $fileExt = pathinfo($file['name'], PATHINFO_EXTENSION);
+                $fileExt = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
                 $fileName = 'avatar_' . $avatar_clave . '_' . time() . '.' . $fileExt;
                 $filePath = $uploadDir . '/' . $fileName;
                 $fileUrl = 'uploads/avatars/' . $fileName;
 
                 // Mover archivo
                 if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+                    $error = error_get_last();
                     echo json_encode([
-                        'error' => 'Error al subir el archivo'
+                        'error' => 'Error al mover archivo a: ' . $filePath . '. Detalles: ' . ($error['message'] ?? 'sin detalles')
                     ]);
                     http_response_code(500);
                     exit;
                 }
 
-                // Guardar en base de datos
-                $stmt = $pdo->prepare("
-                    INSERT INTO config_apariencia (tipo, clave, valor, descripcion, activo, order_index)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE 
-                        valor = VALUES(valor),
-                        updated_at = CURRENT_TIMESTAMP
-                ");
+                // Cambiar permisos del archivo
+                @chmod($filePath, 0644);
 
+                // Guardar en base de datos
                 $descripcion = match($avatar_clave) {
                     'avatar_medico_defecto' => 'Avatar para médicos',
                     'avatar_doctora_defecto' => 'Avatar para doctoras',
@@ -201,14 +231,39 @@ try {
                     default => 0
                 };
 
-                $stmt->execute([
-                    'avatar',
-                    $avatar_clave,
-                    $fileUrl,
-                    $descripcion,
-                    0, // No activo por defecto
-                    $orden
-                ]);
+                try {
+                    $stmt = $pdo->prepare("
+                        UPDATE config_apariencia
+                        SET tipo = 'avatar', valor = ?, descripcion = ?, order_index = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE clave = ?
+                    ");
+                    $stmt->execute([$fileUrl, $descripcion, $orden, $avatar_clave]);
+
+                    if ($stmt->rowCount() === 0) {
+                        insertConfigApariencia($pdo, [
+                            'tipo' => 'avatar',
+                            'clave' => $avatar_clave,
+                            'valor' => $fileUrl,
+                            'descripcion' => $descripcion,
+                            'activo' => 0,
+                            'order_index' => $orden,
+                        ]);
+                    }
+                } catch (Exception $e) {
+                    // Eliminar archivo si hubo error en BD
+                    if (file_exists($filePath)) {
+                        unlink($filePath);
+                    }
+                    echo json_encode([
+                        'error' => 'Error al guardar en BD: ' . $e->getMessage()
+                    ]);
+                    http_response_code(500);
+                    exit;
+                }
+
+                $avatarIdStmt = $pdo->prepare("SELECT id FROM config_apariencia WHERE clave = ? LIMIT 1");
+                $avatarIdStmt->execute([$avatar_clave]);
+                $avatarId = (int)($avatarIdStmt->fetchColumn() ?: 0);
 
                 echo json_encode([
                     'success' => true,
@@ -216,7 +271,7 @@ try {
                     'data' => [
                         'clave' => $avatar_clave,
                         'url' => $fileUrl,
-                        'id' => $pdo->lastInsertId()
+                        'id' => $avatarId
                     ]
                 ]);
                 break;
@@ -309,11 +364,76 @@ try {
 
 function normalizarConfigApariencia(PDO $pdo): void
 {
+    $defaults = [
+        ['tipo' => 'color', 'clave' => 'color_primario', 'valor' => '#3B82F6', 'descripcion' => 'Color primario del sistema', 'activo' => 1, 'order_index' => 0],
+        ['tipo' => 'avatar', 'clave' => 'avatar_medico_defecto', 'valor' => '', 'descripcion' => 'Avatar predefinido para médicos', 'activo' => 0, 'order_index' => 1],
+        ['tipo' => 'avatar', 'clave' => 'avatar_doctora_defecto', 'valor' => '', 'descripcion' => 'Avatar predefinido para doctoras', 'activo' => 0, 'order_index' => 2],
+        ['tipo' => 'avatar', 'clave' => 'avatar_asistente_defecto', 'valor' => '', 'descripcion' => 'Avatar predefinido para asistentes', 'activo' => 0, 'order_index' => 3],
+    ];
+
     // Si hubo cargas en versiones sin índice único, conservar solo el registro más nuevo por clave.
     $pdo->exec("DELETE c1 FROM config_apariencia c1
         INNER JOIN config_apariencia c2
             ON c1.clave = c2.clave
             AND c1.id < c2.id");
+
+    foreach ($defaults as $default) {
+        $stmt = $pdo->prepare("SELECT id, tipo, valor, descripcion, activo, order_index FROM config_apariencia WHERE clave = ? LIMIT 1");
+        $stmt->execute([$default['clave']]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            insertConfigApariencia($pdo, [
+                'tipo' => $default['tipo'],
+                'clave' => $default['clave'],
+                'valor' => $default['valor'],
+                'descripcion' => $default['descripcion'],
+                'activo' => $default['activo'],
+                'order_index' => $default['order_index'],
+            ]);
+            continue;
+        }
+
+        $tipoActual = (string)($row['tipo'] ?? '');
+        $valorActual = (string)($row['valor'] ?? '');
+        $descripcionActual = (string)($row['descripcion'] ?? '');
+        $activoActual = (int)($row['activo'] ?? 0);
+        $ordenActual = (int)($row['order_index'] ?? 0);
+        $updates = [];
+        $params = [];
+
+        if ($tipoActual !== $default['tipo']) {
+            $updates[] = 'tipo = ?';
+            $params[] = $default['tipo'];
+        }
+        if ($descripcionActual === '') {
+            $updates[] = 'descripcion = ?';
+            $params[] = $default['descripcion'];
+        }
+        if ($ordenActual !== (int)$default['order_index']) {
+            $updates[] = 'order_index = ?';
+            $params[] = $default['order_index'];
+        }
+        if ($default['clave'] === 'color_primario' && $activoActual !== 1) {
+            $updates[] = 'activo = 1';
+        }
+
+        if ($default['clave'] === 'color_primario' && !preg_match('/^#[0-9A-Fa-f]{6}$/', $valorActual)) {
+            if (preg_match('/uploads\/avatars\/(avatar_(avatar_[a-z_]+)_\d+\.[a-z0-9]+)$/i', $valorActual, $matches)) {
+                $avatarClave = $matches[2];
+                $repair = $pdo->prepare("UPDATE config_apariencia SET tipo = 'avatar', valor = ?, updated_at = CURRENT_TIMESTAMP WHERE clave = ?");
+                $repair->execute([$valorActual, $avatarClave]);
+            }
+            $updates[] = 'valor = ?';
+            $params[] = $default['valor'];
+        }
+
+        if (!empty($updates)) {
+            $params[] = $default['clave'];
+            $updateStmt = $pdo->prepare('UPDATE config_apariencia SET ' . implode(', ', $updates) . ', updated_at = CURRENT_TIMESTAMP WHERE clave = ?');
+            $updateStmt->execute($params);
+        }
+    }
 
     // Garantizar solo un avatar activo.
     $activoIdStmt = $pdo->query("SELECT id FROM config_apariencia WHERE tipo = 'avatar' AND activo = 1 ORDER BY updated_at DESC, id DESC LIMIT 1");
@@ -330,4 +450,39 @@ function normalizarConfigApariencia(PDO $pdo): void
     if (!$indexExists) {
         $pdo->exec("ALTER TABLE config_apariencia ADD UNIQUE KEY uq_config_apariencia_clave (clave)");
     }
+}
+
+function insertConfigApariencia(PDO $pdo, array $data): void
+{
+    try {
+        $stmt = $pdo->prepare("INSERT INTO config_apariencia (tipo, clave, valor, descripcion, activo, order_index) VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt->execute([
+            $data['tipo'],
+            $data['clave'],
+            $data['valor'],
+            $data['descripcion'],
+            $data['activo'],
+            $data['order_index'],
+        ]);
+        return;
+    } catch (PDOException $e) {
+        $message = $e->getMessage();
+        $duplicateZeroPrimary = str_contains($message, "Duplicate entry '0' for key 'PRIMARY'");
+        $missingIdDefault = str_contains($message, "Field 'id' doesn't have a default value");
+        if (!$duplicateZeroPrimary && !$missingIdDefault) {
+            throw $e;
+        }
+    }
+
+    $nextId = (int)($pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM config_apariencia")->fetchColumn() ?: 1);
+    $stmt = $pdo->prepare("INSERT INTO config_apariencia (id, tipo, clave, valor, descripcion, activo, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->execute([
+        $nextId,
+        $data['tipo'],
+        $data['clave'],
+        $data['valor'],
+        $data['descripcion'],
+        $data['activo'],
+        $data['order_index'],
+    ]);
 }

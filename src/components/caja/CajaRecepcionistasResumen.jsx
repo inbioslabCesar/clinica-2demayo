@@ -1,6 +1,7 @@
 import React from "react";
 
 export default function CajaRecepcionistasResumen({ cajasRecep }) {
+  const tipoIngresoLabel = (tipo) => String(tipo || "").replace(/_/g, " ").toUpperCase();
   if (!cajasRecep || cajasRecep.length === 0) {
     return <div className="text-gray-500">No hay cajas registradas hoy</div>;
   }
@@ -87,12 +88,15 @@ export default function CajaRecepcionistasResumen({ cajasRecep }) {
                     } else if (serv.tipo_ingreso.toLowerCase().includes("procedimiento")) {
                       color = "pink";
                       icon = (<svg width="18" height="18" fill="none" viewBox="0 0 24 24"><circle cx="9" cy="9" r="8" fill="#ec4899"/><text x="9" y="13" textAnchor="middle" fontSize="8" fill="#fff">P</text></svg>);
+                    } else if (serv.tipo_ingreso.toLowerCase().includes("contrato_abono")) {
+                      color = "teal";
+                      icon = (<svg width="18" height="18" fill="none" viewBox="0 0 24 24"><circle cx="9" cy="9" r="8" fill="#0d9488"/><text x="9" y="13" textAnchor="middle" fontSize="8" fill="#fff">A</text></svg>);
                     }
                     return (
                       <div key={j} className={`rounded-lg shadow bg-white border-t-4 border-${color}-400 px-2 py-1 flex items-center gap-1 w-full sm:w-[120px] snap-center`}>
                         {icon}
                         <div className="truncate">
-                          <div className={`font-bold text-${color}-700 text-xs truncate`}>{serv.tipo_ingreso.toUpperCase()}</div>
+                          <div className={`font-bold text-${color}-700 text-xs truncate`}>{tipoIngresoLabel(serv.tipo_ingreso)}</div>
                           <div className={`text-xs text-${color}-600 font-mono`}>S/ {parseFloat(serv.total_servicio).toFixed(2)}</div>
                         </div>
                       </div>

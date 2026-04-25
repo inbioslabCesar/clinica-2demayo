@@ -6,6 +6,7 @@ const ImpresionHistoriaClinica = ({
   triaje, 
   hc,
   fechaConsulta,
+  fechaConsultaTexto,
   templateSections,
   diagnosticos,
   medicamentos,
@@ -56,6 +57,37 @@ const ImpresionHistoriaClinica = ({
     || triaje?.created_at
     || hc?.fecha_consulta
     || "";
+
+  const formatearFechaConsultaImpresion = (rawValue) => {
+    const raw = String(rawValue || '').trim();
+    if (!raw) return '-';
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return formatearFecha(raw) || raw;
+    }
+
+    const parsed = new Date(raw.replace(' ', 'T'));
+    if (Number.isNaN(parsed.getTime())) return raw;
+
+    const tieneHora = /[T\s]\d{1,2}:\d{2}/.test(raw);
+    if (!tieneHora) {
+      return parsed.toLocaleDateString('es-PE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    }
+
+    return parsed.toLocaleString('es-PE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const fechaConsultaImpresion = String(fechaConsultaTexto || '').trim() || formatearFechaConsultaImpresion(fechaConsultaValor);
 
   const calcularImc = () => {
     const peso = parseFloat(triaje?.peso);
@@ -280,7 +312,7 @@ const ImpresionHistoriaClinica = ({
             <p><strong>Colegiatura:</strong> {formatColegiatura(medicoInfo || {})}</p>
             {medicoInfo?.rne && <p><strong>RNE:</strong> {medicoInfo.rne}</p>}
             <p><strong>Especialidad:</strong> {medicoInfo?.especialidad}</p>
-            <p><strong>Fecha Consulta:</strong> {formatearFecha(fechaConsultaValor) || "-"}</p>
+            <p><strong>Fecha Consulta:</strong> {fechaConsultaImpresion}</p>
           </div>
         </div>
       </div>

@@ -38,6 +38,20 @@ export default function CotizarLaboratorioPage() {
       laboratorio: String(raw?.laboratorio ?? raw?.laboratorio_referencia ?? "").trim(),
     };
   };
+  const getLimaDate = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Lima",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+
+    const year = parts.find((p) => p.type === "year")?.value;
+    const month = parts.find((p) => p.type === "month")?.value;
+    const day = parts.find((p) => p.type === "day")?.value;
+    return `${year}-${month}-${day}`;
+  };
   const sameDerivacionConfig = (leftRaw, rightRaw) => {
     const left = normalizeDerivacionConfig(leftRaw);
     const right = normalizeDerivacionConfig(rightRaw);
@@ -95,6 +109,8 @@ export default function CotizarLaboratorioPage() {
   const [comprobante, setComprobante] = useState(null);
   const [paciente, setPaciente] = useState(null);
   const [preloadedLab, setPreloadedLab] = useState({}); // {exId: {cantidad, derivado, tipo, valor, laboratorio}}
+  const [coverageByExamen, setCoverageByExamen] = useState({});
+  const [coverageStatusByExamen, setCoverageStatusByExamen] = useState({});
   const [pendingLabItems, setPendingLabItems] = useState([]); // items desde cobro para mapear contra examenes
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas para eliminar exacto
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
@@ -104,6 +120,10 @@ export default function CotizarLaboratorioPage() {
   const cotizacionId = searchParams.get('cotizacion_id');
   const cobroId = searchParams.get('cobro_id');
   const isEditingCotizacion = Boolean(cotizacionId) && !cobroId;
+  const getCoberturaExamen = (examenId) => coverageByExamen[Number(examenId)] || null;
+  const getDisplayPrice = (examenId, basePrice) => String(getCoberturaExamen(examenId)?.origen_cobro || "") === "contrato"
+    ? 0
+    : Number(basePrice || 0);
 
   useEffect(() => {
     // Cargar exámenes, tarifas, ranking y paciente
@@ -129,6 +149,75 @@ export default function CotizarLaboratorioPage() {
       setMensaje("No se pudo cargar información del cotizador. Intenta nuevamente.");
     });
   }, [pacienteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const cargarCoberturas = async () => {
+      if (!pacienteId || examenes.length === 0) {
+        if (!cancelled) {
+          setCoverageByExamen({});
+          setCoverageStatusByExamen({});
+        }
+        return;
+      }
+
+      const fechaRef = getLimaDate();
+      const examIds = examenes.map((examen) => Number(examen.id)).filter((id) => id > 0);
+      const statusPending = Object.fromEntries(examIds.map((id) => [id, "pending"]));
+      if (!cancelled) {
+        setCoverageStatusByExamen(statusPending);
+      }
+
+      // Intento principal: resolver coberturas en lote para evitar N requests.
+      try {
+        const res = await fetch(
+          `${BASE_URL}api_contratos.php?accion=validar_cobertura_lote&paciente_id=${Number(pacienteId)}&servicio_tipo=laboratorio&cantidad=1&fecha_ref=${encodeURIComponent(fechaRef)}&servicio_ids=${encodeURIComponent(examIds.join(','))}`,
+          { credentials: "include" }
+        );
+        const data = await res.json();
+        if (!cancelled && data?.success && data?.coberturas && typeof data.coberturas === "object") {
+          const coverage = {};
+          const doneStatus = {};
+          examIds.forEach((id) => {
+            coverage[id] = data.coberturas[String(id)] || null;
+            doneStatus[id] = "done";
+          });
+          setCoverageByExamen(coverage);
+          setCoverageStatusByExamen(doneStatus);
+          return;
+        }
+      } catch {
+        // fallback abajo
+      }
+
+      // Fallback: requests individuales si el endpoint lote falla.
+      const entries = await Promise.all(
+        examenes.map(async (examen) => {
+          try {
+            const exId = Number(examen.id);
+            const res = await fetch(
+              `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=laboratorio&servicio_id=${exId}&cantidad=1&fecha_ref=${encodeURIComponent(fechaRef)}`,
+              { credentials: "include" }
+            );
+            const data = await res.json();
+            return [exId, data?.cobertura || null];
+          } catch {
+            return [Number(examen.id), null];
+          }
+        })
+      );
+
+      if (!cancelled) {
+        const doneStatus = Object.fromEntries(entries.map(([id]) => [id, "done"]));
+        setCoverageByExamen(Object.fromEntries(entries));
+        setCoverageStatusByExamen(doneStatus);
+      }
+    };
+
+    cargarCoberturas();
+    return () => { cancelled = true; };
+  }, [pacienteId, examenes]);
 
   // Consultar estado de caja al entrar
   useEffect(() => {
@@ -369,7 +458,8 @@ export default function CotizarLaboratorioPage() {
       if (diff > 0 || metadataChanged) {
         const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exId && t.activo === 1);
         const ex = examenes.find(e => Number(e.id) === exId);
-        const precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+        const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+        const precio = getDisplayPrice(exId, basePrecio);
         const qtyToAdd = metadataChanged ? Math.max(preQty, 1) : diff;
         itemsToAdd.push({
           servicio_id: exId,
@@ -594,7 +684,8 @@ export default function CotizarLaboratorioPage() {
       const exIdNum = Number(exId);
       const ex = examenes.find(e => Number(e.id) === exIdNum);
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
-      const precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const precio = getDisplayPrice(exIdNum, basePrecio);
       return total + precio;
     }, 0);
   };
@@ -608,6 +699,9 @@ export default function CotizarLaboratorioPage() {
   const examenesOrdenados = [...examenes].sort((a, b) => {
     const idA = Number(a?.id);
     const idB = Number(b?.id);
+    const aContrato = String(getCoberturaExamen(idA)?.origen_cobro || "") === "contrato";
+    const bContrato = String(getCoberturaExamen(idB)?.origen_cobro || "") === "contrato";
+    if (aContrato !== bContrato) return aContrato ? -1 : 1;
     const idxA = rankingIds.indexOf(idA);
     const idxB = rankingIds.indexOf(idB);
     if (idxA === -1 && idxB === -1) return safeText(a?.nombre).localeCompare(safeText(b?.nombre));
@@ -638,7 +732,8 @@ export default function CotizarLaboratorioPage() {
       const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
       const descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
       const derivacion = derivaciones[exId] || { derivado: false };
-      const precio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const precio = getDisplayPrice(exIdNum, basePrecio);
       return {
         servicio_tipo: "laboratorio",
         servicio_id: exIdNum,
@@ -794,18 +889,21 @@ export default function CotizarLaboratorioPage() {
 
     const total = detallesFinales.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
 
-    const payload = cotizacionId
+      const fechaRef = getLimaDate();
+      const payload = cotizacionId
       ? {
           accion: 'editar',
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
+          fecha_ref: fechaRef,
           motivo: 'Edición de cotización (merge seguro) desde cotizador de Laboratorio'
         }
       : {
           paciente_id: Number(pacienteId),
           total,
           detalles: detallesFinales,
+          fecha_ref: fechaRef,
           observaciones: 'Cotización registrada desde cotizador de Laboratorio'
         };
 
@@ -838,6 +936,7 @@ export default function CotizarLaboratorioPage() {
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
+          fecha_ref: fechaRef,
           motivo: 'Adenda confirmada por usuario desde cotizador de Laboratorio (cotización pagada)'
         };
         const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
@@ -1017,8 +1116,11 @@ export default function CotizarLaboratorioPage() {
                     const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
                     const isSelected = seleccionados.includes(exIdNum);
                     const derivacion = derivaciones[exIdNum] || { derivado: false, tipo: '', valor: '', laboratorio: '' };
+                    const cubiertaPorContrato = String(getCoberturaExamen(exIdNum)?.origen_cobro || "") === "contrato";
+                    const coberturaResuelta = coverageStatusByExamen[exIdNum] === "done";
                     // Usar precio_publico si no hay tarifa
-                    const precio = tarifa ? tarifa.precio_particular : (ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                    const basePrecio = tarifa ? tarifa.precio_particular : (ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                    const precio = basePrecio === "-" ? "-" : getDisplayPrice(exIdNum, basePrecio);
                     const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                     return (
                       <li key={exIdNum} className="flex flex-col px-4 py-3 hover:bg-blue-50 transition-colors border-b">
@@ -1033,6 +1135,13 @@ export default function CotizarLaboratorioPage() {
                             <div className="font-semibold text-gray-800">{ex.nombre}</div>
                             {ex.categoria && (
                               <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-1 inline-block">{ex.categoria}</span>
+                            )}
+                            {!coberturaResuelta ? (
+                              <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
+                            ) : cubiertaPorContrato ? (
+                              <div className="text-xs text-green-700 mt-1 font-semibold">Cubierta hoy por contrato</div>
+                            ) : (
+                              <div className="text-xs text-amber-700 mt-1">Se cobrara si la seleccionas</div>
                             )}
                           </div>
                           <div className="font-bold text-green-700 text-lg">S/ {precioMostrar}</div>
@@ -1145,12 +1254,21 @@ export default function CotizarLaboratorioPage() {
                   const exIdNum = Number(exId);
                   const ex = examenes.find(e => Number(e.id) === exIdNum);
                   const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
-                  const precio = tarifa ? tarifa.precio_particular : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                  const cubiertaPorContrato = String(getCoberturaExamen(exIdNum)?.origen_cobro || "") === "contrato";
+                  const coberturaResuelta = coverageStatusByExamen[exIdNum] === "done";
+                  const basePrecio = tarifa ? tarifa.precio_particular : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                  const precio = basePrecio === "-" ? "-" : getDisplayPrice(exIdNum, basePrecio);
                   const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                   return (
                     <li key={exIdNum} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
                         <span className="font-medium text-gray-900">{ex?.nombre}</span>
+                        {!coberturaResuelta && (
+                          <span className="block text-xs text-slate-500 mt-1">Verificando cobertura...</span>
+                        )}
+                        {coberturaResuelta && cubiertaPorContrato && (
+                          <span className="block text-xs text-green-700 mt-1 font-semibold">Cubierta hoy por contrato</span>
+                        )}
                         {ex?.condicion_paciente && (
                           <span className="block text-xs text-gray-400 mt-1">Condición: {ex.condicion_paciente}</span>
                         )}
@@ -1177,7 +1295,10 @@ export default function CotizarLaboratorioPage() {
                     <button onClick={() => generarCotizacion({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Actualizar y cobrar</button>
                   </>
                 ) : (
-                  <button onClick={generarCotizacion} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar Cotización</button>
+                  <>
+                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar cotización</button>
+                    <button onClick={() => generarCotizacion({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Registrar y cobrar</button>
+                  </>
                 )}
               </div>
               {cajaEstado === 'cerrada' && (

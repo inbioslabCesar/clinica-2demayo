@@ -4,6 +4,18 @@ require_once __DIR__ . '/init_api.php';
 
 require_once __DIR__ . '/config.php';
 
+function normalizar_turno_egreso($turno)
+{
+    $t = strtolower(trim((string)$turno));
+    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
+        return 'mañana';
+    }
+    if ($t === 'tarde' || $t === 'noche') {
+        return $t;
+    }
+    return 'mañana';
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'POST') {
@@ -15,7 +27,7 @@ if ($method === 'POST') {
     $monto = $input['monto'] ?? 0;
     $metodo_pago = $input['metodo_pago'] ?? 'efectivo';
     $usuario_id = $_SESSION['usuario']['id'] ?? null;
-    $turno = $input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana');
+    $turno = normalizar_turno_egreso($input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana'));
     $estado = $input['estado'] ?? 'pagado';
     // Si no se envía caja_id, buscar la caja abierta del usuario en el día y asignar siempre para egreso operativo
     $fecha_actual = $input['fecha'] ?? date('Y-m-d');
@@ -81,7 +93,7 @@ if ($method === 'PUT') {
         $input['descripcion'] ?? '',
         $input['monto'] ?? 0,
         $input['metodo_pago'] ?? 'efectivo',
-        $input['turno'] ?? '',
+        normalizar_turno_egreso($input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana')),
         $input['estado'] ?? 'pagado',
         empty($input['caja_id']) ? null : $input['caja_id'],
         $input['observaciones'] ?? '',

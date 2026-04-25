@@ -9,7 +9,9 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_inventario_laboratorio", label: "Inventario laboratorio" },
   { key: "ver_modulo_quimico", label: "Modulo quimico / farmacia" },
   { key: "ver_contabilidad", label: "Contabilidad y reportes" },
+  { key: "ver_paquetes_perfiles", label: "Paquetes y Perfiles" },
   { key: "ver_cotizaciones", label: "Cotizaciones" },
+  { key: "ver_contratos", label: "Contratos" },
   { key: "ver_lista_consultas", label: "Lista de Consultas" },
   { key: "ver_recordatorios_citas", label: "Recordatorios de Citas" },
   { key: "ver_web_servicios", label: "Web servicios" },
@@ -26,11 +28,13 @@ export const RECEPCION_PERMISOS = [
 export const RECEPCION_PERMISOS_LEGACY = [
   "ver_pacientes",
   "ver_contabilidad",
+  "ver_paquetes_perfiles",
   "ver_medicos",
   "ver_panel_enfermeria",
   "ver_panel_laboratorio",
   "ver_modulo_quimico",
   "ver_cotizaciones",
+  "ver_contratos",
   "ver_lista_consultas",
   "ver_recordatorios_citas"
 ];

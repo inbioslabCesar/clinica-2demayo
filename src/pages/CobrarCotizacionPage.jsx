@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import CobroModuloFinal from "../components/cobro/CobroModuloFinal";
@@ -35,6 +35,7 @@ export default function CobrarCotizacionPage() {
   const [pagos, setPagos] = useState([]);
   const [montoAbonoInput, setMontoAbonoInput] = useState("");
   const [modoCobro, setModoCobro] = useState("completo");
+  const blockedNoticeShownRef = useRef(false);
   const criterioImputacion = "fifo";
   const themePrimarySoft = {
     backgroundColor: "var(--color-primary-light)",
@@ -279,6 +280,9 @@ export default function CobrarCotizacionPage() {
     return detallesCobro.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
   }, [detallesCobro]);
 
+  const estado = String(cotizacion?.estado || "").toLowerCase();
+  const esEstadoBloqueado = estado === "anulada" || estado === "pagado";
+
   const servicioPago = useMemo(() => {
     const primerTipo = detallesCobro[0]?.servicio_tipo || "procedimiento";
     const key = normalizarServicioKey(primerTipo);
@@ -335,31 +339,6 @@ export default function CobrarCotizacionPage() {
         }
       }
 
-      // Si la cotización es mixta (tiene ítems de laboratorio pero el key principal
-      // no era 'laboratorio'), CobroModuloFinal no creó la orden; la creamos aquí.
-      const itemsLab = detallesCotizacionActivos.filter(
-        (d) => d.servicio_tipo === "laboratorio" && d.servicio_id
-      );
-      if (itemsLab.length > 0 && servicioPago?.key !== "laboratorio") {
-        try {
-          const examenesIds = itemsLab.map((d) => d.servicio_id);
-          await fetch(`${BASE_URL}api_ordenes_laboratorio.php`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              consulta_id: null,
-              examenes: examenesIds,
-              paciente_id: Number(cotizacion?.paciente_id || 0),
-              cobro_id: Number(cobroId),
-              cotizacion_id: Number(cotizacion?.id || 0) || null,
-            }),
-          });
-        } catch {
-          // Best-effort; no bloquear el flujo.
-        }
-      }
-
       await Swal.fire("Cobro aplicado", "La cotización fue actualizada con el pago realizado.", "success");
       navigate("/cotizaciones");
     } catch (err) {
@@ -368,7 +347,36 @@ export default function CobrarCotizacionPage() {
     }
   };
 
+  useEffect(() => {
+    if (loading || !cotizacion?.id || !esEstadoBloqueado || blockedNoticeShownRef.current) return;
+    blockedNoticeShownRef.current = true;
+
+    const redirigirConAviso = async () => {
+      if (estado === "pagado") {
+        await Swal.fire({
+          icon: "info",
+          title: "Cotización sin saldo pendiente",
+          text: "Esta cotización ya está pagada y no requiere cobro. Te llevaremos al detalle.",
+          confirmButtonText: "Ver detalle",
+        });
+        navigate(`/cotizaciones/${Number(cotizacion.id)}/detalle`, { replace: true });
+        return;
+      }
+
+      await Swal.fire({
+        icon: "warning",
+        title: "Cotización anulada",
+        text: "Esta cotización está anulada y no permite registrar cobros.",
+        confirmButtonText: "Ir a cotizaciones",
+      });
+      navigate("/cotizaciones", { replace: true });
+    };
+
+    redirigirConAviso();
+  }, [loading, cotizacion?.id, esEstadoBloqueado, estado, navigate]);
+
   if (loading) return <Spinner />;
+
   if (error) {
     return (
       <div className="max-w-4xl mx-auto p-6">
@@ -383,18 +391,34 @@ export default function CobrarCotizacionPage() {
     );
   }
 
-  const estado = String(cotizacion?.estado || "").toLowerCase();
-  if (estado === "anulada" || estado === "pagado") {
+  if (esEstadoBloqueado) {
     return (
       <div className="max-w-4xl mx-auto p-6">
-        <button
-          onClick={() => navigate("/cotizaciones")}
-          className="mb-4 bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-        >
-          Volver
-        </button>
-        <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded p-4">
-          Esta cotización está en estado <b>{cotizacion?.estado}</b> y no requiere cobro desde esta vista.
+        <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+          <h2 className="text-lg font-semibold mb-2">
+            {estado === "pagado" ? "Cotización ya pagada" : "Cotización anulada"}
+          </h2>
+          <p className="text-sm leading-relaxed">
+            {estado === "pagado"
+              ? "Esta cotización ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados."
+              : "Esta cotización fue anulada y por seguridad no admite cobros desde esta pantalla."}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {estado === "pagado" && (
+              <button
+                onClick={() => navigate(`/cotizaciones/${Number(cotizacion?.id || 0)}/detalle`)}
+                className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700"
+              >
+                Ver detalle de cotización
+              </button>
+            )}
+            <button
+              onClick={() => navigate("/cotizaciones")}
+              className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+            >
+              Ir a cotizaciones
+            </button>
+          </div>
         </div>
       </div>
     );

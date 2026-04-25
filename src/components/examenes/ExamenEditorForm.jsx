@@ -224,6 +224,34 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
     commitItems(updated);
   };
 
+  // Agregar opción predefinida
+  const addOpcion = idx => {
+    const updated = items.map((item, i) =>
+      i === idx ? { ...item, opciones: [...(item.opciones || []), ""] } : item
+    );
+    commitItems(updated);
+  };
+
+  // Editar opción predefinida
+  const handleOpcionChange = (itemIdx, opIdx, value) => {
+    const updated = items.map((item, i) => {
+      if (i !== itemIdx) return item;
+      const opciones = (item.opciones || []).map((o, j) => (j === opIdx ? value : o));
+      return { ...item, opciones };
+    });
+    commitItems(updated);
+  };
+
+  // Eliminar opción predefinida
+  const removeOpcion = (itemIdx, opIdx) => {
+    const updated = items.map((item, i) => {
+      if (i !== itemIdx) return item;
+      const opciones = (item.opciones || []).filter((_, j) => j !== opIdx);
+      return { ...item, opciones };
+    });
+    commitItems(updated);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex gap-2 mb-2">
@@ -333,7 +361,29 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
                   title="Decimales"
                 />
               </div>
-              <div>
+              <div className="mt-2">
+                <b>Opciones predefinidas:</b>
+                <button type="button" className="ml-2 text-indigo-600 text-sm" onClick={() => addOpcion(idx)}>+ Opción</button>
+                {(item.opciones || []).length > 0 && (
+                  <span className="ml-2 text-xs text-indigo-500 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5">Lista ({item.opciones.length})</span>
+                )}
+                {(item.opciones || []).map((op, opIdx) => (
+                  <div key={opIdx} className="flex gap-2 mt-1 items-center">
+                    <input
+                      value={op}
+                      onChange={e => handleOpcionChange(idx, opIdx, e.target.value)}
+                      placeholder={`Opción ${opIdx + 1}`}
+                      className="border rounded px-2 py-1 flex-1"
+                    />
+                    <button
+                      type="button"
+                      className="text-red-500 text-xs border border-red-200 bg-red-50 rounded px-2 py-1 hover:bg-red-100"
+                      onClick={() => removeOpcion(idx, opIdx)}
+                    >Quitar</button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2">
                 <b>Referencias:</b>
                 <button type="button" className="ml-2 text-green-600" onClick={() => addReferencia(idx)}>+ Referencia</button>
                 {item.referencias.map((ref, refIdx) => (
@@ -368,9 +418,33 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
           )}
 
           {item.tipo === "Campo" && (
-            <div className="flex gap-2 mb-2 mt-2">
-              <input value={item.metodologia} onChange={e => handleItemChange(idx, "metodologia", e.target.value)} placeholder="Metodología (opcional)" className="border rounded px-2 py-1 flex-1" />
-              <input value={item.unidad} onChange={e => handleItemChange(idx, "unidad", e.target.value)} placeholder="Unidad (opcional)" className="border rounded px-2 py-1 w-40" />
+            <div className="flex flex-col gap-2 mb-2 mt-2">
+              <div className="flex gap-2">
+                <input value={item.metodologia} onChange={e => handleItemChange(idx, "metodologia", e.target.value)} placeholder="Metodología (opcional)" className="border rounded px-2 py-1 flex-1" />
+                <input value={item.unidad} onChange={e => handleItemChange(idx, "unidad", e.target.value)} placeholder="Unidad (opcional)" className="border rounded px-2 py-1 w-40" />
+              </div>
+              <div>
+                <b className="text-sm">Opciones predefinidas:</b>
+                <button type="button" className="ml-2 text-indigo-600 text-sm" onClick={() => addOpcion(idx)}>+ Opción</button>
+                {(item.opciones || []).length > 0 && (
+                  <span className="ml-2 text-xs text-indigo-500 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5">Lista ({item.opciones.length})</span>
+                )}
+                {(item.opciones || []).map((op, opIdx) => (
+                  <div key={opIdx} className="flex gap-2 mt-1 items-center">
+                    <input
+                      value={op}
+                      onChange={e => handleOpcionChange(idx, opIdx, e.target.value)}
+                      placeholder={`Opción ${opIdx + 1}`}
+                      className="border rounded px-2 py-1 flex-1"
+                    />
+                    <button
+                      type="button"
+                      className="text-red-500 text-xs border border-red-200 bg-red-50 rounded px-2 py-1 hover:bg-red-100"
+                      onClick={() => removeOpcion(idx, opIdx)}
+                    >Quitar</button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

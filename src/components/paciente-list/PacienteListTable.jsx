@@ -16,7 +16,10 @@ function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratul
           </tr>
         </thead>
         <tbody>
-          {(pacientes || []).map(p => (
+          {(pacientes || []).map(p => {
+            const contratoEstado = Number(p?.contrato_activo || 0);
+          const tieneContrato = contratoEstado > 0;
+            return (
             <tr key={p.id} className="hover:bg-blue-50">
               <td className="border px-2 py-1">{p.historia_clinica}</td>
               <td className="border px-2 py-1">{p.nombre}</td>
@@ -35,12 +38,21 @@ function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratul
                   >
                     Cotizar
                   </button>
+                  {tieneContrato && (
+                    <button
+                      onClick={() => onNavigate(`/estado-cuenta/${p.id}`)}
+                      className={contratoEstado === 2 ? "bg-emerald-600 text-white px-1 py-1 rounded text-xs hover:bg-emerald-700" : "bg-slate-500 text-white px-1 py-1 rounded text-xs hover:bg-slate-600"}
+                      title={contratoEstado === 2 ? "Estado de cuenta (contrato vigente)" : "Estado de cuenta (contrato histórico)"}
+                    >
+                      Estado cuenta
+                    </button>
+                  )}
                   <button onClick={() => onNavigate(`/consumo-paciente/${p.id}`)} className="bg-blue-600 text-white px-1 py-1 rounded text-xs hover:bg-blue-700" title="Ver consumo total">Consumo</button>
                   <button onClick={() => onDescargarCaratula(p)} className="bg-purple-600 text-white px-1 py-1 rounded text-xs hover:bg-purple-700" title="Descargar carátula">Carátula</button>
                 </div>
               </td>
             </tr>
-          ))}
+          )})}
         </tbody>
       </table>
       {/* Paginación solo en desktop */}

@@ -1,21 +1,34 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 // Lazy loading de librerías pesadas para exportar
 import { BASE_URL } from "../config/config";
 
 export default function FarmaciaVentasPage() {
+  const REQUEST_TIMEOUT_MS = 12000;
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [detalleVenta, setDetalleVenta] = useState(null);
   const [detalles, setDetalles] = useState([]);
+  const [detalleLoading, setDetalleLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [pagina, setPagina] = useState(1);
   const [tamanoPagina, setTamanoPagina] = useState(3);
   const [totalVentas, setTotalVentas] = useState(0);
+  const ventasRequestIdRef = useRef(0);
+  const ventasAbortRef = useRef(null);
+  const detalleAbortRef = useRef(null);
 
-  const cargarVentas = () => {
+  const cargarVentas = async () => {
+    const requestId = ++ventasRequestIdRef.current;
+    if (ventasAbortRef.current) {
+      ventasAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    ventasAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     setLoading(true);
     let url = `${BASE_URL}api_cotizaciones_farmacia.php`;
     const params = [`page=${pagina}`, `limit=${tamanoPagina}`];
@@ -30,37 +43,63 @@ export default function FarmaciaVentasPage() {
       params.push(`fecha_fin=${fin}`);
     }
     url += "?" + params.join("&");
-    fetch(url, { credentials: "include" })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`Error HTTP: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then(data => {
-        setVentas(data.cotizaciones || []);
-        setTotalVentas(data.total || 0);
+    try {
+      const res = await fetch(url, { credentials: "include", signal: controller.signal });
+      if (!res.ok) {
+        throw new Error(`Error HTTP: ${res.status}`);
+      }
+      const data = await res.json();
+      if (requestId !== ventasRequestIdRef.current) return;
+      setVentas(data.cotizaciones || []);
+      setTotalVentas(data.total || 0);
+    } catch {
+      if (requestId !== ventasRequestIdRef.current) return;
+      setVentas([]);
+      setTotalVentas(0);
+      // Eliminado log y alert de error al cargar ventas
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (requestId === ventasRequestIdRef.current) {
         setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-        // Eliminado log y alert de error al cargar ventas
-      });
+      }
+    }
   };
 
   useEffect(() => {
     cargarVentas();
+    return () => {
+      if (ventasAbortRef.current) {
+        ventasAbortRef.current.abort();
+      }
+    };
     // eslint-disable-next-line
   }, [fechaInicio, fechaFin, pagina, tamanoPagina]);
 
-  const verDetalle = (venta) => {
+  const verDetalle = async (venta) => {
+    if (detalleAbortRef.current) {
+      detalleAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    detalleAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     setDetalleVenta(venta);
+    setDetalles([]);
+    setDetalleLoading(true);
     setModalOpen(true);
-    fetch(`${BASE_URL}api_cotizaciones_farmacia.php?cotizacion_id=${venta.id}&source=${venta.source || "legacy"}`, { credentials: "include" })
-      .then(res => res.json())
-      .then(data => {
-        setDetalles(data.cotizacion?.detalles || []);
-      });
+    try {
+      const res = await fetch(
+        `${BASE_URL}api_cotizaciones_farmacia.php?cotizacion_id=${venta.id}&source=${venta.source || "legacy"}`,
+        { credentials: "include", signal: controller.signal }
+      );
+      const data = await res.json();
+      setDetalles(data.cotizacion?.detalles || []);
+    } catch {
+      setDetalles([]);
+    } finally {
+      window.clearTimeout(timeoutId);
+      setDetalleLoading(false);
+    }
   };
 
   // Exportar a PDF con lazy loading
@@ -195,7 +234,17 @@ export default function FarmaciaVentasPage() {
       {modalOpen && detalleVenta && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg relative">
-              <button className="absolute top-2 right-2 text-gray-500 text-xl" onClick={() => setModalOpen(false)}>✕</button>
+              <button
+                className="absolute top-2 right-2 text-gray-500 text-xl"
+                onClick={() => {
+                  if (detalleAbortRef.current) {
+                    detalleAbortRef.current.abort();
+                  }
+                  setModalOpen(false);
+                }}
+              >
+                ✕
+              </button>
             <h3 className="text-xl font-bold mb-2" style={{ color: "var(--color-secondary)" }}>Detalle de Venta</h3>
             <div className="mb-2 text-sm text-gray-700">
               <div><b>Referencia:</b> {detalleVenta.referencia || "-"}</div>
@@ -216,14 +265,24 @@ export default function FarmaciaVentasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {detalles.map((d, index) => (
-                    <tr key={d.id || `${d.descripcion}-${index}`}>
-                      <td className="p-2">{d.descripcion}</td>
-                      <td className="p-2">{d.cantidad}</td>
-                      <td className="p-2">S/ {d.precio_unitario}</td>
-                      <td className="p-2">S/ {d.subtotal}</td>
+                  {detalleLoading ? (
+                    <tr>
+                      <td className="p-2 text-center text-gray-500" colSpan={4}>Cargando detalle...</td>
                     </tr>
-                  ))}
+                  ) : detalles.length === 0 ? (
+                    <tr>
+                      <td className="p-2 text-center text-gray-500" colSpan={4}>No hay detalle disponible.</td>
+                    </tr>
+                  ) : (
+                    detalles.map((d, index) => (
+                      <tr key={d.id || `${d.descripcion}-${index}`}>
+                        <td className="p-2">{d.descripcion}</td>
+                        <td className="p-2">{d.cantidad}</td>
+                        <td className="p-2">S/ {d.precio_unitario}</td>
+                        <td className="p-2">S/ {d.subtotal}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

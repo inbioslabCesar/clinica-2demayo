@@ -2,6 +2,17 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function normalizar_turno_cc($turno): string {
+    $t = strtolower(trim((string)$turno));
+    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
+        return 'mañana';
+    }
+    if ($t === 'tarde' || $t === 'noche') {
+        return $t;
+    }
+    return 'mañana';
+}
+
 function horas_disponibilidad_sql(): string {
     return "CASE
         WHEN TIME_TO_SEC(hora_fin) > TIME_TO_SEC(hora_inicio)
@@ -446,7 +457,7 @@ if ($method === 'POST') {
 
     // — Registrar como egreso —
     if ($ok) {
-        $turno       = $_SESSION['usuario']['turno'] ?? 'mañana';
+        $turno       = normalizar_turno_cc($_SESSION['usuario']['turno'] ?? 'mañana');
         $responsable = $_SESSION['usuario']['nombre'] ?? '';
         $descEgreso  = "Adelanto de honorarios - $nombreMedico";
         $conceptoEgreso = $motivo ?: "Adelanto honorarios";

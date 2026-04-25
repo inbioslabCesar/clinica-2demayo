@@ -237,25 +237,6 @@ if (tipoDescuento === 'porcentaje') {
       }
 
       if (result.success) {
-        // Si el servicio es laboratorio y no hay consulta asociada, crear orden de laboratorio
-        if (servicio?.key === 'laboratorio' && !servicio?.consulta_id) {
-          const examenesIds = detallesCobro
-            .filter(d => d.servicio_tipo === 'laboratorio' && d.servicio_id)
-            .map(d => d.servicio_id);
-          const ordenResponse = await fetch(`${BASE_URL}api_ordenes_laboratorio.php`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              consulta_id: null,
-              examenes: examenesIds,
-              paciente_id: paciente?.id || null,
-              cobro_id: result.cobro_id,
-              cotizacion_id: servicio?.cotizacion_id || null,
-            })
-          });
-          await ordenResponse.json(); // Eliminado: no se usa la variable
-        }
         // Mostrar comprobante
         await mostrarComprobante(result.cobro_id, cobroData);
         // Callback para continuar con el flujo

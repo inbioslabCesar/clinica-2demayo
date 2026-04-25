@@ -89,14 +89,21 @@ const ConfiguracionPage = lazy(() => import("./pages/ConfiguracionPage.jsx"));
 const PlantillasHCPage = lazy(() => import("./pages/PlantillasHCPage.jsx"));
 const TemaPage = lazy(() => import("./pages/TemaPage.jsx"));
 const GestionTarifasPage = lazy(() => import("./pages/GestionTarifasPage.jsx"));
+const PaquetesPerfilesPage = lazy(() => import("./pages/PaquetesPerfilesPage.jsx"));
 const ProtectedRoute = lazy(() => import("./components/comunes/ProtectedRoute.jsx"));
 const MedicamentosList = lazy(() => import("./farmacia/MedicamentosList.jsx"));
 const FarmaciaCotizadorPage = lazy(() => import("./pages/FarmaciaCotizadorPage.jsx"));
 const CotizarProcedimientosPage = lazy(() =>
   import("./pages/CotizarProcedimientosPage.jsx")
 );
+const CotizarPaquetesPerfilesPage = lazy(() =>
+  import("./pages/CotizarPaquetesPerfilesPage.jsx")
+);
 const ConsumoPacientePage = lazy(() =>
   import("./pages/ConsumoPacientePage.jsx")
+);
+const EstadoCuentaContratoPage = lazy(() =>
+  import("./pages/EstadoCuentaContratoPage.jsx")
 );
 const FarmaciaVentasPage = lazy(() => import("./pages/FarmaciaVentasPage.jsx"));
 const SeleccionarServicioPage = lazy(() =>
@@ -115,6 +122,7 @@ const DocumentosPacientePage = lazy(() => import("./pages/DocumentosPacientePage
 const OrdenesImagenPacientePage = lazy(() => import("./pages/OrdenesImagenPacientePage.jsx"));
 const VisorImagenPage = lazy(() => import("./pages/VisorImagenPage.jsx"));
 const SolicitudImagenPage = lazy(() => import("./pages/SolicitudImagenPage.jsx"));
+const ContratosPage = lazy(() => import("./pages/ContratosPage.jsx"));
 
 // Reinicia el ErrorBoundary en cada cambio de ruta para que errores de una
 // página no persistan al navegar a otra (ej. presionar el botón Back).
@@ -169,6 +177,12 @@ function hydrateUsuario(rawUsuario) {
 }
 
 function App() {
+  const clearClientSessionState = () => {
+    sessionStorage.removeItem("usuario");
+    sessionStorage.removeItem("medico");
+    localStorage.removeItem("enfermero_panel_tab");
+  };
+
   const [usuario, setUsuario] = useState(() => {
     // Restaurar usuario o medico desde sessionStorage si existe
     const storedUsuario = sessionStorage.getItem("usuario");
@@ -200,8 +214,7 @@ function App() {
       console.error("Error al cerrar sesión en el backend:", err);
     });
 
-    sessionStorage.removeItem("usuario");
-    sessionStorage.removeItem("medico");
+    clearClientSessionState();
     window.location.replace("/");
   };
 
@@ -218,8 +231,7 @@ function App() {
         const autenticado = Boolean(data?.success) && Boolean(data?.authenticated);
 
         if (!autenticado && activo) {
-          sessionStorage.removeItem("usuario");
-          sessionStorage.removeItem("medico");
+          clearClientSessionState();
           setUsuario(null);
           return;
         }
@@ -303,9 +315,25 @@ function App() {
         return "/panel-enfermero";
       case "recepcionista":
         if (hasPermiso(usuario, "ver_pacientes")) return "/pacientes";
+        if (hasPermiso(usuario, "ver_usuarios")) return "/usuarios";
         if (hasPermiso(usuario, "ver_medicos")) return "/medicos";
         if (hasPermiso(usuario, "ver_cotizaciones")) return "/cotizaciones";
         if (hasPermiso(usuario, "ver_contabilidad")) return "/contabilidad";
+        if (hasPermiso(usuario, "ver_paquetes_perfiles")) return "/paquetes-perfiles";
+        if (hasPermiso(usuario, "ver_contratos")) return "/contratos";
+        if (hasPermiso(usuario, "ver_gestion_tarifas")) return "/gestion-tarifas";
+        if (hasPermiso(usuario, "ver_reabrir_caja")) return "/reabrir-caja";
+        if (hasPermiso(usuario, "ver_lista_consultas")) return "/lista-consultas";
+        if (hasPermiso(usuario, "ver_recordatorios_citas")) return "/recordatorios-citas";
+        if (hasPermiso(usuario, "ver_panel_enfermeria")) return "/panel-enfermero";
+        if (hasPermiso(usuario, "ver_inventario_general")) return "/inventario-general";
+        if (hasPermiso(usuario, "ver_inventario_laboratorio")) return "/laboratorio/inventario";
+        if (hasPermiso(usuario, "ver_configuracion")) return "/configuracion";
+        if (hasPermiso(usuario, "ver_plantillas_hc")) return "/configuracion/plantillas-hc";
+        if (hasPermiso(usuario, "ver_tema")) return "/tema";
+        if (hasPermiso(usuario, "ver_web_servicios")) return "/web-servicios";
+        if (hasPermiso(usuario, "ver_web_ofertas")) return "/web-ofertas";
+        if (hasPermiso(usuario, "ver_web_banners")) return "/web-banners";
         if (hasPermiso(usuario, "ver_panel_laboratorio")) return "/panel-laboratorio";
         if (hasPermiso(usuario, "ver_modulo_quimico")) return "/medicamentos";
         return "/";
@@ -685,6 +713,18 @@ function App() {
                     }
                   />
                   <Route
+                    path="/paquetes-perfiles"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_paquetes_perfiles"]}
+                      >
+                        <PaquetesPerfilesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/inventario-general"
                     element={
                       <ProtectedRoute
@@ -819,6 +859,18 @@ function App() {
                     }
                   />
                   <Route
+                    path="/cotizar-paquetes-perfiles/:pacienteId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
+                      >
+                        <CotizarPaquetesPerfilesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/seleccionar-servicio"
                     element={
                       <ProtectedRoute
@@ -843,6 +895,18 @@ function App() {
                     }
                   />
                   <Route
+                    path="/estado-cuenta/:pacienteId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
+                      >
+                        <EstadoCuentaContratoPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/historia-clinica-lectura/:pacienteId/:consultaId"
                     element={
                       <ProtectedRoute
@@ -863,6 +927,18 @@ function App() {
                         permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizacionesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/contratos"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_contratos"]}
+                      >
+                        <ContratosPage />
                       </ProtectedRoute>
                     }
                   />

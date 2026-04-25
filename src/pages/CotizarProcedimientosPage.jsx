@@ -319,7 +319,7 @@ export default function CotizarProcedimientosPage() {
     }
 
     const sp = new URLSearchParams(location.search);
-    const isEditingCotizacion = Boolean(sp.get('cotizacion_id')) && !Boolean(sp.get('cobro_id'));
+    const isEditingCotizacion = !!sp.get('cotizacion_id') && !sp.get('cobro_id');
     const detallesBase = construirDetallesSeleccionados();
 
     const yaExisteEnCarrito = (detalle) => {
@@ -393,7 +393,7 @@ export default function CotizarProcedimientosPage() {
     return [...detallesNoProc, ...detallesProcedimiento];
   };
 
-  const cotizar = async () => {
+  const cotizar = async ({ irACobro = false } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos un procedimiento.");
       return;
@@ -501,6 +501,10 @@ export default function CotizarProcedimientosPage() {
       Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
         if (limpiarCarritoAlFinal) {
           clearCart();
+        }
+        if (irACobro && cotizacionDestino > 0) {
+          navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
+          return;
         }
         if (cotizacionDestino > 0 && cotizacionId) {
           try {
@@ -644,7 +648,10 @@ export default function CotizarProcedimientosPage() {
                 {new URLSearchParams(location.search).get('cobro_id') ? (
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
-                  <button onClick={cotizar} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar Cotización'}</button>
+                  <>
+                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}</button>
+                    <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}</button>
+                  </>
                 )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">

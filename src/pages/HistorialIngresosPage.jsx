@@ -112,10 +112,13 @@ export default function HistorialIngresosPage() {
       'ecografia': 'bg-green-100 text-green-800',
       'rayosx': 'bg-red-100 text-red-800',
       'procedimiento': 'bg-gray-100 text-gray-800',
-      'otros': 'bg-indigo-100 text-indigo-800'
+      'otros': 'bg-indigo-100 text-indigo-800',
+      'contrato_abono': 'bg-teal-100 text-teal-800'
     };
     return colores[tipo] || 'bg-gray-100 text-gray-800';
   };
+
+  const tipoIngresoLabel = (tipo) => String(tipo || '').replace(/_/g, ' ').toUpperCase();
 
   const obtenerIconoMetodoPago = (metodo) => {
     const iconos = {
@@ -230,6 +233,7 @@ export default function HistorialIngresosPage() {
               <option value="ecografia">Ecografía</option>
               <option value="rayosx">Rayos X</option>
               <option value="procedimiento">Procedimiento</option>
+              <option value="contrato_abono">Contrato Abono</option>
               <option value="otros">Otros</option>
             </select>
           </div>
@@ -300,7 +304,7 @@ export default function HistorialIngresosPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${obtenerColorTipo(ingreso.tipo_ingreso)}`}>
-                        {ingreso.tipo_ingreso}
+                        {tipoIngresoLabel(ingreso.tipo_ingreso)}
                       </span>
                     </td>
                     <td className="px-6 py-4">

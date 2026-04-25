@@ -31,6 +31,17 @@ function construir_filtro_busqueda_pacientes(string $busqueda): array {
     ];
 }
 
+function pacientes_table_exists($conn, string $table): bool {
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
+    if (!$stmt) return false;
+    $stmt->bind_param('s', $table);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $ok = $res && $res->num_rows > 0;
+    $stmt->close();
+    return $ok;
+}
+
 // Función para generar el próximo número de historia clínica
 function generarProximaHistoriaClinica($conn) {
     // Obtener el último número de HC de la base de datos
@@ -217,6 +228,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $busqueda = isset($_GET['busqueda']) ? trim($_GET['busqueda']) : '';
     [$where, $params, $types] = construir_filtro_busqueda_pacientes($busqueda);
 
+    $selectContratoActivo = '0 AS contrato_activo';
+    if (pacientes_table_exists($conn, 'contratos_paciente')) {
+        $selectContratoActivo = "CASE
+            WHEN EXISTS (
+                SELECT 1 FROM contratos_paciente cp
+                WHERE cp.paciente_id = pacientes.id
+                  AND cp.estado = 'activo'
+                  AND CURDATE() BETWEEN cp.fecha_inicio AND cp.fecha_fin
+            ) THEN 2
+            WHEN EXISTS (
+                SELECT 1 FROM contratos_paciente cp
+                WHERE cp.paciente_id = pacientes.id
+            ) THEN 1
+            ELSE 0
+        END AS contrato_activo";
+    }
+
     // Obtener el total de pacientes filtrados
     if ($where) {
         $sqlTotal = "SELECT COUNT(*) as total FROM pacientes $where";
@@ -235,7 +263,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Obtener solo los pacientes de la página actual filtrados
     if ($where) {
-        $sql = "SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes $where ORDER BY id DESC LIMIT ? OFFSET ?";
+        $sql = "SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en, $selectContratoActivo FROM pacientes $where ORDER BY id DESC LIMIT ? OFFSET ?";
         $stmt = $conn->prepare($sql);
         $params[] = $limit;
         $params[] = $offset;
@@ -244,7 +272,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $stmt->execute();
         $result = $stmt->get_result();
     } else {
-        $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
+        $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en, $selectContratoActivo FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
         $stmt->bind_param('ii', $limit, $offset);
         $stmt->execute();
         $result = $stmt->get_result();

@@ -343,6 +343,9 @@ if ($method === 'POST') {
             $stmt->close();
             $orden_id = $conn->insert_id;
 
+            // Vincular al nodo HC activo de esta consulta
+            $conn->query("UPDATE ordenes_imagen oi INNER JOIN historia_clinica h ON h.consulta_id = oi.consulta_id SET oi.historia_clinica_id = h.id WHERE oi.id = $orden_id AND oi.historia_clinica_id IS NULL");
+
             // Crear cotización si se enviaron servicios con precios
             $cotizData = ['cotizacion_id' => null, 'numero_comprobante' => null, 'total' => 0];
             if (!empty($servicios)) {

@@ -7,11 +7,12 @@ import SidebarSection from "./SidebarSection";
 export default function SidebarRecepcionista({ onClose, usuario }) {
   const [openSection, setOpenSection] = useState("finanzas");
   const can = (permiso) => hasPermiso(usuario, permiso);
-  const showFinanzas = can("ver_contabilidad") || can("ver_gestion_tarifas") || can("ver_reabrir_caja") || can("ver_cotizaciones");
+  const showFinanzas = can("ver_contabilidad") || can("ver_gestion_tarifas") || can("ver_paquetes_perfiles") || can("ver_reabrir_caja") || can("ver_cotizaciones") || can("ver_contratos");
   const showPacientes = can("ver_pacientes") || can("ver_lista_consultas") || can("ver_recordatorios_citas");
   const showPersonal = can("ver_medicos") || can("ver_panel_enfermeria") || can("ver_panel_laboratorio") || can("ver_modulo_quimico");
   const showInventario = can("ver_inventario_general") || can("ver_inventario_laboratorio");
-  const showAdministracion = can("ver_usuarios") || can("ver_configuracion") || can("ver_tema");
+  const showAdministracion = can("ver_usuarios") || can("ver_configuracion") || can("ver_plantillas_hc") || can("ver_tema");
+  const showWeb = can("ver_web_servicios") || can("ver_web_ofertas") || can("ver_web_banners");
 
   const handleToggleSection = (sectionKey) => {
     setOpenSection((prev) => (prev === sectionKey ? null : sectionKey));
@@ -55,6 +56,16 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
               <span>Gestión de Tarifas</span>
             </Link>
           )}
+          {can("ver_paquetes_perfiles") && (
+            <Link
+              to="/paquetes-perfiles"
+              className="py-2.5 px-3 rounded-lg text-blue-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300"
+              onClick={onClose}
+            >
+              <Icon iconName="Product" className="text-lg text-blue-600" />
+              <span>Paquetes y Perfiles</span>
+            </Link>
+          )}
           {can("ver_cotizaciones") && (
             <Link
               to="/cotizaciones"
@@ -63,6 +74,16 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
             >
               <Icon iconName="Paste" className="text-lg text-fuchsia-600" />
               <span>Cotizaciones</span>
+            </Link>
+          )}
+          {can("ver_contratos") && (
+            <Link
+              to="/contratos"
+              className="py-2.5 px-3 rounded-lg text-emerald-700 hover:bg-gradient-to-r hover:from-emerald-50 hover:to-teal-100 font-medium flex items-center gap-3 transition-all duration-300"
+              onClick={onClose}
+            >
+              <Icon iconName="ClipboardList" className="text-lg text-emerald-600" />
+              <span>Contratos</span>
             </Link>
           )}
           {can("ver_reabrir_caja") && (
@@ -225,6 +246,16 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
               <span>Configuración</span>
             </Link>
           )}
+          {can("ver_plantillas_hc") && (
+            <Link
+              to="/configuracion/plantillas-hc"
+              className="py-2.5 px-3 rounded-lg text-cyan-700 hover:bg-gradient-to-r hover:from-cyan-50 hover:to-sky-100 font-medium flex items-center gap-3 transition-all duration-300"
+              onClick={onClose}
+            >
+              <Icon iconName="EditCreate" className="text-lg text-cyan-600" />
+              <span>Plantillas HC</span>
+            </Link>
+          )}
           {can("ver_tema") && (
             <Link
               to="/tema"
@@ -233,6 +264,46 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
             >
               <Icon iconName="Color" className="text-lg text-purple-600" />
               <span>Personalización</span>
+            </Link>
+          )}
+        </SidebarSection>
+      )}
+
+      {showWeb && (
+        <SidebarSection
+          title="Web"
+          iconName="Globe"
+          isOpen={openSection === "web"}
+          onToggle={() => handleToggleSection("web")}
+        >
+          {can("ver_web_servicios") && (
+            <Link
+              to="/web-servicios"
+              className="py-2.5 px-3 rounded-lg text-sky-700 hover:bg-gradient-to-r hover:from-sky-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300"
+              onClick={onClose}
+            >
+              <Icon iconName="Repair" className="text-lg text-sky-600" />
+              <span>Servicios Web</span>
+            </Link>
+          )}
+          {can("ver_web_ofertas") && (
+            <Link
+              to="/web-ofertas"
+              className="py-2.5 px-3 rounded-lg text-pink-700 hover:bg-gradient-to-r hover:from-pink-50 hover:to-rose-100 font-medium flex items-center gap-3 transition-all duration-300"
+              onClick={onClose}
+            >
+              <Icon iconName="Financial" className="text-lg text-pink-600" />
+              <span>Ofertas Web</span>
+            </Link>
+          )}
+          {can("ver_web_banners") && (
+            <Link
+              to="/web-banners"
+              className="py-2.5 px-3 rounded-lg text-indigo-700 hover:bg-gradient-to-r hover:from-indigo-50 hover:to-blue-100 font-medium flex items-center gap-3 transition-all duration-300"
+              onClick={onClose}
+            >
+              <Icon iconName="Picture" className="text-lg text-indigo-600" />
+              <span>Banners Web</span>
             </Link>
           )}
         </SidebarSection>

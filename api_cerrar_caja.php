@@ -57,6 +57,12 @@ foreach ($totales_pago as $row) {
     if ($metodo === 'transferencia') $total_transferencias = floatval($row['total']);
 }
 
+// Total de abonos de contratos (para desglose en contabilidad)
+$stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ? AND (tipo_ingreso = ? OR referencia_tabla = ?)');
+$refCA = 'paciente_seguimiento_pagos';
+$stmt->execute([$caja_id, 'contrato_abono', $refCA]);
+$total_contratos_abono = floatval($stmt->fetchColumn());
+
 // Calcular egresos
 $stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
 $stmt->execute([$caja_id]);
@@ -130,7 +136,8 @@ echo json_encode([
         'egreso_honorarios' => floatval($egreso_honorarios),
         'egreso_lab_ref' => floatval($egreso_lab_ref),
         'egreso_operativo' => floatval($egreso_operativo),
-        'total_egresos' => $total_egresos
+        'total_egresos' => $total_egresos,
+        'total_contratos_abono' => $total_contratos_abono
     ]
 ]);
 ?>

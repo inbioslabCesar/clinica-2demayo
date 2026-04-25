@@ -411,7 +411,7 @@ export default function CotizarOperacionPage() {
     return [...detallesNoOperacion, ...detallesOperacion];
   };
 
-  const cotizar = async () => {
+  const cotizar = async ({ irACobro = false } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos una operación/cirugía.");
       return;
@@ -520,6 +520,10 @@ export default function CotizarOperacionPage() {
       Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
         if (limpiarCarritoAlFinal) {
           clearCart();
+        }
+        if (irACobro && cotizacionDestino > 0) {
+          navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
+          return;
         }
         if (cotizacionDestino > 0 && cotizacionId) {
           try {
@@ -687,13 +691,22 @@ export default function CotizarOperacionPage() {
                   <span>🔄</span>Actualizar cobro
                 </button>
               ) : (
-                <button
-                  onClick={cotizar}
-                  disabled={cajaEstado === 'cerrada'}
-                  className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                >
-                  {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar Cotización'}
-                </button>
+                <>
+                  <button
+                    onClick={() => cotizar()}
+                    disabled={cajaEstado === 'cerrada'}
+                    className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                  >
+                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}
+                  </button>
+                  <button
+                    onClick={() => cotizar({ irACobro: true })}
+                    disabled={cajaEstado === 'cerrada'}
+                    className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                  >
+                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}
+                  </button>
+                </>
               )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
                 <div className="mt-2 flex items-center justify-end gap-2">

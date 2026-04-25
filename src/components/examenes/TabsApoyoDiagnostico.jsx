@@ -17,7 +17,7 @@ const ESTADO_BADGE = {
 };
 
 // ── Sub-panel para un tipo de imagen ─────────────────────────────────────────
-function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
+function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft }) {
   const [ordenes, setOrdenes]             = useState([]);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
 
@@ -64,7 +64,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
       {/* Botón navegar a SolicitudImagenPage */}
       <button
         type="button"
-        onClick={() => navigate(`/solicitud-imagen/${consultaId}/${tipo}`)}
+        onClick={() => navigateWithDraft(`/solicitud-imagen/${consultaId}/${tipo}`)}
         className={`mb-4 bg-${color}-600 text-white px-4 py-2 rounded hover:bg-${color}-700 transition text-sm font-semibold`}
       >
         {emoji} Solicitar {label}
@@ -96,7 +96,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
               {puedeVer(ord) && (
                 <button
                   type="button"
-                  onClick={() => navigate(`/visor-imagen/${ord.id}`)}
+                  onClick={() => navigateWithDraft(`/visor-imagen/${ord.id}`)}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1 rounded-lg font-semibold transition flex items-center gap-1"
                 >
                   🖼️ Ver Imágenes
@@ -128,7 +128,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigate }) {
 
 const STORAGE_KEY = "apoyo_diagnostico_tab";
 
-export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [] }) {
+export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate }) {
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
 
   const cambiarTab = (t) => {
@@ -137,6 +137,15 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   };
   const [examenes, setExamenes] = useState([]);
   const navigate = useNavigate();
+
+  const navigateWithDraft = (path) => {
+    try {
+      if (typeof onBeforeNavigate === "function") onBeforeNavigate();
+    } catch {
+      // No bloquear navegacion por errores de guardado local.
+    }
+    navigate(path);
+  };
 
   // Cargar lista de exámenes para mapear IDs a nombres
   useEffect(() => {
@@ -205,6 +214,10 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
     });
   }, [ordenesLabOrdenadas]);
 
+  const puedeVerResultados = React.useMemo(() => {
+    return hayResultadosRegistrados || hayOrdenesCompletadas;
+  }, [hayResultadosRegistrados, hayOrdenesCompletadas]);
+
   const resultadosConDatoPorOrden = React.useMemo(() => {
     const map = new Map();
     if (!Array.isArray(resultadosLab)) return map;
@@ -252,7 +265,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
             <button
               type="button"
               className="mb-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
-              onClick={() => navigate(`/solicitud-laboratorio/${consultaId}`)}
+              onClick={() => navigateWithDraft(`/solicitud-laboratorio/${consultaId}`)}
             >
               Solicitar análisis de laboratorio
             </button>
@@ -298,13 +311,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
               </div>
             )}
             {/* Botón para ver resultados si existen */}
-            {resultadosLab && resultadosLab.length > 0 &&
-              resultadosLab.some(
-                (r) =>
-                  r.resultados &&
-                  ((typeof r.resultados === 'object' && Object.keys(r.resultados).length > 0) ||
-                  (typeof r.resultados === 'string' && r.resultados.trim() !== ''))
-              ) && (
+            {puedeVerResultados && (
                 <div className="mb-6 p-3 sm:p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-3">
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -320,7 +327,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
                   <button
                     type="button"
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg hover:shadow-xl text-sm sm:text-base"
-                    onClick={() => navigate(`/resultados-laboratorio/${consultaId}`)}
+                    onClick={() => navigateWithDraft(`/resultados-laboratorio/${consultaId}`)}
                   >
                     <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -337,13 +344,13 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           </>
         )}
         {tab === "rx" && (
-          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigate={navigate} />
+          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
         )}
         {tab === "ecografia" && (
-          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigate={navigate} />
+          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
         )}
         {tab === "tomografia" && (
-          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigate={navigate} />
+          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
         )}
       </div>
     </div>

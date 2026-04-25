@@ -3,15 +3,20 @@ import react from '@vitejs/plugin-react'
 
 const apiProxyTarget = process.env.CODESPACES
   ? 'http://127.0.0.1:8000'
-  : 'http://localhost/clinica-2demayo'
+  : 'http://127.0.0.1/clinica-2demayo'
 
 export default defineConfig({
   plugins: [react()],
   cacheDir: 'node_modules/.vite-sistema',
   server: {
-    host: true,
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    hmr: {
+      host: '127.0.0.1',
+      clientPort: 5173,
+      protocol: 'ws',
+    },
     proxy: {
       '/api_': {
         target: apiProxyTarget,
@@ -49,8 +54,55 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) return 'vendor';
-          if (id.includes('src/pages/ExamenesLaboratorioCrudPage.jsx')) return 'examenes-laboratorio-crud';
+          const normalizedId = id.split('\\').join('/');
+          const getPackageChunkName = (moduleId) => {
+            const marker = '/node_modules/';
+            const idx = moduleId.indexOf(marker);
+            if (idx === -1) return null;
+            const rest = moduleId.slice(idx + marker.length);
+            if (!rest) return null;
+
+            const parts = rest.split('/');
+            if (!parts.length) return null;
+
+            let pkg = parts[0];
+            if (pkg.startsWith('@') && parts.length > 1) {
+              pkg = `${pkg}-${parts[1]}`;
+            }
+
+            return `vendor-pkg-${pkg.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          };
+
+          // Split heavy libs first; fallback to generic vendor.
+          if (normalizedId.includes('node_modules/jspdf') || normalizedId.includes('node_modules/jspdf-autotable')) {
+            return 'vendor-jspdf';
+          }
+          if (normalizedId.includes('node_modules/xlsx') || normalizedId.includes('node_modules/file-saver')) {
+            return 'vendor-xlsx';
+          }
+          if (normalizedId.includes('node_modules/react/') || normalizedId.includes('node_modules/react-dom/') || normalizedId.includes('node_modules/react-router-dom/')) {
+            return 'vendor-react';
+          }
+          if (normalizedId.includes('node_modules/recharts')) {
+            return 'vendor-recharts';
+          }
+          if (normalizedId.includes('node_modules/mathjs')) {
+            return 'vendor-mathjs';
+          }
+          if (normalizedId.includes('node_modules/@fluentui') || normalizedId.includes('node_modules/react-icons')) {
+            return 'vendor-ui';
+          }
+          if (normalizedId.includes('node_modules/@cornerstonejs') || normalizedId.includes('node_modules/cornerstone-') || normalizedId.includes('node_modules/dicom-parser')) {
+            return 'vendor-dicom';
+          }
+          if (normalizedId.includes('node_modules/sweetalert2') || normalizedId.includes('node_modules/sweetalert2-react-content')) {
+            return 'vendor-alerts';
+          }
+
+          if (normalizedId.includes('node_modules')) {
+            return getPackageChunkName(normalizedId) || 'vendor';
+          }
+          if (normalizedId.includes('src/pages/ExamenesLaboratorioCrudPage.jsx')) return 'examenes-laboratorio-crud';
           // Agrega aquí solo páginas grandes
           return undefined;
         }

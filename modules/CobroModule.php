@@ -57,6 +57,262 @@ class CobroModule
         return round(min(max($montoEnviado, 0.0), $montoOriginal), 2);
     }
 
+    private static function normalizarServicioTipo($servicioTipo)
+    {
+        $tipo = strtolower(trim((string)$servicioTipo));
+        if ($tipo === 'rayos_x' || $tipo === 'rayos x' || $tipo === 'rx') return 'rayosx';
+        if ($tipo === 'operaciones') return 'operacion';
+        if ($tipo === 'procedimientos') return 'procedimiento';
+        return $tipo;
+    }
+
+    private static function resolverExamenLaboratorioIdPorDescripcion($conn, $descripcion)
+    {
+        $descripcion = trim((string)$descripcion);
+        if ($descripcion === '') {
+            return 0;
+        }
+
+        $stmtExact = $conn->prepare("SELECT id FROM examenes_laboratorio WHERE activo = 1 AND nombre = ? ORDER BY id DESC LIMIT 1");
+        if ($stmtExact) {
+            $stmtExact->bind_param("s", $descripcion);
+            $stmtExact->execute();
+            $row = $stmtExact->get_result()->fetch_assoc();
+            if ($row && !empty($row['id'])) {
+                return (int)$row['id'];
+            }
+        }
+
+        $like = '%' . $descripcion . '%';
+        $stmtLike = $conn->prepare("SELECT id FROM examenes_laboratorio WHERE activo = 1 AND nombre LIKE ? ORDER BY id DESC LIMIT 1");
+        if ($stmtLike) {
+            $stmtLike->bind_param("s", $like);
+            $stmtLike->execute();
+            $row = $stmtLike->get_result()->fetch_assoc();
+            if ($row && !empty($row['id'])) {
+                return (int)$row['id'];
+            }
+        }
+
+        return 0;
+    }
+
+    private static function resolverMedicamentoIdPorDescripcion($conn, $descripcion)
+    {
+        $descripcion = trim((string)$descripcion);
+        if ($descripcion === '') {
+            return 0;
+        }
+
+        $stmtExact = $conn->prepare("SELECT id FROM medicamentos WHERE estado = 'activo' AND nombre = ? ORDER BY id DESC LIMIT 1");
+        if ($stmtExact) {
+            $stmtExact->bind_param("s", $descripcion);
+            $stmtExact->execute();
+            $row = $stmtExact->get_result()->fetch_assoc();
+            if ($row && !empty($row['id'])) {
+                return (int)$row['id'];
+            }
+        }
+
+        $like = '%' . $descripcion . '%';
+        $stmtLike = $conn->prepare("SELECT id FROM medicamentos WHERE estado = 'activo' AND nombre LIKE ? ORDER BY id DESC LIMIT 1");
+        if ($stmtLike) {
+            $stmtLike->bind_param("s", $like);
+            $stmtLike->execute();
+            $row = $stmtLike->get_result()->fetch_assoc();
+            if ($row && !empty($row['id'])) {
+                return (int)$row['id'];
+            }
+        }
+
+        return 0;
+    }
+
+    private static function expandirDetallesPaquete($detalles)
+    {
+        if (!is_array($detalles) || empty($detalles)) {
+            return [];
+        }
+
+        $expandido = [];
+        foreach ($detalles as $detalle) {
+            if (!is_array($detalle)) {
+                continue;
+            }
+
+            $tipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
+            $esPaquete = in_array($tipo, ['paquete', 'perfil'], true) || !empty($detalle['es_paquete']) || !empty($detalle['es_perfil']);
+            $componentes = null;
+            if (isset($detalle['componentes']) && is_array($detalle['componentes'])) {
+                $componentes = $detalle['componentes'];
+            } elseif (isset($detalle['paquete_items']) && is_array($detalle['paquete_items'])) {
+                $componentes = $detalle['paquete_items'];
+            } elseif (isset($detalle['items_paquete']) && is_array($detalle['items_paquete'])) {
+                $componentes = $detalle['items_paquete'];
+            }
+
+            if (!$esPaquete || !is_array($componentes) || empty($componentes)) {
+                $detalle['servicio_tipo'] = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? 'procedimiento');
+                $expandido[] = $detalle;
+                continue;
+            }
+
+            $cantidadPaquete = max(1, (int)($detalle['cantidad'] ?? 1));
+            $componentesNormalizados = [];
+            $sumaBaseComponentes = 0.0;
+
+            foreach ($componentes as $comp) {
+                if (!is_array($comp)) {
+                    continue;
+                }
+
+                $item = $comp;
+                $itemTipo = self::normalizarServicioTipo($item['servicio_tipo'] ?? ($item['source_type'] ?? 'procedimiento'));
+                if ($itemTipo === 'paquete' || $itemTipo === 'perfil') {
+                    continue;
+                }
+
+                $itemCantidad = max(1, (int)($item['cantidad'] ?? 1));
+                $cantidadFinal = $itemCantidad * $cantidadPaquete;
+                $precio = self::toFloatFlexible($item['precio_unitario'] ?? ($item['precio_lista_snapshot'] ?? 0));
+                $subtotal = self::toFloatFlexible($item['subtotal'] ?? ($item['subtotal_snapshot'] ?? ($precio * $cantidadFinal)));
+                $subtotal = round((float)$subtotal, 2);
+
+                $componentesNormalizados[] = [
+                    'item' => $item,
+                    'item_tipo' => $itemTipo,
+                    'cantidad_final' => $cantidadFinal,
+                    'subtotal_base' => $subtotal,
+                ];
+                $sumaBaseComponentes += max(0.0, $subtotal);
+            }
+
+            $subtotalPaquete = self::toFloatFlexible($detalle['subtotal'] ?? 0);
+            if ($subtotalPaquete <= 0) {
+                $subtotalPaquete = self::toFloatFlexible($detalle['precio_unitario'] ?? 0) * $cantidadPaquete;
+            }
+            $subtotalObjetivo = $subtotalPaquete > 0 ? round($subtotalPaquete, 2) : round($sumaBaseComponentes, 2);
+            $factorProrrateo = ($sumaBaseComponentes > 0 && $subtotalObjetivo > 0)
+                ? ($subtotalObjetivo / $sumaBaseComponentes)
+                : 1.0;
+
+            $subtotalAcumulado = 0.0;
+            $lastIdx = count($componentesNormalizados) - 1;
+            foreach ($componentesNormalizados as $idx => $payload) {
+                $item = $payload['item'];
+                $itemTipo = $payload['item_tipo'];
+                $cantidadFinal = $payload['cantidad_final'];
+                $subtotalBase = (float)$payload['subtotal_base'];
+
+                if ($idx === $lastIdx && $subtotalObjetivo > 0) {
+                    $subtotalAjustado = round(max(0.0, $subtotalObjetivo - $subtotalAcumulado), 2);
+                } else {
+                    $subtotalAjustado = round(max(0.0, $subtotalBase * $factorProrrateo), 2);
+                    $subtotalAcumulado = round($subtotalAcumulado + $subtotalAjustado, 2);
+                }
+                $precioAjustado = $cantidadFinal > 0 ? round($subtotalAjustado / $cantidadFinal, 2) : 0.0;
+
+                $item['servicio_tipo'] = $itemTipo;
+                if (!isset($item['servicio_id']) || $item['servicio_id'] === null || $item['servicio_id'] === '') {
+                    $item['servicio_id'] = $item['source_id'] ?? null;
+                }
+                if (!isset($item['tarifa_id']) || $item['tarifa_id'] === null || $item['tarifa_id'] === '') {
+                    $item['tarifa_id'] = $item['servicio_id'] ?? null;
+                }
+                if (!isset($item['descripcion']) || trim((string)$item['descripcion']) === '') {
+                    $item['descripcion'] = (string)($item['descripcion_snapshot'] ?? 'Item paquete/perfil');
+                }
+                $item['cantidad'] = $cantidadFinal;
+                $item['precio_unitario'] = $precioAjustado;
+                $item['subtotal'] = $subtotalAjustado;
+                $item['subtotal_original'] = $subtotalAjustado;
+
+                if (!isset($item['cotizacion_id']) && isset($detalle['cotizacion_id'])) {
+                    $item['cotizacion_id'] = $detalle['cotizacion_id'];
+                }
+                if (!isset($item['paquete_id']) && isset($detalle['paquete_id'])) {
+                    $item['paquete_id'] = $detalle['paquete_id'];
+                }
+                if (!isset($item['paquete_nombre']) && isset($detalle['descripcion'])) {
+                    $item['paquete_nombre'] = $detalle['descripcion'];
+                }
+
+                $expandido[] = $item;
+            }
+        }
+
+        return $expandido;
+    }
+
+    private static function distribuirDescuentoProporcionalEnDetalles($detalles, $montoDescuento)
+    {
+        if (!is_array($detalles) || empty($detalles)) {
+            return [];
+        }
+
+        $montoDescuento = max(0.0, self::toFloatFlexible($montoDescuento));
+        $acumuladoBase = 0.0;
+        foreach ($detalles as $detalle) {
+            if (!is_array($detalle)) continue;
+            $acumuladoBase += max(0.0, self::toFloatFlexible($detalle['subtotal'] ?? 0));
+        }
+        $acumuladoBase = round($acumuladoBase, 2);
+
+        if ($montoDescuento <= 0 || $acumuladoBase <= 0) {
+            foreach ($detalles as &$detalle) {
+                if (!is_array($detalle)) continue;
+                $sub = max(0.0, self::toFloatFlexible($detalle['subtotal'] ?? 0));
+                $detalle['subtotal_original'] = round($sub, 2);
+                $detalle['descuento_item'] = 0.0;
+            }
+            unset($detalle);
+            return $detalles;
+        }
+
+        $descuentoTotal = min($montoDescuento, $acumuladoBase);
+        $descuentoAsignado = 0.0;
+        $indicesValidos = [];
+        foreach ($detalles as $idx => $detalle) {
+            $sub = max(0.0, self::toFloatFlexible($detalle['subtotal'] ?? 0));
+            if ($sub > 0) {
+                $indicesValidos[] = $idx;
+            }
+        }
+
+        $ultimoIdx = !empty($indicesValidos) ? $indicesValidos[count($indicesValidos) - 1] : null;
+        foreach ($detalles as $idx => &$detalle) {
+            if (!is_array($detalle)) continue;
+
+            $subtotalOriginal = max(0.0, self::toFloatFlexible($detalle['subtotal'] ?? 0));
+            $detalle['subtotal_original'] = round($subtotalOriginal, 2);
+
+            if ($subtotalOriginal <= 0 || $descuentoTotal <= 0) {
+                $detalle['descuento_item'] = 0.0;
+                continue;
+            }
+
+            if ($idx === $ultimoIdx) {
+                $descuentoItem = max(0.0, round($descuentoTotal - $descuentoAsignado, 2));
+            } else {
+                $proporcion = $subtotalOriginal / $acumuladoBase;
+                $descuentoItem = round($descuentoTotal * $proporcion, 2);
+                $descuentoAsignado = round($descuentoAsignado + $descuentoItem, 2);
+            }
+
+            $descuentoItem = min($descuentoItem, $subtotalOriginal);
+            $subtotalNeto = max(0.0, round($subtotalOriginal - $descuentoItem, 2));
+            $cantidad = max(1, (int)($detalle['cantidad'] ?? 1));
+            $precioNeto = round($subtotalNeto / $cantidad, 2);
+
+            $detalle['descuento_item'] = round($descuentoItem, 2);
+            $detalle['subtotal'] = $subtotalNeto;
+            $detalle['precio_unitario'] = $precioNeto;
+        }
+        unset($detalle);
+
+        return $detalles;
+    }
+
     private static function cargarDetallesCobros($conn, $cobroIds)
     {
         $cobroIds = array_values(array_unique(array_filter(array_map('intval', $cobroIds), fn($id) => $id > 0)));
@@ -266,6 +522,432 @@ class CobroModule
                 }
             }
         }
+    }
+
+    private static function cargarDetallesCotizacionActivos($conn, $cotizacionId)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0 || !self::tableExists($conn, 'cotizaciones_detalle')) {
+            return [];
+        }
+
+        $whereEstado = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND estado_item <> 'eliminado'"
+            : '';
+
+        $stmt = $conn->prepare("SELECT * FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");
+        if (!$stmt) {
+            return [];
+        }
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    private static function resolverTipoOrdenImagen($servicioTipo, $descripcion = '')
+    {
+        $tipo = strtolower(trim((string)$servicioTipo));
+        $desc = strtolower(trim((string)$descripcion));
+
+        if (in_array($tipo, ['rayosx', 'rayos_x', 'rayos x', 'rx'], true)) {
+            return 'rx';
+        }
+        if ($tipo === 'ecografia') {
+            return 'ecografia';
+        }
+        if ($tipo === 'tomografia') {
+            return 'tomografia';
+        }
+        if (in_array($tipo, ['procedimiento', 'procedimientos'], true)) {
+            if (preg_match('/tomograf|\btac\b/u', $desc)) {
+                return 'tomografia';
+            }
+            if (preg_match('/rayos\s*x|\brx\b/u', $desc)) {
+                return 'rx';
+            }
+            if (preg_match('/ecograf/i', $desc)) {
+                return 'ecografia';
+            }
+        }
+
+        return null;
+    }
+
+    private static function asegurarConsultaDesdeCotizacion($conn, $cotizacionId)
+    {
+        $out = [
+            'success' => true,
+            'consulta_id' => 0,
+            'ya_existia' => false,
+        ];
+
+        if (!self::tableExists($conn, 'cotizaciones') || !self::tableExists($conn, 'cotizaciones_detalle') || !self::tableExists($conn, 'consultas')) {
+            return $out;
+        }
+
+        $stmtCot = $conn->prepare('SELECT paciente_id, fecha FROM cotizaciones WHERE id = ? LIMIT 1');
+        if (!$stmtCot) {
+            return $out;
+        }
+        $stmtCot->bind_param('i', $cotizacionId);
+        $stmtCot->execute();
+        $cot = $stmtCot->get_result()->fetch_assoc();
+        $stmtCot->close();
+        if (!$cot) {
+            return $out;
+        }
+
+        $hasConsultaId = self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id');
+        $hasMedicoId = self::columnExists($conn, 'cotizaciones_detalle', 'medico_id');
+        $whereEstado = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND estado_item <> 'eliminado'"
+            : '';
+
+        if ($hasConsultaId && $hasMedicoId) {
+            $stmtDet = $conn->prepare("SELECT id, medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+        } elseif ($hasMedicoId) {
+            $stmtDet = $conn->prepare("SELECT id, medico_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+        } else {
+            $stmtDet = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+        }
+
+        if (!$stmtDet) {
+            return $out;
+        }
+        $stmtDet->bind_param('i', $cotizacionId);
+        $stmtDet->execute();
+        $detalle = $stmtDet->get_result()->fetch_assoc();
+        $stmtDet->close();
+
+        if (!$detalle) {
+            // Fallback para cotizaciones de contrato que solo tienen items de laboratorio/imagen
+            // sin ningun item tipo 'consulta': buscar consulta_id via agenda_contrato usando
+            // contrato_paciente_id + servicio_tipo + servicio_id del item de lab.
+            if (self::columnExists($conn, 'cotizaciones_detalle', 'contrato_paciente_id')
+                && self::tableExists($conn, 'agenda_contrato')
+                && self::columnExists($conn, 'agenda_contrato', 'consulta_id')
+                && $hasConsultaId) {
+                $stmtFb = $conn->prepare(
+                    'SELECT ac.consulta_id
+                     FROM cotizaciones_detalle cd
+                     INNER JOIN agenda_contrato ac
+                         ON ac.contrato_paciente_id = cd.contrato_paciente_id
+                                                AND LOWER(TRIM(ac.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd.servicio_tipo)) COLLATE utf8mb4_general_ci
+                        AND ac.servicio_id = cd.servicio_id
+                     WHERE cd.cotizacion_id = ?
+                       AND cd.contrato_paciente_id IS NOT NULL AND cd.contrato_paciente_id > 0
+                       AND ac.consulta_id IS NOT NULL AND ac.consulta_id > 0
+                     LIMIT 1'
+                );
+                if ($stmtFb) {
+                    $stmtFb->bind_param('i', $cotizacionId);
+                    $stmtFb->execute();
+                    $rowFb = $stmtFb->get_result()->fetch_assoc();
+                    $stmtFb->close();
+                    $consultaFb = intval($rowFb['consulta_id'] ?? 0);
+                    if ($consultaFb > 0) {
+                        // Propagar consulta_id a todos los detalles de esta cotizacion que no lo tengan
+                        $stmtUpd = $conn->prepare(
+                            'UPDATE cotizaciones_detalle SET consulta_id = ? WHERE cotizacion_id = ? AND (consulta_id IS NULL OR consulta_id = 0)'
+                        );
+                        if ($stmtUpd) {
+                            $stmtUpd->bind_param('ii', $consultaFb, $cotizacionId);
+                            $stmtUpd->execute();
+                            $stmtUpd->close();
+                        }
+                        $out['consulta_id'] = $consultaFb;
+                        $out['ya_existia'] = true;
+                    }
+                }
+            }
+            return $out;
+        }
+
+        $detalleId = (int)($detalle['id'] ?? 0);
+        $medicoId = (int)($detalle['medico_id'] ?? 0);
+        $consultaActual = (int)($detalle['consulta_id'] ?? 0);
+        if ($consultaActual > 0) {
+            $out['consulta_id'] = $consultaActual;
+            $out['ya_existia'] = true;
+            return $out;
+        }
+        if ($medicoId <= 0) {
+            return $out;
+        }
+
+        $pacienteId = (int)($cot['paciente_id'] ?? 0);
+        if ($pacienteId <= 0) {
+            return $out;
+        }
+        $fecha = !empty($cot['fecha']) ? date('Y-m-d', strtotime((string)$cot['fecha'])) : date('Y-m-d');
+        $hora = date('H:i:s');
+        $tipoConsulta = 'programada';
+
+        if (self::columnExists($conn, 'consultas', 'origen_creacion')) {
+            $stmtIns = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, origen_creacion) VALUES (?, ?, ?, ?, ?, ?)');
+            if (!$stmtIns) {
+                return $out;
+            }
+            $origen = 'cotizador';
+            $stmtIns->bind_param('iissss', $pacienteId, $medicoId, $fecha, $hora, $tipoConsulta, $origen);
+        } else {
+            $stmtIns = $conn->prepare('INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta) VALUES (?, ?, ?, ?, ?)');
+            if (!$stmtIns) {
+                return $out;
+            }
+            $stmtIns->bind_param('iisss', $pacienteId, $medicoId, $fecha, $hora, $tipoConsulta);
+        }
+
+        $ok = $stmtIns->execute();
+        $consultaNueva = $ok ? (int)$stmtIns->insert_id : 0;
+        $stmtIns->close();
+        if ($consultaNueva <= 0) {
+            return $out;
+        }
+
+        if ($hasConsultaId && $detalleId > 0) {
+            $stmtVinc = $conn->prepare('UPDATE cotizaciones_detalle SET consulta_id = ? WHERE id = ?');
+            if ($stmtVinc) {
+                $stmtVinc->bind_param('ii', $consultaNueva, $detalleId);
+                $stmtVinc->execute();
+                $stmtVinc->close();
+            }
+        }
+
+        $out['consulta_id'] = $consultaNueva;
+        return $out;
+    }
+
+    private static function crearOrdenesLaboratorioCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId = 0)
+    {
+        if (!self::tableExists($conn, 'ordenes_laboratorio')) {
+            return;
+        }
+
+        $examIds = [];
+        foreach ((array)$detalles as $det) {
+            $tipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
+            if ($tipo !== 'laboratorio') continue;
+            $sid = (int)($det['servicio_id'] ?? 0);
+            if ($sid > 0) $examIds[] = $sid;
+        }
+        $examIds = array_values(array_unique($examIds));
+        if (empty($examIds)) {
+            return;
+        }
+
+        $json = json_encode($examIds);
+        $hasCotizacionId = self::columnExists($conn, 'ordenes_laboratorio', 'cotizacion_id');
+        $hasConsultaId = self::columnExists($conn, 'ordenes_laboratorio', 'consulta_id');
+
+        if ($hasCotizacionId) {
+            $stmtChk = $conn->prepare('SELECT id FROM ordenes_laboratorio WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1');
+            if ($stmtChk) {
+                $stmtChk->bind_param('i', $cotizacionId);
+                $stmtChk->execute();
+                $exists = $stmtChk->get_result()->fetch_assoc();
+                $stmtChk->close();
+                if ($exists) {
+                    $ordenId = (int)($exists['id'] ?? 0);
+                    if ($ordenId > 0) {
+                        if ($hasConsultaId && $consultaId > 0) {
+                            $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                            if ($stmtUp) {
+                                $stmtUp->bind_param('siii', $json, $pacienteId, $consultaId, $ordenId);
+                                $stmtUp->execute();
+                                $stmtUp->close();
+                            }
+                        } else {
+                            $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                            if ($stmtUp) {
+                                $stmtUp->bind_param('sii', $json, $pacienteId, $ordenId);
+                                $stmtUp->execute();
+                                $stmtUp->close();
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+
+            if ($hasConsultaId && $consultaId > 0) {
+                $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, consulta_id) VALUES (?, ?, ?, ?)');
+                if ($stmtIns) {
+                    $stmtIns->bind_param('isii', $cotizacionId, $json, $pacienteId, $consultaId);
+                    $stmtIns->execute();
+                    $stmtIns->close();
+                }
+            } else {
+                $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id) VALUES (?, ?, ?)');
+                if ($stmtIns) {
+                    $stmtIns->bind_param('isi', $cotizacionId, $json, $pacienteId);
+                    $stmtIns->execute();
+                    $stmtIns->close();
+                }
+            }
+            return;
+        }
+
+        if ($hasConsultaId && $consultaId > 0) {
+            $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (examenes, paciente_id, consulta_id) VALUES (?, ?, ?)');
+            if ($stmtIns) {
+                $stmtIns->bind_param('sii', $json, $pacienteId, $consultaId);
+                $stmtIns->execute();
+                $stmtIns->close();
+            }
+        } else {
+            $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (examenes, paciente_id) VALUES (?, ?)');
+            if ($stmtIns) {
+                $stmtIns->bind_param('si', $json, $pacienteId);
+                $stmtIns->execute();
+                $stmtIns->close();
+            }
+        }
+    }
+
+    private static function crearOrdenesImagenCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $usuarioId = 0, $consultaId = 0)
+    {
+        if (!self::tableExists($conn, 'ordenes_imagen')) {
+            return;
+        }
+
+        $tipos = [];
+        foreach ((array)$detalles as $det) {
+            $tipoOrden = self::resolverTipoOrdenImagen($det['servicio_tipo'] ?? '', $det['descripcion'] ?? '');
+            if ($tipoOrden) {
+                $tipos[$tipoOrden] = true;
+            }
+        }
+        if (empty($tipos)) {
+            return;
+        }
+
+        $hasCotizacionId = self::columnExists($conn, 'ordenes_imagen', 'cotizacion_id');
+        $hasConsultaId = self::columnExists($conn, 'ordenes_imagen', 'consulta_id');
+        $hasSolicitadoPor = self::columnExists($conn, 'ordenes_imagen', 'solicitado_por');
+        $hasCargaAnticipada = self::columnExists($conn, 'ordenes_imagen', 'carga_anticipada');
+
+        foreach (array_keys($tipos) as $tipo) {
+            if ($hasCotizacionId) {
+                $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? LIMIT 1');
+                if ($stmtChk) {
+                    $stmtChk->bind_param('is', $cotizacionId, $tipo);
+                    $stmtChk->execute();
+                    $exists = $stmtChk->get_result()->fetch_assoc();
+                    $stmtChk->close();
+                    if ($exists) {
+                        if ($hasConsultaId && $consultaId > 0) {
+                            $ordenId = (int)($exists['id'] ?? 0);
+                            if ($ordenId > 0) {
+                                $stmtUp = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
+                                if ($stmtUp) {
+                                    $stmtUp->bind_param('ii', $consultaId, $ordenId);
+                                    $stmtUp->execute();
+                                    $stmtUp->close();
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            $cols = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
+            $vals = ['?', '?', '?', '?', "'pendiente'"];
+            $types = 'iiss';
+            $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipo, 'Orden creada desde cotización #' . $cotizacionId];
+
+            if ($hasSolicitadoPor) {
+                $cols[] = 'solicitado_por';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = (int)$usuarioId;
+            }
+            if ($hasCotizacionId) {
+                $cols[] = 'cotizacion_id';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = (int)$cotizacionId;
+            }
+            if ($hasCargaAnticipada) {
+                $cols[] = 'carga_anticipada';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = 0;
+            }
+
+            $sql = 'INSERT INTO ordenes_imagen (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+            $stmtIns = $conn->prepare($sql);
+            if ($stmtIns) {
+                $stmtIns->bind_param($types, ...$params);
+                $stmtIns->execute();
+                $stmtIns->close();
+            }
+        }
+    }
+
+    private static function desbloquearConsultasPorCotizacion($conn, $cotizacionId)
+    {
+        if (!self::tableExists($conn, 'cotizaciones_detalle') || !self::tableExists($conn, 'consultas') || !self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            return;
+        }
+
+        $stmt = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
+        if (!$stmt) {
+            return;
+        }
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        if (empty($rows)) {
+            return;
+        }
+
+        $stmtUpd = $conn->prepare("UPDATE consultas SET estado = 'pendiente' WHERE id = ? AND estado = 'falta_cancelar'");
+        if (!$stmtUpd) {
+            return;
+        }
+        foreach ($rows as $row) {
+            $cid = (int)($row['consulta_id'] ?? 0);
+            if ($cid <= 0) continue;
+            $stmtUpd->bind_param('i', $cid);
+            $stmtUpd->execute();
+        }
+        $stmtUpd->close();
+    }
+
+    private static function sincronizarServiciosClinicosPostPagoCotizacion($conn, $cotizacionId, $usuarioId = 0)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0 || !self::tableExists($conn, 'cotizaciones')) {
+            return;
+        }
+
+        $stmtCot = $conn->prepare('SELECT paciente_id FROM cotizaciones WHERE id = ? LIMIT 1');
+        if (!$stmtCot) {
+            return;
+        }
+        $stmtCot->bind_param('i', $cotizacionId);
+        $stmtCot->execute();
+        $row = $stmtCot->get_result()->fetch_assoc();
+        $stmtCot->close();
+        $pacienteId = (int)($row['paciente_id'] ?? 0);
+        if ($pacienteId <= 0) {
+            return;
+        }
+
+        $detalles = self::cargarDetallesCotizacionActivos($conn, $cotizacionId);
+        $consultaSync = self::asegurarConsultaDesdeCotizacion($conn, $cotizacionId);
+        $consultaId = (int)($consultaSync['consulta_id'] ?? 0);
+
+        self::crearOrdenesLaboratorioCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId);
+        self::crearOrdenesImagenCotizacion($conn, $cotizacionId, $pacienteId, $detalles, (int)$usuarioId, $consultaId);
+        self::desbloquearConsultasPorCotizacion($conn, $cotizacionId);
     }
 
     // Obtener cobros (por paciente, por id, o todos con filtros)
@@ -490,6 +1172,13 @@ class CobroModule
                 }
             }
 
+            $detallesOriginales = is_array($data['detalles'] ?? null) ? $data['detalles'] : [];
+            $detallesExpandido = self::expandirDetallesPaquete($detallesOriginales);
+            if (empty($detallesExpandido)) {
+                throw new \Exception('No hay detalles válidos para procesar el cobro.');
+            }
+            $data['detalles'] = $detallesExpandido;
+
             // Normalizar montos de cobro en backend para evitar desfaces entre UI y persistencia.
             $montoOriginal = self::toFloatFlexible($data['monto_original'] ?? 0);
             if ($montoOriginal <= 0) {
@@ -497,6 +1186,10 @@ class CobroModule
             }
             $montoDescuento = self::normalizarDescuento($data, $montoOriginal);
             $totalCobro = max(0.0, round($montoOriginal - $montoDescuento, 2));
+
+            // Aplicar descuento proporcional a cada item para mantener consistencia
+            // entre caja, honorarios, derivaciones y farmacia.
+            $data['detalles'] = self::distribuirDescuentoProporcionalEnDetalles($data['detalles'], $montoDescuento);
 
             $data['monto_original'] = $montoOriginal;
             $data['monto_descuento'] = $montoDescuento;
@@ -588,12 +1281,7 @@ class CobroModule
                 // Modificar el registro de honorarios para guardar el id retornado
                 if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento']) && !empty($data['detalles'])) {
                     foreach ($data['detalles'] as $i => $detalleServicio) {
-                        $detalleServicioKeyRaw = strtolower(trim((string)($detalleServicio['servicio_tipo'] ?? $servicio_key)));
-                        $detalleServicioKey = $detalleServicioKeyRaw;
-                        if ($detalleServicioKey === 'rayos_x' || $detalleServicioKey === 'rayos x') $detalleServicioKey = 'rayosx';
-                        if ($detalleServicioKey === 'rx') $detalleServicioKey = 'rayosx';
-                        if ($detalleServicioKey === 'operaciones') $detalleServicioKey = 'operacion';
-                        if ($detalleServicioKey === 'procedimientos') $detalleServicioKey = 'procedimiento';
+                        $detalleServicioKey = self::normalizarServicioTipo($detalleServicio['servicio_tipo'] ?? $servicio_key);
                         if (!in_array($detalleServicioKey, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento'], true)) {
                             $detalleServicioKey = $servicio_key;
                         }
@@ -627,7 +1315,15 @@ class CobroModule
                         }
                         $tarifa = null;
                         if ($detalleServicioKey === 'laboratorio') {
-                            $examen_id = $detalleServicio['servicio_id'] ?? null;
+                            $examen_id = intval($detalleServicio['servicio_id'] ?? 0);
+                            if ($examen_id <= 0) {
+                                $descBusqueda = (string)($detalleServicio['descripcion'] ?? ($detalleServicio['descripcion_snapshot'] ?? ''));
+                                $examen_id = self::resolverExamenLaboratorioIdPorDescripcion($conn, $descBusqueda);
+                                if ($examen_id > 0) {
+                                    $detalleServicio['servicio_id'] = $examen_id;
+                                    $data['detalles'][$i]['servicio_id'] = $examen_id;
+                                }
+                            }
                             if ($examen_id) {
                                 $stmt_examen = $conn->prepare("SELECT * FROM examenes_laboratorio WHERE id = ? AND activo = 1 LIMIT 1");
                                 $stmt_examen->bind_param("i", $examen_id);
@@ -637,10 +1333,18 @@ class CobroModule
                                     throw new \Exception('No se encontró examen activo para el servicio seleccionado (id: ' . $examen_id . ').');
                                 }
                             } else {
-                                throw new \Exception('No se envió examen_id para laboratorio.');
+                                throw new \Exception('No se envió examen_id para laboratorio y no se pudo resolver por descripción.');
                             }
                         } else if ($detalleServicioKey === 'farmacia') {
-                            $medicamento_id = $detalleServicio['servicio_id'] ?? null;
+                            $medicamento_id = intval($detalleServicio['servicio_id'] ?? 0);
+                            if ($medicamento_id <= 0) {
+                                $descBusqueda = (string)($detalleServicio['descripcion'] ?? ($detalleServicio['descripcion_snapshot'] ?? ''));
+                                $medicamento_id = self::resolverMedicamentoIdPorDescripcion($conn, $descBusqueda);
+                                if ($medicamento_id > 0) {
+                                    $detalleServicio['servicio_id'] = $medicamento_id;
+                                    $data['detalles'][$i]['servicio_id'] = $medicamento_id;
+                                }
+                            }
                             if ($medicamento_id) {
                                 $stmt_medicamento = $conn->prepare("SELECT * FROM medicamentos WHERE id = ? AND estado = 'activo' LIMIT 1");
                                 $stmt_medicamento->bind_param("i", $medicamento_id);
@@ -650,7 +1354,7 @@ class CobroModule
                                     throw new \Exception('No se encontró medicamento activo para el servicio seleccionado (id: ' . $medicamento_id . ').');
                                 }
                             } else {
-                                throw new \Exception('No se envió medicamento_id para farmacia.');
+                                throw new \Exception('No se envió medicamento_id para farmacia y no se pudo resolver por descripción.');
                             }
                         } else {
                             $tarifa_id = $detalleServicio['tarifa_id'] ?? ($detalleServicio['servicio_id'] ?? null);
@@ -770,15 +1474,8 @@ class CobroModule
                                 }
                             }
 
-                            // Registrar ingreso en caja por cada detalle
-                            // Aplicar descuento proporcional si existe
-                            $monto_detalle = $detalleServicio['subtotal'] ?? $total_param;
-                            $monto_original = $data['monto_original'] ?? null;
-                            $monto_descuento = $data['monto_descuento'] ?? 0;
-                            if ($monto_original && $monto_descuento > 0 && $monto_original > 0) {
-                                $proporcion = $monto_detalle / $monto_original;
-                                $monto_detalle = $monto_detalle - ($monto_descuento * $proporcion);
-                            }
+                            // Registrar ingreso en caja por cada detalle con subtotal ya neto.
+                            $monto_detalle = self::toFloatFlexible($detalleServicio['subtotal'] ?? $total_param);
                             $params_individual = [
                                 'caja_id' => $caja_id,
                                 'tipo_ingreso' => $tipo_ingreso_detalle,
@@ -849,6 +1546,7 @@ class CobroModule
                 );
 
                 if (self::cotizacionEstaPagada($conn, $cotizacionIdSync)) {
+                    self::sincronizarServiciosClinicosPostPagoCotizacion($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
                     HonorarioModule::consolidarPorCobrarCotizacion($conn, $cotizacionIdSync);
                 }
             }

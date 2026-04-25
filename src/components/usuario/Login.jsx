@@ -139,8 +139,11 @@ function Login({ onLogin }) {
 
   // Validación de seguridad básica
   const validateSecurity = () => {
+    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+    const isLocalHost = localHosts.has(window.location.hostname);
+
     // En producción, verificar HTTPS
-    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+    if (window.location.protocol !== 'https:' && !isLocalHost) {
       return {
         isValid: false,
         message: "⚠️ Conexión insegura detectada. Se requiere HTTPS para proteger tus credenciales."

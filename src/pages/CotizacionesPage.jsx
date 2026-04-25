@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
+import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
 import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen } from "react-icons/fi";
 
 const SERVICIOS_IMAGEN = new Set(["rayosx", "ecografia", "tomografia"]);
@@ -220,6 +221,14 @@ export default function CotizacionesPage() {
     return "bg-blue-100 text-blue-700";
   };
 
+  const badgeOrigen = (value) => {
+    const v = String(value || "regular").toLowerCase();
+    if (v === "contrato") return { cls: "bg-emerald-100 text-emerald-700", label: "Contrato" };
+    if (v === "extra") return { cls: "bg-orange-100 text-orange-700", label: "Extra" };
+    if (v === "mixto") return { cls: "bg-indigo-100 text-indigo-700", label: "Mixto" };
+    return { cls: "bg-slate-100 text-slate-700", label: "Regular" };
+  };
+
   const anularCotizacion = useCallback(async (cotizacion) => {
     const { value: motivo } = await Swal.fire({
       title: `Anular cotización #${cotizacion.id}`,
@@ -312,6 +321,8 @@ export default function CotizacionesPage() {
 
         <QuickAccessNav keys={["pacientes", "recordatorios", "reporteCaja"]} />
 
+        <CotizadorRapido />
+
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
           <input
             value={qInput}
@@ -389,6 +400,7 @@ export default function CotizacionesPage() {
                 <th className="px-3 py-2 text-left">Paciente</th>
                 <th className="px-3 py-2 text-left">Quién cotizó</th>
                 <th className="px-3 py-2 text-left">Servicios</th>
+                <th className="px-3 py-2 text-left">Origen/Contrato</th>
                 <th className="px-3 py-2 text-right">Total</th>
                 <th className="px-3 py-2 text-right">Saldo</th>
                 <th className="px-3 py-2 text-left">Estado</th>
@@ -398,11 +410,11 @@ export default function CotizacionesPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
+                  <td colSpan={10} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
+                  <td colSpan={10} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
               ) : rows.map((row) => {
                 const estadoRow = String(row.estado || "").toLowerCase();
@@ -434,6 +446,8 @@ export default function CotizacionesPage() {
                 const laboratorioTitulo = tieneResultadosLaboratorio
                   ? "Ver resultados de laboratorio"
                   : "Gestionar resultados de laboratorio";
+                const origen = badgeOrigen(row.origen_cobro_resumen);
+                const contratosIds = String(row.contratos_ids_resumen || "").trim();
                 return (
                   <tr key={row.id} className="border-t align-top">
                     <td className="px-3 py-2 font-semibold">
@@ -467,6 +481,14 @@ export default function CotizacionesPage() {
                             {estadoRow === "anulada" ? `${s} (anulada)` : s}
                           </span>
                         ))}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${origen.cls}`}>{origen.label}</span>
+                        {contratosIds && (
+                          <span className="text-[11px] text-slate-500">Contrato(s): {contratosIds}</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.total || 0).toFixed(2)}</td>

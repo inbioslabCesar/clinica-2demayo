@@ -32,6 +32,8 @@ export default function SeleccionarServicioPage() {
     if (t === "procedimiento") return "Procedimientos";
     if (t === "operacion") return "Operaciones";
     if (t === "consulta") return "Consulta";
+    if (t === "paquete") return "Paquetes";
+    if (t === "perfil") return "Perfiles";
     return "Otros";
   };
 
@@ -261,6 +263,10 @@ export default function SeleccionarServicioPage() {
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-orange-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
                   onClick={() => navigate(`/cotizar-procedimientos/${paciente.id}${editSuffix}`)}
                 ><span>🛠️</span><span className="whitespace-normal">Procedimientos</span> <span className="text-yellow-500">💰</span></button>
+                <button
+                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-indigo-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
+                  onClick={() => navigate(`/cotizar-paquetes-perfiles/${paciente.id}${editSuffix}`)}
+                ><span>📦</span><span className="whitespace-normal">Paquetes/Perfiles</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white font-semibold text-sm md:text-[15px] leading-tight text-center"
                   style={themePrimaryBorder}

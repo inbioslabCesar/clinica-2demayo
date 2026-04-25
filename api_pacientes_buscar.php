@@ -24,6 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $sql = "SELECT $select FROM pacientes WHERE dni = ? LIMIT 5";
         $params[] = $valor;
         $types = 's';
+    } elseif ($tipo === 'carnet_extranjeria') {
+        $sql = "SELECT $select FROM pacientes WHERE dni = ? LIMIT 5";
+        $params[] = $valor;
+        $types = 's';
     } elseif ($tipo === 'nombre') {
         $valorUpper = strtoupper($valor);
         if (preg_match('/^HC\d+$/i', $valorUpper)) {

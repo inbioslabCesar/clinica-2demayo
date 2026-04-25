@@ -25,7 +25,7 @@ export default function useTriageConsultas() {
 
   const recargarConsultas = () => {
     setLoading(true);
-    fetch(BASE_URL + "api_consultas.php", {credentials: "include"})
+    fetch(BASE_URL + "api_consultas.php?solo_activas=1", {credentials: "include"})
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

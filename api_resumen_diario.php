@@ -68,7 +68,7 @@ try {
     $stmt->execute([$inicioDia, $finDia, $caja_id_actual]);
     $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-     $stmt = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ?');
+    $stmt = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ?');
     $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
     $total = $stmt->fetchColumn();
 
@@ -83,6 +83,10 @@ try {
     $stmt = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ? GROUP BY metodo_pago');
     $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
     $ingresos_por_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ? AND (tipo_ingreso = ? OR referencia_tabla = ?)');
+    $stmt->execute([$inicioDia, $finDia, $usuario['id'], 'contrato_abono', 'paciente_seguimiento_pagos']);
+    $total_contratos_abono = floatval($stmt->fetchColumn());
 
     // Consultar el monto de apertura, estado y hora de apertura de la caja del usuario actual
     $stmt = $pdo->prepare('SELECT monto_apertura, estado, hora_apertura FROM cajas WHERE fecha >= ? AND fecha < ? AND usuario_id = ? ORDER BY hora_apertura ASC LIMIT 1');
@@ -170,6 +174,7 @@ try {
         'por_servicio' => $ingresos_por_servicio,
         'por_area' => $ingresos_por_area,
         'por_pago' => $ingresos_por_pago,
+        'total_contratos_abono' => $total_contratos_abono,
         'egreso_honorarios' => $egreso_honorarios,
         'egreso_lab_ref' => $egreso_lab_ref,
         'debug_lab_ref_movs' => $debug_lab_ref_movs,

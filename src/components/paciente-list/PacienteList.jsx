@@ -1,6 +1,6 @@
 // Orquesta la vista principal y conecta los componentes
-import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
 import usePacientes from "./usePacientes";
 import PacienteListHeader from "./PacienteListHeader";
@@ -70,6 +70,33 @@ function PacienteList() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editData, setEditData] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Abrir modal con DNI pre-llenado si viene desde CotizadorRapido
+  useEffect(() => {
+    if (location.state?.openModal && location.state?.prefillDni) {
+      setEditData({
+        id: undefined,
+        dni: location.state.prefillDni,
+        nombre: "",
+        apellido: "",
+        historia_clinica: "",
+        fecha_nacimiento: "",
+        edad: "",
+        edad_unidad: "años",
+        procedencia: "",
+        tipo_seguro: "",
+        sexo: "M",
+        direccion: "",
+        telefono: "",
+        email: "",
+      });
+      setModalOpen(true);
+      // Limpiar el state para evitar re-apertura en navegación futura
+      navigate("/pacientes", { replace: true, state: {} });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Ordenamiento de columnas
   const [sortBy, setSortBy] = useState("id");
   const [sortDir, setSortDir] = useState("desc");

@@ -15,7 +15,6 @@ build
 public/assets/
 
 # Environment and config files
-config.php
 .env
 .env.local
 .env.production
