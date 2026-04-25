@@ -31,24 +31,24 @@ jobs:
 
       - name: Validar secrets FTP requeridos
         env:
-          FTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          FTP_HOST: ${{ secrets.HOSTINGER_FTP_HOST }}
           FTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
           FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          [[ -n "$FTP_HOST" ]] || { echo "Falta secret HOSTINGER_SFTP_HOST (usado como host FTP)"; exit 1; }
+          [[ -n "$FTP_HOST" ]] || { echo "Falta secret HOSTINGER_FTP_HOST"; exit 1; }
           [[ -n "$FTP_USER" ]] || { echo "Falta secret HOSTINGER_FTP_USER"; exit 1; }
           [[ -n "$FTP_PASS" ]] || { echo "Falta secret HOSTINGER_FTP_PASSWORD"; exit 1; }
 
       - name: Publicar backend PHP en /public_html/sistema (FTP)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
           username: ${{ secrets.HOSTINGER_FTP_USER }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           server-dir: /public_html/sistema/
           protocol: ftp
-          port: 21
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-backend.json
           timeout: 120
@@ -90,13 +90,13 @@ jobs:
       - name: Publicar build de sistema (dist -> /public_html/sistema) (FTP)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
           username: ${{ secrets.HOSTINGER_FTP_USER }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           server-dir: /public_html/sistema/
           local-dir: ./dist/
           protocol: ftp
-          port: 21
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-sistema-build.json
           timeout: 120
@@ -104,13 +104,13 @@ jobs:
       - name: Publicar landing (dist-public -> /public_html) (FTP)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
           username: ${{ secrets.HOSTINGER_FTP_USER }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           server-dir: /public_html/
           local-dir: ./dist-public/
           protocol: ftp
-          port: 21
+          port: ${{ secrets.HOSTINGER_FTP_PORT }}
           dangerous-clean-slate: false
           state-name: .ftp-deploy-sync-state-landing-build.json
           timeout: 120
