@@ -56,7 +56,7 @@ jobs:
           printf "commit=%s\ndate=%s\n" "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist-public/deploy_version.txt
           printf "commit=%s\ndate=%s\n" "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > deploy_version_backend.txt
 
-      - name: Publicar backend PHP en /public_html/sistema (SFTP)
+      - name: Publicar backend PHP en public_html/sistema (SFTP)
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -88,13 +88,13 @@ jobs:
             --exclude "*.log" \
             --exclude "*.sql" \
             --exclude "*.sql.backup" \
-            ./ "$SFTP_USER@$SFTP_HOST:/public_html/sistema/"
+            ./ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
 
           sshpass -p "$SFTP_PASS" rsync -az --mkpath \
             -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./deploy_version_backend.txt "$SFTP_USER@$SFTP_HOST:/public_html/sistema/deploy_version_backend.txt"
+            ./deploy_version_backend.txt "$SFTP_USER@$SFTP_HOST:public_html/sistema/deploy_version_backend.txt"
 
-      - name: Publicar build de sistema (dist -> /public_html/sistema)
+      - name: Publicar build de sistema (dist -> public_html/sistema)
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -104,9 +104,9 @@ jobs:
           set -euo pipefail
           sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
             -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist/ "$SFTP_USER@$SFTP_HOST:/public_html/sistema/"
+            ./dist/ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
 
-      - name: Publicar landing (dist-public -> /public_html)
+      - name: Publicar landing (dist-public -> public_html)
         env:
           SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
           SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
@@ -116,4 +116,4 @@ jobs:
           set -euo pipefail
           sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
             -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist-public/ "$SFTP_USER@$SFTP_HOST:/public_html/"
+            ./dist-public/ "$SFTP_USER@$SFTP_HOST:public_html/"
