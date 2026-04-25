@@ -57,7 +57,7 @@ export default function SidebarAdmin({ onClose }) {
           onClick={onClose}
         >
           <Icon iconName="Paste" className="text-lg text-fuchsia-600" />
-          <span>Cotizaciones</span>
+          <span>Cotizaciones Prueba</span>
         </Link>
         <Link
           to="/contratos"

@@ -73,7 +73,7 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
               onClick={onClose}
             >
               <Icon iconName="Paste" className="text-lg text-fuchsia-600" />
-              <span>Cotizaciones</span>
+              <span>Cotizaciones Prueba</span>
             </Link>
           )}
           {can("ver_contratos") && (
