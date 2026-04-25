@@ -102,7 +102,7 @@ jobs:
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
+          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
             -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
             ./dist/ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
 
@@ -114,6 +114,6 @@ jobs:
           SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --delete --mkpath \
+          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
             -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
             ./dist-public/ "$SFTP_USER@$SFTP_HOST:public_html/"
