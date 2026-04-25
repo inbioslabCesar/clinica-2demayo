@@ -1,9 +1,6 @@
 name: Deploy a Hostinger
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
@@ -46,6 +43,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y sshpass rsync
+
+      - name: Preflight remoto SFTP (validar public_html)
+        env:
+          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
+          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
+          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sshpass -p "$SFTP_PASS" ssh -p "$SFTP_PORT" -o StrictHostKeyChecking=no "$SFTP_USER@$SFTP_HOST" \
+            'pwd; ls -la; test -d public_html && ls -la public_html || { echo "No existe public_html en esta cuenta SFTP"; exit 1; }'
 
       - name: Escribir marcadores de version de deploy
         env:
