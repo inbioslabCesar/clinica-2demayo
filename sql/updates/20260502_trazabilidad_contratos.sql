@@ -263,4 +263,11 @@ WHERE (pcd.servicio_nombre_snapshot IS NULL OR pcd.servicio_nombre_snapshot = ''
   AND pcd.servicio_nombre IS NOT NULL
   AND pcd.servicio_nombre <> '';
 
+-- ---------------------------------------------------------------------
+-- Ampliar ENUM origen_tipo en contratos_paciente_servicios para incluir 'plantilla'
+-- (idempotente: si ya tiene el valor, el MODIFY no hace daño)
+-- ---------------------------------------------------------------------
+ALTER TABLE contratos_paciente_servicios
+  MODIFY COLUMN origen_tipo ENUM('manual','cotizacion','consulta','mixto','migracion','plantilla') NOT NULL DEFAULT 'manual';
+
 SELECT 'OK - trazabilidad contratos aplicada (plantilla -> contrato -> produccion)' AS estado;
