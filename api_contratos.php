@@ -79,6 +79,11 @@ function contratos_servicio_es_consulta($servicioTipo) {
     return contratos_normalizar_servicio_tipo($servicioTipo) === 'consulta';
 }
 
+function contratos_servicio_requiere_medico($servicioTipo) {
+    $tipo = contratos_normalizar_servicio_tipo($servicioTipo);
+    return in_array($tipo, ['consulta', 'ecografia', 'rayosx', 'procedimiento', 'operacion'], true);
+}
+
 function contratos_resolver_consulta_ancla_previa($conn, array $evento) {
     $eventoId = (int)($evento['id'] ?? 0);
     $contratoPacienteId = (int)($evento['contrato_paciente_id'] ?? 0);
@@ -263,9 +268,25 @@ function contratos_resolver_hc_origen_evento($conn, $contratoPacienteId, $evento
     $fechaProgramada = trim((string)$fechaProgramada);
     if ($contratoPacienteId <= 0 || $eventoId <= 0 || $fechaProgramada === '') return 0;
 
+    // FIX: Normalizar fecha a formato YYYY-MM-DD para comparación consistente
+    // sin importar si viene con hora o no. Esto evita bugs de orden incorrecto
+    // donde una HC posterior podría ser encontrada como "anterior".
+    $fechaBase = date('Y-m-d', strtotime($fechaProgramada));
+    if (!$fechaBase || $fechaBase === '1970-01-01') {
+        // Si fecha inválida, extraer de forma defensiva
+        if (preg_match('/(\d{4}-\d{2}-\d{2})/', $fechaProgramada, $m)) {
+            $fechaBase = $m[1];
+        } else {
+            return 0;
+        }
+    }
+
     // Normalización canónica: hc_origen_id SIEMPRE almacena consultas.id del evento previo.
     // Esto garantiza que frontend (hc_origen_id === consulta_id) y backend (WHERE consulta_id = ?)
     // operen con el mismo identificador en toda la cadena A→B→C→D.
+    // 
+    // FIX: Usar DATE() para comparación de fechas, asegurando que se buscan ESTRICTAMENTE
+    // eventos anteriores (no posteriores).
     $stmt = $conn->prepare(
         'SELECT ag.consulta_id
          FROM agenda_contrato ag
@@ -274,14 +295,14 @@ function contratos_resolver_hc_origen_evento($conn, $contratoPacienteId, $evento
            AND ag.id <> ?
            AND ag.consulta_id IS NOT NULL
            AND ag.consulta_id > 0
-           AND (ag.fecha_programada < ? OR (ag.fecha_programada = ? AND ag.id < ?))
+           AND (DATE(ag.fecha_programada) < ? OR (DATE(ag.fecha_programada) = ? AND ag.id < ?))
            AND (h.chain_status IS NULL OR h.chain_status <> ?)
-         ORDER BY ag.fecha_programada DESC, ag.id DESC
+         ORDER BY DATE(ag.fecha_programada) DESC, ag.id DESC
          LIMIT 1'
     );
     if (!$stmt) return 0;
     $anulada = 'anulada';
-    $stmt->bind_param('iissis', $contratoPacienteId, $eventoId, $fechaProgramada, $fechaProgramada, $eventoId, $anulada);
+    $stmt->bind_param('iissis', $contratoPacienteId, $eventoId, $fechaBase, $fechaBase, $eventoId, $anulada);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
@@ -300,12 +321,12 @@ function contratos_resolver_hc_origen_evento($conn, $contratoPacienteId, $evento
            AND ag.id <> ?
            AND ag.consulta_id IS NOT NULL
            AND ag.consulta_id > 0
-           AND (ag.fecha_programada < ? OR (ag.fecha_programada = ? AND ag.id < ?))
-         ORDER BY ag.fecha_programada DESC, ag.id DESC
+           AND (DATE(ag.fecha_programada) < ? OR (DATE(ag.fecha_programada) = ? AND ag.id < ?))
+         ORDER BY DATE(ag.fecha_programada) DESC, ag.id DESC
          LIMIT 1'
     );
     if (!$stmtFallback) return 0;
-    $stmtFallback->bind_param('iissi', $contratoPacienteId, $eventoId, $fechaProgramada, $fechaProgramada, $eventoId);
+    $stmtFallback->bind_param('iissi', $contratoPacienteId, $eventoId, $fechaBase, $fechaBase, $eventoId);
     $stmtFallback->execute();
     $rowFallback = $stmtFallback->get_result()->fetch_assoc();
     $stmtFallback->close();
@@ -559,6 +580,562 @@ function contratos_autocerrar_eventos_preconsumidos($conn, $contratoPacienteId, 
     return $actualizados;
 }
 
+function contratos_analytics_contrato_disponible($conn) {
+    return contratos_table_exists($conn, 'produccion_contrato_detalle');
+}
+
+function contratos_medico_existe($conn, $medicoId) {
+    $medicoId = (int)$medicoId;
+    if ($medicoId <= 0 || !contratos_table_exists($conn, 'medicos')) {
+        return false;
+    }
+    $stmt = $conn->prepare('SELECT id FROM medicos WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $medicoId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return !empty($row);
+}
+
+function contratos_consulta_existe($conn, $consultaId) {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0 || !contratos_table_exists($conn, 'consultas')) {
+        return false;
+    }
+    $stmt = $conn->prepare('SELECT id FROM consultas WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return !empty($row);
+}
+
+function contratos_obtener_medico_de_consulta($conn, $consultaId) {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0 || !contratos_table_exists($conn, 'consultas')) {
+        return 0;
+    }
+    $stmt = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return 0;
+    }
+    $stmt->bind_param('i', $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['medico_id'] ?? 0);
+}
+
+function contratos_obtener_consulta_activa_paciente($conn, $pacienteId) {
+    $pacienteId = (int)$pacienteId;
+    if ($pacienteId <= 0 || !contratos_table_exists($conn, 'consultas')) {
+        return 0;
+    }
+
+    $hasEstado = contratos_column_exists($conn, 'consultas', 'estado');
+    $hasFecha = contratos_column_exists($conn, 'consultas', 'fecha');
+    $hasCreatedAt = contratos_column_exists($conn, 'consultas', 'created_at');
+
+    $sql = 'SELECT id FROM consultas WHERE paciente_id = ?';
+    if ($hasEstado) {
+        $sql .= " AND LOWER(TRIM(COALESCE(estado, ''))) NOT IN ('cancelado', 'anulado')";
+    }
+    if ($hasFecha) {
+        $sql .= ' ORDER BY fecha DESC, id DESC';
+    } elseif ($hasCreatedAt) {
+        $sql .= ' ORDER BY created_at DESC, id DESC';
+    } else {
+        $sql .= ' ORDER BY id DESC';
+    }
+    $sql .= ' LIMIT 1';
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return 0;
+    }
+    $stmt->bind_param('i', $pacienteId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['id'] ?? 0);
+}
+
+function contratos_buscar_cotizacion_origen_para_plantilla($conn, $pacienteId, $plantillaId) {
+    $pacienteId = (int)$pacienteId;
+    $plantillaId = (int)$plantillaId;
+    if ($pacienteId <= 0 || $plantillaId <= 0 || !contratos_table_exists($conn, 'cotizaciones') || !contratos_table_exists($conn, 'cotizaciones_detalle') || !contratos_table_exists($conn, 'contratos_plantillas_items')) {
+        return 0;
+    }
+
+    $sql = "SELECT c.id
+            FROM cotizaciones c
+            INNER JOIN cotizaciones_detalle cd ON cd.cotizacion_id = c.id
+            INNER JOIN contratos_plantillas_items cpi
+                ON cpi.plantilla_id = ?
+               AND cpi.activo = 1
+               AND LOWER(TRIM(cpi.servicio_tipo)) = LOWER(TRIM(cd.servicio_tipo))
+               AND cpi.servicio_id = cd.servicio_id
+            WHERE c.paciente_id = ?";
+
+    if (contratos_column_exists($conn, 'cotizaciones', 'estado')) {
+        $sql .= " AND LOWER(TRIM(COALESCE(c.estado, ''))) NOT IN ('anulada', 'anulado', 'cancelada', 'cancelado')";
+    }
+    if (contratos_column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
+        $sql .= " AND COALESCE(cd.estado_item, 'activo') <> 'eliminado'";
+    }
+
+    $sql .= ' ORDER BY c.id DESC LIMIT 1';
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return 0;
+    }
+    $stmt->bind_param('ii', $plantillaId, $pacienteId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['id'] ?? 0);
+}
+
+function contratos_obtener_snapshot_medico($conn, $medicoId) {
+    $medicoId = (int)$medicoId;
+    if ($medicoId <= 0 || !contratos_table_exists($conn, 'medicos')) {
+        return ['nombre' => '', 'cmp' => ''];
+    }
+
+    $hasApellido = contratos_column_exists($conn, 'medicos', 'apellido');
+    $hasCmp = contratos_column_exists($conn, 'medicos', 'cmp');
+    $sql = 'SELECT nombre'
+        . ($hasApellido ? ', apellido' : '')
+        . ($hasCmp ? ', cmp' : '')
+        . ' FROM medicos WHERE id = ? LIMIT 1';
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return ['nombre' => '', 'cmp' => ''];
+    }
+    $stmt->bind_param('i', $medicoId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+
+    $nombre = trim((string)($row['nombre'] ?? ''));
+    $apellido = trim((string)($row['apellido'] ?? ''));
+    $full = trim($nombre . ' ' . $apellido);
+    if ($full === '') {
+        $full = $nombre;
+    }
+
+    return [
+        'nombre' => $full,
+        'cmp' => trim((string)($row['cmp'] ?? '')),
+    ];
+}
+
+function contratos_origen_por_servicio_desde_cotizacion($conn, $cotizacionId, $pacienteId = 0) {
+    $map = [];
+    $cotizacionId = (int)$cotizacionId;
+    $pacienteId = (int)$pacienteId;
+    if ($cotizacionId <= 0 || !contratos_table_exists($conn, 'cotizaciones_detalle') || !contratos_table_exists($conn, 'cotizaciones')) {
+        return $map;
+    }
+
+    $stmtCot = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? AND (? <= 0 OR paciente_id = ?) LIMIT 1');
+    if (!$stmtCot) {
+        return $map;
+    }
+    $stmtCot->bind_param('iii', $cotizacionId, $pacienteId, $pacienteId);
+    $stmtCot->execute();
+    $okCot = $stmtCot->get_result()->fetch_assoc();
+    $stmtCot->close();
+    if (!$okCot) {
+        return $map;
+    }
+
+    $whereEstado = '';
+    if (contratos_column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
+        $whereEstado = " AND cd.estado_item <> 'eliminado'";
+    }
+
+    $stmt = $conn->prepare(
+        "SELECT cd.servicio_tipo,
+                cd.servicio_id,
+                MAX(CASE WHEN cd.consulta_id IS NOT NULL AND cd.consulta_id > 0 THEN cd.consulta_id END) AS consulta_id,
+                MAX(CASE WHEN cd.medico_id IS NOT NULL AND cd.medico_id > 0 THEN cd.medico_id END) AS medico_id
+         FROM cotizaciones_detalle cd
+         WHERE cd.cotizacion_id = ?
+           AND cd.servicio_id IS NOT NULL
+           AND cd.servicio_id > 0{$whereEstado}
+         GROUP BY cd.servicio_tipo, cd.servicio_id"
+    );
+    if (!$stmt) {
+        return $map;
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    foreach ($rows as $r) {
+        $tipo = contratos_normalizar_servicio_tipo((string)($r['servicio_tipo'] ?? ''));
+        $sid = (int)($r['servicio_id'] ?? 0);
+        if ($tipo === '' || $sid <= 0) {
+            continue;
+        }
+        $map[$tipo . ':' . $sid] = [
+            'consulta_id' => (int)($r['consulta_id'] ?? 0),
+            'medico_id' => (int)($r['medico_id'] ?? 0),
+        ];
+    }
+
+    return $map;
+}
+
+function contratos_resolver_origen_cps($conn, $contratoPacienteId, $contratoPacienteServicioId, $servicioTipo, $servicioId) {
+    $out = [
+        'cps_id' => 0,
+        'consulta_origen_id' => 0,
+        'medico_origen_id' => 0,
+        'medico_origen_nombre_snapshot' => '',
+        'servicio_nombre_snapshot' => '',
+    ];
+
+    if (!contratos_table_exists($conn, 'contratos_paciente_servicios')) {
+        return $out;
+    }
+
+    $contratoPacienteId = (int)$contratoPacienteId;
+    $contratoPacienteServicioId = (int)$contratoPacienteServicioId;
+    $servicioTipo = contratos_normalizar_servicio_tipo((string)$servicioTipo);
+    $servicioId = (int)$servicioId;
+
+    if ($contratoPacienteId <= 0 || $servicioTipo === '' || $servicioId <= 0) {
+        return $out;
+    }
+
+    $hasConsultaOrigen = contratos_column_exists($conn, 'contratos_paciente_servicios', 'consulta_origen_id');
+    $hasMedicoOrigen = contratos_column_exists($conn, 'contratos_paciente_servicios', 'medico_origen_id');
+    $hasMedicoSnap = contratos_column_exists($conn, 'contratos_paciente_servicios', 'medico_origen_nombre_snapshot');
+    $hasServicioSnap = contratos_column_exists($conn, 'contratos_paciente_servicios', 'servicio_nombre_snapshot');
+
+    $select = 'SELECT id'
+        . ($hasConsultaOrigen ? ', consulta_origen_id' : ', 0 AS consulta_origen_id')
+        . ($hasMedicoOrigen ? ', medico_origen_id' : ', 0 AS medico_origen_id')
+        . ($hasMedicoSnap ? ', medico_origen_nombre_snapshot' : ", '' AS medico_origen_nombre_snapshot")
+        . ($hasServicioSnap ? ', servicio_nombre_snapshot' : ", '' AS servicio_nombre_snapshot")
+        . ' FROM contratos_paciente_servicios';
+
+    if ($contratoPacienteServicioId > 0) {
+        $stmt = $conn->prepare($select . ' WHERE id = ? AND contrato_paciente_id = ? LIMIT 1');
+        if ($stmt) {
+            $stmt->bind_param('ii', $contratoPacienteServicioId, $contratoPacienteId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row) {
+                $out['cps_id'] = (int)($row['id'] ?? 0);
+                $out['consulta_origen_id'] = (int)($row['consulta_origen_id'] ?? 0);
+                $out['medico_origen_id'] = (int)($row['medico_origen_id'] ?? 0);
+                $out['medico_origen_nombre_snapshot'] = trim((string)($row['medico_origen_nombre_snapshot'] ?? ''));
+                $out['servicio_nombre_snapshot'] = trim((string)($row['servicio_nombre_snapshot'] ?? ''));
+                return $out;
+            }
+        }
+    }
+
+    $stmt = $conn->prepare($select . ' WHERE contrato_paciente_id = ? AND servicio_tipo = ? AND servicio_id = ? ORDER BY id ASC LIMIT 1');
+    if (!$stmt) {
+        return $out;
+    }
+    $stmt->bind_param('isi', $contratoPacienteId, $servicioTipo, $servicioId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return $out;
+    }
+
+    $out['cps_id'] = (int)($row['id'] ?? 0);
+    $out['consulta_origen_id'] = (int)($row['consulta_origen_id'] ?? 0);
+    $out['medico_origen_id'] = (int)($row['medico_origen_id'] ?? 0);
+    $out['medico_origen_nombre_snapshot'] = trim((string)($row['medico_origen_nombre_snapshot'] ?? ''));
+    $out['servicio_nombre_snapshot'] = trim((string)($row['servicio_nombre_snapshot'] ?? ''));
+    return $out;
+}
+
+function contratos_registrar_analitica_consumo_contrato(
+    $conn,
+    $eventoId,
+    $contratoPacienteId,
+    $pacienteId,
+    $consultaId,
+    $medicoId,
+    $servicioTipo,
+    $servicioId,
+    $servicioNombre,
+    $fechaAtencion,
+    $cantidad,
+    $montoListaReferencial,
+    $modoCobertura,
+    $usuarioId,
+    $contratoPacienteServicioId = 0
+) {
+    if (!contratos_analytics_contrato_disponible($conn)) {
+        return;
+    }
+
+    $eventoId = (int)$eventoId;
+    $contratoPacienteId = (int)$contratoPacienteId;
+    $pacienteId = (int)$pacienteId;
+    $consultaId = (int)$consultaId;
+    $medicoId = (int)$medicoId;
+    $servicioId = (int)$servicioId;
+    $contratoPacienteServicioId = (int)$contratoPacienteServicioId;
+    $cantidad = max(0.01, (float)$cantidad);
+    $montoListaReferencial = max(0.0, (float)$montoListaReferencial);
+    $usuarioId = (int)$usuarioId;
+    $servicioTipo = contratos_normalizar_servicio_tipo((string)$servicioTipo);
+    $servicioNombre = trim((string)$servicioNombre);
+    $modoCobertura = strtolower(trim((string)$modoCobertura));
+    if (!in_array($modoCobertura, ['contrato', 'extra'], true)) {
+        $modoCobertura = 'contrato';
+    }
+
+    if ($eventoId <= 0 || $contratoPacienteId <= 0 || $pacienteId <= 0 || $servicioTipo === '' || $servicioId <= 0) {
+        return;
+    }
+
+    if ($servicioNombre === '') {
+        $servicioNombre = 'Servicio contrato';
+    }
+
+    $origenCps = contratos_resolver_origen_cps(
+        $conn,
+        $contratoPacienteId,
+        $contratoPacienteServicioId,
+        $servicioTipo,
+        $servicioId
+    );
+    $contratoPacienteServicioId = (int)($origenCps['cps_id'] ?? 0);
+    $consultaOrigenId = (int)($origenCps['consulta_origen_id'] ?? 0);
+    $medicoOrigenId = (int)($origenCps['medico_origen_id'] ?? 0);
+    $medicoOrigenNombre = trim((string)($origenCps['medico_origen_nombre_snapshot'] ?? ''));
+    $servicioNombreSnapshot = trim((string)($origenCps['servicio_nombre_snapshot'] ?? ''));
+
+    if ($medicoId <= 0 && $medicoOrigenId > 0) {
+        $medicoId = $medicoOrigenId;
+    }
+    if ($medicoOrigenId <= 0 && $medicoId > 0) {
+        $medicoOrigenId = $medicoId;
+    }
+
+    // Mantener red de seguridad FK para casos legacy.
+    if (!contratos_medico_existe($conn, $medicoId)) {
+        $medicoId = 0;
+    }
+    if (!contratos_medico_existe($conn, $medicoOrigenId)) {
+        $medicoOrigenId = 0;
+    }
+    if ($consultaOrigenId > 0 && !contratos_consulta_existe($conn, $consultaOrigenId)) {
+        $consultaOrigenId = 0;
+    }
+
+    if ($medicoOrigenNombre === '' && $medicoOrigenId > 0) {
+        $snap = contratos_obtener_snapshot_medico($conn, $medicoOrigenId);
+        $medicoOrigenNombre = trim((string)($snap['nombre'] ?? ''));
+    }
+    if ($servicioNombreSnapshot === '') {
+        $servicioNombreSnapshot = $servicioNombre;
+    }
+
+    $fechaBase = !empty($fechaAtencion) ? date('Y-m-d H:i:s', strtotime((string)$fechaAtencion)) : date('Y-m-d H:i:s');
+    if (!$fechaBase || $fechaBase === '1970-01-01 00:00:00') {
+        $fechaBase = date('Y-m-d H:i:s');
+    }
+
+    $stmt = $conn->prepare(
+        'INSERT INTO produccion_contrato_detalle (
+            contrato_paciente_id,
+            contrato_paciente_servicio_id,
+            agenda_evento_id,
+            consulta_id,
+            consulta_origen_id,
+            paciente_id,
+            medico_id,
+            medico_origen_id,
+            medico_origen_nombre_snapshot,
+            servicio_nombre_snapshot,
+            servicio_tipo,
+            servicio_id,
+            servicio_nombre,
+            fecha_atencion,
+            cantidad,
+            monto_lista_referencial,
+            monto_reconocido,
+            estado_financiero,
+            modo_cobertura,
+            created_by,
+            updated_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, "pendiente_liquidar", ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            contrato_paciente_servicio_id = VALUES(contrato_paciente_servicio_id),
+            consulta_id = VALUES(consulta_id),
+            consulta_origen_id = VALUES(consulta_origen_id),
+            medico_id = VALUES(medico_id),
+            medico_origen_id = VALUES(medico_origen_id),
+            medico_origen_nombre_snapshot = VALUES(medico_origen_nombre_snapshot),
+            servicio_nombre_snapshot = VALUES(servicio_nombre_snapshot),
+            servicio_nombre = VALUES(servicio_nombre),
+            fecha_atencion = VALUES(fecha_atencion),
+            cantidad = VALUES(cantidad),
+            monto_lista_referencial = VALUES(monto_lista_referencial),
+            modo_cobertura = VALUES(modo_cobertura),
+            updated_by = VALUES(updated_by),
+            updated_at = CURRENT_TIMESTAMP'
+    );
+    if (!$stmt) {
+        return;
+    }
+
+    $stmt->bind_param(
+        'iiiiiiiisssissddsii',
+        $contratoPacienteId,
+        $contratoPacienteServicioId,
+        $eventoId,
+        $consultaId,
+        $consultaOrigenId,
+        $pacienteId,
+        $medicoId,
+        $medicoOrigenId,
+        $medicoOrigenNombre,
+        $servicioNombreSnapshot,
+        $servicioTipo,
+        $servicioId,
+        $servicioNombre,
+        $fechaBase,
+        $cantidad,
+        $montoListaReferencial,
+        $modoCobertura,
+        $usuarioId,
+        $usuarioId
+    );
+    $stmt->execute();
+    $stmt->close();
+}
+
+function contratos_liquidar_analitica_contrato($conn, $contratoPacienteId, $montoTotalContrato, $usuarioId) {
+    if (!contratos_analytics_contrato_disponible($conn)) {
+        return;
+    }
+
+    $contratoPacienteId = (int)$contratoPacienteId;
+    $montoTotalContrato = max(0.0, (float)$montoTotalContrato);
+    $usuarioId = (int)$usuarioId;
+    if ($contratoPacienteId <= 0) {
+        return;
+    }
+
+    $stmtSum = $conn->prepare(
+        "SELECT COALESCE(SUM(monto_reconocido), 0) AS reconocido
+         FROM produccion_contrato_detalle
+         WHERE contrato_paciente_id = ?
+           AND modo_cobertura = 'contrato'
+           AND estado_financiero = 'liquidado'"
+    );
+    if (!$stmtSum) {
+        return;
+    }
+    $stmtSum->bind_param('i', $contratoPacienteId);
+    $stmtSum->execute();
+    $rowSum = $stmtSum->get_result()->fetch_assoc() ?: [];
+    $stmtSum->close();
+
+    $montoYaReconocido = (float)($rowSum['reconocido'] ?? 0);
+    $montoDistribuir = round(max(0.0, $montoTotalContrato - $montoYaReconocido), 2);
+
+    $stmtPend = $conn->prepare(
+        "SELECT id, COALESCE(monto_lista_referencial, 0) AS peso
+         FROM produccion_contrato_detalle
+         WHERE contrato_paciente_id = ?
+           AND modo_cobertura = 'contrato'
+           AND estado_financiero = 'pendiente_liquidar'
+         ORDER BY fecha_atencion ASC, id ASC
+         FOR UPDATE"
+    );
+    if (!$stmtPend) {
+        return;
+    }
+    $stmtPend->bind_param('i', $contratoPacienteId);
+    $stmtPend->execute();
+    $pendientes = $stmtPend->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmtPend->close();
+
+    if (empty($pendientes)) {
+        return;
+    }
+
+    $totalPeso = 0.0;
+    foreach ($pendientes as $p) {
+        $totalPeso += max(0.0, (float)($p['peso'] ?? 0));
+    }
+
+    $ids = array_map(function ($r) {
+        return (int)($r['id'] ?? 0);
+    }, $pendientes);
+
+    $montos = [];
+    $acumulado = 0.0;
+    $countIds = count($ids);
+    foreach ($ids as $idx => $idRow) {
+        if ($idRow <= 0) {
+            continue;
+        }
+        if ($idx === $countIds - 1) {
+            $montoRow = round(max(0.0, $montoDistribuir - $acumulado), 2);
+        } else {
+            if ($montoDistribuir <= 0.00001) {
+                $montoRow = 0.0;
+            } elseif ($totalPeso > 0.00001) {
+                $peso = max(0.0, (float)($pendientes[$idx]['peso'] ?? 0));
+                $montoRow = round($montoDistribuir * ($peso / $totalPeso), 2);
+            } else {
+                $montoRow = round($montoDistribuir / max(1, $countIds), 2);
+            }
+            $acumulado += $montoRow;
+        }
+        $montos[$idRow] = $montoRow;
+    }
+
+    $stmtUpd = $conn->prepare(
+        "UPDATE produccion_contrato_detalle
+         SET monto_reconocido = ?,
+             estado_financiero = 'liquidado',
+             liquidado_en = NOW(),
+             liquidado_por = ?,
+             updated_by = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?"
+    );
+    if (!$stmtUpd) {
+        return;
+    }
+
+    foreach ($ids as $idRow) {
+        if ($idRow <= 0) {
+            continue;
+        }
+        $montoRow = (float)($montos[$idRow] ?? 0);
+        $stmtUpd->bind_param('diii', $montoRow, $usuarioId, $usuarioId, $idRow);
+        $stmtUpd->execute();
+    }
+    $stmtUpd->close();
+}
+
 function contratos_asegurar_consulta_evento($conn, array $evento, $usuarioId = 0, $forzarControl = false) {
     $consultaIdActual = (int)($evento['consulta_id'] ?? 0);
     $forzarControl = (bool)$forzarControl;
@@ -713,10 +1290,10 @@ function contratos_crear_cotizacion_ejecucion($conn, $pacienteId, $usuarioId, $e
 
     $hasSaldoV2 = contratos_column_exists($conn, 'cotizaciones', 'total_pagado') && contratos_column_exists($conn, 'cotizaciones', 'saldo_pendiente');
     $hasFechaVenc = contratos_column_exists($conn, 'cotizaciones', 'fecha_vencimiento');
-    $esControlContrato = $total <= 0.00001 && $soloContrato;
-    $estado = $esControlContrato ? 'CONTROL' : ($total <= 0.00001 ? 'pagado' : 'pendiente');
-    $obs = $esControlContrato
-        ? ('Cotización automática CONTROL (sin costo) - Evento de contrato #' . (int)$eventoId)
+    $esCostoCeroContrato = $total <= 0.00001 && $soloContrato;
+    $estado = $total <= 0.00001 ? 'pagado' : 'pendiente';
+    $obs = $esCostoCeroContrato
+        ? ('Cotización automática PAGADA por contrato (sin costo) - Evento de contrato #' . (int)$eventoId)
         : ('Ejecucion agenda contrato evento #' . (int)$eventoId);
     $fechaVenc = $hasFechaVenc && $estado === 'pendiente' ? date('Y-m-d H:i:s', strtotime('+24 hours')) : null;
 
@@ -749,6 +1326,16 @@ function contratos_crear_cotizacion_ejecucion($conn, $pacienteId, $usuarioId, $e
     $stmt->close();
     if (!$ok || $cotizacionId <= 0) {
         return ['success' => false, 'error' => 'No se pudo crear cotizacion de ejecucion'];
+    }
+
+    if (contratos_column_exists($conn, 'cotizaciones', 'es_costo_cero_contrato')) {
+        $flagContrato = $esCostoCeroContrato ? 1 : 0;
+        $stmtFlag = $conn->prepare('UPDATE cotizaciones SET es_costo_cero_contrato = ? WHERE id = ?');
+        if ($stmtFlag) {
+            $stmtFlag->bind_param('ii', $flagContrato, $cotizacionId);
+            $stmtFlag->execute();
+            $stmtFlag->close();
+        }
     }
 
     if (contratos_column_exists($conn, 'cotizaciones', 'numero_comprobante')) {
@@ -994,7 +1581,11 @@ function contratos_generar_agenda_auto($conn, $contratoId, $plantillaId, $fechaI
         $stmtDel->close();
     }
 
-    $stmtItems = $conn->prepare('SELECT id, servicio_tipo, servicio_id, descripcion_snapshot, orden_programado, regla_uso, offset_tipo, offset_valor, offset_unidad FROM contratos_plantillas_items WHERE plantilla_id = ? AND activo = 1 ORDER BY orden_programado ASC, id ASC');
+    $hasTplItemMedicoId = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_id');
+    $sqlItems = 'SELECT id, servicio_tipo, servicio_id, descripcion_snapshot, orden_programado, regla_uso, offset_tipo, offset_valor, offset_unidad'
+        . ($hasTplItemMedicoId ? ', medico_id' : ', 0 AS medico_id')
+        . ' FROM contratos_plantillas_items WHERE plantilla_id = ? AND activo = 1 ORDER BY orden_programado ASC, id ASC';
+    $stmtItems = $conn->prepare($sqlItems);
     $stmtItems->bind_param('i', $plantillaId);
     $stmtItems->execute();
     $items = $stmtItems->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -1021,11 +1612,76 @@ function contratos_generar_agenda_auto($conn, $contratoId, $plantillaId, $fechaI
         $obs = 'Generado automaticamente desde plantilla';
         $stmtIns->bind_param('iisissssii', $contratoId, $plantillaItemId, $servicioTipo, $servicioId, $descripcion, $fechaProgramada, $estadoEvento, $obs, $usuarioId, $usuarioId);
         $stmtIns->execute();
+        $agendaId = (int)$conn->insert_id;
         $stmtIns->close();
         $insertados++;
+
+        $medicoId = (int)($it['medico_id'] ?? 0);
+        if ($agendaId > 0 && $medicoId > 0 && contratos_table_exists($conn, 'agenda_contrato_medicos')) {
+            $rolMed = 'titular';
+            $prioridad = 1;
+            $stmtMed = $conn->prepare('INSERT INTO agenda_contrato_medicos (agenda_contrato_id, medico_id, rol_medico, prioridad, activo) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE rol_medico = VALUES(rol_medico), prioridad = VALUES(prioridad), activo = 1');
+            if ($stmtMed) {
+                $stmtMed->bind_param('iisi', $agendaId, $medicoId, $rolMed, $prioridad);
+                $stmtMed->execute();
+                $stmtMed->close();
+            }
+        }
     }
 
     return $insertados;
+}
+
+function contratos_generar_consultas_origen_contrato($conn, $contratoPacienteId, $usuarioId = 0) {
+    $contratoPacienteId = (int)$contratoPacienteId;
+    if ($contratoPacienteId <= 0 || !contratos_table_exists($conn, 'agenda_contrato')) {
+        return 0;
+    }
+
+    $stmt = $conn->prepare(
+        'SELECT ac.id, ac.contrato_paciente_id, ac.plantilla_item_id, ac.servicio_tipo, ac.servicio_id, ac.fecha_programada, ac.consulta_id, cp.paciente_id
+         FROM agenda_contrato ac
+         INNER JOIN contratos_paciente cp ON cp.id = ac.contrato_paciente_id
+         WHERE ac.contrato_paciente_id = ?
+           AND LOWER(TRIM(ac.servicio_tipo)) = "consulta"
+         ORDER BY ac.fecha_programada ASC, ac.id ASC'
+    );
+    if (!$stmt) {
+        return 0;
+    }
+    $stmt->bind_param('i', $contratoPacienteId);
+    $stmt->execute();
+    $eventos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    if (empty($eventos)) {
+        return 0;
+    }
+
+    $creadas = 0;
+    $hasConsultaOrigen = contratos_column_exists($conn, 'contratos_paciente_servicios', 'consulta_origen_id');
+    foreach ($eventos as $ev) {
+        $resultado = contratos_asegurar_consulta_evento($conn, $ev, $usuarioId, true);
+        if (!($resultado['success'] ?? false)) {
+            continue;
+        }
+
+        $consultaId = (int)($resultado['consulta_id'] ?? 0);
+        $plantillaItemId = (int)($ev['plantilla_item_id'] ?? 0);
+        if ($consultaId <= 0 || $plantillaItemId <= 0 || !$hasConsultaOrigen) {
+            continue;
+        }
+
+        $stmtUp = $conn->prepare('UPDATE contratos_paciente_servicios SET consulta_origen_id = CASE WHEN consulta_origen_id IS NULL OR consulta_origen_id <= 0 THEN ? ELSE consulta_origen_id END, updated_at = CURRENT_TIMESTAMP WHERE contrato_paciente_id = ? AND plantilla_item_id = ?');
+        if ($stmtUp) {
+            $stmtUp->bind_param('iii', $consultaId, $contratoPacienteId, $plantillaItemId);
+            $stmtUp->execute();
+            $stmtUp->close();
+        }
+        $creadas++;
+    }
+
+    return $creadas;
 }
 
 if (!isset($_SESSION['usuario'])) {
@@ -1047,11 +1703,14 @@ try {
                 contratos_responder(['success' => false, 'error' => 'paciente_id requerido'], 422);
             }
 
-            $stmt = $conn->prepare("SELECT cp.*, p.nombre AS plantilla_nombre, p.codigo AS plantilla_codigo
-                                   FROM contratos_paciente cp
-                                   INNER JOIN contratos_plantillas p ON p.id = cp.plantilla_id
-                                   WHERE cp.paciente_id = ?
-                                   ORDER BY cp.id DESC");
+                $stmt = $conn->prepare("SELECT cp.*, p.nombre AS plantilla_nombre, p.codigo AS plantilla_codigo,
+                               pa.nombre AS paciente_nombre, pa.apellido AS paciente_apellido,
+                               pa.dni AS paciente_dni, pa.historia_clinica AS paciente_hc
+                           FROM contratos_paciente cp
+                           INNER JOIN contratos_plantillas p ON p.id = cp.plantilla_id
+                           LEFT JOIN pacientes pa ON pa.id = cp.paciente_id
+                           WHERE cp.paciente_id = ?
+                           ORDER BY cp.id DESC");
             $stmt->bind_param('i', $pacienteId);
             $stmt->execute();
             $contratos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -1232,7 +1891,43 @@ try {
                 if (!empty($ids)) {
                     $placeholders = implode(',', array_fill(0, count($ids), '?'));
                     $typesIds = str_repeat('i', count($ids));
-                    $stmtItems = $conn->prepare("SELECT * FROM contratos_plantillas_items WHERE plantilla_id IN ($placeholders) AND activo = 1 ORDER BY orden_programado ASC, id ASC");
+                    $hasTplMedicoId = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_id');
+                    $hasTplMedicoNombreSnap = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_nombre_snapshot');
+                    $hasTplMedicoCmpSnap = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_cmp_snapshot');
+
+                    $hasTarifasMedicoId = contratos_column_exists($conn, 'tarifas', 'medico_id');
+                    $selectMedicoNombre = $hasTplMedicoId
+                        ? "TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre_completo"
+                        : ($hasTarifasMedicoId
+                            ? "TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre_completo"
+                            : "'' AS medico_nombre_completo");
+
+                    $joinTarifasMedicos = '';
+                    if ($hasTplMedicoId) {
+                        $joinTarifasMedicos = 'LEFT JOIN medicos m ON m.id = cpi.medico_id';
+                    } elseif ($hasTarifasMedicoId) {
+                        $joinTarifasMedicos = "LEFT JOIN tarifas t
+                               ON t.id = cpi.servicio_id
+                              AND (
+                                  LOWER(CONVERT(cpi.servicio_tipo USING utf8mb4)) COLLATE utf8mb4_general_ci = LOWER(CONVERT(t.servicio_tipo USING utf8mb4)) COLLATE utf8mb4_general_ci
+                                  OR (LOWER(CONVERT(cpi.servicio_tipo USING utf8mb4)) COLLATE utf8mb4_general_ci = 'procedimiento' AND LOWER(CONVERT(t.servicio_tipo USING utf8mb4)) COLLATE utf8mb4_general_ci = 'procedimientos')
+                                  OR (LOWER(CONVERT(cpi.servicio_tipo USING utf8mb4)) COLLATE utf8mb4_general_ci = 'rayosx' AND LOWER(CONVERT(t.servicio_tipo USING utf8mb4)) COLLATE utf8mb4_general_ci IN ('rayos x', 'rayos_x', 'rayosx'))
+                              )
+                           LEFT JOIN medicos m ON m.id = t.medico_id";
+                    }
+
+                    $sqlItems = 'SELECT cpi.*'
+                        . ($hasTplMedicoId ? ', cpi.medico_id' : ', 0 AS medico_id')
+                        . ($hasTplMedicoNombreSnap ? ', cpi.medico_nombre_snapshot' : ", '' AS medico_nombre_snapshot")
+                        . ($hasTplMedicoCmpSnap ? ', cpi.medico_cmp_snapshot' : ", '' AS medico_cmp_snapshot")
+                        . ", {$selectMedicoNombre}
+                                 FROM contratos_plantillas_items cpi
+                                 {$joinTarifasMedicos}
+                                 WHERE cpi.plantilla_id IN ($placeholders)
+                                   AND cpi.activo = 1
+                                 ORDER BY cpi.orden_programado ASC, cpi.id ASC";
+
+                    $stmtItems = $conn->prepare($sqlItems);
                     $stmtItems->bind_param($typesIds, ...$ids);
                     $stmtItems->execute();
                     $itemsRows = $stmtItems->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -1334,6 +2029,71 @@ try {
                 'total' => $total,
                 'page' => $page,
                 'limit' => $limit,
+            ]);
+        }
+
+        if ($accion === 'resolver_origen_automatico') {
+            $pacienteId = (int)($_GET['paciente_id'] ?? 0);
+            $plantillaId = (int)($_GET['plantilla_id'] ?? 0);
+            if ($pacienteId <= 0 || $plantillaId <= 0) {
+                contratos_responder(['success' => false, 'error' => 'paciente_id y plantilla_id son requeridos'], 422);
+            }
+
+            $hasTplItemMedicoId = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_id');
+            $sql = 'SELECT servicio_tipo, servicio_id, descripcion_snapshot'
+                . ($hasTplItemMedicoId ? ', medico_id' : ', 0 AS medico_id')
+                . ' FROM contratos_plantillas_items WHERE plantilla_id = ? AND activo = 1';
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                contratos_responder(['success' => false, 'error' => 'No se pudo resolver origen de plantilla'], 500);
+            }
+            $stmt->bind_param('i', $plantillaId);
+            $stmt->execute();
+            $tplItems = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmt->close();
+
+            $servicioMedicos = [];
+            $medicoOrigenId = 0;
+            $medicoOrigenNombre = '';
+            foreach ($tplItems as $it) {
+                $tipo = contratos_normalizar_servicio_tipo((string)($it['servicio_tipo'] ?? ''));
+                $sid = (int)($it['servicio_id'] ?? 0);
+                if ($tipo === '' || $sid <= 0) {
+                    continue;
+                }
+
+                $medicoIdItem = (int)($it['medico_id'] ?? 0);
+                if ($medicoIdItem > 0 && !contratos_medico_existe($conn, $medicoIdItem)) {
+                    $medicoIdItem = 0;
+                }
+
+                $snap = contratos_obtener_snapshot_medico($conn, $medicoIdItem);
+                if ($medicoOrigenId <= 0 && $medicoIdItem > 0) {
+                    $medicoOrigenId = $medicoIdItem;
+                    $medicoOrigenNombre = trim((string)($snap['nombre'] ?? ''));
+                }
+
+                $servicioMedicos[$tipo . ':' . $sid] = [
+                    'servicio_tipo' => $tipo,
+                    'servicio_id' => $sid,
+                    'descripcion' => trim((string)($it['descripcion_snapshot'] ?? '')),
+                    'medico_id' => $medicoIdItem,
+                    'medico_nombre' => trim((string)($snap['nombre'] ?? '')),
+                ];
+            }
+
+            contratos_responder([
+                'success' => true,
+                'origen' => [
+                    'fuente' => 'plantilla',
+                    'cotizacion_origen_id' => 0,
+                    'consulta_origen_id' => 0,
+                    'medico_origen_id' => $medicoOrigenId,
+                    'medico_origen_nombre' => $medicoOrigenNombre,
+                    'servicio_medicos' => $servicioMedicos,
+                    'paciente_id' => $pacienteId,
+                    'plantilla_id' => $plantillaId,
+                ],
             ]);
         }
 
@@ -1815,6 +2575,10 @@ try {
                 throw new Exception('No se pudo registrar el movimiento en ingresos_diarios.');
             }
 
+            if ($nuevoEstado === 'liquidado') {
+                contratos_liquidar_analitica_contrato($conn, $contratoId, (float)($contrato['monto_total'] ?? 0), $usuarioId);
+            }
+
             $conn->commit();
 
             contratos_responder([
@@ -1877,6 +2641,10 @@ try {
             }
 
             $keptIds = [];
+            $hasTplItemMedicoId = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_id');
+            $hasTplItemMedicoNombreSnap = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_nombre_snapshot');
+            $hasTplItemMedicoCmpSnap = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_cmp_snapshot');
+
             foreach ($items as $idx => $it) {
                 $itemId = (int)($it['id'] ?? 0);
                 $servicioTipo = contratos_normalizar_servicio_tipo($it['servicio_tipo'] ?? '');
@@ -1888,21 +2656,112 @@ try {
                 $offsetTipoItem   = trim((string)($it['offset_tipo']   ?? 'ninguno'));
                 $offsetValorItem  = max(0, (int)($it['offset_valor']  ?? 0));
                 $offsetUnidadItem = trim((string)($it['offset_unidad'] ?? 'semanas'));
+                $medicoIdItem = (int)($it['medico_id'] ?? 0);
+
                 if (!in_array($offsetTipoItem, ['ninguno','relativo_anchor','semana_gestacional'], true)) $offsetTipoItem = 'ninguno';
                 if (!in_array($offsetUnidadItem, ['dias','semanas','meses'], true)) $offsetUnidadItem = 'semanas';
                 if ($servicioTipo === '' || $servicioId <= 0 || $descripcionSnapshot === '') continue;
 
+                if ($hasTplItemMedicoId) {
+                    if ($medicoIdItem > 0 && !contratos_medico_existe($conn, $medicoIdItem)) {
+                        throw new Exception('El medico asignado al item ' . $descripcionSnapshot . ' no existe o esta inactivo.');
+                    }
+                    if (contratos_servicio_requiere_medico($servicioTipo) && $medicoIdItem <= 0) {
+                        throw new Exception('El item ' . $descripcionSnapshot . ' requiere medico responsable en la plantilla.');
+                    }
+                } else {
+                    $medicoIdItem = 0;
+                }
+
+                $snapMedTpl = contratos_obtener_snapshot_medico($conn, $medicoIdItem);
+                $medicoNombreTpl = trim((string)($snapMedTpl['nombre'] ?? ''));
+                $medicoCmpTpl = trim((string)($snapMedTpl['cmp'] ?? ''));
+
                 if ($itemId > 0 && isset($existingIds[$itemId])) {
-                    $stmtUpIt = $conn->prepare('UPDATE contratos_plantillas_items SET servicio_tipo=?, servicio_id=?, descripcion_snapshot=?, cantidad_incluida=?, orden_programado=?, regla_uso=?, offset_tipo=?, offset_valor=?, offset_unidad=?, activo=1, updated_at=NOW() WHERE id=? AND plantilla_id=?');
-                    $stmtUpIt->bind_param('sisdissisii', $servicioTipo, $servicioId, $descripcionSnapshot, $cantidadIncluida, $ordenProgramado, $reglaUso, $offsetTipoItem, $offsetValorItem, $offsetUnidadItem, $itemId, $id);
-                    $stmtUpIt->execute();
-                    $stmtUpIt->close();
+                    if ($hasTplItemMedicoId || $hasTplItemMedicoNombreSnap || $hasTplItemMedicoCmpSnap) {
+                        $sqlUpIt = 'UPDATE contratos_plantillas_items SET servicio_tipo=?, servicio_id=?, descripcion_snapshot=?, cantidad_incluida=?, orden_programado=?, regla_uso=?, offset_tipo=?, offset_valor=?, offset_unidad=?';
+                        $typesUp = 'sisdissis';
+                        $paramsUp = [$servicioTipo, $servicioId, $descripcionSnapshot, $cantidadIncluida, $ordenProgramado, $reglaUso, $offsetTipoItem, $offsetValorItem, $offsetUnidadItem];
+
+                        if ($hasTplItemMedicoId) {
+                            $sqlUpIt .= ', medico_id=?';
+                            $typesUp .= 'i';
+                            $paramsUp[] = $medicoIdItem > 0 ? $medicoIdItem : null;
+                        }
+                        if ($hasTplItemMedicoNombreSnap) {
+                            $sqlUpIt .= ', medico_nombre_snapshot=?';
+                            $typesUp .= 's';
+                            $paramsUp[] = $medicoNombreTpl;
+                        }
+                        if ($hasTplItemMedicoCmpSnap) {
+                            $sqlUpIt .= ', medico_cmp_snapshot=?';
+                            $typesUp .= 's';
+                            $paramsUp[] = $medicoCmpTpl;
+                        }
+
+                        $sqlUpIt .= ', activo=1, updated_at=NOW() WHERE id=? AND plantilla_id=?';
+                        $typesUp .= 'ii';
+                        $paramsUp[] = $itemId;
+                        $paramsUp[] = $id;
+
+                        $stmtUpIt = $conn->prepare($sqlUpIt);
+                        if (!$stmtUpIt) {
+                            throw new Exception('No se pudo preparar actualizacion del item de plantilla.');
+                        }
+                        $stmtUpIt->bind_param($typesUp, ...$paramsUp);
+                        $stmtUpIt->execute();
+                        $stmtUpIt->close();
+                    } else {
+                        $stmtUpIt = $conn->prepare('UPDATE contratos_plantillas_items SET servicio_tipo=?, servicio_id=?, descripcion_snapshot=?, cantidad_incluida=?, orden_programado=?, regla_uso=?, offset_tipo=?, offset_valor=?, offset_unidad=?, activo=1, updated_at=NOW() WHERE id=? AND plantilla_id=?');
+                        $stmtUpIt->bind_param('sisdissisii', $servicioTipo, $servicioId, $descripcionSnapshot, $cantidadIncluida, $ordenProgramado, $reglaUso, $offsetTipoItem, $offsetValorItem, $offsetUnidadItem, $itemId, $id);
+                        $stmtUpIt->execute();
+                        $stmtUpIt->close();
+                    }
+
                     $keptIds[$itemId] = true;
                     $actualizados++;
                 } else {
-                    $stmtIt = $conn->prepare('INSERT INTO contratos_plantillas_items (plantilla_id, servicio_tipo, servicio_id, descripcion_snapshot, cantidad_incluida, orden_programado, regla_uso, offset_tipo, offset_valor, offset_unidad, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)');
-                    $stmtIt->bind_param('isisdissis', $id, $servicioTipo, $servicioId, $descripcionSnapshot, $cantidadIncluida, $ordenProgramado, $reglaUso, $offsetTipoItem, $offsetValorItem, $offsetUnidadItem);
-                    $stmtIt->execute();
+                    if ($hasTplItemMedicoId || $hasTplItemMedicoNombreSnap || $hasTplItemMedicoCmpSnap) {
+                        $colsIns = ['plantilla_id', 'servicio_tipo', 'servicio_id', 'descripcion_snapshot', 'cantidad_incluida', 'orden_programado', 'regla_uso', 'offset_tipo', 'offset_valor', 'offset_unidad'];
+                        $valsIns = ['?', '?', '?', '?', '?', '?', '?', '?', '?', '?'];
+                        $typesIns = 'isisdissis';
+                        $paramsIns = [$id, $servicioTipo, $servicioId, $descripcionSnapshot, $cantidadIncluida, $ordenProgramado, $reglaUso, $offsetTipoItem, $offsetValorItem, $offsetUnidadItem];
+
+                        if ($hasTplItemMedicoId) {
+                            $colsIns[] = 'medico_id';
+                            $valsIns[] = '?';
+                            $typesIns .= 'i';
+                            $paramsIns[] = $medicoIdItem > 0 ? $medicoIdItem : null;
+                        }
+                        if ($hasTplItemMedicoNombreSnap) {
+                            $colsIns[] = 'medico_nombre_snapshot';
+                            $valsIns[] = '?';
+                            $typesIns .= 's';
+                            $paramsIns[] = $medicoNombreTpl;
+                        }
+                        if ($hasTplItemMedicoCmpSnap) {
+                            $colsIns[] = 'medico_cmp_snapshot';
+                            $valsIns[] = '?';
+                            $typesIns .= 's';
+                            $paramsIns[] = $medicoCmpTpl;
+                        }
+
+                        $colsIns[] = 'activo';
+                        $valsIns[] = '1';
+
+                        $sqlInsIt = 'INSERT INTO contratos_plantillas_items (' . implode(', ', $colsIns) . ') VALUES (' . implode(', ', $valsIns) . ')';
+                        $stmtIt = $conn->prepare($sqlInsIt);
+                        if (!$stmtIt) {
+                            throw new Exception('No se pudo preparar insercion del item de plantilla.');
+                        }
+                        $stmtIt->bind_param($typesIns, ...$paramsIns);
+                        $stmtIt->execute();
+                    } else {
+                        $stmtIt = $conn->prepare('INSERT INTO contratos_plantillas_items (plantilla_id, servicio_tipo, servicio_id, descripcion_snapshot, cantidad_incluida, orden_programado, regla_uso, offset_tipo, offset_valor, offset_unidad, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)');
+                        $stmtIt->bind_param('isisdissis', $id, $servicioTipo, $servicioId, $descripcionSnapshot, $cantidadIncluida, $ordenProgramado, $reglaUso, $offsetTipoItem, $offsetValorItem, $offsetUnidadItem);
+                        $stmtIt->execute();
+                    }
+
                     $newItemId = (int)$conn->insert_id;
                     $stmtIt->close();
                     if ($newItemId > 0) $keptIds[$newItemId] = true;
@@ -1947,8 +2806,10 @@ try {
             $plantillaId = (int)($data['plantilla_id'] ?? 0);
             $fechaInicio = trim((string)($data['fecha_inicio'] ?? ''));
             $fechaFin = trim((string)($data['fecha_fin'] ?? ''));
-            $montoTotal = (float)($data['monto_total'] ?? 0);
-            $saldoPendiente = isset($data['saldo_pendiente']) ? (float)$data['saldo_pendiente'] : $montoTotal;
+            $rawMontoTotal = $data['monto_total'] ?? null;
+            $montoTotal = is_numeric($rawMontoTotal) ? (float)$rawMontoTotal : 0.0;
+            $rawSaldoPendiente = array_key_exists('saldo_pendiente', $data) ? $data['saldo_pendiente'] : null;
+            $saldoPendiente = is_numeric($rawSaldoPendiente) ? (float)$rawSaldoPendiente : null;
             $estado = trim((string)($data['estado'] ?? 'activo'));
             $observaciones = trim((string)($data['observaciones'] ?? ''));
             $regenerarAgenda = (int)($data['regenerar_agenda'] ?? 0) === 1;
@@ -1960,6 +2821,20 @@ try {
                 ? trim((string)$data['anchor_fecha'])
                 : null;
 
+            $consultaOrigenInput = (int)($data['consulta_origen_id'] ?? 0);
+            $medicoOrigenInput = (int)($data['medico_origen_id'] ?? 0);
+            $cotizacionOrigenId = (int)($data['cotizacion_origen_id'] ?? 0);
+
+            if (!contratos_consulta_existe($conn, $consultaOrigenInput)) {
+                $consultaOrigenInput = 0;
+            }
+            if (!contratos_medico_existe($conn, $medicoOrigenInput)) {
+                $medicoOrigenInput = 0;
+            }
+
+            // Enfoque INBIOSLAB: el medico de origen se hereda por item desde la plantilla.
+            // cotizacion/consulta se mantienen solo como metadatos opcionales, no como fuente primaria.
+
             if ($plantillaId > 0 && !isset($data['dias_anticipacion_liquidacion'])) {
                 $stmtTpl = $conn->prepare('SELECT dias_anticipacion_liquidacion FROM contratos_plantillas WHERE id = ? LIMIT 1');
                 $stmtTpl->bind_param('i', $plantillaId);
@@ -1969,6 +2844,25 @@ try {
                 if ($tplRow) {
                     $diasAnt = max(0, (int)($tplRow['dias_anticipacion_liquidacion'] ?? 7));
                 }
+            }
+
+            // Si el contrato nuevo llega sin monto, usar pago_unico_monto de plantilla para evitar saldos 0 involuntarios.
+            if ($id <= 0 && $plantillaId > 0 && $montoTotal <= 0.0) {
+                $stmtMontoTpl = $conn->prepare('SELECT pago_unico_monto FROM contratos_plantillas WHERE id = ? LIMIT 1');
+                if ($stmtMontoTpl) {
+                    $stmtMontoTpl->bind_param('i', $plantillaId);
+                    $stmtMontoTpl->execute();
+                    $rowMontoTpl = $stmtMontoTpl->get_result()->fetch_assoc();
+                    $stmtMontoTpl->close();
+                    $montoTpl = (float)($rowMontoTpl['pago_unico_monto'] ?? 0);
+                    if ($montoTpl > 0.0) {
+                        $montoTotal = $montoTpl;
+                    }
+                }
+            }
+
+            if ($saldoPendiente === null) {
+                $saldoPendiente = $montoTotal;
             }
 
             $fechaLimiteLiquidacion = $fechaFin !== ''
@@ -1988,7 +2882,18 @@ try {
 
                 $stmtDel = $conn->prepare('DELETE FROM contratos_paciente_servicios WHERE contrato_paciente_id = ?');
                 $stmtDel->bind_param('i', $id);
-                $stmtDel->execute();
+                $okDel = $stmtDel->execute();
+                if (!$okDel) {
+                    $errNo = (int)($stmtDel->errno ?: $conn->errno);
+                    $errMsg = trim((string)($stmtDel->error ?: $conn->error));
+                    $stmtDel->close();
+
+                    if ($errNo === 1451) {
+                        throw new Exception('No se puede actualizar este contrato porque ya tiene consumos registrados. Para evitar perder trazabilidad, crea un nuevo contrato para los nuevos servicios o finaliza/cancela el actual.');
+                    }
+
+                    throw new Exception('No se pudo actualizar los servicios del contrato. ' . ($errMsg !== '' ? $errMsg : 'Intenta nuevamente.'));
+                }
                 $stmtDel->close();
             } else {
                 $stmtIns = $conn->prepare('INSERT INTO contratos_paciente (paciente_id, plantilla_id, fecha_inicio, fecha_fin, monto_total, saldo_pendiente, estado, observaciones, fecha_limite_liquidacion, anchor_tipo, anchor_fecha, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -1998,7 +2903,16 @@ try {
                 $stmtIns->close();
             }
 
-            $stmtTplItems = $conn->prepare('SELECT id, servicio_tipo, servicio_id, cantidad_incluida FROM contratos_plantillas_items WHERE plantilla_id = ? AND activo = 1');
+            $hasTplItemMedicoId = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_id');
+            $hasTplItemMedicoNombreSnap = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_nombre_snapshot');
+            $hasTplItemMedicoCmpSnap = contratos_column_exists($conn, 'contratos_plantillas_items', 'medico_cmp_snapshot');
+
+            $sqlTplItems = 'SELECT id, servicio_tipo, servicio_id, descripcion_snapshot, cantidad_incluida'
+                . ($hasTplItemMedicoId ? ', medico_id' : ', 0 AS medico_id')
+                . ($hasTplItemMedicoNombreSnap ? ', medico_nombre_snapshot' : ", '' AS medico_nombre_snapshot")
+                . ($hasTplItemMedicoCmpSnap ? ', medico_cmp_snapshot' : ", '' AS medico_cmp_snapshot")
+                . ' FROM contratos_plantillas_items WHERE plantilla_id = ? AND activo = 1';
+            $stmtTplItems = $conn->prepare($sqlTplItems);
             $stmtTplItems->bind_param('i', $plantillaId);
             $stmtTplItems->execute();
             $tplItems = $stmtTplItems->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -2009,16 +2923,59 @@ try {
                 $servicioTipo = contratos_normalizar_servicio_tipo($tplIt['servicio_tipo'] ?? '');
                 $servicioId = (int)($tplIt['servicio_id'] ?? 0);
                 $cantidadTotal = (float)($tplIt['cantidad_incluida'] ?? 1);
+                $servicioNombreSnapshot = trim((string)($tplIt['descripcion_snapshot'] ?? ''));
                 if ($plantillaItemId <= 0 || $servicioTipo === '' || $servicioId <= 0) continue;
 
-                $stmtSrv = $conn->prepare('INSERT INTO contratos_paciente_servicios (contrato_paciente_id, plantilla_item_id, servicio_tipo, servicio_id, cantidad_total, cantidad_consumida, estado) VALUES (?, ?, ?, ?, ?, 0, ? )');
+                $medicoOrigenItem = (int)($tplIt['medico_id'] ?? 0);
+                if ($medicoOrigenItem > 0 && !contratos_medico_existe($conn, $medicoOrigenItem)) {
+                    $medicoOrigenItem = 0;
+                }
+
+                if (contratos_servicio_requiere_medico($servicioTipo) && $medicoOrigenItem <= 0) {
+                    throw new Exception('La plantilla tiene el item #' . $plantillaItemId . ' sin medico responsable. Corrige la plantilla antes de vender el contrato.');
+                }
+
+                $consultaOrigenItem = $consultaOrigenInput > 0 ? $consultaOrigenInput : 0;
+                if ($consultaOrigenItem > 0 && !contratos_consulta_existe($conn, $consultaOrigenItem)) {
+                    $consultaOrigenItem = 0;
+                }
+
+                $consultaOrigenItemNullable = $consultaOrigenItem > 0 ? $consultaOrigenItem : null;
+                $medicoOrigenItemNullable = $medicoOrigenItem > 0 ? $medicoOrigenItem : null;
+
+                $origenTipoItem = 'plantilla';
+                $origenRefTablaItem = 'contratos_plantillas_items';
+                $origenRefIdItem = $plantillaItemId;
+                $origenRefIdItemNullable = $origenRefIdItem > 0 ? $origenRefIdItem : null;
+                $origenAsignadoEn = date('Y-m-d H:i:s');
+                $origenAsignadoPor = $usuarioId > 0 ? $usuarioId : 0;
+                $origenAsignadoPorNullable = $origenAsignadoPor > 0 ? $origenAsignadoPor : null;
+
+                $medicoNombreSnapshot = trim((string)($tplIt['medico_nombre_snapshot'] ?? ''));
+                $medicoCmpSnapshot = trim((string)($tplIt['medico_cmp_snapshot'] ?? ''));
+                if (($medicoNombreSnapshot === '' || $medicoCmpSnapshot === '') && $medicoOrigenItem > 0) {
+                    $snapMed = contratos_obtener_snapshot_medico($conn, $medicoOrigenItem);
+                    if ($medicoNombreSnapshot === '') {
+                        $medicoNombreSnapshot = trim((string)($snapMed['nombre'] ?? ''));
+                    }
+                    if ($medicoCmpSnapshot === '') {
+                        $medicoCmpSnapshot = trim((string)($snapMed['cmp'] ?? ''));
+                    }
+                }
+
+                if ($servicioNombreSnapshot === '') {
+                    $servicioNombreSnapshot = $servicioTipo . ' #' . $servicioId;
+                }
+
+                $stmtSrv = $conn->prepare('INSERT INTO contratos_paciente_servicios (contrato_paciente_id, plantilla_item_id, servicio_tipo, servicio_id, consulta_origen_id, medico_origen_id, servicio_nombre_snapshot, cantidad_total, cantidad_consumida, estado, origen_tipo, origen_referencia_tabla, origen_referencia_id, origen_asignado_en, origen_asignado_por, medico_origen_nombre_snapshot, medico_origen_cmp_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)');
                 $estadoSrv = 'pendiente';
-                $stmtSrv->bind_param('iisids', $id, $plantillaItemId, $servicioTipo, $servicioId, $cantidadTotal, $estadoSrv);
+                $stmtSrv->bind_param('iisiissdsssisiss', $id, $plantillaItemId, $servicioTipo, $servicioId, $consultaOrigenItemNullable, $medicoOrigenItemNullable, $servicioNombreSnapshot, $cantidadTotal, $estadoSrv, $origenTipoItem, $origenRefTablaItem, $origenRefIdItemNullable, $origenAsignadoEn, $origenAsignadoPorNullable, $medicoNombreSnapshot, $medicoCmpSnapshot);
                 $stmtSrv->execute();
                 $stmtSrv->close();
             }
 
             $agendaInsertada = contratos_generar_agenda_auto($conn, $id, $plantillaId, $fechaInicio, $usuarioId, $regenerarAgenda, $anchorTipo, $anchorFecha);
+            contratos_generar_consultas_origen_contrato($conn, $id, $usuarioId);
 
             $conn->commit();
             contratos_responder(['success' => true, 'id' => $id, 'agenda_insertada' => $agendaInsertada, 'fecha_limite_liquidacion' => $fechaLimiteLiquidacion, 'anchor_tipo' => $anchorTipo, 'anchor_fecha' => $anchorFecha]);
@@ -2491,6 +3448,58 @@ try {
                             $stmtLedger->execute();
                             $stmtLedger->close();
                         }
+
+                        $fechaAtencionAnalytics = $nuevaFecha !== null ? $nuevaFecha : (string)($evRow['fecha_programada'] ?? '');
+                        $medicoMain = contratos_resolver_medico_evento(
+                            $conn,
+                            $eventoId,
+                            (string)($evRow['servicio_tipo'] ?? ''),
+                            (int)($evRow['servicio_id'] ?? 0)
+                        );
+                        $montoListaMain = contratos_obtener_precio_servicio($conn, (string)($evRow['servicio_tipo'] ?? ''), (int)($evRow['servicio_id'] ?? 0));
+                        contratos_registrar_analitica_consumo_contrato(
+                            $conn,
+                            $eventoId,
+                            $contratoPacienteId,
+                            $pid,
+                            $consultaIdEjecucion,
+                            $medicoMain,
+                            (string)($evRow['servicio_tipo'] ?? ''),
+                            (int)($evRow['servicio_id'] ?? 0),
+                            (string)($evRow['titulo_evento'] ?? 'Servicio de contrato'),
+                            $fechaAtencionAnalytics,
+                            1.0,
+                            $montoListaMain,
+                            'contrato',
+                            $usuarioId,
+                            $cpsId
+                        );
+
+                        if (!empty($itemsEjecucion) && is_array($itemsEjecucion)) {
+                            foreach ($itemsEjecucion as $itemAnalytic) {
+                                $origenItem = strtolower(trim((string)($itemAnalytic['origen_cobro'] ?? 'regular')));
+                                if ($origenItem !== 'contrato') {
+                                    continue;
+                                }
+                                contratos_registrar_analitica_consumo_contrato(
+                                    $conn,
+                                    $eventoId,
+                                    $contratoPacienteId,
+                                    $pid,
+                                    $consultaIdEjecucion,
+                                    (int)($itemAnalytic['medico_id'] ?? 0),
+                                    (string)($itemAnalytic['servicio_tipo'] ?? ''),
+                                    (int)($itemAnalytic['servicio_id'] ?? 0),
+                                    (string)($itemAnalytic['descripcion'] ?? 'Servicio de contrato'),
+                                    $fechaAtencionAnalytics,
+                                    (float)($itemAnalytic['cantidad'] ?? 1),
+                                    (float)($itemAnalytic['monto_lista_referencial'] ?? 0),
+                                    'contrato',
+                                    $usuarioId,
+                                    (int)($itemAnalytic['contrato_paciente_servicio_id'] ?? 0)
+                                );
+                            }
+                        }
                     }
                 } elseif ($permitirExtra) {
                     $contratoPacienteId = (int)($evRow['contrato_paciente_id'] ?? 0);
@@ -2506,6 +3515,38 @@ try {
                             $stmtLedger->close();
                         }
                     }
+                }
+            }
+
+            if ($esTransicionConsumo && $affected > 0 && $preconsumoDetectado && (bool)($cobertura['aplica_contrato'] ?? false)) {
+                $pid = (int)($evRow['paciente_id'] ?? 0);
+                $contratoPacienteId = (int)($cobertura['contrato_paciente_id'] ?? (int)($evRow['contrato_paciente_id'] ?? 0));
+                if ($pid > 0 && $contratoPacienteId > 0) {
+                    $fechaAtencionAnalytics = $nuevaFecha !== null ? $nuevaFecha : (string)($evRow['fecha_programada'] ?? '');
+                    $medicoMain = contratos_resolver_medico_evento(
+                        $conn,
+                        $eventoId,
+                        (string)($evRow['servicio_tipo'] ?? ''),
+                        (int)($evRow['servicio_id'] ?? 0)
+                    );
+                    $montoListaMain = contratos_obtener_precio_servicio($conn, (string)($evRow['servicio_tipo'] ?? ''), (int)($evRow['servicio_id'] ?? 0));
+                    contratos_registrar_analitica_consumo_contrato(
+                        $conn,
+                        $eventoId,
+                        $contratoPacienteId,
+                        $pid,
+                        $consultaIdEjecucion,
+                        $medicoMain,
+                        (string)($evRow['servicio_tipo'] ?? ''),
+                        (int)($evRow['servicio_id'] ?? 0),
+                        (string)($evRow['titulo_evento'] ?? 'Servicio de contrato'),
+                        $fechaAtencionAnalytics,
+                        1.0,
+                        $montoListaMain,
+                        'contrato',
+                        $usuarioId,
+                        (int)($cobertura['contrato_paciente_servicio_id'] ?? 0)
+                    );
                 }
             }
 

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const ESTADOS = ["borrador", "activo", "inactivo", "archivado"];
 const SERVICE_TYPES = ["consulta", "ecografia", "rayosx", "procedimiento", "operacion", "laboratorio", "farmacia"];
+const SERVICE_TYPES_REQUIRING_MEDICO = new Set(["consulta", "ecografia", "rayosx", "procedimiento", "operacion"]);
 
 const EMPTY_PLANTILLA = {
   id: 0,
@@ -22,6 +23,7 @@ const EMPTY_ITEM = {
   servicio_id: "",
   servicio_search: "",
   descripcion_snapshot: "",
+  medico_id: "",
   medico_nombre_completo: "",
   precio_particular: "",
   fuente: "",
@@ -37,6 +39,9 @@ const EMPTY_CONTRATO = {
   id: 0,
   paciente_id: "",
   plantilla_id: "",
+  cotizacion_origen_id: "",
+  consulta_origen_id: "",
+  medico_origen_id: "",
   fecha_inicio: "",
   fecha_fin: "",
   monto_total: "",
@@ -48,6 +53,15 @@ const EMPTY_CONTRATO = {
   observaciones: "",
 };
 
+const EMPTY_ORIGEN_AUTO = {
+  cotizacion_origen_id: 0,
+  consulta_origen_id: 0,
+  medico_origen_id: 0,
+  medico_origen_nombre: "",
+  servicio_medicos: {},
+  loading: false,
+};
+
 function n(v) {
   const x = Number(v);
   return Number.isFinite(x) ? x : 0;
@@ -57,6 +71,24 @@ function formatMoney(v) {
   const amount = n(v);
   if (amount <= 0) return "-";
   return `S/ ${amount.toFixed(2)}`;
+}
+
+function getFriendlyContratoError(rawMessage) {
+  const msg = String(rawMessage || "").trim();
+  if (!msg) return "No se pudo completar la accion. Intenta nuevamente.";
+
+  const lower = msg.toLowerCase();
+  const looksForeignKey =
+    lower.includes("foreign key") ||
+    lower.includes("cannot delete or update a parent row") ||
+    lower.includes("contratos_consumos") ||
+    lower.includes("fk_contrato_consumo_servicio");
+
+  if (looksForeignKey) {
+    return "Este contrato ya tiene consumos registrados y no se puede reescribir su detalle. Para continuar, finaliza/cancela el contrato actual y crea uno nuevo con los cambios.";
+  }
+
+  return msg;
 }
 
 export default function ContratosPage() {
@@ -76,6 +108,7 @@ export default function ContratosPage() {
   const [catalogLoading, setCatalogLoading] = useState(false);
 
   const [formContrato, setFormContrato] = useState(EMPTY_CONTRATO);
+  const [origenAuto, setOrigenAuto] = useState(EMPTY_ORIGEN_AUTO);
   const [savingContrato, setSavingContrato] = useState(false);
   const [regenerarAgenda, setRegenerarAgenda] = useState(true);
   const [pacienteSearch, setPacienteSearch] = useState("");
@@ -106,8 +139,7 @@ export default function ContratosPage() {
       if (qAplicado.trim()) params.set("q", qAplicado.trim());
       if (estadoFilterAplicado) params.set("estado", estadoFilterAplicado);
 
-      const res = await fetch(`${BASE_URL}api_contratos.php?${params.toString()}`, {
-        credentials: "include",
+      const res = await authFetch(`api_contratos.php?${params.toString()}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -131,8 +163,7 @@ export default function ContratosPage() {
       params.set("limit", String(limitContrato));
       if (String(qContratoAplicado || "").trim()) params.set("q", String(qContratoAplicado).trim());
 
-      const res = await fetch(`${BASE_URL}api_contratos.php?${params.toString()}`, {
-        credentials: "include",
+      const res = await authFetch(`api_contratos.php?${params.toString()}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -169,8 +200,7 @@ export default function ContratosPage() {
       params.set("page", "1");
       params.set("limit", "8");
 
-      const res = await fetch(`${BASE_URL}api_pacientes.php?${params.toString()}`, {
-        credentials: "include",
+      const res = await authFetch(`api_pacientes.php?${params.toString()}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -214,8 +244,7 @@ export default function ContratosPage() {
       params.set("limit", "12");
       params.set("q", termino);
 
-      const res = await fetch(`${BASE_URL}api_contratos.php?${params.toString()}`, {
-        credentials: "include",
+      const res = await authFetch(`api_contratos.php?${params.toString()}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -237,9 +266,14 @@ export default function ContratosPage() {
       Swal.fire("Atencion", "Servicio ID debe ser mayor a 0", "warning");
       return;
     }
+    if (SERVICE_TYPES_REQUIRING_MEDICO.has(String(itemDraft.servicio_tipo || "").toLowerCase()) && n(itemDraft.medico_id) <= 0) {
+      Swal.fire("Atencion", "Este tipo de servicio requiere un medico responsable en la plantilla", "warning");
+      return;
+    }
     const next = {
       ...itemDraft,
       servicio_id: n(itemDraft.servicio_id),
+      medico_id: n(itemDraft.medico_id),
       medico_nombre_completo: String(itemDraft.medico_nombre_completo || "").trim(),
       precio_particular: n(itemDraft.precio_particular),
       fuente: String(itemDraft.fuente || "").trim(),
@@ -278,9 +312,8 @@ export default function ContratosPage() {
         dias_anticipacion_liquidacion: Math.max(1, n(form.dias_anticipacion_liquidacion)),
       };
 
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -309,15 +342,20 @@ export default function ContratosPage() {
       duracion_dias: n(row.duracion_dias),
       pago_unico_monto: n(row.pago_unico_monto),
       dias_anticipacion_liquidacion: Math.max(1, n(row.dias_anticipacion_liquidacion || 7)),
-      items: Array.isArray(row.items) ? row.items : [],
+      items: Array.isArray(row.items)
+        ? row.items.map((it) => ({
+          ...it,
+          medico_id: n(it?.medico_id),
+          medico_nombre_completo: String(it?.medico_nombre_completo || it?.medico_nombre_snapshot || "").trim(),
+        }))
+        : [],
     });
   };
 
   const cambiarEstadoPlantilla = async (id, estado) => {
     try {
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accion: "estado_plantilla", id, estado }),
       });
@@ -348,16 +386,18 @@ export default function ContratosPage() {
         regenerar_agenda: regenerarAgenda ? 1 : 0,
         paciente_id: n(formContrato.paciente_id),
         plantilla_id: n(formContrato.plantilla_id),
-        monto_total: n(formContrato.monto_total),
-        saldo_pendiente: formContrato.saldo_pendiente === "" ? n(formContrato.monto_total) : n(formContrato.saldo_pendiente),
+        cotizacion_origen_id: formContrato.cotizacion_origen_id === "" ? null : n(formContrato.cotizacion_origen_id),
+        consulta_origen_id: formContrato.consulta_origen_id === "" ? null : n(formContrato.consulta_origen_id),
+        medico_origen_id: formContrato.medico_origen_id === "" ? null : n(formContrato.medico_origen_id),
+        monto_total: formContrato.monto_total === "" ? null : n(formContrato.monto_total),
+        saldo_pendiente: formContrato.saldo_pendiente === "" ? null : n(formContrato.saldo_pendiente),
         dias_anticipacion_liquidacion: Math.max(0, n(formContrato.dias_anticipacion_liquidacion)),
         anchor_tipo: formContrato.anchor_tipo || "ninguno",
         anchor_fecha: (formContrato.anchor_tipo !== "ninguno" && formContrato.anchor_fecha) ? formContrato.anchor_fecha : null,
       };
 
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -369,6 +409,7 @@ export default function ContratosPage() {
         : "";
       Swal.fire("Listo", `Contrato de paciente guardado${agendaMsg}`, "success");
       setFormContrato(EMPTY_CONTRATO);
+      setOrigenAuto({ ...EMPTY_ORIGEN_AUTO });
       setPacienteSearch("");
       setPacienteResultados([]);
       setPacienteSeleccionado(null);
@@ -376,7 +417,7 @@ export default function ContratosPage() {
       setPageContrato(1);
       loadContratos();
     } catch (err) {
-      Swal.fire("Error", err?.message || "No se pudo guardar contrato", "error");
+      Swal.fire("No se pudo guardar el contrato", getFriendlyContratoError(err?.message || ""), "error");
     } finally {
       setSavingContrato(false);
     }
@@ -390,6 +431,9 @@ export default function ContratosPage() {
       id: Number(row?.id || 0),
       paciente_id: String(row?.paciente_id || ""),
       plantilla_id: String(row?.plantilla_id || ""),
+      cotizacion_origen_id: String(row?.cotizacion_origen_id || ""),
+      consulta_origen_id: String(row?.consulta_origen_id || ""),
+      medico_origen_id: String(row?.medico_origen_id || ""),
       fecha_inicio: row?.fecha_inicio || "",
       fecha_fin: row?.fecha_fin || "",
       monto_total: String(row?.monto_total ?? ""),
@@ -407,6 +451,14 @@ export default function ContratosPage() {
       anchor_fecha: row?.anchor_fecha || "",
       estado: row?.estado || "activo",
       observaciones: row?.observaciones || "",
+    });
+    setOrigenAuto({
+      cotizacion_origen_id: Number(row?.cotizacion_origen_id || 0),
+      consulta_origen_id: Number(row?.consulta_origen_id || 0),
+      medico_origen_id: Number(row?.medico_origen_id || 0),
+      medico_origen_nombre: String(row?.medico_origen_nombre_snapshot || "").trim(),
+      servicio_medicos: {},
+      loading: false,
     });
     setPacienteSeleccionado({
       id: Number(row?.paciente_id || 0),
@@ -435,8 +487,73 @@ export default function ContratosPage() {
     setMostrarResultadosPaciente(false);
   };
 
+  const resolverOrigenAutomaticoContrato = useCallback(async () => {
+    const pacienteId = n(formContrato.paciente_id);
+    const plantillaId = n(formContrato.plantilla_id);
+    if (n(formContrato.id) > 0 || pacienteId <= 0 || plantillaId <= 0) {
+      return;
+    }
+
+    setOrigenAuto((prev) => ({ ...prev, loading: true }));
+    try {
+      const params = new URLSearchParams();
+      params.set("accion", "resolver_origen_automatico");
+      params.set("paciente_id", String(pacienteId));
+      params.set("plantilla_id", String(plantillaId));
+      const res = await authFetch(`api_contratos.php?${params.toString()}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!data?.success) throw new Error(data?.error || "No se pudo resolver origen automatico");
+
+      const cotizacionOrigenId = Number(data?.origen?.cotizacion_origen_id || 0);
+      const consultaOrigenId = Number(data?.origen?.consulta_origen_id || 0);
+      const medicoOrigenId = Number(data?.origen?.medico_origen_id || 0);
+      const medicoOrigenNombre = String(data?.origen?.medico_origen_nombre || "").trim();
+      const servicioMedicos = (data?.origen?.servicio_medicos && typeof data.origen.servicio_medicos === "object")
+        ? data.origen.servicio_medicos
+        : {};
+
+      setOrigenAuto({
+        cotizacion_origen_id: cotizacionOrigenId,
+        consulta_origen_id: consultaOrigenId,
+        medico_origen_id: medicoOrigenId,
+        medico_origen_nombre: medicoOrigenNombre,
+        servicio_medicos: servicioMedicos,
+        loading: false,
+      });
+
+      setFormContrato((prev) => ({
+        ...prev,
+        cotizacion_origen_id: cotizacionOrigenId > 0 ? String(cotizacionOrigenId) : "",
+        consulta_origen_id: consultaOrigenId > 0 ? String(consultaOrigenId) : "",
+        medico_origen_id: medicoOrigenId > 0 ? String(medicoOrigenId) : "",
+      }));
+    } catch {
+      setOrigenAuto((prev) => ({
+        ...EMPTY_ORIGEN_AUTO,
+        loading: false,
+      }));
+    }
+  }, [formContrato.id, formContrato.paciente_id, formContrato.plantilla_id]);
+
+  useEffect(() => {
+    if (n(formContrato.id) > 0) return;
+    const pacienteId = n(formContrato.paciente_id);
+    const plantillaId = n(formContrato.plantilla_id);
+    if (pacienteId <= 0 || plantillaId <= 0) {
+      setOrigenAuto({ ...EMPTY_ORIGEN_AUTO });
+      setFormContrato((prev) => ({ ...prev, cotizacion_origen_id: "", consulta_origen_id: "", medico_origen_id: "" }));
+      return;
+    }
+
+    const handle = setTimeout(() => {
+      resolverOrigenAutomaticoContrato();
+    }, 180);
+    return () => clearTimeout(handle);
+  }, [formContrato.id, formContrato.paciente_id, formContrato.plantilla_id, resolverOrigenAutomaticoContrato]);
+
   const limpiarPacienteContrato = () => {
     setFormContrato((prev) => ({ ...prev, paciente_id: "" }));
+    setOrigenAuto({ ...EMPTY_ORIGEN_AUTO });
     setPacienteSearch("");
     setPacienteResultados([]);
     setPacienteSeleccionado(null);
@@ -467,9 +584,8 @@ export default function ContratosPage() {
         if (!cf.isConfirmed) return;
       }
 
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accion: "estado_contrato_paciente", id, estado }),
       });
@@ -486,6 +602,7 @@ export default function ContratosPage() {
       ...prev,
       servicio_id: Number(item?.id || 0),
       descripcion_snapshot: String(item?.descripcion || ""),
+      medico_id: Number(item?.medico_id || 0),
       medico_nombre_completo: String(item?.medico_nombre_completo || "").trim(),
       precio_particular: n(item?.precio_particular),
       fuente: String(item?.fuente || "").trim(),
@@ -499,6 +616,7 @@ export default function ContratosPage() {
       servicio_search: "",
       servicio_id: "",
       descripcion_snapshot: "",
+      medico_id: "",
       medico_nombre_completo: "",
       precio_particular: "",
       fuente: "",
@@ -741,7 +859,7 @@ export default function ContratosPage() {
                     if (it.offset_tipo === "semana_gestacional") return `Sem. gest. ${it.offset_valor}`;
                     return `+${it.offset_valor} ${it.offset_unidad} desde anchor`;
                   })();
-                  const medicoItem = String(it.medico_nombre_completo || "").trim() || "General";
+                  const medicoItem = String(it.medico_nombre_completo || it.medico_nombre_snapshot || "").trim() || (n(it.medico_id) > 0 ? `Medico #${n(it.medico_id)}` : "General");
                   return (
                   <tr key={`${it.servicio_tipo}-${it.servicio_id}-${idx}`} className="border-t">
                     <td className="px-2 py-2">{it.servicio_tipo}</td>
@@ -813,6 +931,9 @@ export default function ContratosPage() {
           </select>
           <input className="border rounded px-2 py-2" type="date" value={formContrato.fecha_inicio} onChange={(e) => setFormContrato((p) => ({ ...p, fecha_inicio: e.target.value }))} />
           <input className="border rounded px-2 py-2" type="date" value={formContrato.fecha_fin} onChange={(e) => setFormContrato((p) => ({ ...p, fecha_fin: e.target.value }))} />
+          <input className="border rounded px-2 py-2 bg-slate-50" type="text" placeholder="Cotizacion origen (auto)" value="No aplica (fuente: plantilla)" readOnly />
+          <input className="border rounded px-2 py-2 bg-slate-50" type="text" placeholder="Consulta origen (auto)" value={origenAuto.consulta_origen_id > 0 ? `Consulta #${origenAuto.consulta_origen_id}` : "Se genera desde agenda"} readOnly />
+          <input className="border rounded px-2 py-2 bg-slate-50" type="text" placeholder="Medico origen (auto)" value={origenAuto.medico_origen_id > 0 ? `#${origenAuto.medico_origen_id}${origenAuto.medico_origen_nombre ? ` - ${origenAuto.medico_origen_nombre}` : ""}` : "Definido por item de plantilla"} readOnly />
           <input className="border rounded px-2 py-2" type="number" min="0" step="0.01" placeholder="Monto total" value={formContrato.monto_total} onChange={(e) => setFormContrato((p) => ({ ...p, monto_total: e.target.value }))} />
           <input className="border rounded px-2 py-2" type="number" min="0" step="0.01" placeholder="Saldo pendiente (opcional)" value={formContrato.saldo_pendiente} onChange={(e) => setFormContrato((p) => ({ ...p, saldo_pendiente: e.target.value }))} />
           <input className="border rounded px-2 py-2" type="number" min="0" placeholder="Dias previos para liquidar" value={formContrato.dias_anticipacion_liquidacion} onChange={(e) => setFormContrato((p) => ({ ...p, dias_anticipacion_liquidacion: e.target.value }))} />
@@ -851,6 +972,14 @@ export default function ContratosPage() {
         {pacienteSeleccionado && (
           <div className="mb-2 text-xs text-slate-600 bg-slate-50 border rounded px-3 py-2">
             Paciente seleccionado: {pacienteSeleccionado.nombre} {pacienteSeleccionado.apellido} | ID: {pacienteSeleccionado.id} | DNI: {pacienteSeleccionado.dni || "-"} | HC: {pacienteSeleccionado.historia_clinica || "-"}
+          </div>
+        )}
+
+        {(origenAuto.loading || origenAuto.cotizacion_origen_id > 0 || origenAuto.consulta_origen_id > 0 || origenAuto.medico_origen_id > 0) && (
+          <div className="mb-2 text-xs text-slate-700 bg-blue-50 border border-blue-100 rounded px-3 py-2">
+            {origenAuto.loading
+              ? "Preparando herencia automatica desde la plantilla..."
+              : `Origen detectado: plantilla seleccionada, ${origenAuto.medico_origen_id > 0 ? `medico principal referencial #${origenAuto.medico_origen_id}` : "medicos por item"}, ${origenAuto.consulta_origen_id > 0 ? `consulta #${origenAuto.consulta_origen_id}` : "consulta se crea desde agenda"}.`}
           </div>
         )}
 
