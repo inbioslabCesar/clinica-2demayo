@@ -197,9 +197,9 @@ UPDATE contratos_plantillas_items cpi
 INNER JOIN tarifas t
   ON t.id = cpi.servicio_id
  AND (
-   LOWER(TRIM(cpi.servicio_tipo)) = LOWER(TRIM(t.servicio_tipo))
-   OR (LOWER(TRIM(cpi.servicio_tipo)) = 'procedimiento' AND LOWER(TRIM(t.servicio_tipo)) = 'procedimientos')
-   OR (LOWER(TRIM(cpi.servicio_tipo)) = 'rayosx' AND LOWER(TRIM(t.servicio_tipo)) IN ('rayos x', 'rayos_x', 'rayosx'))
+   LOWER(TRIM(cpi.servicio_tipo)) COLLATE utf8mb4_unicode_ci = LOWER(TRIM(t.servicio_tipo)) COLLATE utf8mb4_unicode_ci
+   OR (LOWER(TRIM(cpi.servicio_tipo)) COLLATE utf8mb4_unicode_ci = 'procedimiento' AND LOWER(TRIM(t.servicio_tipo)) COLLATE utf8mb4_unicode_ci = 'procedimientos')
+   OR (LOWER(TRIM(cpi.servicio_tipo)) COLLATE utf8mb4_unicode_ci = 'rayosx' AND LOWER(TRIM(t.servicio_tipo)) COLLATE utf8mb4_unicode_ci IN ('rayos x', 'rayos_x', 'rayosx'))
  )
 SET cpi.medico_id = t.medico_id
 WHERE (cpi.medico_id IS NULL OR cpi.medico_id = 0)
