@@ -293,10 +293,21 @@ export default function ResultadosLaboratorioPage() {
                       let exId = ex;
                       let nombreParam = null;
                       if (ex.includes("__")) {
-                        [exId, nombreParam] = ex.split("__");
+                        const parts = ex.split("__");
+                        exId = parts[0];
+                        nombreParam = parts.slice(1).join("__");
                       }
                       if (!agrupados[exId]) agrupados[exId] = [];
                       agrupados[exId].push({ nombreParam, val, ex });
+                    });
+                    // Si para un examen hay entradas con nombreParam y sin nombreParam,
+                    // descartar las entradas sin nombreParam (son claves legacy duplicadas)
+                    Object.keys(agrupados).forEach(exId => {
+                      const entradas = agrupados[exId];
+                      const tieneConNombre = entradas.some(e => e.nombreParam !== null);
+                      if (tieneConNombre) {
+                        agrupados[exId] = entradas.filter(e => e.nombreParam !== null);
+                      }
                     });
                     return Object.entries(agrupados).map(([exId, params]) => {
                       const examName = idToNombre[exId] || exId;
