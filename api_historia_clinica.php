@@ -35,6 +35,26 @@ function hc_actor_label() {
     return $display . ' (' . $rol . ')';
 }
 
+function hc_resolver_actor_usuario_id() {
+    if (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) {
+        $rol = strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
+        if ($rol === 'medico') {
+            return 0;
+        }
+        return (int)($_SESSION['usuario']['id'] ?? 0);
+    }
+
+    if (isset($_SESSION['usuario_id'])) {
+        return (int)$_SESSION['usuario_id'];
+    }
+
+    if (isset($_SESSION['medico_id'])) {
+        return 0;
+    }
+
+    return 0;
+}
+
 function hc_append_proxima_historial($proximaCita, $evento) {
     if (!is_array($proximaCita)) {
         $proximaCita = [];
@@ -172,10 +192,7 @@ function hc_crear_cotizacion_proxima_cita($conn, $pacienteId, $medicoId, $consul
     }
     
     // Crear cotización
-    $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
-    if ($usuarioId <= 0) {
-        $usuarioId = 1;
-    }
+    $usuarioId = hc_resolver_actor_usuario_id();
 
     $stmtCot = $conn->prepare('INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones) VALUES (?, ?, ?, ?, "pendiente", ?)');
     if (!$stmtCot) {
@@ -256,10 +273,7 @@ function hc_asegurar_cotizacion_control($conn, $pacienteId, $medicoId, $consulta
         }
     }
 
-    $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
-    if ($usuarioId <= 0) {
-        $usuarioId = 1;
-    }
+    $usuarioId = hc_resolver_actor_usuario_id();
 
     $stmtCot = $conn->prepare('INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones) VALUES (?, ?, 0, 0, "CONTROL", ?)');
     if (!$stmtCot) {
@@ -440,7 +454,6 @@ function hc_crear_cotizacion_receta_auto($conn, $pacienteId, $usuarioId, $consul
     $usuarioId = (int)$usuarioId;
     $consultaId = (int)$consultaId;
     if ($pacienteId <= 0 || $consultaId <= 0) return 0;
-    if ($usuarioId <= 0) $usuarioId = 1;
 
     $observaciones = 'Cotizacion automatica de receta desde Historia Clinica. Consulta #' . $consultaId;
     $hasSaldoV2 = hc_column_exists($conn, 'cotizaciones', 'total_pagado') && hc_column_exists($conn, 'cotizaciones', 'saldo_pendiente');
@@ -613,8 +626,7 @@ function hc_sincronizar_receta_a_cotizacion($conn, $consultaId, $hcId, $datos) {
         ];
     }
 
-    $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
-    if ($usuarioId <= 0) $usuarioId = 1;
+    $usuarioId = hc_resolver_actor_usuario_id();
 
     $conn->begin_transaction();
     try {

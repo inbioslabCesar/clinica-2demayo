@@ -435,8 +435,6 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Falta consulta_id']);
             exit;
         }
-        $consultaFiltroEstricto = rl_consulta_requiere_filtro_estricto($conn, (int)$consulta_id);
-
         header('Content-Type: application/json; charset=utf-8');
 
         if ($esSesionMedico) {
@@ -453,47 +451,14 @@ switch ($method) {
         }
         $resultados = [];
 
-        // Priorizar resultados por orden asociada a la consulta.
-        // En no estricto, mantener compatibilidad por paciente para órdenes legacy sin consulta_id.
-        if ($consultaFiltroEstricto) {
-            $stmt = $conn->prepare(
-                'SELECT r.* FROM resultados_laboratorio r'
-                . ' INNER JOIN ordenes_laboratorio o ON o.id = r.orden_id'
-                . ' WHERE o.consulta_id = ?'
-                . '    OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND EXISTS('
-                . '        SELECT 1 FROM cotizaciones_detalle cd_r'
-                . '        INNER JOIN agenda_contrato ac_r'
-                . '            ON ac_r.contrato_paciente_id = cd_r.contrato_paciente_id'
-                . '           AND LOWER(TRIM(ac_r.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_r.servicio_tipo)) COLLATE utf8mb4_general_ci'
-                . '           AND ac_r.servicio_id = cd_r.servicio_id'
-                . '        WHERE cd_r.cotizacion_id = o.cotizacion_id'
-                . '          AND cd_r.contrato_paciente_id > 0'
-                . '          AND ac_r.consulta_id = ?'
-                . '    ))'
-                . ' ORDER BY r.fecha ASC, r.id ASC'
-            );
-            $stmt->bind_param('ii', $consulta_id, $consulta_id);
-        } else {
-            $stmt = $conn->prepare(
-                'SELECT r.* FROM resultados_laboratorio r'
-                . ' INNER JOIN ordenes_laboratorio o ON o.id = r.orden_id'
-                . ' WHERE o.consulta_id = ?'
-                . '    OR ((o.consulta_id IS NULL OR o.consulta_id = 0)'
-                . '        AND o.paciente_id = (SELECT c_hc.paciente_id FROM consultas c_hc WHERE c_hc.id = ? LIMIT 1))'
-                . '    OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND EXISTS('
-                . '        SELECT 1 FROM cotizaciones_detalle cd_r'
-                . '        INNER JOIN agenda_contrato ac_r'
-                . '            ON ac_r.contrato_paciente_id = cd_r.contrato_paciente_id'
-                . '           AND LOWER(TRIM(ac_r.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_r.servicio_tipo)) COLLATE utf8mb4_general_ci'
-                . '           AND ac_r.servicio_id = cd_r.servicio_id'
-                . '        WHERE cd_r.cotizacion_id = o.cotizacion_id'
-                . '          AND cd_r.contrato_paciente_id > 0'
-                . '          AND ac_r.consulta_id = ?'
-                . '    ))'
-                . ' ORDER BY r.fecha ASC, r.id ASC'
-            );
-            $stmt->bind_param('iii', $consulta_id, $consulta_id, $consulta_id);
-        }
+        // Regla estricta HC: solo resultados vinculados explícitamente a la consulta actual.
+        $stmt = $conn->prepare(
+            'SELECT r.* FROM resultados_laboratorio r'
+            . ' INNER JOIN ordenes_laboratorio o ON o.id = r.orden_id'
+            . ' WHERE o.consulta_id = ?'
+            . ' ORDER BY r.fecha ASC, r.id ASC'
+        );
+        $stmt->bind_param('i', $consulta_id);
         $stmt->execute();
         $res = $stmt->get_result();
         while ($row = $res->fetch_assoc()) {
@@ -519,68 +484,25 @@ switch ($method) {
         $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\') . '/';
 
                 $documentos_externos = [];
-                if ($consultaFiltroEstricto) {
-                        $stmtDocs = $conn->prepare(
-                                'SELECT
-                                        dep.id AS documento_id,
-                                        dep.titulo,
-                                        dep.descripcion,
-                                        dep.fecha AS documento_fecha,
-                                        dep.orden_id,
-                                        dea.id AS archivo_id,
-                                        dea.nombre_original,
-                                        dea.mime_type,
-                                        dea.tamano
-                                 FROM documentos_externos_paciente dep
-                                 INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
-                                 WHERE LOWER(TRIM(dep.tipo)) = "laboratorio"
-                                     AND dep.orden_id IN (
-                                         SELECT id FROM ordenes_laboratorio
-                                         WHERE consulta_id = ?
-                                         UNION
-                                         SELECT o2.id FROM ordenes_laboratorio o2
-                                         WHERE (o2.consulta_id IS NULL OR o2.consulta_id = 0)
-                                           AND EXISTS(
-                                               SELECT 1 FROM cotizaciones_detalle cd_doc
-                                               INNER JOIN agenda_contrato ac_doc
-                                                   ON ac_doc.contrato_paciente_id = cd_doc.contrato_paciente_id
-                                                                  AND LOWER(TRIM(ac_doc.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_doc.servicio_tipo)) COLLATE utf8mb4_general_ci
-                                                  AND ac_doc.servicio_id = cd_doc.servicio_id
-                                               WHERE cd_doc.cotizacion_id = o2.cotizacion_id
-                                                 AND cd_doc.contrato_paciente_id > 0
-                                                 AND ac_doc.consulta_id = ?
-                                           )
-                                     )
-                                 ORDER BY dep.fecha DESC, dep.id DESC, dea.id ASC'
-                        );
-                } else {
-                        $stmtDocs = $conn->prepare(
-                                'SELECT
-                                        dep.id AS documento_id,
-                                        dep.titulo,
-                                        dep.descripcion,
-                                        dep.fecha AS documento_fecha,
-                                        dep.orden_id,
-                                        dea.id AS archivo_id,
-                                        dea.nombre_original,
-                                        dea.mime_type,
-                                        dea.tamano
-                                 FROM documentos_externos_paciente dep
-                                 INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
-                                 WHERE LOWER(TRIM(dep.tipo)) = "laboratorio"
-                                     AND (
-                                         dep.orden_id IN (SELECT id FROM ordenes_laboratorio WHERE consulta_id = ?)
-                                         OR dep.cotizacion_id IN (SELECT cotizacion_id FROM ordenes_laboratorio WHERE consulta_id = ? AND cotizacion_id IS NOT NULL)
-                                     )
-                                 ORDER BY dep.fecha DESC, dep.id DESC, dea.id ASC'
-                        );
-                }
+                $stmtDocs = $conn->prepare(
+                    'SELECT
+                        dep.id AS documento_id,
+                        dep.titulo,
+                        dep.descripcion,
+                        dep.fecha AS documento_fecha,
+                        dep.orden_id,
+                        dea.id AS archivo_id,
+                        dea.nombre_original,
+                        dea.mime_type,
+                        dea.tamano
+                     FROM documentos_externos_paciente dep
+                     INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
+                     WHERE LOWER(TRIM(dep.tipo)) = "laboratorio"
+                       AND dep.orden_id IN (SELECT id FROM ordenes_laboratorio WHERE consulta_id = ?)
+                     ORDER BY dep.fecha DESC, dep.id DESC, dea.id ASC'
+                );
         if ($stmtDocs) {
-                        if ($consultaFiltroEstricto) {
-                                $stmtDocs->bind_param('ii', $consulta_id, $consulta_id);
-                        } else {
-                                $stmtDocs->bind_param('ii', $consulta_id, $consulta_id);
-                        }
+                    $stmtDocs->bind_param('i', $consulta_id);
             $stmtDocs->execute();
             $rowsDocs = $stmtDocs->get_result()->fetch_all(MYSQLI_ASSOC);
             $stmtDocs->close();

@@ -226,127 +226,183 @@ function extraer_detalles_farmacia_desde_json($descripcionJson, $fallbackRow = n
     return $detalles;
 }
 
-function obtener_ventas_generales_farmacia($conn, $fecha_inicio = null, $fecha_fin = null) {
-    $where = [
-        "c.estado <> 'anulado'",
-        "EXISTS (
-            SELECT 1
-            FROM cobros_detalle cd
-            WHERE cd.cobro_id = c.id
-              AND (
-                cd.servicio_tipo = 'farmacia'
-                OR cd.descripcion LIKE '%\\\"servicio_tipo\\\":\\\"farmacia\\\"%'
-              )
-        )"
-    ];
-    $params = [];
-    $types = '';
+/**
+ * Paginación real en SQL: UNION ALL de cotizaciones_farmacia + cobros con ítems farmacia.
+ * Devuelve sólo las filas de la página solicitada; el total lo resuelve un COUNT separado.
+ * Elimina el anti-patrón anterior de traer toda la tabla para paginar en PHP.
+ */
+function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $fecha_fin, $buscar) {
+    $offset = ($page - 1) * $limit;
 
+    $whereLegacy  = '1=1';
+    $whereGeneral = "c.estado <> 'anulado'
+        AND EXISTS (
+            SELECT 1 FROM cobros_detalle cdx
+            WHERE cdx.cobro_id = c.id
+              AND (cdx.servicio_tipo = 'farmacia'
+                   OR cdx.descripcion LIKE '%\\\"servicio_tipo\\\":\\\"farmacia\\\"%')
+        )";
+
+    $unionParams = [];
+    $unionTypes  = '';
     if ($fecha_inicio && $fecha_fin) {
-        $where[] = 'DATE(c.fecha_cobro) BETWEEN ? AND ?';
-        $params[] = $fecha_inicio;
-        $params[] = $fecha_fin;
-        $types .= 'ss';
+        $whereLegacy  .= ' AND DATE(cf.fecha) BETWEEN ? AND ?';
+        $whereGeneral .= ' AND DATE(c.fecha_cobro) BETWEEN ? AND ?';
+        $unionParams   = [$fecha_inicio, $fecha_fin, $fecha_inicio, $fecha_fin];
+        $unionTypes    = 'ssss';
     }
 
-    $sql = "SELECT
-                c.id,
-                c.paciente_id,
-                c.usuario_id,
-                c.fecha_cobro,
-                c.total,
-                c.estado,
-                c.observaciones,
-                p.nombre,
-                p.apellido,
-                p.dni,
-                u.nombre AS usuario_nombre
-            FROM cobros c
-            LEFT JOIN pacientes p ON c.paciente_id = p.id
-            LEFT JOIN usuarios u ON c.usuario_id = u.id
-            WHERE " . implode(' AND ', $where) . "
-            ORDER BY c.fecha_cobro DESC";
+    $unionSql = "
+        SELECT
+            cf.id                                                                   AS id,
+            'legacy'                                                                AS source,
+            CONCAT('F', LPAD(cf.id, 6, '0'))                                       AS referencia,
+            cf.fecha                                                                AS fecha,
+            cf.paciente_id,
+            COALESCE(
+                NULLIF(TRIM(CONCAT(COALESCE(p.nombre,''), ' ', COALESCE(p.apellido,''))), ''),
+                NULLIF(TRIM(cf.paciente_nombre), ''),
+                'Particular'
+            )                                                                       AS paciente_nombre,
+            COALESCE(p.dni, cf.paciente_dni, '')                                    AS paciente_dni,
+            cf.usuario_id,
+            COALESCE(u.nombre, 'Sistema')                                           AS usuario_nombre,
+            cf.total                                                                AS total,
+            cf.estado,
+            NULL                                                                    AS observaciones
+        FROM cotizaciones_farmacia cf
+        LEFT JOIN pacientes p ON p.id = cf.paciente_id
+        LEFT JOIN usuarios u ON u.id = cf.usuario_id
+        WHERE $whereLegacy
 
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        respond(['success' => false, 'error' => 'Error en SQL: ' . $conn->error], 500);
-    }
-    if ($types !== '') {
-        $stmt->bind_param($types, ...$params);
-    }
-    if (!$stmt->execute()) {
-        respond(['success' => false, 'error' => 'Error al consultar ventas: ' . $stmt->error], 500);
+        UNION ALL
+
+        SELECT
+            c.id                                                                    AS id,
+            'general'                                                               AS source,
+            CONCAT('C', LPAD(c.id, 6, '0'))                                        AS referencia,
+            c.fecha_cobro                                                           AS fecha,
+            c.paciente_id,
+            COALESCE(
+                NULLIF(TRIM(CONCAT(COALESCE(p.nombre,''), ' ', COALESCE(p.apellido,''))), ''),
+                'Particular'
+            )                                                                       AS paciente_nombre,
+            COALESCE(p.dni, '')                                                     AS paciente_dni,
+            c.usuario_id,
+            COALESCE(u.nombre, 'Sistema')                                           AS usuario_nombre,
+            COALESCE((
+                SELECT SUM(CASE WHEN cd2.servicio_tipo = 'farmacia' THEN cd2.subtotal ELSE 0 END)
+                FROM cobros_detalle cd2
+                WHERE cd2.cobro_id = c.id
+            ), 0)                                                                   AS total,
+            c.estado,
+            c.observaciones
+        FROM cobros c
+        LEFT JOIN pacientes p ON p.id = c.paciente_id
+        LEFT JOIN usuarios u ON u.id = c.usuario_id
+        WHERE $whereGeneral
+    ";
+
+    // Filtro de búsqueda aplicado sobre el resultado del UNION
+    $searchWhere  = '1=1';
+    $searchParams = [];
+    $searchTypes  = '';
+    if ($buscar !== '') {
+        $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $buscar) . '%';
+        $searchWhere  = '(paciente_nombre LIKE ? OR paciente_dni LIKE ? OR referencia LIKE ? OR usuario_nombre LIKE ?)';
+        $searchParams = [$like, $like, $like, $like];
+        $searchTypes  = 'ssss';
     }
 
+    $allParams = array_merge($unionParams, $searchParams);
+    $allTypes  = $unionTypes . $searchTypes;
+
+    // 1) COUNT total (2 queries: count + data — sin importar cuántos registros haya en BD)
+    $stmtCount = $conn->prepare("SELECT COUNT(*) AS total FROM ($unionSql) AS ventas WHERE $searchWhere");
+    if (!$stmtCount) {
+        respond(['success' => false, 'error' => 'Error count farmacia: ' . $conn->error], 500);
+    }
+    if ($allTypes !== '') {
+        $stmtCount->bind_param($allTypes, ...$allParams);
+    }
+    $stmtCount->execute();
+    $total = (int)($stmtCount->get_result()->fetch_assoc()['total'] ?? 0);
+
+    // 2) Datos de la página solicitada
+    $dataParams = array_merge($allParams, [$limit, $offset]);
+    $dataTypes  = $allTypes . 'ii';
+    $stmtData   = $conn->prepare("SELECT * FROM ($unionSql) AS ventas WHERE $searchWhere ORDER BY fecha DESC LIMIT ? OFFSET ?");
+    if (!$stmtData) {
+        respond(['success' => false, 'error' => 'Error data farmacia: ' . $conn->error], 500);
+    }
+    if ($dataTypes !== '') {
+        $stmtData->bind_param($dataTypes, ...$dataParams);
+    }
+    $stmtData->execute();
+    $rows = $stmtData->get_result()->fetch_all(MYSQLI_ASSOC);
+
+    // 3) Enriquecer medico_nombre para filas 'general': una sola query IN() sobre las N filas de la página
+    $cobroIds = array_values(array_filter(
+        array_map(fn($r) => $r['source'] === 'general' ? (int)$r['id'] : 0, $rows)
+    ));
+    $medicoNombrePorCobro = [];
+    if (!empty($cobroIds)
+        && table_exists_local($conn, 'cotizacion_movimientos')
+        && table_exists_local($conn, 'cotizaciones_detalle')
+    ) {
+        $ph      = implode(',', array_fill(0, count($cobroIds), '?'));
+        $stmtMed = $conn->prepare(
+            "SELECT cm.cobro_id,
+                    MAX(TRIM(CONCAT(COALESCE(m.nombre,''), ' ', COALESCE(m.apellido,'')))) AS medico_nombre
+             FROM cotizacion_movimientos cm
+             INNER JOIN cotizaciones_detalle cd ON cd.cotizacion_id = cm.cotizacion_id
+             LEFT JOIN medicos m ON m.id = cd.medico_id
+             WHERE cm.cobro_id IN ($ph)
+               AND cd.medico_id IS NOT NULL AND cd.medico_id > 0
+             GROUP BY cm.cobro_id"
+        );
+        if ($stmtMed) {
+            $stmtMed->bind_param(str_repeat('i', count($cobroIds)), ...$cobroIds);
+            $stmtMed->execute();
+            foreach ($stmtMed->get_result()->fetch_all(MYSQLI_ASSOC) as $mRow) {
+                $medicoNombrePorCobro[(int)$mRow['cobro_id']] = trim((string)$mRow['medico_nombre']);
+            }
+        }
+    }
+
+    // 4) Normalizar filas de la página (máximo $limit filas en memoria)
     $ventas = [];
-    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    $stmtDetalle = $conn->prepare("SELECT id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal FROM cobros_detalle WHERE cobro_id = ?");
-    if (!$stmtDetalle) {
-        respond(['success' => false, 'error' => 'Error al preparar detalle de cobros: ' . $conn->error], 500);
-    }
-
     foreach ($rows as $row) {
-        $cobroId = (int)$row['id'];
-        $stmtDetalle->bind_param('i', $cobroId);
-        if (!$stmtDetalle->execute()) {
-            respond(['success' => false, 'error' => 'Error al consultar detalle de cobro: ' . $stmtDetalle->error], 500);
-        }
-        $detalleRows = $stmtDetalle->get_result()->fetch_all(MYSQLI_ASSOC);
-        $detallesFarmacia = [];
-        foreach ($detalleRows as $detalleRow) {
-            $detallesFarmacia = array_merge(
-                $detallesFarmacia,
-                extraer_detalles_farmacia_desde_json($detalleRow['descripcion'] ?? '', $detalleRow)
-            );
-        }
-
-        if (empty($detallesFarmacia)) {
-            continue;
-        }
-
-        $pacienteNombre = formatear_paciente($row['nombre'] ?? '', $row['apellido'] ?? '');
-        $pacienteDni = trim((string)($row['dni'] ?? ''));
-        if ($pacienteNombre === 'Particular' && $pacienteDni === '') {
-            $temp = extraer_paciente_temporal_desde_observaciones($row['observaciones'] ?? '');
-            if (trim((string)($temp['nombre'] ?? '')) !== '') {
-                $pacienteNombre = $temp['nombre'];
-            }
-            $pacienteDni = trim((string)($temp['dni'] ?? ''));
-
-            if (($pacienteNombre === 'Particular' || $pacienteNombre === '') && $pacienteDni === '') {
-                $pacienteCot = resolver_paciente_desde_cotizacion_por_cobro($conn, $cobroId);
-                if (trim((string)($pacienteCot['nombre'] ?? '')) !== '') {
-                    $pacienteNombre = trim((string)$pacienteCot['nombre']);
+        $medico = '';
+        if ($row['source'] === 'general') {
+            $medico = $medicoNombrePorCobro[(int)$row['id']] ?? '';
+            // Fallback de paciente desde observaciones solo si el campo viene vacío
+            if (($row['paciente_nombre'] ?? '') === 'Particular' && ($row['paciente_dni'] ?? '') === '') {
+                $tmp = extraer_paciente_temporal_desde_observaciones($row['observaciones'] ?? '');
+                if (trim((string)($tmp['nombre'] ?? '')) !== '') {
+                    $row['paciente_nombre'] = $tmp['nombre'];
                 }
-                if (trim((string)($pacienteCot['dni'] ?? '')) !== '') {
-                    $pacienteDni = trim((string)$pacienteCot['dni']);
-                }
+                $row['paciente_dni'] = trim((string)($tmp['dni'] ?? ''));
             }
         }
-
-        $totalFarmacia = 0;
-        foreach ($detallesFarmacia as $detalle) {
-            $totalFarmacia += (float)($detalle['subtotal'] ?? 0);
-        }
-
         $ventas[] = [
-            'id' => $cobroId,
-            'source' => 'general',
-            'origen' => 'cobro',
-            'referencia' => sprintf('C%06d', $cobroId),
-            'fecha' => $row['fecha_cobro'],
-            'paciente_id' => isset($row['paciente_id']) ? (int)$row['paciente_id'] : null,
-            'paciente_nombre' => $pacienteNombre,
-            'paciente_dni' => $pacienteDni,
-            'usuario_id' => isset($row['usuario_id']) ? (int)$row['usuario_id'] : null,
-            'usuario_nombre' => $row['usuario_nombre'] ?? '',
-            'medico_nombre' => resolver_medico_desde_cobro($conn, $cobroId),
-            'total' => round($totalFarmacia, 2),
-            'estado' => $row['estado'] ?? 'pagado'
+            'id'              => (int)$row['id'],
+            'source'          => $row['source'],
+            'origen'          => $row['source'] === 'legacy' ? 'farmacia' : 'cobro',
+            'referencia'      => $row['referencia'],
+            'fecha'           => $row['fecha'],
+            'paciente_id'     => isset($row['paciente_id']) ? (int)$row['paciente_id'] : null,
+            'paciente_nombre' => $row['paciente_nombre'] ?? 'Particular',
+            'paciente_dni'    => $row['paciente_dni'] ?? '',
+            'usuario_id'      => isset($row['usuario_id']) ? (int)$row['usuario_id'] : null,
+            'usuario_nombre'  => $row['usuario_nombre'] ?? '',
+            'medico_nombre'   => $medico,
+            'total'           => round((float)($row['total'] ?? 0), 2),
+            'estado'          => $row['estado'] ?? 'pagado',
         ];
     }
 
-    return $ventas;
+    return ['ventas' => $ventas, 'total' => $total];
 }
 
 function obtener_detalle_venta_general($conn, $cobroId) {
@@ -527,62 +583,21 @@ switch($method) {
             $movimientos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             respond(['success' => true, 'movimientos' => $movimientos]);
         } else {
-            // Todas las ventas de farmacia (legacy + cobros generales con ítems farmacia)
-            $page = max(1, (int)($_GET['page'] ?? 1));
-            $limit = max(1, (int)($_GET['limit'] ?? 10));
-            $offset = ($page - 1) * $limit;
+            // Todas las ventas de farmacia — paginación real en SQL (UNION ALL + LIMIT/OFFSET)
+            $page         = max(1, (int)($_GET['page']  ?? 1));
+            $limit        = max(1, min(100, (int)($_GET['limit'] ?? 10)));
             $fecha_inicio = $_GET['fecha_inicio'] ?? null;
-            $fecha_fin = $_GET['fecha_fin'] ?? null;
+            $fecha_fin    = $_GET['fecha_fin']    ?? null;
+            $buscar       = trim((string)($_GET['buscar'] ?? ''));
 
-            $where = '';
-            $params = [];
-            $types = '';
-            if ($fecha_inicio && $fecha_fin) {
-                $where = 'WHERE DATE(c.fecha) BETWEEN ? AND ?';
-                $params = [$fecha_inicio, $fecha_fin];
-                $types = 'ss';
-            }
-            $sql = "SELECT c.*, 
-                COALESCE(p.nombre, c.paciente_nombre) as paciente_nombre, 
-                COALESCE(p.dni, c.paciente_dni) as paciente_dni, 
-                u.nombre as usuario_nombre 
-                FROM cotizaciones_farmacia c 
-                LEFT JOIN pacientes p ON c.paciente_id = p.id 
-                JOIN usuarios u ON c.usuario_id = u.id 
-                $where 
-                ORDER BY c.fecha DESC";
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                respond(['success' => false, 'error' => 'Error en SQL: ' . $conn->error], 500);
-            }
-            if ($types !== '' && !$stmt->bind_param($types, ...$params)) {
-                respond(['success' => false, 'error' => 'Error en bind_param: ' . $stmt->error], 500);
-            }
-            if (!$stmt->execute()) {
-                respond(['success' => false, 'error' => 'Error en execute: ' . $stmt->error], 500);
-            }
-
-            $ventasLegacy = array_map('normalizar_venta_legacy', $stmt->get_result()->fetch_all(MYSQLI_ASSOC));
-            $ventasGenerales = obtener_ventas_generales_farmacia($conn, $fecha_inicio, $fecha_fin);
-            $ventas = array_merge($ventasLegacy, $ventasGenerales);
-
-            usort($ventas, function ($a, $b) {
-                return strcmp((string)($b['fecha'] ?? ''), (string)($a['fecha'] ?? ''));
-            });
-
-            $total = count($ventas);
-            if ($offset > 0) {
-                $ventas = array_slice($ventas, $offset, $limit);
-            } else {
-                $ventas = array_slice($ventas, 0, $limit);
-            }
+            $resultado = listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $fecha_fin, $buscar);
 
             respond([
-                'success' => true,
-                'cotizaciones' => $ventas,
-                'total' => $total,
-                'page' => $page,
-                'limit' => $limit
+                'success'      => true,
+                'cotizaciones' => $resultado['ventas'],
+                'total'        => $resultado['total'],
+                'page'         => $page,
+                'limit'        => $limit,
             ]);
         }
         break;

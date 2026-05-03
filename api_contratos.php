@@ -922,7 +922,7 @@ function contratos_registrar_analitica_consumo_contrato(
         $servicioId
     );
     $contratoPacienteServicioId = (int)($origenCps['cps_id'] ?? 0);
-    $consultaOrigenId = (int)($origenCps['consulta_origen_id'] ?? 0);
+    $consultaOrigenId = ($origenCps['consulta_origen_id'] ?? 0) > 0 ? (int)$origenCps['consulta_origen_id'] : null;
     $medicoOrigenId = (int)($origenCps['medico_origen_id'] ?? 0);
     $medicoOrigenNombre = trim((string)($origenCps['medico_origen_nombre_snapshot'] ?? ''));
     $servicioNombreSnapshot = trim((string)($origenCps['servicio_nombre_snapshot'] ?? ''));
@@ -942,7 +942,7 @@ function contratos_registrar_analitica_consumo_contrato(
         $medicoOrigenId = 0;
     }
     if ($consultaOrigenId > 0 && !contratos_consulta_existe($conn, $consultaOrigenId)) {
-        $consultaOrigenId = 0;
+        $consultaOrigenId = null;
     }
 
     if ($medicoOrigenNombre === '' && $medicoOrigenId > 0) {
@@ -1632,7 +1632,7 @@ function contratos_generar_agenda_auto($conn, $contratoId, $plantillaId, $fechaI
     return $insertados;
 }
 
-function contratos_generar_consultas_origen_contrato($conn, $contratoPacienteId, $usuarioId = 0) {
+function contratos_generar_consultas_origen_contrato($conn, $contratoPacienteId, $usuarioId = 0, $consultaRaizInicial = null, $medicoRaizInicial = null) {
     $contratoPacienteId = (int)$contratoPacienteId;
     if ($contratoPacienteId <= 0 || !contratos_table_exists($conn, 'agenda_contrato')) {
         return 0;
@@ -1643,7 +1643,6 @@ function contratos_generar_consultas_origen_contrato($conn, $contratoPacienteId,
          FROM agenda_contrato ac
          INNER JOIN contratos_paciente cp ON cp.id = ac.contrato_paciente_id
          WHERE ac.contrato_paciente_id = ?
-           AND LOWER(TRIM(ac.servicio_tipo)) = "consulta"
          ORDER BY ac.fecha_programada ASC, ac.id ASC'
     );
     if (!$stmt) {
@@ -1658,30 +1657,94 @@ function contratos_generar_consultas_origen_contrato($conn, $contratoPacienteId,
         return 0;
     }
 
-    $creadas = 0;
+    $actualizados = 0;
     $hasConsultaOrigen = contratos_column_exists($conn, 'contratos_paciente_servicios', 'consulta_origen_id');
-    foreach ($eventos as $ev) {
-        $resultado = contratos_asegurar_consulta_evento($conn, $ev, $usuarioId, true);
-        if (!($resultado['success'] ?? false)) {
-            continue;
-        }
-
-        $consultaId = (int)($resultado['consulta_id'] ?? 0);
-        $plantillaItemId = (int)($ev['plantilla_item_id'] ?? 0);
-        if ($consultaId <= 0 || $plantillaItemId <= 0 || !$hasConsultaOrigen) {
-            continue;
-        }
-
-        $stmtUp = $conn->prepare('UPDATE contratos_paciente_servicios SET consulta_origen_id = CASE WHEN consulta_origen_id IS NULL OR consulta_origen_id <= 0 THEN ? ELSE consulta_origen_id END, updated_at = CURRENT_TIMESTAMP WHERE contrato_paciente_id = ? AND plantilla_item_id = ?');
-        if ($stmtUp) {
-            $stmtUp->bind_param('iii', $consultaId, $contratoPacienteId, $plantillaItemId);
-            $stmtUp->execute();
-            $stmtUp->close();
-        }
-        $creadas++;
+    $hasMedicoOrigen = contratos_column_exists($conn, 'contratos_paciente_servicios', 'medico_origen_id');
+    if (!$hasConsultaOrigen && !$hasMedicoOrigen) {
+        return 0;
     }
 
-    return $creadas;
+    $consultaRaizActiva = (int)$consultaRaizInicial;
+    if ($consultaRaizActiva > 0 && !contratos_consulta_existe($conn, $consultaRaizActiva)) {
+        $consultaRaizActiva = 0;
+    }
+
+    $medicoRaizActivo = (int)$medicoRaizInicial;
+    if ($medicoRaizActivo > 0 && !contratos_medico_existe($conn, $medicoRaizActivo)) {
+        $medicoRaizActivo = 0;
+    }
+
+    if ($consultaRaizActiva > 0) {
+        $medicoDeConsultaInicial = contratos_obtener_medico_de_consulta($conn, $consultaRaizActiva);
+        if ($medicoDeConsultaInicial > 0) {
+            $medicoRaizActivo = $medicoDeConsultaInicial;
+        }
+    }
+
+    foreach ($eventos as $ev) {
+        $plantillaItemId = (int)($ev['plantilla_item_id'] ?? 0);
+        if ($plantillaItemId <= 0) {
+            continue;
+        }
+
+        $servicioTipo = contratos_normalizar_servicio_tipo((string)($ev['servicio_tipo'] ?? ''));
+        $consultaOrigenAsignada = $consultaRaizActiva > 0 ? $consultaRaizActiva : null;
+        $medicoOrigenAsignado = $medicoRaizActivo > 0 ? $medicoRaizActivo : null;
+
+        if (contratos_servicio_es_consulta($servicioTipo)) {
+            $resultado = contratos_asegurar_consulta_evento($conn, $ev, $usuarioId, true);
+            if ($resultado['success'] ?? false) {
+                $consultaNueva = (int)($resultado['consulta_id'] ?? 0);
+                if ($consultaNueva > 0) {
+                    $consultaRaizActiva = $consultaNueva;
+                    $consultaOrigenAsignada = $consultaNueva;
+
+                    $medicoConsultaNueva = contratos_obtener_medico_de_consulta($conn, $consultaNueva);
+                    if ($medicoConsultaNueva > 0) {
+                        $medicoRaizActivo = $medicoConsultaNueva;
+                        $medicoOrigenAsignado = $medicoConsultaNueva;
+                    }
+                }
+            }
+        }
+
+        $sql = 'UPDATE contratos_paciente_servicios SET ';
+        $sets = [];
+        $types = '';
+        $params = [];
+
+        if ($hasConsultaOrigen) {
+            $sets[] = 'consulta_origen_id = ?';
+            $types .= 'i';
+            $params[] = $consultaOrigenAsignada;
+        }
+        if ($hasMedicoOrigen) {
+            $sets[] = 'medico_origen_id = COALESCE(medico_origen_id, ?)';
+            $types .= 'i';
+            $params[] = $medicoOrigenAsignado;
+        }
+
+        if (empty($sets)) {
+            continue;
+        }
+
+        $sql .= implode(', ', $sets) . ', updated_at = CURRENT_TIMESTAMP WHERE contrato_paciente_id = ? AND plantilla_item_id = ?';
+        $types .= 'ii';
+        $params[] = $contratoPacienteId;
+        $params[] = $plantillaItemId;
+
+        $stmtUp = $conn->prepare($sql);
+        if ($stmtUp) {
+            $stmtUp->bind_param($types, ...$params);
+            $stmtUp->execute();
+            if ($stmtUp->affected_rows > 0) {
+                $actualizados++;
+            }
+            $stmtUp->close();
+        }
+    }
+
+    return $actualizados;
 }
 
 if (!isset($_SESSION['usuario'])) {
@@ -2826,10 +2889,10 @@ try {
             $cotizacionOrigenId = (int)($data['cotizacion_origen_id'] ?? 0);
 
             if (!contratos_consulta_existe($conn, $consultaOrigenInput)) {
-                $consultaOrigenInput = 0;
+                $consultaOrigenInput = null;
             }
             if (!contratos_medico_existe($conn, $medicoOrigenInput)) {
-                $medicoOrigenInput = 0;
+                $medicoOrigenInput = null;
             }
 
             // Enfoque INBIOSLAB: el medico de origen se hereda por item desde la plantilla.
@@ -2935,12 +2998,12 @@ try {
                     throw new Exception('La plantilla tiene el item #' . $plantillaItemId . ' sin medico responsable. Corrige la plantilla antes de vender el contrato.');
                 }
 
-                $consultaOrigenItem = $consultaOrigenInput > 0 ? $consultaOrigenInput : 0;
-                if ($consultaOrigenItem > 0 && !contratos_consulta_existe($conn, $consultaOrigenItem)) {
-                    $consultaOrigenItem = 0;
+                $consultaOrigenItem = ($consultaOrigenInput !== null && (int)$consultaOrigenInput > 0) ? (int)$consultaOrigenInput : null;
+                if ($consultaOrigenItem !== null && !contratos_consulta_existe($conn, $consultaOrigenItem)) {
+                    $consultaOrigenItem = null;
                 }
 
-                $consultaOrigenItemNullable = $consultaOrigenItem > 0 ? $consultaOrigenItem : null;
+                $consultaOrigenItemNullable = $consultaOrigenItem;
                 $medicoOrigenItemNullable = $medicoOrigenItem > 0 ? $medicoOrigenItem : null;
 
                 $origenTipoItem = 'plantilla';
@@ -2975,7 +3038,7 @@ try {
             }
 
             $agendaInsertada = contratos_generar_agenda_auto($conn, $id, $plantillaId, $fechaInicio, $usuarioId, $regenerarAgenda, $anchorTipo, $anchorFecha);
-            contratos_generar_consultas_origen_contrato($conn, $id, $usuarioId);
+            contratos_generar_consultas_origen_contrato($conn, $id, $usuarioId, $consultaOrigenInput, $medicoOrigenInput);
 
             $conn->commit();
             contratos_responder(['success' => true, 'id' => $id, 'agenda_insertada' => $agendaInsertada, 'fecha_limite_liquidacion' => $fechaLimiteLiquidacion, 'anchor_tipo' => $anchorTipo, 'anchor_fecha' => $anchorFecha]);

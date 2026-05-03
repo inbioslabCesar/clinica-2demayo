@@ -159,6 +159,46 @@ export default function CobrarCotizacionPage() {
     };
   }, [cotizacionIds]);
 
+  useEffect(() => {
+    if (loading) return;
+    if (cotizacionIds.length !== 1) return;
+
+    const baseId = Number(cotizacionIds[0] || 0);
+    if (baseId <= 0) return;
+
+    let cancelled = false;
+    const resolverGrupo = async () => {
+      try {
+        const res = await authFetch(
+          `api_cotizaciones.php?accion=sugerir_grupo_cobro&cotizacion_id=${baseId}&_t=${Date.now()}`,
+          { cache: "no-store" }
+        );
+        const data = await res.json();
+        if (cancelled || !data?.success || !Array.isArray(data.ids)) return;
+
+        const sugeridos = Array.from(
+          new Set(
+            data.ids
+              .map((value) => Number(value))
+              .filter((value) => Number.isFinite(value) && value > 0)
+          )
+        );
+
+        if (sugeridos.length <= 1) return;
+
+        const query = `?ids=${sugeridos.join(",")}`;
+        navigate(`/cobrar-cotizacion/${Number(sugeridos[0])}${query}`, { replace: true });
+      } catch {
+        // Si falla la sugerencia, mantener el flujo normal de cobro individual.
+      }
+    };
+
+    resolverGrupo();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, cotizacionIds, navigate]);
+
   const cotizacionesActivas = useMemo(() => {
     if (selectedIds.size === 0) return cotizacionesSeleccionadas;
     return cotizacionesSeleccionadas.filter((c) => selectedIds.has(String(c.id)));

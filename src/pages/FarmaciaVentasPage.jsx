@@ -16,9 +16,28 @@ export default function FarmaciaVentasPage() {
   const [pagina, setPagina] = useState(1);
   const [tamanoPagina, setTamanoPagina] = useState(3);
   const [totalVentas, setTotalVentas] = useState(0);
+  const [buscarInput, setBuscarInput] = useState("");
+  const [buscar, setBuscar] = useState("");
+  const debounceRef = useRef(null);
   const ventasRequestIdRef = useRef(0);
   const ventasAbortRef = useRef(null);
   const detalleAbortRef = useRef(null);
+
+  const handleBuscarChange = (e) => {
+    const val = e.target.value;
+    setBuscarInput(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setBuscar(val);
+      setPagina(1);
+    }, 350);
+  };
+
+  const limpiarBusqueda = () => {
+    setBuscarInput("");
+    setBuscar("");
+    setPagina(1);
+  };
 
   const cargarVentas = async () => {
     const requestId = ++ventasRequestIdRef.current;
@@ -41,6 +60,9 @@ export default function FarmaciaVentasPage() {
     if (inicio && fin) {
       params.push(`fecha_inicio=${inicio}`);
       params.push(`fecha_fin=${fin}`);
+    }
+    if (buscar.trim()) {
+      params.push(`buscar=${encodeURIComponent(buscar.trim())}`);
     }
     url += "?" + params.join("&");
     try {
@@ -76,7 +98,7 @@ export default function FarmaciaVentasPage() {
       }
     };
     // eslint-disable-next-line
-  }, [fechaInicio, fechaFin, pagina, tamanoPagina]);
+  }, [fechaInicio, fechaFin, pagina, tamanoPagina, buscar]);
 
   const verDetalle = async (venta) => {
     if (detalleAbortRef.current) {
@@ -162,6 +184,33 @@ export default function FarmaciaVentasPage() {
         <button className="px-3 py-1 text-white rounded" onClick={cargarVentas} style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-secondary))" }}>Filtrar</button>
         {(fechaInicio || fechaFin) && (
           <button className="px-2 py-1 bg-gray-200 text-gray-700 rounded" onClick={() => { setFechaInicio(""); setFechaFin(""); }}>Limpiar</button>
+        )}
+      </div>
+      {/* Buscador dinámico */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m0 0A7 7 0 1 0 6.5 6.5a7 7 0 0 0 9.15 9.15z" /></svg>
+          </span>
+          <input
+            type="text"
+            value={buscarInput}
+            onChange={handleBuscarChange}
+            placeholder="Buscar por paciente, DNI, referencia, médico…"
+            className="w-full pl-9 pr-9 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+          />
+          {buscarInput && (
+            <button
+              onClick={limpiarBusqueda}
+              className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600"
+              title="Limpiar búsqueda"
+            >✕</button>
+          )}
+        </div>
+        {buscar && (
+          <span className="text-xs text-gray-500 whitespace-nowrap">
+            {totalVentas} resultado{totalVentas !== 1 ? 's' : ''}
+          </span>
         )}
       </div>
       {loading ? (

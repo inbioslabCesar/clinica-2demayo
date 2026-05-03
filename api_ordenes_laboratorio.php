@@ -615,10 +615,6 @@ switch ($method) {
         $filtro_fecha_desde = isset($_GET['filtro_fecha_desde']) ? trim((string)$_GET['filtro_fecha_desde']) : '';
         $filtro_fecha_hasta = isset($_GET['filtro_fecha_hasta']) ? trim((string)$_GET['filtro_fecha_hasta']) : '';
         $filtro_busqueda = isset($_GET['filtro_busqueda']) ? trim((string)$_GET['filtro_busqueda']) : '';
-        $consultaFiltroEstricto = ($consulta_id && $consulta_id > 0)
-            ? ol_consulta_requiere_filtro_estricto($conn, (int)$consulta_id)
-            : false;
-
         // En endpoints por consulta, el médico debe ser dueño de la consulta solicitada.
         // Esto evita exposición cruzada y permite relajar filtros por fila cuando la orden
         // heredada no tiene medico resoluble por joins.
@@ -702,34 +698,10 @@ switch ($method) {
             $types .= 's';
         }
         if ($consulta_id) {
-            if ($consultaFiltroEstricto) {
-                // En consultas encadenadas (contrato/control), aislar por consulta activa:
-                //   1) match directo por consulta_id
-                //   2) fallback via cotizaciones_detalle.consulta_id (cd_ref)
-                //   3) fallback via agenda_contrato para ordenes de contrato sin consulta_id escrito
-                $sql .= ' AND (o.consulta_id = ?'
-                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND cd_ref.consulta_ref_id = ?)'
-                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND EXISTS('
-                    . '   SELECT 1 FROM cotizaciones_detalle cd_ac'
-                    . '   INNER JOIN agenda_contrato ac_ol'
-                    . '       ON ac_ol.contrato_paciente_id = cd_ac.contrato_paciente_id'
-                    . '      AND LOWER(TRIM(ac_ol.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_ac.servicio_tipo)) COLLATE utf8mb4_general_ci'
-                    . '      AND ac_ol.servicio_id = cd_ac.servicio_id'
-                    . '   WHERE cd_ac.cotizacion_id = o.cotizacion_id'
-                    . '     AND cd_ac.contrato_paciente_id > 0'
-                    . '     AND ac_ol.consulta_id = ?'
-                    . ')))';
-                $params[] = $consulta_id;
-                $params[] = $consulta_id;
-                $params[] = $consulta_id;
-                $types .= 'iii';
-            } else {
-                // Compatibilidad histórica para consultas antiguas sin consulta_id en órdenes.
-                $sql .= ' AND (o.consulta_id = ? OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND o.paciente_id = (SELECT c_hc.paciente_id FROM consultas c_hc WHERE c_hc.id = ? LIMIT 1)))';
-                $params[] = $consulta_id;
-                $params[] = $consulta_id;
-                $types .= 'ii';
-            }
+            // Regla estricta HC: solo órdenes ligadas explícitamente a la consulta actual.
+            $sql .= ' AND o.consulta_id = ?';
+            $params[] = $consulta_id;
+            $types .= 'i';
         }
         if ($filtro_fecha_desde !== '') {
             $sql .= ' AND DATE(o.fecha) >= ?';
@@ -799,22 +771,7 @@ switch ($method) {
             $sqlCount .= ' AND o.estado = ?';
         }
         if ($consulta_id) {
-            if ($consultaFiltroEstricto) {
-                $sqlCount .= ' AND (o.consulta_id = ?'
-                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND cd_ref.consulta_ref_id = ?)'
-                    . ' OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND EXISTS('
-                    . '   SELECT 1 FROM cotizaciones_detalle cd_ac'
-                    . '   INNER JOIN agenda_contrato ac_ol'
-                    . '       ON ac_ol.contrato_paciente_id = cd_ac.contrato_paciente_id'
-                    . '      AND LOWER(TRIM(ac_ol.servicio_tipo)) COLLATE utf8mb4_general_ci = LOWER(TRIM(cd_ac.servicio_tipo)) COLLATE utf8mb4_general_ci'
-                    . '      AND ac_ol.servicio_id = cd_ac.servicio_id'
-                    . '   WHERE cd_ac.cotizacion_id = o.cotizacion_id'
-                    . '     AND cd_ac.contrato_paciente_id > 0'
-                    . '     AND ac_ol.consulta_id = ?'
-                    . ')))';
-            } else {
-                $sqlCount .= ' AND (o.consulta_id = ? OR ((o.consulta_id IS NULL OR o.consulta_id = 0) AND o.paciente_id = (SELECT c_hc.paciente_id FROM consultas c_hc WHERE c_hc.id = ? LIMIT 1)))';
-            }
+            $sqlCount .= ' AND o.consulta_id = ?';
         }
         if ($filtro_fecha_desde !== '') {
             $sqlCount .= ' AND DATE(o.fecha) >= ?';
