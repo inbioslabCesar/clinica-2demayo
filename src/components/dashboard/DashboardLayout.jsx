@@ -2,7 +2,7 @@ import { Icon } from '@fluentui/react';
 import Footer from "../comunes/Footer";
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { BASE_URL } from "../../config/config";
+import { BASE_URL, fetchConfigSingleton } from "../../config/config";
 import SidebarMedico from "../sidebar/SidebarMedico";
 import SidebarEnfermero from "../sidebar/SidebarEnfermero";
 import SidebarLaboratorista from "../sidebar/SidebarLaboratorista";
@@ -13,6 +13,7 @@ import QuoteCartPanel from "../cotizacion/QuoteCartPanel";
 import AsistenteChatGlobal from "../asistente/AsistenteChatGlobal";
 
 const BRAND_STORAGE_KEY = "clinica_brand_cache";
+const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
 const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
 
 function resolveSystemLogoSize(sizeOption) {
@@ -392,6 +393,10 @@ function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize, logoIsWide }) 
 
 function DashboardLayout({ usuario, onLogout, children }) {
   const cachedBrand = readBrandCache();
+  const hasFreshBrandCache = Boolean(
+    (cachedBrand.nombre || cachedBrand.logo_url || cachedBrand.logo_size_sistema) &&
+    (Date.now() - Number(cachedBrand.updated_at || 0)) < BRAND_CACHE_TTL_MS
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [logoSrc, setLogoSrc] = useState(
     resolveLogoUrl(cachedBrand.logo_url || "", cachedBrand.updated_at || Date.now())
@@ -454,12 +459,7 @@ function DashboardLayout({ usuario, onLogout, children }) {
 
     const loadConfigLogo = async () => {
       try {
-        const res = await fetch(`${BASE_URL}api_get_configuracion.php`, {
-          method: "GET",
-          credentials: "include",
-          cache: "no-store"
-        });
-        const data = await res.json();
+        const data = await fetchConfigSingleton();
         if (!mounted || !data?.success) return;
         const cfg = data.data || {};
         applyLogo(cfg.logo_url, cfg.updated_at || Date.now());
@@ -479,14 +479,16 @@ function DashboardLayout({ usuario, onLogout, children }) {
       applyLogoShape(detail.logo_shape_sistema);
     };
 
-    loadConfigLogo();
+    if (!hasFreshBrandCache) {
+      loadConfigLogo();
+    }
     window.addEventListener("clinica-config-updated", onConfigUpdated);
 
     return () => {
       mounted = false;
       window.removeEventListener("clinica-config-updated", onConfigUpdated);
     };
-  }, []);
+  }, [hasFreshBrandCache]);
 
   useEffect(() => {
     const safeName = String(clinicName || '').trim();

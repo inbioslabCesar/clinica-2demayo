@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 
+import { authFetch } from "../../utils/apiClient";
 import AperturaCajaForm from "./AperturaCajaForm";
 import Modal from "../comunes/Modal";
 import CajaActionButtons from "./CajaActionButtons";
@@ -20,9 +21,7 @@ export default function CajaAdminDashboard() {
   const fetchResumen = async () => {
     setLoading(true);
     try {
-      const resp = await fetch("/api_resumen_diario.php", {
-        credentials: "include",
-      });
+      const resp = await authFetch("api_resumen_diario.php");
       const data = await resp.json();
       if (data.success) {
         setResumen(data);

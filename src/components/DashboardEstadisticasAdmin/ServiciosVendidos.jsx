@@ -18,6 +18,8 @@ const ServiciosVendidos = ({
   setFilterTipo,
   filterNombre,
   setFilterNombre,
+  filterMedico,
+  setFilterMedico,
   handleExportExcel,
   handleExportPDF,
 }) => {
@@ -27,6 +29,12 @@ const ServiciosVendidos = ({
   // Unique types for the filter select (from the unfiltered full list)
   const tiposUnicos = useMemo(() => [...new Set((servicios ?? []).map(s => s.tipo))].filter(Boolean).sort(), [servicios]);
   const nombresVisibles = useMemo(() => [...new Set((servicios ?? []).filter(s => !filterTipo || s.tipo === filterTipo).map(s => s.nombre))].filter(Boolean).sort(), [servicios, filterTipo]);
+  const medicosVisibles = useMemo(
+    () => [...new Set((servicios ?? [])
+      .filter(s => (!filterTipo || s.tipo === filterTipo) && (!filterNombre || s.nombre === filterNombre))
+      .map(s => s.medico))].filter(Boolean).sort(),
+    [servicios, filterTipo, filterNombre]
+  );
 
   const totalGeneral = useMemo(() => lista.reduce((acc, s) => acc + Number(s.total || 0), 0), [lista]);
 
@@ -40,7 +48,7 @@ const ServiciosVendidos = ({
           <select
             className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-300"
             value={filterTipo}
-            onChange={e => { setFilterTipo(e.target.value); setFilterNombre(''); }}
+            onChange={e => { setFilterTipo(e.target.value); setFilterNombre(''); setFilterMedico(''); }}
           >
             <option value="">Todos los tipos</option>
             {tiposUnicos.map(tipo => <option key={tipo} value={tipo}>{tipo}</option>)}
@@ -52,6 +60,14 @@ const ServiciosVendidos = ({
           >
             <option value="">Todos los servicios</option>
             {nombresVisibles.map(nombre => <option key={nombre} value={nombre}>{nombre}</option>)}
+          </select>
+          <select
+            className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-300"
+            value={filterMedico}
+            onChange={e => setFilterMedico(e.target.value)}
+          >
+            <option value="">Todos los médicos</option>
+            {medicosVisibles.map(medico => <option key={medico} value={medico}>{medico}</option>)}
           </select>
           <button
             className="inline-flex items-center gap-1 text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg shadow-sm transition"
@@ -79,6 +95,7 @@ const ServiciosVendidos = ({
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">#</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Servicio</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Tipo</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Médico solicitante</th>
                   <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 uppercase tracking-wide">Qty</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">%</th>
@@ -88,7 +105,7 @@ const ServiciosVendidos = ({
                 {lista.map((s, i) => {
                   const pct = totalGeneral > 0 ? ((Number(s.total || 0) / totalGeneral) * 100).toFixed(1) : '0.0';
                   return (
-                    <tr key={s.tipo + '-' + s.nombre} className="hover:bg-slate-50 transition-colors">
+                    <tr key={s.tipo + '-' + s.nombre + '-' + s.medico} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-2.5 text-gray-400 font-medium">{i + 1}</td>
                       <td className="px-4 py-2.5 font-semibold text-gray-800">{s.nombre}</td>
                       <td className="px-4 py-2.5">
@@ -96,6 +113,7 @@ const ServiciosVendidos = ({
                           {s.tipo}
                         </span>
                       </td>
+                      <td className="px-4 py-2.5 text-gray-700">{s.medico || 'Sin médico'}</td>
                       <td className="px-4 py-2.5 text-center font-bold text-gray-700">{s.cantidad}</td>
                       <td className="px-4 py-2.5 text-right font-bold text-blue-700">S/ {Number(s.total || 0).toFixed(2)}</td>
                       <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{pct}%</td>
@@ -105,7 +123,7 @@ const ServiciosVendidos = ({
               </tbody>
               <tfoot className="bg-slate-50 border-t border-gray-200">
                 <tr>
-                  <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Total</td>
+                  <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Total</td>
                   <td className="px-4 py-2.5 text-right font-bold text-purple-700">S/ {totalGeneral.toFixed(2)}</td>
                   <td className="px-4 py-2.5 text-right text-gray-400 text-xs">100%</td>
                 </tr>
