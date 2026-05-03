@@ -25,9 +25,13 @@ export default function ResultadosLaboratorioPage() {
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
-    authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}`)
-      .then(res => res.json())
-      .then((resLab) => {
+
+    Promise.all([
+      authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}`).then(r => r.json()),
+      authFetch(`api_examenes_laboratorio.php`).then(r => r.json()),
+      authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}`).then(r => r.json()),
+    ])
+      .then(([resLab, resEx, resOrdenes]) => {
         if (!isMounted) return;
         if (resLab.success) {
           setResultados(resLab.resultados || []);
@@ -38,6 +42,8 @@ export default function ResultadosLaboratorioPage() {
           setError(resLab.error || "No hay resultados");
           setDocumentosExternos([]);
         }
+        setExamenes(resEx.examenes || []);
+        setOrdenesConsulta(Array.isArray(resOrdenes?.ordenes) ? resOrdenes.ordenes : []);
       })
       .catch(() => {
         if (!isMounted) return;
@@ -46,28 +52,6 @@ export default function ResultadosLaboratorioPage() {
       })
       .finally(() => {
         if (isMounted) setLoading(false);
-      });
-
-    authFetch(`api_examenes_laboratorio.php`)
-      .then(res => res.json())
-      .then((resEx) => {
-        if (!isMounted) return;
-        setExamenes(resEx.examenes || []);
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setExamenes([]);
-      });
-
-    authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}`)
-      .then(res => res.json())
-      .then((resOrdenes) => {
-        if (!isMounted) return;
-        setOrdenesConsulta(Array.isArray(resOrdenes?.ordenes) ? resOrdenes.ordenes : []);
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setOrdenesConsulta([]);
       });
 
     return () => {
@@ -300,14 +284,45 @@ export default function ResultadosLaboratorioPage() {
                       if (!agrupados[exId]) agrupados[exId] = [];
                       agrupados[exId].push({ nombreParam, val, ex });
                     });
-                    // Si para un examen hay entradas con nombreParam y sin nombreParam,
-                    // descartar las entradas sin nombreParam (son claves legacy duplicadas)
+                    // Deduplicar: si varias claves del mismo examen resuelven al mismo
+                    // parámetro (nombre vs codigo_interno), conservar solo la clave
+                    // por nombre canónico; si no hay match, conservar la primera aparición.
                     Object.keys(agrupados).forEach(exId => {
                       const entradas = agrupados[exId];
+                      // Descartar entradas sin nombreParam si hay con nombreParam (legacy)
                       const tieneConNombre = entradas.some(e => e.nombreParam !== null);
-                      if (tieneConNombre) {
-                        agrupados[exId] = entradas.filter(e => e.nombreParam !== null);
-                      }
+                      const filtradas = tieneConNombre
+                        ? entradas.filter(e => e.nombreParam !== null)
+                        : entradas;
+                      // Deduplicar por parámetro resuelto: mismo param => misma clave canónica
+                      const paramsList = idToReferencias[exId] || [];
+                      const vistas = new Map(); // paramNombreCanónico -> entrada ya registrada
+                      const deduplicadas = [];
+                      filtradas.forEach(entrada => {
+                        const param = getParametro(paramsList, entrada.nombreParam);
+                        const canonico = param ? String(param.nombre || '').trim().toLowerCase() : null;
+                        if (canonico) {
+                          if (!vistas.has(canonico)) {
+                            vistas.set(canonico, true);
+                            // Preferir la entrada cuyo nombreParam coincide con el nombre canónico
+                            const nombreNorm = normalizeName(entrada.nombreParam || '');
+                            const canonicoNorm = normalizeName(param.nombre || '');
+                            if (nombreNorm === canonicoNorm) {
+                              deduplicadas.push(entrada);
+                            } else {
+                              // Buscar si existe otra entrada con el nombre canónico
+                              const porNombre = filtradas.find(e =>
+                                normalizeName(e.nombreParam || '') === canonicoNorm
+                              );
+                              deduplicadas.push(porNombre || entrada);
+                            }
+                          }
+                          // si ya está registrado, ignorar (es el alias codigo_interno)
+                        } else {
+                          deduplicadas.push(entrada);
+                        }
+                      });
+                      agrupados[exId] = deduplicadas;
                     });
                     return Object.entries(agrupados).map(([exId, params]) => {
                       const examName = idToNombre[exId] || exId;
