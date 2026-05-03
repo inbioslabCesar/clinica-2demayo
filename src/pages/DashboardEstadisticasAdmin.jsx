@@ -15,11 +15,17 @@ const EMPTY_PRODUCCION_DETALLE = {
     monto_total: 0,
     monto_produccion_medica: 0,
     monto_venta_directa: 0,
+    monto_produccion_real: 0,
+    monto_produccion_proyectada: 0,
     items_total: 0,
     items_produccion_medica: 0,
     items_venta_directa: 0,
+    items_produccion_real: 0,
+    items_produccion_proyectada: 0,
   },
   ranking_medicos: [],
+  ranking_medicos_origen: [],
+  ranking_medicos_ejecucion: [],
   ranking_venta_directa: [],
 };
 
@@ -38,6 +44,7 @@ const DashboardEstadisticasAdmin = () => {
   const [tendencias, setTendencias] = useState([]);
   const [modoProduccion, setModoProduccion] = useState('todos');
   const [produccionDetalle, setProduccionDetalle] = useState(EMPTY_PRODUCCION_DETALLE);
+  const [modoRankingMedico, setModoRankingMedico] = useState('origen');
   const [filterTipo, setFilterTipo] = useState("");
   const [filterNombre, setFilterNombre] = useState("");
   const [filterMedico, setFilterMedico] = useState("");
@@ -117,6 +124,12 @@ const DashboardEstadisticasAdmin = () => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }), []);
+  const rankingMedicosActivo = useMemo(() => {
+    if (modoRankingMedico === 'ejecucion') {
+      return produccionDetalle?.ranking_medicos_ejecucion || [];
+    }
+    return produccionDetalle?.ranking_medicos_origen || produccionDetalle?.ranking_medicos || [];
+  }, [modoRankingMedico, produccionDetalle]);
 
   if (loading) {
     return (
@@ -250,6 +263,16 @@ const DashboardEstadisticasAdmin = () => {
                   <p className="text-xs text-emerald-700">Producción médica</p>
                   <p className="text-xl font-bold text-emerald-800">S/ {money(produccionDetalle?.resumen?.monto_produccion_medica)}</p>
                   <p className="text-xs text-emerald-700 mt-1">Items: {Number(produccionDetalle?.resumen?.items_produccion_medica || 0)}</p>
+                  <p className="text-[11px] text-emerald-700 mt-2">
+                    Real: S/ {money(produccionDetalle?.resumen?.monto_produccion_real)}
+                    {' · '}
+                    Proyectada: S/ {money(produccionDetalle?.resumen?.monto_produccion_proyectada)}
+                  </p>
+                  <p className="text-[11px] text-emerald-700 mt-1">
+                    Items real: {Number(produccionDetalle?.resumen?.items_produccion_real || 0)}
+                    {' · '}
+                    Items proyectados: {Number(produccionDetalle?.resumen?.items_produccion_proyectada || 0)}
+                  </p>
                 </div>
                 <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
                   <p className="text-xs text-sky-700">Venta directa</p>
@@ -261,10 +284,20 @@ const DashboardEstadisticasAdmin = () => {
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
                   <div className="px-4 py-3 bg-slate-100 border-b border-slate-200">
-                    <h3 className="font-semibold text-slate-800">Ranking producción por médico</h3>
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="font-semibold text-slate-800">Ranking producción por médico</h3>
+                      <select
+                        value={modoRankingMedico}
+                        onChange={(e) => setModoRankingMedico(e.target.value)}
+                        className="px-2 py-1 rounded-md border border-slate-300 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      >
+                        <option value="origen">Por origen</option>
+                        <option value="ejecucion">Por ejecución</option>
+                      </select>
+                    </div>
                   </div>
                   <div className="max-h-72 overflow-auto">
-                    {(produccionDetalle?.ranking_medicos || []).length === 0 ? (
+                    {rankingMedicosActivo.length === 0 ? (
                       <p className="p-4 text-sm text-slate-500">Sin datos para este período.</p>
                     ) : (
                       <table className="w-full text-sm">
@@ -273,15 +306,19 @@ const DashboardEstadisticasAdmin = () => {
                             <th className="px-4 py-2">Médico</th>
                             <th className="px-4 py-2">Especialidad</th>
                             <th className="px-4 py-2 text-right">Items</th>
+                            <th className="px-4 py-2 text-right">Real</th>
+                            <th className="px-4 py-2 text-right">Proyectado</th>
                             <th className="px-4 py-2 text-right">Monto</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {(produccionDetalle?.ranking_medicos || []).map((row, idx) => (
+                          {rankingMedicosActivo.map((row, idx) => (
                             <tr key={`${row.medico_id || 'm'}-${idx}`} className="border-b border-slate-100 last:border-b-0">
                               <td className="px-4 py-2 font-medium text-slate-800">{row.medico_nombre || `Médico #${row.medico_id}`}</td>
                               <td className="px-4 py-2 text-slate-600">{row.especialidad || '-'}</td>
                               <td className="px-4 py-2 text-right text-slate-700">{Number(row.items || 0)}</td>
+                              <td className="px-4 py-2 text-right font-medium text-emerald-700">S/ {money(row.monto_real)}</td>
+                              <td className="px-4 py-2 text-right font-medium text-amber-700">S/ {money(row.monto_proyectado)}</td>
                               <td className="px-4 py-2 text-right font-semibold text-slate-800">S/ {money(row.monto_total)}</td>
                             </tr>
                           ))}

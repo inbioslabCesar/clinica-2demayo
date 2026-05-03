@@ -60,7 +60,14 @@ function aplicar_fallback_paciente_temporal(&$row) {
 
 function get_user_id_from_session() {
     if (isset($_SESSION['usuario']) && isset($_SESSION['usuario']['id'])) {
+        $rolSesion = strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
+        if ($rolSesion === 'medico') {
+            return 0;
+        }
         return (int)$_SESSION['usuario']['id'];
+    }
+    if (isset($_SESSION['medico_id'])) {
+        return 0;
     }
     if (isset($_SESSION['usuario_id'])) {
         return (int)$_SESSION['usuario_id'];
@@ -186,6 +193,81 @@ function obtener_medico_desde_consulta($conn, $consultaId) {
         'nombre' => $nombre,
         'apellido' => $apellido,
         'completo' => trim($nombre . ' ' . $apellido),
+    ];
+}
+
+function obtener_medico_id_desde_consulta($conn, $consultaId) {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0) return 0;
+
+    $stmt = $conn->prepare("SELECT medico_id FROM consultas WHERE id = ? LIMIT 1");
+    if (!$stmt) return 0;
+    $stmt->bind_param("i", $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return (int)($row['medico_id'] ?? 0);
+}
+
+function resolver_contexto_clinico_base_cotizacion($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return ['consulta_id' => 0, 'medico_id' => 0];
+    }
+
+    $consultaId = 0;
+    $medicoId = 0;
+
+    if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+        $stmtDet = $conn->prepare(
+            "SELECT consulta_id
+             FROM cotizaciones_detalle
+             WHERE cotizacion_id = ?
+               AND consulta_id IS NOT NULL
+               AND consulta_id > 0
+             ORDER BY CASE WHEN LOWER(TRIM(servicio_tipo)) = 'consulta' THEN 0 ELSE 1 END, id ASC
+             LIMIT 1"
+        );
+        if ($stmtDet) {
+            $stmtDet->bind_param('i', $cotizacionId);
+            $stmtDet->execute();
+            $rowDet = $stmtDet->get_result()->fetch_assoc();
+            $stmtDet->close();
+            $consultaId = (int)($rowDet['consulta_id'] ?? 0);
+        }
+    }
+
+    if (column_exists($conn, 'cotizaciones_detalle', 'medico_id')) {
+        $stmtMed = $conn->prepare(
+            "SELECT medico_id
+             FROM cotizaciones_detalle
+             WHERE cotizacion_id = ?
+               AND medico_id IS NOT NULL
+               AND medico_id > 0
+             ORDER BY CASE WHEN LOWER(TRIM(servicio_tipo)) = 'consulta' THEN 0 ELSE 1 END, id ASC
+             LIMIT 1"
+        );
+        if ($stmtMed) {
+            $stmtMed->bind_param('i', $cotizacionId);
+            $stmtMed->execute();
+            $rowMed = $stmtMed->get_result()->fetch_assoc();
+            $stmtMed->close();
+            $medicoId = (int)($rowMed['medico_id'] ?? 0);
+        }
+    }
+
+    if ($consultaId <= 0) {
+        $consultaId = resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
+    }
+
+    if ($medicoId <= 0 && $consultaId > 0) {
+        $medicoId = obtener_medico_id_desde_consulta($conn, $consultaId);
+    }
+
+    return [
+        'consulta_id' => max(0, (int)$consultaId),
+        'medico_id' => max(0, (int)$medicoId),
     ];
 }
 
@@ -677,8 +759,10 @@ function obtener_cotizacion($conn, $cotizacionId) {
     } else {
         $cot['medico_solicitante'] = '';
     }
-    // Si proviene de HC, el médico solicitante prevalece como "Quién cotizó".
-    if ($cot['medico_solicitante'] !== '') {
+    // Si proviene de HC y no hay un usuario real (admin/recepcionista) que la creó,
+    // el médico solicitante prevalece como "Quién cotizó".
+    // Si usuario_id > 0 existe un usuario real → se respeta su nombre.
+    if ($cot['medico_solicitante'] !== '' && (int)($cot['usuario_id'] ?? 0) === 0) {
         $cot['usuario_nombre'] = $cot['medico_solicitante'];
     }
     return $cot;
@@ -733,6 +817,8 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
     }
 
     $fechaValidacion = $fechaRef ?: date('Y-m-d');
+    $contextoBaseCotizacion = resolver_contexto_clinico_base_cotizacion($conn, (int)$cotizacionId);
+    $medicoPorConsultaCache = [];
 
     foreach ($detalles as $detalle) {
         $servicioTipo = $detalle['servicio_tipo'] ?? '';
@@ -880,6 +966,23 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
             if ($detalleId > 0 && ($hasConsultaId || $hasMedicoId || $hasContratoPacienteId || $hasContratoPacienteServicioId || $hasOrigenCobro || $hasMontoListaReferencial)) {
                 $consultaId = isset($detalle['consulta_id']) ? (int)$detalle['consulta_id'] : 0;
                 $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
+
+                if ($consultaId <= 0) {
+                    $consultaId = (int)($contextoBaseCotizacion['consulta_id'] ?? 0);
+                }
+
+                if ($medicoId <= 0) {
+                    if ($consultaId > 0) {
+                        if (!isset($medicoPorConsultaCache[$consultaId])) {
+                            $medicoPorConsultaCache[$consultaId] = obtener_medico_id_desde_consulta($conn, $consultaId);
+                        }
+                        $medicoId = (int)$medicoPorConsultaCache[$consultaId];
+                    }
+
+                    if ($medicoId <= 0) {
+                        $medicoId = (int)($contextoBaseCotizacion['medico_id'] ?? 0);
+                    }
+                }
                 $contratoPacienteId = (int)($metaContrato['contrato_paciente_id'] ?? 0);
                 $contratoPacienteServicioId = (int)($metaContrato['contrato_paciente_servicio_id'] ?? 0);
                 $origenCobro = (string)($metaContrato['origen_cobro'] ?? 'regular');
@@ -3769,10 +3872,10 @@ switch ($method) {
                 $cotRow['origen_cobro_resumen'] = $origenCobroPorCotizacion[$cid] ?? 'regular';
                 $cotRow['contratos_ids_resumen'] = $contratoResumenPorCotizacion[$cid] ?? '';
 
-                // Si fue una cotización originada desde HC, el médico solicitante prevalece
-                // como "Quién cotizó" (usuario_id puede apuntar a un usuario de admin/sistema
-                // que no refleja la identidad clínica real del solicitante).
-                if ($cotRow['medico_solicitante'] !== '') {
+                // Si fue una cotización originada desde HC y no hay un usuario real que la creó
+                // (usuario_id = 0 → sesión de médico), el médico solicitante prevalece como "Quién cotizó".
+                // Si usuario_id > 0 (admin/recepcionista real), se respeta su nombre.
+                if ($cotRow['medico_solicitante'] !== '' && (int)($cotRow['usuario_id'] ?? 0) === 0) {
                     $cotRow['usuario_nombre'] = $cotRow['medico_solicitante'];
                 }
             }

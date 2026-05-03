@@ -278,11 +278,13 @@ try {
                 COALESCE(NULLIF(TRIM(pmd.servicio_nombre), ''), 'Servicio') AS nombre_servicio,
                 pmd.medico_id,
                 pmd.clasificacion_origen,
+                pmd.origen_operacion,
+                pmd.cotizacion_id,
                 COALESCE(SUM(pmd.cantidad), 0) AS cantidad_total,
                 COALESCE(SUM(pmd.monto_neto_item), 0) AS monto_total
             FROM produccion_medica_detalle pmd
             WHERE pmd.fecha_cobro >= ? AND pmd.fecha_cobro < ?
-            GROUP BY pmd.servicio_tipo, pmd.servicio_id, nombre_servicio, pmd.medico_id, pmd.clasificacion_origen";
+            GROUP BY pmd.servicio_tipo, pmd.servicio_id, nombre_servicio, pmd.medico_id, pmd.clasificacion_origen, pmd.origen_operacion, pmd.cotizacion_id";
             $paramsServicios[] = $inicioMes;
             $paramsServicios[] = $inicioMesSiguiente;
         }
@@ -292,48 +294,82 @@ try {
                 pcd.servicio_tipo AS tipo_servicio,
                 pcd.servicio_id,
                 COALESCE(NULLIF(TRIM(pcd.servicio_nombre), ''), 'Servicio contrato') AS nombre_servicio,
-                pcd.medico_id,
+                COALESCE(NULLIF(co.medico_id, 0), NULLIF(cps.medico_origen_id, 0), pcd.medico_id) AS medico_id,
                 CASE
                     WHEN pcd.estado_financiero = 'liquidado' THEN 'contrato_liquidado'
                     ELSE 'contrato_pendiente'
                 END AS clasificacion_origen,
+                'contrato' AS origen_operacion,
+                NULL AS cotizacion_id,
                 COALESCE(SUM(pcd.cantidad), 0) AS cantidad_total,
                 COALESCE(SUM(CASE WHEN pcd.estado_financiero = 'liquidado' THEN pcd.monto_reconocido ELSE 0 END), 0) AS monto_total
             FROM produccion_contrato_detalle pcd
+            LEFT JOIN contratos_paciente_servicios cps ON cps.id = pcd.contrato_paciente_servicio_id
+            LEFT JOIN consultas co ON co.id = pcd.consulta_origen_id
             WHERE pcd.fecha_atencion >= ? AND pcd.fecha_atencion < ?
               AND pcd.modo_cobertura = 'contrato'
               AND pcd.estado_financiero IN ('pendiente_liquidar', 'liquidado')
-            GROUP BY pcd.servicio_tipo, pcd.servicio_id, nombre_servicio, pcd.medico_id, pcd.estado_financiero";
+            GROUP BY pcd.servicio_tipo, pcd.servicio_id, nombre_servicio, COALESCE(NULLIF(co.medico_id, 0), NULLIF(cps.medico_origen_id, 0), pcd.medico_id), pcd.estado_financiero";
             $paramsServicios[] = $inicioMes;
             $paramsServicios[] = $inicioMesSiguiente;
         }
 
         $sqlServicios = "SELECT
-            src.tipo_servicio,
-            src.servicio_id,
-            src.nombre_servicio,
-            src.medico_id,
-            CASE
-                WHEN src.clasificacion_origen = 'produccion_medica' THEN COALESCE(
-                    NULLIF(TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))), ''),
-                    CONCAT('Médico #', src.medico_id)
-                )
-                WHEN src.clasificacion_origen = 'contrato_pendiente' THEN COALESCE(
-                    NULLIF(TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))), ''),
-                    'Contrato pendiente'
-                )
-                WHEN src.clasificacion_origen = 'contrato_liquidado' THEN COALESCE(
-                    NULLIF(TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))), ''),
-                    'Contrato liquidado'
-                )
-                ELSE 'Venta directa'
-            END AS medico_solicitante,
-            src.clasificacion_origen,
-            COALESCE(SUM(src.cantidad_total), 0) AS cantidad_total,
-            COALESCE(SUM(src.monto_total), 0) AS monto_total
-        FROM (" . implode(" UNION ALL ", $fuentesServicios) . ") src
-        LEFT JOIN medicos m ON m.id = src.medico_id
-        GROUP BY src.tipo_servicio, src.servicio_id, src.nombre_servicio, src.medico_id, medico_solicitante, src.clasificacion_origen";
+            base.tipo_servicio,
+            base.servicio_id,
+            base.nombre_servicio,
+            base.medico_id,
+            base.clasificacion_origen,
+            base.medico_solicitante,
+            COALESCE(SUM(base.cantidad_total), 0) AS cantidad_total,
+            COALESCE(SUM(base.monto_total), 0) AS monto_total
+        FROM (
+            SELECT
+                src.tipo_servicio,
+                src.servicio_id,
+                src.nombre_servicio,
+                COALESCE(src.medico_id, ctx.medico_id) AS medico_id,
+                CASE
+                    WHEN src.clasificacion_origen = 'venta_directa'
+                         AND src.origen_operacion = 'cotizacion'
+                         AND COALESCE(src.medico_id, ctx.medico_id) IS NOT NULL
+                    THEN 'produccion_medica'
+                    ELSE src.clasificacion_origen
+                END AS clasificacion_origen,
+                CASE
+                    WHEN (
+                        src.clasificacion_origen = 'produccion_medica'
+                        OR (src.clasificacion_origen = 'venta_directa'
+                            AND src.origen_operacion = 'cotizacion'
+                            AND COALESCE(src.medico_id, ctx.medico_id) IS NOT NULL)
+                    ) THEN COALESCE(
+                        NULLIF(TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))), ''),
+                        CONCAT('Médico #', COALESCE(src.medico_id, ctx.medico_id))
+                    )
+                    WHEN src.clasificacion_origen = 'contrato_pendiente' THEN COALESCE(
+                        NULLIF(TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))), ''),
+                        'Contrato pendiente'
+                    )
+                    WHEN src.clasificacion_origen = 'contrato_liquidado' THEN COALESCE(
+                        NULLIF(TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))), ''),
+                        'Contrato liquidado'
+                    )
+                    ELSE 'Venta directa'
+                END AS medico_solicitante,
+                src.cantidad_total,
+                src.monto_total
+            FROM (" . implode(" UNION ALL ", $fuentesServicios) . ") src
+            LEFT JOIN (
+                SELECT
+                    cd.cotizacion_id,
+                    MAX(COALESCE(NULLIF(cd.medico_id, 0), NULLIF(con.medico_id, 0))) AS medico_id
+                FROM cotizaciones_detalle cd
+                LEFT JOIN consultas con ON con.id = cd.consulta_id
+                GROUP BY cd.cotizacion_id
+            ) ctx ON ctx.cotizacion_id = src.cotizacion_id
+            LEFT JOIN medicos m ON m.id = COALESCE(src.medico_id, ctx.medico_id)
+        ) base
+        GROUP BY base.tipo_servicio, base.servicio_id, base.nombre_servicio, base.medico_id, base.clasificacion_origen, base.medico_solicitante";
         $stmtServicios = $pdo->prepare($sqlServicios);
         $stmtServicios->execute($paramsServicios);
         $servicios = $stmtServicios->fetchAll(PDO::FETCH_ASSOC);
@@ -422,7 +458,7 @@ try {
         ':refContratoAbono' => $refContratoAbono,
     ]);
     $serviciosContratos = $stmtServiciosContratos->fetch(PDO::FETCH_ASSOC);
-    if (floatval($serviciosContratos['monto_total'] ?? 0) > 0) {
+    if (floatval($serviciosContratos['monto_total'] ?? 0) > 0 && !$hasProduccionContratoDetalle) {
         $servicios[] = [
             'tipo_servicio' => $tipoContratoAbono,
             'servicio_id' => 0,
@@ -556,62 +592,138 @@ try {
         'ranking_venta_directa' => [],
     ];
 
-    if (dashboard_table_exists($pdo, 'produccion_medica_detalle')) {
+    $hasPmdAnalitica = dashboard_table_exists($pdo, 'produccion_medica_detalle');
+    $hasPcdAnalitica = dashboard_table_exists($pdo, 'produccion_contrato_detalle');
+    if ($hasPmdAnalitica || $hasPcdAnalitica) {
         $filtroModoSql = '';
-        $paramsBase = [
-            ':inicioMes' => $inicioMes,
-            ':inicioMesSiguiente' => $inicioMesSiguiente,
-        ];
-
         if ($modoProduccion === 'produccion_medica') {
-            $filtroModoSql = " AND pmd.clasificacion_origen = 'produccion_medica'";
+            $filtroModoSql = " AND base.canal = 'produccion_medica'";
         } elseif ($modoProduccion === 'venta_directa') {
-            $filtroModoSql = " AND pmd.clasificacion_origen = 'venta_directa'";
+            $filtroModoSql = " AND base.canal = 'venta_directa'";
         }
 
+        $fuentesProduccion = [];
+        $paramsBase = [];
+
+        if ($hasPmdAnalitica) {
+            $fuentesProduccion[] = "SELECT
+                pmd.medico_id,
+                pmd.medico_id AS medico_origen_id,
+                pmd.medico_id AS medico_ejecutor_id,
+                pmd.servicio_tipo,
+                COALESCE(NULLIF(TRIM(pmd.servicio_nombre), ''), 'Servicio') AS servicio_nombre,
+                COALESCE(pmd.cantidad, 0) AS cantidad,
+                COALESCE(pmd.monto_neto_item, 0) AS monto,
+                'real' AS estado_produccion,
+                CASE
+                    WHEN pmd.clasificacion_origen = 'venta_directa' THEN 'venta_directa'
+                    ELSE 'produccion_medica'
+                END AS canal
+            FROM produccion_medica_detalle pmd
+            WHERE pmd.fecha_cobro >= :inicioMesPmd AND pmd.fecha_cobro < :inicioMesSiguientePmd";
+            $paramsBase[':inicioMesPmd'] = $inicioMes;
+            $paramsBase[':inicioMesSiguientePmd'] = $inicioMesSiguiente;
+        }
+
+        if ($hasPcdAnalitica) {
+            $fuentesProduccion[] = "SELECT
+                COALESCE(NULLIF(co.medico_id, 0), NULLIF(cps.medico_origen_id, 0), pcd.medico_id) AS medico_id,
+                COALESCE(NULLIF(co.medico_id, 0), NULLIF(cps.medico_origen_id, 0), pcd.medico_origen_id, pcd.medico_id) AS medico_origen_id,
+                pcd.medico_id AS medico_ejecutor_id,
+                pcd.servicio_tipo,
+                COALESCE(NULLIF(TRIM(pcd.servicio_nombre), ''), 'Servicio contrato') AS servicio_nombre,
+                COALESCE(pcd.cantidad, 0) AS cantidad,
+                COALESCE(
+                    CASE
+                        WHEN pcd.estado_financiero = 'liquidado' THEN pcd.monto_reconocido
+                        ELSE pcd.monto_lista_referencial
+                    END,
+                    0
+                ) AS monto,
+                CASE
+                    WHEN pcd.estado_financiero = 'liquidado' THEN 'real'
+                    ELSE 'proyectada'
+                END AS estado_produccion,
+                'produccion_medica' AS canal
+            FROM produccion_contrato_detalle pcd
+            LEFT JOIN contratos_paciente_servicios cps ON cps.id = pcd.contrato_paciente_servicio_id
+                        LEFT JOIN consultas co ON co.id = pcd.consulta_origen_id
+            WHERE pcd.fecha_atencion >= :inicioMesPcd AND pcd.fecha_atencion < :inicioMesSiguientePcd
+              AND pcd.modo_cobertura = 'contrato'
+              AND pcd.estado_financiero IN ('pendiente_liquidar', 'liquidado')";
+            $paramsBase[':inicioMesPcd'] = $inicioMes;
+            $paramsBase[':inicioMesSiguientePcd'] = $inicioMesSiguiente;
+        }
+
+        $sqlFuenteBase = "FROM (" . implode(" UNION ALL ", $fuentesProduccion) . ") base WHERE 1 = 1{$filtroModoSql}";
+
         $sqlProduccionResumen = "SELECT
-            COALESCE(SUM(pmd.monto_neto_item), 0) AS monto_total,
-            COALESCE(SUM(CASE WHEN pmd.clasificacion_origen = 'produccion_medica' THEN pmd.monto_neto_item ELSE 0 END), 0) AS monto_produccion_medica,
-            COALESCE(SUM(CASE WHEN pmd.clasificacion_origen = 'venta_directa' THEN pmd.monto_neto_item ELSE 0 END), 0) AS monto_venta_directa,
+            COALESCE(SUM(base.monto), 0) AS monto_total,
+            COALESCE(SUM(CASE WHEN base.canal = 'produccion_medica' THEN base.monto ELSE 0 END), 0) AS monto_produccion_medica,
+            COALESCE(SUM(CASE WHEN base.canal = 'venta_directa' THEN base.monto ELSE 0 END), 0) AS monto_venta_directa,
+            COALESCE(SUM(CASE WHEN base.canal = 'produccion_medica' AND base.estado_produccion = 'real' THEN base.monto ELSE 0 END), 0) AS monto_produccion_real,
+            COALESCE(SUM(CASE WHEN base.canal = 'produccion_medica' AND base.estado_produccion = 'proyectada' THEN base.monto ELSE 0 END), 0) AS monto_produccion_proyectada,
             COUNT(*) AS items_total,
-            SUM(CASE WHEN pmd.clasificacion_origen = 'produccion_medica' THEN 1 ELSE 0 END) AS items_produccion_medica,
-            SUM(CASE WHEN pmd.clasificacion_origen = 'venta_directa' THEN 1 ELSE 0 END) AS items_venta_directa
-        FROM produccion_medica_detalle pmd
-        WHERE pmd.fecha_cobro >= :inicioMes AND pmd.fecha_cobro < :inicioMesSiguiente{$filtroModoSql}";
+            SUM(CASE WHEN base.canal = 'produccion_medica' THEN 1 ELSE 0 END) AS items_produccion_medica,
+            SUM(CASE WHEN base.canal = 'venta_directa' THEN 1 ELSE 0 END) AS items_venta_directa,
+            SUM(CASE WHEN base.canal = 'produccion_medica' AND base.estado_produccion = 'real' THEN 1 ELSE 0 END) AS items_produccion_real,
+            SUM(CASE WHEN base.canal = 'produccion_medica' AND base.estado_produccion = 'proyectada' THEN 1 ELSE 0 END) AS items_produccion_proyectada
+            {$sqlFuenteBase}";
 
         $stmtProduccionResumen = $pdo->prepare($sqlProduccionResumen);
         $stmtProduccionResumen->execute($paramsBase);
         $resProd = $stmtProduccionResumen->fetch(PDO::FETCH_ASSOC) ?: [];
 
-        $sqlRankingMedicos = "SELECT
-            pmd.medico_id,
-            TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre,
-            COALESCE(m.especialidad, 'Sin especialidad') AS especialidad,
-            COUNT(*) AS items,
-            COALESCE(SUM(pmd.monto_neto_item), 0) AS monto_total
-        FROM produccion_medica_detalle pmd
-        LEFT JOIN medicos m ON m.id = pmd.medico_id
-        WHERE pmd.fecha_cobro >= :inicioMes AND pmd.fecha_cobro < :inicioMesSiguiente
-          AND pmd.clasificacion_origen = 'produccion_medica'
-          AND pmd.medico_id IS NOT NULL
-          {$filtroModoSql}
-        GROUP BY pmd.medico_id, medico_nombre, especialidad
-        ORDER BY monto_total DESC, items DESC
-        LIMIT 20";
-        $stmtRankingMedicos = $pdo->prepare($sqlRankingMedicos);
-        $stmtRankingMedicos->execute($paramsBase);
-        $rankingMedicos = $stmtRankingMedicos->fetchAll(PDO::FETCH_ASSOC);
+                $sqlRankingMedicosOrigen = "SELECT
+                        base.medico_origen_id AS medico_id,
+                        TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre,
+                        COALESCE(m.especialidad, 'Sin especialidad') AS especialidad,
+                        COUNT(*) AS items,
+                    COALESCE(SUM(base.monto), 0) AS monto_total,
+                    COALESCE(SUM(CASE WHEN base.estado_produccion = 'real' THEN base.monto ELSE 0 END), 0) AS monto_real,
+                    COALESCE(SUM(CASE WHEN base.estado_produccion = 'proyectada' THEN base.monto ELSE 0 END), 0) AS monto_proyectado
+                FROM (" . implode(" UNION ALL ", $fuentesProduccion) . ") base
+                LEFT JOIN medicos m ON m.id = base.medico_origen_id
+                WHERE 1 = 1{$filtroModoSql}
+                    AND base.canal = 'produccion_medica'
+                    AND base.medico_origen_id IS NOT NULL
+                    AND base.medico_origen_id > 0
+                GROUP BY base.medico_origen_id, medico_nombre, especialidad
+                ORDER BY monto_total DESC, items DESC
+                LIMIT 20";
+        $stmtRankingMedicosOrigen = $pdo->prepare($sqlRankingMedicosOrigen);
+        $stmtRankingMedicosOrigen->execute($paramsBase);
+        $rankingMedicosOrigen = $stmtRankingMedicosOrigen->fetchAll(PDO::FETCH_ASSOC);
+
+        $sqlRankingMedicosEjecucion = "SELECT
+                        base.medico_ejecutor_id AS medico_id,
+                        TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre,
+                        COALESCE(m.especialidad, 'Sin especialidad') AS especialidad,
+                        COUNT(*) AS items,
+                    COALESCE(SUM(base.monto), 0) AS monto_total,
+                    COALESCE(SUM(CASE WHEN base.estado_produccion = 'real' THEN base.monto ELSE 0 END), 0) AS monto_real,
+                    COALESCE(SUM(CASE WHEN base.estado_produccion = 'proyectada' THEN base.monto ELSE 0 END), 0) AS monto_proyectado
+                FROM (" . implode(" UNION ALL ", $fuentesProduccion) . ") base
+                LEFT JOIN medicos m ON m.id = base.medico_ejecutor_id
+                WHERE 1 = 1{$filtroModoSql}
+                    AND base.canal = 'produccion_medica'
+                    AND base.medico_ejecutor_id IS NOT NULL
+                    AND base.medico_ejecutor_id > 0
+                GROUP BY base.medico_ejecutor_id, medico_nombre, especialidad
+                ORDER BY monto_total DESC, items DESC
+                LIMIT 20";
+        $stmtRankingMedicosEjecucion = $pdo->prepare($sqlRankingMedicosEjecucion);
+        $stmtRankingMedicosEjecucion->execute($paramsBase);
+        $rankingMedicosEjecucion = $stmtRankingMedicosEjecucion->fetchAll(PDO::FETCH_ASSOC);
 
         $sqlRankingVentaDirecta = "SELECT
-            pmd.servicio_tipo,
-            COALESCE(NULLIF(TRIM(pmd.servicio_nombre), ''), 'Venta directa') AS servicio_nombre,
-            COALESCE(SUM(pmd.cantidad), 0) AS cantidad_total,
-            COALESCE(SUM(pmd.monto_neto_item), 0) AS monto_total
-        FROM produccion_medica_detalle pmd
-        WHERE pmd.fecha_cobro >= :inicioMes AND pmd.fecha_cobro < :inicioMesSiguiente
-          AND pmd.clasificacion_origen = 'venta_directa'
-          {$filtroModoSql}
-        GROUP BY pmd.servicio_tipo, servicio_nombre
+            base.servicio_tipo,
+            COALESCE(NULLIF(TRIM(base.servicio_nombre), ''), 'Venta directa') AS servicio_nombre,
+            COALESCE(SUM(base.cantidad), 0) AS cantidad_total,
+            COALESCE(SUM(base.monto), 0) AS monto_total
+            {$sqlFuenteBase}
+            AND base.canal = 'venta_directa'
+        GROUP BY base.servicio_tipo, servicio_nombre
         ORDER BY monto_total DESC, cantidad_total DESC
         LIMIT 20";
         $stmtRankingDirecta = $pdo->prepare($sqlRankingVentaDirecta);
@@ -625,11 +737,17 @@ try {
                 'monto_total' => floatval($resProd['monto_total'] ?? 0),
                 'monto_produccion_medica' => floatval($resProd['monto_produccion_medica'] ?? 0),
                 'monto_venta_directa' => floatval($resProd['monto_venta_directa'] ?? 0),
+                'monto_produccion_real' => floatval($resProd['monto_produccion_real'] ?? 0),
+                'monto_produccion_proyectada' => floatval($resProd['monto_produccion_proyectada'] ?? 0),
                 'items_total' => intval($resProd['items_total'] ?? 0),
                 'items_produccion_medica' => intval($resProd['items_produccion_medica'] ?? 0),
                 'items_venta_directa' => intval($resProd['items_venta_directa'] ?? 0),
+                'items_produccion_real' => intval($resProd['items_produccion_real'] ?? 0),
+                'items_produccion_proyectada' => intval($resProd['items_produccion_proyectada'] ?? 0),
             ],
-            'ranking_medicos' => $rankingMedicos,
+            'ranking_medicos' => $rankingMedicosOrigen,
+            'ranking_medicos_origen' => $rankingMedicosOrigen,
+            'ranking_medicos_ejecucion' => $rankingMedicosEjecucion,
             'ranking_venta_directa' => $rankingDirecta,
         ];
     }
