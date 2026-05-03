@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { BASE_URL } from "../config/config";
-import axios from "axios";
+import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 
 export default function MovimientosModal({ medicamento, usuario, onClose }) {
@@ -17,10 +16,9 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
       });
       if (!confirm.isConfirmed) return;
       try {
-        const res = await fetch(apiUrl, {
+        const res = await authFetch(apiUrl, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          credentials: "include",
           body: JSON.stringify({ id: mov.id })
         });
         const result = await res.json();
@@ -50,19 +48,19 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
   const [enviando, setEnviando] = useState(false);
   const [medicos, setMedicos] = useState([]);
   useEffect(() => {
-    axios
-      .get(BASE_URL + "api_medicos.php")
-      .then((res) => setMedicos(res.data.medicos || []))
+    authFetch("api_medicos.php")
+      .then((res) => res.json())
+      .then((data) => setMedicos(data.medicos || []))
       .catch(() => setMedicos([]));
   }, []);
 
-  const apiUrl = `${BASE_URL}api_movimientos_medicamento.php`;
+  const apiUrl = "api_movimientos_medicamento.php";
 
   const fetchMovimientos = () => {
     setLoading(true);
     setError(null);
     let url = apiUrl + `?medicamento_id=${medicamento.id}`;
-    fetch(url, { credentials: "include" })
+    authFetch(url)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok || data.error) {
@@ -91,10 +89,9 @@ export default function MovimientosModal({ medicamento, usuario, onClose }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     setEnviando(true);
-    fetch(apiUrl, {
+    authFetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({
         medicamento_id: medicamento.id,
         tipo: form.tipo,

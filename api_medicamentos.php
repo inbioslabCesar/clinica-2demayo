@@ -20,6 +20,7 @@ switch ($method) {
         $result = $stmt->get_result();
         $medicamentos = [];
         while ($row = $result->fetch_assoc()) {
+            $row['stock'] = isset($row['stock']) ? (int)$row['stock'] : 0;
             if (isset($row['fecha_vencimiento']) && $row['fecha_vencimiento']) {
                 $row['fecha_vencimiento'] = date('Y-m-d', strtotime($row['fecha_vencimiento']));
             }
@@ -34,6 +35,7 @@ switch ($method) {
     $result = $conn->query($sql);
     $medicamentos = [];
     while ($row = $result->fetch_assoc()) {
+        $row['stock'] = isset($row['stock']) ? (int)$row['stock'] : 0;
         if (isset($row['fecha_vencimiento']) && $row['fecha_vencimiento']) {
             $row['fecha_vencimiento'] = date('Y-m-d', strtotime($row['fecha_vencimiento']));
         }

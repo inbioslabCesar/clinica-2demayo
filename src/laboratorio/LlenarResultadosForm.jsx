@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
@@ -17,7 +17,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
   const cargarDocExternos = () => {
     if (!pacienteId || !orden?.id) return;
-    fetch(`${BASE_URL}api_documentos_paciente.php?paciente_id=${pacienteId}`, { credentials: 'include' })
+    authFetch(`api_documentos_paciente.php?paciente_id=${pacienteId}`)
       .then(r => r.json())
       .then(data => {
         if (data.documentos) {
@@ -79,12 +79,98 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
   const getExamenId = (examenItem) => (typeof examenItem === 'object' ? examenItem.id : examenItem);
 
+  const normalizeParamToken = (value) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase()
+      .replace(/[-_\s]+/g, '_')
+      .replace(/[^a-z0-9_]/g, '')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+  const findResultadoKeyForParam = (source, examId, param) => {
+    if (!source || typeof source !== 'object' || !param || typeof param !== 'object') return null;
+
+    const idText = String(examId);
+    const nombre = String(param.nombre || '').trim();
+    const codigo = String(param.codigo_interno || '').trim();
+
+    const directCandidates = [];
+    if (codigo) directCandidates.push(`${idText}__${codigo}`);
+    if (nombre) directCandidates.push(`${idText}__${nombre}`);
+
+    for (const key of directCandidates) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        return key;
+      }
+    }
+
+    const targetTokens = [];
+    if (codigo) targetTokens.push(normalizeParamToken(codigo));
+    if (nombre) targetTokens.push(normalizeParamToken(nombre));
+    const uniqueTokens = Array.from(new Set(targetTokens.filter(Boolean)));
+    if (uniqueTokens.length === 0) return null;
+
+    const prefix = `${idText}__`;
+    for (const key of Object.keys(source)) {
+      if (!String(key).startsWith(prefix)) continue;
+      const suffix = String(key).slice(prefix.length);
+      const keyToken = normalizeParamToken(suffix);
+      if (keyToken && uniqueTokens.includes(keyToken)) {
+        return key;
+      }
+    }
+
+    return null;
+  };
+
+  const getResultValueForParam = (source, examId, param, defaultValue = '') => {
+    const matchKey = findResultadoKeyForParam(source, examId, param);
+    if (!matchKey) return defaultValue;
+    const raw = source[matchKey];
+    return raw === null || raw === undefined ? defaultValue : raw;
+  };
+
   const normalizeExamName = (value) =>
     String(value || '')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .trim()
       .toLowerCase();
+
+  const getEffectiveParamsListForExam = (examId) => {
+    const idText = String(examId);
+    const exObj = (examenesDisponibles || []).find(e => String(e?.id) === idText || e?.id == examId);
+    const examenesArray = parseExamenesArray(orden?.examenes);
+    const exOrdenDetalle = Array.isArray(examenesArray)
+      ? examenesArray.find(ex => (typeof ex === 'object' && String(ex?.id) === idText))
+      : null;
+
+    const examNameFromOrder = (exOrdenDetalle && exOrdenDetalle.nombre) || (exObj && exObj.nombre) || '';
+    const exObjResolved = (() => {
+      const byIdHasParams = exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0;
+      if (byIdHasParams) return exObj;
+
+      const normalized = normalizeExamName(examNameFromOrder);
+      if (!normalized) return exObj;
+
+      const byNameWithParams = (examenesDisponibles || []).find((e) =>
+        normalizeExamName(e?.nombre) === normalized
+        && Array.isArray(e?.valores_referenciales)
+        && e.valores_referenciales.length > 0
+      );
+
+      return byNameWithParams || exObj;
+    })();
+
+    const paramsList = (exObjResolved && Array.isArray(exObjResolved.valores_referenciales) && exObjResolved.valores_referenciales.length > 0)
+      ? exObjResolved.valores_referenciales
+      : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
+
+    return Array.isArray(paramsList) ? paramsList.filter(p => p && typeof p === 'object') : [];
+  };
 
   const printFlagKey = (examId) => `${examId}__imprimir_examen`;
   const alarmActiveKey = (examId) => `${examId}__alarma_activa`;
@@ -148,9 +234,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   };
 
   useEffect(() => {
-    fetch(BASE_URL + "api_examenes_laboratorio.php", {
-      credentials: 'include'
-    })
+    authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
       .then(data => setExamenesDisponibles(data.examenes || []));
   }, []);
@@ -180,6 +264,30 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         if (!Object.prototype.hasOwnProperty.call(preloaded, alarmDaysKey(id))) {
           preloaded[alarmDaysKey(id)] = suggestedDays || '';
         }
+
+        const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
+          ? exObj.valores_referenciales
+          : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
+
+        if (Array.isArray(paramsList) && paramsList.length > 0) {
+          paramsList.filter(p => p && typeof p === 'object').forEach(param => {
+            if (!(isTipoParametro(param.tipo) || isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo))) return;
+            const nombre = String(param.nombre || '').trim();
+            if (!nombre) return;
+
+            const canonicalKey = `${id}__${nombre}`;
+            const valueResolved = getResultValueForParam(preloaded, id, param, '');
+            preloaded[canonicalKey] = valueResolved;
+
+            const codigo = String(param.codigo_interno || '').trim();
+            if (codigo) {
+              const codeKey = `${id}__${codigo}`;
+              if (!Object.prototype.hasOwnProperty.call(preloaded, codeKey)) {
+                preloaded[codeKey] = valueResolved;
+              }
+            }
+          });
+        }
       });
       setResultados(preloaded);
     } else {
@@ -207,6 +315,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
           paramsList.filter(p => p && typeof p === 'object').forEach(param => {
             if ((isTipoParametro(param.tipo) || isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo)) && param.nombre && param.nombre.trim() !== "") {
               res[`${id}__${param.nombre}`] = "";
+              if (param.codigo_interno && String(param.codigo_interno).trim() !== '') {
+                res[`${id}__${param.codigo_interno}`] = "";
+              }
             }
           });
         } else {
@@ -226,13 +337,34 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     if (value === null || value === undefined) return NaN;
     if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
     let s = String(value).trim();
-    // convertir coma decimal a punto
-    s = s.replace(/,/g, ".");
+
+    const hasComma = s.includes(',');
+    if (hasComma) {
+      // Regla de negocio:
+      // - coma en grupos de 3 dígitos => miles (eliminar comas)
+      // - coma con 1-2 dígitos => decimal (convertir a punto)
+      // - punto siempre decimal, no se altera
+      if (/^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)) {
+        s = s.replace(/,/g, '');
+      } else {
+        s = s.replace(/,/g, '.');
+      }
+    }
+
     // extraer el primer número válido (soporta signo y decimales)
     const match = s.match(/-?\d+(?:\.\d+)?/);
     if (!match) return NaN;
     const n = parseFloat(match[0]);
     return Number.isFinite(n) ? n : NaN;
+  }
+
+  function formatReferenceNumber(value) {
+    const n = normalizeNumber(value);
+    if (!Number.isFinite(n)) return String(value ?? '').trim();
+    return Number(n).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 6,
+    });
   }
 
   function normalizeSexValue(value) {
@@ -280,9 +412,15 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     const numVal = normalizeNumber(value);
     if (!Number.isFinite(numVal)) return String(value);
     if (decimales !== null && decimales !== undefined && decimales !== "" && !isNaN(parseInt(decimales, 10))) {
-      return Number(numVal).toFixed(parseInt(decimales, 10));
+      const d = parseInt(decimales, 10);
+      return Number(numVal).toLocaleString('en-US', {
+        minimumFractionDigits: d,
+        maximumFractionDigits: d,
+      });
     }
-    if (Number.isInteger(numVal)) return String(Math.trunc(numVal));
+    if (Number.isInteger(numVal)) {
+      return Number(numVal).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    }
     return String(numVal);
   }
 
@@ -332,26 +470,28 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   function parseMinMaxFromText(texto) {
     if (!texto) return { min: null, max: null };
     let s = String(texto).trim();
-    // normalizar separadores y coma decimal
+    // Primero quitar comas que sean separadores de miles dentro de números (X,ddd)
+    s = s.replace(/-?[1-9]\d{0,2}(?:,\d{3})+(\.\d+)?/g, (m) => m.replace(/,/g, ''));
+    // Luego convertir comas restantes (decimales tipo 1,5) a punto
     s = s.replace(/,/g, '.');
     // quitar etiquetas comunes
     s = s.replace(/^(?:N\s*:\s*|Normal\s*:\s*)/i, '');
     s = s.replace(/Rango(?:\s*de)?\s*referencia\s*:?/i, '');
     // patrón de rango "x - y" con distintos separadores
-    const mRango = s.match(/(-?\d+(?:\.\d+)?)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d+(?:\.\d+)?)/i);
+    const mRango = s.match(/(-?\d[\d\.,]*)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d[\d\.,]*)/i);
     if (mRango) {
-      const min = parseFloat(mRango[1]);
-      const max = parseFloat(mRango[2]);
+      const min = normalizeNumber(mRango[1]);
+      const max = normalizeNumber(mRango[2]);
       return {
         min: Number.isFinite(min) ? min : null,
         max: Number.isFinite(max) ? max : null,
       };
     }
     // límites unilaterales
-    const mMin = s.match(/(?:>=|≥|desde|mayor\s*a?)\s*(-?\d+(?:\.\d+)?)/i);
-    const mMax = s.match(/(?:<=|≤|hasta|menor\s*a?)\s*(-?\d+(?:\.\d+)?)/i);
-    const min = mMin ? parseFloat(mMin[1]) : null;
-    const max = mMax ? parseFloat(mMax[1]) : null;
+    const mMin = s.match(/(?:>=|≥|desde|mayor\s*a?)\s*(-?\d[\d\.,]*)/i);
+    const mMax = s.match(/(?:<=|≤|hasta|menor\s*a?)\s*(-?\d[\d\.,]*)/i);
+    const min = mMin ? normalizeNumber(mMin[1]) : null;
+    const max = mMax ? normalizeNumber(mMax[1]) : null;
     return {
       min: Number.isFinite(min) ? min : null,
       max: Number.isFinite(max) ? max : null,
@@ -359,8 +499,50 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   }
 
   const handleChange = (e) => {
-    const nuevos = { ...resultados, [e.target.name]: e.target.value };
-    setResultados(nuevos);
+    const fieldName = String(e?.target?.name || '');
+    const fieldValue = e?.target?.value ?? '';
+    const updates = { [fieldName]: fieldValue };
+
+    // Mantener sincronizadas claves por nombre y por codigo_interno.
+    // El renderer prioriza codigo_interno cuando existe; si no se actualiza en cada tecla,
+    // el campo parece "bloqueado" aunque se esté escribiendo en la clave por nombre.
+    if (fieldName.includes('__')) {
+      const separatorIndex = fieldName.indexOf('__');
+      const examIdText = fieldName.slice(0, separatorIndex);
+      const paramToken = fieldName.slice(separatorIndex + 2);
+      const examIdNum = parseInt(examIdText, 10);
+
+      if (Number.isFinite(examIdNum) && paramToken) {
+        const paramsList = getEffectiveParamsListForExam(examIdNum);
+        const paramTokenNorm = normalizeParamToken(paramToken);
+
+        const matchedParam = paramsList.find((param) => {
+          const nombre = String(param?.nombre || '').trim();
+          const codigo = String(param?.codigo_interno || '').trim();
+          if (!nombre && !codigo) return false;
+
+          if (nombre === paramToken || codigo === paramToken) return true;
+
+          const nombreNorm = normalizeParamToken(nombre);
+          const codigoNorm = normalizeParamToken(codigo);
+          return paramTokenNorm && (paramTokenNorm === nombreNorm || paramTokenNorm === codigoNorm);
+        });
+
+        if (matchedParam) {
+          const canonicalName = String(matchedParam.nombre || '').trim();
+          const internalCode = String(matchedParam.codigo_interno || '').trim();
+
+          if (canonicalName) {
+            updates[`${examIdNum}__${canonicalName}`] = fieldValue;
+          }
+          if (internalCode) {
+            updates[`${examIdNum}__${internalCode}`] = fieldValue;
+          }
+        }
+      }
+    }
+
+    setResultados(prev => ({ ...prev, ...updates }));
   };
 
   const handlePrintToggle = (examId, checked) => {
@@ -459,7 +641,12 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         const valoresPorNombre = {};
         paramsList.filter(p => p && typeof p === 'object').forEach(param => {
           if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-            valoresPorNombre[param.nombre] = resultadosToSend[`${id}__${param.nombre}`] || "";
+            const v = getResultValueForParam(resultadosToSend, id, param, '');
+            valoresPorNombre[param.nombre] = v;
+            // Registrar también por codigo_interno (clave inmutable) para que fórmulas sobrevivan renombrados
+            if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+              valoresPorNombre[param.codigo_interno] = v;
+            }
           }
         });
         // evaluar y almacenar fórmulas
@@ -468,16 +655,20 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             if (param.formula && param.formula.trim() !== "") {
               const computed = evalFormula(param.formula, valoresPorNombre, param.decimales);
               // actualizar tanto el mapa local como el objeto a enviar
-              valoresPorNombre[param.nombre] = computed === null || computed === undefined ? "" : computed;
-              resultadosToSend[`${id}__${param.nombre}`] = computed === null || computed === undefined ? "" : computed;
+              const val = computed === null || computed === undefined ? "" : computed;
+              valoresPorNombre[param.nombre] = val;
+              if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+                valoresPorNombre[param.codigo_interno] = val;
+                resultadosToSend[`${id}__${param.codigo_interno}`] = val;
+              }
+              resultadosToSend[`${id}__${param.nombre}`] = val;
             }
           }
         });
       });
 
-      const res = await fetch(BASE_URL + "api_resultados_laboratorio.php", {
+      const res = await authFetch("api_resultados_laboratorio.php", {
         method: "POST",
-        credentials: 'include',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orden_id: orden.id,
@@ -562,9 +753,8 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       fd.append('descripcion', 'Resultado procesado en laboratorio externo. Orden #' + orden.id);
       fd.append('orden_id', orden.id);
       fd.append('archivos[]', archivo);
-      const res = await fetch(BASE_URL + 'api_documentos_paciente.php', {
+      const res = await authFetch('api_documentos_paciente.php', {
         method: 'POST',
-        credentials: 'include',
         body: fd,
       });
       const data = await res.json();
@@ -585,9 +775,8 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const handleEliminarDocExamen = async (documentoId) => {
     if (!window.confirm('¿Eliminar este archivo?')) return;
     try {
-      const res = await fetch(BASE_URL + 'api_documentos_paciente.php', {
+      const res = await authFetch('api_documentos_paciente.php', {
         method: 'DELETE',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ documento_id: documentoId }),
       });
@@ -746,10 +935,15 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
                 if (Array.isArray(paramsList) && paramsList.length > 0 && hasRenderableParams) {
                   // Construir un mapa nombre->valor para este examen usando la lista efectiva de parámetros
+                  // Incluir también codigo_interno como clave para que fórmulas sobrevivan renombrados
                   const valoresPorNombre = {};
                   paramsList.filter(p => p && typeof p === 'object').forEach(param => {
                     if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-                      valoresPorNombre[param.nombre] = resultados[`${id}__${param.nombre}`] || "";
+                      const v = getResultValueForParam(resultados, id, param, '');
+                      valoresPorNombre[param.nombre] = v;
+                      if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+                        valoresPorNombre[param.codigo_interno] = v;
+                      }
                     }
                   });
                   const examName = (exObjResolved && exObjResolved.nombre) || (exOrdenDetalle && exOrdenDetalle.nombre) || `Examen ${id}`;
@@ -833,7 +1027,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           }
 
                           if (isTipoTextoLargo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-                            const textoValue = resultados[`${id}__${param.nombre}`] || "";
+                            const textoValue = getResultValueForParam(resultados, id, param, '');
                             return (
                               <div key={`text-${idx}-${param.nombre}`} className="md:col-span-2 space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
@@ -852,7 +1046,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           }
 
                           if (isTipoCampo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-                            const fieldValue = resultados[`${id}__${param.nombre}`] || "";
+                            const fieldValue = getResultValueForParam(resultados, id, param, '');
                             const opcionesCampo = Array.isArray(param.opciones) ? param.opciones.filter(o => String(o).trim() !== "") : [];
                             return (
                               <div key={`campo-${idx}-${param.nombre}`} className="space-y-2">
@@ -892,7 +1086,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
                           if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
                             const tieneFormula = param.formula && param.formula.trim() !== "";
-                            let valor = resultados[`${id}__${param.nombre}`] || "";
+                            let valor = getResultValueForParam(resultados, id, param, '');
 
                             // Nombre a mostrar: si viene como "Item 1" y este examen solo tiene un parámetro,
                             // mostrar el nombre del examen para una mejor UX, manteniendo la clave original.
@@ -915,7 +1109,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             // Texto de referencia a mostrar: soporta rango (min/max) o valor textual
                             let referenciaTexto = null;
                             if (min !== null || max !== null) {
-                              referenciaTexto = `Rango de referencia: ${min !== null ? min : '∞'} - ${max !== null ? max : '∞'}`;
+                              referenciaTexto = `Rango de referencia: ${min !== null ? formatReferenceNumber(min) : '∞'} - ${max !== null ? formatReferenceNumber(max) : '∞'}`;
                             } else if (referenciaAplicada && referenciaAplicada.valor && String(referenciaAplicada.valor).trim() !== '') {
                                 referenciaTexto = `Referencia: ${referenciaAplicada.valor}`;
                               }

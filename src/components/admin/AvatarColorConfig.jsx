@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BASE_URL } from '../../config/config.js';
+import { authFetch } from '../../utils/apiClient';
 
 function AvatarColorConfig() {
   const [avatares, setAvatares] = useState([]);
@@ -17,9 +18,7 @@ function AvatarColorConfig() {
   const cargarConfiguracion = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${BASE_URL}api_configuracion_apariencia.php`, {
-        credentials: 'include',
-      });
+      const res = await authFetch('api_configuracion_apariencia.php');
       const data = await res.json();
       if (data.success) {
         setAvatares(data.data.avatares || []);
@@ -39,9 +38,8 @@ function AvatarColorConfig() {
       formData.append('action', 'activate_avatar');
       formData.append('avatar_id', avatarId);
 
-      const res = await fetch(`${BASE_URL}api_configuracion_apariencia.php`, {
+      const res = await authFetch('api_configuracion_apariencia.php', {
         method: 'POST',
-        credentials: 'include',
         body: formData,
       });
       const data = await res.json();
@@ -66,9 +64,8 @@ function AvatarColorConfig() {
       formData.append('action', 'update_color');
       formData.append('color', nuevoColor);
 
-      const res = await fetch(`${BASE_URL}api_configuracion_apariencia.php`, {
+      const res = await authFetch('api_configuracion_apariencia.php', {
         method: 'POST',
-        credentials: 'include',
         body: formData,
       });
       const data = await res.json();
@@ -113,9 +110,8 @@ function AvatarColorConfig() {
       formData.append('avatar', file);
       formData.append('avatar_clave', clave);
 
-      const res = await fetch(`${BASE_URL}api_configuracion_apariencia.php`, {
+      const res = await authFetch('api_configuracion_apariencia.php', {
         method: 'POST',
-        credentials: 'include',
         body: formData,
       });
       const data = await res.json();

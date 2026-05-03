@@ -1,5 +1,6 @@
 // src/utils/security.js
 import { SECURITY_CONFIG } from '../config/config';
+import { authFetch } from '../utils/apiClient';
 
 /**
  * Utilidades de seguridad para proteger credenciales
@@ -101,7 +102,7 @@ export function useSecureLogin() {
         // 3. Realizar login con configuración segura
         // ...existing code...
         
-        const response = await fetch(apiUrl, SecurityUtils.createSecureFetchConfig(credentials));
+        const response = await authFetch(apiUrl, SecurityUtils.createSecureFetchConfig(credentials));
         
         if (!response.ok) {
             throw new Error(`Error de login: ${response.status}`);

@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function usePacientes({ initialBusqueda = "", initialPage = 1, initialRowsPerPage = 5, initialFechaDesde = "", initialFechaHasta = "" } = {}) {
     // Función para recargar pacientes desde el backend
@@ -13,7 +13,7 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
         fecha_desde: filtros.fechaDesde || fechaDesde,
         fecha_hasta: filtros.fechaHasta || fechaHasta
       });
-      fetch(`${BASE_URL}api_pacientes.php?${params.toString()}`)
+      authFetch(`api_pacientes.php?${params.toString()}`)
         .then(res => res.json())
         .then(data => {
           if (data.success) {
@@ -50,7 +50,7 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
       fecha_desde: fechaDesde,
       fecha_hasta: fechaHasta
     });
-    fetch(`${BASE_URL}api_pacientes.php?${params.toString()}`)
+    authFetch(`api_pacientes.php?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
         if (data.success) {
@@ -75,11 +75,10 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
     setError("");
     let result;
     try {
-      const res = await fetch(`${BASE_URL}api_pacientes.php`, {
+      const res = await authFetch("api_pacientes.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(paciente),
-        credentials: "include"
       });
       const data = await res.json();
       if (data.success && data.paciente) {
@@ -114,7 +113,7 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
     setLoading(true);
     let result;
     try {
-      const res = await fetch(`${BASE_URL}api_pacientes.php`, {
+      const res = await authFetch("api_pacientes.php", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: paciente.id })

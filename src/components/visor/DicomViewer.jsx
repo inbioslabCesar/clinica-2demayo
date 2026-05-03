@@ -4,6 +4,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import dicomParser from "dicom-parser";
+import { authFetch } from "../../utils/apiClient";
 
 function tagInt(ds, tag, def = 0) {
   try { return ds.uint16(tag) ?? def; } catch { return def; }
@@ -83,7 +84,7 @@ export default function DicomViewer({ url, nombre }) {
     setErrorMsg("");
     pixRef.current = null;
 
-    fetch(url, { credentials: "include" })
+    authFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status} al descargar el DICOM.`);
         return r.arrayBuffer();

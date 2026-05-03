@@ -1,7 +1,8 @@
-
+﻿
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { APP_BASE_PATH, BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import TabsApoyoDiagnostico from "../components/examenes/TabsApoyoDiagnostico";
 import { FormularioHistoriaClinica, TriajePaciente, DatosPaciente, TratamientoPaciente } from "../components/paciente";
 import DiagnosticoCIE10Selector from "../components/diagnostico/DiagnosticoCIE10Selector";
@@ -69,6 +70,11 @@ function HistoriaClinicaPage() {
   const [firmaMedico, setFirmaMedico] = useState(null);
   const [resultadosLab, setResultadosLab] = useState([]);
   const [ordenesLab, setOrdenesLab] = useState([]);
+  const [tratamientoEstado, setTratamientoEstado] = useState({
+    loading: false,
+    data: null,
+    error: "",
+  });
   const [usuarioSesion, setUsuarioSesion] = useState(null);
   const [fechaConsulta, setFechaConsulta] = useState("");
   const [consultaActual, setConsultaActual] = useState(null);
@@ -79,6 +85,11 @@ function HistoriaClinicaPage() {
   const [hcAnteriorLoading, setHcAnteriorLoading] = useState(false);
   const [drawerHistorialAbierto, setDrawerHistorialAbierto] = useState(false);
   const [mostrarHcAnterior, setMostrarHcAnterior] = useState(false);
+  const [tratamientoEstadoHcPrevia, setTratamientoEstadoHcPrevia] = useState({
+    loading: false,
+    data: null,
+    error: "",
+  });
   const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
   const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
   useEffect(() => {
@@ -96,8 +107,7 @@ function HistoriaClinicaPage() {
   useEffect(() => {
     if (!consultaId) return;
     const noCache = `_t=${Date.now()}`;
-    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
-      credentials: 'include',
+    authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
       cache: 'no-store',
     })
       .then((res) => res.json())
@@ -106,8 +116,7 @@ function HistoriaClinicaPage() {
         else setResultadosLab([]);
       })
       .catch(() => setResultadosLab([]));
-    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
-      credentials: 'include',
+    authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
       cache: 'no-store',
     })
       .then((res) => res.json())
@@ -119,6 +128,68 @@ function HistoriaClinicaPage() {
         }
       })
       .catch(() => setOrdenesLab([]));
+  }, [consultaId]);
+
+  useEffect(() => {
+    if (!consultaId) {
+      setTratamientoEstado({ loading: false, data: null, error: "" });
+      return;
+    }
+
+    let cancelled = false;
+    setTratamientoEstado({ loading: true, data: null, error: "" });
+
+    authFetch(
+      `api_tratamientos_enfermeria.php?consulta_id=${consultaId}&estado=pendiente,en_ejecucion,completado,suspendido`,
+      { cache: "no-store" }
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data?.data) ? data.data : [];
+        const ordered = [...rows].sort((a, b) => {
+          const vDiff = Number(b?.version_num || 0) - Number(a?.version_num || 0);
+          if (vDiff !== 0) return vDiff;
+          return Number(b?.id || 0) - Number(a?.id || 0);
+        });
+        const noSuspendidos = ordered.filter((t) => String(t?.estado || "") !== "suspendido");
+        const principal = noSuspendidos[0] || ordered[0] || null;
+
+        if (!principal) {
+          setTratamientoEstado({ loading: false, data: null, error: "" });
+          return;
+        }
+
+        const progresoRaw = Number(principal?.progreso_pct || 0);
+        const progresoPct = Number.isFinite(progresoRaw)
+          ? Math.max(0, Math.min(100, progresoRaw))
+          : 0;
+
+        setTratamientoEstado({
+          loading: false,
+          error: "",
+          data: {
+            ...principal,
+            progreso_pct: progresoPct,
+            total_dias: Number(principal?.total_dias || 0),
+            dias_cerrados: Number(principal?.dias_cerrados || 0),
+            pendientes_hoy: Number(principal?.pendientes_hoy || 0),
+            dia_actual: Number(principal?.dia_actual || 0),
+          },
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTratamientoEstado({
+          loading: false,
+          data: null,
+          error: "No se pudo cargar el avance del tratamiento.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [consultaId]);
 
   const formatearFechaEvento = (rawValue) => {
@@ -300,7 +371,9 @@ function HistoriaClinicaPage() {
     if (!consultaId) return;
     const templateQuery = HC_TEMPLATE_ENGINE_READ ? '&include_template=1' : '';
     setDraftHydrated(false);
-    fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}${templateQuery}`, { credentials: 'include' })
+    authFetch(`api_historia_clinica.php?consulta_id=${consultaId}${templateQuery}`, {
+      cache: 'no-store',
+    })
       .then((res) => res.json())
       .then((data) => {
         const fromApiHc = normalizeHistoriaData(data.success && data.datos ? data.datos : {});
@@ -448,8 +521,7 @@ function HistoriaClinicaPage() {
       }
 
       try {
-        const res = await fetch(`${BASE_URL}api_consultas.php?paciente_id=${actualPacienteId}&solo_activas=1`, {
-          credentials: 'include',
+        const res = await authFetch(`api_consultas.php?paciente_id=${actualPacienteId}&solo_activas=1`, {
           cache: 'no-store',
         });
         const data = await res.json();
@@ -523,7 +595,9 @@ function HistoriaClinicaPage() {
   useEffect(() => {
     if (!pacienteId) return;
     setLoading(true);
-    fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
+    authFetch(`api_pacientes.php?id=${pacienteId}`, {
+      cache: 'no-store',
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.paciente) setPaciente(data.paciente);
@@ -537,7 +611,7 @@ function HistoriaClinicaPage() {
   }, [pacienteId]);
   useEffect(() => {
     if (!consultaId) return;
-    fetch(`${BASE_URL}api_triaje.php?consulta_id=${consultaId}`, { credentials: 'include' })
+    authFetch(`api_triaje.php?consulta_id=${consultaId}`, { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.triaje && data.triaje.datos)
@@ -547,7 +621,7 @@ function HistoriaClinicaPage() {
       .catch(() => setTriaje(null));
   }, [consultaId]);
   useEffect(() => {
-    fetch(`${BASE_URL}api_get_configuracion.php`, { credentials: 'include' })
+    authFetch("api_get_configuracion.php", { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.data) {
@@ -570,8 +644,7 @@ function HistoriaClinicaPage() {
       }
 
       try {
-        const res = await fetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaId}`, {
-          credentials: 'include',
+        const res = await authFetch(`api_consultas.php?consulta_id=${consultaId}`, {
           cache: 'no-store',
         });
         const data = await res.json();
@@ -676,7 +749,7 @@ function HistoriaClinicaPage() {
 
     const cargarHcAnterior = async () => {
       try {
-        const res = await fetch(`${BASE_URL}api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1`, { credentials: 'include' });
+        const res = await authFetch(`api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1`);
         const data = await res.json();
         if (cancelled) return;
         const chain = Array.isArray(data.historias_previas) ? data.historias_previas : [];
@@ -744,6 +817,61 @@ function HistoriaClinicaPage() {
     setHcAnterior(historiasPrevias[safeIndex] || null);
   }, [indiceHistoriaPrevia, historiasPrevias]);
 
+  useEffect(() => {
+    const consultaPreviaId = Number(hcAnterior?.consulta_id || 0);
+    if (consultaPreviaId <= 0) {
+      setTratamientoEstadoHcPrevia({ loading: false, data: null, error: "" });
+      return;
+    }
+
+    let cancelled = false;
+    setTratamientoEstadoHcPrevia({ loading: true, data: null, error: "" });
+
+    authFetch(
+      `api_tratamientos_enfermeria.php?consulta_id=${consultaPreviaId}&estado=pendiente,en_ejecucion,completado,suspendido`,
+      { cache: "no-store" }
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data?.data) ? data.data : [];
+        const ordered = [...rows].sort((a, b) => {
+          const versionDiff = Number(b?.version_num || 0) - Number(a?.version_num || 0);
+          if (versionDiff !== 0) return versionDiff;
+          return Number(b?.id || 0) - Number(a?.id || 0);
+        });
+        const activos = ordered.filter((t) => String(t?.estado || "") !== "suspendido");
+        const principal = activos[0] || ordered[0] || null;
+
+        if (!principal) {
+          setTratamientoEstadoHcPrevia({ loading: false, data: null, error: "" });
+          return;
+        }
+
+        const progreso = Number(principal?.progreso_pct || 0);
+        setTratamientoEstadoHcPrevia({
+          loading: false,
+          error: "",
+          data: {
+            ...principal,
+            progreso_pct: Number.isFinite(progreso) ? Math.max(0, Math.min(100, progreso)) : 0,
+          },
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTratamientoEstadoHcPrevia({
+          loading: false,
+          data: null,
+          error: "No se pudo cargar el estado del tratamiento previo.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hcAnterior?.consulta_id]);
+
   const totalHistoriasPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
   useEffect(() => {
     const handleOpenHistoryDrawer = () => {
@@ -800,9 +928,26 @@ function HistoriaClinicaPage() {
   const fuenteEcografiaLabel = ecografiaDisponible ? 'Visor de imágenes' : 'Sin fuente';
 
   const abrirRecursoHistorialPrevio = (targetPath) => {
-    const path = String(targetPath || '').trim();
-    if (!path) return;
-    window.open(path, '_blank', 'noopener,noreferrer');
+    const rawPath = String(targetPath || '').trim();
+    if (!rawPath) return;
+
+    if (/^(https?:)?\/\//i.test(rawPath) || rawPath.startsWith('blob:') || rawPath.startsWith('data:')) {
+      window.open(rawPath, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    const basePath = String(APP_BASE_PATH || '/').replace(/\/+$/, '') || '';
+    let normalizedPath = rawPath;
+
+    if (rawPath.startsWith('/')) {
+      normalizedPath = rawPath.startsWith(`${basePath}/`) || rawPath === basePath
+        ? rawPath
+        : `${basePath}${rawPath}`;
+    } else if (basePath) {
+      normalizedPath = `${basePath}/${rawPath.replace(/^\/+/, '')}`;
+    }
+
+    window.open(normalizedPath, '_blank', 'noopener,noreferrer');
   };
   const importarDiagnosticoDesdeAnterior = () => {
     if (readOnly) return;
@@ -885,6 +1030,22 @@ function HistoriaClinicaPage() {
     : [];
   const datosHcAnterior = hcAnterior?.datos && typeof hcAnterior.datos === "object" ? hcAnterior.datos : {};
   const recetaPrevia = Array.isArray(datosHcAnterior?.receta) ? datosHcAnterior.receta : [];
+  const tratamientoPrevioEnfermeria = tratamientoEstadoHcPrevia.data;
+  const estadoTratamientoPrevio = String(tratamientoPrevioEnfermeria?.estado || "").trim();
+  const estadoTratamientoPrevioLabel =
+    estadoTratamientoPrevio === "completado"
+      ? "Completado"
+      : estadoTratamientoPrevio === "en_ejecucion"
+        ? "En ejecución"
+        : estadoTratamientoPrevio === "pendiente"
+          ? "Pendiente"
+          : estadoTratamientoPrevio === "suspendido"
+            ? "Suspendido"
+            : "Sin registro";
+  const tratamientoPrevioCompletado = estadoTratamientoPrevio === "completado";
+  const tratamientoPrevioCompletadoEn = tratamientoPrevioEnfermeria?.completado_en
+    ? formatearFechaEvento(tratamientoPrevioEnfermeria.completado_en)
+    : "";
   const tratamientoPrevio = obtenerTextoDesdeCampos(datosHcAnterior, [
     "tratamiento",
     "plan_tratamiento",
@@ -979,6 +1140,50 @@ function HistoriaClinicaPage() {
     ? `${medicamentosActuales} medicamento(s) actual(es), ${medicamentosPrevios} en HC previa`
     : 'sin medicación registrada';
 
+  const tratamientoEstadoData = tratamientoEstado.data;
+  const estadoTratamiento = String(tratamientoEstadoData?.estado || "").trim();
+  const progresoTratamiento = Number(tratamientoEstadoData?.progreso_pct || 0);
+  const completadoTratamientoEn = tratamientoEstadoData?.completado_en
+    ? formatearFechaEvento(tratamientoEstadoData.completado_en)
+    : "";
+  const estadoTratamientoLabel =
+    estadoTratamiento === "completado"
+      ? "Completado"
+      : estadoTratamiento === "en_ejecucion"
+        ? "En ejecución"
+        : estadoTratamiento === "pendiente"
+          ? "Pendiente"
+          : estadoTratamiento === "suspendido"
+            ? "Suspendido"
+            : "Sin tratamiento";
+  const estadoTratamientoBadgeClass =
+    estadoTratamiento === "completado"
+      ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+      : estadoTratamiento === "en_ejecucion"
+        ? "bg-amber-100 text-amber-700 border-amber-200"
+        : estadoTratamiento === "pendiente"
+          ? "bg-slate-100 text-slate-700 border-slate-200"
+          : estadoTratamiento === "suspendido"
+            ? "bg-rose-100 text-rose-700 border-rose-200"
+            : "bg-gray-100 text-gray-600 border-gray-200";
+  const resumenTratamientoTexto = (() => {
+    if (tratamientoEstado.loading) return "cargando estado...";
+    if (tratamientoEstado.error) return tratamientoEstado.error;
+    if (!tratamientoEstadoData) return "sin tratamiento de enfermería sincronizado";
+    if (estadoTratamiento === "completado") {
+      return `completado (${progresoTratamiento.toFixed(0)}%), cierre: ${completadoTratamientoEn || "-"}`;
+    }
+    if (estadoTratamiento === "en_ejecucion") {
+      const diaActual = Number(tratamientoEstadoData?.dia_actual || 0);
+      const pendientesHoy = Number(tratamientoEstadoData?.pendientes_hoy || 0);
+      return `en ejecución (${progresoTratamiento.toFixed(0)}%), día actual: ${diaActual > 0 ? diaActual : "-"}, pendientes hoy: ${pendientesHoy}`;
+    }
+    if (estadoTratamiento === "pendiente") {
+      return `pendiente de inicio (${progresoTratamiento.toFixed(0)}%)`;
+    }
+    return `${estadoTratamientoLabel.toLowerCase()} (${progresoTratamiento.toFixed(0)}%)`;
+  })();
+
   const fechaHcPreviaResumen = hcAnterior?.fecha_registro
     ? formatearFechaCorta(hcAnterior.fecha_registro)
     : '-';
@@ -992,6 +1197,7 @@ function HistoriaClinicaPage() {
     `Laboratorio: ${resumenLaboratorioTexto}`,
     `Ecografía: ${resumenEcografiaTexto}`,
     `Medicamentos: ${resumenMedicacionTexto}`,
+    `Tratamiento enfermería: ${resumenTratamientoTexto}`,
     `Apoyo diagnostico previo: Lab ${laboratorioDisponible ? 'con resultados' : 'sin resultados'} · Ecografía ${ecografiaDisponible ? 'con imágenes' : 'sin imágenes'}`,
   ]), [
     totalHistoriasPrevias,
@@ -1000,14 +1206,19 @@ function HistoriaClinicaPage() {
     resumenLaboratorioTexto,
     resumenEcografiaTexto,
     resumenMedicacionTexto,
+    resumenTratamientoTexto,
     laboratorioDisponible,
     ecografiaDisponible,
   ]);
 
   useEffect(() => {
+    // FIX: canOpenHistoryDrawer debe verificar que HC previas fueron realmente cargadas, 
+    // no solo que hc_origen_id esté seteado. Evita mostrar botón cuando no hay HC anteriores.
+    const tieneHcPreviasDisponibles = (totalHistoriasPrevias && totalHistoriasPrevias > 0 && !hcAnteriorLoading && !hcAnteriorError);
+    
     const payload = {
       source: 'historia-clinica',
-      available: Number(consultaActual?.hc_origen_id || 0) > 0,
+      available: tieneHcPreviasDisponibles,
       readOnly,
       consultaId: Number(consultaId || 0),
       pacienteId: Number(pacienteId || 0),
@@ -1015,7 +1226,7 @@ function HistoriaClinicaPage() {
       hcAnteriorLoading,
       hcAnteriorError,
       resumenItems: resumenAsistenteItems,
-      canOpenHistoryDrawer: Number(consultaActual?.hc_origen_id || 0) > 0,
+      canOpenHistoryDrawer: tieneHcPreviasDisponibles,
     };
 
     window.dispatchEvent(new CustomEvent('hc-assistant-context-updated', { detail: payload }));
@@ -1220,6 +1431,7 @@ function HistoriaClinicaPage() {
             )}
           </div>
         )}
+
         {/* Formulario principal de Historia Clínica */}
         <form
           onSubmit={async (e) => {
@@ -1251,11 +1463,10 @@ function HistoriaClinicaPage() {
                 };
               }
 
-              const res = await fetch(`${BASE_URL}api_historia_clinica.php`, {
+              const res = await authFetch("api_historia_clinica.php", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ consulta_id: consultaId, datos }),
-                credentials: "include"
               });
               const data = await res.json();
 
@@ -1282,6 +1493,29 @@ function HistoriaClinicaPage() {
                 setMensajeModalGuardado(successMsg);
                 setMostrarModalGuardado(true);
                 setMsg(successMsg);
+                // Re-fetch treatment status: saving may create a new pending version
+                if (consultaId) {
+                  authFetch(
+                    `api_tratamientos_enfermeria.php?consulta_id=${consultaId}&estado=pendiente,en_ejecucion,completado,suspendido`,
+                    { cache: 'no-store' }
+                  )
+                    .then((r) => r.json())
+                    .then((tdata) => {
+                      const rows = Array.isArray(tdata?.data) ? tdata.data : [];
+                      const ordered = [...rows].sort((a, b) => {
+                        const vd = Number(b?.version_num || 0) - Number(a?.version_num || 0);
+                        return vd !== 0 ? vd : Number(b?.id || 0) - Number(a?.id || 0);
+                      });
+                      const principal = ordered.filter((t) => String(t?.estado || '') !== 'suspendido')[0] || ordered[0] || null;
+                      if (principal) {
+                        const pct = Math.max(0, Math.min(100, Number(principal?.progreso_pct || 0)));
+                        setTratamientoEstado({ loading: false, error: '', data: { ...principal, progreso_pct: pct, total_dias: Number(principal?.total_dias || 0), dias_cerrados: Number(principal?.dias_cerrados || 0), pendientes_hoy: Number(principal?.pendientes_hoy || 0), dia_actual: Number(principal?.dia_actual || 0) } });
+                      } else {
+                        setTratamientoEstado({ loading: false, data: null, error: '' });
+                      }
+                    })
+                    .catch(() => {});
+                }
               } else {
                 setMsg(data.error || "Error al guardar");
               }
@@ -1366,6 +1600,90 @@ function HistoriaClinicaPage() {
               tratamiento={hc.tratamiento || ""}
               setTratamiento={valor => setHc(h => ({ ...h, tratamiento: valor }))}
             />
+          </div>
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gradient-to-r from-sky-500 to-cyan-500 rounded-full flex items-center justify-center">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2-11H7a2 2 0 00-2 2v10a2 2 0 002 2h5m5-11l2 2-6 6H9v-4l6-6z" />
+                  </svg>
+                </div>
+                <h2 className="text-lg font-semibold text-gray-800">📈 Evolución de Tratamiento (Enfermería)</h2>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${estadoTratamientoBadgeClass}`}>
+                {estadoTratamientoLabel}
+              </span>
+            </div>
+
+            {tratamientoEstado.loading && (
+              <p className="text-sm text-gray-500 mt-3">Cargando estado del tratamiento...</p>
+            )}
+
+            {!tratamientoEstado.loading && tratamientoEstado.error && (
+              <p className="text-sm text-red-600 mt-3">{tratamientoEstado.error}</p>
+            )}
+
+            {!tratamientoEstado.loading && !tratamientoEstado.error && !tratamientoEstadoData && (
+              <p className="text-sm text-gray-600 mt-3">
+                No hay tratamiento de enfermería vinculado a esta consulta todavía.
+              </p>
+            )}
+
+            {!tratamientoEstado.loading && estadoTratamiento === 'completado' && Array.isArray(hc?.receta) && hc.receta.length > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-3">
+                ⚠️ El tratamiento anterior fue completado. Al guardar la HC con los medicamentos actuales se creará una nueva versión en estado <strong>pendiente</strong>.
+              </p>
+            )}
+
+            {!tratamientoEstado.loading && !tratamientoEstado.error && tratamientoEstadoData && (
+              <>
+                <div className="mt-4">
+                  <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-500 ${
+                        estadoTratamiento === "completado"
+                          ? "bg-emerald-500"
+                          : estadoTratamiento === "en_ejecucion"
+                            ? "bg-amber-500"
+                            : "bg-slate-400"
+                      }`}
+                      style={{ width: `${Math.max(0, Math.min(100, progresoTratamiento))}%` }}
+                    />
+                  </div>
+                  <p className="text-sm font-medium text-gray-700 mt-2">
+                    Progreso: {progresoTratamiento.toFixed(0)}%
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs text-slate-500">Días cerrados</p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {Number(tratamientoEstadoData?.dias_cerrados || 0)} / {Number(tratamientoEstadoData?.total_dias || 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs text-slate-500">Día actual</p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {Number(tratamientoEstadoData?.dia_actual || 0) > 0
+                        ? `Día ${Number(tratamientoEstadoData?.dia_actual || 0)}`
+                        : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs text-slate-500">Pendientes hoy</p>
+                    <p className="text-sm font-semibold text-slate-800">{Number(tratamientoEstadoData?.pendientes_hoy || 0)}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs text-slate-500">Completado en</p>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {completadoTratamientoEn || "-"}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center gap-3 mb-5">
@@ -1955,6 +2273,62 @@ function HistoriaClinicaPage() {
                           </div>
                         </div>
                       )}
+
+                      <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="font-semibold">Estado de tratamiento enfermería (HC previa)</p>
+
+                        {tratamientoEstadoHcPrevia.loading && (
+                          <p className="mt-2 text-slate-600">Cargando estado...</p>
+                        )}
+
+                        {!tratamientoEstadoHcPrevia.loading && tratamientoEstadoHcPrevia.error && (
+                          <p className="mt-2 text-red-600">{tratamientoEstadoHcPrevia.error}</p>
+                        )}
+
+                        {!tratamientoEstadoHcPrevia.loading && !tratamientoEstadoHcPrevia.error && !tratamientoPrevioEnfermeria && (
+                          <p className="mt-2 text-slate-600">Sin registro de tratamiento de enfermería para esta consulta previa.</p>
+                        )}
+
+                        {!tratamientoEstadoHcPrevia.loading && !tratamientoEstadoHcPrevia.error && tratamientoPrevioEnfermeria && (
+                          <div className="mt-2 space-y-2">
+                            {tratamientoPrevioCompletado && (
+                              <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                                <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center text-lg font-bold leading-none">
+                                  ✓
+                                </div>
+                                <div>
+                                  <p className="text-emerald-800 font-semibold">Tratamiento completado</p>
+                                  <p className="text-emerald-700 text-[11px]">
+                                    Cierre registrado: {tratamientoPrevioCompletadoEn || "-"}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                Estado: {estadoTratamientoPrevioLabel}
+                              </span>
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                                tratamientoPrevioCompletado
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "border-amber-200 bg-amber-50 text-amber-700"
+                              }`}>
+                                {tratamientoPrevioCompletado ? "Completado: Sí" : "Completado: No"}
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                Progreso: {Number(tratamientoPrevioEnfermeria?.progreso_pct || 0).toFixed(0)}%
+                              </span>
+                            </div>
+
+                            {tratamientoPrevioCompletado && (
+                              <p className="text-slate-700">
+                                Fecha de completado: <span className="font-semibold">{tratamientoPrevioCompletadoEn || "-"}</span>
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
                       <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
                         <p className="font-semibold">Apoyo diagnóstico previo</p>

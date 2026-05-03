@@ -61,9 +61,23 @@ if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0755, true);
 }
 
-$scheme  = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST']
-         . rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\') . '/';
+$scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$serverName = trim((string)($_SERVER['SERVER_NAME'] ?? ''));
+$serverPort = intval($_SERVER['SERVER_PORT'] ?? 0);
+$httpHost = trim((string)($_SERVER['HTTP_HOST'] ?? ''));
+
+// Cuando la API se consume via proxy dev (5173), HTTP_HOST puede apuntar al frontend.
+// SERVER_NAME/SERVER_PORT reflejan mejor el host real de PHP (Apache/Laragon).
+$host = $serverName !== '' ? $serverName : $httpHost;
+if ($host !== '' && strpos($host, ':') === false && $serverPort > 0 && $serverPort !== 80 && $serverPort !== 443) {
+    $host .= ':' . $serverPort;
+}
+
+if ($host === '') {
+    $host = '127.0.0.1';
+}
+
+$baseUrl = $scheme . '://' . $host . rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\') . '/';
 
 $method = $_SERVER['REQUEST_METHOD'];
 

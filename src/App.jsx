@@ -1,10 +1,13 @@
 import React, { useState, useEffect, lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import ErrorBoundary from "./components/comunes/ErrorBoundary.jsx";
 import { QuoteCartProvider } from "./context/QuoteCartContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { hasPermiso, normalizePermisos } from "./config/recepcionPermisos";
+import { APP_BASE_PATH, BASE_URL } from "./config/config";
+import { authFetch } from "./utils/apiClient";
 import DashboardLayout from "./components/dashboard/DashboardLayout";
+import ModalAperturaCaja from "./components/caja/ModalAperturaCaja.jsx";
 // Lazy loading para todos los componentes y páginas principales
 const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
@@ -131,6 +134,8 @@ function RouteErrorBoundary({ children }) {
   return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
 }
 
+const ROUTER_BASENAME = APP_BASE_PATH.replace(/\/+$/, "") || "/";
+
 function RequireCajaAbierta({ children }) {
   const location = useLocation();
   const [estado, setEstado] = useState({ loading: true, abierta: true });
@@ -139,8 +144,7 @@ function RequireCajaAbierta({ children }) {
     let activo = true;
     const verificar = async () => {
       try {
-        const r = await fetch('/api_caja_estado.php', {
-          credentials: 'include',
+        const r = await authFetch("api_caja_estado.php", {
           cache: 'no-store',
         });
         const data = await r.json();
@@ -166,6 +170,64 @@ function RequireCajaAbierta({ children }) {
   }
 
   return children;
+}
+
+function CajaAperturaGuard({ usuario }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [state, setState] = useState({ loading: false, cajaAbierta: true });
+
+  const rol = String(usuario?.rol || "").toLowerCase();
+  const aplicaBloqueo = rol === "administrador" || rol === "recepcionista";
+  const pathname = String(location?.pathname || "/");
+
+  const rutaPermitidaSinCaja =
+    pathname === "/contabilidad" ||
+    pathname === "/reabrir-caja";
+
+  useEffect(() => {
+    if (!aplicaBloqueo) {
+      setState({ loading: false, cajaAbierta: true });
+      return;
+    }
+
+    let activo = true;
+
+    const verificar = async () => {
+      setState((prev) => ({ ...prev, loading: true }));
+      try {
+        const response = await authFetch("api_caja_verificar.php", { cache: "no-store" });
+        const data = await response.json();
+        const cajaAbierta = Boolean(data?.success && data?.caja_abierta);
+        if (activo) {
+          setState({ loading: false, cajaAbierta });
+        }
+      } catch {
+        // Fail-closed: bloquear por seguridad si no se puede validar.
+        if (activo) {
+          setState({ loading: false, cajaAbierta: false });
+        }
+      }
+    };
+
+    verificar();
+    return () => {
+      activo = false;
+    };
+  }, [aplicaBloqueo, location.key]);
+
+  if (!aplicaBloqueo) return null;
+
+  const mostrarModal = !state.loading && !state.cajaAbierta && !rutaPermitidaSinCaja;
+  if (!mostrarModal) return null;
+
+  return (
+    <ModalAperturaCaja
+      open
+      mensaje="¡Atención! No puedes realizar operaciones sin una caja activa."
+      onIrReporteCaja={() => navigate("/contabilidad")}
+    />
+  );
 }
 
 function hydrateUsuario(rawUsuario) {
@@ -206,16 +268,15 @@ function App() {
 
   // Logout sin render intermedio para evitar parpadeo visual
   const handleLogout = () => {
-    fetch("/api_logout.php", {
+    authFetch("api_logout.php", {
       method: "POST",
-      credentials: "include",
       keepalive: true,
     }).catch((err) => {
       console.error("Error al cerrar sesión en el backend:", err);
     });
 
     clearClientSessionState();
-    window.location.replace("/");
+    window.location.replace(BASE_URL);
   };
 
   useEffect(() => {
@@ -223,8 +284,7 @@ function App() {
 
     const validarSesionBackend = async () => {
       try {
-        const r = await fetch("/api_auth_status.php", {
-          credentials: "include",
+        const r = await authFetch("api_auth_status.php", {
           cache: "no-store",
         });
         const data = await r.json().catch(() => null);
@@ -350,8 +410,10 @@ function App() {
   return (
     <ThemeProvider>
     <QuoteCartProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={ROUTER_BASENAME}>
         {usuario ? (
+          <>
+          <CajaAperturaGuard usuario={usuario} />
           <DashboardLayout usuario={usuario} onLogout={handleLogout}>
             <RouteErrorBoundary>
             {/* Suspense solo para el contenido de rutas: evita que desaparezca todo el layout */}
@@ -1165,6 +1227,7 @@ function App() {
             </Suspense>
             </RouteErrorBoundary>
           </DashboardLayout>
+          </>
         ) : (
           <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
             <Login onLogin={setUsuario} />

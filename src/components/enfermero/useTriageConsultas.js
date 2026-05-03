@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function useTriageConsultas() {
   const [consultas, setConsultas] = useState([]);
@@ -25,7 +25,7 @@ export default function useTriageConsultas() {
 
   const recargarConsultas = () => {
     setLoading(true);
-    fetch(BASE_URL + "api_consultas.php?solo_activas=1", {credentials: "include"})
+    authFetch("api_consultas.php?solo_activas=1&incluir_completadas_sin_triaje=1")
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

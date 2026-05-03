@@ -1,3 +1,4 @@
+import { authFetch } from "../utils/apiClient";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
@@ -128,10 +129,10 @@ export default function CotizarLaboratorioPage() {
   useEffect(() => {
     // Cargar exámenes, tarifas, ranking y paciente
     Promise.all([
-      fetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include" }).then(res => res.json()),
-      fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" }).then(res => res.json()),
-      fetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include" }).then(res => res.json()),
-      pacienteId ? fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, { credentials: "include" }).then(res => res.json()) : Promise.resolve({ success: false })
+      authFetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
+      authFetch(`${BASE_URL}api_tarifas.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
+      authFetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
+      pacienteId ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, { credentials: "include", cache: "no-store" }).then(res => res.json()) : Promise.resolve({ success: false })
     ]).then(([examenesData, tarifasData, rankingData, pacienteData]) => {
       setExamenes(Array.isArray(examenesData?.examenes) ? examenesData.examenes : []);
       setTarifas(Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : []);
@@ -171,7 +172,7 @@ export default function CotizarLaboratorioPage() {
 
       // Intento principal: resolver coberturas en lote para evitar N requests.
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${BASE_URL}api_contratos.php?accion=validar_cobertura_lote&paciente_id=${Number(pacienteId)}&servicio_tipo=laboratorio&cantidad=1&fecha_ref=${encodeURIComponent(fechaRef)}&servicio_ids=${encodeURIComponent(examIds.join(','))}`,
           { credentials: "include" }
         );
@@ -196,7 +197,7 @@ export default function CotizarLaboratorioPage() {
         examenes.map(async (examen) => {
           try {
             const exId = Number(examen.id);
-            const res = await fetch(
+            const res = await authFetch(
               `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=laboratorio&servicio_id=${exId}&cantidad=1&fecha_ref=${encodeURIComponent(fechaRef)}`,
               { credentials: "include" }
             );
@@ -221,7 +222,7 @@ export default function CotizarLaboratorioPage() {
 
   // Consultar estado de caja al entrar
   useEffect(() => {
-    fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' })
+    authFetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => setCajaEstado(data?.estado || 'cerrada'))
       .catch(() => setCajaEstado('cerrada'));
@@ -238,7 +239,7 @@ export default function CotizarLaboratorioPage() {
       setSeleccionados([]);
     }
     if (!cotizacionId) setCotizacionDetallesOriginales([]);
-    if (cobroId) loaders.push(fetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(r => r.json()).then(data => {
+    if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(r => r.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null;
       if (!data.success || !cobro) return;
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
@@ -251,7 +252,7 @@ export default function CotizarLaboratorioPage() {
       if (itemsLab.length) setPendingLabItems(prev => [...prev, ...itemsLab]);
       if (itemsLab.length) setPreloadedItems(prev => [...prev, ...itemsLab]);
     }));
-    if (cotizacionId) loaders.push(fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(r => r.json()).then(data => {
+    if (cotizacionId) loaders.push(authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(r => r.json()).then(data => {
       const cot = data.cotizacion || null;
       if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
@@ -278,7 +279,7 @@ export default function CotizarLaboratorioPage() {
 
       if (faltanCamposDerivacion && Number(cot.paciente_id || 0) > 0 && itemsLab.length > 0) {
         loaders.push(
-          fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?paciente_id=${Number(cot.paciente_id)}&cotizacion_id=${Number(cotizacionId)}`, { credentials: "include" })
+          authFetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?paciente_id=${Number(cot.paciente_id)}&cotizacion_id=${Number(cotizacionId)}`, { credentials: "include" })
             .then((r) => r.json())
             .then((movData) => {
               const movimientosIniciales = Array.isArray(movData?.movimientos) ? movData.movimientos : [];
@@ -290,7 +291,7 @@ export default function CotizarLaboratorioPage() {
               if (movData?.supports_cotizacion_id) {
                 return [];
               }
-              return fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?paciente_id=${Number(cot.paciente_id)}`, { credentials: "include" })
+              return authFetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?paciente_id=${Number(cot.paciente_id)}`, { credentials: "include" })
                 .then((rr) => rr.json())
                 .then((legacyData) => (Array.isArray(legacyData?.movimientos) ? legacyData.movimientos : []));
             })
@@ -421,7 +422,7 @@ export default function CotizarLaboratorioPage() {
     if (!cobroId) return;
     // Verificar caja abierta
     try {
-      const ce = await fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' }).then(r => r.json());
+      const ce = await authFetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' }).then(r => r.json());
       if (!ce?.success || ce?.estado !== 'abierta') {
         setCajaEstado(ce?.estado || 'cerrada');
         Swal.fire('Error', 'No hay caja abierta. Abre caja para actualizar este cobro.', 'error');
@@ -508,7 +509,7 @@ export default function CotizarLaboratorioPage() {
     const additionsAfterReductions = [...itemsToAdd];
 
     const refetchBaselineFromServer = async () => {
-      const resp = await fetch(`${BASE_URL}api_cobros.php?cobro_id=${Number(cobroId)}`, { credentials: 'include' });
+      const resp = await authFetch(`${BASE_URL}api_cobros.php?cobro_id=${Number(cobroId)}`, { credentials: 'include' });
       const data = await resp.json();
       const cobro = data.cobro || data?.result?.cobro || null;
       if (!data?.success || !cobro) return [];
@@ -574,7 +575,7 @@ export default function CotizarLaboratorioPage() {
           const lineQty = Number(line?.cantidad || 0);
           if (lineQty <= 0) throw new Error('Cantidad inválida en el detalle del cobro.');
 
-          const delResp = await fetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
+          const delResp = await authFetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
@@ -619,7 +620,7 @@ export default function CotizarLaboratorioPage() {
       }
 
       if (additionsAfterReductions.length > 0) {
-        const resp = await fetch(`${BASE_URL}api_cobro_actualizar.php`, {
+        const resp = await authFetch(`${BASE_URL}api_cobro_actualizar.php`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
@@ -828,7 +829,7 @@ export default function CotizarLaboratorioPage() {
   };
 
   const obtenerDetallesCotizacion = async (targetCotizacionId) => {
-    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+    const res = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
       credentials: 'include',
     });
     const data = await res.json();
@@ -909,7 +910,7 @@ export default function CotizarLaboratorioPage() {
 
     try {
       let data;
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -939,7 +940,7 @@ export default function CotizarLaboratorioPage() {
           fecha_ref: fechaRef,
           motivo: 'Adenda confirmada por usuario desde cotizador de Laboratorio (cotización pagada)'
         };
-        const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+        const resAdenda = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },

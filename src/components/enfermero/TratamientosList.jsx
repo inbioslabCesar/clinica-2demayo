@@ -6,7 +6,7 @@ import autoTable from "jspdf-autotable";
 import useTratamientosPendientes from "./useTratamientosPendientes";
 import TratamientoDetalleModal from "./TratamientoDetalleModal";
 import Spinner from "../comunes/Spinner";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 const BADGE = {
   pendiente:    { label: "Pendiente",    bg: "bg-yellow-100", text: "text-yellow-800", dot: "bg-yellow-400" },
@@ -30,6 +30,16 @@ function formatFechaHora(fecha, hora) {
   const [y, m, d] = String(fecha).split("-");
   const h = String(hora ?? "").slice(0, 5);
   return `${d}/${m}/${y}${h ? " " + h : ""}`;
+}
+
+function ContratoBadge({ esContrato }) {
+  if (!esContrato) return null;
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+      <span>📘</span>
+      Contrato
+    </span>
+  );
 }
 
 export default function TratamientosList({ activo }) {
@@ -93,9 +103,7 @@ export default function TratamientosList({ activo }) {
         params.set("q", busqueda.trim());
       }
 
-      const res = await fetch(BASE_URL + `api_tratamientos_enfermeria.php?${params.toString()}`, {
-        credentials: "include",
-      });
+      const res = await authFetch(`api_tratamientos_enfermeria.php?${params.toString()}`);
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || "No se pudo preparar la exportación");
@@ -342,6 +350,9 @@ export default function TratamientosList({ activo }) {
                           <p className="font-semibold text-gray-800 text-sm leading-tight">
                             {t.paciente_nombre} {t.paciente_apellido}
                           </p>
+                          <div className="mt-1">
+                            <ContratoBadge esContrato={Number(t.es_contrato || 0) === 1} />
+                          </div>
                           {t.paciente_dni && (
                             <p className="text-xs text-gray-400">DNI: {t.paciente_dni}</p>
                           )}
@@ -423,6 +434,9 @@ export default function TratamientosList({ activo }) {
                       <p className="font-semibold text-gray-800">
                         {t.paciente_nombre} {t.paciente_apellido}
                       </p>
+                      <div className="mt-1">
+                        <ContratoBadge esContrato={Number(t.es_contrato || 0) === 1} />
+                      </div>
                       <p className="text-xs text-gray-500">HC: {t.paciente_hc || "N/A"}</p>
                     </div>
                   </div>

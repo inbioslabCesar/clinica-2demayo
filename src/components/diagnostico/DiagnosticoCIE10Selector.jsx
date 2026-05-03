@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from "react";
-import { BASE_URL } from "../../config/config.js";
+import { authFetch } from "../../utils/apiClient";
+
+function normalizarTipoDiagnostico(tipo) {
+  return String(tipo || "").toLowerCase() === "presuntivo" ? "presuntivo" : "definitivo";
+}
 
 export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos }) {
   const [busqueda, setBusqueda] = useState("");
   const [sugerencias, setSugerencias] = useState([]);
   const [seleccion, setSeleccion] = useState(null);
-  const [detalle, setDetalle] = useState({ tipo: "principal", observaciones: "" });
+  const [detalle, setDetalle] = useState({ tipo: "definitivo", observaciones: "" });
   const [cargando, setCargando] = useState(false);
   const abortRef = useRef(null);
   const requestIdRef = useRef(0);
@@ -45,9 +49,8 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
       abortRef.current = controller;
 
       try {
-        const response = await fetch(`${BASE_URL}api_cie10.php?buscar=${encodeURIComponent(termino)}&limite=15`, {
+        const response = await authFetch(`api_cie10.php?buscar=${encodeURIComponent(termino)}&limite=15`, {
           signal: controller.signal,
-          credentials: "include",
         });
         const data = await response.json();
 
@@ -83,11 +86,12 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
       {
         ...seleccion,
         ...detalle,
+        tipo: normalizarTipoDiagnostico(detalle.tipo),
         fecha: new Date().toISOString().slice(0, 10)
       }
     ]);
     setSeleccion(null);
-    setDetalle({ tipo: "secundario", observaciones: "" });
+    setDetalle({ tipo: "definitivo", observaciones: "" });
     setBusqueda("");
     setSugerencias([]);
   };
@@ -97,7 +101,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
   };
 
   const cambiarTipo = (codigo, tipo) => {
-    setDiagnosticos(prev => prev.map(d => d.codigo === codigo ? { ...d, tipo } : d));
+    setDiagnosticos(prev => prev.map(d => d.codigo === codigo ? { ...d, tipo: normalizarTipoDiagnostico(tipo) } : d));
   };
 
   return (
@@ -177,10 +181,9 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
             <select
               className="border rounded p-1"
               value={detalle.tipo}
-              onChange={e => setDetalle(d => ({ ...d, tipo: e.target.value }))}
+              onChange={e => setDetalle(d => ({ ...d, tipo: normalizarTipoDiagnostico(e.target.value) }))}
             >
-              <option value="principal">Principal</option>
-              <option value="secundario">Secundario</option>
+              <option value="definitivo">Definitivo</option>
               <option value="presuntivo">Presuntivo</option>
             </select>
             <input
@@ -224,11 +227,10 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
                     <td className="border px-2 py-1">
                       <select
                         className="border rounded p-1 text-xs w-full min-w-0"
-                        value={d.tipo}
+                        value={normalizarTipoDiagnostico(d.tipo)}
                         onChange={e => cambiarTipo(d.codigo, e.target.value)}
                       >
-                        <option value="principal">Principal</option>
-                        <option value="secundario">Secundario</option>
+                        <option value="definitivo">Definitivo</option>
                         <option value="presuntivo">Presuntivo</option>
                       </select>
                     </td>

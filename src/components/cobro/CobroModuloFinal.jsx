@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import CobroDescuento from './CobroDescuento';
 import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
+import { authFetch } from '../../utils/apiClient';
 
 function CobroModulo({
   paciente,
@@ -30,7 +31,7 @@ function CobroModulo({
   const [cajaLoading, setCajaLoading] = useState(true);
   useEffect(() => {
     const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
-    fetch(`${BASE_URL}api_caja_actual.php`, { credentials: 'include' })
+    authFetch("api_caja_actual.php")
       .then(res => res.json())
       .then(data => {
         const usuarioSesionId = Number(usuario?.id || 0);
@@ -48,7 +49,7 @@ function CobroModulo({
       });
   }, []);
   // Solo permitir servicios médicos (consulta, laboratorio, farmacia, etc.)
-  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia', 'rayosx', 'ecografia', 'procedimiento','operacion','hospitalizacion'];
+  const serviciosPermitidos = ['consulta', 'laboratorio', 'farmacia', 'rayosx', 'ecografia', 'procedimiento','operacion','hospitalizacion', 'mixto'];
   const esServicioMedico = servicio && serviciosPermitidos.includes(servicio.key);
   // const [tarifas, setTarifas] = useState([]); // Eliminado: no se usa
   const [tipoCobertura, setTipoCobertura] = useState('particular');
@@ -74,9 +75,8 @@ function CobroModulo({
     let mounted = true;
     const cargarMarcaClinica = async () => {
       try {
-        const resp = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+        const resp = await authFetch("api_get_configuracion.php", {
           method: 'GET',
-          credentials: 'include',
           cache: 'no-store'
         });
         const data = await resp.json();
@@ -113,9 +113,7 @@ function CobroModulo({
 
   const cargarTarifas = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_tarifas.php`, {
-        credentials: 'include'
-      });
+      const response = await authFetch("api_tarifas.php");
       await response.json();
       // if (data.success) {
       //   setTarifas(data.tarifas || []);
@@ -171,6 +169,19 @@ if (tipoDescuento === 'porcentaje') {
       return;
     }
 
+    const montoOriginalValidacion = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
+    let descuentoValidacion = 0;
+    if (tipoDescuento === 'porcentaje') {
+      descuentoValidacion = montoOriginalValidacion * (valorDescuento / 100);
+    } else {
+      descuentoValidacion = valorDescuento;
+    }
+
+    if (descuentoValidacion > 0 && !String(motivo || '').trim()) {
+      Swal.fire('Motivo requerido', 'Debes ingresar el motivo del descuento para continuar.', 'warning');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -205,16 +216,16 @@ if (tipoDescuento === 'porcentaje') {
         observaciones: observaciones,
         detalles: detallesCobro,
         servicio: String(servicio.key),
-        servicio_info: { key: String(servicio.key), label: servicio.label },
+        servicio_info: { key: String(servicio.key), label: servicio.label, cotizacion_ids: servicio?.cotizacion_ids || [] },
         cotizacion_id: Number(servicio?.cotizacion_id || 0) || null,
+        cotizacion_ids: Array.isArray(servicio?.cotizacion_ids) ? servicio.cotizacion_ids : [],
         motivo: descuento > 0 ? motivo : ''
       };
-      const response = await fetch(`${BASE_URL}api_cobros.php`, {
+      const response = await authFetch("api_cobros.php", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        credentials: 'include',
         body: JSON.stringify(cobroData)
       });
       let result;
@@ -270,9 +281,7 @@ if (tipoDescuento === 'porcentaje') {
     let consultaVinculada = null;
     if (consultaId > 0) {
       try {
-        const resConsulta = await fetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaId}`, {
-          credentials: 'include',
-        });
+        const resConsulta = await authFetch(`api_consultas.php?consulta_id=${consultaId}`);
         const dataConsulta = await resConsulta.json();
         if (dataConsulta?.success && Array.isArray(dataConsulta.consultas) && dataConsulta.consultas.length > 0) {
           consultaVinculada = dataConsulta.consultas[0] || null;
@@ -310,9 +319,14 @@ if (tipoDescuento === 'porcentaje') {
       : fechaConsulta;
     const numeroOrden = tipoConsultaRaw === 'programada' ? (consulta.numero_orden || consultaVinculada?.numero_orden || 'N/A') : '';
     const logoSrc = clinicBrand.logo || '/2demayo.svg';
-    const cotizacionId = Number(servicio?.cotizacion_id || 0);
+    const cotizacionIdsTicket = Array.from(new Set([
+      ...(Array.isArray(datosComprobante?.cotizacion_ids) ? datosComprobante.cotizacion_ids : []),
+      ...(Array.isArray(servicio?.cotizacion_ids) ? servicio.cotizacion_ids : []),
+      Number(servicio?.cotizacion_id || 0),
+    ].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)));
+    const cotizacionId = cotizacionIdsTicket[0] || 0;
     const tieneSaldoPendiente = Number.isFinite(Number(saldoPendiente)) && Number(saldoPendiente) > 0;
-    const esCobroCotizacion = cotizacionId > 0 && tieneSaldoPendiente;
+    const esCobroCotizacion = cotizacionIdsTicket.length > 0 && tieneSaldoPendiente;
     const saldoAnteriorCobro = Math.max(0, Number(saldoPendiente || 0));
     const abonoAplicadoCobro = Math.max(0, Number(datosComprobante?.total || 0));
     const descuentoAplicadoCobro = Math.max(0, Number(datosComprobante?.monto_descuento || 0));
@@ -376,57 +390,167 @@ if (tipoDescuento === 'porcentaje') {
       ? (nombreMedico.toLowerCase().startsWith(abreviaturaProfesional.toLowerCase()) ? nombreMedico : `${abreviaturaProfesional} ${nombreMedico}`)
       : '';
 
-    const comprobante = `
-      <div style="text-align: left; font-family: monospace;">
-        <div style="text-align: center; margin-bottom: 0;">
-          <img src='${logoSrc}' alt='Logo' style='height:60px; margin-bottom:4px; display:block; margin-left:auto; margin-right:auto;' />
-          <h3 style="text-align: center; margin-bottom: 4px; margin-top: 4px;${clinicBrand.nombre_color ? ' color:' + clinicBrand.nombre_color + ';' : ''}">${clinicBrand.name}</h3>
-          ${clinicBrand.slogan ? `<p style="text-align:center;margin:0 0 4px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>` : ''}
-          ${clinicBrand.direccion ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.direccion}</p>` : ''}
-          ${clinicBrand.telefono ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Tel: ${clinicBrand.telefono}</p>` : ''}
-          ${clinicBrand.celular ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Cel: ${clinicBrand.celular}</p>` : ''}
-          ${clinicBrand.email ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.email}</p>` : ''}
-          ${clinicBrand.ruc ? `<p style="text-align:center;margin:2px 0;font-size:11px;">RUC: ${clinicBrand.ruc}</p>` : ''}
+    const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
+    const contactoLinea = [
+      clinicBrand.telefono ? `Tel: ${clinicBrand.telefono}` : '',
+      clinicBrand.celular ? `Cel: ${clinicBrand.celular}` : '',
+    ].filter(Boolean).join(' | ');
+    const categoriaLabelMap = {
+      consulta: 'Consultas',
+      laboratorio: 'Laboratorio',
+      farmacia: 'Farmacia',
+      rayosx: 'Rayos X',
+      ecografia: 'Ecografía',
+      procedimiento: 'Procedimientos',
+      operacion: 'Operaciones',
+      hospitalizacion: 'Hospitalización',
+    };
+    const gruposDetalles = Object.values((Array.isArray(datosComprobante.detalles) ? datosComprobante.detalles : []).reduce((acc, d) => {
+      const key = String(d?.servicio_tipo || 'procedimiento').toLowerCase();
+      if (!acc[key]) {
+        acc[key] = {
+          key,
+          label: categoriaLabelMap[key] || 'Otros servicios',
+          subtotal: 0,
+          items: [],
+        };
+      }
+      acc[key].subtotal += Number(d?.subtotal || 0);
+      acc[key].items.push(d);
+      return acc;
+    }, {}));
+    const resumenDetallesHtml = gruposDetalles.map((grupo) => {
+      const itemsHtml = grupo.items.map((d) => {
+        const descripcion = String(d?.descripcion || 'Servicio').trim();
+        const prefijoCotizacion = Number(d?.cotizacion_id || 0) > 0 && cotizacionIdsTicket.length > 1
+          ? `[#${Number(d?.cotizacion_id || 0)}] `
+          : '';
+        const descripcionCorta = `${prefijoCotizacion}${descripcion}`.length > 34
+          ? `${`${prefijoCotizacion}${descripcion}`.slice(0, 31)}...`
+          : `${prefijoCotizacion}${descripcion}`;
+        const cantidad = Number(d?.cantidad || 0);
+        const subtotal = Number(d?.subtotal || 0);
+        return `
+          <div class="t-row">
+            <div class="t-desc">${descripcionCorta} x${cantidad}</div>
+            <div class="t-amount">${toMoney(subtotal)}</div>
+          </div>`;
+      }).join('');
+
+      return `
+        <div class="t-section">${grupo.label}</div>
+        ${itemsHtml}
+        <div class="t-row">
+          <div class="t-desc"><strong>Subtotal ${grupo.label}</strong></div>
+          <div class="t-amount">${toMoney(grupo.subtotal)}</div>
+        </div>`;
+    }).join('');
+
+    const ticketCss = `
+      <style>
+        * { box-sizing: border-box; }
+        .ticket-80 {
+          width: 100%;
+          max-width: 320px;
+          margin: 0 auto;
+          padding: 8px 10px;
+          font-family: "Courier New", "Lucida Console", monospace;
+          font-size: 11px;
+          line-height: 1.2;
+          color: #111827;
+        }
+        .ticket-80 .t-center { text-align: center; }
+        .ticket-80 .t-logo { height: 48px; margin: 0 auto 4px; display: block; }
+        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+        .ticket-80 .t-line { margin: 1px 0; }
+        .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
+        .ticket-80 .t-title { font-weight: 700; text-transform: uppercase; margin: 0 0 4px; }
+        .ticket-80 .t-meta { margin: 1px 0; }
+        .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 700; text-transform: uppercase; }
+        .ticket-80 .t-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 6px;
+          margin: 1px 0;
+        }
+        .ticket-80 .t-desc {
+          flex: 1;
+          min-width: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
+        .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
+        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #4b5563; }
+        @media print {
+          @page { size: 80mm auto; margin: 2mm; }
+          html, body { margin: 0; padding: 0; }
+          .ticket-80 {
+            width: 76mm;
+            max-width: 76mm;
+            margin: 0;
+            padding: 2.5mm;
+            font-size: 10.5px;
+            line-height: 1.15;
+          }
+          .ticket-80 .t-clinic { font-size: 12px; }
+          .ticket-80 .t-logo { height: 40px; margin-bottom: 3px; }
+          .ticket-80 .t-total { font-size: 11.5px; }
+        }
+      </style>`;
+
+    const comprobanteBody = `
+      <div class="ticket-80">
+        <div class="t-center">
+          <img src="${logoSrc}" alt="Logo" class="t-logo" />
+          <div class="t-clinic"${clinicBrand.nombre_color ? ` style="color:${clinicBrand.nombre_color};"` : ''}>${clinicBrand.name}</div>
+          ${clinicBrand.slogan ? `<div class="t-line" style="font-style:italic;${clinicBrand.slogan_color ? `color:${clinicBrand.slogan_color};` : ''}">${clinicBrand.slogan}</div>` : ''}
+          ${clinicBrand.direccion ? `<div class="t-line">${clinicBrand.direccion}</div>` : ''}
+          ${contactoLinea ? `<div class="t-line">${contactoLinea}</div>` : ''}
+          ${clinicBrand.ruc ? `<div class="t-line">RUC: ${clinicBrand.ruc}</div>` : ''}
         </div>
-        <hr>
-        <p><strong>COMPROBANTE DE PAGO #${cobroId}</strong></p>
-        <p>Fecha: ${fechaHora}</p>
-        <p>Paciente: ${nombreCompleto}</p>
-        <p>DNI: ${dniPaciente || '-'}</p>
-        <p>H.C.: ${historiaClinicaPaciente || '-'}</p>
-        ${esConsultaMedica ? `<p>Tipo de consulta: ${tipoConsulta}</p>` : ''}
-        ${esConsultaMedica ? `<p>Fecha de consulta: ${fechaConsultaFmt || 'No registrada'}</p>` : ''}
-        ${esConsultaMedica ? `<p>Hora de consulta: ${horaConsulta || 'No registrada'}</p>` : ''}
-        ${esConsultaMedica && tipoConsultaRaw === 'programada' ? `<p>N° Orden de llegada: ${numeroOrden}</p>` : ''}
-        ${nombreProfesional ? `<p>Profesional: ${nombreProfesional}</p>` : ''}
-        <hr>
-        <p><strong>DETALLE:</strong></p>
-        ${datosComprobante.detalles.map(d => {
-          const resumen = d.descripcion.length > 50 ? d.descripcion.slice(0, 47) + '...' : d.descripcion;
-          return `<p>${resumen} x${d.cantidad} .... S/ ${d.subtotal.toFixed(2)}</p>`;
-        }).join('')}
-        <hr>
-          ${datosComprobante.monto_descuento && datosComprobante.monto_descuento > 0 ? `
-            <p style="color: #d97706;"><strong>DESCUENTO:</strong> -S/ ${datosComprobante.monto_descuento.toFixed(2)} (${datosComprobante.tipo_descuento === 'porcentaje' ? datosComprobante.valor_descuento + '%' : 'Monto fijo'})</p>
-          ` : ''}
-        <p><strong>TOTAL: S/ ${datosComprobante.total.toFixed(2)}</strong></p>
+
+        <hr class="t-hr" />
+        <div class="t-title">Comprobante de pago #${cobroId}</div>
+        <div class="t-meta">Fecha: ${fechaHora}</div>
+        <div class="t-meta">Paciente: ${nombreCompleto}</div>
+        <div class="t-meta">DNI: ${dniPaciente || '-'}</div>
+        <div class="t-meta">H.C.: ${historiaClinicaPaciente || '-'}</div>
+        ${cotizacionIdsTicket.length > 0 ? `<div class="t-meta">Cotizaciones: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
+        ${esConsultaMedica ? `<div class="t-meta">Consulta: ${tipoConsulta}</div>` : ''}
+        ${esConsultaMedica ? `<div class="t-meta">Fecha consulta: ${fechaConsultaFmt || 'No registrada'}</div>` : ''}
+        ${esConsultaMedica ? `<div class="t-meta">Hora consulta: ${horaConsulta || 'No registrada'}</div>` : ''}
+        ${esConsultaMedica && tipoConsultaRaw === 'programada' ? `<div class="t-meta">Orden: ${numeroOrden}</div>` : ''}
+        ${nombreProfesional ? `<div class="t-meta">Profesional: ${nombreProfesional}</div>` : ''}
+
+        <hr class="t-hr" />
+        <div class="t-section">Detalle</div>
+        ${resumenDetallesHtml || '<div class="t-meta">Sin detalles</div>'}
+
+        <hr class="t-hr" />
+        ${descuentoAplicadoCobro > 0
+          ? `<div class="t-row"><div class="t-desc"><strong>Descuento</strong></div><div class="t-amount">-${toMoney(descuentoAplicadoCobro)}</div></div>`
+          : ''}
+        <div class="t-row t-total"><div class="t-desc">TOTAL</div><div class="t-amount">${toMoney(datosComprobante.total)}</div></div>
+
         ${mostrarResumenSaldo ? `
-          ${esCobroCotizacion ? `<p><strong>Cotización:</strong> #${cotizacionId}</p>` : ''}
-          <p><strong>Tipo de aplicación:</strong> ${esAdelantoCobro ? 'Adelanto' : 'Pago completo'}</p>
-          <p><strong>Saldo anterior:</strong> S/ ${saldoAnteriorCobro.toFixed(2)}</p>
-          <p><strong>Abono aplicado hoy:</strong> S/ ${abonoAplicadoCobro.toFixed(2)}</p>
-          ${descuentoAplicadoCobro > 0 ? `<p><strong>Descuento aplicado:</strong> S/ ${descuentoAplicadoCobro.toFixed(2)}</p>` : ''}
-          <p><strong>Saldo pendiente:</strong> S/ ${saldoRestanteCobro.toFixed(2)}</p>
+          <div class="t-section">Resumen saldo</div>
+          ${esCobroCotizacion ? `<div class="t-meta">${cotizacionIdsTicket.length > 1 ? 'Cotizaciones' : 'Cotización'}: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
+          <div class="t-meta">Aplicación: ${esAdelantoCobro ? 'Adelanto' : 'Pago completo'}</div>
+          <div class="t-row"><div class="t-desc">Saldo anterior</div><div class="t-amount">${toMoney(saldoAnteriorCobro)}</div></div>
+          <div class="t-row"><div class="t-desc">Abono aplicado</div><div class="t-amount">${toMoney(abonoAplicadoCobro)}</div></div>
+          <div class="t-row"><div class="t-desc">Saldo pendiente</div><div class="t-amount">${toMoney(saldoRestanteCobro)}</div></div>
         ` : ''}
-        <p>Tipo de pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</p>
-        <p>Cobertura: ${tipoCobertura.toUpperCase()}</p>
-        <hr>
-        <p style="text-align: center; font-size: 12px;">
-          Gracias por su preferencia<br>
-          Conserve este comprobante
-        </p>
-      </div>
-    `;
+
+        <div class="t-meta">Pago: ${tipoPago === 'yape' ? 'Yape' : tipoPago.toUpperCase()}</div>
+        <div class="t-meta">Cobertura: ${tipoCobertura.toUpperCase()}</div>
+        <hr class="t-hr" />
+        <div class="t-note">Gracias por su preferencia<br />Conserve este comprobante</div>
+      </div>`;
+
+    const comprobante = `${ticketCss}${comprobanteBody}`;
 
     await Swal.fire({
       title: 'Cobro Procesado ✅',
@@ -439,7 +563,8 @@ if (tipoDescuento === 'porcentaje') {
       if (result.isConfirmed) {
         // Abrir ventana de impresión
         const ventanaImpresion = window.open('', '_blank');
-        ventanaImpresion.document.write(comprobante);
+        const documentoImpresion = `<!doctype html><html><head><meta charset="utf-8"><title>Comprobante</title>${ticketCss}</head><body>${comprobanteBody}</body></html>`;
+        ventanaImpresion.document.write(documentoImpresion);
         ventanaImpresion.document.close();
         ventanaImpresion.print();
       }
@@ -569,6 +694,9 @@ if (tipoDescuento === 'porcentaje') {
                 <div key={index} className="flex justify-between items-center text-base">
                   <span>
                     {detalle.descripcion}
+                    {Number(detalle?.cotizacion_id || 0) > 0 && Array.isArray(servicio?.cotizacion_ids) && servicio.cotizacion_ids.length > 1 ? (
+                      <span className="block text-xs text-slate-500">Cotización #{Number(detalle.cotizacion_id)}</span>
+                    ) : null}
                     {medicoNombre ? <span className="block text-xs text-gray-500">{medicoNombre}</span> : null}
                   </span>
                   <span className="font-bold">S/ {precio > 0 ? precio.toFixed(2) : '—'}</span>
@@ -610,7 +738,7 @@ if (tipoDescuento === 'porcentaje') {
           <div className="flex flex-col md:flex-row gap-4 mt-4">
             <button 
               onClick={procesarCobro}
-              disabled={loading || totalCobro <= 0}
+              disabled={loading}
               className="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg font-bold text-lg hover:bg-green-700 disabled:bg-gray-400 transition-all shadow-md"
             >
               {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}

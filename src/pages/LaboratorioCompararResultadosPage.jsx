@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import {
   LineChart,
   Line,
@@ -37,8 +38,8 @@ export default function LaboratorioCompararResultadosPage() {
         qs.set("alcance", alcance);
         if (parametro) qs.set("parametro", parametro);
 
-        const res = await fetch(`${BASE_URL}api_laboratorio_comparar_resultados.php?${qs.toString()}`, {
-          credentials: "include",
+        const res = await authFetch(`api_laboratorio_comparar_resultados.php?${qs.toString()}`, {
+          cache: "no-store",
         });
         const json = await res.json();
 

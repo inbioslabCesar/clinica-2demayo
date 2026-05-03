@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import { 
   FaArrowLeft, 
   FaSave,
@@ -42,7 +43,7 @@ export default function NuevoIngresoPage() {
       return;
     }
     setLoading(true);
-    fetch(`${BASE_URL}api_tarifas.php?servicio_tipo=${formData.tipo_ingreso}`, { credentials: 'include' })
+    authFetch(`api_tarifas.php?servicio_tipo=${formData.tipo_ingreso}`)
       .then(res => res.json())
       .then(data => {
         if (data.success) {
@@ -59,7 +60,7 @@ export default function NuevoIngresoPage() {
     try {
       setLoading(true);
       // Solo cargar métodos de pago
-      const metodosResp = await fetch(`${BASE_URL}api_metodos_pago.php`, { credentials: 'include' });
+      const metodosResp = await authFetch(`api_metodos_pago.php`);
       const metodosData = await metodosResp.json();
       if (metodosData.success) {
         setMetodosPago(metodosData.metodos);
@@ -151,10 +152,9 @@ export default function NuevoIngresoPage() {
       if (formData.paciente_id) {
         payload.paciente_id = formData.paciente_id;
       }
-      const response = await fetch(`${BASE_URL}api_registrar_ingreso.php`, {
+      const response = await authFetch(`api_registrar_ingreso.php`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
 

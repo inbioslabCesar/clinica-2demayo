@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import ExamenesStatsBar from "../components/examenes/ExamenesStatsBar";
 import ExamenesFilterBar from "../components/examenes/ExamenesFilterBar";
 import ExamenesTable from "../components/examenes/ExamenesTable";
@@ -107,8 +107,8 @@ export default function ExamenesLaboratorioCrudPage() {
 
     setLoading(true);
     try {
-      const res = await fetch(BASE_URL + "api_examenes_laboratorio.php", {
-        credentials: "include",
+      const res = await authFetch("api_examenes_laboratorio.php", {
+        cache: "no-store",
         signal: controller.signal,
       });
 
@@ -227,17 +227,15 @@ export default function ExamenesLaboratorioCrudPage() {
     try {
       const method = editId ? "PUT" : "POST";
       const url =
-        BASE_URL +
         "api_examenes_laboratorio.php" +
         (editId ? `?id=${editId}` : "");
       // Normalizar valores_referenciales antes de enviar
       const payload = { ...form, valores_referenciales: normalizeValoresReferenciales(form.valores_referenciales) };
       if (editId) payload.id = editId;
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        credentials: "include",
       });
       const data = await res.json();
       
@@ -313,13 +311,9 @@ export default function ExamenesLaboratorioCrudPage() {
     if (!window.confirm("¿Está seguro de eliminar este examen? Esta acción no se puede deshacer.")) return;
     
     try {
-      const res = await fetch(
-        BASE_URL + `api_examenes_laboratorio.php?id=${id}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-        }
-      );
+      const res = await authFetch(`api_examenes_laboratorio.php?id=${id}`, {
+        method: "DELETE",
+      });
       const data = await res.json();
       
       if (data.success) {

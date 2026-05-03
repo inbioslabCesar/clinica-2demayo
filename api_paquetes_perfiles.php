@@ -67,22 +67,30 @@ function pp_fetch_catalog(PDO $pdo, string $sourceType, string $q, int $limit): 
     $qLike = '%' . $q . '%';
     $limit = max(1, min(100, $limit));
 
-    // Compatibilidad historica: en algunas bases existe "procedimientos" en tarifas.
-    $sourceTypeQuery = $sourceType;
-    if ($sourceType === 'procedimiento') {
-        $sourceTypeQuery = 'procedimientos';
-    }
-
     if (in_array($sourceType, ['consulta', 'ecografia', 'rayosx', 'procedimiento', 'operacion'], true)) {
+        $aliasesByType = [
+            'consulta' => ['consulta'],
+            'ecografia' => ['ecografia'],
+            'rayosx' => ['rayosx', 'rayos x', 'rayos_x'],
+            'procedimiento' => ['procedimiento', 'procedimientos'],
+            'operacion' => ['operacion', 'operaciones', 'cirugia', 'cirugias', 'cirugia_mayor'],
+        ];
+
+        $tiposServicio = $aliasesByType[$sourceType] ?? [$sourceType];
+        $tiposServicio = array_values(array_unique(array_map('strtolower', $tiposServicio)));
+        $placeholders = implode(',', array_fill(0, count($tiposServicio), '?'));
+
         $stmt = $pdo->prepare(
             "SELECT t.id, t.descripcion, t.precio_particular, t.medico_id, COALESCE(m.nombre, '') AS medico_nombre, COALESCE(m.apellido, '') AS medico_apellido
              FROM tarifas t
              LEFT JOIN medicos m ON m.id = t.medico_id
-             WHERE t.activo = 1 AND LOWER(t.servicio_tipo) IN (?, ?) AND t.descripcion LIKE ?
+             WHERE t.activo = 1 AND LOWER(t.servicio_tipo) IN ({$placeholders}) AND t.descripcion LIKE ?
              ORDER BY t.descripcion ASC
              LIMIT {$limit}"
         );
-        $stmt->execute([strtolower($sourceType), strtolower($sourceTypeQuery), $qLike]);
+        $params = $tiposServicio;
+        $params[] = $qLike;
+        $stmt->execute($params);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return array_map(function ($r) use ($sourceType) {
             return [

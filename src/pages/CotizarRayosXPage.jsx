@@ -1,3 +1,4 @@
+import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useState } from "react";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
@@ -59,13 +60,16 @@ export default function CotizarRayosXPage() {
 
   useEffect(() => {
     // Obtener datos del paciente
-    fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
+    authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, {
+      credentials: 'include',
+      cache: 'no-store'
+    })
       .then(r => r.json())
       .then(data => {
         if (data.success && data.paciente) setPaciente(data.paciente);
       });
     // Obtener tarifas de rayos x
-    fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
+    authFetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         const rayosxTarifas = (data.tarifas || [])
@@ -79,7 +83,7 @@ export default function CotizarRayosXPage() {
         setTarifas(rayosxTarifas);
       });
     // Obtener lista de médicos
-    fetch(`${BASE_URL}api_medicos.php`, { credentials: "include" })
+    authFetch(`${BASE_URL}api_medicos.php`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         setMedicos(data.medicos || []);
@@ -88,7 +92,7 @@ export default function CotizarRayosXPage() {
 
   // Consultar estado de caja al entrar
   useEffect(() => {
-    fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' })
+    authFetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => setCajaEstado(data?.estado || 'cerrada'))
       .catch(() => setCajaEstado('cerrada'));
@@ -104,7 +108,7 @@ export default function CotizarRayosXPage() {
       setPreloadedItems([]);
       setPendingRxItems([]);
     }
-    if (cobroId) loaders.push(fetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
+    if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null; if (!data.success || !cobro) return;
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
       const itemsRx = [];
@@ -113,7 +117,7 @@ export default function CotizarRayosXPage() {
         setPendingRxItems(prev => [...prev, ...itemsRx]);
       }
     }));
-    if (cotizacionId) loaders.push(fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(res => res.json()).then(data => {
+    if (cotizacionId) loaders.push(authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cot = data.cotizacion || null; if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
       setCotizacionDetallesOriginales(detalles);
@@ -161,7 +165,7 @@ export default function CotizarRayosXPage() {
     if (!cobroId) return;
     // Verificar caja abierta
     try {
-      const ce = await fetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' }).then(r => r.json());
+      const ce = await authFetch(`${BASE_URL}api_caja_estado.php`, { credentials: 'include' }).then(r => r.json());
       if (!ce?.success || ce?.estado !== 'abierta') {
         setCajaEstado(ce?.estado || 'cerrada');
         Swal.fire('Error', 'No hay caja abierta. Abre caja para actualizar este cobro.', 'error');
@@ -261,7 +265,7 @@ export default function CotizarRayosXPage() {
           const lineQty = Number(line?.cantidad || 0);
           if (lineQty <= 0) throw new Error('Cantidad inválida en el detalle del cobro.');
 
-          const delResp = await fetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
+          const delResp = await authFetch(`${BASE_URL}api_cobro_eliminar_item.php`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
@@ -295,7 +299,7 @@ export default function CotizarRayosXPage() {
       }
 
       if (additionsAfterReductions.length > 0) {
-        const resp = await fetch(`${BASE_URL}api_cobro_actualizar.php`, {
+        const resp = await authFetch(`${BASE_URL}api_cobro_actualizar.php`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
@@ -433,7 +437,7 @@ export default function CotizarRayosXPage() {
   };
 
   const obtenerDetallesCotizacion = async (targetCotizacionId) => {
-    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
+    const res = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(targetCotizacionId)}`, {
       credentials: 'include',
     });
     const data = await res.json();
@@ -510,7 +514,7 @@ export default function CotizarRayosXPage() {
 
     try {
       let data;
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -539,7 +543,7 @@ export default function CotizarRayosXPage() {
           total,
           motivo: 'Adenda confirmada por usuario desde cotizador de Rayos X (cotización pagada)'
         };
-        const resAdenda = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+        const resAdenda = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },

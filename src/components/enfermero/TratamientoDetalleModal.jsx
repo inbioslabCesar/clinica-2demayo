@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@fluentui/react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 const BADGE = {
   pendiente:    { label: "Pendiente",    bg: "bg-yellow-100", text: "text-yellow-800", icon: "Clock"     },
@@ -74,10 +74,7 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
     }
 
     try {
-      const res = await fetch(
-        BASE_URL + `api_tratamientos_ejecucion.php?tratamiento_id=${tratamiento.id}`,
-        { credentials: "include" }
-      );
+      const res = await authFetch(`api_tratamientos_ejecucion.php?tratamiento_id=${tratamiento.id}`);
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || "No se pudo cargar detalle multidia");
@@ -128,10 +125,9 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
     setGuardando(true);
     setErrorMsg("");
     try {
-      const res = await fetch(BASE_URL + "api_tratamientos_ejecucion.php", {
+      const res = await authFetch("api_tratamientos_ejecucion.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           action: "registrar_evento",
           ejecucion_diaria_id: ejecucionDiariaId,
@@ -160,10 +156,9 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
     setGuardando(true);
     setErrorMsg("");
     try {
-      const res = await fetch(BASE_URL + "api_tratamientos_ejecucion.php", {
+      const res = await authFetch("api_tratamientos_ejecucion.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           action: "iniciar_item",
           tratamiento_id: tratamiento.id,

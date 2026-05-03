@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { BASE_URL } from '../config/config'
+import { authFetch } from '../utils/apiClient'
 import Modal from '../components/comunes/Modal.jsx'
 
 const emptyForm = {
@@ -35,7 +36,7 @@ export default function WebBannersCrudPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await fetch(endpoint, { credentials: 'include' })
+      const r = await authFetch(endpoint)
       const data = await r.json()
       if (!data?.success) throw new Error(data?.error || 'No se pudo cargar')
       setItems(data.banners || [])
@@ -99,10 +100,9 @@ export default function WebBannersCrudPage() {
       for (const file of imagenFiles) fd.append('imagen[]', file)
     }
 
-    const r = await fetch(uploadEndpoint, {
+    const r = await authFetch(uploadEndpoint, {
       method: 'POST',
       body: fd,
-      credentials: 'include',
     })
     const data = await r.json().catch(() => null)
     if (!r.ok || !data?.success) {
@@ -123,10 +123,9 @@ export default function WebBannersCrudPage() {
     const fd = new FormData()
     fd.append('imagen', imagenFijaFile)
 
-    const r = await fetch(uploadEndpoint, {
+    const r = await authFetch(uploadEndpoint, {
       method: 'POST',
       body: fd,
-      credentials: 'include',
     })
     const data = await r.json().catch(() => null)
     if (!r.ok || !data?.success) {
@@ -146,10 +145,9 @@ export default function WebBannersCrudPage() {
     const fd = new FormData()
     fd.append('imagen', imagenConocenosFile)
 
-    const r = await fetch(uploadEndpoint, {
+    const r = await authFetch(uploadEndpoint, {
       method: 'POST',
       body: fd,
-      credentials: 'include',
     })
     const data = await r.json().catch(() => null)
     if (!r.ok || !data?.success) {
@@ -185,11 +183,10 @@ export default function WebBannersCrudPage() {
         if (uploadedConocenosUrl) payload.imagen_conocenos_url = uploadedConocenosUrl
         if (!payload.imagen_url) throw new Error('La imagen es requerida')
 
-        const r = await fetch(endpoint, {
+        const r = await authFetch(endpoint, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          credentials: 'include',
         })
         const data = await r.json()
         if (!data?.success) throw new Error(data?.error || 'No se pudo guardar')
@@ -211,11 +208,10 @@ export default function WebBannersCrudPage() {
             titulo: (basePayload.titulo || '').trim() ? basePayload.titulo : suggestedTitle,
           }
 
-          const r = await fetch(endpoint, {
+          const r = await authFetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-            credentials: 'include',
           })
           const data = await r.json().catch(() => null)
           if (!data?.success) throw new Error(data?.error || 'No se pudo guardar')
@@ -245,11 +241,10 @@ export default function WebBannersCrudPage() {
     if (!confirm.isConfirmed) return
 
     try {
-      const r = await fetch(endpoint, {
+      const r = await authFetch(endpoint, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
-        credentials: 'include',
       })
       const data = await r.json()
       if (!data?.success) throw new Error(data?.error || 'No se pudo desactivar')

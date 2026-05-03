@@ -1,6 +1,6 @@
 
 import { useState } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 const TIPO_META = {
   dni: { label: "DNI", placeholder: "Ej: 71609118" },
@@ -23,10 +23,9 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
     setBuscando(true);
     setResultados([]);
     try {
-      const res = await fetch(BASE_URL + 'api_pacientes_buscar.php', {
+      const res = await authFetch('api_pacientes_buscar.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ tipo, valor: busqueda })
       });
       const data = await res.json();

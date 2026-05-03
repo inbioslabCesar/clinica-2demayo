@@ -1,31 +1,63 @@
-function getDefaultApiBase() {
-  const hostname = window.location.hostname
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost/clinica-2demayo/'
-
-  const normalizedHost = hostname.replace(/^www\./i, '')
-  if (/^sistema\./i.test(normalizedHost)) {
-    return `${window.location.protocol}//${normalizedHost}/`
-  }
-
-  return `https://sistema.${normalizedHost}/`
+function normalizeBase(base) {
+  return String(base || '').trim().replace(/\/+$/, '/')
 }
 
-export const PUBLIC_API_BASE = (import.meta.env.VITE_PUBLIC_API_BASE || getDefaultApiBase()).replace(/\/+$/, '/')
+function buildApiBaseCandidates() {
+  const hostname = window.location.hostname
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return [normalizeBase(`${window.location.protocol}//${hostname}/clinica-2demayo/`)]
+  }
+
+  const protocol = window.location.protocol
+  const host = window.location.host
+  const normalizedHost = hostname.replace(/^www\./i, '')
+  const candidates = []
+
+  if (/^sistema\./i.test(normalizedHost)) {
+    candidates.push(normalizeBase(`${protocol}//${host}/`))
+  } else {
+    // Priorizar despliegue por ruta: dominio/sistema/
+    candidates.push(normalizeBase(`${protocol}//${host}/sistema/`))
+    // Fallback para despliegues en subdominio sistema.<dominio>
+    candidates.push(normalizeBase(`${protocol}//sistema.${normalizedHost}/`))
+  }
+
+  return [...new Set(candidates)]
+}
+
+const envApiBase = normalizeBase(import.meta.env.VITE_PUBLIC_API_BASE || '')
+const runtimeApiBases = envApiBase ? [envApiBase] : buildApiBaseCandidates()
+
+export const PUBLIC_API_BASE = runtimeApiBases[0]
 
 async function fetchJson(path) {
-  const separator = path.includes('?') ? '&' : '?'
-  const url = `${PUBLIC_API_BASE}${path}${separator}_t=${Date.now()}`
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'Accept': 'application/json' },
-    cache: 'no-store',
-  })
-  const data = await response.json().catch(() => null)
-  if (!response.ok) {
-    const message = data?.error || data?.message || `HTTP ${response.status}`
-    throw new Error(message)
+  let lastError = null
+
+  for (const base of runtimeApiBases) {
+    const separator = path.includes('?') ? '&' : '?'
+    const url = `${base}${path}${separator}_t=${Date.now()}`
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store',
+      })
+
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        const message = data?.error || data?.message || `HTTP ${response.status}`
+        lastError = new Error(message)
+        continue
+      }
+
+      return data
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Error de conexión al API público')
+    }
   }
-  return data
+
+  throw lastError || new Error('No se pudo conectar al API público')
 }
 
 export async function getServicios() {

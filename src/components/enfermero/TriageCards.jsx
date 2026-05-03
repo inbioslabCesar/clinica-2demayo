@@ -2,6 +2,19 @@ import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
 function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+  const getContratoMeta = (consulta) => {
+    const esContrato = Number(consulta?.es_contrato || 0) === 1;
+    if (!esContrato) {
+      return { visible: false, label: '', icon: '', className: '' };
+    }
+    return {
+      visible: true,
+      label: 'Contrato',
+      icon: '📘',
+      className: 'bg-emerald-100 text-emerald-800'
+    };
+  };
+
   const formatearFecha = (fecha) => {
     if (!fecha) return '-';
     const partes = String(fecha).split('-');
@@ -15,7 +28,9 @@ function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
   };
   return (
     <div className="lg:hidden p-4 space-y-4">
-      {consultasPagina.map((c) => (
+      {consultasPagina.map((c) => {
+        const contratoMeta = getContratoMeta(c);
+        return (
         <div key={c.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
@@ -30,6 +45,11 @@ function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
                   <Icon iconName="NumberField" className="text-sm" />
                   HC: {c.historia_clinica || 'N/A'}
                 </div>
+                {contratoMeta.visible && (
+                  <span className={`mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${contratoMeta.className}`}>
+                    {contratoMeta.icon} {contratoMeta.label}
+                  </span>
+                )}
               </div>
             </div>
             {triajeStatus[c.id] === 'Completado' ? (
@@ -68,7 +88,7 @@ function TriageCards({ consultasPagina, triajeStatus, onRealizarTriaje }) {
             Realizar Triaje
           </button>
         </div>
-      ))}
+      );})}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ResultadosLaboratorio from "./ResultadosLaboratorio";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 // ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
 const TIPOS_IMAGEN = [
@@ -24,7 +24,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
   const cargarOrdenes = useCallback(() => {
     if (!consultaId) return;
     setLoadingOrdenes(true);
-    fetch(`${BASE_URL}api_ordenes_imagen.php?consulta_id=${consultaId}`, { credentials: "include" })
+    authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.success) setOrdenes((d.ordenes || []).filter((o) => o.tipo === tipo));
@@ -36,16 +36,18 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
   useEffect(() => { cargarOrdenes(); }, [cargarOrdenes]);
 
   const handleCancelar = async (ordenId) => {
-    await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
+    await authFetch("api_ordenes_imagen.php", {
       method: "POST",
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "cancelar", orden_id: ordenId }),
     });
     cargarOrdenes();
   };
 
-  const esPagada = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
+  const esPagada = (cot) => {
+    const estado = String(cot?.estado || "").toLowerCase();
+    return ["completado", "pagado", "control", "contrato"].includes(estado);
+  };
 
   const cotizBadge = (ord) => {
     const cot = ord.cotizacion;
@@ -150,9 +152,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   // Cargar lista de exámenes para mapear IDs a nombres
   useEffect(() => {
     // Obtener catálogo de exámenes con credenciales (cookies de sesión)
-    fetch(`${BASE_URL}api_examenes_laboratorio.php`, {
-      credentials: 'include'
-    })
+    authFetch("api_examenes_laboratorio.php")
       .then((response) => response.json())
       .then((data) => setExamenes(data.examenes || []))
       .catch((error) => console.error('Error al obtener exámenes:', error));

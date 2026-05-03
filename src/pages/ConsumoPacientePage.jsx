@@ -4,6 +4,7 @@ import { BASE_URL } from "../config/config";
 import Spinner from "../components/comunes/Spinner";
 import { FaMoneyBillWave, FaUserCircle, FaClipboardList } from "react-icons/fa";
 import Swal from 'sweetalert2';
+import { authFetch } from "../utils/apiClient";
 
 export default function ConsumoPacientePage() {
   const [modalVisible, setModalVisible] = useState(false);
@@ -27,7 +28,7 @@ export default function ConsumoPacientePage() {
   useEffect(() => { setPage(1); }, [itemsPerPage]);
 
   useEffect(() => {
-  fetch(`${BASE_URL}api_consumos_paciente.php?paciente_id=${pacienteId}`, { credentials: 'include' })
+  authFetch(`api_consumos_paciente.php?paciente_id=${pacienteId}`)
       .then(res => res.json())
       .then(data => {
         if (data.success) setConsumo(data);
@@ -42,9 +43,8 @@ export default function ConsumoPacientePage() {
 
   useEffect(() => {
     let mounted = true;
-    fetch(`${BASE_URL}api_get_configuracion.php`, {
+    authFetch("api_get_configuracion.php", {
       method: 'GET',
-      credentials: 'include',
       cache: 'no-store'
     })
       .then((res) => res.json())
@@ -81,7 +81,7 @@ export default function ConsumoPacientePage() {
 
   useEffect(() => {
     let mounted = true;
-    fetch(`${BASE_URL}api_medicos.php`, { credentials: 'include' })
+    authFetch("api_medicos.php")
       .then((res) => res.json())
       .then((data) => {
         if (!mounted) return;
@@ -108,7 +108,7 @@ export default function ConsumoPacientePage() {
 
   useEffect(() => {
     let mounted = true;
-    fetch(`${BASE_URL}api_tarifas.php`, { credentials: 'include' })
+    authFetch("api_tarifas.php")
       .then((res) => res.json())
       .then((data) => {
         if (!mounted) return;
@@ -173,7 +173,7 @@ export default function ConsumoPacientePage() {
   }, [historialBase, fechaInicio, fechaFin]);
   // Agrupar por cobro (por fecha y monto total)
   const cobrosAgrupados = useMemo(() => {
-    const priority = { pendiente: 4, parcial: 3, anulada: 2, pagado: 1 };
+    const priority = { pendiente: 4, parcial: 3, anulada: 2, pagado_con_descuento: 1, pagado: 1 };
     const grupos = {};
 
     const pushTipoServicio = (bucket, tipoRaw) => {
@@ -262,6 +262,7 @@ export default function ConsumoPacientePage() {
 
   const estadoStyles = {
     pagado: 'bg-green-100 text-green-700',
+    pagado_con_descuento: 'bg-emerald-100 text-emerald-800',
     parcial: 'bg-amber-100 text-amber-700',
     pendiente: 'bg-red-100 text-red-700',
     anulada: 'bg-gray-200 text-gray-700',
@@ -269,6 +270,7 @@ export default function ConsumoPacientePage() {
 
   const estadoLabel = {
     pagado: 'pagado',
+    pagado_con_descuento: 'pagado con descuento',
     parcial: 'parcial',
     pendiente: 'pendiente',
     anulada: 'anulada',

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 
 /**
@@ -17,9 +17,9 @@ export default function useDisponibilidadMedico(medicoId = null) {
     setLoading(true);
     try {
       const url = medicoId
-        ? `${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medicoId}`
-        : `${BASE_URL}api_disponibilidad_medicos.php`;
-      const res = await fetch(url, { credentials: "include" });
+        ? `api_disponibilidad_medicos.php?medico_id=${medicoId}`
+        : "api_disponibilidad_medicos.php";
+      const res = await authFetch(url);
       const data = await res.json();
       setDisponibilidad(data.disponibilidad || []);
       setError(null);
@@ -40,10 +40,9 @@ export default function useDisponibilidadMedico(medicoId = null) {
     try {
       const method = editId ? "PUT" : "POST";
       const body = editId ? { ...bloque, id: editId } : { ...bloque, medico_id: medicoId };
-      const res = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
+      const res = await authFetch("api_disponibilidad_medicos.php", {
         method,
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(body)
       });
       if (res.ok) {
@@ -71,10 +70,9 @@ export default function useDisponibilidadMedico(medicoId = null) {
   const deleteDisponibilidad = async (id) => {
     setLoading(true);
     try {
-      const res = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
+      const res = await authFetch("api_disponibilidad_medicos.php", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ id })
       });
       if (res.ok) {

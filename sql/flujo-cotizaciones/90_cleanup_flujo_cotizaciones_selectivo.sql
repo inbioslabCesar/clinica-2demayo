@@ -15,6 +15,10 @@
 --
 -- REGLA DE ORO:
 --   Solo elimina registros de transaccion vinculados a cotizaciones.
+--
+-- Nota:
+--   Incluye limpieza de produccion_medica_detalle (si existe) para
+--   mantener coherencia con el dashboard de produccion medica.
 
 DELIMITER $$
 
@@ -51,6 +55,19 @@ BEGIN
     DROP TEMPORARY TABLE IF EXISTS tmp_honorarios_mov_obj;
     DROP TEMPORARY TABLE IF EXISTS tmp_ingresos_diarios_obj;
     DROP TEMPORARY TABLE IF EXISTS tmp_liq_med_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_pmd_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_te_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_tei_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_ted_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_tedose_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_teevt_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_hc_sync_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_hc_sync_pend_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_pacientes_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_contratos_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_psp_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_cps_obj;
+    DROP TEMPORARY TABLE IF EXISTS tmp_pcd_obj;
 
     CREATE TEMPORARY TABLE tmp_cotizaciones_obj (
         id INT PRIMARY KEY
@@ -95,6 +112,71 @@ BEGIN
     INNER JOIN tmp_cotizaciones_obj tco ON tco.id = hpc.cotizacion_id
     WHERE hpc.consulta_id IS NOT NULL AND hpc.consulta_id > 0;
 
+    CREATE TEMPORARY TABLE tmp_pacientes_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    INSERT IGNORE INTO tmp_pacientes_obj (id)
+    SELECT DISTINCT c.paciente_id
+    FROM cotizaciones c
+    INNER JOIN tmp_cotizaciones_obj tco ON tco.id = c.id
+    WHERE c.paciente_id IS NOT NULL AND c.paciente_id > 0;
+
+    INSERT IGNORE INTO tmp_pacientes_obj (id)
+    SELECT DISTINCT q.paciente_id
+    FROM consultas q
+    INNER JOIN tmp_consultas_obj tcu ON tcu.id = q.id
+    WHERE q.paciente_id IS NOT NULL AND q.paciente_id > 0;
+
+    INSERT IGNORE INTO tmp_pacientes_obj (id)
+    SELECT DISTINCT cc.paciente_id
+    FROM contratos_consumos cc
+    INNER JOIN tmp_cotizaciones_obj tco ON tco.id = cc.cotizacion_id
+    WHERE cc.paciente_id IS NOT NULL AND cc.paciente_id > 0;
+
+    CREATE TEMPORARY TABLE tmp_contratos_obj (
+        id BIGINT UNSIGNED PRIMARY KEY
+    ) ENGINE=Memory;
+
+    INSERT IGNORE INTO tmp_contratos_obj (id)
+    SELECT cp.id
+    FROM contratos_paciente cp
+    INNER JOIN tmp_pacientes_obj tp ON tp.id = cp.paciente_id;
+
+    CREATE TEMPORARY TABLE tmp_psp_obj (
+        id BIGINT UNSIGNED PRIMARY KEY
+    ) ENGINE=Memory;
+
+    INSERT IGNORE INTO tmp_psp_obj (id)
+    SELECT psp.id
+    FROM paciente_seguimiento_pagos psp
+    INNER JOIN tmp_contratos_obj tct ON tct.id = psp.contrato_paciente_id;
+
+    CREATE TEMPORARY TABLE tmp_cps_obj (
+        id BIGINT UNSIGNED PRIMARY KEY
+    ) ENGINE=Memory;
+
+    INSERT IGNORE INTO tmp_cps_obj (id)
+    SELECT cps.id
+    FROM contratos_paciente_servicios cps
+    INNER JOIN tmp_contratos_obj tct ON tct.id = cps.contrato_paciente_id;
+
+    CREATE TEMPORARY TABLE tmp_pcd_obj (
+        id BIGINT UNSIGNED PRIMARY KEY
+    ) ENGINE=Memory;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'produccion_contrato_detalle'
+    ) THEN
+        INSERT IGNORE INTO tmp_pcd_obj (id)
+        SELECT pcd.id
+        FROM produccion_contrato_detalle pcd
+        INNER JOIN tmp_contratos_obj tct ON tct.id = pcd.contrato_paciente_id;
+    END IF;
+
     CREATE TEMPORARY TABLE tmp_hc_obj (
         id INT PRIMARY KEY
     ) ENGINE=Memory;
@@ -103,6 +185,132 @@ BEGIN
     SELECT hc.id
     FROM historia_clinica hc
     INNER JOIN tmp_consultas_obj tc ON tc.id = hc.consulta_id;
+
+    CREATE TEMPORARY TABLE tmp_te_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    CREATE TEMPORARY TABLE tmp_tei_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    CREATE TEMPORARY TABLE tmp_ted_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    CREATE TEMPORARY TABLE tmp_tedose_obj (
+        id BIGINT UNSIGNED PRIMARY KEY
+    ) ENGINE=Memory;
+
+    CREATE TEMPORARY TABLE tmp_teevt_obj (
+        id BIGINT UNSIGNED PRIMARY KEY
+    ) ENGINE=Memory;
+
+    CREATE TEMPORARY TABLE tmp_hc_sync_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    CREATE TEMPORARY TABLE tmp_hc_sync_pend_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_enfermeria'
+    ) THEN
+        INSERT IGNORE INTO tmp_te_obj (id)
+        SELECT te.id
+        FROM tratamientos_enfermeria te
+        INNER JOIN tmp_consultas_obj tco ON tco.id = te.consulta_id;
+
+        -- Modo estricto: incluir tratamientos con consulta inexistente
+        -- para evitar cadenas huerfanas persistentes (items/diaria/dosis/eventos).
+        INSERT IGNORE INTO tmp_te_obj (id)
+        SELECT te.id
+        FROM tratamientos_enfermeria te
+        LEFT JOIN consultas q ON q.id = te.consulta_id
+        WHERE q.id IS NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_enfermeria_items'
+    ) THEN
+        INSERT IGNORE INTO tmp_tei_obj (id)
+        SELECT tei.id
+        FROM tratamientos_enfermeria_items tei
+        INNER JOIN tmp_te_obj tte ON tte.id = tei.tratamiento_id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_ejecucion_diaria'
+    ) THEN
+        INSERT IGNORE INTO tmp_ted_obj (id)
+        SELECT ted.id
+        FROM tratamientos_ejecucion_diaria ted
+        INNER JOIN tmp_tei_obj ttei ON ttei.id = ted.tratamiento_item_id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_ejecucion_dosis'
+    ) THEN
+        INSERT IGNORE INTO tmp_tedose_obj (id)
+        SELECT td.id
+        FROM tratamientos_ejecucion_dosis td
+        LEFT JOIN tmp_te_obj tte ON tte.id = td.tratamiento_id
+        LEFT JOIN tmp_tei_obj ttei ON ttei.id = td.tratamiento_item_id
+        LEFT JOIN tmp_ted_obj tted ON tted.id = td.ejecucion_diaria_id
+        WHERE tte.id IS NOT NULL OR ttei.id IS NOT NULL OR tted.id IS NOT NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_ejecucion_eventos'
+    ) THEN
+        INSERT IGNORE INTO tmp_teevt_obj (id)
+        SELECT teev.id
+        FROM tratamientos_ejecucion_eventos teev
+        LEFT JOIN tmp_te_obj tte ON tte.id = teev.tratamiento_id
+        LEFT JOIN tmp_ted_obj tted ON tted.id = teev.ejecucion_diaria_id
+        LEFT JOIN tmp_tedose_obj ttdo ON ttdo.id = teev.dosis_programada_id
+        WHERE tte.id IS NOT NULL OR tted.id IS NOT NULL OR ttdo.id IS NOT NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'hc_receta_cotizacion_sync'
+    ) THEN
+        INSERT IGNORE INTO tmp_hc_sync_obj (id)
+        SELECT hs.id
+        FROM hc_receta_cotizacion_sync hs
+        INNER JOIN tmp_consultas_obj tco ON tco.id = hs.consulta_id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'hc_receta_cotizacion_items_pendientes'
+    ) THEN
+        INSERT IGNORE INTO tmp_hc_sync_pend_obj (id)
+        SELECT hsp.id
+        FROM hc_receta_cotizacion_items_pendientes hsp
+        INNER JOIN tmp_consultas_obj tco ON tco.id = hsp.consulta_id;
+    END IF;
 
     CREATE TEMPORARY TABLE tmp_cobros_obj (
         id INT PRIMARY KEY
@@ -201,6 +409,8 @@ BEGIN
         LEFT JOIN tmp_consultas_obj tcu ON tcu.id = idg.referencia_id
         LEFT JOIN tmp_cotizaciones_obj tco ON tco.id = idg.referencia_id
         LEFT JOIN tmp_honorarios_mov_obj thm ON thm.id = idg.honorario_movimiento_id
+        LEFT JOIN tmp_psp_obj tpsp ON tpsp.id = idg.referencia_id
+        LEFT JOIN tmp_pacientes_obj tpo ON tpo.id = idg.paciente_id
         WHERE (
                         LOWER(COALESCE(idg.referencia_tabla, '')) IN ('cobro', 'cobros')
                         AND tcb.id IS NOT NULL
@@ -213,7 +423,43 @@ BEGIN
                         LOWER(COALESCE(idg.referencia_tabla, '')) IN ('cotizacion', 'cotizaciones')
                         AND tco.id IS NOT NULL
                     )
-             OR thm.id IS NOT NULL;
+             OR thm.id IS NOT NULL
+             OR (
+                        LOWER(COALESCE(idg.referencia_tabla, '')) = 'paciente_seguimiento_pagos'
+                        AND tpsp.id IS NOT NULL
+                    )
+             OR (
+                        LOWER(COALESCE(idg.tipo_ingreso, '')) = 'contrato_abono'
+                        AND tpo.id IS NOT NULL
+                    );
+
+    CREATE TEMPORARY TABLE tmp_pmd_obj (
+        id INT PRIMARY KEY
+    ) ENGINE=Memory;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'produccion_medica_detalle'
+    ) THEN
+        -- En modo global (sin rango), limpiar completamente el espejo analitico.
+        IF p_fecha_desde IS NULL AND p_fecha_hasta IS NULL THEN
+            INSERT IGNORE INTO tmp_pmd_obj (id)
+            SELECT pmd.id
+            FROM produccion_medica_detalle pmd;
+        ELSE
+            INSERT IGNORE INTO tmp_pmd_obj (id)
+            SELECT pmd.id
+            FROM produccion_medica_detalle pmd
+            LEFT JOIN tmp_cotizaciones_obj tco ON tco.id = pmd.cotizacion_id
+            LEFT JOIN tmp_cobros_obj tcb ON tcb.id = pmd.cobro_id
+            LEFT JOIN tmp_consultas_obj tcu ON tcu.id = pmd.consulta_id
+            WHERE tco.id IS NOT NULL
+               OR tcb.id IS NOT NULL
+               OR tcu.id IS NOT NULL;
+        END IF;
+    END IF;
 
     -- ============================================================
     -- PREVIEW DE IMPACTO
@@ -232,9 +478,22 @@ BEGIN
     INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'cobros', COUNT(*) FROM tmp_cobros_obj;
     INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'ingresos_diarios', COUNT(*) FROM tmp_ingresos_diarios_obj;
     INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'honorarios_medicos_movimientos', COUNT(*) FROM tmp_honorarios_mov_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'produccion_medica_detalle', COUNT(*) FROM tmp_pmd_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'tratamientos_enfermeria', COUNT(*) FROM tmp_te_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'tratamientos_enfermeria_items', COUNT(*) FROM tmp_tei_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'tratamientos_ejecucion_diaria', COUNT(*) FROM tmp_ted_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'tratamientos_ejecucion_dosis', COUNT(*) FROM tmp_tedose_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'tratamientos_ejecucion_eventos', COUNT(*) FROM tmp_teevt_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'hc_receta_cotizacion_sync', COUNT(*) FROM tmp_hc_sync_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'hc_receta_cotizacion_items_pendientes', COUNT(*) FROM tmp_hc_sync_pend_obj;
     INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'ordenes_laboratorio', COUNT(*) FROM tmp_orden_lab_obj;
     INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'ordenes_imagen', COUNT(*) FROM tmp_orden_img_obj;
     INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'documentos_externos_paciente', COUNT(*) FROM tmp_docs_ext_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'pacientes_obj', COUNT(*) FROM tmp_pacientes_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'contratos_paciente', COUNT(*) FROM tmp_contratos_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'paciente_seguimiento_pagos', COUNT(*) FROM tmp_psp_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'contratos_paciente_servicios', COUNT(*) FROM tmp_cps_obj;
+    INSERT INTO tmp_preview_cleanup (tabla, registros) SELECT 'produccion_contrato_detalle', COUNT(*) FROM tmp_pcd_obj;
 
     INSERT INTO tmp_preview_cleanup (tabla, registros)
     SELECT 'cotizacion_item_ajustes', COUNT(*)
@@ -319,15 +578,19 @@ BEGIN
     LEFT JOIN tmp_cobros_obj tcb ON tcb.id = lrm.cobro_id
     WHERE tco.id IS NOT NULL OR tcb.id IS NOT NULL;
 
-    -- Consumos de contrato vinculados a cotizaciones
+    -- Consumos de contrato vinculados a cotizaciones o a contratos de pacientes objetivo
     DELETE cc
     FROM contratos_consumos cc
-    INNER JOIN tmp_cotizaciones_obj tco ON tco.id = cc.cotizacion_id;
+    LEFT JOIN tmp_cotizaciones_obj tco ON tco.id = cc.cotizacion_id
+    LEFT JOIN tmp_contratos_obj tct ON tct.id = cc.contrato_paciente_id
+    WHERE tco.id IS NOT NULL OR tct.id IS NOT NULL;
 
-    -- Agenda de contrato vinculada a consultas afectadas
+    -- Agenda de contrato vinculada a consultas afectadas o a contratos de pacientes objetivo
     DELETE ac
     FROM agenda_contrato ac
-    INNER JOIN tmp_consultas_obj tcu ON tcu.id = ac.consulta_id;
+    LEFT JOIN tmp_consultas_obj tcu ON tcu.id = ac.consulta_id
+    LEFT JOIN tmp_contratos_obj tct ON tct.id = ac.contrato_paciente_id
+    WHERE tcu.id IS NOT NULL OR tct.id IS NOT NULL;
 
     -- Ordenes de imagen/laboratorio
     DELETE oi
@@ -376,6 +639,117 @@ BEGIN
     FROM ingresos_diarios idg
     INNER JOIN tmp_ingresos_diarios_obj tig ON tig.id = idg.id;
 
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'produccion_medica_detalle'
+    ) THEN
+        DELETE pmd
+        FROM produccion_medica_detalle pmd
+        INNER JOIN tmp_pmd_obj tpmd ON tpmd.id = pmd.id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'produccion_contrato_detalle'
+    ) THEN
+        DELETE pcd
+        FROM produccion_contrato_detalle pcd
+        INNER JOIN tmp_pcd_obj tpcd ON tpcd.id = pcd.id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_ejecucion_diaria'
+    ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_ejecucion_eventos'
+        ) THEN
+            DELETE teev
+            FROM tratamientos_ejecucion_eventos teev
+            INNER JOIN tmp_teevt_obj tteev ON tteev.id = teev.id;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_ejecucion_dosis'
+        ) THEN
+            DELETE td
+            FROM tratamientos_ejecucion_dosis td
+            INNER JOIN tmp_tedose_obj ttdo ON ttdo.id = td.id;
+        END IF;
+
+        DELETE ted
+        FROM tratamientos_ejecucion_diaria ted
+        INNER JOIN tmp_ted_obj tted ON tted.id = ted.id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_enfermeria_items'
+    ) THEN
+        DELETE tei
+        FROM tratamientos_enfermeria_items tei
+        INNER JOIN tmp_tei_obj ttei ON ttei.id = tei.id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'tratamientos_enfermeria'
+    ) THEN
+        DELETE te
+        FROM tratamientos_enfermeria te
+        INNER JOIN tmp_te_obj tte ON tte.id = te.id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'hc_receta_cotizacion_items_pendientes'
+    ) THEN
+        DELETE hsp
+        FROM hc_receta_cotizacion_items_pendientes hsp
+        INNER JOIN tmp_hc_sync_pend_obj thsp ON thsp.id = hsp.id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'hc_receta_cotizacion_sync'
+    ) THEN
+        DELETE hs
+        FROM hc_receta_cotizacion_sync hs
+        INNER JOIN tmp_hc_sync_obj ths ON ths.id = hs.id;
+    END IF;
+
+    DELETE psp
+    FROM paciente_seguimiento_pagos psp
+    INNER JOIN tmp_psp_obj tpsp ON tpsp.id = psp.id;
+
+    DELETE cps
+    FROM contratos_paciente_servicios cps
+    INNER JOIN tmp_cps_obj tcps ON tcps.id = cps.id;
+
+    DELETE cp
+    FROM contratos_paciente cp
+    INNER JOIN tmp_contratos_obj tct ON tct.id = cp.id;
+
     DELETE cb
     FROM cobros cb
     INNER JOIN tmp_cobros_obj tcb ON tcb.id = cb.id;
@@ -406,6 +780,70 @@ BEGIN
         IF (SELECT COUNT(*) FROM cobros) = 0 THEN ALTER TABLE cobros AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM cobros_detalle) = 0 THEN ALTER TABLE cobros_detalle AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM ingresos_diarios) = 0 THEN ALTER TABLE ingresos_diarios AUTO_INCREMENT = 1; END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'produccion_medica_detalle'
+        ) THEN
+            IF (SELECT COUNT(*) FROM produccion_medica_detalle) = 0 THEN ALTER TABLE produccion_medica_detalle AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_enfermeria'
+        ) THEN
+            IF (SELECT COUNT(*) FROM tratamientos_enfermeria) = 0 THEN ALTER TABLE tratamientos_enfermeria AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_enfermeria_items'
+        ) THEN
+            IF (SELECT COUNT(*) FROM tratamientos_enfermeria_items) = 0 THEN ALTER TABLE tratamientos_enfermeria_items AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_ejecucion_diaria'
+        ) THEN
+            IF (SELECT COUNT(*) FROM tratamientos_ejecucion_diaria) = 0 THEN ALTER TABLE tratamientos_ejecucion_diaria AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_ejecucion_dosis'
+        ) THEN
+            IF (SELECT COUNT(*) FROM tratamientos_ejecucion_dosis) = 0 THEN ALTER TABLE tratamientos_ejecucion_dosis AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'tratamientos_ejecucion_eventos'
+        ) THEN
+            IF (SELECT COUNT(*) FROM tratamientos_ejecucion_eventos) = 0 THEN ALTER TABLE tratamientos_ejecucion_eventos AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'hc_receta_cotizacion_sync'
+        ) THEN
+            IF (SELECT COUNT(*) FROM hc_receta_cotizacion_sync) = 0 THEN ALTER TABLE hc_receta_cotizacion_sync AUTO_INCREMENT = 1; END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'hc_receta_cotizacion_items_pendientes'
+        ) THEN
+            IF (SELECT COUNT(*) FROM hc_receta_cotizacion_items_pendientes) = 0 THEN ALTER TABLE hc_receta_cotizacion_items_pendientes AUTO_INCREMENT = 1; END IF;
+        END IF;
         IF (SELECT COUNT(*) FROM ordenes_laboratorio) = 0 THEN ALTER TABLE ordenes_laboratorio AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM resultados_laboratorio) = 0 THEN ALTER TABLE resultados_laboratorio AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM ordenes_imagen) = 0 THEN ALTER TABLE ordenes_imagen AUTO_INCREMENT = 1; END IF;
@@ -418,6 +856,17 @@ BEGIN
         IF (SELECT COUNT(*) FROM laboratorio_referencia_movimientos) = 0 THEN ALTER TABLE laboratorio_referencia_movimientos AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM contratos_consumos) = 0 THEN ALTER TABLE contratos_consumos AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM agenda_contrato) = 0 THEN ALTER TABLE agenda_contrato AUTO_INCREMENT = 1; END IF;
+        IF (SELECT COUNT(*) FROM paciente_seguimiento_pagos) = 0 THEN ALTER TABLE paciente_seguimiento_pagos AUTO_INCREMENT = 1; END IF;
+        IF (SELECT COUNT(*) FROM contratos_paciente_servicios) = 0 THEN ALTER TABLE contratos_paciente_servicios AUTO_INCREMENT = 1; END IF;
+        IF (SELECT COUNT(*) FROM contratos_paciente) = 0 THEN ALTER TABLE contratos_paciente AUTO_INCREMENT = 1; END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'produccion_contrato_detalle'
+        ) THEN
+            IF (SELECT COUNT(*) FROM produccion_contrato_detalle) = 0 THEN ALTER TABLE produccion_contrato_detalle AUTO_INCREMENT = 1; END IF;
+        END IF;
         IF (SELECT COUNT(*) FROM cotizacion_item_ajustes) = 0 THEN ALTER TABLE cotizacion_item_ajustes AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM cotizacion_eventos) = 0 THEN ALTER TABLE cotizacion_eventos AUTO_INCREMENT = 1; END IF;
         IF (SELECT COUNT(*) FROM cotizacion_movimientos) = 0 THEN ALTER TABLE cotizacion_movimientos AUTO_INCREMENT = 1; END IF;

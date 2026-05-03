@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
   // Estados para la información del médico
@@ -33,9 +33,7 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
   const cargarInfoProfesional = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}api_info_profesional_medico.php`, {
-        credentials: 'include'
-      });
+      const response = await authFetch("api_info_profesional_medico.php");
       const data = await response.json();
       
       if (data.success && data.medico) {
@@ -127,12 +125,11 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
         colegio_sigla: (infoProfesional.colegio_sigla || '').trim() || (tipo === 'medico' ? 'CMP' : ''),
       };
 
-      const response = await fetch(`${BASE_URL}api_info_profesional_medico.php`, {
+      const response = await authFetch("api_info_profesional_medico.php", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
 
@@ -165,10 +162,7 @@ export default function ConfiguracionProfesionalMedico({ isOpen, onClose }) {
       setLoading(true);
       setMensaje("");
 
-      const response = await fetch(`${BASE_URL}api_info_profesional_medico.php`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
+      const response = await authFetch("api_info_profesional_medico.php", { method: 'DELETE' });
 
       const data = await response.json();
 

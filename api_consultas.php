@@ -563,6 +563,9 @@ switch ($method) {
         $solo_activas = isset($_GET['solo_activas'])
             ? in_array(strtolower(trim((string)$_GET['solo_activas'])), ['1', 'true', 'si', 'sí', 'yes'], true)
             : false;
+        $incluir_completadas_sin_triaje = isset($_GET['incluir_completadas_sin_triaje'])
+            ? in_array(strtolower(trim((string)$_GET['incluir_completadas_sin_triaje'])), ['1', 'true', 'si', 'sí', 'yes'], true)
+            : false;
         $usar_paginacion = ($page > 0 && $per_page > 0);
         if ($usar_paginacion && $per_page > 100) {
             $per_page = 100;
@@ -628,7 +631,12 @@ switch ($method) {
         }
 
         if ($solo_activas) {
-            $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'completada')";
+            if ($incluir_completadas_sin_triaje) {
+                // En panel de triaje mostrar también consultas completadas para que no desaparezcan tras guardar.
+                $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) <> 'cancelada'";
+            } else {
+                $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'completada')";
+            }
         }
 
         $whereSql = count($where) ? (' WHERE ' . implode(' AND ', $where)) : '';
@@ -648,11 +656,22 @@ switch ($method) {
         $statsRow = $statsRes->fetch_assoc() ?: [];
         $statsStmt->close();
 
+        $hasCdOrigenCobro = columna_existe_local($conn, 'cotizaciones_detalle', 'origen_cobro');
+        $hasCotEsCostoCeroContrato = columna_existe_local($conn, 'cotizaciones', 'es_costo_cero_contrato');
+
+        $selectContratoOrigenExpr = $hasCdOrigenCobro
+            ? 'MAX(CASE WHEN LOWER(TRIM(COALESCE(cd.origen_cobro, ""))) = "contrato" THEN 1 ELSE 0 END) AS tiene_origen_contrato'
+            : '0 AS tiene_origen_contrato';
+
+        $selectCotEsCostoCeroExpr = $hasCotEsCostoCeroContrato
+            ? 'COALESCE(cot.es_costo_cero_contrato, 0) AS cot_es_costo_cero_contrato'
+            : '0 AS cot_es_costo_cero_contrato';
+
         $fromData = ' FROM consultas'
             . ' LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id'
             . ' LEFT JOIN medicos ON consultas.medico_id = medicos.id'
             . ' LEFT JOIN ('
-            . '   SELECT cd.consulta_id, MAX(cd.cotizacion_id) AS cotizacion_id'
+            . '   SELECT cd.consulta_id, MAX(cd.cotizacion_id) AS cotizacion_id, ' . $selectContratoOrigenExpr
             . '   FROM cotizaciones_detalle cd'
             . '   INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
             . '   WHERE cd.consulta_id IS NOT NULL'
@@ -665,7 +684,9 @@ switch ($method) {
 
         $sql = 'SELECT consultas.*, pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni, medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido, medicos.especialidad AS medico_especialidad, medicos.cmp AS medico_cmp, medicos.rne AS medico_rne, medicos.firma AS medico_firma, medicos.tipo_profesional AS medico_tipo_profesional, medicos.abreviatura_profesional AS medico_abreviatura_profesional, medicos.colegio_sigla AS medico_colegio_sigla, medicos.nro_colegiatura AS medico_nro_colegiatura,'
             . ' cot_ref.cotizacion_id AS cotizacion_id,'
-            . ' cot.estado AS cotizacion_estado'
+            . ' cot.estado AS cotizacion_estado,'
+            . ' cot_ref.tiene_origen_contrato AS cot_tiene_origen_contrato,'
+            . ' ' . $selectCotEsCostoCeroExpr
             . $fromData
             . $whereSql
             . ' ORDER BY consultas.fecha DESC, consultas.hora DESC';
@@ -694,8 +715,14 @@ switch ($method) {
         foreach ($rows as &$row) {
             $cotId = intval($row['cotizacion_id'] ?? 0);
             $cotEstado = trim((string)($row['cotizacion_estado'] ?? ''));
+            $cotTieneOrigenContrato = intval($row['cot_tiene_origen_contrato'] ?? 0) === 1;
+            $cotEsCostoCeroContrato = intval($row['cot_es_costo_cero_contrato'] ?? 0) === 1;
+            $cotEstadoNorm = strtolower($cotEstado);
+            $esContratoLegacy = in_array($cotEstadoNorm, ['control', 'contrato'], true);
+
             $row['cotizacion_id'] = $cotId > 0 ? $cotId : null;
             $row['cotizacion_estado'] = $cotEstado !== '' ? $cotEstado : null;
+            $row['es_contrato'] = ($cotTieneOrigenContrato || $cotEsCostoCeroContrato || $esContratoLegacy) ? 1 : 0;
         }
         unset($row);
 

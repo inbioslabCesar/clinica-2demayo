@@ -26,7 +26,7 @@ if ($paciente_id <= 0) {
     exit;
 }
 
-function obtenerEstadoServicio(PDO $pdo, $cobroEstado, $detalles, array &$cacheCotizaciones, $cotizacionIdForzada = null) {
+function obtenerEstadoServicio(PDO $pdo, $cobroEstado, $detalles, array &$cacheCotizaciones, array &$cacheCotizacionesDescuento, $cotizacionIdForzada = null) {
     $cobroEstadoLc = strtolower((string)$cobroEstado);
     $estadoDefault = [
         'estado_pago' => $cobroEstadoLc === 'anulado' ? 'anulada' : ($cobroEstadoLc === 'pagado' ? 'pagado' : 'pendiente'),
@@ -72,6 +72,7 @@ function obtenerEstadoServicio(PDO $pdo, $cobroEstado, $detalles, array &$cacheC
             'saldo_pendiente' => 0.0,
             'total_pagado' => null,
             'total_cotizacion' => null,
+            'pagado_con_descuento' => 0,
         ];
     }
 
@@ -80,12 +81,30 @@ function obtenerEstadoServicio(PDO $pdo, $cobroEstado, $detalles, array &$cacheC
     $pagado = isset($cot['total_pagado']) ? floatval($cot['total_pagado']) : null;
     $total = isset($cot['total']) ? floatval($cot['total']) : null;
 
-    if (!in_array($estado, ['pagado', 'parcial', 'pendiente', 'anulada'], true)) {
+    if (in_array($estado, ['control', 'contrato'], true)) {
+        $estado = 'pagado';
+    } elseif (!in_array($estado, ['pagado', 'parcial', 'pendiente', 'anulada'], true)) {
         if ($saldo > 0) {
             $estado = ($pagado !== null && $pagado > 0) ? 'parcial' : 'pendiente';
         } else {
             $estado = 'pagado';
         }
+    }
+
+    if (!array_key_exists($cotizacionId, $cacheCotizacionesDescuento)) {
+        try {
+            $stmtDesc = $pdo->prepare("SELECT SUM(CASE WHEN LOWER(tipo_movimiento) = 'devolucion' THEN monto ELSE 0 END) AS total_descuento FROM cotizacion_movimientos WHERE cotizacion_id = ?");
+            $stmtDesc->execute([$cotizacionId]);
+            $totalDesc = (float)($stmtDesc->fetchColumn() ?: 0);
+            $cacheCotizacionesDescuento[$cotizacionId] = $totalDesc > 0 ? 1 : 0;
+        } catch (Exception $e) {
+            $cacheCotizacionesDescuento[$cotizacionId] = 0;
+        }
+    }
+
+    $pagadoConDescuento = (int)($cacheCotizacionesDescuento[$cotizacionId] ?? 0);
+    if ($estado === 'pagado' && $pagadoConDescuento === 1) {
+        $estado = 'pagado_con_descuento';
     }
 
     return [
@@ -94,6 +113,7 @@ function obtenerEstadoServicio(PDO $pdo, $cobroEstado, $detalles, array &$cacheC
         'saldo_pendiente' => $saldo,
         'total_pagado' => $pagado,
         'total_cotizacion' => $total,
+        'pagado_con_descuento' => $pagadoConDescuento,
     ];
 }
 
@@ -137,6 +157,7 @@ try {
     $historial_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $historial = [];
     $cacheCotizaciones = [];
+    $cacheCotizacionesDescuento = [];
     $cacheCobroCotizacion = [];
     foreach ($historial_raw as $row) {
         $detalles = json_decode($row['descripcion'], true);
@@ -153,7 +174,7 @@ try {
             $cotizacionIdForzada = $cotizacion_id_ctx;
         }
 
-        $estadoServicio = obtenerEstadoServicio($pdo, $row['cobro_estado'] ?? 'pagado', $detalles, $cacheCotizaciones, $cotizacionIdForzada);
+        $estadoServicio = obtenerEstadoServicio($pdo, $row['cobro_estado'] ?? 'pagado', $detalles, $cacheCotizaciones, $cacheCotizacionesDescuento, $cotizacionIdForzada);
 
         if ($cotizacion_id_ctx > 0 && intval($estadoServicio['cotizacion_id'] ?? 0) > 0 && intval($estadoServicio['cotizacion_id']) !== $cotizacion_id_ctx) {
             continue;
@@ -207,6 +228,7 @@ try {
             'detalles' => $detalles,
             'resultados_laboratorio' => $resultados_laboratorio_url,
             'estado_pago' => $estadoServicio['estado_pago'],
+            'pagado_con_descuento' => $estadoServicio['pagado_con_descuento'],
             'cotizacion_id' => $estadoServicio['cotizacion_id'],
             'saldo_pendiente' => $estadoServicio['saldo_pendiente'],
             'total_pagado' => $estadoServicio['total_pagado'],

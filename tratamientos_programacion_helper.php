@@ -494,6 +494,74 @@ function tph_rebuild_plan_multidia($conn, $tratamientoId, $receta) {
     }
 }
 
+/**
+ * Agrega solo medicamentos nuevos a un tratamiento ya en ejecución, sin tocar
+ * los ítems existentes ni resetear el progreso.
+ * $newItems : subconjunto de la receta (solo los medicamentos nuevos)
+ * $startIdx : item_idx desde el que empezar (debe ser max_existente + 1)
+ */
+function tph_append_items_to_plan($conn, $tratamientoId, $newItems, $startIdx = 0) {
+    $tratamientoId = (int)$tratamientoId;
+    if ($tratamientoId <= 0 || empty($newItems)) return;
+
+    tph_ensure_multidia_tables($conn);
+
+    // Nuevos ítems empiezan a contarse desde hoy
+    $fechaBase = date('Y-m-d');
+
+    foreach ($newItems as $relIdx => $item) {
+        $idx  = (int)$startIdx + (int)$relIdx;
+        $norm = tph_normalize_prescripcion_item($item, $idx);
+        $orden = $idx + 1;
+
+        $frecuenciaValor  = isset($norm['frecuencia_valor']) ? (int)$norm['frecuencia_valor'] : null;
+        $horasJson        = !empty($norm['frecuencia_horas'])
+            ? json_encode(array_values($norm['frecuencia_horas']), JSON_UNESCAPED_UNICODE)
+            : null;
+        $duracionDias     = (int)$norm['duracion_dias'];
+        $dosisPlanificadas = (int)$norm['dosis_dia'];
+
+        // 15 parámetros: iniciado_en y completado_en son NULL en el SQL literal
+        $stmtItem = $conn->prepare(
+            'INSERT INTO tratamientos_enfermeria_items
+                (tratamiento_id, item_idx, medicamento_codigo, medicamento_nombre, dosis_texto,
+                 frecuencia_texto, frecuencia_tipo, frecuencia_valor, frecuencia_horas_json,
+                 duracion_texto, duracion_valor, duracion_unidad, duracion_dias, observaciones,
+                 iniciado_en, completado_en, orden)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)'
+        );
+        if (!$stmtItem) continue;
+        $stmtItem->bind_param(
+            'iisssssissisisi',
+            $tratamientoId, $idx,
+            $norm['codigo'], $norm['nombre'], $norm['dosis'],
+            $norm['frecuencia_texto'], $norm['frecuencia_tipo'],
+            $frecuenciaValor, $horasJson,
+            $norm['duracion_texto'], $norm['duracion_valor'], $norm['duracion_unidad'], $norm['duracion_dias'],
+            $norm['observaciones'],
+            $orden
+        );
+        $okItem = $stmtItem->execute();
+        $itemId = $okItem ? (int)$stmtItem->insert_id : 0;
+        $stmtItem->close();
+        if ($itemId <= 0) continue;
+
+        for ($dia = 1; $dia <= $duracionDias; $dia++) {
+            $fechaProgramada = date('Y-m-d', strtotime($fechaBase . ' +' . ($dia - 1) . ' day'));
+            $stmtDia = $conn->prepare(
+                'INSERT INTO tratamientos_ejecucion_diaria
+                    (tratamiento_id, tratamiento_item_id, dia_nro, fecha_programada,
+                     dosis_planificadas, dosis_administradas, estado_dia)
+                 VALUES (?, ?, ?, ?, ?, 0, "pendiente")'
+            );
+            if (!$stmtDia) continue;
+            $stmtDia->bind_param('iiisi', $tratamientoId, $itemId, $dia, $fechaProgramada, $dosisPlanificadas);
+            $stmtDia->execute();
+            $stmtDia->close();
+        }
+    }
+}
+
 function tph_seed_plan_from_snapshot($conn, $tratamientoId) {
     $tratamientoId = (int)$tratamientoId;
     if ($tratamientoId <= 0) {
@@ -746,6 +814,21 @@ function tph_regenerar_dosis_programadas($conn, $tratamientoId, $inicioReal = nu
                     $doseNumber++;
                     tph_insert_dosis_programada($stmtDosis, $tratamientoId, $itemId, $ejecucionDiariaId, $dayNumber, $doseNumber, date('Y-m-d H:i:s', $doseTs));
                 }
+
+                // If all fixed hours for day 1 were already in the past, add rescue doses every 2 hours.
+                if ($dayNumber === 1 && $doseNumber === 0) {
+                    $rescueIntervalSeconds = 2 * 3600;
+                    $rescueMaxDoses = max(1, count($norm['frecuencia_horas']));
+                    $endOfDayTs = strtotime(date('Y-m-d 23:59:59', $startTs));
+                    for ($rescueIndex = 0; $rescueIndex < $rescueMaxDoses; $rescueIndex++) {
+                        $rescueTs = $startTs + ($rescueIndex * $rescueIntervalSeconds);
+                        if ($rescueTs > $endOfDayTs) {
+                            break;
+                        }
+                        $doseNumber++;
+                        tph_insert_dosis_programada($stmtDosis, $tratamientoId, $itemId, $ejecucionDiariaId, $dayNumber, $doseNumber, date('Y-m-d H:i:s', $rescueTs));
+                    }
+                }
             }
         }
     }
@@ -865,6 +948,21 @@ function tph_regenerar_dosis_programadas_item($conn, $tratamientoId, $itemId, $i
                 }
                 $doseNumber++;
                 tph_insert_dosis_programada($stmtDosis, $tratamientoId, $itemId, $ejecucionDiariaId, $dayNumber, $doseNumber, date('Y-m-d H:i:s', $doseTs));
+            }
+
+            // If all fixed hours for day 1 were already in the past, add rescue doses every 2 hours.
+            if ($dayNumber === 1 && $doseNumber === 0) {
+                $rescueIntervalSeconds = 2 * 3600;
+                $rescueMaxDoses = max(1, count($norm['frecuencia_horas']));
+                $endOfDayTs = strtotime(date('Y-m-d 23:59:59', $startTs));
+                for ($rescueIndex = 0; $rescueIndex < $rescueMaxDoses; $rescueIndex++) {
+                    $rescueTs = $startTs + ($rescueIndex * $rescueIntervalSeconds);
+                    if ($rescueTs > $endOfDayTs) {
+                        break;
+                    }
+                    $doseNumber++;
+                    tph_insert_dosis_programada($stmtDosis, $tratamientoId, $itemId, $ejecucionDiariaId, $dayNumber, $doseNumber, date('Y-m-d H:i:s', $rescueTs));
+                }
             }
         }
     }

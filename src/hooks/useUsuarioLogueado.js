@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function useUsuarioLogueado() {
   const [usuario, setUsuario] = useState(null);
   useEffect(() => {
-    fetch(BASE_URL + "api_auth_status.php", { credentials: "include" })
+    authFetch("api_auth_status.php")
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.authenticated) {

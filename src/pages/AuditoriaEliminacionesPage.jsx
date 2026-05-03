@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function AuditoriaEliminacionesPage() {
   const hoy = useMemo(() => {
@@ -52,7 +52,7 @@ export default function AuditoriaEliminacionesPage() {
       const params = buildParams();
       params.set('limit', String(limit));
       params.set('page', String(pageExp));
-      const resp = await fetch(`${BASE_URL}api_log_eliminaciones.php?${params.toString()}`, { credentials: 'include' });
+      const resp = await authFetch(`api_log_eliminaciones.php?${params.toString()}`);
       const data = await resp.json();
       if (!data.success) return [];
       totalExp = data.total || 0;
@@ -66,13 +66,13 @@ export default function AuditoriaEliminacionesPage() {
       const params = buildParams();
       params.set('limit', String(limit));
       params.set('page', String(pageExp));
-      const resp = await fetch(`${BASE_URL}api_log_eliminaciones.php?${params.toString()}`, { credentials: 'include' });
+      const resp = await authFetch(`api_log_eliminaciones.php?${params.toString()}`);
       const data = await resp.json();
       if (!data.success) break;
       if (Array.isArray(data.logs)) collected = collected.concat(data.logs);
     }
     return collected;
-  }, [BASE_URL, desde, hasta, servicioTipo, usuarioId, cobroId, paciente, montoMin, montoMax]);
+  }, [desde, hasta, servicioTipo, usuarioId, cobroId, paciente, montoMin, montoMax]);
 
   const cargar = React.useCallback(async () => {
     setCargando(true);
@@ -88,7 +88,7 @@ export default function AuditoriaEliminacionesPage() {
       if (montoMax !== '') params.set('monto_max', montoMax);
       params.set('limit', String(pageSize));
       params.set('page', String(page));
-      const resp = await fetch(`${BASE_URL}api_log_eliminaciones.php?${params.toString()}`, { credentials: 'include' });
+      const resp = await authFetch(`api_log_eliminaciones.php?${params.toString()}`);
       const data = await resp.json();
       if (data.success) {
         setLogs(data.logs || []);
@@ -106,7 +106,7 @@ export default function AuditoriaEliminacionesPage() {
   useEffect(() => {
     (async () => {
       try {
-        const resp = await fetch(`${BASE_URL}api_usuarios.php`, { credentials: 'include' });
+        const resp = await authFetch("api_usuarios.php");
         const data = await resp.json();
         if (Array.isArray(data)) {
           setUsuarios(data);

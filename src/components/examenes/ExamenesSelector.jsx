@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 // Forzar el uso de React para evitar warning de importación no usada
 const _jsx = React.createElement;
@@ -24,7 +24,7 @@ export default function ExamenesSelector({ selected, setSelected }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(BASE_URL + "api_examenes_laboratorio.php", { credentials: 'include' })
+    authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
       .then(data => setExamenes(data.examenes || []))
       .finally(() => setLoading(false));

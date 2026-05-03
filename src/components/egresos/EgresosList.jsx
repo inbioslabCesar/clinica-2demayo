@@ -1,4 +1,5 @@
 import React, { useEffect, useState, forwardRef, useImperativeHandle } from "react";
+import { authFetch } from "../../utils/apiClient";
 
 const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
   const [egresos, setEgresos] = useState([]);
@@ -18,20 +19,39 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
 
   const fetchEgresos = async () => {
     setLoading(true);
-      let url = "/api_egresos.php";
+    try {
+      let url = `api_egresos.php`;
       if (fechaFiltro) {
         url += `?fecha=${fechaFiltro}`;
       }
-      const resp = await fetch(url);
-    const data = await resp.json();
-    setLoading(false);
-    if (data.success) setEgresos(data.egresos || []);
+      const resp = await authFetch(url, {
+        cache: 'no-store'
+      });
+      if (!resp.ok) {
+        console.error(`Error fetching egresos: ${resp.status} ${resp.statusText}`);
+        setEgresos([]);
+        setLoading(false);
+        return;
+      }
+      const data = await resp.json();
+      setLoading(false);
+      if (data.success) {
+        setEgresos(data.egresos || []);
+      } else {
+        console.warn('API returned success=false:', data);
+        setEgresos([]);
+      }
+    } catch (err) {
+      console.error('Error fetching egresos:', err);
+      setEgresos([]);
+      setLoading(false);
+    }
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm("¿Eliminar este egreso?")) return;
     setLoading(true);
-    const resp = await fetch(`/api_egresos.php?id=${id}`, { method: "DELETE" });
+    const resp = await authFetch(`api_egresos.php?id=${id}`, { method: "DELETE" });
     const data = await resp.json();
     setLoading(false);
     if (data.success) fetchEgresos();

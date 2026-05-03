@@ -5,8 +5,12 @@ const apiProxyTarget = process.env.CODESPACES
   ? 'http://127.0.0.1:8000'
   : 'http://127.0.0.1/clinica-2demayo'
 
+const sistemaBuildBase = (process.env.VITE_SISTEMA_BASE || '/sistema/').replace(/\/+$/, '') + '/'
+
 export default defineConfig({
   plugins: [react()],
+  // En produccion sistema se sirve bajo /sistema/, usar base absoluta evita pantallas en blanco al refrescar rutas profundas.
+  base: process.env.NODE_ENV === 'production' ? sistemaBuildBase : '/',
   cacheDir: 'node_modules/.vite-sistema',
   server: {
     host: '127.0.0.1',
@@ -21,6 +25,21 @@ export default defineConfig({
       '/api_': {
         target: apiProxyTarget,
         // Keep original host (e.g. *.devtunnels.ms) so PHP emits a valid session cookie domain.
+        changeOrigin: false,
+        secure: false,
+      },
+      '/clinica-2demayo': {
+        target: apiProxyTarget,
+        changeOrigin: false,
+        secure: false,
+      },
+      '/descargar_caratula_paciente.php': {
+        target: apiProxyTarget,
+        changeOrigin: false,
+        secure: false,
+      },
+      '/descargar_resultados_laboratorio.php': {
+        target: apiProxyTarget,
         changeOrigin: false,
         secure: false,
       }

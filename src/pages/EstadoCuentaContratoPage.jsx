@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 function money(v) {
   return `S/ ${Number(v || 0).toFixed(2)}`;
@@ -51,8 +52,7 @@ export default function EstadoCuentaContratoPage() {
   const cargar = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${BASE_URL}api_contratos.php?accion=estado_cuenta&paciente_id=${Number(pacienteId)}&_t=${Date.now()}`, {
-        credentials: "include",
+      const res = await authFetch(`api_contratos.php?accion=estado_cuenta&paciente_id=${Number(pacienteId)}&_t=${Date.now()}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -73,9 +73,8 @@ export default function EstadoCuentaContratoPage() {
     let mounted = true;
     const cargarMarcaClinica = async () => {
       try {
-        const resp = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+        const resp = await authFetch("api_get_configuracion.php", {
           method: "GET",
-          credentials: "include",
           cache: "no-store",
         });
         const data = await resp.json();
@@ -115,13 +114,22 @@ export default function EstadoCuentaContratoPage() {
   const serviciosTotalesGeneral = useMemo(() => contratos.reduce((acc, c) => acc + Number(c.servicios_totales || 0), 0), [contratos]);
   const serviciosConsumidosGeneral = useMemo(() => contratos.reduce((acc, c) => acc + Number(c.servicios_consumidos || 0), 0), [contratos]);
   const agendaConsumidosGeneral = useMemo(() => contratos.reduce((acc, c) => acc + Number(c.agenda_consumidos || 0), 0), [contratos]);
+  const pacienteInfo = useMemo(() => {
+    const base = Array.isArray(contratos) && contratos.length > 0 ? contratos[0] : null;
+    const nombre = String(base?.paciente_nombre || "").trim();
+    const apellido = String(base?.paciente_apellido || "").trim();
+    const dni = String(base?.paciente_dni || "").trim();
+    const hc = String(base?.paciente_hc || "").trim();
+    const fullName = `${nombre} ${apellido}`.trim();
+    return { fullName, dni, hc };
+  }, [contratos]);
 
   const cargarAgenda = useCallback(async (contratoId) => {
     setLoadingAgenda((p) => ({ ...p, [contratoId]: true }));
     try {
-      const res = await fetch(
-        `${BASE_URL}api_contratos.php?accion=agenda_contrato&contrato_paciente_id=${contratoId}&_t=${Date.now()}`,
-        { credentials: "include", cache: "no-store" }
+      const res = await authFetch(
+        `api_contratos.php?accion=agenda_contrato&contrato_paciente_id=${contratoId}&_t=${Date.now()}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "Error al cargar agenda");
@@ -152,9 +160,8 @@ export default function EstadoCuentaContratoPage() {
     if (!eventoId || !contratoId) return;
 
     const enviarActualizacion = async (permitirExtra = 0) => {
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accion: "actualizar_evento_agenda", id: eventoId, estado_evento: nuevoEstado, permitir_extra: permitirExtra }),
       });
@@ -209,9 +216,8 @@ export default function EstadoCuentaContratoPage() {
     if (!recalcForm) return;
     setRecalcForm((p) => ({ ...p, saving: true }));
     try {
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accion: "recalcular_agenda",
@@ -235,8 +241,7 @@ export default function EstadoCuentaContratoPage() {
   const registrarAbono = async (contrato) => {
     let cajaAbierta = false;
     try {
-      const cajaRes = await fetch(`${BASE_URL}api_caja_estado.php?_t=${Date.now()}`, {
-        credentials: "include",
+      const cajaRes = await authFetch(`api_caja_estado.php?_t=${Date.now()}`, {
         cache: "no-store",
       });
       const cajaData = await cajaRes.json();
@@ -311,9 +316,8 @@ export default function EstadoCuentaContratoPage() {
     const { monto, metodo } = formValues;
 
     try {
-      const res = await fetch(`${BASE_URL}api_contratos.php`, {
+      const res = await authFetch("api_contratos.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accion: "registrar_abono",
@@ -325,42 +329,103 @@ export default function EstadoCuentaContratoPage() {
       });
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "No se pudo registrar abono");
-      const logoHtml = clinicBrand.logo
-        ? `<div style="width:100%;display:flex;justify-content:center;align-items:center;margin:0 0 8px 0;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="display:block;margin:0 auto;height:52px;max-width:170px;object-fit:contain;object-position:center;" /></div>`
-        : "";
       const fechaHora = new Date().toLocaleString("es-PE");
-      const comprobante = `
-        <div style="text-align: left; font-family: monospace;">
-          <div style="text-align: center; margin-bottom: 0;">
-            ${logoHtml}
-            <h3 style="text-align: center; margin-bottom: 4px; margin-top: 4px;${clinicBrand.nombre_color ? ` color:${clinicBrand.nombre_color};` : ""}">${clinicBrand.name}</h3>
-            ${clinicBrand.slogan ? `<p style="text-align:center;margin:0 0 4px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? `color:${clinicBrand.slogan_color};` : ""}">${clinicBrand.slogan}</p>` : ""}
-            ${clinicBrand.direccion ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.direccion}</p>` : ""}
-            ${clinicBrand.telefono ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Tel: ${clinicBrand.telefono}</p>` : ""}
-            ${clinicBrand.celular ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Cel: ${clinicBrand.celular}</p>` : ""}
-            ${clinicBrand.email ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.email}</p>` : ""}
-            ${clinicBrand.ruc ? `<p style="text-align:center;margin:2px 0;font-size:11px;">RUC: ${clinicBrand.ruc}</p>` : ""}
+      const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
+      const contactoLinea = [clinicBrand.telefono, clinicBrand.celular].filter(Boolean).join(" | ");
+      const logoSrc = clinicBrand.logo || "https://via.placeholder.com/120x60?text=LOGO";
+      const nombrePaciente = String(pacienteInfo?.fullName || "Paciente").trim() || "Paciente";
+
+      const ticketCss = `
+        <style>
+          * { box-sizing: border-box; }
+          .ticket-80 {
+            width: 100%;
+            max-width: 320px;
+            margin: 0 auto;
+            padding: 8px 10px;
+            font-family: "Courier New", "Lucida Console", monospace;
+            font-size: 11px;
+            line-height: 1.2;
+            color: #111827;
+          }
+          .ticket-80 .t-center { text-align: center; }
+          .ticket-80 .t-logo { height: 48px; margin: 0 auto 4px; display: block; }
+          .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+          .ticket-80 .t-line { margin: 1px 0; }
+          .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
+          .ticket-80 .t-title { font-weight: 700; text-transform: uppercase; margin: 0 0 4px; }
+          .ticket-80 .t-meta { margin: 1px 0; }
+          .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 700; text-transform: uppercase; }
+          .ticket-80 .t-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 6px;
+            margin: 1px 0;
+          }
+          .ticket-80 .t-desc {
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
+          .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
+          .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #4b5563; }
+          @media print {
+            @page { size: 80mm auto; margin: 2mm; }
+            html, body { margin: 0; padding: 0; }
+            .ticket-80 {
+              width: 76mm;
+              max-width: 76mm;
+              margin: 0;
+              padding: 2.5mm;
+              font-size: 10.5px;
+              line-height: 1.15;
+            }
+            .ticket-80 .t-clinic { font-size: 12px; }
+            .ticket-80 .t-logo { height: 40px; margin-bottom: 3px; }
+            .ticket-80 .t-total { font-size: 11.5px; }
+          }
+        </style>`;
+
+      const comprobanteBody = `
+        <div class="ticket-80">
+          <div class="t-center">
+            <img src="${logoSrc}" alt="Logo" class="t-logo" />
+            <div class="t-clinic"${clinicBrand.nombre_color ? ` style="color:${clinicBrand.nombre_color};"` : ""}>${clinicBrand.name}</div>
+            ${clinicBrand.slogan ? `<div class="t-line" style="font-style:italic;${clinicBrand.slogan_color ? `color:${clinicBrand.slogan_color};` : ""}">${clinicBrand.slogan}</div>` : ""}
+            ${clinicBrand.direccion ? `<div class="t-line">${clinicBrand.direccion}</div>` : ""}
+            ${contactoLinea ? `<div class="t-line">${contactoLinea}</div>` : ""}
+            ${clinicBrand.ruc ? `<div class="t-line">RUC: ${clinicBrand.ruc}</div>` : ""}
           </div>
-          <hr>
-          <p><strong>COMPROBANTE DE ABONO #${Number(data?.ingreso_id || 0) || "-"}</strong></p>
-          <p>Fecha: ${fechaHora}</p>
-          <p>Paciente ID: ${Number(pacienteId || 0)}</p>
-          <p>Contrato: #${Number(contrato?.id || 0)} ${String(contrato?.plantilla_codigo || "")}</p>
-          <hr>
-          <p><strong>DETALLE:</strong></p>
-          <p>Abono contrato .... S/ ${Number(data?.abono_registrado || 0).toFixed(2)}</p>
-          <hr>
-          <p><strong>Saldo anterior:</strong> S/ ${Number(data?.saldo_anterior || 0).toFixed(2)}</p>
-          <p><strong>Saldo pendiente:</strong> S/ ${Number(data?.saldo_nuevo || 0).toFixed(2)}</p>
-          <p><strong>Estado contrato:</strong> ${String(data?.estado_contrato || "activo").toUpperCase()}</p>
-          <p><strong>Tipo de pago:</strong> ${String(metodo || "efectivo").toUpperCase()}</p>
-          <hr>
-          <p style="text-align: center; font-size: 12px;">
-            Gracias por su preferencia<br>
-            Conserve este comprobante
-          </p>
-        </div>
-      `;
+
+          <hr class="t-hr" />
+          <div class="t-title">Comprobante de abono #${Number(data?.ingreso_id || 0) || "-"}</div>
+          <div class="t-meta">Fecha: ${fechaHora}</div>
+          <div class="t-meta">Paciente: ${nombrePaciente}</div>
+          <div class="t-meta">DNI: ${pacienteInfo?.dni || "-"}</div>
+          <div class="t-meta">H.C.: ${pacienteInfo?.hc || "-"}</div>
+          <div class="t-meta">Contrato: #${Number(contrato?.id || 0)} ${String(contrato?.plantilla_codigo || "")}</div>
+
+          <hr class="t-hr" />
+          <div class="t-section">Detalle</div>
+          <div class="t-row"><div class="t-desc">Abono contrato</div><div class="t-amount">${toMoney(data?.abono_registrado || 0)}</div></div>
+
+          <hr class="t-hr" />
+          <div class="t-section">Resumen saldo</div>
+          <div class="t-row"><div class="t-desc">Saldo anterior</div><div class="t-amount">${toMoney(data?.saldo_anterior || 0)}</div></div>
+          <div class="t-row"><div class="t-desc">Abono aplicado</div><div class="t-amount">${toMoney(data?.abono_registrado || 0)}</div></div>
+          <div class="t-row t-total"><div class="t-desc">Saldo pendiente</div><div class="t-amount">${toMoney(data?.saldo_nuevo || 0)}</div></div>
+
+          <div class="t-meta">Estado contrato: ${String(data?.estado_contrato || "activo").toUpperCase()}</div>
+          <div class="t-meta">Pago: ${String(metodo || "efectivo").toUpperCase()}</div>
+          <hr class="t-hr" />
+          <div class="t-note">Gracias por su preferencia<br />Conserve este comprobante</div>
+        </div>`;
+
+      const comprobante = `${ticketCss}${comprobanteBody}`;
 
       await Swal.fire({
         title: "Abono Procesado ✅",
@@ -373,7 +438,8 @@ export default function EstadoCuentaContratoPage() {
         if (result.isConfirmed) {
           const ventanaImpresion = window.open("", "_blank");
           if (!ventanaImpresion) return;
-          ventanaImpresion.document.write(comprobante);
+          const documentoImpresion = `<!doctype html><html><head><meta charset="utf-8"><title>Comprobante</title>${ticketCss}</head><body>${comprobanteBody}</body></html>`;
+          ventanaImpresion.document.write(documentoImpresion);
           ventanaImpresion.document.close();
           ventanaImpresion.print();
         }
@@ -390,6 +456,13 @@ export default function EstadoCuentaContratoPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Estado de Cuenta del Paciente</h1>
           <p className="text-sm text-slate-600">Paciente ID: {pacienteId}</p>
+          {(pacienteInfo.fullName || pacienteInfo.dni || pacienteInfo.hc) && (
+            <p className="text-sm text-slate-600">
+              {pacienteInfo.fullName || "Paciente"}
+              {pacienteInfo.dni ? ` | DNI: ${pacienteInfo.dni}` : ""}
+              {pacienteInfo.hc ? ` | HC: ${pacienteInfo.hc}` : ""}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <button

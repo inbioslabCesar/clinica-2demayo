@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BASE_URL } from '../config/config';
+import { authFetch } from '../utils/apiClient';
 import Swal from 'sweetalert2';
 
 function GestionHonorariosMedicos() {
@@ -61,9 +61,7 @@ function GestionHonorariosMedicos() {
 
   const cargarConfiguraciones = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_honorarios_medicos_v2.php`, {
-        credentials: 'include'
-      });
+      const response = await authFetch('api_honorarios_medicos_v2.php');
       const data = await response.json();
       if (data.success) {
         setConfiguraciones(data.configuraciones || []);
@@ -75,9 +73,7 @@ function GestionHonorariosMedicos() {
 
   const cargarMedicos = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_medicos.php`, {
-        credentials: 'include'
-      });
+      const response = await authFetch('api_medicos.php');
       const data = await response.json();
       if (data.success) {
         setMedicos(data.medicos || []);
@@ -89,9 +85,7 @@ function GestionHonorariosMedicos() {
 
   const cargarTarifas = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_honorarios_medicos_v2.php?tarifas_con_honorarios=1`, {
-        credentials: 'include'
-      });
+      const response = await authFetch('api_honorarios_medicos_v2.php?tarifas_con_honorarios=1');
       const data = await response.json();
       if (data.success) {
         setTarifas(data.tarifas || []);
@@ -172,7 +166,7 @@ function GestionHonorariosMedicos() {
     if (!validarFormulario()) return;
 
     try {
-      const url = `${BASE_URL}api_honorarios_medicos_v2.php`;
+      const url = 'api_honorarios_medicos_v2.php';
       const method = configuracionEditando ? 'PUT' : 'POST';
       
       // Limpiar campos vacíos para evitar problemas con la base de datos
@@ -188,12 +182,11 @@ function GestionHonorariosMedicos() {
 
       const data = dataToSend;
 
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
         body: JSON.stringify(data),
       });
 
@@ -230,10 +223,9 @@ function GestionHonorariosMedicos() {
 
     if (result.isConfirmed) {
       try {
-        const response = await fetch(`${BASE_URL}api_honorarios_medicos_v2.php`, {
+        const response = await authFetch('api_honorarios_medicos_v2.php', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify({ id })
         });
 

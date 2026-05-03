@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Spinner from "../components/comunes/Spinner";
 import DicomViewer from "../components/visor/DicomViewer";
 import {
@@ -162,7 +162,7 @@ export default function VisorImagenPage() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${BASE_URL}api_ordenes_imagen.php?orden_id=${ordenId}`, { credentials: "include" })
+    authFetch(`api_ordenes_imagen.php?orden_id=${ordenId}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {

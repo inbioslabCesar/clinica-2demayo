@@ -171,6 +171,83 @@ if ($method === 'GET') {
     $stmtCount->close();
     $totalItems = (int)($countRow['total'] ?? 0);
 
+    $statsSql = "SELECT
+                SUM(CASE
+                    WHEN DATEDIFF(c.fecha, CURDATE()) <= 1
+                     AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta')
+                     AND COALESCE(hc.hc_tiene_registro, 0) = 0
+                    THEN 1 ELSE 0 END) AS urgentes,
+                SUM(CASE
+                    WHEN DATEDIFF(c.fecha, CURDATE()) = 0
+                    THEN 1 ELSE 0 END) AS hoy,
+                SUM(CASE
+                    WHEN COALESCE(NULLIF(TRIM(p.telefono), ''), '') = ''
+                    THEN 1 ELSE 0 END) AS sin_telefono,
+                SUM(CASE
+                    WHEN COALESCE(rc.estado, 'pendiente') = 'confirmado'
+                    THEN 1 ELSE 0 END) AS confirmadas,
+                SUM(CASE
+                    WHEN COALESCE(hc.hc_tiene_registro, 0) = 1
+                    THEN 1 ELSE 0 END) AS atendidas,
+                SUM(CASE
+                    WHEN COALESCE(hc.hc_tiene_registro, 0) = 1
+                    THEN 1 ELSE 0 END) AS pr_atendido,
+                SUM(CASE
+                    WHEN COALESCE(hc.hc_tiene_registro, 0) = 0
+                     AND COALESCE(rc.estado, 'pendiente') IN ('confirmado', 'cancelado')
+                    THEN 1 ELSE 0 END) AS pr_resuelto,
+                SUM(CASE
+                    WHEN COALESCE(hc.hc_tiene_registro, 0) = 0
+                     AND COALESCE(rc.estado, 'pendiente') NOT IN ('confirmado', 'cancelado')
+                     AND DATEDIFF(c.fecha, CURDATE()) = 0
+                     AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta')
+                    THEN 1 ELSE 0 END) AS pr_critico,
+                SUM(CASE
+                    WHEN COALESCE(hc.hc_tiene_registro, 0) = 0
+                     AND COALESCE(rc.estado, 'pendiente') NOT IN ('confirmado', 'cancelado')
+                     AND NOT (
+                        DATEDIFF(c.fecha, CURDATE()) = 0
+                        AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta')
+                     )
+                     AND (
+                        (DATEDIFF(c.fecha, CURDATE()) = 1 AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta'))
+                        OR (COALESCE(NULLIF(TRIM(p.telefono), ''), '') = '' AND COALESCE(rc.estado, 'pendiente') <> 'confirmado')
+                     )
+                    THEN 1 ELSE 0 END) AS pr_alto,
+                SUM(CASE
+                    WHEN COALESCE(hc.hc_tiene_registro, 0) = 0
+                     AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'contactado', 'no_contesta', 'reprogramar')
+                     AND NOT (
+                        DATEDIFF(c.fecha, CURDATE()) = 0
+                        AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta')
+                     )
+                     AND NOT (
+                        (DATEDIFF(c.fecha, CURDATE()) = 1 AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta'))
+                        OR (COALESCE(NULLIF(TRIM(p.telefono), ''), '') = '' AND COALESCE(rc.estado, 'pendiente') <> 'confirmado')
+                     )
+                    THEN 1 ELSE 0 END) AS pr_normal
+            "
+        . $from
+        . $whereSql;
+
+    $stmtStats = $conn->prepare($statsSql);
+    if (!$stmtStats) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'No se pudo preparar estadísticas de recordatorios']);
+        exit;
+    }
+    $stmtStats->bind_param($types, ...$params);
+    $stmtStats->execute();
+    $statsRow = $stmtStats->get_result()->fetch_assoc() ?: [];
+    $stmtStats->close();
+
+    $prAtendido = (int)($statsRow['pr_atendido'] ?? 0);
+    $prResuelto = (int)($statsRow['pr_resuelto'] ?? 0);
+    $prCritico = (int)($statsRow['pr_critico'] ?? 0);
+    $prAlto = (int)($statsRow['pr_alto'] ?? 0);
+    $prNormal = (int)($statsRow['pr_normal'] ?? 0);
+    $prBajo = max(0, $totalItems - ($prAtendido + $prResuelto + $prCritico + $prAlto + $prNormal));
+
     $sql = "SELECT
                 c.id,
                 c.paciente_id,
@@ -271,6 +348,21 @@ if ($method === 'GET') {
         'dias' => $dias,
         'count' => count($items),
         'total' => $totalItems,
+        'stats' => [
+            'urgentes' => (int)($statsRow['urgentes'] ?? 0),
+            'hoy' => (int)($statsRow['hoy'] ?? 0),
+            'sin_telefono' => (int)($statsRow['sin_telefono'] ?? 0),
+            'confirmadas' => (int)($statsRow['confirmadas'] ?? 0),
+            'atendidas' => (int)($statsRow['atendidas'] ?? 0),
+        ],
+        'prioridad' => [
+            'critico' => $prCritico,
+            'alto' => $prAlto,
+            'normal' => $prNormal,
+            'bajo' => $prBajo,
+            'atendido' => $prAtendido,
+            'resuelto' => $prResuelto,
+        ],
         'items' => $items,
     ];
     if ($usarPaginacion) {

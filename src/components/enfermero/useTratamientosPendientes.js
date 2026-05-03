@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 const POLL_ACTIVE = 20_000;   // 20 s cuando la tab está visible
 const POLL_HIDDEN = 60_000;   // 60 s cuando está en background
@@ -37,11 +37,8 @@ export default function useTratamientosPendientes({
         params.set("q", busqueda.trim());
       }
 
-      const url = BASE_URL + `api_tratamientos_enfermeria.php?${params.toString()}`;
-      const res  = await fetch(
-        url,
-        { credentials: "include" }
-      );
+      const url = `api_tratamientos_enfermeria.php?${params.toString()}`;
+      const res  = await authFetch(url);
       const raw = await res.text();
       let data = null;
       try {
@@ -137,10 +134,9 @@ export default function useTratamientosPendientes({
       prev.map((t) => (t.id === id ? { ...t, estado: nuevoEstado, notas_enfermeria: notasEnfermeria || t.notas_enfermeria } : t))
     );
 
-    const res  = await fetch(BASE_URL + "api_tratamientos_enfermeria.php", {
+    const res  = await authFetch("api_tratamientos_enfermeria.php", {
       method:  "PATCH",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body:    JSON.stringify(body),
     });
     const raw = await res.text();

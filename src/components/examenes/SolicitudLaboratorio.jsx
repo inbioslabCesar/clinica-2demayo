@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 import ExamenesSelector from "./ExamenesSelector";
 
@@ -45,7 +45,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   const [cotizResult, setCotizResult] = useState(null); // {numero_comprobante, total}
   // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
   useEffect(() => {
-    fetch(BASE_URL + "api_examenes_laboratorio.php", { credentials: 'include' })
+    authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
       .then(data => setExamenesDisponibles(data.examenes || []));
   }, []);
@@ -65,10 +65,9 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
     setMsg("");
     setCotizResult(null);
     try {
-      const response = await fetch(BASE_URL + "api_ordenes_laboratorio.php", {
+      const response = await authFetch("api_ordenes_laboratorio.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ consulta_id: consultaId, examenes, carga_anticipada: cargaAnticipada }),
       });
       

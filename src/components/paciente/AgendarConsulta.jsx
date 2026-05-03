@@ -1,3 +1,4 @@
+import { authFetch } from "../../utils/apiClient";
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
@@ -71,7 +72,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
 
     const observacionBase = `Cita reprogramada para ${fecha} ${String(hora || "").slice(0, 5)}.`;
-    const response = await fetch(`${BASE_URL}api_recordatorios_citas.php`, {
+    const response = await authFetch(`${BASE_URL}api_recordatorios_citas.php`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -108,7 +109,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
 
     if (tarifa) return tarifa;
 
-    const r = await fetch(BASE_URL + "api_tarifas.php", { credentials: "include" });
+    const r = await authFetch(BASE_URL + "api_tarifas.php", { credentials: "include" });
     const data = await r.json();
     if (!data.success || !Array.isArray(data.tarifas)) {
       throw new Error("No se pudo obtener la tarifa de consulta");
@@ -171,7 +172,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   };
 
   const registrarCotizacionConsulta = async (consultaInfo, detalle, total) => {
-    const response = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+    const response = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -193,7 +194,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
 
   const obtenerMontoCobro = async (cobroId, fallbackMonto = 0) => {
     try {
-      const response = await fetch(`${BASE_URL}api_cobros.php?cobro_id=${Number(cobroId)}`, {
+      const response = await authFetch(`${BASE_URL}api_cobros.php?cobro_id=${Number(cobroId)}`, {
         credentials: "include",
       });
       const result = await response.json();
@@ -210,7 +211,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const registrarAbonoCotizacion = async (cotizacionId, cobroId, monto) => {
     const usuarioSesion = JSON.parse(sessionStorage.getItem("usuario") || "{}");
     const usuarioId = Number(usuarioSesion?.id || 0);
-    const response = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+    const response = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -231,7 +232,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   };
 
   const cancelarConsultaAgendada = async (consultaId) => {
-    const response = await fetch(`${BASE_URL}api_consultas.php`, {
+    const response = await authFetch(`${BASE_URL}api_consultas.php`, {
       method: "PUT",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -250,7 +251,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const anularCotizacionConsulta = async (cotizacionId, motivo = "Cancelación de consulta antes del pago") => {
     if (!cotizacionId) return;
 
-    const response = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+    const response = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -270,8 +271,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   useEffect(() => {
     // Cargar médicos y tarifas, luego filtrar
     Promise.all([
-      fetch(BASE_URL + "api_medicos.php", { credentials: "include" }).then(r => r.json()),
-      fetch(BASE_URL + "api_tarifas.php", { credentials: "include" }).then(r => r.json())
+      authFetch(BASE_URL + "api_medicos.php", { credentials: "include" }).then(r => r.json()),
+      authFetch(BASE_URL + "api_tarifas.php", { credentials: "include" }).then(r => r.json())
     ]).then(([medicosData, tarifasData]) => {
       const medicosList = Array.isArray(medicosData?.medicos) ? medicosData.medicos : [];
       setMedicos(medicosList);
@@ -304,7 +305,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
           const tarifaId = Number(tarifa?.id || 0);
           if (tarifaId <= 0) return [tarifaId, null];
           try {
-            const res = await fetch(
+            const res = await authFetch(
               `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=consulta&servicio_id=${tarifaId}&cantidad=1&fecha_ref=${encodeURIComponent(String(fecha))}`,
               { credentials: "include" }
             );
@@ -339,7 +340,10 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
         params.set("consulta_id", String(consultaIdNum));
       }
 
-      fetch(`${BASE_URL}api_horarios_disponibles.php?${params.toString()}`)
+      authFetch(`${BASE_URL}api_horarios_disponibles.php?${params.toString()}`, {
+        credentials: "include",
+        cache: "no-store",
+      })
         .then((r) => r.json())
         .then((data) => {
           if (data.success) {
@@ -362,14 +366,19 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   useEffect(() => {
     // Cargar información del paciente
     if (pacienteId) {
-      fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
+      authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, {
+        credentials: "include",
+        cache: "no-store",
+      })
         .then((r) => r.json())
         .then((data) => {
           if (data.success && data.paciente) {
             setPacienteInfo(data.paciente);
           }
         })
-        .catch(console.error);
+        .catch(() => {
+          setPacienteInfo(null);
+        });
     }
   }, [pacienteId]);
 
@@ -383,7 +392,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       setMsg("");
       try {
         // Cargar todos los detalles de la cotización para ver cuántas consultas hay
-        const resCot = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionIdNum}`, {
+        const resCot = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionIdNum}`, {
           credentials: "include",
         });
         const dataCot = await resCot.json();
@@ -427,7 +436,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       setCargandoConsultaEdicion(true);
       setMsg("");
       try {
-        const res = await fetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaIdNum}`, {
+        const res = await authFetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaIdNum}`, {
           credentials: "include",
         });
         const data = await res.json();
@@ -468,7 +477,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const recargarConsultasDisponibles = async () => {
     if (cotizacionIdNum <= 0) return;
     try {
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionIdNum}`, {
+      const res = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionIdNum}`, {
         credentials: "include",
       });
       const data = await res.json();
@@ -509,7 +518,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -551,7 +560,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       }
 
       // Crear la consulta clínica
-      const resConsulta = await fetch(`${BASE_URL}api_consultas.php`, {
+      const resConsulta = await authFetch(`${BASE_URL}api_consultas.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -579,7 +588,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       const descripcion = `${tarifa.descripcion || "Consulta médica"} - ${medicoNombre} (${fecha} ${hora})`;
 
       // Agregar el detalle a la cotización
-      const resDetalle = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const resDetalle = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -635,7 +644,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
 
       if (consultaIdNum <= 0) {
         // No hay consulta vinculada: crear una nueva y vincularla a la cotización
-        const resCrear = await fetch(`${BASE_URL}api_consultas.php`, {
+        const resCrear = await authFetch(`${BASE_URL}api_consultas.php`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -656,7 +665,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
 
         // Vincular la consulta al detalle de la cotización
         if (cotizacionIdNum > 0) {
-          await fetch(`${BASE_URL}api_cotizaciones.php`, {
+          await authFetch(`${BASE_URL}api_cotizaciones.php`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -686,7 +695,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
         return;
       }
 
-      const response = await fetch(`${BASE_URL}api_consultas.php`, {
+      const response = await authFetch(`${BASE_URL}api_consultas.php`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -746,7 +755,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     const usuarioSesionId = Number(usuario?.id || 0);
     let cajaAbierta = null;
     try {
-      const cajaRes = await fetch(BASE_URL + "api_caja_actual.php", { credentials: "include" });
+      const cajaRes = await authFetch(BASE_URL + "api_caja_actual.php", { credentials: "include" });
       const cajaData = await cajaRes.json();
       const usuarioCajaId = Number(cajaData?.caja?.usuario_id || 0);
       if (cajaData.success && cajaData.caja && usuarioSesionId > 0 && usuarioCajaId === usuarioSesionId) {
@@ -765,7 +774,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   };
 
   const crearConsultaYDetalle = async () => {
-    const res = await fetch(BASE_URL + "api_consultas.php", {
+    const res = await authFetch(BASE_URL + "api_consultas.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -1008,11 +1017,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     try {
       if (cotizacionId) {
         const montoResumen = Number(cobroResumen?.total_cobrado);
-        const montoFallback = Number.isFinite(montoResumen) && montoResumen > 0
-          ? montoResumen
-          : totalConsulta;
-        const montoCobrado = montoFallback > 0
-          ? montoFallback
+        const montoCobrado = Number.isFinite(montoResumen)
+          ? Math.max(0, montoResumen)
           : await obtenerMontoCobro(cobroId, totalConsulta);
         if (montoCobrado > 0) {
           await registrarAbonoCotizacion(cotizacionId, cobroId, montoCobrado);

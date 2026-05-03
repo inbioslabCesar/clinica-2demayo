@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function ResultadosLaboratorioPage() {
   const { consultaId } = useParams();
@@ -25,7 +25,7 @@ export default function ResultadosLaboratorioPage() {
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
-    fetch(`${BASE_URL}api_resultados_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
+    authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}`)
       .then(res => res.json())
       .then((resLab) => {
         if (!isMounted) return;
@@ -48,7 +48,7 @@ export default function ResultadosLaboratorioPage() {
         if (isMounted) setLoading(false);
       });
 
-    fetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: 'include' })
+    authFetch(`api_examenes_laboratorio.php`)
       .then(res => res.json())
       .then((resEx) => {
         if (!isMounted) return;
@@ -59,7 +59,7 @@ export default function ResultadosLaboratorioPage() {
         setExamenes([]);
       });
 
-    fetch(`${BASE_URL}api_ordenes_laboratorio.php?consulta_id=${consultaId}`, { credentials: 'include' })
+    authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}`)
       .then(res => res.json())
       .then((resOrdenes) => {
         if (!isMounted) return;
@@ -85,14 +85,36 @@ export default function ResultadosLaboratorioPage() {
 
   // Normaliza valores numéricos desde texto (soporta coma decimal y unidades)
   function normalizeNumber(value) {
-    if (value === null || value === undefined) return 0;
-    if (typeof value === "number") return value;
+    if (value === null || value === undefined) return NaN;
+    if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
     let s = String(value).trim();
-    s = s.replace(/,/g, ".");
+
+    const hasComma = s.includes(',');
+    if (hasComma) {
+      // Regla de negocio:
+      // - coma en grupos de 3 dígitos => miles (eliminar comas)
+      // - coma con 1-2 dígitos => decimal (convertir a punto)
+      // - punto siempre decimal, no se altera
+      if (/^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)) {
+        s = s.replace(/,/g, '');
+      } else {
+        s = s.replace(/,/g, '.');
+      }
+    }
+
     const match = s.match(/-?\d+(?:\.\d+)?/);
-    if (!match) return 0;
+    if (!match) return NaN;
     const n = parseFloat(match[0]);
-    return Number.isFinite(n) ? n : 0;
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  function formatReferenceNumber(value) {
+    const n = normalizeNumber(value);
+    if (!Number.isFinite(n)) return String(value ?? '').trim();
+    return Number(n).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 6,
+    });
   }
 
   // Mapas para nombre, unidad y valores de referencia (array)
@@ -147,19 +169,19 @@ export default function ResultadosLaboratorioPage() {
       // Si no hay min/max pero hay texto en `valor`, intentar extraer rango "a" o "-"
       if (min === null && max === null && typeof ref0.valor === 'string' && ref0.valor.trim() !== '') {
         // Normalizar comas, guiones y quitar etiquetas como 'N:'
-        let txt = ref0.valor.replace(/,/g, '.').replace(/\bN\s*:|\bNormal\s*:\s*/i, '').trim();
+        let txt = String(ref0.valor || '').replace(/\bN\s*:|\bNormal\s*:\s*/i, '').trim();
         // patrones: "x - y" | "x – y" | "x — y" | "x a y" | "x hasta y" | "entre x y y"
-        const rangeMatch = txt.match(/(-?\d+(?:\.\d+)?)\s*(?:-|–|—|a|hasta|\bentre\b)\s*(-?\d+(?:\.\d+)?)/i);
+        const rangeMatch = txt.match(/(-?\d[\d\.,]*)\s*(?:-|–|—|a|hasta|\bentre\b)\s*(-?\d[\d\.,]*)/i);
         if (rangeMatch) {
-          const rmin = parseFloat(rangeMatch[1]);
-          const rmax = parseFloat(rangeMatch[2]);
+          const rmin = normalizeNumber(rangeMatch[1]);
+          const rmax = normalizeNumber(rangeMatch[2]);
           if (Number.isFinite(rmin)) min = rmin;
           if (Number.isFinite(rmax)) max = rmax;
         } else {
           // si solo hay un número, usarlo como referencia exacta (min=max)
-          const single = txt.match(/-?\d+(?:\.\d+)?/);
+          const single = txt.match(/-?\d[\d\.,]*/);
           if (single) {
-            const v = parseFloat(single[0]);
+            const v = normalizeNumber(single[0]);
             if (Number.isFinite(v)) { min = v; max = v; }
           }
         }
@@ -327,7 +349,7 @@ export default function ResultadosLaboratorioPage() {
                                   {(min !== null || max !== null || refText) && (
                                     <span className="ml-2 text-xs text-gray-500">[
                                       {min !== null || max !== null
-                                        ? `${min !== null ? `min: ${min}` : ''}${min !== null && max !== null ? ', ' : ''}${max !== null ? `max: ${max}` : ''}`
+                                        ? `${min !== null ? `min: ${formatReferenceNumber(min)}` : ''}${min !== null && max !== null ? ', ' : ''}${max !== null ? `max: ${formatReferenceNumber(max)}` : ''}`
                                         : `ref: ${refText}`}
                                     ]</span>
                                   )}

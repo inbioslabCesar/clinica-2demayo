@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { BASE_URL } from "../../config/config";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
+import { authFetch } from "../../utils/apiClient";
 import DatosBasicos from "./DatosBasicos.jsx";
 import DatosEdad from "./DatosEdad.jsx";
 import DatosAdicionales from "./DatosAdicionales.jsx";
@@ -58,11 +59,10 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
 
   const guardarPacienteFallback = async (pacientePayload) => {
     try {
-      const res = await fetch(`${BASE_URL}api_pacientes.php`, {
+      const res = await authFetch("api_pacientes.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(pacientePayload),
-        credentials: "include",
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success || !data?.paciente) {
@@ -164,7 +164,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
 
       if (formToSend.tipo_documento === "dni" && formToSend.dni) {
         try {
-          const resDni = await fetch(`${BASE_URL}api_pacientes.php?busqueda=${formToSend.dni}&limit=1`, { credentials: "include" });
+          const resDni = await authFetch(`api_pacientes.php?busqueda=${formToSend.dni}&limit=1`);
           const dataDni = await resDni.json();
           if (dataDni.success && Array.isArray(dataDni.pacientes) && dataDni.pacientes.length > 0) {
             const pacienteEncontrado = dataDni.pacientes[0];

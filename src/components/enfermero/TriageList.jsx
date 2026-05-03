@@ -1,7 +1,6 @@
 
 
 import Spinner from "../comunes/Spinner";
-import { BASE_URL } from "../../config/config";
 import useTriageConsultas from "./useTriageConsultas";
 import TriageStats from "./TriageStats";
 import TriageFilters from "./TriageFilters";
@@ -9,6 +8,7 @@ import TriageTable from "./TriageTable";
 import TriageCards from "./TriageCards";
 import TriagePagination from "./TriagePagination";
 import TriageFormModal from "./TriageFormModal";
+import { authFetch } from "../../utils/apiClient";
 
 
 function TriageList() {
@@ -49,7 +49,7 @@ function TriageList() {
     setCargandoTriaje(true);
     setTriajeData(null);
     try {
-      const res = await fetch(BASE_URL + `api_triaje.php?consulta_id=${c.id}`, { credentials: 'include' });
+      const res = await authFetch(`api_triaje.php?consulta_id=${c.id}`);
       const data = await res.json();
       if (data.success && data.triaje && data.triaje.datos) {
         setTriajeData(data.triaje.datos);
@@ -73,10 +73,9 @@ function TriageList() {
       }
     };
     try {
-      const response = await fetch(BASE_URL + "api_triaje.php", {
+      const response = await authFetch("api_triaje.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload)
       });
       const result = await response.json();

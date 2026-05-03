@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import useDisponibilidadMedico from "../../hooks/useDisponibilidadMedico";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 
@@ -62,8 +62,8 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     // (Eliminadas las declaraciones duplicadas)
   useEffect(() => {
     Promise.all([
-      fetch(`${BASE_URL}api_medicos.php`, { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
-      fetch(`${BASE_URL}api_consultas.php?solo_activas=1&_t=${refreshKey}`, { credentials: 'include', cache: 'no-store' }).then(r => r.json())
+      authFetch("api_medicos.php", { cache: 'no-store' }).then(r => r.json()),
+      authFetch(`api_consultas.php?solo_activas=1&_t=${refreshKey}`, { cache: 'no-store' }).then(r => r.json())
     ]).then(([m, c]) => {
       setMedicos(Array.isArray(m?.medicos) ? m.medicos : []);
       setConsultas(Array.isArray(c?.consultas) ? c.consultas : []);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const DEFAULT_TEMPLATE_OPTIONS = [
   { id: "default", nombre: "Plantilla base (fallback)" },
@@ -308,9 +308,8 @@ export default function PlantillasHCPage() {
 
   const loadHcTemplateConfig = async () => {
     try {
-      const res = await fetch(`${BASE_URL}api_get_configuracion.php`, {
+      const res = await authFetch(`api_get_configuracion.php`, {
         method: 'GET',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' }
       });
       const data = await res.json();
@@ -351,10 +350,9 @@ export default function PlantillasHCPage() {
         hc_template_single_id: selectedSingleId || '',
       };
       
-      const res = await fetch(`${BASE_URL}api_configuracion.php`, {
+      const res = await authFetch(`api_configuracion.php`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
       const data = await res.json();
@@ -415,9 +413,7 @@ export default function PlantillasHCPage() {
       setMessage("");
       setMessageType("info");
       try {
-        const res = await fetch(`${BASE_URL}api_hc_templates.php?mode=list`, {
-          credentials: "include",
-        });
+        const res = await authFetch(`api_hc_templates.php?mode=list`);
         const data = await res.json();
         if (!data.success) {
           throw new Error(data.error || "No se pudo cargar lista de plantillas");
@@ -448,9 +444,8 @@ export default function PlantillasHCPage() {
       setMessage("");
       setMessageType("info");
       try {
-        const res = await fetch(
-          `${BASE_URL}api_hc_templates.php?template_id=${encodeURIComponent(selectedTemplateValue)}`,
-          { credentials: "include" }
+        const res = await authFetch(
+          `api_hc_templates.php?template_id=${encodeURIComponent(selectedTemplateValue)}`
         );
         const data = await res.json();
         if (!data.success || !data.template) {
@@ -658,10 +653,9 @@ export default function PlantillasHCPage() {
         sections,
       };
 
-      const res = await fetch(`${BASE_URL}api_hc_templates.php`, {
+      const res = await authFetch(`api_hc_templates.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
       const data = await res.json();

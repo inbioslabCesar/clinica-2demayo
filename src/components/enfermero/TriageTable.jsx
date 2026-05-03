@@ -2,6 +2,19 @@ import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
 function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+  const getContratoMeta = (consulta) => {
+    const esContrato = Number(consulta?.es_contrato || 0) === 1;
+    if (!esContrato) {
+      return { visible: false, label: '', icon: '', className: '' };
+    }
+    return {
+      visible: true,
+      label: 'Contrato',
+      icon: '📘',
+      className: 'bg-emerald-100 text-emerald-800'
+    };
+  };
+
   const formatearFecha = (fecha) => {
     if (!fecha) return '-';
     const partes = String(fecha).split('-');
@@ -27,7 +40,9 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
-          {consultasPagina.map((c) => (
+          {consultasPagina.map((c) => {
+            const contratoMeta = getContratoMeta(c);
+            return (
             <tr key={c.id} className="hover:bg-gray-50 transition-colors duration-200">
               <td className="px-6 py-4">
                 <div className="flex items-center gap-2">
@@ -44,6 +59,11 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
                     <div className="font-semibold text-gray-800">
                       {c.paciente_nombre} {c.paciente_apellido}
                     </div>
+                    {contratoMeta.visible && (
+                      <span className={`mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${contratoMeta.className}`}>
+                        {contratoMeta.icon} {contratoMeta.label}
+                      </span>
+                    )}
                   </div>
                 </div>
               </td>
@@ -85,7 +105,7 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
                 </button>
               </td>
             </tr>
-          ))}
+          );})}
         </tbody>
       </table>
     </div>

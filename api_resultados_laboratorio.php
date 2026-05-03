@@ -41,6 +41,59 @@ if (!function_exists('is_result_value_meaningful')) {
     }
 }
 
+if (!function_exists('rl_str_ends_with')) {
+    function rl_str_ends_with($haystack, $needle)
+    {
+        $haystack = (string)$haystack;
+        $needle = (string)$needle;
+        if ($needle === '') {
+            return true;
+        }
+        $needleLen = strlen($needle);
+        if ($needleLen > strlen($haystack)) {
+            return false;
+        }
+        return substr($haystack, -$needleLen) === $needle;
+    }
+}
+
+if (!function_exists('resultados_has_meaningful_values')) {
+    function resultados_has_meaningful_values($resultados)
+    {
+        if (!is_array($resultados)) {
+            return false;
+        }
+
+        foreach ($resultados as $k => $v) {
+            $key = (string)$k;
+            if ($key === '' || rl_str_ends_with($key, '__alarma_activa') || rl_str_ends_with($key, '__alarma_dias') || rl_str_ends_with($key, '__imprimir_examen')) {
+                continue;
+            }
+            if (is_result_value_meaningful($v)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('merge_resultados_preservando_historico')) {
+    function merge_resultados_preservando_historico($existentes, $nuevos)
+    {
+        $base = is_array($existentes) ? $existentes : [];
+        $incoming = is_array($nuevos) ? $nuevos : [];
+
+        // Regla de merge: respetar todo lo previo y sobreescribir solo claves recibidas.
+        // De este modo no se pierden claves legacy tras renombrado de parámetros.
+        foreach ($incoming as $k => $v) {
+            $base[$k] = $v;
+        }
+
+        return $base;
+    }
+}
+
 if (!function_exists('calculate_order_progress')) {
     function calculate_order_progress($conn, $resultados, $rawExamenes)
     {
@@ -616,23 +669,7 @@ switch ($method) {
             exit;
         }
 
-        $hasMeaningfulResults = false;
-        if (is_array($resultados)) {
-            foreach ($resultados as $k => $v) {
-                $key = (string)$k;
-                if ($key === '' || str_ends_with($key, '__alarma_activa') || str_ends_with($key, '__alarma_dias') || str_ends_with($key, '__imprimir_examen')) {
-                    continue;
-                }
-                if ($v === null) {
-                    continue;
-                }
-                if (is_string($v) && trim($v) === '') {
-                    continue;
-                }
-                $hasMeaningfulResults = true;
-                break;
-            }
-        }
+        $hasMeaningfulResults = resultados_has_meaningful_values($resultados);
 
         if (is_array($resultados)) {
             foreach ($resultados as $key => $value) {
@@ -656,7 +693,7 @@ switch ($method) {
             }
         }
 
-        $json = json_encode($resultados);
+        $resultadosPersistir = $resultados;
         $inventarioResumen = [
             'aplicados' => 0,
             'pendientes' => 0,
@@ -699,12 +736,20 @@ switch ($method) {
         }
         $ok = false;
         $existingSignerId = 0;
-        $stmt_check = $conn->prepare('SELECT id, firmado_por_usuario_id FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
+        $stmt_check = $conn->prepare('SELECT id, firmado_por_usuario_id, resultados FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
         $stmt_check->bind_param('i', $orden['id']);
         $stmt_check->execute();
         $existingResult = $stmt_check->get_result()->fetch_assoc();
         $hasExistingResult = is_array($existingResult) && isset($existingResult['id']);
         $existingSignerId = intval($existingResult['firmado_por_usuario_id'] ?? 0);
+
+        if ($hasExistingResult) {
+            $existingResultados = json_decode($existingResult['resultados'] ?? '[]', true);
+            $resultadosPersistir = merge_resultados_preservando_historico($existingResultados, $resultados);
+        }
+
+        $json = json_encode($resultadosPersistir);
+        $hasMeaningfulResults = resultados_has_meaningful_values($resultadosPersistir);
 
         $firmado_por_usuario_id = resolve_laboratorio_signer_user_id($conn, $_SESSION['usuario'] ?? null, $existingSignerId);
 
@@ -728,7 +773,7 @@ switch ($method) {
         }
         $stmt_check->close();
 
-        $progress = calculate_order_progress($conn, $resultados, $orden['examenes'] ?? []);
+        $progress = calculate_order_progress($conn, $resultadosPersistir, $orden['examenes'] ?? []);
         // Compatibilidad: algunas ordenes legacy no tienen mapeo usable de examenes,
         // pero si se guardaron resultados significativos no debe quedarse en pendiente.
         if ($progress['total'] <= 0 && $hasMeaningfulResults) {

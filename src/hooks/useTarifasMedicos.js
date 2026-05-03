@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export function useTarifasMedicos() {
   const [tarifas, setTarifas] = useState([]);
@@ -14,7 +14,7 @@ export function useTarifasMedicos() {
   const cargarTarifas = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" });
+      const response = await authFetch("api_tarifas.php");
       const data = await response.json();
       if (data.success) {
         setTarifas(data.tarifas || []);
@@ -28,7 +28,7 @@ export function useTarifasMedicos() {
 
   const cargarMedicos = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_medicos.php`);
+      const response = await authFetch("api_medicos.php");
       const data = await response.json();
       if (data.success) {
         const medicosNormalizados = (data.medicos || []).map((medico) => ({ ...medico, id: parseInt(medico.id) }));

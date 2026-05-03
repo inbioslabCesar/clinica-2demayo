@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import LiquidacionLaboratorioReferenciaTable from "../components/laboratorio_referencia/LiquidacionLaboratorioReferenciaTable";
 import LiquidacionLaboratorioReferenciaModal from "../components/laboratorio_referencia/LiquidacionLaboratorioReferenciaModal";
 
@@ -23,7 +23,7 @@ export default function LiquidacionLaboratorioReferenciaPage() {
 
   const fetchMovimientos = () => {
     setLoading(true);
-    fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php?solo_liquidables=1`, { credentials: "include" })
+    authFetch(`api_laboratorio_referencia_movimientos.php?solo_liquidables=1`)
       .then(res => res.json())
       .then(data => {
         setMovimientos(data.movimientos || []);
@@ -33,10 +33,9 @@ export default function LiquidacionLaboratorioReferenciaPage() {
   };
 
   const marcarPagado = (id) => {
-    fetch(`${BASE_URL}api_laboratorio_referencia_movimientos.php`, {
+    authFetch(`api_laboratorio_referencia_movimientos.php`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ accion: "marcar_pagado", id })
     })
       .then(res => res.json())

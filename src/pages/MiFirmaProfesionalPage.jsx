@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function MiFirmaProfesionalPage() {
   const DEFAULT_LOGO_SIZE_PDF = 130;
@@ -42,7 +43,7 @@ export default function MiFirmaProfesionalPage() {
   const cargar = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${BASE_URL}api_mi_firma_profesional.php`, {
+      const res = await authFetch(`api_mi_firma_profesional.php`, {
         credentials: "include",
       });
       const data = await res.json();
@@ -71,7 +72,7 @@ export default function MiFirmaProfesionalPage() {
 
   useEffect(() => {
     if (!mostrarSeccionLogoLab) return;
-    fetch(`${BASE_URL}api_logo_laboratorio.php`, { credentials: "include" })
+    authFetch(`api_logo_laboratorio.php`)
       .then((res) => res.json())
       .then((data) => {
         if (data?.success) {
@@ -120,9 +121,8 @@ export default function MiFirmaProfesionalPage() {
   const guardar = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${BASE_URL}api_mi_firma_profesional.php`, {
+      const res = await authFetch(`api_mi_firma_profesional.php`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profesion: form.profesion,
@@ -138,9 +138,8 @@ export default function MiFirmaProfesionalPage() {
       // Guardar también configuración de logo/tamaño para laboratorista,
       // así no se pierde al usar el botón "Guardar configuración".
       if (mostrarSeccionLogoLab) {
-        const logoRes = await fetch(`${BASE_URL}api_logo_laboratorio.php`, {
+        const logoRes = await authFetch(`api_logo_laboratorio.php`, {
           method: 'POST',
-          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             logo_url: logoLaboratorio || '',
@@ -175,9 +174,8 @@ export default function MiFirmaProfesionalPage() {
     if (!r.isConfirmed) return;
 
     try {
-      const res = await fetch(`${BASE_URL}api_mi_firma_profesional.php`, {
+      const res = await authFetch(`api_mi_firma_profesional.php`, {
         method: "DELETE",
-        credentials: "include",
       });
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "No se pudo eliminar");
@@ -193,9 +191,8 @@ export default function MiFirmaProfesionalPage() {
   const subirArchivoLogo = async (file) => {
     const formData = new FormData();
     formData.append('logo', file);
-    const response = await fetch(`${BASE_URL}api_upload_logo.php`, {
+    const response = await authFetch(`api_upload_logo.php`, {
       method: 'POST',
-      credentials: 'include',
       body: formData
     });
     const result = await response.json();
@@ -213,9 +210,8 @@ export default function MiFirmaProfesionalPage() {
         logoPath = await subirArchivoLogo(logoFile);
       }
 
-      const response = await fetch(`${BASE_URL}api_logo_laboratorio.php`, {
+      const response = await authFetch(`api_logo_laboratorio.php`, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           logo_url: logoPath,
@@ -256,9 +252,8 @@ export default function MiFirmaProfesionalPage() {
 
     setLogoSaving(true);
     try {
-      const response = await fetch(`${BASE_URL}api_logo_laboratorio.php`, {
+      const response = await authFetch(`api_logo_laboratorio.php`, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           logo_url: '',

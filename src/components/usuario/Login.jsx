@@ -1,11 +1,13 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL, SECURITY_CONFIG } from "../../config/config";
+import { BASE_URL, SECURITY_CONFIG, fetchConfigSingleton } from "../../config/config";
 import { Icon } from '@fluentui/react';
 import { normalizePermisos } from "../../config/recepcionPermisos";
+import { authFetch } from "../../utils/apiClient";
 
 const LOGIN_BRAND_CACHE_KEY = 'login_brand_cache_v1';
+const LOGIN_BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
 const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
 
 function toAbsoluteLogoUrl(rawLogo) {
@@ -22,8 +24,9 @@ function readCachedBrand() {
     const parsed = JSON.parse(raw);
     const clinicName = String(parsed?.clinicName || '').trim();
     const logoSrc = String(parsed?.logoSrc || '').trim();
+    const ts = Number(parsed?.ts || 0);
     if (!clinicName && !logoSrc) return null;
-    return { clinicName, logoSrc };
+    return { clinicName, logoSrc, ts };
   } catch {
     return null;
   }
@@ -63,6 +66,10 @@ function applyFavicon(iconHref) {
 
 function Login({ onLogin }) {
   const cachedBrand = readCachedBrand();
+  const hasFreshCachedBrand = Boolean(
+    (cachedBrand?.clinicName || cachedBrand?.logoSrc) &&
+    (Date.now() - Number(cachedBrand?.ts || 0)) < LOGIN_BRAND_CACHE_TTL_MS
+  );
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -73,15 +80,14 @@ function Login({ onLogin }) {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (hasFreshCachedBrand) {
+      return undefined;
+    }
+
     let mounted = true;
     const loadLogo = async () => {
       try {
-        const res = await fetch(BASE_URL + 'api_get_configuracion.php', {
-          method: 'GET',
-          credentials: 'include',
-          cache: 'no-store'
-        });
-        const data = await res.json();
+        const data = await fetchConfigSingleton();
         if (!mounted || !data?.success) return;
         const cfg = data.data || {};
         const configuredName = String(cfg.nombre_clinica || '').trim();
@@ -126,7 +132,7 @@ function Login({ onLogin }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [hasFreshCachedBrand]);
 
   useEffect(() => {
     const safeName = String(clinicName || '').trim();
@@ -176,24 +182,29 @@ function Login({ onLogin }) {
     const esEmail = usuario.includes("@") && usuario.includes(".");
     try {
       if (esEmail) {
-        // 1. Intentar login como médico
-        let resMedico, dataMedico;
-        try {
-          resMedico = await fetch(BASE_URL + "api_login_medico.php", {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ email: usuario, password }),
-            credentials: "include"
-          });
-          dataMedico = await resMedico.json();
-        } catch {
-          resMedico = { ok: false };
-          dataMedico = {};
-        }
-        if (resMedico.ok && dataMedico.success) {
+        // Lanzar médico y usuario en paralelo para evitar doble RTT secuencial.
+        const fetchMedico = authFetch("api_login_medico.php", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: JSON.stringify({ email: usuario, password }),
+        }).then(r => r.json()).catch(() => ({}));
+
+        const fetchUsuario = authFetch("api_login.php", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: JSON.stringify({ usuario, password }),
+        }).then(r => r.json()).catch(() => ({}));
+
+        const [dataMedico, dataUsuario] = await Promise.all([fetchMedico, fetchUsuario]);
+
+        // Prioridad médico → usuario (mantiene la lógica previa)
+        if (dataMedico?.success) {
           const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
           sessionStorage.removeItem('usuario');
           sessionStorage.removeItem('user_role');
@@ -202,31 +213,13 @@ function Login({ onLogin }) {
           navigate("/");
           return;
         }
-        // Si falla, intentar como usuario normal
-        let res, data;
-        try {
-          res = await fetch(BASE_URL + "api_login.php", {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ usuario, password }),
-            credentials: "include"
-          });
-          data = await res.json();
-        } catch {
-          res = { ok: false };
-          data = {};
-        }
-        if (res.ok && data.success) {
+        if (dataUsuario?.success) {
           const usuarioNormalizado = {
-            ...data.usuario,
-            permisos: normalizePermisos(data?.usuario?.permisos || []),
+            ...dataUsuario.usuario,
+            permisos: normalizePermisos(dataUsuario?.usuario?.permisos || []),
           };
           sessionStorage.removeItem('medico');
           sessionStorage.setItem('usuario', JSON.stringify(usuarioNormalizado));
-          // Guardar el rol explícitamente para uso global
           if (usuarioNormalizado.rol) {
             sessionStorage.setItem('user_role', usuarioNormalizado.rol);
           } else {
@@ -240,14 +233,13 @@ function Login({ onLogin }) {
         // 1. Intentar login como usuario normal
         let res, data;
         try {
-          res = await fetch(BASE_URL + "api_login.php", {
+          res = await authFetch("api_login.php", {
             method: "POST",
             headers: { 
               "Content-Type": "application/json",
               "X-Requested-With": "XMLHttpRequest"
             },
             body: JSON.stringify({ usuario, password }),
-            credentials: "include"
           });
           data = await res.json();
         } catch {
@@ -274,14 +266,13 @@ function Login({ onLogin }) {
         // Si falla, intentar como médico
         let resMedico, dataMedico;
         try {
-          resMedico = await fetch(BASE_URL + "api_login_medico.php", {
+          resMedico = await authFetch("api_login_medico.php", {
             method: "POST",
             headers: { 
               "Content-Type": "application/json",
               "X-Requested-With": "XMLHttpRequest"
             },
             body: JSON.stringify({ email: usuario, password }),
-            credentials: "include"
           });
           dataMedico = await resMedico.json();
         } catch {

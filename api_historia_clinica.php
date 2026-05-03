@@ -297,6 +297,560 @@ function hc_asegurar_cotizacion_control($conn, $pacienteId, $medicoId, $consulta
     ];
 }
 
+function hc_normalizar_item_receta_hash($item) {
+    $codigo = trim((string)($item['codigo'] ?? ''));
+    $nombre = trim((string)($item['nombre'] ?? ($item['medicamento'] ?? '')));
+    $dosis = trim((string)($item['dosis'] ?? ''));
+    $frecuencia = trim((string)($item['frecuencia'] ?? ''));
+    $duracion = trim((string)($item['duracion'] ?? ''));
+    $obs = trim((string)($item['observaciones'] ?? ($item['indicaciones'] ?? '')));
+    $manual = !empty($item['manual']) ? 1 : 0;
+
+    return [
+        'codigo' => mb_strtolower($codigo, 'UTF-8'),
+        'nombre' => mb_strtolower($nombre, 'UTF-8'),
+        'dosis' => mb_strtolower($dosis, 'UTF-8'),
+        'frecuencia' => mb_strtolower($frecuencia, 'UTF-8'),
+        'duracion' => mb_strtolower($duracion, 'UTF-8'),
+        'observaciones' => mb_strtolower($obs, 'UTF-8'),
+        'manual' => $manual,
+    ];
+}
+
+function hc_calcular_hash_receta($receta) {
+    $normalizada = [];
+    foreach ((array)$receta as $item) {
+        if (!is_array($item)) continue;
+        $normalizada[] = hc_normalizar_item_receta_hash($item);
+    }
+
+    usort($normalizada, function ($a, $b) {
+        $ka = ($a['codigo'] ?? '') . '|' . ($a['nombre'] ?? '');
+        $kb = ($b['codigo'] ?? '') . '|' . ($b['nombre'] ?? '');
+        return strcmp($ka, $kb);
+    });
+
+    return sha1(json_encode($normalizada, JSON_UNESCAPED_UNICODE));
+}
+
+function hc_resolver_precio_medicamento($med) {
+    $precioVenta = isset($med['precio_venta']) ? (float)$med['precio_venta'] : 0.0;
+    if ($precioVenta > 0) {
+        return round($precioVenta, 2);
+    }
+
+    $precioCompra = isset($med['precio_compra']) ? (float)$med['precio_compra'] : 0.0;
+    $margen = isset($med['margen_ganancia']) ? (float)$med['margen_ganancia'] : 0.0;
+    if ($precioCompra > 0) {
+        return round($precioCompra * (1 + ($margen / 100)), 2);
+    }
+
+    return 0.0;
+}
+
+function hc_resolver_medicamento_desde_receta($conn, $item) {
+    $codigo = trim((string)($item['codigo'] ?? ''));
+    $nombre = trim((string)($item['nombre'] ?? ($item['medicamento'] ?? '')));
+    $manual = !empty($item['manual']) || stripos($codigo, 'MANUAL-') === 0;
+
+    if ($manual) {
+        return [null, 'item_manual_sin_catalogo'];
+    }
+
+    if ($codigo !== '') {
+        $stmt = $conn->prepare('SELECT * FROM medicamentos WHERE codigo = ? ORDER BY id DESC LIMIT 1');
+        if ($stmt) {
+            $stmt->bind_param('s', $codigo);
+            $stmt->execute();
+            $med = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($med) {
+                $estado = strtolower(trim((string)($med['estado'] ?? 'activo')));
+                if ($estado !== '' && $estado !== 'activo') {
+                    return [null, 'medicamento_inactivo'];
+                }
+                return [$med, null];
+            }
+        }
+    }
+
+    if ($nombre !== '') {
+        $stmtEq = $conn->prepare('SELECT * FROM medicamentos WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1');
+        if ($stmtEq) {
+            $stmtEq->bind_param('s', $nombre);
+            $stmtEq->execute();
+            $medEq = $stmtEq->get_result()->fetch_assoc();
+            $stmtEq->close();
+            if ($medEq) {
+                $estadoEq = strtolower(trim((string)($medEq['estado'] ?? 'activo')));
+                if ($estadoEq !== '' && $estadoEq !== 'activo') {
+                    return [null, 'medicamento_inactivo'];
+                }
+                return [$medEq, null];
+            }
+        }
+
+        $like = '%' . $nombre . '%';
+        $stmtLike = $conn->prepare('SELECT * FROM medicamentos WHERE nombre LIKE ? ORDER BY id DESC LIMIT 1');
+        if ($stmtLike) {
+            $stmtLike->bind_param('s', $like);
+            $stmtLike->execute();
+            $medLike = $stmtLike->get_result()->fetch_assoc();
+            $stmtLike->close();
+            if ($medLike) {
+                $estadoLike = strtolower(trim((string)($medLike['estado'] ?? 'activo')));
+                if ($estadoLike !== '' && $estadoLike !== 'activo') {
+                    return [null, 'medicamento_inactivo'];
+                }
+                return [$medLike, null];
+            }
+        }
+    }
+
+    return [null, 'medicamento_no_encontrado'];
+}
+
+function hc_buscar_cotizacion_editable_por_consulta($conn, $consultaId) {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0) return 0;
+
+    $sql = 'SELECT c.id, LOWER(TRIM(c.estado)) AS estado
+            FROM cotizaciones c
+            INNER JOIN cotizaciones_detalle cd ON cd.cotizacion_id = c.id
+            WHERE cd.consulta_id = ?
+              AND LOWER(TRIM(c.estado)) NOT IN ("anulado", "anulada", "pagado")
+            ORDER BY c.id DESC
+            LIMIT 1';
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return 0;
+    $stmt->bind_param('i', $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $estado = strtolower(trim((string)($row['estado'] ?? '')));
+    if (!in_array($estado, ['pendiente', 'control'], true)) {
+        return 0;
+    }
+    return (int)($row['id'] ?? 0);
+}
+
+function hc_crear_cotizacion_receta_auto($conn, $pacienteId, $usuarioId, $consultaId) {
+    $pacienteId = (int)$pacienteId;
+    $usuarioId = (int)$usuarioId;
+    $consultaId = (int)$consultaId;
+    if ($pacienteId <= 0 || $consultaId <= 0) return 0;
+    if ($usuarioId <= 0) $usuarioId = 1;
+
+    $observaciones = 'Cotizacion automatica de receta desde Historia Clinica. Consulta #' . $consultaId;
+    $hasSaldoV2 = hc_column_exists($conn, 'cotizaciones', 'total_pagado') && hc_column_exists($conn, 'cotizaciones', 'saldo_pendiente');
+
+    if ($hasSaldoV2) {
+        $stmt = $conn->prepare('INSERT INTO cotizaciones (paciente_id, usuario_id, total, total_pagado, saldo_pendiente, estado, observaciones) VALUES (?, ?, 0, 0, 0, "pendiente", ?)');
+        if (!$stmt) return 0;
+        $stmt->bind_param('iis', $pacienteId, $usuarioId, $observaciones);
+    } else {
+        $stmt = $conn->prepare('INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (?, ?, 0, "pendiente", ?)');
+        if (!$stmt) return 0;
+        $stmt->bind_param('iis', $pacienteId, $usuarioId, $observaciones);
+    }
+
+    $ok = $stmt->execute();
+    $id = $ok ? (int)$stmt->insert_id : 0;
+    $stmt->close();
+
+    if ($id > 0 && hc_column_exists($conn, 'cotizaciones', 'numero_comprobante')) {
+        $numero = sprintf('Q%06d', $id);
+        $stmtNum = $conn->prepare('UPDATE cotizaciones SET numero_comprobante = ? WHERE id = ? LIMIT 1');
+        if ($stmtNum) {
+            $stmtNum->bind_param('si', $numero, $id);
+            $stmtNum->execute();
+            $stmtNum->close();
+        }
+    }
+
+    return $id;
+}
+
+function hc_guardar_sync_receta_estado($conn, $consultaId, $hcId, $cotizacionId, $recetaHash, $itemsTotal, $itemsSync, $itemsPend, $estado, $errorMsg = null) {
+    if (!hc_table_exists($conn, 'hc_receta_cotizacion_sync')) {
+        return;
+    }
+
+    $consultaId = (int)$consultaId;
+    $hcId = (int)$hcId;
+    $cotizacionId = (int)$cotizacionId;
+    $itemsTotal = (int)$itemsTotal;
+    $itemsSync = (int)$itemsSync;
+    $itemsPend = (int)$itemsPend;
+    $estado = trim((string)$estado);
+    $recetaHash = trim((string)$recetaHash);
+    $errorMsg = $errorMsg !== null ? trim((string)$errorMsg) : null;
+
+    $sql = 'INSERT INTO hc_receta_cotizacion_sync
+            (consulta_id, hc_id, cotizacion_id, receta_hash, receta_items_total, items_sincronizados, items_pendientes, estado, ultimo_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                hc_id = VALUES(hc_id),
+                cotizacion_id = VALUES(cotizacion_id),
+                receta_hash = VALUES(receta_hash),
+                receta_items_total = VALUES(receta_items_total),
+                items_sincronizados = VALUES(items_sincronizados),
+                items_pendientes = VALUES(items_pendientes),
+                estado = VALUES(estado),
+                ultimo_error = VALUES(ultimo_error),
+                updated_at = CURRENT_TIMESTAMP';
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return;
+    $stmt->bind_param('iiisiiiss', $consultaId, $hcId, $cotizacionId, $recetaHash, $itemsTotal, $itemsSync, $itemsPend, $estado, $errorMsg);
+    $stmt->execute();
+    $stmt->close();
+}
+
+function hc_guardar_receta_items_pendientes($conn, $consultaId, $hcId, $syncId, $pendientes) {
+    if (!hc_table_exists($conn, 'hc_receta_cotizacion_items_pendientes')) {
+        return;
+    }
+
+    $consultaId = (int)$consultaId;
+    $hcId = (int)$hcId;
+    $syncId = (int)$syncId;
+
+    $stmtDel = $conn->prepare('DELETE FROM hc_receta_cotizacion_items_pendientes WHERE consulta_id = ?');
+    if ($stmtDel) {
+        $stmtDel->bind_param('i', $consultaId);
+        $stmtDel->execute();
+        $stmtDel->close();
+    }
+
+    if (empty($pendientes)) return;
+
+    $stmtIns = $conn->prepare(
+        'INSERT INTO hc_receta_cotizacion_items_pendientes
+         (sync_id, consulta_id, hc_id, item_idx, codigo, nombre, motivo, payload_json, estado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, "pendiente")'
+    );
+    if (!$stmtIns) return;
+
+    foreach ((array)$pendientes as $p) {
+        $itemIdx = (int)($p['item_idx'] ?? 0);
+        $codigo = trim((string)($p['codigo'] ?? ''));
+        $nombre = trim((string)($p['nombre'] ?? ''));
+        $motivo = trim((string)($p['motivo'] ?? 'sin_motivo'));
+        $payload = json_encode($p['payload'] ?? [], JSON_UNESCAPED_UNICODE);
+        $stmtIns->bind_param('iiiissss', $syncId, $consultaId, $hcId, $itemIdx, $codigo, $nombre, $motivo, $payload);
+        $stmtIns->execute();
+    }
+
+    $stmtIns->close();
+}
+
+function hc_obtener_sync_id_receta($conn, $consultaId) {
+    if (!hc_table_exists($conn, 'hc_receta_cotizacion_sync')) {
+        return 0;
+    }
+    $stmt = $conn->prepare('SELECT id FROM hc_receta_cotizacion_sync WHERE consulta_id = ? LIMIT 1');
+    if (!$stmt) return 0;
+    $stmt->bind_param('i', $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['id'] ?? 0);
+}
+
+function hc_sincronizar_receta_a_cotizacion($conn, $consultaId, $hcId, $datos) {
+    $consultaId = (int)$consultaId;
+    $hcId = (int)$hcId;
+    $receta = (is_array($datos) && isset($datos['receta']) && is_array($datos['receta'])) ? $datos['receta'] : [];
+
+    if ($consultaId <= 0) {
+        return ['success' => false, 'error' => 'consulta_id_invalido'];
+    }
+
+    if (!hc_table_exists($conn, 'hc_receta_cotizacion_sync') || !hc_table_exists($conn, 'hc_receta_cotizacion_items_pendientes')) {
+        return [
+            'success' => false,
+            'error' => 'tablas_sync_no_disponibles',
+            'skip' => true,
+        ];
+    }
+
+    $recetaHash = hc_calcular_hash_receta($receta);
+    $itemsTotal = count((array)$receta);
+
+    $stmtCtx = $conn->prepare('SELECT paciente_id, medico_id FROM consultas WHERE id = ? LIMIT 1');
+    if (!$stmtCtx) {
+        return ['success' => false, 'error' => 'no_se_pudo_resolver_contexto_consulta'];
+    }
+    $stmtCtx->bind_param('i', $consultaId);
+    $stmtCtx->execute();
+    $ctx = $stmtCtx->get_result()->fetch_assoc();
+    $stmtCtx->close();
+
+    $pacienteId = (int)($ctx['paciente_id'] ?? 0);
+    $medicoId = (int)($ctx['medico_id'] ?? 0);
+    if ($pacienteId <= 0) {
+        return ['success' => false, 'error' => 'paciente_no_valido_para_sincronizacion'];
+    }
+
+    $stmtSync = $conn->prepare('SELECT id, cotizacion_id, receta_hash, estado FROM hc_receta_cotizacion_sync WHERE consulta_id = ? LIMIT 1');
+    $syncPrev = null;
+    if ($stmtSync) {
+        $stmtSync->bind_param('i', $consultaId);
+        $stmtSync->execute();
+        $syncPrev = $stmtSync->get_result()->fetch_assoc();
+        $stmtSync->close();
+    }
+
+    if ($syncPrev && trim((string)($syncPrev['receta_hash'] ?? '')) === $recetaHash) {
+        return [
+            'success' => true,
+            'cotizacion_id' => (int)($syncPrev['cotizacion_id'] ?? 0),
+            'items_total' => $itemsTotal,
+            'items_sincronizados' => (int)($syncPrev['items_sincronizados'] ?? 0),
+            'items_pendientes' => (int)($syncPrev['items_pendientes'] ?? 0),
+            'sin_cambios' => true,
+        ];
+    }
+
+    $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
+    if ($usuarioId <= 0) $usuarioId = 1;
+
+    $conn->begin_transaction();
+    try {
+        $cotizacionId = (int)($syncPrev['cotizacion_id'] ?? 0);
+        if ($cotizacionId > 0) {
+            $stmtCotEstado = $conn->prepare('SELECT LOWER(TRIM(estado)) AS estado FROM cotizaciones WHERE id = ? LIMIT 1');
+            if ($stmtCotEstado) {
+                $stmtCotEstado->bind_param('i', $cotizacionId);
+                $stmtCotEstado->execute();
+                $rowEstado = $stmtCotEstado->get_result()->fetch_assoc();
+                $stmtCotEstado->close();
+                $estadoCot = strtolower(trim((string)($rowEstado['estado'] ?? '')));
+                if (!in_array($estadoCot, ['pendiente', 'control'], true)) {
+                    $cotizacionId = 0;
+                }
+            }
+        }
+
+        if ($cotizacionId <= 0) {
+            $candidatoId = hc_buscar_cotizacion_editable_por_consulta($conn, $consultaId);
+            // Solo reutilizar esa cotización si NO tiene ítems de otro tipo (ej. ecografía, laboratorio).
+            // Si tiene ítems no-farmacia, crear una cotización nueva exclusiva para la receta.
+            if ($candidatoId > 0) {
+                $stmtChk = $conn->prepare(
+                    "SELECT COUNT(*) AS cnt FROM cotizaciones_detalle
+                     WHERE cotizacion_id = ?
+                       AND LOWER(TRIM(servicio_tipo)) <> 'farmacia'"
+                );
+                if ($stmtChk) {
+                    $stmtChk->bind_param('i', $candidatoId);
+                    $stmtChk->execute();
+                    $rowChk = $stmtChk->get_result()->fetch_assoc();
+                    $stmtChk->close();
+                    if ((int)($rowChk['cnt'] ?? 0) === 0) {
+                        $cotizacionId = $candidatoId;
+                    }
+                    // Si tiene ítems no-farmacia, $cotizacionId sigue en 0 → se creará una nueva
+                }
+            }
+        }
+        if ($cotizacionId <= 0) {
+            $cotizacionId = hc_crear_cotizacion_receta_auto($conn, $pacienteId, $usuarioId, $consultaId);
+        }
+        if ($cotizacionId <= 0) {
+            throw new Exception('no_se_pudo_crear_o_resolver_cotizacion');
+        }
+
+        $hasMotivoColForDelete = hc_column_exists($conn, 'cotizaciones_detalle', 'motivo_edicion');
+        if ($hasMotivoColForDelete) {
+            // Prefer deleting by sync marker to also clean legacy rows with servicio_tipo mal tipado.
+            $stmtDelAuto = $conn->prepare('DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND motivo_edicion = "RECETA_HC_AUTO"');
+        } else {
+            $stmtDelAuto = $conn->prepare('DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = "farmacia"');
+        }
+        if ($stmtDelAuto) {
+            $stmtDelAuto->bind_param('i', $cotizacionId);
+            $stmtDelAuto->execute();
+            $stmtDelAuto->close();
+        }
+
+        $hasConsultaId = hc_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+        $hasMedicoId = hc_column_exists($conn, 'cotizaciones_detalle', 'medico_id');
+        $hasEstadoItem = hc_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
+        $hasVersionItem = hc_column_exists($conn, 'cotizaciones_detalle', 'version_item');
+        $hasEditadoPor = hc_column_exists($conn, 'cotizaciones_detalle', 'editado_por');
+        $hasEditadoEn = hc_column_exists($conn, 'cotizaciones_detalle', 'editado_en');
+        $hasMotivo = hc_column_exists($conn, 'cotizaciones_detalle', 'motivo_edicion');
+
+        $pendientes = [];
+        $sincronizados = 0;
+
+        foreach ((array)$receta as $idx => $item) {
+            if (!is_array($item)) continue;
+
+            [$med, $motivoNoMap] = hc_resolver_medicamento_desde_receta($conn, $item);
+            if (!$med) {
+                $pendientes[] = [
+                    'item_idx' => (int)$idx,
+                    'codigo' => trim((string)($item['codigo'] ?? '')),
+                    'nombre' => trim((string)($item['nombre'] ?? ($item['medicamento'] ?? ''))),
+                    'motivo' => $motivoNoMap ?: 'no_mapeado',
+                    'payload' => $item,
+                ];
+                continue;
+            }
+
+            $medId = (int)($med['id'] ?? 0);
+            if ($medId <= 0) {
+                $pendientes[] = [
+                    'item_idx' => (int)$idx,
+                    'codigo' => trim((string)($item['codigo'] ?? '')),
+                    'nombre' => trim((string)($item['nombre'] ?? ($item['medicamento'] ?? ''))),
+                    'motivo' => 'medicamento_id_invalido',
+                    'payload' => $item,
+                ];
+                continue;
+            }
+
+            $precio = hc_resolver_precio_medicamento($med);
+            $cantidad = 1;
+            $subtotal = round($precio * $cantidad, 2);
+
+            $nombreMed = trim((string)($med['nombre'] ?? ($item['nombre'] ?? 'Medicamento')));
+            $codigoMed = trim((string)($med['codigo'] ?? ''));
+            $descripcion = $nombreMed . ($codigoMed !== '' ? ' (' . $codigoMed . ')' : '');
+
+            $cols = ['cotizacion_id', 'servicio_tipo', 'servicio_id', 'descripcion', 'cantidad', 'precio_unitario', 'subtotal'];
+            $vals = ['?', '?', '?', '?', '?', '?', '?'];
+            $types = 'isisidd';
+            $params = [$cotizacionId, 'farmacia', $medId, $descripcion, $cantidad, $precio, $subtotal];
+
+            if ($hasEstadoItem) {
+                $cols[] = 'estado_item';
+                $vals[] = '?';
+                $types .= 's';
+                $params[] = 'activo';
+            }
+            if ($hasVersionItem) {
+                $cols[] = 'version_item';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = 1;
+            }
+            if ($hasEditadoPor) {
+                $cols[] = 'editado_por';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = $usuarioId;
+            }
+            if ($hasEditadoEn) {
+                $cols[] = 'editado_en';
+                $vals[] = 'NOW()';
+            }
+            if ($hasMotivo) {
+                $cols[] = 'motivo_edicion';
+                $vals[] = '?';
+                $types .= 's';
+                $params[] = 'RECETA_HC_AUTO';
+            }
+            if ($hasConsultaId) {
+                $cols[] = 'consulta_id';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = $consultaId;
+            }
+            if ($hasMedicoId && $medicoId > 0) {
+                $cols[] = 'medico_id';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = $medicoId;
+            }
+
+            $sqlIns = 'INSERT INTO cotizaciones_detalle (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+            $stmtIns = $conn->prepare($sqlIns);
+            if (!$stmtIns) {
+                throw new Exception('no_se_pudo_preparar_detalle_farmacia_auto');
+            }
+            $stmtIns->bind_param($types, ...$params);
+            if (!$stmtIns->execute()) {
+                $stmtIns->close();
+                throw new Exception('no_se_pudo_insertar_detalle_farmacia_auto');
+            }
+            $stmtIns->close();
+            $sincronizados++;
+        }
+
+        $whereEstado = hc_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND estado_item <> 'eliminado'"
+            : '';
+        $stmtTot = $conn->prepare('SELECT COALESCE(SUM(subtotal), 0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?' . $whereEstado);
+        $totalCot = 0.0;
+        if ($stmtTot) {
+            $stmtTot->bind_param('i', $cotizacionId);
+            $stmtTot->execute();
+            $rowTot = $stmtTot->get_result()->fetch_assoc();
+            $totalCot = (float)($rowTot['total'] ?? 0);
+            $stmtTot->close();
+        }
+
+        $hasSaldoV2 = hc_column_exists($conn, 'cotizaciones', 'total_pagado') && hc_column_exists($conn, 'cotizaciones', 'saldo_pendiente');
+        if ($hasSaldoV2) {
+            $stmtGetPagado = $conn->prepare('SELECT COALESCE(total_pagado, 0) AS total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+            $totalPagado = 0.0;
+            if ($stmtGetPagado) {
+                $stmtGetPagado->bind_param('i', $cotizacionId);
+                $stmtGetPagado->execute();
+                $rowPag = $stmtGetPagado->get_result()->fetch_assoc();
+                $stmtGetPagado->close();
+                $totalPagado = (float)($rowPag['total_pagado'] ?? 0);
+            }
+            $saldo = max(0.0, round($totalCot - $totalPagado, 2));
+            $estadoCot = ($saldo <= 0.00001)
+                ? 'pagado'
+                : (($totalPagado > 0.00001) ? 'parcial' : 'pendiente');
+
+            $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ? LIMIT 1');
+            if ($stmtUpdCot) {
+                $stmtUpdCot->bind_param('ddsi', $totalCot, $saldo, $estadoCot, $cotizacionId);
+                $stmtUpdCot->execute();
+                $stmtUpdCot->close();
+            }
+        } else {
+            $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = ? WHERE id = ? LIMIT 1');
+            if ($stmtUpdCot) {
+                $stmtUpdCot->bind_param('di', $totalCot, $cotizacionId);
+                $stmtUpdCot->execute();
+                $stmtUpdCot->close();
+            }
+        }
+
+        $estadoSync = empty($pendientes) ? 'ok' : (($sincronizados > 0) ? 'parcial' : 'pendiente_mapeo');
+        hc_guardar_sync_receta_estado($conn, $consultaId, $hcId, $cotizacionId, $recetaHash, $itemsTotal, $sincronizados, count($pendientes), $estadoSync, null);
+        $syncId = hc_obtener_sync_id_receta($conn, $consultaId);
+        hc_guardar_receta_items_pendientes($conn, $consultaId, $hcId, $syncId, $pendientes);
+
+        $conn->commit();
+
+        return [
+            'success' => true,
+            'cotizacion_id' => $cotizacionId,
+            'items_total' => $itemsTotal,
+            'items_sincronizados' => $sincronizados,
+            'items_pendientes' => count($pendientes),
+            'estado' => $estadoSync,
+        ];
+    } catch (Throwable $e) {
+        $conn->rollback();
+        $msg = $e->getMessage();
+        hc_guardar_sync_receta_estado($conn, $consultaId, $hcId, 0, $recetaHash, $itemsTotal, 0, $itemsTotal, 'error', $msg);
+        return [
+            'success' => false,
+            'error' => $msg,
+        ];
+    }
+}
+
 function hc_estado_proxima_cita($conn) {
     $valorDeseado = 'falta_cancelar';
 
@@ -875,6 +1429,50 @@ function hc_resolver_proxima_cita_contrato($conn, $consultaId) {
     ];
 }
 
+function hc_normalizar_proxima_cita_contrato($datos, $proximaContratoEvento) {
+    if (!is_array($datos) || !isset($datos['proxima_cita']) || !is_array($datos['proxima_cita'])) {
+        return $datos;
+    }
+
+    $proxima = $datos['proxima_cita'];
+    $origen = strtolower(trim((string)($proxima['origen'] ?? '')));
+    if ($origen !== 'contrato_agenda') {
+        return $datos;
+    }
+
+    $nextConsultaId = is_array($proximaContratoEvento)
+        ? (int)($proximaContratoEvento['consulta_id'] ?? 0)
+        : 0;
+
+    if ($nextConsultaId <= 0) {
+        // Regla de negocio: si no hay siguiente evento de contrato, no debe quedar
+        // proxima_cita abierta por origen contrato_agenda.
+        $proxima['programar'] = false;
+        $proxima['consulta_id'] = null;
+        $proxima['fecha'] = '';
+        $proxima['hora'] = '';
+        $proxima['medico_id'] = '';
+        $proxima['es_control'] = false;
+        $proxima['estado_validacion'] = 'sin_siguiente_evento_contrato';
+        $datos['proxima_cita'] = $proxima;
+        return $datos;
+    }
+
+    // Si existe siguiente evento, forzar consistencia para evitar desalineación
+    // entre JSON de HC y consulta real del contrato.
+    $proxima['programar'] = true;
+    $proxima['consulta_id'] = $nextConsultaId;
+    $proxima['fecha'] = (string)($proximaContratoEvento['fecha'] ?? '');
+    $proxima['hora'] = (string)($proximaContratoEvento['hora'] ?? '');
+    $proxima['medico_id'] = (string)($proximaContratoEvento['medico_id'] ?? '');
+    $proxima['es_control'] = !empty($proximaContratoEvento['es_control']);
+    $proxima['origen'] = 'contrato_agenda';
+    $proxima['estado_validacion'] = 'ok';
+    $datos['proxima_cita'] = $proxima;
+
+    return $datos;
+}
+
 function hc_bool_query_param($key, $default = false) {
     if (!isset($_GET[$key])) return $default;
     $raw = strtolower(trim((string)$_GET[$key]));
@@ -893,6 +1491,26 @@ function hc_table_exists($conn, $tableName) {
     $stmt->execute();
     $row = $stmt->get_result()->fetch_row();
     $stmt->close();
+    return !empty($row);
+}
+
+function hc_column_exists($conn, $tableName, $columnName) {
+    $tableName = trim((string)$tableName);
+    $columnName = trim((string)$columnName);
+    if ($tableName === '' || $columnName === '') {
+        return false;
+    }
+
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('ss', $tableName, $columnName);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_row();
+    $stmt->close();
+
     return !empty($row);
 }
 
@@ -1534,8 +2152,62 @@ function hc_upsert_tratamiento_enfermeria($conn, $consulta_id, $datos) {
     }
 
     if ($lastEstado === 'en_ejecucion') {
-        // Regla avanzada: si enfermería está aplicando y el médico edita,
-        // el tratamiento actual se suspende y se crea una nueva versión pendiente.
+        // Detectar si el cambio es solo aditivo (se agregan medicamentos, no se elimina ni modifica ninguno).
+        // Si es aditivo, conservar el tratamiento en ejecución y solo agregar los ítems nuevos.
+        $oldReceta = json_decode($lastReceta, true);
+        if (!is_array($oldReceta)) $oldReceta = [];
+
+        // Fingerprint normalizado por medicamento: nombre|dosis|frecuencia_tipo|frecuencia_valor|duracion_dias
+        $makeFp = function ($item) {
+            $n = tph_normalize_prescripcion_item($item, 0);
+            return mb_strtolower(trim($n['nombre']), 'UTF-8')
+                . '|' . strtolower(trim($n['dosis']))
+                . '|' . $n['frecuencia_tipo']
+                . '|' . (string)($n['frecuencia_valor'] ?? '')
+                . '|' . (string)$n['duracion_dias'];
+        };
+
+        $oldFps = [];
+        foreach ($oldReceta as $it) { $oldFps[$makeFp($it)] = true; }
+
+        $newFps    = [];
+        $addedItems = [];
+        foreach ($receta as $it) {
+            $fp = $makeFp($it);
+            $newFps[$fp] = true;
+            if (!isset($oldFps[$fp])) { $addedItems[] = $it; }
+        }
+
+        // Verificar que ningún ítem antiguo fue eliminado o modificado
+        $isAdditive = true;
+        foreach ($oldReceta as $it) {
+            if (!isset($newFps[$makeFp($it)])) { $isAdditive = false; break; }
+        }
+
+        if ($isAdditive) {
+            // Actualizar snapshot con la receta completa (incluye los nuevos)
+            $stmtUpSnap = $conn->prepare('UPDATE tratamientos_enfermeria SET receta_snapshot = ?, tratamiento_texto = ? WHERE id = ? LIMIT 1');
+            if ($stmtUpSnap) {
+                $stmtUpSnap->bind_param('ssi', $recetaJson, $tratamientoTexto, $lastId);
+                $stmtUpSnap->execute();
+                $stmtUpSnap->close();
+            }
+            if (!empty($addedItems)) {
+                // Obtener el próximo item_idx disponible
+                $stmtMaxIdx = $conn->prepare('SELECT COALESCE(MAX(item_idx), -1) AS max_idx FROM tratamientos_enfermeria_items WHERE tratamiento_id = ?');
+                $maxIdx = -1;
+                if ($stmtMaxIdx) {
+                    $stmtMaxIdx->bind_param('i', $lastId);
+                    $stmtMaxIdx->execute();
+                    $maxIdx = (int)($stmtMaxIdx->get_result()->fetch_assoc()['max_idx'] ?? -1);
+                    $stmtMaxIdx->close();
+                }
+                tph_append_items_to_plan($conn, $lastId, $addedItems, $maxIdx + 1);
+            }
+            return; // conservar en_ejecucion, no crear nueva versión
+        }
+
+        // Cambio destructivo (se eliminó o modificó un medicamento): suspender y crear nueva versión
         $stmtSusp = $conn->prepare(
             'UPDATE tratamientos_enfermeria
              SET estado = "suspendido",
@@ -1614,11 +2286,15 @@ switch ($method) {
         if ($row) {
             $targetConsultaId = (int)($row['consulta_id'] ?? 0);
             $datos = json_decode($row['datos'], true);
+            if (!is_array($datos)) {
+                $datos = [];
+            }
             [$templateMeta, $templateResolution] = hc_resolve_template_for_hc($conn, $targetConsultaId, is_array($datos) ? $datos : []);
             $historialPrevias = $includeChain
                 ? hc_get_historial_cadena_previas($conn, $targetConsultaId)
                 : null;
             $proximaContratoEvento = hc_resolver_proxima_cita_contrato($conn, $targetConsultaId);
+            $datos = hc_normalizar_proxima_cita_contrato($datos, $proximaContratoEvento);
 
             echo json_encode([
                 'success' => true,
@@ -1720,7 +2396,34 @@ switch ($method) {
         $proximaResultado = null;
         try {
             if (is_array($datos) && isset($datos['proxima_cita']) && is_array($datos['proxima_cita'])) {
-                $proximaResultado = hc_programar_proxima_cita($conn, (int)$consulta_id, $datos['proxima_cita'], $hcActualId);
+                $origenProxima = strtolower(trim((string)($datos['proxima_cita']['origen'] ?? '')));
+
+                if ($origenProxima === 'contrato_agenda') {
+                    $proximaContratoEvento = hc_resolver_proxima_cita_contrato($conn, (int)$consulta_id);
+                    $datos = hc_normalizar_proxima_cita_contrato($datos, $proximaContratoEvento);
+
+                    // Si es último evento de contrato, no programar próxima cita automática.
+                    if (!empty($datos['proxima_cita']) && is_array($datos['proxima_cita']) && empty($datos['proxima_cita']['programar'])) {
+                        $datos['proxima_cita'] = hc_append_proxima_historial($datos['proxima_cita'], [
+                            'accion' => 'omitida_por_fin_contrato',
+                            'fecha_evento' => date('Y-m-d H:i:s'),
+                            'actor' => hc_actor_label(),
+                            'motivo' => 'No existe un siguiente evento de contrato programado.',
+                        ]);
+
+                        $jsonConNormalizacion = json_encode($datos);
+                        $stmtNormalize = $conn->prepare('UPDATE historia_clinica SET datos = ?, fecha_registro = CURRENT_TIMESTAMP WHERE id = ? LIMIT 1');
+                        if ($stmtNormalize) {
+                            $stmtNormalize->bind_param('si', $jsonConNormalizacion, $hcActualId);
+                            $stmtNormalize->execute();
+                            $stmtNormalize->close();
+                        }
+                    }
+                }
+
+                if (!empty($datos['proxima_cita']['programar'])) {
+                    $proximaResultado = hc_programar_proxima_cita($conn, (int)$consulta_id, $datos['proxima_cita'], $hcActualId);
+                }
                 if (is_array($proximaResultado)) {
                     $datos['proxima_cita']['consulta_id'] = (int)($proximaResultado['consulta_id'] ?? 0);
                     $datos['proxima_cita']['programada_en'] = date('Y-m-d H:i:s');
@@ -1761,12 +2464,24 @@ switch ($method) {
         $stmt_estado->execute();
         $stmt_estado->close();
 
-        // Sincronizar receta/tratamiento al panel de enfermería
+        // Sincronizar receta/tratamiento al panel de enfermeria
         hc_upsert_tratamiento_enfermeria($conn, (int)$consulta_id, $datos);
+
+        // Sincronizar receta medica a cotizacion automatica (no bloqueante para el guardado clinico)
+        $syncReceta = null;
+        try {
+            $syncReceta = hc_sincronizar_receta_a_cotizacion($conn, (int)$consulta_id, (int)$hcActualId, $datos);
+        } catch (Throwable $e) {
+            $syncReceta = [
+                'success' => false,
+                'error' => $e->getMessage(),
+            ];
+        }
 
         echo json_encode([
             'success' => $ok,
             'proxima_cita' => $proximaResultado,
+            'receta_cotizacion_sync' => $syncReceta,
         ]);
         $stmt_check->close();
         break;

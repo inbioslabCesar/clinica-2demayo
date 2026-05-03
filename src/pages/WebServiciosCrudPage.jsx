@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { BASE_URL } from '../config/config'
+import { authFetch } from '../utils/apiClient'
 import Modal from '../components/comunes/Modal.jsx'
 
 const emptyForm = { titulo: '', descripcion: '', precio: '', icono: '', orden: 0, activo: true, tipo: 'clasico', imagen_shape: 'rounded', imagen_tipo: 'normal' }
@@ -19,7 +20,7 @@ export default function WebServiciosCrudPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await fetch(endpoint, { credentials: 'include' })
+      const r = await authFetch(endpoint)
       const data = await r.json()
       if (!data?.success) throw new Error(data?.error || 'No se pudo cargar')
       setItems(data.servicios || [])
@@ -70,10 +71,9 @@ export default function WebServiciosCrudPage() {
     const fd = new FormData()
     fd.append('imagen', imagenFile)
 
-    const r = await fetch(uploadEndpoint, {
+    const r = await authFetch(uploadEndpoint, {
       method: 'POST',
       body: fd,
-      credentials: 'include',
     })
     const data = await r.json().catch(() => null)
     if (!r.ok || !data?.success) {
@@ -96,11 +96,10 @@ export default function WebServiciosCrudPage() {
       const method = editingId ? 'PUT' : 'POST'
       if (editingId) payload.id = editingId
 
-      const r = await fetch(endpoint, {
+      const r = await authFetch(endpoint, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        credentials: 'include',
       })
       const data = await r.json()
       if (!data?.success) throw new Error(data?.error || 'No se pudo guardar')
@@ -126,11 +125,10 @@ export default function WebServiciosCrudPage() {
     if (!confirm.isConfirmed) return
 
     try {
-      const r = await fetch(endpoint, {
+      const r = await authFetch(endpoint, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
-        credentials: 'include',
       })
       const data = await r.json()
       if (!data?.success) throw new Error(data?.error || 'No se pudo desactivar')

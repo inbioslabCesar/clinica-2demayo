@@ -1,7 +1,7 @@
 
 import { useEffect, useRef, useState } from "react";
 // Lazy loading de librerías pesadas para exportar
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function FarmaciaVentasPage() {
   const REQUEST_TIMEOUT_MS = 12000;
@@ -30,7 +30,7 @@ export default function FarmaciaVentasPage() {
     const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     setLoading(true);
-    let url = `${BASE_URL}api_cotizaciones_farmacia.php`;
+    let url = `api_cotizaciones_farmacia.php`;
     const params = [`page=${pagina}`, `limit=${tamanoPagina}`];
     let inicio = fechaInicio;
     let fin = fechaFin;
@@ -44,7 +44,10 @@ export default function FarmaciaVentasPage() {
     }
     url += "?" + params.join("&");
     try {
-      const res = await fetch(url, { credentials: "include", signal: controller.signal });
+      const res = await authFetch(url, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!res.ok) {
         throw new Error(`Error HTTP: ${res.status}`);
       }
@@ -88,9 +91,12 @@ export default function FarmaciaVentasPage() {
     setDetalleLoading(true);
     setModalOpen(true);
     try {
-      const res = await fetch(
-        `${BASE_URL}api_cotizaciones_farmacia.php?cotizacion_id=${venta.id}&source=${venta.source || "legacy"}`,
-        { credentials: "include", signal: controller.signal }
+      const res = await authFetch(
+        `api_cotizaciones_farmacia.php?cotizacion_id=${venta.id}&source=${venta.source || "legacy"}`,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+        }
       );
       const data = await res.json();
       setDetalles(data.cotizacion?.detalles || []);
@@ -109,8 +115,8 @@ export default function FarmaciaVentasPage() {
     const doc = new jsPDF();
     doc.text("Ventas de Farmacia", 14, 14);
     autoTable(doc, {
-      head: [["Fecha", "Referencia", "Paciente", "DNI", "Vendido por", "Total", "Estado"]],
-      body: ventas.map(v => [v.fecha, v.referencia || "-", v.paciente_nombre || "-", v.paciente_dni || "-", v.usuario_nombre || v.usuario_id, v.total, v.estado]),
+      head: [["Fecha", "Referencia", "Paciente", "DNI", "Médico", "Vendido por", "Total", "Estado"]],
+      body: ventas.map(v => [v.fecha, v.referencia || "-", v.paciente_nombre || "-", v.paciente_dni || "-", v.medico_nombre || "Venta directa", v.usuario_nombre || v.usuario_id, v.total, v.estado]),
     });
     doc.save("ventas_farmacia.pdf");
   };
@@ -123,6 +129,7 @@ export default function FarmaciaVentasPage() {
       Referencia: v.referencia || "-",
       Paciente: v.paciente_nombre || "-",
       DNI: v.paciente_dni || "-",
+      "Médico": v.medico_nombre || "Venta directa",
       "Vendido por": v.usuario_nombre || v.usuario_id,
       Total: v.total,
       Estado: v.estado
@@ -171,6 +178,7 @@ export default function FarmaciaVentasPage() {
                   <th className="p-2">Referencia</th>
                   <th className="p-2">Paciente</th>
                   <th className="p-2">DNI</th>
+                  <th className="p-2">Médico</th>
                   <th className="p-2">Vendido por</th>
                   <th className="p-2">Total</th>
                   <th className="p-2">Estado</th>
@@ -184,6 +192,7 @@ export default function FarmaciaVentasPage() {
                     <td className="p-2 font-medium">{v.referencia || "-"}</td>
                     <td className="p-2">{v.paciente_nombre || "-"}</td>
                     <td className="p-2">{v.paciente_dni || "-"}</td>
+                    <td className="p-2">{v.medico_nombre || "Venta directa"}</td>
                     <td className="p-2">{v.usuario_nombre || v.usuario_id}</td>
                     <td className="p-2 font-bold" style={{ color: "var(--color-secondary)" }}>S/ {v.total}</td>
                     <td className="p-2 capitalize">{v.estado}</td>
@@ -211,6 +220,7 @@ export default function FarmaciaVentasPage() {
                 </div>
                 <div className="mt-3 space-y-1 text-sm text-gray-700">
                   <div><b>DNI:</b> {v.paciente_dni || "-"}</div>
+                  <div><b>Médico:</b> {v.medico_nombre || "Venta directa"}</div>
                   <div><b>Vendido por:</b> {v.usuario_nombre || v.usuario_id}</div>
                   <div><b>Estado:</b> <span className="capitalize">{v.estado}</span></div>
                 </div>
@@ -233,7 +243,7 @@ export default function FarmaciaVentasPage() {
       {/* Modal de detalles */}
       {modalOpen && detalleVenta && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg relative">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg relative max-h-[90vh] overflow-hidden flex flex-col">
               <button
                 className="absolute top-2 right-2 text-gray-500 text-xl"
                 onClick={() => {
@@ -250,11 +260,12 @@ export default function FarmaciaVentasPage() {
               <div><b>Referencia:</b> {detalleVenta.referencia || "-"}</div>
               <div><b>Paciente:</b> {detalleVenta.paciente_nombre || "-"}</div>
               <div><b>DNI:</b> {detalleVenta.paciente_dni || "-"}</div>
+              <div><b>Médico:</b> {detalleVenta.medico_nombre || "Venta directa"}</div>
               <div><b>Vendido por:</b> {detalleVenta.usuario_nombre || detalleVenta.usuario_id}</div>
               <div><b>Fecha:</b> {detalleVenta.fecha}</div>
               <div><b>Total:</b> S/ {detalleVenta.total}</div>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-y-scroll overflow-x-auto h-[44vh]">
               <table className="w-full text-sm border mb-2 min-w-[520px]">
                 <thead>
                   <tr style={{ background: "var(--color-primary-light)" }}>

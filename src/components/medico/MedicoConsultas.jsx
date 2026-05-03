@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const navigate = useNavigate();
@@ -30,7 +30,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       if (fechaDesde) params.set('fecha_desde', fechaDesde);
       if (fechaHasta) params.set('fecha_hasta', fechaHasta);
 
-      const response = await fetch(`${BASE_URL}api_consultas.php?${params.toString()}`, { credentials: "include" });
+      const response = await authFetch(`api_consultas.php?${params.toString()}`);
       const data = await response.json();
 
       if (!data?.success) {
@@ -67,10 +67,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     setMsg("");
     setLoading(true);
     try {
-      await fetch(BASE_URL + "api_consultas.php", {
+      await authFetch("api_consultas.php", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ id, estado })
       });
       
@@ -299,6 +298,25 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       label: '',
       icon: '',
       className: ''
+    };
+  };
+
+  const getContratoMeta = (consulta) => {
+    const esContrato = Number(consulta?.es_contrato || 0) === 1;
+    if (!esContrato) {
+      return {
+        visible: false,
+        label: '',
+        icon: '',
+        className: ''
+      };
+    }
+
+    return {
+      visible: true,
+      label: 'Contrato',
+      icon: '📘',
+      className: 'bg-emerald-100 text-emerald-800 border-emerald-200'
     };
   };
 
@@ -537,6 +555,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                     const tipoMeta = getTipoConsultaMeta(consulta);
                     const agendaMeta = getAgendaMeta(consulta);
                     const origenMeta = getOrigenConsultaMeta(consulta);
+                    const contratoMeta = getContratoMeta(consulta);
                     const estadoVisual = getEstadoVisual(consulta);
                     const esProgramada = tipoMeta.label === 'Programada';
                     const estadoCobro = getEstadoCobro(consulta);
@@ -569,6 +588,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                                 {origenMeta.visible && (
                                   <span className={`ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${origenMeta.className}`}>
                                     {origenMeta.icon} {origenMeta.label}
+                                  </span>
+                                )}
+                                {contratoMeta.visible && (
+                                  <span className={`ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${contratoMeta.className}`}>
+                                    {contratoMeta.icon} {contratoMeta.label}
                                   </span>
                                 )}
                               </div>
@@ -745,6 +769,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               const tipoMeta = getTipoConsultaMeta(consulta);
               const agendaMeta = getAgendaMeta(consulta);
               const origenMeta = getOrigenConsultaMeta(consulta);
+              const contratoMeta = getContratoMeta(consulta);
               const estadoVisual = getEstadoVisual(consulta);
               const esProgramada = tipoMeta.label === 'Programada';
               const estadoCobro = getEstadoCobro(consulta);
@@ -776,6 +801,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                       {origenMeta.visible && (
                         <span className={`ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${origenMeta.className}`}>
                           {origenMeta.icon} {origenMeta.label}
+                        </span>
+                      )}
+                      {contratoMeta.visible && (
+                        <span className={`ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${contratoMeta.className}`}>
+                          {contratoMeta.icon} {contratoMeta.label}
                         </span>
                       )}
                     </p>

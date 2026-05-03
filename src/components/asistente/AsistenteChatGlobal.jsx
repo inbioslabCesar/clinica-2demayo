@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BASE_URL } from '../../config/config.js';
+import { authFetch } from '../../utils/apiClient.js';
 
-const API_CHAT_URL = '/api_asistente_chat.php';
-const API_APARIENCIA_URL = '/api_configuracion_apariencia.php';
+const API_CHAT_URL = `${BASE_URL}api_asistente_chat.php`;
+const API_APARIENCIA_URL = `${BASE_URL}api_configuracion_apariencia.php`;
 const SOPORTE_WHATSAPP = '51945241682';
 
 const CATEGORIAS_ICONOS = {
@@ -88,6 +89,45 @@ function sugerenciasFallbackPorRol(rolRaw) {
   return Array.isArray(list) ? list : [];
 }
 
+const CHISTES_CORTOS = [
+  'Prometo no recetar cafe por vena... aunque a veces provoca en guardia.',
+  'Hoy estoy tan aplicado que hasta los pendientes me saludan primero.',
+  'Dato clinico del dia: respirar profundo tambien ayuda a depurar bugs.',
+  'No hago magia, pero si me das contexto te resuelvo casi todo.',
+  'Mi cardio sube cuando dicen: "solo es un ajuste rapido".',
+];
+
+function firstWord(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return '';
+  return clean.split(/\s+/)[0] || '';
+}
+
+function construirNombreCordial(usuario) {
+  const nombre = String(usuario?.nombre || '').trim();
+  const apellido = String(usuario?.apellido || '').trim();
+  const rol = normalizarRol(usuario?.rol);
+  const primerNombre = firstWord(nombre);
+  const primerApellido = firstWord(apellido);
+
+  if (!primerNombre && !primerApellido) return '';
+
+  if (rol === 'medico') {
+    if (primerNombre || primerApellido) {
+      return `Dr. ${[primerNombre, primerApellido].filter(Boolean).join(' ')}`.trim();
+    }
+  }
+
+  return [primerNombre, primerApellido].filter(Boolean).join(' ').trim();
+}
+
+function obtenerSaludoPorHora() {
+  const hora = new Date().getHours();
+  if (hora < 12) return 'Buenos dias';
+  if (hora < 19) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
 // Mensaje tipo burbuja
 function Burbuja({ msg }) {
   const esUsuario = msg.tipo === 'usuario';
@@ -169,8 +209,8 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     const cargar = async () => {
       try {
         const [resAvatar, resCat] = await Promise.all([
-          fetch(API_APARIENCIA_URL, { credentials: 'include' }),
-          fetch(`${API_CHAT_URL}?action=categorias`, { credentials: 'include' }),
+          authFetch(API_APARIENCIA_URL),
+          authFetch(`${API_CHAT_URL}?action=categorias`),
         ]);
         const [dataAv, dataCat] = await Promise.all([resAvatar.json(), resCat.json()]);
 
@@ -279,7 +319,7 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
   const cargarSugerencias = async (cat) => {
     try {
       const url = `${API_CHAT_URL}?action=sugerencias${cat ? `&categoria=${encodeURIComponent(cat)}` : ''}`;
-      const res  = await fetch(url, { credentials: 'include' });
+      const res  = await authFetch(url);
       const data = await res.json();
       if (data.success) {
         const filtradas = filtrarPorRol(data.sugerencias || [], rolActual);
@@ -327,9 +367,8 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     }
 
     try {
-      await fetch(API_CHAT_URL, {
+      await authFetch(API_CHAT_URL, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'escalar',
@@ -374,6 +413,51 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '');
+
+    const nombreCordial = construirNombreCordial(usuario);
+    const saludoHora = obtenerSaludoPorHora();
+    const sugerenciasRol = sugerenciasFallbackPorRol(rolActual);
+
+    const esSaludo = /^(hola|holi|buenas|buenos dias|buen dia|buenas tardes|buenas noches|que tal|hey|hi)\b/.test(textoNormalizado);
+    const preguntaComoEstas = /(como estas|como te va|que tal estas|todo bien)/.test(textoNormalizado);
+    const pideChiste = /(chiste|broma|algo divertido|hazme reir|cuentame algo gracioso)/.test(textoNormalizado);
+    const agradece = /(gracias|muchas gracias|te agradezco)/.test(textoNormalizado);
+
+    if (pideChiste) {
+      const idx = Math.floor(Math.random() * CHISTES_CORTOS.length);
+      const chiste = CHISTES_CORTOS[idx];
+      setIntentosAclaracion(0);
+      agregarMensaje({
+        tipo: 'asistente',
+        texto: `${chiste}\n\nSi quieres, te cuento otro o pasamos a algo puntual del sistema.`,
+        relacionadas: sugerenciasRol.slice(0, 4).map(s => ({ id: s.id, pregunta: s.pregunta, categoria: s.categoria })),
+      });
+      setCargando(false);
+      return;
+    }
+
+    if (esSaludo || preguntaComoEstas) {
+      setIntentosAclaracion(0);
+      const saludoPersonal = nombreCordial ? `${saludoHora}, ${nombreCordial}.` : `${saludoHora}.`;
+      agregarMensaje({
+        tipo: 'asistente',
+        texto: `${saludoPersonal} Estoy muy bien y listo para ayudarte.\n\n¿En que te acompano hoy? Si quieres, puedo guiarte paso a paso en HC, consultas, laboratorio o cotizaciones.`,
+        relacionadas: sugerenciasRol.slice(0, 4).map(s => ({ id: s.id, pregunta: s.pregunta, categoria: s.categoria })),
+      });
+      setCargando(false);
+      return;
+    }
+
+    if (agradece) {
+      setIntentosAclaracion(0);
+      agregarMensaje({
+        tipo: 'asistente',
+        texto: `Con gusto${nombreCordial ? `, ${nombreCordial}` : ''}. Estoy para apoyarte en lo que necesites.`,
+        relacionadas: sugerenciasRol.slice(0, 3).map(s => ({ id: s.id, pregunta: s.pregunta, categoria: s.categoria })),
+      });
+      setCargando(false);
+      return;
+    }
 
     const consultaHistorial = /(historia\s*previa|historias?\s*clinicas?\s*previas?|hc\s*previa|historial\s*(clinico|completo|previo)|ver\s*historial|abrir\s*historial|ultimas?\s*historias?\s*clinicas?)/.test(textoNormalizado);
     const consultaResumenHc = /(resumen|datos\s*previos|hc\s*anterior|diagnostico\s*previo|laboratorio\s*previo|ecografia\s*previa)/.test(textoNormalizado);
@@ -454,9 +538,8 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     }
 
     try {
-      const res  = await fetch(API_CHAT_URL, {
+      const res  = await authFetch(API_CHAT_URL, {
         method:      'POST',
-        credentials: 'include',
         headers:     { 'Content-Type': 'application/json' },
         body:        JSON.stringify({ action: 'buscar', pregunta: texto }),
       });
@@ -792,3 +875,5 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     </>
   );
 }
+
+// Modified for build test

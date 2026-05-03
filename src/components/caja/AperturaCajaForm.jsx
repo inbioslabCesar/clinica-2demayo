@@ -1,7 +1,7 @@
 
 import React, { useState } from "react";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 const TURNOS = [
   { value: "manana", label: "Mañana" },
@@ -27,10 +27,9 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(BASE_URL + "api_caja_abrir.php", {
+      const res = await authFetch("api_caja_abrir.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           monto_apertura: montoApertura,
           observaciones,

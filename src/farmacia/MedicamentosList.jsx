@@ -7,7 +7,7 @@ import MedicamentoForm from "./MedicamentoForm";
 // ...existing code...
 import { useEffect, useRef, useState } from "react";
 
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import useUsuarioLogueado from "../hooks/useUsuarioLogueado";
 import Swal from "sweetalert2";
 
@@ -146,11 +146,10 @@ export default function MedicamentosList() {
       });
       if (!confirm.isConfirmed) return;
       setDeleteLoading(true);
-      const apiUrl = `${BASE_URL}api_medicamentos.php`;
+      const apiUrl = "api_medicamentos.php";
       try {
-        const res = await fetch(apiUrl, {
+        const res = await authFetch(apiUrl, {
           method: "DELETE",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: med.id })
         });
@@ -222,10 +221,9 @@ export default function MedicamentosList() {
 
     setLoading(true);
     setError(null);
-    const apiUrl = `${BASE_URL}api_medicamentos.php`;
+    const apiUrl = "api_medicamentos.php";
     try {
-      const res = await fetch(apiUrl, {
-        credentials: "include",
+      const res = await authFetch(apiUrl, {
         signal: controller.signal,
       });
       if (!res.ok) throw new Error("Error al cargar medicamentos");
@@ -267,10 +265,9 @@ export default function MedicamentosList() {
   };
 
   const handleSave = (data) => {
-    const apiUrl = `${BASE_URL}api_medicamentos.php`;
-    return fetch(apiUrl, {
+    const apiUrl = "api_medicamentos.php";
+    return authFetch(apiUrl, {
       method: "POST",
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
@@ -773,7 +770,7 @@ export default function MedicamentosList() {
                     disabled={!motivoCuarentena.trim()}
                     onClick={async () => {
                       if (!cuarentenaData) return;
-                      const apiUrl = `${BASE_URL}api_medicamentos.php`;
+                      const apiUrl = "api_medicamentos.php";
                       const hoy = new Date().toISOString().slice(0, 10);
                       const data = {
                         ...cuarentenaData,
@@ -781,9 +778,8 @@ export default function MedicamentosList() {
                         fecha_cuarentena: hoy,
                         motivo_cuarentena: motivoCuarentena,
                       };
-                      await fetch(apiUrl, {
+                      await authFetch(apiUrl, {
                         method: "POST",
-                        credentials: "include",
                         headers: {
                           "Content-Type": "application/json",
                         },

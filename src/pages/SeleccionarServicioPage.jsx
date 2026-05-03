@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Swal from "sweetalert2";
 import { useLocation, useNavigate } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function SeleccionarServicioPage() {
   const themeGradient = {
@@ -73,7 +73,7 @@ export default function SeleccionarServicioPage() {
 
     useEffect(() => {
       // Obtener servicios de tarifas activos y filtrar los excluidos
-      fetch(BASE_URL + "api_tarifas.php", { credentials: "include" })
+      authFetch("api_tarifas.php")
         .then(r => r.json())
         .then(data => {
           if (data.success && Array.isArray(data.tarifas)) {
@@ -92,7 +92,9 @@ export default function SeleccionarServicioPage() {
 
   useEffect(() => {
     if (pacienteId) {
-      fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`)
+      authFetch(`api_pacientes.php?id=${pacienteId}`, {
+        cache: "no-store",
+      })
         .then(r => r.json())
         .then(data => {
           if (data.success && data.paciente) {
@@ -100,6 +102,9 @@ export default function SeleccionarServicioPage() {
           } else {
             setPaciente(null);
           }
+        })
+        .catch(() => {
+          setPaciente(null);
         });
     }
   }, [pacienteId]);
@@ -112,7 +117,7 @@ export default function SeleccionarServicioPage() {
     }
 
     setLoadingResumen(true);
-    fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, { credentials: "include" })
+    authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`)
       .then((r) => r.json())
       .then((data) => {
         const cot = data?.cotizacion;

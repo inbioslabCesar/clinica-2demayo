@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const TIPO_CONFIG = {
   rx:         { label: "Rayos X",    emoji: "📸", servTipo: "rayosx",    color: "sky" },
@@ -28,7 +28,7 @@ export default function SolicitudImagenPage() {
 
   useEffect(() => {
     // Cargar tarifas del tipo correspondiente
-    fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
+    authFetch(`api_tarifas.php`)
       .then((r) => r.json())
       .then((d) => {
         if (!d?.success) {
@@ -47,7 +47,7 @@ export default function SolicitudImagenPage() {
       .finally(() => setLoadingTarifas(false));
 
     // Obtener paciente_id de la consulta
-    fetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaId}`, { credentials: "include" })
+    authFetch(`api_consultas.php?consulta_id=${consultaId}`)
       .then((r) => r.json())
       .then((d) => {
         const consulta = d.consultas?.[0] ?? d.consulta ?? null;
@@ -81,9 +81,8 @@ export default function SolicitudImagenPage() {
     setError("");
     setGuardando(true);
     try {
-      const res = await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
+      const res = await authFetch(`api_ordenes_imagen.php`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "crear",

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const itemInicial = {
   id: null,
@@ -58,8 +58,8 @@ export default function InventarioGeneralPage() {
       if (filtros.estado_stock) qParams.set("estado_stock", filtros.estado_stock);
 
       const [resItems, resMov] = await Promise.all([
-        fetch(`${BASE_URL}api_inventario_items.php?${qParams.toString()}`, { credentials: "include" }),
-        fetch(`${BASE_URL}api_inventario_movimientos.php?limit=80`, { credentials: "include" }),
+        authFetch(`api_inventario_items.php?${qParams.toString()}`),
+        authFetch(`api_inventario_movimientos.php?limit=80`),
       ]);
       const dataItems = await resItems.json();
       const dataMov = await resMov.json();
@@ -121,9 +121,8 @@ export default function InventarioGeneralPage() {
       };
 
       const method = itemForm.id ? "PUT" : "POST";
-      const res = await fetch(`${BASE_URL}api_inventario_items.php`, {
+      const res = await authFetch(`api_inventario_items.php`, {
         method,
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -154,9 +153,8 @@ export default function InventarioGeneralPage() {
         cantidad_presentacion: Number(movForm.cantidad_presentacion || 0),
       };
 
-      const res = await fetch(`${BASE_URL}api_inventario_movimientos.php`, {
+      const res = await authFetch(`api_inventario_movimientos.php`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });

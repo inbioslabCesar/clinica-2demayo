@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { BASE_URL } from '../config/config.js';
 import AvatarColorConfig from '../components/admin/AvatarColorConfig.jsx';
+import { authFetch } from '../utils/apiClient';
 
 const LOGO_SIZE_OPTIONS = [
   { value: '', label: 'Predeterminado' },
@@ -92,9 +93,8 @@ function ConfiguracionPage() {
     try {
       setCargandoDatos(true);
       
-      const response = await fetch(BASE_URL + 'api_get_configuracion.php', {
+      const response = await authFetch('api_get_configuracion.php', {
         method: 'GET',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         }
@@ -140,7 +140,7 @@ function ConfiguracionPage() {
           cancelButtonText: 'Cancelar'
         }).then((result) => {
           if (result.isConfirmed) {
-            window.location.href = '/';
+            window.location.href = BASE_URL;
           }
         });
       } else {
@@ -166,9 +166,8 @@ function ConfiguracionPage() {
   const subirArchivoLogo = async (file) => {
     const form = new FormData();
     form.append('logo', file);
-    const resp = await fetch(BASE_URL + 'api_upload_logo.php', {
+    const resp = await authFetch('api_upload_logo.php', {
       method: 'POST',
-      credentials: 'include',
       body: form
     });
     const j = await resp.json();
@@ -181,9 +180,8 @@ function ConfiguracionPage() {
   const subirArchivoCaratula = async (file) => {
     const form = new FormData();
     form.append('caratula', file);
-    const resp = await fetch(BASE_URL + 'api_upload_caratula.php', {
+    const resp = await authFetch('api_upload_caratula.php', {
       method: 'POST',
-      credentials: 'include',
       body: form
     });
     const j = await resp.json();
@@ -270,9 +268,8 @@ function ConfiguracionPage() {
         payload.caratula_fondo_url = normalizeLogoForSave(uploadedCaratula);
       }
 
-      const response = await fetch(BASE_URL + 'api_configuracion.php', {
+      const response = await authFetch('api_configuracion.php', {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -324,7 +321,7 @@ function ConfiguracionPage() {
           cancelButtonText: 'Cancelar'
         }).then((result) => {
           if (result.isConfirmed) {
-            window.location.href = '/';
+            window.location.href = BASE_URL;
           }
         });
         return; // Salir sin mostrar el error genérico
@@ -426,19 +423,6 @@ function ConfiguracionPage() {
   return (
     <div className="container mx-auto p-6">
       <h1 className="text-3xl font-bold mb-6 text-blue-800">⚙️ Configuración del Sistema</h1>
-      <div className="mb-6 rounded-lg border border-cyan-200 bg-cyan-50 p-4">
-        <p className="text-sm text-cyan-900 font-semibold">Plantillas de Historia Clinica</p>
-        <p className="text-xs text-cyan-800 mt-1">
-          Para configurar campos sugeridos por especialidad entra a: Configuracion &gt; Plantillas HC.
-        </p>
-        <button
-          type="button"
-          className="mt-3 px-3 py-2 text-xs rounded-md bg-cyan-600 text-white hover:bg-cyan-700"
-          onClick={() => (window.location.href = '/configuracion/plantillas-hc')}
-        >
-          Ir a Plantillas HC
-        </button>
-      </div>
       
       {cargandoDatos ? (
         <div className="bg-white rounded-lg shadow-lg p-6 text-center">
@@ -725,20 +709,6 @@ function ConfiguracionPage() {
               </p>
             </div>
 
-            <div className="mb-6 rounded-lg border border-cyan-200 bg-cyan-50 p-4">
-              <p className="text-sm text-cyan-900 font-semibold">Plantillas de Historia Clinica</p>
-              <p className="text-xs text-cyan-800 mt-1">
-                Para configurar plantillas y decidir si usas una fija o automática por especialidad, ve a: Configuracion &gt; Plantillas HC.
-              </p>
-              <button
-                type="button"
-                className="mt-3 px-3 py-2 text-xs rounded-md bg-cyan-600 text-white hover:bg-cyan-700"
-                onClick={() => (window.location.href = '/configuracion/plantillas-hc')}
-              >
-                Ir a Plantillas HC
-              </button>
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Tamaño del logo en la página pública
@@ -903,6 +873,9 @@ function ConfiguracionPage() {
         </div>
       )}
 
+      {/* Sección de Avatar y Colores */}
+      <AvatarColorConfig />
+
       <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <h3 className="text-lg font-semibold text-yellow-800 mb-2">ℹ️ Información del Sistema</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -920,9 +893,6 @@ function ConfiguracionPage() {
           </div>
         </div>
       </div>
-
-      {/* Sección de Avatar y Colores */}
-      <AvatarColorConfig />
     </div>
   );
 }

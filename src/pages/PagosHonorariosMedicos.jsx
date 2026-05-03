@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BASE_URL } from '../config/config';
+import { authFetch } from '../utils/apiClient';
 import Swal from 'sweetalert2';
 
 function PagosHonorariosMedicos() {
@@ -67,9 +67,7 @@ function PagosHonorariosMedicos() {
 
   const cargarMedicos = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_medicos.php`, {
-        credentials: 'include'
-      });
+      const response = await authFetch(`api_medicos.php`);
       const data = await response.json();
       if (data.success) {
         setMedicos(data.medicos || []);
@@ -91,9 +89,7 @@ function PagosHonorariosMedicos() {
         url += `&estado_pago=${filtroEstado}`;
       }
 
-      const response = await fetch(url, {
-        credentials: 'include'
-      });
+      const response = await authFetch(url);
       const data = await response.json();
       if (data.success) {
         setMovimientos(data.movimientos || []);
@@ -122,12 +118,11 @@ function PagosHonorariosMedicos() {
     if (!movimientoSeleccionado) return;
 
     try {
-      const response = await fetch(`${BASE_URL}api_movimientos_honorarios.php`, {
+      const response = await authFetch(`api_movimientos_honorarios.php`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
         body: JSON.stringify({
           id: movimientoSeleccionado.id,
           ...datosPago
@@ -167,7 +162,7 @@ function PagosHonorariosMedicos() {
 
     if (result.isConfirmed) {
       try {
-        const response = await fetch(`${BASE_URL}api_movimientos_honorarios.php`, {
+        const response = await authFetch(`api_movimientos_honorarios.php`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',

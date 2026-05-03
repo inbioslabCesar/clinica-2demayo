@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Spinner from "../components/comunes/Spinner";
 import Swal from "sweetalert2";
 import {
@@ -80,7 +80,7 @@ function formatFecha(str) {
 }
 
 // ─── Componente tarjeta documento ────────────────────────────────────────────
-function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, puedeProcesarLaboratorio, onAbrirLaboratorio }) {
+function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, puedeProcesarLaboratorio, onAbrirLaboratorio, onDescargar }) {
   const [lightbox, setLightbox] = useState(null);
   const cfg = TIPO_CONFIG[doc.tipo] || TIPO_CONFIG.otro;
   const ordenCancelada = String(doc?.orden_estado || doc?.estado || '').toLowerCase() === 'cancelada';
@@ -175,13 +175,13 @@ function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, pu
         {/* Resultado generado */}
         {doc.origen === "generado" && doc.estado === "disponible" && doc.url && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <a
-              href={doc.url}
-              download
+            <button
+              type="button"
+              onClick={() => onDescargar?.(doc.url, `resultado_laboratorio_${doc.resultado_id || doc.orden_id || 'paciente'}.pdf`)}
               className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition"
             >
               <FaDownload /> Descargar resultado PDF
-            </a>
+            </button>
             {puedeProcesarLaboratorio && Number(doc.orden_id || 0) > 0 && (
               <button
                 onClick={() => onAbrirLaboratorio?.(doc)}
@@ -247,15 +247,14 @@ function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, pu
                   {arch.nombre_original}
                 </span>
                 <span className="text-[10px] text-gray-400 flex-shrink-0">{formatBytes(arch.tamano)}</span>
-                <a
-                  href={arch.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => onDescargar?.(arch.url, arch.nombre_original || `archivo_${arch.id || 'documento'}`)}
                   title="Abrir / Descargar"
                   className="flex-shrink-0 text-indigo-500 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50 transition"
                 >
                   <FaDownload className="text-xs" />
-                </a>
+                </button>
               </div>
             ))}
           </div>
@@ -366,9 +365,8 @@ function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
     archivos.forEach((f) => fd.append("archivos[]", f));
 
     try {
-      const res = await fetch(`${BASE_URL}api_documentos_paciente.php`, {
+      const res = await authFetch(`api_documentos_paciente.php`, {
         method: "POST",
-        credentials: "include",
         body: fd,
       });
       const data = await res.json();
@@ -633,6 +631,75 @@ export default function DocumentosPacientePage({ usuario }) {
   const puedeEliminar = usuario?.rol === "administrador";
   const puedeProcesarLaboratorio = rolesSubida.includes(usuario?.rol);
 
+  const resolverUrlDescarga = useCallback((rawUrl) => {
+    const raw = String(rawUrl || '').trim();
+    if (!raw) return raw;
+
+    const parsed = new URL(raw, window.location.origin);
+    const isDevVite = /^517\d$/.test(String(window.location.port || ''));
+    if (!isDevVite) return parsed.toString();
+
+    const isPhpEndpoint = parsed.pathname.includes('.php');
+    if (!isPhpEndpoint) return parsed.toString();
+
+    const backendOrigin = `${window.location.protocol}//${window.location.hostname}`;
+    let backendPath = parsed.pathname;
+    if (!backendPath.startsWith('/clinica-2demayo/')) {
+      backendPath = `/clinica-2demayo${backendPath.startsWith('/') ? '' : '/'}${backendPath}`;
+    }
+    return `${backendOrigin}${backendPath}${parsed.search}${parsed.hash}`;
+  }, []);
+
+  const descargarArchivo = useCallback(async (url, fallbackName = 'archivo') => {
+    try {
+      const finalUrl = resolverUrlDescarga(url);
+      const res = await authFetch(finalUrl, { method: 'GET' });
+      if (!res.ok) {
+        let detalle = `Error ${res.status}`;
+        try {
+          const t = await res.text();
+          if (t) detalle = t.slice(0, 220);
+        } catch {
+          // ignore
+        }
+        throw new Error(detalle);
+      }
+
+      const contentType = (res.headers.get('Content-Type') || '').toLowerCase();
+      if (contentType.includes('text/html') || contentType.includes('application/json')) {
+        let detalle = 'El servidor no devolvio un archivo descargable.';
+        try {
+          const t = await res.text();
+          if (t) detalle = t.slice(0, 260);
+        } catch {
+          // ignore
+        }
+        throw new Error(detalle);
+      }
+
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+      const serverName = decodeURIComponent((match?.[1] || match?.[2] || '').trim());
+      const filename = serverName || fallbackName;
+
+      const objUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error de descarga',
+        text: e?.message || 'No se pudo descargar el archivo.',
+      });
+    }
+  }, [resolverUrlDescarga]);
+
   const abrirEnPanelLaboratorio = useCallback((doc) => {
     const ordenId = Number(doc?.orden_id || 0);
     if (ordenId <= 0) return;
@@ -649,9 +716,8 @@ export default function DocumentosPacientePage({ usuario }) {
   const cargar = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `${BASE_URL}api_documentos_paciente.php?paciente_id=${pacienteId}`,
-        { credentials: "include" }
+      const res = await authFetch(
+        `api_documentos_paciente.php?paciente_id=${pacienteId}`
       );
       const data = await res.json();
       if (data.success) {
@@ -738,9 +804,8 @@ export default function DocumentosPacientePage({ usuario }) {
     });
     if (!isConfirmed) return;
     try {
-      const res = await fetch(`${BASE_URL}api_documentos_paciente.php`, {
+      const res = await authFetch(`api_documentos_paciente.php`, {
         method: "DELETE",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ documento_id: documentoId }),
       });
@@ -916,6 +981,7 @@ export default function DocumentosPacientePage({ usuario }) {
                 cotizacionResaltada={filtroCotizacion}
                 puedeProcesarLaboratorio={puedeProcesarLaboratorio}
                 onAbrirLaboratorio={abrirEnPanelLaboratorio}
+                onDescargar={descargarArchivo}
               />
             ))}
           </div>

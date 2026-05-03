@@ -3,6 +3,44 @@ require_once __DIR__ . '/init_api.php';
 
 require_once 'config.php';
 
+function stmtBindParamsDynamic($stmt, $types, array &$params) {
+    if (!$stmt) {
+        return false;
+    }
+    $bind = [$types];
+    foreach ($params as $k => &$v) {
+        $bind[] = &$v;
+    }
+    return call_user_func_array([$stmt, 'bind_param'], $bind);
+}
+
+function cie10TieneColumnasEs($conn) {
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $requeridas = ['nombre_es', 'categoria_es', 'subcategoria_es', 'descripcion_es'];
+    foreach ($requeridas as $columna) {
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = "cie10" AND column_name = ? LIMIT 1');
+        if (!$stmt) {
+            $cache = false;
+            return $cache;
+        }
+        $stmt->bind_param('s', $columna);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_row();
+        $stmt->close();
+        if (empty($row)) {
+            $cache = false;
+            return $cache;
+        }
+    }
+
+    $cache = true;
+    return $cache;
+}
+
 function construirTerminoBooleano($termino) {
     $limpio = preg_replace('/[^\p{L}\p{N}\s\.\-]/u', ' ', (string)$termino);
     $tokens = preg_split('/\s+/u', trim($limpio));
@@ -38,11 +76,21 @@ function buscarCIE10($conn, $termino, $limite = 20) {
     $inicio = microtime(true);
     $terminoUpper = strtoupper($termino);
     $esCodigo = pareceCodigoCIE10($termino);
+    $tieneEs = cie10TieneColumnasEs($conn);
+    $nombreExpr = $tieneEs ? "COALESCE(NULLIF(nombre_es, ''), nombre)" : 'nombre';
+    $categoriaExpr = $tieneEs ? "COALESCE(NULLIF(categoria_es, ''), categoria)" : 'categoria';
+    $subcategoriaExpr = $tieneEs ? "COALESCE(NULLIF(subcategoria_es, ''), subcategoria)" : 'subcategoria';
+    $descripcionExpr = $tieneEs ? "COALESCE(NULLIF(descripcion_es, ''), descripcion)" : 'descripcion';
 
     if ($esCodigo) {
         $sql = "
             SELECT
-                id, codigo, nombre, categoria, subcategoria, descripcion
+                id,
+                codigo,
+                {$nombreExpr} AS nombre,
+                {$categoriaExpr} AS categoria,
+                {$subcategoriaExpr} AS subcategoria,
+                {$descripcionExpr} AS descripcion
             FROM cie10
             WHERE activo = 1
               AND codigo LIKE ?
@@ -61,37 +109,89 @@ function buscarCIE10($conn, $termino, $limite = 20) {
         $codigoExacto = $terminoUpper;
         $stmt->bind_param("sssi", $codigoPrefijo, $codigoExacto, $codigoPrefijo, $limite);
     } else {
-        $sql = "
-            SELECT
-                id, codigo, nombre, categoria, subcategoria, descripcion,
-                MATCH(nombre, descripcion) AGAINST(? IN BOOLEAN MODE) AS score
-            FROM cie10
-            WHERE activo = 1
-              AND (
-                MATCH(nombre, descripcion) AGAINST(? IN BOOLEAN MODE)
-                OR nombre LIKE ?
-                OR categoria LIKE ?
-                OR subcategoria LIKE ?
-              )
-            ORDER BY
-              CASE
-                WHEN nombre LIKE ? THEN 0
-                WHEN categoria LIKE ? THEN 1
-                WHEN subcategoria LIKE ? THEN 2
-                ELSE 3
-              END,
-              score DESC,
-              codigo ASC
-            LIMIT ?
-        ";
-
-        $stmt = $conn->prepare($sql);
         $booleano = construirTerminoBooleano($termino);
         if ($booleano === '') {
             $booleano = $termino;
         }
         $prefijo = $termino . '%';
-        $stmt->bind_param("ssssssssi", $booleano, $booleano, $prefijo, $prefijo, $prefijo, $prefijo, $prefijo, $prefijo, $limite);
+
+                if ($tieneEs) {
+                        $sql = "
+                                SELECT
+                                        id,
+                                        codigo,
+                                        {$nombreExpr} AS nombre,
+                                        {$categoriaExpr} AS categoria,
+                                        {$subcategoriaExpr} AS subcategoria,
+                                        {$descripcionExpr} AS descripcion,
+                                        MATCH(nombre, descripcion) AGAINST(? IN BOOLEAN MODE) AS score
+                                FROM cie10
+                                WHERE activo = 1
+                                    AND (
+                                        MATCH(nombre, descripcion) AGAINST(? IN BOOLEAN MODE)
+                                        OR nombre LIKE ?
+                                        OR categoria LIKE ?
+                                        OR subcategoria LIKE ?
+                                        OR nombre_es LIKE ?
+                                        OR categoria_es LIKE ?
+                                        OR subcategoria_es LIKE ?
+                                    )
+                                ORDER BY
+                                    CASE
+                                        WHEN {$nombreExpr} LIKE ? THEN 0
+                                        WHEN {$categoriaExpr} LIKE ? THEN 1
+                                        WHEN {$subcategoriaExpr} LIKE ? THEN 2
+                                        ELSE 3
+                                    END,
+                                    score DESC,
+                                    codigo ASC
+                                LIMIT ?
+                        ";
+
+                        $stmt = $conn->prepare($sql);
+                        $params = [
+                                $booleano,
+                                $booleano,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $prefijo,
+                                $limite,
+                        ];
+                        stmtBindParamsDynamic($stmt, 'sssssssssssi', $params);
+                } else {
+                        $sql = "
+                                SELECT
+                                        id, codigo, nombre, categoria, subcategoria, descripcion,
+                                        MATCH(nombre, descripcion) AGAINST(? IN BOOLEAN MODE) AS score
+                                FROM cie10
+                                WHERE activo = 1
+                                    AND (
+                                        MATCH(nombre, descripcion) AGAINST(? IN BOOLEAN MODE)
+                                        OR nombre LIKE ?
+                                        OR categoria LIKE ?
+                                        OR subcategoria LIKE ?
+                                    )
+                                ORDER BY
+                                    CASE
+                                        WHEN nombre LIKE ? THEN 0
+                                        WHEN categoria LIKE ? THEN 1
+                                        WHEN subcategoria LIKE ? THEN 2
+                                        ELSE 3
+                                    END,
+                                    score DESC,
+                                    codigo ASC
+                                LIMIT ?
+                        ";
+
+                        $stmt = $conn->prepare($sql);
+                        $stmt->bind_param("ssssssssi", $booleano, $booleano, $prefijo, $prefijo, $prefijo, $prefijo, $prefijo, $prefijo, $limite);
+                }
     }
     
     $stmt->execute();
@@ -115,7 +215,24 @@ function buscarCIE10($conn, $termino, $limite = 20) {
 
 // Función para obtener un código específico por ID
 function obtenerCIE10PorId($conn, $id) {
-    $sql = "SELECT * FROM cie10 WHERE id = ? AND activo = 1";
+    if (cie10TieneColumnasEs($conn)) {
+        $sql = "
+            SELECT
+                id,
+                codigo,
+                COALESCE(NULLIF(nombre_es, ''), nombre) AS nombre,
+                COALESCE(NULLIF(categoria_es, ''), categoria) AS categoria,
+                COALESCE(NULLIF(subcategoria_es, ''), subcategoria) AS subcategoria,
+                COALESCE(NULLIF(descripcion_es, ''), descripcion) AS descripcion,
+                activo,
+                creado_en,
+                actualizado_en
+            FROM cie10
+            WHERE id = ? AND activo = 1
+        ";
+    } else {
+        $sql = "SELECT * FROM cie10 WHERE id = ? AND activo = 1";
+    }
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("i", $id);
     $stmt->execute();
@@ -127,10 +244,34 @@ function obtenerCIE10PorId($conn, $id) {
 
 // Función para obtener códigos por categoría
 function obtenerCIE10PorCategoria($conn, $categoria, $limite = 50) {
-    $sql = "SELECT * FROM cie10 WHERE categoria LIKE ? AND activo = 1 ORDER BY codigo ASC LIMIT ?";
+    if (cie10TieneColumnasEs($conn)) {
+        $sql = "
+            SELECT
+                id,
+                codigo,
+                COALESCE(NULLIF(nombre_es, ''), nombre) AS nombre,
+                COALESCE(NULLIF(categoria_es, ''), categoria) AS categoria,
+                COALESCE(NULLIF(subcategoria_es, ''), subcategoria) AS subcategoria,
+                COALESCE(NULLIF(descripcion_es, ''), descripcion) AS descripcion,
+                activo,
+                creado_en,
+                actualizado_en
+            FROM cie10
+            WHERE activo = 1
+              AND (categoria LIKE ? OR categoria_es LIKE ?)
+            ORDER BY codigo ASC
+            LIMIT ?
+        ";
+    } else {
+        $sql = "SELECT * FROM cie10 WHERE categoria LIKE ? AND activo = 1 ORDER BY codigo ASC LIMIT ?";
+    }
     $stmt = $conn->prepare($sql);
     $categoria_like = "%{$categoria}%";
-    $stmt->bind_param("si", $categoria_like, $limite);
+    if (cie10TieneColumnasEs($conn)) {
+        $stmt->bind_param("ssi", $categoria_like, $categoria_like, $limite);
+    } else {
+        $stmt->bind_param("si", $categoria_like, $limite);
+    }
     $stmt->execute();
     $resultado = $stmt->get_result();
     

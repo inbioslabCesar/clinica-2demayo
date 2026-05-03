@@ -247,7 +247,8 @@ if ($method === 'POST') {
         $puedeSubir = (intval($orden['carga_anticipada']) === 1);
         if (!$puedeSubir && !empty($orden['cotizacion_id'])) {
             $cotizRow = $conn->query("SELECT estado FROM cotizaciones WHERE id = " . intval($orden['cotizacion_id']))->fetch_assoc();
-            if ($cotizRow && in_array($cotizRow['estado'], ['completado', 'pagado'], true)) $puedeSubir = true;
+            $estadoCot = strtolower(trim((string)($cotizRow['estado'] ?? '')));
+            if (in_array($estadoCot, ['completado', 'pagado', 'control', 'contrato'], true)) $puedeSubir = true;
         } elseif (!$puedeSubir && empty($orden['cotizacion_id'])) {
             // Sin cotización → permitir subida sin restricción (orden sin pago asignado)
             $puedeSubir = true;

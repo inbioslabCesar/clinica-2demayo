@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import RegistrarEgresoForm from "../components/egresos/RegistrarEgresoForm";
 import EgresosList from "../components/egresos/EgresosList";
+import { authFetch } from "../utils/apiClient";
 
 export default function RegistrarEgresoPage() {
   const egresosListRef = useRef();
@@ -25,16 +26,15 @@ export default function RegistrarEgresoPage() {
   const handleSubmit = async e => {
     e.preventDefault();
     setLoading(true);
-    let url = "/api_egresos.php";
+    let url = `api_egresos.php`;
     let method = "POST";
     if (editId) {
       url += `?id=${editId}`;
       method = "PUT";
     }
-    const resp = await fetch(url, {
+    const resp = await authFetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify(form),
     });
     const data = await resp.json();

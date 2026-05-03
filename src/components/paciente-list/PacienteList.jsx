@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
+import Swal from "sweetalert2";
 import usePacientes from "./usePacientes";
 import PacienteListHeader from "./PacienteListHeader";
 import PacienteListFilters from "./PacienteListFilters";
@@ -142,14 +144,36 @@ function PacienteList() {
     await eliminarPaciente(paciente);
     recargarPacientes(); // Recarga los datos desde el backend tras eliminar
   };
-  const handleDescargarCaratula = (paciente) => {
-    const url = `${BASE_URL}descargar_caratula_paciente.php?paciente_id=${paciente.id}&_ts=${Date.now()}`;
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `caratula_${paciente.historia_clinica}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDescargarCaratula = async (paciente) => {
+    try {
+      const url = `${BASE_URL}descargar_caratula_paciente.php?paciente_id=${paciente.id}&_ts=${Date.now()}`;
+      const res = await authFetch(url);
+
+      const contentType = res.headers.get('Content-Type') || '';
+      if (!res.ok || !contentType.includes('application/pdf')) {
+        let msg = 'Error al generar la carátula.';
+        try {
+          const json = await res.json();
+          msg = json.details || json.error || msg;
+        } catch {
+          // no JSON
+        }
+        Swal.fire({ icon: 'error', title: 'Error PDF', text: msg });
+        return;
+      }
+
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = `caratula_${paciente.historia_clinica}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objUrl);
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Error', text: 'No se pudo descargar la carátula.' });
+    }
   };
 
   // Exportar a Excel

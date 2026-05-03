@@ -113,12 +113,69 @@ if (!empty($examenes_ids)) {
 
 function h($s) { return htmlspecialchars($s ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
+function normalize_resultado_key_token($value)
+{
+    $s = strtolower(trim((string)$value));
+    $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+    if ($t !== false) {
+        $s = $t;
+    }
+    $s = preg_replace('/[-_\s]+/', '_', $s);
+    $s = preg_replace('/[^a-z0-9_]/', '', $s);
+    $s = preg_replace('/_+/', '_', $s);
+    return trim((string)$s, '_');
+}
+
+$resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInterno = '') {
+    $idText = (string)$exId;
+    $nombre = trim((string)$nombreActual);
+    $codigo = trim((string)$codigoInterno);
+
+    $directKeys = [];
+    if ($codigo !== '') $directKeys[] = $idText . '__' . $codigo;
+    if ($nombre !== '') $directKeys[] = $idText . '__' . $nombre;
+
+    foreach ($directKeys as $k) {
+        if (array_key_exists($k, $map)) {
+            return $map[$k];
+        }
+    }
+
+    $targetTokens = [];
+    if ($codigo !== '') $targetTokens[] = normalize_resultado_key_token($codigo);
+    if ($nombre !== '') $targetTokens[] = normalize_resultado_key_token($nombre);
+    $targetTokens = array_values(array_unique(array_filter($targetTokens)));
+    if (empty($targetTokens)) {
+        return '';
+    }
+
+    $prefix = $idText . '__';
+    foreach ($map as $k => $v) {
+        $key = (string)$k;
+        if (strpos($key, $prefix) !== 0) continue;
+        $suffix = substr($key, strlen($prefix));
+        $token = normalize_resultado_key_token($suffix);
+        if ($token !== '' && in_array($token, $targetTokens, true)) {
+            return $v;
+        }
+    }
+
+    return '';
+};
+
 $toNullableFloat = function ($val) {
     if ($val === null) return null;
     if (is_string($val)) {
         $val = trim($val);
         if ($val === '') return null;
-        $val = str_replace(',', '.', $val);
+        // Regla de normalizacion:
+        // - 10,000 / 1,800 => separador de miles (eliminar coma)
+        // - 1,5 / 0,292 => separador decimal (convertir coma a punto)
+        if (preg_match('/^-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$/', $val)) {
+            $val = str_replace(',', '', $val);
+        } else {
+            $val = str_replace(',', '.', $val);
+        }
     }
     return is_numeric($val) ? floatval($val) : null;
 };
@@ -420,13 +477,12 @@ if (empty($examenes_detalle)) {
                 $nombre_param = $param['nombre'] ?? '';
 
                 if ($tipoNorm === 'titulo' || $tipoNorm === 'subtitulo') {
-                    $rowsHtml .= '<tr><td colspan="5" style="background:#edf2f7;color:#1f2937;font-weight:bold;text-align:left;padding:6px 8px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
+                    $rowsHtml .= '<tr><td colspan="5" style="background:#edf2f7;color:#1f2937;font-weight:bold;text-align:left;padding:4px 7px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
                     continue;
                 }
 
                 if ($tipoNorm === 'texto largo') {
-                    $keyTexto = $exId . '__' . $nombre_param;
-                    $valorTexto = isset($resultados_map[$keyTexto]) ? $resultados_map[$keyTexto] : '';
+                    $valorTexto = $resolveResultadoValor($resultados_map, $exId, $nombre_param, $param['codigo_interno'] ?? '');
                     $rowsHtml .= '<tr><td colspan="5" style="padding:6px 8px;">'
                         . '<div style="font-weight:bold; margin-bottom:3px;">' . h($nombre_param) . '</div>'
                         . '<div>' . nl2br(h((string)$valorTexto)) . '</div>'
@@ -437,8 +493,7 @@ if (empty($examenes_detalle)) {
                 $nombre = $param['nombre'] ?? '';
                 $metodo = $param['metodologia'] ?? '';
                 $unidad = $param['unidad'] ?? '';
-                $key = $exId . '__' . $nombre;
-                $valor = isset($resultados_map[$key]) ? $resultados_map[$key] : '';
+                $valor = $resolveResultadoValor($resultados_map, $exId, $nombre, $param['codigo_interno'] ?? '');
                 $valorNum = $toNullableFloat($valor);
 
                 $edadPaciente = $toNullableFloat($edad);
@@ -450,7 +505,17 @@ if (empty($examenes_detalle)) {
                 $maxRef = $referenciaAplicada ? $toNullableFloat($referenciaAplicada['valor_max'] ?? null) : null;
 
                 if ($minRef === null && $maxRef === null && $referenciaAplicada && !empty($referenciaAplicada['valor'])) {
-                    $txt = str_replace(',', '.', (string)$referenciaAplicada['valor']);
+                    $txt = (string)$referenciaAplicada['valor'];
+                    // Primero limpiar comas de miles dentro de numeros (X,ddd[,ddd]).
+                    $txt = preg_replace_callback(
+                        '/-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?/',
+                        function ($m) {
+                            return str_replace(',', '', $m[0]);
+                        },
+                        $txt
+                    );
+                    // Luego convertir comas restantes (decimales) a punto.
+                    $txt = str_replace(',', '.', $txt);
                     if (preg_match('/(-?\d+(?:\.\d+)?)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d+(?:\.\d+)?)/i', $txt, $mRango)) {
                         $minRef = floatval($mRango[1]);
                         $maxRef = floatval($mRango[2]);
@@ -512,12 +577,12 @@ if (empty($examenes_detalle)) {
 }
 
 $bodyCss = '<style>
-body { font-family: dejavusanscondensed, DejaVu Sans, Arial, sans-serif; font-size: 11px; color: #1f2937; }
-.results-title { font-family: Courier, "Courier New", monospace; font-size: 13px; font-weight: bold; letter-spacing: 0.2px; color: #1f2937; margin: 8px 0 8px 0; text-transform: uppercase; text-align: center; }
+body { font-family: dejavusanscondensed, DejaVu Sans, Arial, sans-serif; font-size: 10px; color: #1f2937; }
+.results-title { font-family: Courier, "Courier New", monospace; font-size: 12px; font-weight: bold; letter-spacing: 0.2px; color: #1f2937; margin: 4px 0 5px 0; text-transform: uppercase; text-align: center; }
 .results-table { width: 100%; border-collapse: collapse; border: 1px solid #d5dbe1; }
 .results-table thead { display: table-header-group; }
-.results-table th { font-family: Courier, "Courier New", monospace; background: #eaf0f7; color: #111827; border-bottom: 1px solid #d5dbe1; padding: 8px 7px; font-size: 10.6px; text-align: left; letter-spacing: 0.15px; }
-.results-table td { font-family: Courier, "Courier New", monospace; border-bottom: 1px solid #e5e7eb; padding: 5px 7px; font-size: 10.8px; vertical-align: top; line-height: 1.15; }
+.results-table th { font-family: Courier, "Courier New", monospace; background: #eaf0f7; color: #111827; border-bottom: 1px solid #d5dbe1; padding: 5px 7px; font-size: 9.8px; text-align: left; letter-spacing: 0.15px; }
+.results-table td { font-family: Courier, "Courier New", monospace; border-bottom: 1px solid #e5e7eb; padding: 4px 7px; font-size: 10px; vertical-align: top; line-height: 1.15; }
 .results-table tr { page-break-inside: avoid; }
 .results-table tbody tr:nth-child(even) td { background: #fcfdff; }
 </style>';
@@ -542,31 +607,31 @@ if ($firmante_colegiatura !== '') $signatureHtml .= '<div style="font-size:8.8px
 $signatureHtml .= '</div>';
 
 // Header mPDF
-$headerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, sans-serif; border-bottom:1px solid #cfd8e3; padding-bottom:6px; margin-bottom:8px;">'
+$headerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, sans-serif; border-bottom:1px solid #cfd8e3; padding-bottom:4px; margin-bottom:4px;">'
     . '<table width="100%" style="border-collapse:collapse;">'
     . '<tr>'
     . '<td width="45%" style="vertical-align:top;text-align:left;padding-right:0;">' . $logo_html_header . '</td>'
     . '<td width="55%" style="vertical-align:top;text-align:right;font-family:DejaVu Serif, Georgia, serif;">'
-    . '<div style="font-family:DejaVu Serif, Georgia, serif;font-size:17px;font-weight:bold;letter-spacing:0.25px;color:#2c3e50;">' . h($clinica_config['nombre_clinica'] ?? 'Laboratorio Clínico') . '</div>'
-    . (!empty($clinica_config['direccion']) ? '<div style="font-size:9.8px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Dirección:</span> ' . h($clinica_config['direccion']) . '</div>' : '')
-    . (!empty($clinica_config['telefono']) ? '<div style="font-size:9.8px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Teléfono:</span> ' . h($clinica_config['telefono']) . '</div>' : '')
-    . (!empty($clinica_config['email']) ? '<div style="font-size:9.8px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Email:</span> ' . h($clinica_config['email']) . '</div>' : '')
+    . '<div style="font-family:DejaVu Serif, Georgia, serif;font-size:16px;font-weight:bold;letter-spacing:0.25px;color:#2c3e50;">' . h($clinica_config['nombre_clinica'] ?? 'Laboratorio Clínico') . '</div>'
+    . (!empty($clinica_config['direccion']) ? '<div style="font-size:9px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Dirección:</span> ' . h($clinica_config['direccion']) . '</div>' : '')
+    . (!empty($clinica_config['telefono']) ? '<div style="font-size:9px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Teléfono:</span> ' . h($clinica_config['telefono']) . '</div>' : '')
+    . (!empty($clinica_config['email']) ? '<div style="font-size:9px;color:#475569;letter-spacing:0.1px;"><span style="font-weight:700;">Email:</span> ' . h($clinica_config['email']) . '</div>' : '')
     . '</td></tr></table>'
     . '</div>'
-    . '<div style="background:#f7fafc; padding:8px 9px; border:1px solid #d7dee8; border-radius:4px; font-size:11.8px;">'
+    . '<div style="background:#f7fafc; padding:6px 9px; border:1px solid #d7dee8; border-radius:4px; font-size:10.8px;">'
     . '<table width="100%" style="border-collapse:collapse;"><tr>'
-    . '<td width="50%" style="vertical-align:top;line-height:1.18;font-size:11.8px;">'
-    . '<div style="font-size:11.8px;"><span style="font-weight:600;">Paciente:</span> ' . h($paciente_nombre) . '</div>'
-    . ($paciente_dni ? '<div style="font-size:11.8px;"><span style="font-weight:600;">DNI:</span> ' . h($paciente_dni) . '</div>' : '')
-    . ($historia_clinica ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Historia Clínica:</span> ' . h($historia_clinica) . '</div>' : '')
-    . '<div style="font-size:11.8px;"><span style="font-weight:600;">Edad:</span> ' . h($edad ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
+    . '<td width="50%" style="vertical-align:top;line-height:1.18;font-size:10.8px;">'
+    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Paciente:</span> ' . h($paciente_nombre) . '</div>'
+    . ($paciente_dni ? '<div style="font-size:10.8px;"><span style="font-weight:600;">DNI:</span> ' . h($paciente_dni) . '</div>' : '')
+    . ($historia_clinica ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Historia Clínica:</span> ' . h($historia_clinica) . '</div>' : '')
+    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Edad:</span> ' . h($edad ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
     . '</td>'
-    . '<td width="50%" style="vertical-align:top;line-height:1.17;font-size:11.8px;">'
-    . ($sexo ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Sexo:</span> ' . h($sexo) . '</div>' : '')
-    . ($fecha_nacimiento ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Fecha Nac.:</span> ' . h($fecha_nacimiento) . '</div>' : '')
-    . '<div style="font-size:11.8px;"><span style="font-weight:600;">Fecha Examen:</span> ' . h($row['fecha']) . '</div>'
-    . ($tipo_solicitud ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Referencia:</span> ' . h($tipo_solicitud) . '</div>' : '')
-    . (($tipo_solicitud === 'Médico' && $medico_solicitante) ? '<div style="font-size:11.8px;"><span style="font-weight:600;">Médico:</span> ' . h($medico_solicitante) . '</div>' : '')
+    . '<td width="50%" style="vertical-align:top;line-height:1.17;font-size:10.8px;">'
+    . ($sexo ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Sexo:</span> ' . h($sexo) . '</div>' : '')
+    . ($fecha_nacimiento ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Fecha Nac.:</span> ' . h($fecha_nacimiento) . '</div>' : '')
+    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Fecha Examen:</span> ' . h($row['fecha']) . '</div>'
+    . ($tipo_solicitud ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Referencia:</span> ' . h($tipo_solicitud) . '</div>' : '')
+    . (($tipo_solicitud === 'Médico' && $medico_solicitante) ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Médico:</span> ' . h($medico_solicitante) . '</div>' : '')
     . '</td></tr></table>'
     . '</div>';
 
@@ -633,7 +698,7 @@ if (class_exists('\Mpdf\Mpdf')) {
             'default_font' => 'dejavusanscondensed',
             'margin_left' => 8,
             'margin_right' => 8,
-            'margin_top' => 66,
+            'margin_top' => 55,
             'margin_bottom' => 54,
             'tempDir' => $mpdfTempDir,
         ]);

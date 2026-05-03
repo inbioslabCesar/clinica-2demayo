@@ -74,6 +74,21 @@ function te_column_exists($conn, $table, $column) {
     return $r && $r->num_rows > 0;
 }
 
+function te_resolver_select_contrato($conn) {
+    $hasCdOrigenCobro = te_column_exists($conn, 'cotizaciones_detalle', 'origen_cobro');
+    $hasCotEsCostoCeroContrato = te_column_exists($conn, 'cotizaciones', 'es_costo_cero_contrato');
+
+    $selectOrigen = $hasCdOrigenCobro
+        ? 'MAX(CASE WHEN LOWER(TRIM(COALESCE(cd.origen_cobro, ""))) = "contrato" THEN 1 ELSE 0 END) AS tiene_origen_contrato'
+        : '0 AS tiene_origen_contrato';
+
+    $selectCostoCero = $hasCotEsCostoCeroContrato
+        ? 'COALESCE(cot.es_costo_cero_contrato, 0) AS cot_es_costo_cero_contrato'
+        : '0 AS cot_es_costo_cero_contrato';
+
+    return [$selectOrigen, $selectCostoCero];
+}
+
 function te_reconciliar_desde_hc($conn) {
     // Fallback de consistencia: si por algún motivo no se creó el registro
     // en el guardado de HC, se reconstruye aquí desde historia_clinica.
@@ -260,6 +275,7 @@ switch ($method) {
         }
 
         $whereClause = implode(' AND ', $where);
+        [$selectContratoOrigenExpr, $selectCotEsCostoCeroExpr] = te_resolver_select_contrato($conn);
 
         $extraSelect = '';
         $extraJoin = '';
@@ -295,6 +311,10 @@ switch ($method) {
                     c.tipo_consulta,
                     c.triaje_realizado,
                     c.clasificacion  AS triaje_clasificacion,
+                    cot_ref.cotizacion_id AS cotizacion_id,
+                    cot.estado AS cotizacion_estado,
+                    cot_ref.tiene_origen_contrato AS cot_tiene_origen_contrato,
+                    $selectCotEsCostoCeroExpr,
                     p.nombre         AS paciente_nombre,
                     p.apellido       AS paciente_apellido,
                     p.historia_clinica AS paciente_hc,
@@ -304,6 +324,20 @@ switch ($method) {
                     $extraSelect
                 FROM  tratamientos_enfermeria te
                 INNER JOIN consultas c  ON c.id  = te.consulta_id
+                LEFT JOIN (
+                    SELECT
+                        cd.consulta_id,
+                        MAX(cd.cotizacion_id) AS cotizacion_id,
+                        $selectContratoOrigenExpr
+                    FROM cotizaciones_detalle cd
+                    INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id
+                    WHERE cd.consulta_id IS NOT NULL
+                      AND cd.consulta_id > 0
+                      AND LOWER(TRIM(cd.servicio_tipo)) = 'consulta'
+                      AND LOWER(TRIM(ct.estado)) NOT IN ('anulado', 'anulada')
+                    GROUP BY cd.consulta_id
+                ) cot_ref ON cot_ref.consulta_id = c.id
+                LEFT JOIN cotizaciones cot ON cot.id = cot_ref.cotizacion_id
                 INNER JOIN pacientes p  ON p.id  = te.paciente_id
                 LEFT  JOIN medicos   m  ON m.id  = c.medico_id
                 $extraJoin
@@ -428,6 +462,12 @@ switch ($method) {
             $row['pendientes_hoy'] = (int)($row['pendientes_hoy'] ?? 0);
             $row['dia_actual'] = (int)($row['dia_actual'] ?? 0);
             $row['progreso_pct'] = (float)($row['progreso_pct'] ?? 0);
+
+            $cotEstado = strtolower(trim((string)($row['cotizacion_estado'] ?? '')));
+            $esContratoLegacy = in_array($cotEstado, ['control', 'contrato'], true);
+            $tieneOrigenContrato = (int)($row['cot_tiene_origen_contrato'] ?? 0) === 1;
+            $esCostoCeroContrato = (int)($row['cot_es_costo_cero_contrato'] ?? 0) === 1;
+            $row['es_contrato'] = ($tieneOrigenContrato || $esCostoCeroContrato || $esContratoLegacy) ? 1 : 0;
         }
         unset($row);
 

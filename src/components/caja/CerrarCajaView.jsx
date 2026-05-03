@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
+import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 // Modal SweetAlert2 para impresión tipo etiquetera
 function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = null) {
@@ -79,12 +81,12 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
       .ticket-cierre {
         width: ${esA4 ? "720px" : "320px"};
         margin: 0 auto;
-        padding: ${esA4 ? "14px 18px" : "10px 12px"};
+        padding: ${esA4 ? "14px 18px" : "8px 10px"};
         box-sizing: border-box;
         font-family: "Courier New", "Lucida Console", monospace;
         color: #1f2937;
-        font-size: ${esA4 ? "14px" : "13px"};
-        line-height: 1.3;
+        font-size: ${esA4 ? "14px" : "11px"};
+        line-height: ${esA4 ? "1.3" : "1.2"};
       }
       .ticket-cierre .t-center { text-align: center; }
       .ticket-cierre .t-title {
@@ -101,22 +103,22 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
       .ticket-cierre .t-hr {
         border: 0;
         border-top: 1px dashed #6b7280;
-        margin: 8px 0;
+        margin: ${esA4 ? "8px 0" : "4px 0"};
       }
       .ticket-cierre .t-row {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
         gap: 8px;
-        margin: ${esA4 ? "2px 0" : "1px 0"};
+        margin: ${esA4 ? "1px 0" : "0px 0"};
       }
       .ticket-cierre .t-row .label { font-weight: 700; white-space: nowrap; }
       .ticket-cierre .t-row .value { text-align: right; }
       .ticket-cierre .t-section {
-        margin-top: 6px;
+        margin: ${esA4 ? "6px 0 3px" : "4px 0 2px"};
         font-weight: 700;
         text-transform: uppercase;
-        font-size: 12px;
+        font-size: ${esA4 ? "12px" : "11px"};
         letter-spacing: 0.4px;
       }
       .ticket-cierre .t-note {
@@ -159,8 +161,9 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
         .ticket-cierre {
           width: ${esA4 ? "190mm" : "76mm"};
           margin: 0;
-          padding: ${esA4 ? "6mm" : "3mm"};
-          font-size: ${esA4 ? "13px" : "12px"};
+          padding: ${esA4 ? "6mm" : "2.5mm"};
+          font-size: ${esA4 ? "13px" : "10.5px"};
+          line-height: ${esA4 ? "1.3" : "1.15"};
         }
       }
     </style>
@@ -249,7 +252,33 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
       const ventanaImpresion = window.open('', '_blank');
       ventanaImpresion.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Cierre de Caja</title></head><body>${recibo}</body></html>`);
       ventanaImpresion.document.close();
-      ventanaImpresion.print();
+      
+      // Esperar a que las imágenes (logo y QR) se carguen antes de imprimir
+      setTimeout(() => {
+        const imgElements = ventanaImpresion.document.querySelectorAll('img');
+        if (imgElements.length > 0) {
+          let loadCount = 0;
+          const handleImageLoad = () => {
+            loadCount++;
+            if (loadCount === imgElements.length) {
+              ventanaImpresion.print();
+            }
+          };
+          imgElements.forEach(img => {
+            if (img.complete) {
+              loadCount++;
+            } else {
+              img.onload = handleImageLoad;
+              img.onerror = handleImageLoad;
+            }
+          });
+          if (loadCount === imgElements.length) {
+            ventanaImpresion.print();
+          }
+        } else {
+          ventanaImpresion.print();
+        }
+      }, 300);
     }
   });
 }
@@ -266,10 +295,7 @@ export default function CerrarCajaView() {
 
   const verificarCajaAbierta = async ({ mostrarMensaje = false } = {}) => {
     try {
-      const r = await fetch('/api_caja_estado.php', {
-        credentials: 'include',
-        cache: 'no-store'
-      });
+      const r = await authFetch("api_caja_estado.php", { cache: 'no-store' });
       const data = await r.json();
       const abierta = Boolean(data?.success) && String(data?.estado || '').toLowerCase() === 'abierta';
       if (!abierta && mostrarMensaje) {
@@ -298,7 +324,7 @@ export default function CerrarCajaView() {
           return;
         }
 
-        const resp = await fetch("/api_resumen_diario.php", { credentials: "include" });
+        const resp = await authFetch("api_resumen_diario.php");
         const data = await resp.json();
         if (data.success) {
           setResumen(data);
@@ -329,9 +355,8 @@ export default function CerrarCajaView() {
 
   useEffect(() => {
     let mounted = true;
-    fetch('/api_get_configuracion.php', {
+    authFetch("api_get_configuracion.php", {
       method: 'GET',
-      credentials: 'include',
       cache: 'no-store'
     })
       .then((res) => res.json())
@@ -343,7 +368,7 @@ export default function CerrarCajaView() {
         const logo = rawLogo
           ? (/^(https?:\/\/|data:|blob:)/i.test(rawLogo)
             ? rawLogo
-            : `${window.location.origin}/${rawLogo.replace(/^\/+/, '')}`)
+            : `${BASE_URL}${rawLogo.replace(/^\/+/, '')}`)
           : '';
         setClinicBrand({
           name,
@@ -395,10 +420,9 @@ export default function CerrarCajaView() {
         return;
       }
 
-      const resp = await fetch("/api_cerrar_caja.php", {
+      const resp = await authFetch("api_cerrar_caja.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           monto_contado: montoContado,
           observaciones,

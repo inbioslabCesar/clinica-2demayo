@@ -1,7 +1,7 @@
 
 
 import { useState, useRef, useEffect } from 'react';
-import { BASE_URL } from '../../config/config';
+import { authFetch } from '../../utils/apiClient';
 
 const MedicoFormModal = ({ 
   isOpen, 
@@ -31,9 +31,7 @@ const MedicoFormModal = ({
 
   const cargarConfiguracion = async () => {
     try {
-      const res = await fetch(`${BASE_URL}api_configuracion.php`, {
-        credentials: 'include'
-      });
+      const res = await authFetch('api_configuracion.php');
       const data = await res.json();
       if (data.success) {
         setConfiguracion(data.data);

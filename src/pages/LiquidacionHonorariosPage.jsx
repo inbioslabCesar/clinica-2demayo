@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 
 function LiquidacionHonorariosPage() {
@@ -25,11 +25,10 @@ function LiquidacionHonorariosPage() {
       });
       if (!result.isConfirmed) return;
       try {
-        const response = await fetch(`${BASE_URL}api_eliminar_honorario.php`, {
+        const response = await authFetch(`api_eliminar_honorario.php`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: honorarioId }),
-          credentials: "include"
         });
         const data = await response.json();
         if (data.success) {
@@ -60,13 +59,14 @@ function LiquidacionHonorariosPage() {
 
   const cargarMedicos = async () => {
     try {
-      const response = await fetch(`${BASE_URL}api_medicos.php`);
+      const response = await authFetch(`api_medicos.php`);
       const data = await response.json();
       if (data.success) {
         setMedicos(data.medicos || []);
       }
-    } catch {
-      // Eliminado log de error al cargar médicos
+    } catch (err) {
+      console.error('Error al cargar médicos:', err);
+      setMedicos([]);
     }
   };
 
@@ -80,14 +80,17 @@ function LiquidacionHonorariosPage() {
       params.push(`page=${page}`);
       params.push(`limit=${rowsPerPage}`);
       const query = params.length ? `?${params.join("&")}` : "";
-      const response = await fetch(`${BASE_URL}api_honorarios_pendientes.php${query}`);
+      const response = await authFetch(`api_honorarios_pendientes.php${query}`);
       const data = await response.json();
       if (data.success) {
-        // Eliminado log de honorarios recibidos
         setHonorarios(data.honorarios || []);
+      } else {
+        console.warn('Error en respuesta de honorarios:', data);
+        setHonorarios([]);
       }
-    } catch {
-      // Eliminado log de error al cargar honorarios
+    } catch (err) {
+      console.error('Error al cargar honorarios:', err);
+      setHonorarios([]);
     } finally {
       setLoading(false);
     }
@@ -105,11 +108,10 @@ function LiquidacionHonorariosPage() {
     });
     if (!result.isConfirmed) return;
     try {
-      const response = await fetch(`${BASE_URL}api_liquidar_honorario.php`, {
+      const response = await authFetch(`api_liquidar_honorario.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: honorarioId }),
-        credentials: "include"
       });
       const data = await response.json();
       if (data.success) {

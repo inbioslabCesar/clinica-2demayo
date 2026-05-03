@@ -1,3 +1,4 @@
+import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
@@ -36,7 +37,7 @@ export default function ListaConsultasPage() {
       fecha_desde: fechaDesde,
       fecha_hasta: fechaHasta
     });
-    fetch(`${BASE_URL}api_consultas.php?${params.toString()}`, {
+    authFetch(`${BASE_URL}api_consultas.php?${params.toString()}`, {
       credentials: "include",
       signal: controller.signal,
     })

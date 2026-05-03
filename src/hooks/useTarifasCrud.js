@@ -1,4 +1,4 @@
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 
 export function useTarifasCrud(cargarTarifas, setNuevaTarifa, setTarifaEditando, setMostrarModal) {
@@ -13,7 +13,6 @@ export function useTarifasCrud(cargarTarifas, setNuevaTarifa, setTarifaEditando,
       return;
     }
     try {
-      const url = BASE_URL + "api_tarifas.php";
       const method = tarifaEditando ? "PUT" : "POST";
       const data = tarifaEditando
         ? { ...nuevaTarifa, id: tarifaEditando.id, servicio_tipo: nuevaTarifa.servicio_tipo || tarifaEditando.servicio_tipo }
@@ -23,10 +22,9 @@ export function useTarifasCrud(cargarTarifas, setNuevaTarifa, setTarifaEditando,
       if (payload.porcentaje_medico === "" || payload.porcentaje_medico === null) payload.porcentaje_medico = null;
       if (payload.porcentaje_clinica === "" || payload.porcentaje_clinica === null) payload.porcentaje_clinica = null;
 
-      const response = await fetch(url, {
+      const response = await authFetch("api_tarifas.php", {
         method,
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
       const result = await response.json();
@@ -74,11 +72,9 @@ export function useTarifasCrud(cargarTarifas, setNuevaTarifa, setTarifaEditando,
     });
     if (result.isConfirmed) {
       try {
-        const url = BASE_URL + "api_tarifas.php";
-        const response = await fetch(url, {
+        const response = await authFetch("api_tarifas.php", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          credentials: "include",
           body: JSON.stringify({ id }),
         });
         const data = await response.json();
@@ -97,11 +93,9 @@ export function useTarifasCrud(cargarTarifas, setNuevaTarifa, setTarifaEditando,
   // Cambiar estado de tarifa
   const cambiarEstado = async (id, nuevoEstado) => {
     try {
-      const url = BASE_URL + "api_tarifas.php";
-      const response = await fetch(url, {
+      const response = await authFetch("api_tarifas.php", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ id, activo: nuevoEstado }),
       });
       const data = await response.json();

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { BASE_URL } from "../config/config";
 import { ThemeContext, DEFAULT_THEME } from "./themeConstants";
+import { authFetch } from "../utils/apiClient";
 
 const THEME_CACHE_KEY = "clinica_theme_cache";
 
@@ -52,9 +52,8 @@ export function ThemeProvider({ children }) {
 
   const fetchTheme = useCallback(async () => {
     try {
-      const res = await fetch(`${BASE_URL}api_tema.php`, {
+      const res = await authFetch("api_tema.php", {
         method: "GET",
-        credentials: "include",
         cache: "no-store",
       });
       const data = await res.json();

@@ -1,3 +1,4 @@
+import { authFetch } from "../utils/apiClient";
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
@@ -9,7 +10,7 @@ export default function CotizarServicioPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
+    authFetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         setTarifas((data.tarifas || []).filter(t => t.servicio_tipo === servicioTipo && t.activo === 1));

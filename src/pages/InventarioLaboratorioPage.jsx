@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const initialRecetaForm = {
   id_examen: "",
@@ -66,9 +66,9 @@ export default function InventarioLaboratorioPage() {
     setError("");
     try {
       const [resRecetas, resTransfers, resStock] = await Promise.all([
-        fetch(`${BASE_URL}api_inventario_recetas.php?catalogo=1`, { credentials: "include" }),
-        fetch(`${BASE_URL}api_inventario_transferencias.php?limit=50`, { credentials: "include" }),
-        fetch(`${BASE_URL}api_inventario_transferencias.php?accion=stock_interno`, { credentials: "include" }),
+        authFetch("api_inventario_recetas.php?catalogo=1", { cache: "no-store" }),
+        authFetch("api_inventario_transferencias.php?limit=50", { cache: "no-store" }),
+        authFetch("api_inventario_transferencias.php?accion=stock_interno", { cache: "no-store" }),
       ]);
 
       const dataRecetas = await resRecetas.json();
@@ -120,9 +120,8 @@ export default function InventarioLaboratorioPage() {
     try {
       const method = editingRecetaId ? "PUT" : "POST";
       const body = editingRecetaId ? { ...payload, id: editingRecetaId } : payload;
-      const res = await fetch(`${BASE_URL}api_inventario_recetas.php`, {
+      const res = await authFetch("api_inventario_recetas.php", {
         method,
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -157,9 +156,8 @@ export default function InventarioLaboratorioPage() {
   const handleEliminarReceta = async (id) => {
     resetMensajes();
     try {
-      const res = await fetch(`${BASE_URL}api_inventario_recetas.php`, {
+      const res = await authFetch("api_inventario_recetas.php", {
         method: "DELETE",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
@@ -191,9 +189,8 @@ export default function InventarioLaboratorioPage() {
 
     setSavingTransfer(true);
     try {
-      const res = await fetch(`${BASE_URL}api_inventario_transferencias.php`, {
+      const res = await authFetch("api_inventario_transferencias.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           item_id: itemId,

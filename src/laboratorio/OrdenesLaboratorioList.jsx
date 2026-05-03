@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import { useNavigate } from "react-router-dom";
 
 const STORAGE_PAGE_KEY = "lab_ordenes_page";
@@ -76,8 +76,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    fetch(BASE_URL + "api_examenes_laboratorio.php", {
-      credentials: 'include',
+    authFetch("api_examenes_laboratorio.php", {
       signal: controller.signal,
     })
       .then(res => res.json())
@@ -121,8 +120,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     if (estadoFiltro) params.set('estado', estadoFiltro);
     if (filtroAlertaEstado) params.set('filtro_alerta', filtroAlertaEstado);
 
-    fetch(BASE_URL + 'api_ordenes_laboratorio.php?' + params.toString(), {
-      credentials: 'include',
+    authFetch('api_ordenes_laboratorio.php?' + params.toString(), {
       signal: controller.signal,
     })
       .then(res => res.json())
@@ -166,8 +164,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     if (busquedaDebounced.trim()) params.set('filtro_busqueda', busquedaDebounced.trim());
     if (estadoFiltro) params.set('estado', estadoFiltro);
 
-    fetch(BASE_URL + 'api_ordenes_laboratorio.php?' + params.toString(), {
-      credentials: 'include',
+    authFetch('api_ordenes_laboratorio.php?' + params.toString(), {
       signal: controller.signal,
     })
       .then(res => res.json())

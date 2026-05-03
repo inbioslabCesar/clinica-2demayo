@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { BASE_URL } from '../../config/config';
 import HistorialReaperturas from './HistorialReaperturas';
 import RowsSelector from './RowsSelector';
+import { authFetch } from '../../utils/apiClient';
 
 const HistorialReaperturasPage = () => {
 	const [historial, setHistorial] = useState([]);
@@ -13,9 +13,7 @@ const HistorialReaperturasPage = () => {
 		const fetchHistorial = async () => {
 			try {
 				setLoading(true);
-				const response = await fetch(BASE_URL + 'api_cajas_cerradas.php', {
-					credentials: 'include'
-				});
+				const response = await authFetch('api_cajas_cerradas.php');
 				if (response.ok) {
 					const data = await response.json();
 					if (data.success) {

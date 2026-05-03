@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import OrdenesLaboratorioList from "../laboratorio/OrdenesLaboratorioList";
 import LlenarResultadosForm from "../laboratorio/LlenarResultadosForm";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 function LaboratorioPanelPage() {
   const location = useLocation();
@@ -24,8 +24,8 @@ function LaboratorioPanelPage() {
   const backTo = new URLSearchParams(location.search).get('back_to') || '';
 
   useEffect(() => {
-    fetch(BASE_URL + "api_examenes_laboratorio.php", {
-      credentials: 'include'
+    authFetch("api_examenes_laboratorio.php", {
+      cache: 'no-store'
     })
       .then(res => res.json())
       .then(data => setExamenesDisponibles(data.examenes || []));
@@ -34,8 +34,8 @@ function LaboratorioPanelPage() {
   useEffect(() => {
     if (activeTab !== 'ordenes') return;
 
-    fetch(BASE_URL + "api_ordenes_laboratorio.php?solo_visibles_panel=1", {
-      credentials: 'include'
+    authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1", {
+      cache: 'no-store'
     })
       .then(res => res.json())
       .then(data => {
@@ -59,8 +59,8 @@ function LaboratorioPanelPage() {
   const handleSeleccionarOrden = useCallback(async (orden) => {
     try {
       const idBusqueda = orden.id;
-      const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
-        credentials: 'include'
+      const res = await authFetch(`api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
+        cache: 'no-store'
       });
       const data = await res.json();
 
@@ -88,8 +88,8 @@ function LaboratorioPanelPage() {
 
     const resolverDesdeDeepLink = async () => {
       try {
-        const res = await fetch(BASE_URL + "api_ordenes_laboratorio.php?solo_visibles_panel=1", {
-          credentials: 'include'
+        const res = await authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1", {
+          cache: 'no-store'
         });
         const data = await res.json();
         const ordenes = data?.success && Array.isArray(data.ordenes) ? data.ordenes : [];
@@ -150,8 +150,8 @@ function LaboratorioPanelPage() {
 
     try {
       const idBusqueda = ordenSeleccionada.id;
-      const res = await fetch(BASE_URL + `api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
-        credentials: 'include'
+      const res = await authFetch(`api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
+        cache: 'no-store'
       });
       const data = await res.json();
 

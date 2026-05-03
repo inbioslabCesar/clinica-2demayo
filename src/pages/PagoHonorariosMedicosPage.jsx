@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function PagoHonorariosMedicosPage() {
   const [honorarios, setHonorarios] = useState([]);
@@ -19,8 +19,8 @@ export default function PagoHonorariosMedicosPage() {
     if (!window.confirm("¿Está seguro que desea cancelar este honorario?"))
       return;
     try {
-      const response = await fetch(
-        `${BASE_URL}api_cancelar_honorario_medico.php`,
+      const response = await authFetch(
+        `api_cancelar_honorario_medico.php`,
         {
           method: "POST",
           headers: {
@@ -60,7 +60,7 @@ export default function PagoHonorariosMedicosPage() {
         url += `&tipo_consulta=${tipoConsultaFiltro}`;
       }
   // ...eliminado comentario de depuración...
-      const resp = await fetch(url, { credentials: "include" });
+      const resp = await authFetch(url);
       const data = await resp.json();
   // ...eliminado comentario de depuración...
       if (data.success) {
@@ -96,7 +96,7 @@ export default function PagoHonorariosMedicosPage() {
     if (!result.isConfirmed) return;
     try {
       setLoading(true);
-      const resp = await fetch(`${BASE_URL}api_pagar_honorario_medico.php`, {
+      const resp = await authFetch(`api_pagar_honorario_medico.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

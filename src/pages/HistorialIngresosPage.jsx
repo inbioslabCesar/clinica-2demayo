@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import { 
   FaHistory, 
   FaArrowLeft, 
@@ -56,9 +56,7 @@ export default function HistorialIngresosPage() {
       if (filtros.tipo) params.append('tipo', filtros.tipo);
       if (filtros.metodo) params.append('metodo', filtros.metodo);
 
-      const response = await fetch(`${BASE_URL}api_historial_ingresos.php?${params}`, { 
-        credentials: 'include' 
-      });
+      const response = await authFetch(`api_historial_ingresos.php?${params}`);
       const data = await response.json();
       
       if (data.success) {

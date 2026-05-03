@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function FirmaDigitalMedico({ isOpen, onClose }) {
   const [firma, setFirma] = useState(null);
@@ -19,9 +19,7 @@ export default function FirmaDigitalMedico({ isOpen, onClose }) {
   const cargarFirmaExistente = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}api_firma_medico.php`, {
-        credentials: 'include'
-      });
+      const response = await authFetch("api_firma_medico.php");
       const data = await response.json();
       
       if (data.success && data.firma) {
@@ -75,12 +73,11 @@ export default function FirmaDigitalMedico({ isOpen, onClose }) {
       setLoading(true);
       setMensaje("");
 
-      const response = await fetch(`${BASE_URL}api_firma_medico.php`, {
+      const response = await authFetch("api_firma_medico.php", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
         body: JSON.stringify({ firma })
       });
 
@@ -112,10 +109,7 @@ export default function FirmaDigitalMedico({ isOpen, onClose }) {
       setLoading(true);
       setMensaje("");
 
-      const response = await fetch(`${BASE_URL}api_firma_medico.php`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
+      const response = await authFetch("api_firma_medico.php", { method: 'DELETE' });
 
       const data = await response.json();
 

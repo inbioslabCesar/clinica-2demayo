@@ -313,6 +313,188 @@ class CobroModule
         return $detalles;
     }
 
+    private static function resolverCotizacionIdsDesdeCobro($data)
+    {
+        $ids = [];
+
+        if (isset($data['cotizacion_ids'])) {
+            if (is_array($data['cotizacion_ids'])) {
+                $ids = array_merge($ids, $data['cotizacion_ids']);
+            } elseif (is_string($data['cotizacion_ids'])) {
+                $ids = array_merge($ids, preg_split('/\s*,\s*/', trim($data['cotizacion_ids'])) ?: []);
+            }
+        }
+
+        if (isset($data['cotizacion_id'])) {
+            $ids[] = $data['cotizacion_id'];
+        }
+
+        if (isset($data['detalles']) && is_array($data['detalles'])) {
+            foreach ($data['detalles'] as $detalle) {
+                if (!is_array($detalle)) {
+                    continue;
+                }
+                if (isset($detalle['cotizacion_id'])) {
+                    $ids[] = $detalle['cotizacion_id'];
+                }
+            }
+        }
+
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+        sort($ids);
+        return $ids;
+    }
+
+    private static function construirResumenCobroPorCotizacion($detalles)
+    {
+        $resumen = [];
+        $orden = 0;
+
+        foreach ($detalles as $detalle) {
+            if (!is_array($detalle)) {
+                continue;
+            }
+
+            $cotizacionId = (int)($detalle['cotizacion_id'] ?? 0);
+            if ($cotizacionId <= 0) {
+                continue;
+            }
+
+            if (!isset($resumen[$cotizacionId])) {
+                $orden++;
+                $resumen[$cotizacionId] = [
+                    'cotizacion_id' => $cotizacionId,
+                    'monto_original' => 0.0,
+                    'descuento_aplicado' => 0.0,
+                    'monto_aplicado' => 0.0,
+                    'orden_aplicacion' => $orden,
+                ];
+            }
+
+            $resumen[$cotizacionId]['monto_original'] += self::toFloatFlexible($detalle['subtotal_original'] ?? $detalle['subtotal'] ?? 0);
+            $resumen[$cotizacionId]['descuento_aplicado'] += self::toFloatFlexible($detalle['descuento_item'] ?? 0);
+            $resumen[$cotizacionId]['monto_aplicado'] += self::toFloatFlexible($detalle['subtotal'] ?? 0);
+        }
+
+        foreach ($resumen as &$row) {
+            $row['monto_original'] = round($row['monto_original'], 2);
+            $row['descuento_aplicado'] = round($row['descuento_aplicado'], 2);
+            $row['monto_aplicado'] = round($row['monto_aplicado'], 2);
+        }
+        unset($row);
+
+        return $resumen;
+    }
+
+    private static function bloquearCotizacionesParaCobro($conn, $cotizacionIds)
+    {
+        $cotizacionIds = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), fn($id) => $id > 0)));
+        if (empty($cotizacionIds) || !self::tableExists($conn, 'cotizaciones')) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($cotizacionIds), '?'));
+        $types = str_repeat('i', count($cotizacionIds));
+        $sql = "SELECT id, paciente_id, estado, total, total_pagado, saldo_pendiente, "
+            . (self::columnExists($conn, 'cotizaciones', 'fecha_vencimiento') ? 'fecha_vencimiento' : 'NULL AS fecha_vencimiento')
+            . " FROM cotizaciones WHERE id IN ($placeholders) FOR UPDATE";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new \Exception('No se pudo bloquear las cotizaciones seleccionadas para el cobro.');
+        }
+        $stmt->bind_param($types, ...$cotizacionIds);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $byId = [];
+        foreach ($rows as $row) {
+            $byId[(int)($row['id'] ?? 0)] = $row;
+        }
+
+        return $byId;
+    }
+
+    private static function registrarCobroCotizaciones($conn, $cobroId, $resumenPorCotizacion, $cotizacionesBloqueadas, $usuarioId)
+    {
+        $cobroId = (int)$cobroId;
+        $usuarioId = (int)$usuarioId;
+        if ($cobroId <= 0 || empty($resumenPorCotizacion) || !self::tableExists($conn, 'cobros_cotizaciones')) {
+            return;
+        }
+
+        $stmt = $conn->prepare(
+            "INSERT INTO cobros_cotizaciones (
+                cobro_id,
+                cotizacion_id,
+                monto_original,
+                descuento_aplicado,
+                monto_aplicado,
+                saldo_anterior,
+                saldo_nuevo,
+                estado_resultado,
+                orden_aplicacion,
+                usuario_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                monto_original = VALUES(monto_original),
+                descuento_aplicado = VALUES(descuento_aplicado),
+                monto_aplicado = VALUES(monto_aplicado),
+                saldo_anterior = VALUES(saldo_anterior),
+                saldo_nuevo = VALUES(saldo_nuevo),
+                estado_resultado = VALUES(estado_resultado),
+                orden_aplicacion = VALUES(orden_aplicacion),
+                usuario_id = VALUES(usuario_id),
+                updated_at = CURRENT_TIMESTAMP"
+        );
+        if (!$stmt) {
+            throw new \Exception('No se pudo registrar la relación entre el cobro y las cotizaciones.');
+        }
+
+        foreach ($resumenPorCotizacion as $resumen) {
+            $cotizacionId = (int)($resumen['cotizacion_id'] ?? 0);
+            if ($cotizacionId <= 0 || !isset($cotizacionesBloqueadas[$cotizacionId])) {
+                continue;
+            }
+
+            $cot = $cotizacionesBloqueadas[$cotizacionId];
+            $totalActual = self::toFloatFlexible($cot['total'] ?? 0);
+            $pagadoActual = self::toFloatFlexible($cot['total_pagado'] ?? 0);
+            $saldoActual = self::toFloatFlexible($cot['saldo_pendiente'] ?? 0);
+            $estadoActual = strtolower(trim((string)($cot['estado'] ?? 'pendiente')));
+            if ($saldoActual <= 0 && $totalActual > $pagadoActual && $estadoActual !== 'pagado') {
+                $saldoActual = max(0.0, round($totalActual - $pagadoActual, 2));
+            }
+
+            $montoOriginal = round(self::toFloatFlexible($resumen['monto_original'] ?? 0), 2);
+            $descuentoAplicado = round(self::toFloatFlexible($resumen['descuento_aplicado'] ?? 0), 2);
+            $montoAplicado = round(min(self::toFloatFlexible($resumen['monto_aplicado'] ?? 0), $saldoActual), 2);
+            $totalAjustado = $descuentoAplicado > 0 ? max(0.0, round($totalActual - $descuentoAplicado, 2)) : $totalActual;
+            $pagadoNuevo = min($totalAjustado, round($pagadoActual + $montoAplicado, 2));
+            $saldoNuevo = max(0.0, round($totalAjustado - $pagadoNuevo, 2));
+            $estadoResultado = $saldoNuevo <= 0 ? 'pagado' : ($montoAplicado > 0 ? 'parcial' : $estadoActual);
+            $ordenAplicacion = (int)($resumen['orden_aplicacion'] ?? 1);
+
+            $stmt->bind_param(
+                'iidddddsii',
+                $cobroId,
+                $cotizacionId,
+                $montoOriginal,
+                $descuentoAplicado,
+                $montoAplicado,
+                $saldoActual,
+                $saldoNuevo,
+                $estadoResultado,
+                $ordenAplicacion,
+                $usuarioId
+            );
+            $stmt->execute();
+        }
+
+        $stmt->close();
+    }
+
     private static function cargarDetallesCobros($conn, $cobroIds)
     {
         $cobroIds = array_values(array_unique(array_filter(array_map('intval', $cobroIds), fn($id) => $id > 0)));
@@ -380,25 +562,332 @@ class CobroModule
         return $res && $res->num_rows > 0;
     }
 
-    private static function resolverCotizacionIdDesdeCobro($data)
+    private static function resolverMedicoDesdeConsulta($conn, $consultaId)
     {
-        $id = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
-        if ($id > 0) {
-            return $id;
-        }
-
-        if (!isset($data['detalles']) || !is_array($data['detalles'])) {
+        $consultaId = (int)$consultaId;
+        if ($consultaId <= 0 || !self::tableExists($conn, 'consultas') || !self::columnExists($conn, 'consultas', 'medico_id')) {
             return 0;
         }
 
-        foreach ($data['detalles'] as $detalle) {
-            $detalleId = isset($detalle['cotizacion_id']) ? (int)$detalle['cotizacion_id'] : 0;
-            if ($detalleId > 0) {
-                return $detalleId;
-            }
+        $stmt = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return 0;
+        }
+        $stmt->bind_param('i', $consultaId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int)($row['medico_id'] ?? 0);
+    }
+
+    private static function resolverContextoClinicoCotizacion($conn, $cotizacionId, &$cacheMedicoConsulta)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0 || !self::tableExists($conn, 'cotizaciones_detalle')) {
+            return ['consulta_id' => 0, 'medico_id' => 0];
         }
 
-        return 0;
+        $hasConsultaId = self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id');
+        $hasMedicoId = self::columnExists($conn, 'cotizaciones_detalle', 'medico_id');
+        if (!$hasConsultaId && !$hasMedicoId) {
+            return ['consulta_id' => 0, 'medico_id' => 0];
+        }
+
+        $selectCols = [];
+        if ($hasConsultaId) {
+            $selectCols[] = 'cd.consulta_id';
+        }
+        if ($hasMedicoId) {
+            $selectCols[] = 'cd.medico_id';
+        }
+
+        $where = [];
+        if ($hasConsultaId) {
+            $where[] = '(cd.consulta_id IS NOT NULL AND cd.consulta_id > 0)';
+        }
+        if ($hasMedicoId) {
+            $where[] = '(cd.medico_id IS NOT NULL AND cd.medico_id > 0)';
+        }
+
+        if (empty($selectCols) || empty($where)) {
+            return ['consulta_id' => 0, 'medico_id' => 0];
+        }
+
+        $whereEstado = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND cd.estado_item <> 'eliminado'"
+            : '';
+
+        $sql = 'SELECT ' . implode(', ', $selectCols) . '
+                FROM cotizaciones_detalle cd
+                WHERE cd.cotizacion_id = ?
+                  AND (' . implode(' OR ', $where) . ')'
+                . $whereEstado . '
+                ORDER BY CASE WHEN LOWER(TRIM(cd.servicio_tipo)) = "consulta" THEN 0 ELSE 1 END, cd.id ASC
+                LIMIT 1';
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return ['consulta_id' => 0, 'medico_id' => 0];
+        }
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            return ['consulta_id' => 0, 'medico_id' => 0];
+        }
+
+        $consultaId = (int)($row['consulta_id'] ?? 0);
+        $medicoId = (int)($row['medico_id'] ?? 0);
+
+        if ($medicoId <= 0 && $consultaId > 0) {
+            if (!array_key_exists($consultaId, $cacheMedicoConsulta)) {
+                $cacheMedicoConsulta[$consultaId] = self::resolverMedicoDesdeConsulta($conn, $consultaId);
+            }
+            $medicoId = (int)$cacheMedicoConsulta[$consultaId];
+        }
+
+        return [
+            'consulta_id' => max(0, $consultaId),
+            'medico_id' => max(0, $medicoId),
+        ];
+    }
+
+    private static function resolverOrigenOperacionProduccionDetalle($detalle, $clasificacionOrigen, $cotizacionId)
+    {
+        $origen = strtolower(trim((string)($detalle['origen_operacion'] ?? '')));
+        if ($origen !== '') {
+            return $origen;
+        }
+
+        $servicioTipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
+
+        if ($cotizacionId > 0) {
+            return 'cotizacion';
+        }
+
+        if ($clasificacionOrigen === 'venta_directa') {
+            if ($servicioTipo === 'farmacia') {
+                return 'farmacia_directa';
+            }
+            return 'caja_directa';
+        }
+
+        return 'cobro_directo';
+    }
+
+    private static function registrarProduccionMedicaDetalle($conn, $data, $cobroId, $cajaId = null, $turno = null)
+    {
+        if (!self::tableExists($conn, 'produccion_medica_detalle')) {
+            return;
+        }
+
+        $detalles = is_array($data['detalles'] ?? null) ? $data['detalles'] : [];
+        if (empty($detalles)) {
+            return;
+        }
+
+        $pacienteIdGlobal = isset($data['paciente_id']) && $data['paciente_id'] !== 'null'
+            ? (int)$data['paciente_id']
+            : null;
+        $usuarioCajaId = (int)($_SESSION['usuario']['id'] ?? ($data['usuario_id'] ?? 0));
+        $cotizacionIdGlobal = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
+        $tipoPago = strtolower(trim((string)($data['tipo_pago'] ?? '')));
+        $fechaCobro = date('Y-m-d H:i:s');
+        $periodo = date('Ym');
+
+        $sql = "INSERT INTO produccion_medica_detalle (
+            fecha_cobro,
+            periodo_yyyymm,
+            cobro_id,
+            cobro_detalle_idx,
+            cotizacion_id,
+            cotizacion_detalle_id,
+            consulta_id,
+            medico_id,
+            paciente_id,
+            clasificacion_origen,
+            origen_operacion,
+            servicio_tipo,
+            servicio_id,
+            servicio_nombre,
+            cantidad,
+            precio_unitario_lista,
+            monto_bruto_item,
+            descuento_item,
+            monto_neto_item,
+            usuario_caja_id,
+            caja_id,
+            turno,
+            tipo_pago,
+            hash_origen
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            consulta_id = VALUES(consulta_id),
+            medico_id = VALUES(medico_id),
+            paciente_id = VALUES(paciente_id),
+            clasificacion_origen = VALUES(clasificacion_origen),
+            origen_operacion = VALUES(origen_operacion),
+            servicio_nombre = VALUES(servicio_nombre),
+            cantidad = VALUES(cantidad),
+            precio_unitario_lista = VALUES(precio_unitario_lista),
+            monto_bruto_item = VALUES(monto_bruto_item),
+            descuento_item = VALUES(descuento_item),
+            monto_neto_item = VALUES(monto_neto_item),
+            usuario_caja_id = VALUES(usuario_caja_id),
+            caja_id = VALUES(caja_id),
+            turno = VALUES(turno),
+            tipo_pago = VALUES(tipo_pago),
+            updated_at = CURRENT_TIMESTAMP";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new \Exception('No se pudo preparar inserción en produccion_medica_detalle');
+        }
+
+        $cacheMedicoConsulta = [];
+        $cacheContextoCotizacion = [];
+        foreach ($detalles as $idx => $detalle) {
+            if (!is_array($detalle)) {
+                continue;
+            }
+
+            $servicioTipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? 'otros');
+            $servicioId = isset($detalle['servicio_id']) && $detalle['servicio_id'] !== ''
+                ? (int)$detalle['servicio_id']
+                : null;
+            $servicioNombre = trim((string)($detalle['descripcion'] ?? 'Servicio'));
+
+            $cantidad = self::toFloatFlexible($detalle['cantidad'] ?? 1);
+            if ($cantidad <= 0) {
+                $cantidad = 1.0;
+            }
+
+            $descuentoItem = max(0.0, self::toFloatFlexible($detalle['descuento_item'] ?? 0));
+            $montoNeto = max(0.0, self::toFloatFlexible($detalle['subtotal'] ?? 0));
+            $montoBruto = self::toFloatFlexible($detalle['subtotal_original'] ?? 0);
+            if ($montoBruto <= 0) {
+                $montoBruto = $montoNeto + $descuentoItem;
+            }
+            $montoBruto = max(0.0, round($montoBruto, 2));
+            $montoNeto = max(0.0, round($montoNeto, 2));
+            $descuentoItem = max(0.0, round($descuentoItem, 2));
+
+            $precioUnitarioLista = $cantidad > 0 ? round($montoBruto / $cantidad, 2) : 0.0;
+
+            $cotizacionId = isset($detalle['cotizacion_id']) ? (int)$detalle['cotizacion_id'] : $cotizacionIdGlobal;
+            if ($cotizacionId <= 0) {
+                $cotizacionId = null;
+            }
+
+            $cotizacionDetalleId = isset($detalle['cotizacion_detalle_id'])
+                ? (int)$detalle['cotizacion_detalle_id']
+                : (isset($detalle['detalle_id']) ? (int)$detalle['detalle_id'] : 0);
+            if ($cotizacionDetalleId <= 0) {
+                $cotizacionDetalleId = null;
+            }
+
+            $consultaId = isset($detalle['consulta_id']) ? (int)$detalle['consulta_id'] : 0;
+            if ($consultaId <= 0) {
+                $consultaId = null;
+            }
+
+            $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
+            if ($medicoId <= 0 && $consultaId !== null) {
+                if (!array_key_exists($consultaId, $cacheMedicoConsulta)) {
+                    $cacheMedicoConsulta[$consultaId] = self::resolverMedicoDesdeConsulta($conn, $consultaId);
+                }
+                $medicoId = (int)$cacheMedicoConsulta[$consultaId];
+            }
+
+            if (($consultaId === null || $medicoId <= 0) && $cotizacionId !== null) {
+                $cotizacionCtxId = (int)$cotizacionId;
+                if (!array_key_exists($cotizacionCtxId, $cacheContextoCotizacion)) {
+                    $cacheContextoCotizacion[$cotizacionCtxId] = self::resolverContextoClinicoCotizacion($conn, $cotizacionCtxId, $cacheMedicoConsulta);
+                }
+                $ctx = $cacheContextoCotizacion[$cotizacionCtxId];
+                $consultaCtx = (int)($ctx['consulta_id'] ?? 0);
+                $medicoCtx = (int)($ctx['medico_id'] ?? 0);
+
+                if ($consultaId === null && $consultaCtx > 0) {
+                    $consultaId = $consultaCtx;
+                }
+                if ($medicoId <= 0 && $medicoCtx > 0) {
+                    $medicoId = $medicoCtx;
+                }
+            }
+
+            if ($medicoId <= 0) {
+                $medicoId = null;
+            }
+
+            $pacienteId = isset($detalle['paciente_id']) && $detalle['paciente_id'] !== null && $detalle['paciente_id'] !== 'null'
+                ? (int)$detalle['paciente_id']
+                : $pacienteIdGlobal;
+            if ($pacienteId !== null && $pacienteId <= 0) {
+                $pacienteId = null;
+            }
+
+            $clasificacionOrigen = ($consultaId !== null || $medicoId !== null)
+                ? 'produccion_medica'
+                : 'venta_directa';
+            $origenOperacion = self::resolverOrigenOperacionProduccionDetalle($detalle, $clasificacionOrigen, (int)($cotizacionId ?? 0));
+
+            $hashOrigen = sha1(implode('|', [
+                (int)$cobroId,
+                (int)$idx,
+                (string)$servicioTipo,
+                (string)($servicioId ?? 0),
+                (string)($cotizacionId ?? 0),
+                (string)($cotizacionDetalleId ?? 0),
+                number_format($montoNeto, 2, '.', ''),
+            ]));
+
+            $cobroDetalleIdx = (int)$idx + 1;
+            $cajaIdVal = $cajaId !== null ? (int)$cajaId : null;
+            $turnoVal = $turno !== null ? (string)$turno : null;
+            $tipoPagoVal = $tipoPago !== '' ? $tipoPago : null;
+
+            $stmt->bind_param(
+                'ssiiiiiiisssisdddddiisss',
+                $fechaCobro,
+                $periodo,
+                $cobroId,
+                $cobroDetalleIdx,
+                $cotizacionId,
+                $cotizacionDetalleId,
+                $consultaId,
+                $medicoId,
+                $pacienteId,
+                $clasificacionOrigen,
+                $origenOperacion,
+                $servicioTipo,
+                $servicioId,
+                $servicioNombre,
+                $cantidad,
+                $precioUnitarioLista,
+                $montoBruto,
+                $descuentoItem,
+                $montoNeto,
+                $usuarioCajaId,
+                $cajaIdVal,
+                $turnoVal,
+                $tipoPagoVal,
+                $hashOrigen
+            );
+
+            $stmt->execute();
+        }
+
+        $stmt->close();
+    }
+
+    private static function resolverCotizacionIdDesdeCobro($data)
+    {
+        $ids = self::resolverCotizacionIdsDesdeCobro($data);
+        return !empty($ids) ? (int)$ids[0] : 0;
     }
 
     private static function cotizacionEstaPagada($conn, $cotizacionId)
@@ -1099,6 +1588,45 @@ class CobroModule
             $stmt = $conn->prepare("UPDATE cobros SET estado = ?, observaciones = ? WHERE id = ?");
             $stmt->bind_param("ssi", $data['estado'], $observaciones_update, $data['id']);
             $stmt->execute();
+
+            // Si se anuló y existen registros en cobros_cotizaciones, revertir saldo de cada cotización
+            if ($data['estado'] === 'anulado' && self::tableExists($conn, 'cobros_cotizaciones')) {
+                $stmtBridge = $conn->prepare(
+                    "SELECT cotizacion_id, monto_aplicado FROM cobros_cotizaciones WHERE cobro_id = ? AND estado_resultado <> 'anulado'"
+                );
+                if ($stmtBridge) {
+                    $stmtBridge->bind_param('i', $data['id']);
+                    $stmtBridge->execute();
+                    $bridges = $stmtBridge->get_result()->fetch_all(MYSQLI_ASSOC);
+                    foreach ($bridges as $bridge) {
+                        $cotId  = (int)$bridge['cotizacion_id'];
+                        $monto  = (float)$bridge['monto_aplicado'];
+                        $stmtCot = $conn->prepare("SELECT total_pagado, saldo_pendiente, total FROM cotizaciones WHERE id = ? FOR UPDATE");
+                        if (!$stmtCot) continue;
+                        $stmtCot->bind_param('i', $cotId);
+                        $stmtCot->execute();
+                        $cot = $stmtCot->get_result()->fetch_assoc();
+                        if (!$cot) continue;
+                        $nuevoPagado = max(0, (float)$cot['total_pagado'] - $monto);
+                        $nuevoSaldo  = max(0, (float)$cot['total'] - $nuevoPagado);
+                        $nuevoEstado = ($nuevoSaldo <= 0.00001) ? 'pagado' : ($nuevoPagado > 0 ? 'parcial' : 'pendiente');
+                        $stmtUp = $conn->prepare("UPDATE cotizaciones SET total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
+                        if ($stmtUp) {
+                            $stmtUp->bind_param('ddsi', $nuevoPagado, $nuevoSaldo, $nuevoEstado, $cotId);
+                            $stmtUp->execute();
+                        }
+                    }
+                    // Marcar filas del bridge como anuladas
+                    $stmtMarkBridge = $conn->prepare(
+                        "UPDATE cobros_cotizaciones SET estado_resultado = 'anulado', updated_at = NOW() WHERE cobro_id = ?"
+                    );
+                    if ($stmtMarkBridge) {
+                        $stmtMarkBridge->bind_param('i', $data['id']);
+                        $stmtMarkBridge->execute();
+                    }
+                }
+            }
+
             $conn->commit();
             return ['success' => true, 'message' => 'Estado actualizado'];
         } catch (\Exception $e) {
@@ -1121,53 +1649,54 @@ class CobroModule
 
             $conn->begin_transaction();
 
-            $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
-            if ($cotizacionId <= 0 && isset($data['detalles']) && is_array($data['detalles'])) {
-                foreach ($data['detalles'] as $det) {
-                    $detCot = isset($det['cotizacion_id']) ? (int)$det['cotizacion_id'] : 0;
-                    if ($detCot > 0) {
-                        $cotizacionId = $detCot;
-                        break;
+            $cotizacionIdsFlujo = self::resolverCotizacionIdsDesdeCobro($data);
+            $cotizacionId = !empty($cotizacionIdsFlujo) ? (int)$cotizacionIdsFlujo[0] : 0;
+            $cotizacionesBloqueadas = self::bloquearCotizacionesParaCobro($conn, $cotizacionIdsFlujo);
+
+            if (!empty($cotizacionIdsFlujo)) {
+                foreach ($cotizacionIdsFlujo as $cotizacionIdValidar) {
+                    if (!isset($cotizacionesBloqueadas[$cotizacionIdValidar])) {
+                        throw new \Exception('Una de las cotizaciones seleccionadas ya no existe o no está disponible para cobrar.');
                     }
                 }
             }
 
-            // Resolver paciente_id desde cotización si no viene en los datos
+            // Resolver paciente_id desde las cotizaciones si no viene en los datos
             $pacienteId = isset($data['paciente_id']) ? (int)$data['paciente_id'] : 0;
-            if (($pacienteId <= 0 || $pacienteId === null) && $cotizacionId > 0 && self::tableExists($conn, 'cotizaciones')) {
-                $stmtPaciente = $conn->prepare("SELECT paciente_id FROM cotizaciones WHERE id = ? LIMIT 1");
-                if ($stmtPaciente) {
-                    $stmtPaciente->bind_param("i", $cotizacionId);
-                    $stmtPaciente->execute();
-                    $rowPaciente = $stmtPaciente->get_result()->fetch_assoc();
-                    $stmtPaciente->close();
-                    
-                    if ($rowPaciente && isset($rowPaciente['paciente_id'])) {
-                        $pacienteIdResuelto = (int)$rowPaciente['paciente_id'];
-                        if ($pacienteIdResuelto > 0) {
-                            $data['paciente_id'] = $pacienteIdResuelto;
-                        }
+            $pacientesCotizacion = [];
+            foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
+                $pacienteCot = (int)($cotizacionBloqueada['paciente_id'] ?? 0);
+                if ($pacienteCot > 0) {
+                    $pacientesCotizacion[$pacienteCot] = true;
+                }
+            }
+            if (count($pacientesCotizacion) > 1) {
+                throw new \Exception('No se puede unificar el cobro de cotizaciones de pacientes distintos.');
+            }
+            if (($pacienteId <= 0 || $pacienteId === null) && count($pacientesCotizacion) === 1) {
+                $data['paciente_id'] = (int)array_key_first($pacientesCotizacion);
+                $pacienteId = (int)$data['paciente_id'];
+            }
+            if ($pacienteId > 0) {
+                foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
+                    $pacienteCot = (int)($cotizacionBloqueada['paciente_id'] ?? 0);
+                    if ($pacienteCot > 0 && $pacienteCot !== $pacienteId) {
+                        throw new \Exception('Las cotizaciones seleccionadas no pertenecen al paciente actual.');
                     }
                 }
             }
 
-            if ($cotizacionId > 0 && self::tableExists($conn, 'cotizaciones') && self::columnExists($conn, 'cotizaciones', 'fecha_vencimiento')) {
-                $stmtV = $conn->prepare("SELECT estado, fecha_vencimiento FROM cotizaciones WHERE id = ? LIMIT 1");
-                if ($stmtV) {
-                    $stmtV->bind_param("i", $cotizacionId);
-                    $stmtV->execute();
-                    $rowV = $stmtV->get_result()->fetch_assoc();
-                    $stmtV->close();
+            foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
+                $estadoCot = strtolower(trim((string)($cotizacionBloqueada['estado'] ?? '')));
+                if (in_array($estadoCot, ['anulada', 'anulado', 'pagado'], true)) {
+                    throw new \Exception('Una de las cotizaciones seleccionadas ya no admite cobro. Refresca la pantalla e inténtalo nuevamente.');
+                }
 
-                    if ($rowV) {
-                        $estadoCot = strtolower(trim((string)($rowV['estado'] ?? '')));
-                        $fechaVenc = trim((string)($rowV['fecha_vencimiento'] ?? ''));
-                        if ($fechaVenc !== '' && in_array($estadoCot, ['pendiente', 'parcial'], true)) {
-                            $tsVence = strtotime($fechaVenc);
-                            if ($tsVence !== false && time() > $tsVence) {
-                                throw new \Exception('La cotización está vencida y no puede cobrarse. Solicita una recotización.');
-                            }
-                        }
+                $fechaVenc = trim((string)($cotizacionBloqueada['fecha_vencimiento'] ?? ''));
+                if ($fechaVenc !== '' && in_array($estadoCot, ['pendiente', 'parcial'], true)) {
+                    $tsVence = strtotime($fechaVenc);
+                    if ($tsVence !== false && time() > $tsVence) {
+                        throw new \Exception('Una de las cotizaciones seleccionadas está vencida y no puede cobrarse. Solicita una recotización.');
                     }
                 }
             }
@@ -1190,10 +1719,21 @@ class CobroModule
             // Aplicar descuento proporcional a cada item para mantener consistencia
             // entre caja, honorarios, derivaciones y farmacia.
             $data['detalles'] = self::distribuirDescuentoProporcionalEnDetalles($data['detalles'], $montoDescuento);
+            $resumenPorCotizacion = self::construirResumenCobroPorCotizacion($data['detalles']);
+            if (empty($resumenPorCotizacion) && $cotizacionId > 0) {
+                $resumenPorCotizacion[$cotizacionId] = [
+                    'cotizacion_id' => $cotizacionId,
+                    'monto_original' => round($montoOriginal, 2),
+                    'descuento_aplicado' => round($montoDescuento, 2),
+                    'monto_aplicado' => round($totalCobro, 2),
+                    'orden_aplicacion' => 1,
+                ];
+            }
 
             $data['monto_original'] = $montoOriginal;
             $data['monto_descuento'] = $montoDescuento;
             $data['total'] = $totalCobro;
+            $data['cotizacion_ids'] = $cotizacionIdsFlujo;
 
             // Validar que exista una caja abierta antes de cualquier registro
             $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
@@ -1208,11 +1748,27 @@ class CobroModule
             $cobro_id = self::registrarCobro($conn, $data);
             // Registrar descuento aplicado si corresponde
             self::registrarDescuento($conn, $data, $cobro_id);
+            self::registrarCobroCotizaciones(
+                $conn,
+                $cobro_id,
+                $resumenPorCotizacion,
+                $cotizacionesBloqueadas,
+                (int)($data['usuario_id'] ?? 0)
+            );
+
+            // Espejo analitico itemizado para clasificar produccion medica vs venta directa.
+            self::registrarProduccionMedicaDetalle(
+                $conn,
+                $data,
+                $cobro_id,
+                (int)$caja_id,
+                $caja_abierta['turno'] ?? ($data['turno'] ?? null)
+            );
 
             // Caja ya validada arriba; usar datos para registrar ingreso
 
             $cotizacionIdFlujo = self::resolverCotizacionIdDesdeCobro($data);
-            $usarHonorarioDiferido = $cotizacionIdFlujo > 0;
+            $usarHonorarioDiferido = !empty($cotizacionIdsFlujo);
 
             // Registrar movimientos de laboratorio de referencia
             foreach ($data['detalles'] as $detalle) {
@@ -1279,7 +1835,7 @@ class CobroModule
                     }
                 }
                 // Modificar el registro de honorarios para guardar el id retornado
-                if (in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento']) && !empty($data['detalles'])) {
+                if (!empty($data['detalles'])) {
                     foreach ($data['detalles'] as $i => $detalleServicio) {
                         $detalleServicioKey = self::normalizarServicioTipo($detalleServicio['servicio_tipo'] ?? $servicio_key);
                         if (!in_array($detalleServicioKey, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento'], true)) {
@@ -1450,7 +2006,7 @@ class CobroModule
                                             $detalleServicioKey,
                                             $metodo_pago,
                                             $cobro_id,
-                                            $cotizacionIdFlujo,
+                                            (int)($detalleServicio['cotizacion_id'] ?? $cotizacionIdFlujo),
                                             (int)($_SESSION['usuario']['id'] ?? $usuario_id_param),
                                             (int)$caja_id,
                                             $turno_param
@@ -1518,7 +2074,7 @@ class CobroModule
                         $dni_paciente,
                         $hc_paciente,
                         $data['usuario_id'],
-                        $cotizacionId
+                        (int)($detalle['cotizacion_id'] ?? $cotizacionId)
                     );
                 }
             }
@@ -1526,6 +2082,10 @@ class CobroModule
             // ...el bloque de registro de honorarios médicos ya se ejecuta arriba, no repetir aquí...
 
             // Registro de atención
+            $servicio_key = $data['servicio_info']['key'] ?? '';
+            if (!in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento', 'hospitalizacion'], true)) {
+                $servicio_key = self::normalizarServicioTipo($data['detalles'][0]['servicio_tipo'] ?? 'consulta');
+            }
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
                 $ok = AtencionModule::registrarAtencion($conn, $data['paciente_id'], $data['usuario_id'], $servicio_key);
                 if (!$ok) {
@@ -1534,15 +2094,19 @@ class CobroModule
             }
 
             // Sincronizar cotización en el mismo flujo del cobro para evitar desfaces
-            $cotizacionIdSync = $cotizacionIdFlujo;
-            if ($cotizacionIdSync > 0) {
+            foreach ($resumenPorCotizacion as $resumenCotizacion) {
+                $cotizacionIdSync = (int)($resumenCotizacion['cotizacion_id'] ?? 0);
+                if ($cotizacionIdSync <= 0) {
+                    continue;
+                }
+
                 self::sincronizarAbonoCotizacionDesdeCobro(
                     $conn,
                     $cotizacionIdSync,
                     $cobro_id,
-                    (float)($data['total'] ?? 0),
+                    (float)($resumenCotizacion['monto_aplicado'] ?? 0),
                     (int)($data['usuario_id'] ?? 0),
-                    (float)($data['monto_descuento'] ?? 0)
+                    (float)($resumenCotizacion['descuento_aplicado'] ?? 0)
                 );
 
                 if (self::cotizacionEstaPagada($conn, $cotizacionIdSync)) {
@@ -1595,8 +2159,18 @@ class CobroModule
         $stmt->execute();
         $cobro_id = $conn->insert_id;
         // Insertar detalles del cobro
-        $servicio_tipo = $data['detalles'][0]['servicio_tipo'];
-        $servicio_id = $data['detalles'][0]['tarifa_id'] ?? ($data['detalles'][0]['servicio_id'] ?? null);
+        $tiposServicio = [];
+        foreach ($data['detalles'] as $detalle) {
+            $tipoDetalle = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
+            if ($tipoDetalle !== '') {
+                $tiposServicio[$tipoDetalle] = true;
+            }
+        }
+        $tiposServicio = array_keys($tiposServicio);
+        $servicio_tipo = count($tiposServicio) === 1 ? $tiposServicio[0] : 'mixto';
+        $servicio_id = count($data['detalles']) === 1
+            ? ($data['detalles'][0]['tarifa_id'] ?? ($data['detalles'][0]['servicio_id'] ?? null))
+            : null;
         $descripcion_json = json_encode($data['detalles']);
         $cantidad = count($data['detalles']);
         $precio_unitario = array_sum(array_map(function ($d) {

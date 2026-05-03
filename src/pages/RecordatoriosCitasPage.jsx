@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 
@@ -154,6 +154,10 @@ export default function RecordatoriosCitasPage() {
   const [filaActivaId, setFilaActivaId] = useState(null);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [statsGlobal, setStatsGlobal] = useState({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
+  const [prioridadGlobal, setPrioridadGlobal] = useState({ critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 });
 
   const cargar = async () => {
     setLoading(true);
@@ -165,19 +169,40 @@ export default function RecordatoriosCitasPage() {
         origen_consulta: origenConsulta,
         busqueda: busqueda.trim(),
         solo_sin_gestion: soloSinGestion ? "1" : "0",
+        page: String(page),
+        per_page: String(rowsPerPage),
         _t: String(Date.now()),
       });
-      const res = await fetch(`${BASE_URL}api_recordatorios_citas.php?${params.toString()}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await authFetch(`api_recordatorios_citas.php?${params.toString()}`);
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || "No se pudo cargar recordatorios");
       }
       setItems(Array.isArray(data.items) ? data.items : []);
+      setTotalItems(Number(data?.pagination?.total ?? data?.total ?? 0));
+      setTotalPages(Math.max(1, Number(data?.pagination?.total_pages ?? 1)));
+      setStatsGlobal({
+        urgentes: Number(data?.stats?.urgentes || 0),
+        hoy: Number(data?.stats?.hoy || 0),
+        sin_telefono: Number(data?.stats?.sin_telefono || 0),
+        confirmadas: Number(data?.stats?.confirmadas || 0),
+        atendidas: Number(data?.stats?.atendidas || 0),
+      });
+      setPrioridadGlobal({
+        critico: Number(data?.prioridad?.critico || 0),
+        alto: Number(data?.prioridad?.alto || 0),
+        normal: Number(data?.prioridad?.normal || 0),
+        bajo: Number(data?.prioridad?.bajo || 0),
+        atendido: Number(data?.prioridad?.atendido || 0),
+        resuelto: Number(data?.prioridad?.resuelto || 0),
+      });
     } catch (err) {
       setError(err.message || "Error cargando recordatorios");
+      setItems([]);
+      setTotalItems(0);
+      setTotalPages(1);
+      setStatsGlobal({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
+      setPrioridadGlobal({ critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 });
     } finally {
       setLoading(false);
     }
@@ -187,6 +212,11 @@ export default function RecordatoriosCitasPage() {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dias, estadoGestion, origenConsulta, soloSinGestion]);
+
+  useEffect(() => {
+    cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, rowsPerPage]);
 
   useEffect(() => {
     setPage(1);
@@ -200,17 +230,13 @@ export default function RecordatoriosCitasPage() {
     [items]
   );
 
-  const metricas = useMemo(() => {
-    const urgentes = items.filter((item) => {
-      const d = diasParaCita(item.fecha);
-      return d !== null && d <= 1 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
-    }).length;
-    const hoy = items.filter((item) => diasParaCita(item.fecha) === 0).length;
-    const sinTelefono = items.filter((item) => !String(item.paciente_telefono || "").trim()).length;
-    const confirmadas = items.filter((item) => item.estado_gestion === "confirmado").length;
-    const atendidas = items.filter((item) => consultaAtendidaEnHC(item)).length;
-    return { urgentes, hoy, sinTelefono, confirmadas, atendidas };
-  }, [items]);
+  const metricas = useMemo(() => ({
+    urgentes: Number(statsGlobal.urgentes || 0),
+    hoy: Number(statsGlobal.hoy || 0),
+    sinTelefono: Number(statsGlobal.sin_telefono || 0),
+    confirmadas: Number(statsGlobal.confirmadas || 0),
+    atendidas: Number(statsGlobal.atendidas || 0),
+  }), [statsGlobal]);
 
   const itemsVista = useMemo(() => {
     if (vistaRapida === "criticos") {
@@ -261,37 +287,24 @@ export default function RecordatoriosCitasPage() {
     return enriched;
   }, [itemsVista]);
 
-  const resumenPrioridad = useMemo(() => {
-    const resumen = { critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 };
-    itemsPriorizados.forEach((i) => {
-      const key = i.prioridad?.nivel || "normal";
-      resumen[key] = (resumen[key] || 0) + 1;
-    });
-    return resumen;
-  }, [itemsPriorizados]);
+  const resumenPrioridad = useMemo(() => ({
+    critico: Number(prioridadGlobal.critico || 0),
+    alto: Number(prioridadGlobal.alto || 0),
+    normal: Number(prioridadGlobal.normal || 0),
+    bajo: Number(prioridadGlobal.bajo || 0),
+    atendido: Number(prioridadGlobal.atendido || 0),
+    resuelto: Number(prioridadGlobal.resuelto || 0),
+  }), [prioridadGlobal]);
 
   const siguienteLlamada = useMemo(
     () => itemsPriorizados.find((item) => !["confirmado", "cancelado"].includes(String(item.estado_gestion || "")) && !consultaAtendidaEnHC(item)) || null,
     [itemsPriorizados]
   );
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(itemsPriorizados.length / rowsPerPage)),
-    [itemsPriorizados.length, rowsPerPage]
-  );
-
-  const itemsPaginados = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    return itemsPriorizados.slice(start, start + rowsPerPage);
-  }, [itemsPriorizados, page, rowsPerPage]);
+  const itemsPaginados = itemsPriorizados;
 
   const enfocarSiguienteLlamada = () => {
     if (!siguienteLlamada) return;
-    const idx = itemsPriorizados.findIndex((item) => item.id === siguienteLlamada.id);
-    if (idx >= 0) {
-      const targetPage = Math.floor(idx / rowsPerPage) + 1;
-      setPage(targetPage);
-    }
     setFilaActivaId(siguienteLlamada.id);
     window.setTimeout(() => {
       const el = document.getElementById(`rc-row-${siguienteLlamada.id}`);
@@ -336,10 +349,9 @@ export default function RecordatoriosCitasPage() {
     setSavingId(item.id);
     setMensaje("");
     try {
-      const res = await fetch(`${BASE_URL}api_recordatorios_citas.php`, {
+      const res = await authFetch(`api_recordatorios_citas.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           consulta_id: item.id,
           estado,
@@ -370,10 +382,9 @@ export default function RecordatoriosCitasPage() {
     setSavingId(item.id);
     setMensaje("");
     try {
-      const res = await fetch(`${BASE_URL}api_recordatorios_citas.php`, {
+      const res = await authFetch(`api_recordatorios_citas.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ action: "crear_cotizacion", consulta_id: item.id }),
       });
       const data = await res.json();
@@ -722,7 +733,7 @@ export default function RecordatoriosCitasPage() {
           <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3 text-slate-600">
               <span>
-                Mostrando {itemsPaginados.length} de {itemsPriorizados.length} registro(s)
+                Mostrando {itemsPaginados.length} de {totalItems} registro(s)
               </span>
               <div className="flex items-center gap-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filas</label>

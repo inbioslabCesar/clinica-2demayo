@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 export default function useCajaActual() {
   const [caja, setCaja] = useState(null);
@@ -7,7 +7,7 @@ export default function useCajaActual() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch(BASE_URL + "api_caja_actual.php", { credentials: "include" })
+    authFetch("api_caja_actual.php")
       .then(res => res.json())
       .then(data => {
         if (data.success) {

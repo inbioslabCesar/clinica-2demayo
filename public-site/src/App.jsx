@@ -150,10 +150,10 @@ function getDefaultSistemaUrl() {
 
   const normalizedHost = hostname.replace(/^www\./i, '')
   if (/^sistema\./i.test(normalizedHost)) {
-    return `${window.location.protocol}//${normalizedHost}/`
+    return `${window.location.protocol}//${window.location.host}/`
   }
 
-  return `https://sistema.${normalizedHost}/`
+  return `${window.location.protocol}//${window.location.host}/sistema/`
 }
 
 const SISTEMA_URL = ((import.meta.env.VITE_SISTEMA_URL || getDefaultSistemaUrl()) + '').replace(/\/+$/, '') + '/'

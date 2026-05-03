@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import Swal from "sweetalert2";
 import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
@@ -43,7 +43,7 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
     if (!medico?.id) return;
     setLoadingBloques(true);
     const mesStr = String(mes).padStart(2, "0");
-    fetch(`${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medico.id}`, { credentials: "include" })
+    authFetch(`api_disponibilidad_medicos.php?medico_id=${medico.id}`)
       .then(r => r.json())
       .then(data => {
         const prefix = `${anio}-${mesStr}`;
@@ -106,10 +106,9 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
 
     setLoading(true);
     try {
-      const res = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
+      const res = await authFetch("api_disponibilidad_medicos.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           accion: "programar_mes",
           medico_id: medico.id,
@@ -123,7 +122,7 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
         Swal.fire({ icon: "success", title: data.mensaje || "Horario programado", timer: 2500, showConfirmButton: false });
         // Recargar bloques
         const mesStr = String(mes).padStart(2, "0");
-        const res2 = await fetch(`${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medico.id}`, { credentials: "include" });
+        const res2 = await authFetch(`api_disponibilidad_medicos.php?medico_id=${medico.id}`);
         const data2 = await res2.json();
         const prefix = `${anio}-${mesStr}`;
         setBloques((data2.disponibilidad || []).filter(b => String(b.fecha || "").startsWith(prefix)));
@@ -150,10 +149,9 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
     if (!conf.isConfirmed) return;
     setLoading(true);
     try {
-      const res = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
+      const res = await authFetch("api_disponibilidad_medicos.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ accion: "limpiar_mes", medico_id: medico.id, anio, mes }),
       });
       const data = await res.json();

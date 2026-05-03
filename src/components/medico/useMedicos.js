@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function useMedicos({ initialBusqueda = "", initialPage = 1, initialRowsPerPage = 5 } = {}) {
   const [medicos, setMedicos] = useState([]);
@@ -19,7 +19,7 @@ export default function useMedicos({ initialBusqueda = "", initialPage = 1, init
       limit: rowsPerPage,
       busqueda: busqueda.trim(),
     });
-    fetch(`${BASE_URL}api_medicos.php?${params.toString()}`)
+    authFetch(`api_medicos.php?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
         if (data.success) {
@@ -43,11 +43,10 @@ export default function useMedicos({ initialBusqueda = "", initialPage = 1, init
     setError("");
     let result;
     try {
-      const res = await fetch(`${BASE_URL}api_medicos.php`, {
+      const res = await authFetch("api_medicos.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(medico),
-        credentials: "include"
       });
       const data = await res.json();
       if (data.success && data.medico) {
@@ -80,7 +79,7 @@ export default function useMedicos({ initialBusqueda = "", initialPage = 1, init
     setLoading(true);
     let result;
     try {
-      const res = await fetch(`${BASE_URL}api_medicos.php`, {
+      const res = await authFetch("api_medicos.php", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: medico.id })

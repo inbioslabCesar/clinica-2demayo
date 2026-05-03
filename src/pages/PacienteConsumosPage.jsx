@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 function PacienteConsumosPage({ pacienteId }) {
   const [consumos, setConsumos] = useState([]);
@@ -16,7 +16,7 @@ function PacienteConsumosPage({ pacienteId }) {
     if (fechaInicio) url += `&fecha_inicio=${fechaInicio}`;
     if (fechaFin) url += `&fecha_fin=${fechaFin}`;
     if (area) url += `&area=${encodeURIComponent(area)}`;
-    fetch(url, { credentials: "include" })
+    authFetch(url)
       .then(res => res.json())
       .then(data => {
         setConsumos(Array.isArray(data) ? data : []);

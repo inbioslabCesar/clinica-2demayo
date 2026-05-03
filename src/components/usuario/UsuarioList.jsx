@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import Spinner from "../comunes/Spinner";
 import Swal from 'sweetalert2';
 import UsuarioForm from "./UsuarioForm";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 function UsuarioModal({ open, onClose, initialData, onSave, loading }) {
   if (!open) return null;
@@ -66,7 +66,7 @@ function UsuarioList() {
 
   const fetchUsuarios = () => {
     setLoading(true);
-  fetch(BASE_URL + "api_usuarios.php", { credentials: "include" })
+  authFetch("api_usuarios.php")
       .then(res => res.json())
       .then(data => {
         setUsuarios(Array.isArray(data) ? data : data.usuarios || []);
@@ -129,7 +129,7 @@ function UsuarioList() {
       cancelButtonText: 'Cancelar'
     }).then((result) => {
       if (result.isConfirmed) {
-        fetch(BASE_URL + `api_usuarios.php?id=${id}`, { method: "DELETE", credentials: "include" })
+        authFetch(`api_usuarios.php?id=${id}`, { method: "DELETE" })
           .then(res => res.json())
           .then((data) => {
             if (data.success) {
@@ -153,9 +153,8 @@ function UsuarioList() {
     // Para edición, agregar el ID al form
     const dataToSend = isEditing ? { ...form, id: editData.id } : form;
     
-    fetch(BASE_URL + "api_usuarios.php", {
+    authFetch("api_usuarios.php", {
       method: method,
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(dataToSend)
     })

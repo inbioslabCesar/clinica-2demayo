@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function ResultadosLaboratorio({ resultadosLab }) {
   const [examenes, setExamenes] = useState([]);
   useEffect(() => {
-    fetch(BASE_URL + "api_examenes_laboratorio.php", { credentials: 'include' })
+    authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
       .then(data => setExamenes(data.examenes || []));
   }, []);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 const emptyDetalle = {
   dosis: "",
@@ -62,10 +62,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
     }
 
     setLoading(true);
-    fetch(
-      `${BASE_URL}api_medicamentos.php?busqueda=${encodeURIComponent(busqueda)}`,
-      { credentials: "include" }
-    )
+    authFetch(`api_medicamentos.php?busqueda=${encodeURIComponent(busqueda)}`)
       .then((res) => res.json())
       .then((data) => setResultados(Array.isArray(data) ? data : []))
       .finally(() => setLoading(false));
@@ -176,17 +173,33 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       {resultados.length > 0 && !medicamentoSel && (
         <div className="border rounded bg-white shadow max-h-40 overflow-y-auto mb-2">
           {resultados.map((m) => (
-            <div
-              key={m.codigo}
-              className="px-2 py-1 hover:bg-blue-100 cursor-pointer text-sm"
-              onClick={() => {
-                setMedicamentoSel(m);
-                setModoManual(false);
-                setManualNombre("");
-              }}
-            >
-              {m.nombre} <span className="text-gray-500">({m.codigo})</span>
-            </div>
+            (() => {
+              const stock = Number(m?.stock || 0);
+              const sinStock = stock <= 0;
+              return (
+                <div
+                  key={m.id || m.codigo}
+                  className={`px-2 py-1 text-sm flex items-center justify-between gap-2 ${sinStock ? "bg-red-50 text-gray-500 cursor-not-allowed" : "hover:bg-blue-100 cursor-pointer"}`}
+                  onClick={() => {
+                    if (sinStock) return;
+                    setMedicamentoSel(m);
+                    setModoManual(false);
+                    setManualNombre("");
+                  }}
+                  title={sinStock ? "Sin stock en farmacia" : "Seleccionar medicamento"}
+                  aria-disabled={sinStock}
+                >
+                  <span>
+                    {m.nombre} <span className="text-gray-500">({m.codigo})</span>
+                  </span>
+                  {sinStock && (
+                    <span className="text-[11px] font-semibold text-red-700 bg-red-100 border border-red-200 rounded px-2 py-0.5">
+                      Sin Stock
+                    </span>
+                  )}
+                </div>
+              );
+            })()
           ))}
         </div>
       )}

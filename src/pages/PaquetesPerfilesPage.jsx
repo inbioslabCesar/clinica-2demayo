@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const SOURCE_TYPES = [
   { value: "consulta", label: "Consulta" },
@@ -101,10 +101,7 @@ export default function PaquetesPerfilesPage() {
       if (q.trim()) params.set("q", q.trim());
       if (estado) params.set("estado", estado);
 
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php?${params.toString()}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await authFetch(`api_paquetes_perfiles.php?${params.toString()}`);
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "No se pudo cargar");
       setRows(Array.isArray(data.rows) ? data.rows : []);
@@ -142,10 +139,7 @@ export default function PaquetesPerfilesPage() {
 
   const editRow = async (id) => {
     try {
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php?paquete_id=${id}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await authFetch(`api_paquetes_perfiles.php?paquete_id=${id}`);
       const data = await res.json();
       if (!data?.success || !data?.paquete) throw new Error(data?.error || "No se pudo cargar paquete");
       const p = data.paquete;
@@ -186,14 +180,14 @@ export default function PaquetesPerfilesPage() {
       params.set("source_type", itemDraft.source_type);
       params.set("q", catalogQ);
       params.set("limit", "25");
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php?${params.toString()}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await authFetch(`api_paquetes_perfiles.php?${params.toString()}`);
       const data = await res.json();
-      if (!data?.success) throw new Error(data?.error || "No se pudo consultar catalogo");
-      setCatalogResults(Array.isArray(data.items) ? data.items : []);
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo consultar catalogo");
+      }
+      setCatalogResults(Array.isArray(data?.items) ? data.items : []);
     } catch (err) {
+      setCatalogResults([]);
       Swal.fire("Error", err?.message || "No se pudo consultar catalogo", "error");
     } finally {
       setCatalogLoading(false);
@@ -254,10 +248,9 @@ export default function PaquetesPerfilesPage() {
         })),
       };
 
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php`, {
+      const res = await authFetch(`api_paquetes_perfiles.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
       const data = await res.json();
@@ -276,10 +269,9 @@ export default function PaquetesPerfilesPage() {
 
   const setEstadoRow = async (id, nextEstado) => {
     try {
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php`, {
+      const res = await authFetch(`api_paquetes_perfiles.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ accion: "estado", id, estado: nextEstado }),
       });
       const data = await res.json();
@@ -302,10 +294,9 @@ export default function PaquetesPerfilesPage() {
     if (!confirm.isConfirmed) return;
 
     try {
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php`, {
+      const res = await authFetch(`api_paquetes_perfiles.php`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ id }),
       });
       const data = await res.json();

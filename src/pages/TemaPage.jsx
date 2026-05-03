@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTheme } from "../context/useTheme";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import { Icon } from "@fluentui/react";
 
 function ColorSwatch({ color, label, onChange, name }) {
@@ -193,10 +193,9 @@ export default function TemaPage() {
           }
         : { preset: activePreset, public_layout: publicLayout };
 
-      const res = await fetch(`${BASE_URL}api_tema.php`, {
+      const res = await authFetch(`api_tema.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
       const data = await res.json();

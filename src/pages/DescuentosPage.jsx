@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { BASE_URL } from "../config/config";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
+import { authFetch } from "../utils/apiClient";
 
 
 export default function DescuentosPage() {
@@ -19,18 +19,31 @@ export default function DescuentosPage() {
 
   const cargarDescuentos = async () => {
     setLoading(true);
-    const params = new URLSearchParams({
-      fecha: fecha,
-      limit: registrosPorPagina,
-      offset: (pagina - 1) * registrosPorPagina
-    });
-    const res = await fetch(`${BASE_URL}api_descuentos.php?${params}`);
-    const data = await res.json();
-    if (data.success) {
-      setDescuentos(data.descuentos);
-      setTotal(data.total);
+    try {
+      const params = new URLSearchParams({
+        fecha: fecha,
+        limit: registrosPorPagina,
+        offset: (pagina - 1) * registrosPorPagina
+      });
+      const res = await authFetch(`api_descuentos.php?${params}`, {
+        cache: 'no-store'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDescuentos(data.descuentos || []);
+        setTotal(data.total || 0);
+      } else {
+        console.warn('Error en respuesta de descuentos:', data);
+        setDescuentos([]);
+        setTotal(0);
+      }
+    } catch (err) {
+      console.error('Error al cargar descuentos:', err);
+      setDescuentos([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Columnas para exportación

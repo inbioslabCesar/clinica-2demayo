@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import Spinner from "../components/comunes/Spinner";
 import Swal from "sweetalert2";
 import {
@@ -60,8 +60,8 @@ function ModalSubir({ orden, onClose, onSubido }) {
     fd.append("orden_id", orden.id);
     archivos.forEach((f) => fd.append("archivos[]", f));
     try {
-      const res = await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
-        method: "POST", credentials: "include", body: fd,
+      const res = await authFetch(`api_ordenes_imagen.php`, {
+        method: "POST", body: fd,
       });
       const d = await res.json();
       if (d.success) {
@@ -158,9 +158,8 @@ function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
   const handleEliminarArchivo = async (archivoId) => {
     const { isConfirmed } = await Swal.fire({ title: "¿Eliminar archivo?", icon: "warning", showCancelButton: true, confirmButtonText: "Sí, eliminar", cancelButtonText: "Cancelar" });
     if (!isConfirmed) return;
-    await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
+    await authFetch(`api_ordenes_imagen.php`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "eliminar_archivo", archivo_id: archivoId }),
     });
     onRecargar();
@@ -181,9 +180,8 @@ function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
     }
     setToggling(true);
     try {
-      await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
+      await authFetch(`api_ordenes_imagen.php`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "toggle_anticipada", orden_id: orden.id, valor: nuevoValor }),
       });
       onRecargar();
@@ -362,7 +360,7 @@ export default function OrdenesImagenPacientePage() {
 
   const cargar = useCallback(() => {
     setLoading(true);
-    fetch(`${BASE_URL}api_ordenes_imagen.php?paciente_id=${pacienteId}`, { credentials: "include" })
+    authFetch(`api_ordenes_imagen.php?paciente_id=${pacienteId}`)
       .then((r) => r.json())
       .then((d) => { if (d.success) setOrdenes(d.ordenes || []); })
       .catch(() => {})
@@ -372,7 +370,7 @@ export default function OrdenesImagenPacientePage() {
   useEffect(() => { cargar(); }, [cargar]);
 
   useEffect(() => {
-    fetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, { credentials: "include" })
+    authFetch(`api_pacientes.php?id=${pacienteId}`)
       .then((r) => r.json())
       .then((d) => { if (d.paciente) setPaciente(d.paciente); })
       .catch(() => {});
@@ -395,9 +393,8 @@ export default function OrdenesImagenPacientePage() {
 
       setIntentadoGenerarDesdeCotizacion(true);
       try {
-        const res = await fetch(`${BASE_URL}api_ordenes_imagen.php`, {
+        const res = await authFetch(`api_ordenes_imagen.php`, {
           method: "POST",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "crear_desde_cotizacion",

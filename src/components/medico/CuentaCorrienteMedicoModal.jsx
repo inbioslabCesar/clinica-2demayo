@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import Swal from "sweetalert2";
 import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
@@ -22,9 +22,7 @@ export default function CuentaCorrienteMedicoModal({ medico, rolUsuario, onClose
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${BASE_URL}api_medico_cuenta_corriente.php?medico_id=${medico.id}`, {
-        credentials: "include",
-      });
+      const res = await authFetch(`api_medico_cuenta_corriente.php?medico_id=${medico.id}`);
       const json = await res.json();
       if (json.success) {
         setData(json);
@@ -59,10 +57,9 @@ export default function CuentaCorrienteMedicoModal({ medico, rolUsuario, onClose
     }
     setGuardando(true);
     try {
-      const res = await fetch(`${BASE_URL}api_medico_cuenta_corriente.php`, {
+      const res = await authFetch("api_medico_cuenta_corriente.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           accion: "registrar_adelanto",
           medico_id: medico.id,
@@ -98,10 +95,9 @@ export default function CuentaCorrienteMedicoModal({ medico, rolUsuario, onClose
     });
     if (!conf.isConfirmed) return;
     try {
-      const res = await fetch(`${BASE_URL}api_medico_cuenta_corriente.php`, {
+      const res = await authFetch("api_medico_cuenta_corriente.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ accion: "anular_adelanto", id: adelanto.id }),
       });
       const json = await res.json();

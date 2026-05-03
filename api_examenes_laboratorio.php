@@ -33,6 +33,18 @@ function decode_valores_referenciales_any($raw) {
     return $value;
 }
 
+// Genera un slug estable (codigo_interno) a partir del nombre de un parámetro.
+// Solo se usa si el parámetro no trae ya uno; una vez asignado, es inmutable.
+function generar_codigo_interno($nombre, $idx) {
+    // Normalizar: minúsculas, quitar acentos, reemplazar no-alfanumérico por guión bajo
+    $s = mb_strtolower(trim((string)$nombre), 'UTF-8');
+    $s = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+    $s = preg_replace('/[^a-z0-9]+/', '_', $s);
+    $s = trim($s, '_');
+    if ($s === '') $s = 'param_' . ($idx + 1);
+    return $s;
+}
+
 // Helper: normalizar valores_referenciales recibidos desde frontend
 function normalize_valores_referenciales($raw) {
     if (!$raw) return json_encode([] , JSON_UNESCAPED_UNICODE);
@@ -44,6 +56,10 @@ function normalize_valores_referenciales($raw) {
         $item = [];
         $item['tipo'] = $it['tipo'] ?? 'Parámetro';
         $item['nombre'] = $it['nombre'] ?? ($it['titulo'] ?? ('Item ' . ($idx + 1)));
+        // codigo_interno: preservar si ya existe (inmutable), generar si falta
+        $item['codigo_interno'] = (isset($it['codigo_interno']) && trim((string)$it['codigo_interno']) !== '')
+            ? trim((string)$it['codigo_interno'])
+            : generar_codigo_interno($item['nombre'], $idx);
         $item['metodologia'] = $it['metodologia'] ?? '';
         $item['unidad'] = $it['unidad'] ?? '';
     $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
@@ -107,6 +123,9 @@ switch ($method) {
                 $item['nombre'] = isset($it['nombre']) && trim($it['nombre']) !== ''
                     ? $it['nombre']
                     : (isset($it['titulo']) && trim($it['titulo']) !== '' ? $it['titulo'] : $fallbackNombre);
+                $item['codigo_interno'] = (isset($it['codigo_interno']) && trim((string)$it['codigo_interno']) !== '')
+                    ? trim((string)$it['codigo_interno'])
+                    : generar_codigo_interno($item['nombre'], $idx);
                 $item['metodologia'] = isset($it['metodologia']) ? $it['metodologia'] : '';
                 $item['unidad'] = isset($it['unidad']) ? $it['unidad'] : '';
                 $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];

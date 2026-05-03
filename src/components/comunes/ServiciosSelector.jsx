@@ -2,7 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import CobroModuloFinal from "../cobro/CobroModuloFinal";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 import { useEffect } from "react";
 
@@ -26,7 +26,7 @@ function ServiciosSelector({ paciente }) {
 
   useEffect(() => {
     // Obtener servicios de tarifas activos y filtrar los excluidos
-    fetch(BASE_URL + "api_tarifas.php", { credentials: "include" })
+    authFetch("api_tarifas.php")
       .then(r => r.json())
       .then(data => {
         if (data.success && Array.isArray(data.tarifas)) {
@@ -97,7 +97,7 @@ function ServiciosSelector({ paciente }) {
       return;
     }
     try {
-      const res = await fetch(BASE_URL + "api_atenciones.php", {
+      const res = await authFetch("api_atenciones.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

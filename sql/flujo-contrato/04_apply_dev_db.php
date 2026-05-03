@@ -15,6 +15,7 @@ $scripts = [
     $baseDir . '/09_backfill_fecha_limite_liquidacion.sql',
     $baseDir . '/08_verificacion_finanzas_alerta.sql',
     $baseDir . '/10_auditoria_consolidada_contratos.sql',
+    $baseDir . '/33_estado_pagado_contrato_costo_cero.sql',
 ];
 
 foreach ($scripts as $file) {

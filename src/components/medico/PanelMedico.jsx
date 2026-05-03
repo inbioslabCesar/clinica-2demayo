@@ -4,7 +4,7 @@ import useDisponibilidadMedico from "../../hooks/useDisponibilidadMedico";
 import Spinner from "../comunes/Spinner";
 import { useEffect, useState, useCallback } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import Swal from 'sweetalert2';
 import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
@@ -33,7 +33,7 @@ function PanelMedico() {
     let cancelled = false;
     const fetchMedicoObjetivo = async () => {
       try {
-        const res = await fetch(`${BASE_URL}api_medicos.php`, { credentials: "include" });
+        const res = await authFetch("api_medicos.php");
         const data = await res.json();
         const medico = (data.medicos || []).find((m) => Number(m.id) === Number(medicoId));
         if (!cancelled && medico) {
@@ -87,9 +87,7 @@ function PanelMedico() {
   const fetchBloques = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${BASE_URL}api_disponibilidad_medicos.php?medico_id=${medicoId}`, {
-        credentials: "include"
-      });
+      const response = await authFetch(`api_disponibilidad_medicos.php?medico_id=${medicoId}`);
       const data = await response.json();
       setBloquesGuardados(data.disponibilidad || []);
     } catch {
@@ -105,10 +103,9 @@ function PanelMedico() {
   // Guardar disponibilidad (enviar al backend)
   const handleSaveDisponibilidad = async (bloques) => {
     try {
-      const response = await fetch(`${BASE_URL}api_disponibilidad_medicos.php`, {
+      const response = await authFetch("api_disponibilidad_medicos.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ medico_id: medicoId, bloques })
       });
       const data = await response.json();

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { BASE_URL } from '../../config/config';
 import RowsSelector from './RowsSelector';
 import CajasCerradasTable from './CajasCerradasTable';
 import ConfirmModal from './ConfirmModal';
 import HistorialReaperturasPage from './HistorialReaperturasPage';
 import { useNavigate } from 'react-router-dom';
+import { authFetch } from '../../utils/apiClient';
 
 const ReabrirCajaPage = () => {
 	const [cajasCerradas, setCajasCerradas] = useState([]);
@@ -26,9 +26,7 @@ const ReabrirCajaPage = () => {
 	const cargarDatos = async () => {
 		try {
 			setLoading(true);
-			const response = await fetch(BASE_URL + 'api_cajas_cerradas.php', {
-				credentials: 'include'
-			});
+			const response = await authFetch('api_cajas_cerradas.php');
 			if (response.ok) {
 				const data = await response.json();
 				if (data.success) {
@@ -65,10 +63,9 @@ const ReabrirCajaPage = () => {
 		if (!cajaSeleccionada || !motivo.trim()) return;
 		setProcesando(true);
 		try {
-			const response = await fetch(BASE_URL + 'api_reabrir_caja.php', {
+			const response = await authFetch('api_reabrir_caja.php', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				credentials: 'include',
 				body: JSON.stringify({ caja_id: cajaSeleccionada.id, motivo })
 			});
 			if (response.ok) {

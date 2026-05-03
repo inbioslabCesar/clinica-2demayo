@@ -6,20 +6,54 @@ require_once __DIR__ . '/config.php';
 const LOGIN_MEDICO_MAX_ATTEMPTS = 5;
 const LOGIN_MEDICO_BLOCK_SECONDS = 300;
 
-function ensure_medicos_profesional_columns_login($conn) {
-    $checks = [
-        'tipo_profesional' => "ALTER TABLE medicos ADD COLUMN tipo_profesional VARCHAR(30) NOT NULL DEFAULT 'medico'",
-        'abreviatura_profesional' => "ALTER TABLE medicos ADD COLUMN abreviatura_profesional VARCHAR(20) NOT NULL DEFAULT 'Dr(a).'",
-        'colegio_sigla' => "ALTER TABLE medicos ADD COLUMN colegio_sigla VARCHAR(20) NULL",
-        'nro_colegiatura' => "ALTER TABLE medicos ADD COLUMN nro_colegiatura VARCHAR(30) NULL",
+function obtener_columnas_medicos_login($conn): array {
+    static $columns = null;
+    if (is_array($columns)) {
+        return $columns;
+    }
+
+    $columns = [];
+    $result = $conn->query('SHOW COLUMNS FROM medicos');
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $field = (string)($row['Field'] ?? '');
+            if ($field !== '') {
+                $columns[$field] = true;
+            }
+        }
+        $result->free();
+    }
+
+    return $columns;
+}
+
+function resolver_select_medico_login($conn): string {
+    $required = ['id', 'nombre', 'apellido', 'especialidad', 'email', 'password', 'cmp', 'rne', 'firma'];
+    $optional = [
+        'tipo_profesional' => "COALESCE(tipo_profesional, 'medico') AS tipo_profesional",
+        'abreviatura_profesional' => "COALESCE(abreviatura_profesional, 'Dr(a).') AS abreviatura_profesional",
+        'colegio_sigla' => 'colegio_sigla',
+        'nro_colegiatura' => 'nro_colegiatura',
     ];
 
-    foreach ($checks as $col => $sqlAlter) {
-        $exists = $conn->query("SHOW COLUMNS FROM medicos LIKE '{$col}'");
-        if ($exists && $exists->num_rows === 0) {
-            $conn->query($sqlAlter);
+    $columns = obtener_columnas_medicos_login($conn);
+    $parts = $required;
+    foreach ($optional as $column => $expr) {
+        if (!empty($columns[$column])) {
+            $parts[] = $expr;
+            continue;
+        }
+
+        if ($column === 'tipo_profesional') {
+            $parts[] = "'medico' AS tipo_profesional";
+        } elseif ($column === 'abreviatura_profesional') {
+            $parts[] = "'Dr(a).' AS abreviatura_profesional";
+        } else {
+            $parts[] = "NULL AS {$column}";
         }
     }
+
+    return implode(', ', $parts);
 }
 
 function obtenerRateLimitLoginMedico(string $email): array {
@@ -64,8 +98,6 @@ function limpiarRateLimitLoginMedico(string $email): void {
     unset($_SESSION['login_medico_rate_limit'][$limit['key']]);
 }
 
-ensure_medicos_profesional_columns_login($conn);
-
 $rawInput = file_get_contents('php://input');
 $data = json_decode($rawInput, true);
 
@@ -100,7 +132,8 @@ if ($loginLimit['blocked_until'] > time()) {
     exit;
 }
 
-$stmt = $conn->prepare('SELECT id, nombre, apellido, especialidad, email, password, cmp, rne, firma, tipo_profesional, abreviatura_profesional, colegio_sigla, nro_colegiatura FROM medicos WHERE email = ? LIMIT 1');
+$selectMedico = resolver_select_medico_login($conn);
+$stmt = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE email = ? LIMIT 1");
 $stmt->bind_param('s', $email);
 $stmt->execute();
 $result = $stmt->get_result();

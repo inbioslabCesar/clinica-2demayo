@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 import { FaArrowLeft, FaSearch } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import Spinner from "../components/comunes/Spinner";
@@ -17,7 +17,7 @@ export default function IngresosDetallePage() {
   const cargarIngresos = async () => {
     setLoading(true);
     try {
-      const res = await fetch(BASE_URL + "api_detalle_ingresos_hoy.php", { credentials: "include" });
+      const res = await authFetch("api_detalle_ingresos_hoy.php");
       const data = await res.json();
       if (data.success) {
         setIngresos(data.detalle || []);

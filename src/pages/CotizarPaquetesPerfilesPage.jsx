@@ -1,3 +1,4 @@
+import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
@@ -160,14 +161,19 @@ export default function CotizarPaquetesPerfilesPage() {
   }, [search, componentFilters, componentFilterMode, location.pathname, location.search, navigate]);
 
   useEffect(() => {
-    fetch(`${BASE_URL}api_pacientes.php?id=${Number(pacienteId)}`, { credentials: "include" })
+    authFetch(`${BASE_URL}api_pacientes.php?id=${Number(pacienteId)}`, {
+      credentials: "include",
+      cache: "no-store",
+    })
       .then((r) => r.json())
       .then((data) => {
         if (data?.success && data?.paciente) {
           setPaciente(data.paciente);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setPaciente(null);
+      });
   }, [pacienteId]);
 
   const loadPackages = async () => {
@@ -179,7 +185,7 @@ export default function CotizarPaquetesPerfilesPage() {
       params.set("limit", "100");
       if (search.trim()) params.set("q", search.trim());
 
-      const res = await fetch(`${BASE_URL}api_paquetes_perfiles.php?${params.toString()}`, {
+      const res = await authFetch(`${BASE_URL}api_paquetes_perfiles.php?${params.toString()}`, {
         credentials: "include",
         cache: "no-store",
       });
@@ -334,7 +340,7 @@ export default function CotizarPaquetesPerfilesPage() {
 
       let detallesFinales = detallesPaquete;
       if (isEditingCotizacion && cotizacionId > 0) {
-        const resGet = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, {
+        const resGet = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, {
           credentials: "include",
         });
         const dataGet = await resGet.json();
@@ -371,7 +377,7 @@ export default function CotizarPaquetesPerfilesPage() {
             observaciones: "Cotizacion registrada desde cotizador de Paquetes/Perfiles",
           };
 
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
