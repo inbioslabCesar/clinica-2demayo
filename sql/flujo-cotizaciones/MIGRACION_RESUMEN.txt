@@ -1,0 +1,292 @@
+===============================================================================
+FASE 1 HÍBRIDA - RESUMEN DE MIGRACIÓN PARA PRODUCCIÓN
+===============================================================================
+Fecha: 02/05/2026
+Status: ✅ LISTO PARA PRODUCCIÓN
+
+===============================================================================
+📁 ARCHIVOS GENERADOS
+===============================================================================
+
+Ubicación: c:\laragon\www\clinica-2demayo\sql\flujo-cotizaciones\
+
+┌─ ARCHIVO PRINCIPAL (Ejecutar Este)
+│  └─ 2026-05-02_fase1_hibrida_responsable_farmacia.sql
+│     ├─ Crea columna: responsable_farmacia_id INT NULL
+│     ├─ Crea índices: idx_responsable_farmacia_id, idx_resp_farm_estado
+│     ├─ Incluye verificaciones pre/post
+│     ├─ Idempotente (seguro ejecutar N veces)
+│     └─ Líneas: 365
+│
+├─ DOCUMENTACIÓN
+│  ├─ ARCHIVOS_MIGRACION.md
+│  │  └─ Índice completo + quick start
+│  ├─ FASE1_HIBRIDA_README.md
+│  │  └─ Guía detallada (3 opciones de ejecución)
+│  └─ Este archivo (MIGRACION_RESUMEN.txt)
+│
+└─ AUTOMACIÓN
+   └─ EJECUTAR_MIGRACION.sh
+      ├─ Script bash (Linux/WSL)
+      ├─ Checklist + ejecución + validación
+      └─ Listo para CI/CD
+
+===============================================================================
+🚀 OPCIÓN 1: EJECUCIÓN VÍA MySQL CLI (Recomendado)
+===============================================================================
+
+Comando:
+   mysql -u root -p poli2demayo < sql/flujo-cotizaciones/2026-05-02_fase1_hibrida_responsable_farmacia.sql
+
+Tiempo: ~30 segundos
+Downtime: 0
+Resultado esperado:
+   - Columna responsable_farmacia_id creada
+   - 2 índices creados
+   - Query de verificación muestra estadísticas
+
+===============================================================================
+🚀 OPCIÓN 2: EJECUCIÓN VÍA PHPMYADMIN (Alternativa)
+===============================================================================
+
+Pasos:
+   1. Abrir phpMyAdmin → Base de datos "poli2demayo"
+   2. Tab "SQL"
+   3. Copiar contenido completo de: 2026-05-02_fase1_hibrida_responsable_farmacia.sql
+   4. Click "Ejecutar"
+   5. Verificar resultados
+
+Tiempo: ~2 minutos (incluyendo copiar)
+Downtime: 0
+
+===============================================================================
+🚀 OPCIÓN 3: EJECUCIÓN AUTOMATIZADA (Linux/WSL)
+===============================================================================
+
+Comando:
+   bash sql/flujo-cotizaciones/EJECUTAR_MIGRACION.sh
+
+Características:
+   - Checklist pre-migración (backup, conectividad)
+   - Ejecución automática
+   - Verificaciones post-migración
+   - Estadísticas finales
+   - Perfecto para pipelines CI/CD
+
+Tiempo: ~5 minutos (incluyendo validaciones)
+Downtime: 0
+
+===============================================================================
+✅ CAMBIOS A LA BASE DE DATOS
+===============================================================================
+
+COLUMNA NUEVA:
+   Tabla: cotizaciones
+   Nombre: responsable_farmacia_id
+   Tipo: INT
+   Nullable: SÍ
+   Default: NULL
+   Ubicación: Después de usuario_id
+   
+   Propósito: Rastrear quién (químico) preparó cada cotización de farmacia
+
+ÍNDICES NUEVOS:
+   1. idx_responsable_farmacia_id
+      └─ Columnas: (responsable_farmacia_id)
+      └─ Uso: Búsquedas por responsable
+
+   2. idx_resp_farm_estado
+      └─ Columnas: (responsable_farmacia_id, estado)
+      └─ Uso: Búsquedas filtradas por responsable + estado
+
+===============================================================================
+✅ VERIFICACIÓN POST-MIGRACIÓN
+===============================================================================
+
+Ejecutar ESTAS QUERIES para validar:
+
+1. Verificar columna:
+   SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+   FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_NAME = 'cotizaciones'
+     AND COLUMN_NAME = 'responsable_farmacia_id';
+   
+   Resultado esperado: 1 fila con INT, YES
+
+2. Verificar índices:
+   SHOW INDEX FROM cotizaciones 
+   WHERE Column_name = 'responsable_farmacia_id';
+   
+   Resultado esperado: 2 filas
+
+3. Ver estadísticas:
+   SELECT 
+       COUNT(*) as total_cotizaciones,
+       SUM(CASE WHEN responsable_farmacia_id IS NOT NULL THEN 1 ELSE 0 END) as con_responsable,
+       SUM(CASE WHEN responsable_farmacia_id IS NULL THEN 1 ELSE 0 END) as sin_responsable
+   FROM cotizaciones;
+
+===============================================================================
+✅ TESTING POST-MIGRACIÓN (Manual)
+===============================================================================
+
+Scenario 1: Paciente con orden de farmacia del médico
+   1. Login como Químico
+   2. Abrir "Cotizador de Farmacia"
+   3. Buscar paciente (DNI, nombre, etc.)
+   4. ✅ VERIFICAR: Verde banner "Receta del médico detectada"
+   5. ✅ VERIFICAR: Medicamentos pre-cargados
+   6. Click "Confirmar receta..."
+   7. ✅ VERIFICAR: ACTUALIZA cotización (no crea duplicado)
+
+Scenario 2: Paciente nuevo (sin orden del médico)
+   1. Login como Químico
+   2. Abrir "Cotizador de Farmacia"
+   3. Buscar paciente nuevo
+   4. ✅ VERIFICAR: NO hay banner (cotización no existe)
+   5. Seleccionar medicamentos manualmente
+   6. Click "Enviar a recepción"
+   7. ✅ VERIFICAR: CREA nueva cotización
+   8. ✅ VERIFICAR: responsable_farmacia_id = ID del químico
+
+Scenario 3: Verificar base de datos
+   1. Ejecutar:
+      SELECT id, numero_comprobante, responsable_farmacia_id
+      FROM cotizaciones
+      WHERE responsable_farmacia_id IS NOT NULL
+      ORDER BY fecha DESC LIMIT 5;
+   
+   2. ✅ VERIFICAR: Las cotizaciones nuevas tienen responsable_farmacia_id
+
+===============================================================================
+⏮️ ROLLBACK (Si es necesario revertir)
+===============================================================================
+
+Script completo:
+   ALTER TABLE cotizaciones DROP INDEX IF EXISTS idx_responsable_farmacia_id;
+   ALTER TABLE cotizaciones DROP INDEX IF EXISTS idx_resp_farm_estado;
+   ALTER TABLE cotizaciones DROP COLUMN responsable_farmacia_id;
+
+   -- Verificar
+   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+   WHERE TABLE_NAME = 'cotizaciones' 
+     AND COLUMN_NAME = 'responsable_farmacia_id';
+   -- Resultado: 0 filas = OK
+
+⚠️ NOTA: Si ya hay datos en responsable_farmacia_id, se perderán.
+
+===============================================================================
+📊 IMPACTO Y TIMELINE
+===============================================================================
+
+Complejidad: BAJA
+Riesgo: BAJO (backward compatible)
+Downtime: 0 (sin downtime)
+Tiempo de ejecución: 30 segundos
+Tiempo total (con validaciones): 5 minutos
+
+FASES DE MIGRACIÓN:
+   Pre-migración         → 5 min   (backup, verificaciones)
+   Ejecución script      → 30 seg  (migración)
+   Validación            → 3 min   (índices, estructura)
+   Testing               → 15 min  (manual)
+   ────────────────────────────────
+   TOTAL                 → 25 min
+
+===============================================================================
+🔗 ARCHIVOS RELACIONADOS EN CÓDIGO
+===============================================================================
+
+Backend (api_cotizaciones.php):
+   - Función: buscar_cotizacion_pendiente_farmacia() - LÍNEA 510
+     └─ Busca cotización pendiente con farmacia items
+   
+   - Función: registrar_cotizacion() - LÍNEA 1909 (MODIFICADA)
+     └─ Asigna responsable_farmacia_id al crear nueva
+   
+   - Función: editar_cotizacion() - LÍNEA 2027 (MODIFICADA)
+     └─ Asigna responsable si es primera vez con farmacia
+
+Frontend (FarmaciaCotizadorPage.jsx):
+   - Auto-fetch - LÍNEA 1145
+     └─ Llama a buscar_pendiente_farmacia automáticamente
+   
+   - Green banner - LÍNEA 1253
+     └─ Muestra "Receta del médico detectada"
+   
+   - Smart branching - LÍNEA 83
+     └─ Decide si usar accion='editar' o 'registrar'
+
+Documentación:
+   - DIAGNOSTICO_AGRUPACION_COTIZACIONES.md
+     └─ Análisis completo + roadmap de 3 fases
+
+===============================================================================
+📞 SUPPORT & TROUBLESHOOTING
+===============================================================================
+
+Problema: "Duplicate column error"
+Solución: La columna ya existe. Es SEGURO ignorar este error.
+
+Problema: "Can't create index on duplicate keys"
+Solución: El índice ya existe. Es SEGURO ignorar este error.
+
+Problema: "Access denied for user"
+Solución: Usar usuario con permisos ALTER TABLE (típicamente root)
+
+Problema: "Syntax error near responsable"
+Solución: Verificar que MySQL versión >= 5.7
+
+Problema: "Timeout executing query"
+Solución: Ejecutar vía MySQL CLI en lugar de phpMyAdmin
+
+===============================================================================
+🎯 SIGUIENTE: FASES FUTURAS
+===============================================================================
+
+Fase 2 Híbrida (4-6 semanas):
+   - Tabla cotizacion_detalle_responsables (trazabilidad por ítem)
+   - Auto-merge de múltiples cotizaciones
+   - Dashboard "Mis preparaciones"
+   - Esfuerzo: 8 horas
+
+Fase 3 Híbrida (3-4 meses):
+   - Cobro parcial por servicio_tipo
+   - Reportes consolidados
+   - Auditoría completa
+   - Esfuerzo: 15 horas
+
+===============================================================================
+✅ CHECKLIST FINAL
+===============================================================================
+
+PRE-MIGRACIÓN:
+   ☐ Backup de BD hecho (mysqldump)
+   ☐ MySQL conectando correctamente
+   ☐ Suficiente espacio en disco
+   ☐ Sin usuarios activos en el sistema
+
+MIGRACIÓN:
+   ☐ Ejecutar script SQL (opción 1, 2 o 3)
+   ☐ Sin errores críticos (advertencias OK)
+
+POST-MIGRACIÓN:
+   ☐ Ejecutar queries de verificación
+   ☐ Verificar columna existe
+   ☐ Verificar índices creados
+   ☐ Testing manual con químico
+   ☐ Verificar verde banner aparece
+   ☐ Verificar no hay duplicados
+
+GO-LIVE:
+   ☐ Reinciar servicios PHP/Apache (si fue necesario)
+   ☐ Monitorear logs de errores (1 hora)
+   ☐ Comunicar a usuario
+
+===============================================================================
+
+Última actualización: 02/05/2026
+Version: 1.0
+Status: PRODUCCIÓN-READY ✅
+
+===============================================================================

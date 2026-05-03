@@ -2,6 +2,15 @@ name: Deploy a Hostinger
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: 'Escribe EXACTAMENTE: DEPLOY_CARDIOVIDA_PROD'
+        required: true
+        type: string
+      confirm_host:
+        description: 'Escribe EXACTAMENTE: cardiovidaiquitos.com'
+        required: true
+        type: string
 
 concurrency:
   group: deploy-hostinger-main
@@ -13,6 +22,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Confirmacion humana obligatoria
+        run: |
+          set -euo pipefail
+          [[ "${{ github.ref_name }}" == "main" ]] || { echo "Este deploy solo puede ejecutarse desde main"; exit 1; }
+          [[ "${{ github.event.inputs.confirm_production }}" == "DEPLOY_CARDIOVIDA_PROD" ]] || { echo "Confirmacion de produccion invalida"; exit 1; }
+          [[ "${{ github.event.inputs.confirm_host }}" == "cardiovidaiquitos.com" ]] || { echo "Confirmacion de host invalida"; exit 1; }
+          echo "Confirmaciones validas. Continuando deploy..."
 
       - name: Setup Node
         uses: actions/setup-node@v4
