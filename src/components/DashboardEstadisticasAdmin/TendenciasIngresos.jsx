@@ -17,6 +17,7 @@ const fmtAxisDate = (fechaStr) => {
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   const tiempoReal = payload.find(p => p.dataKey === 'tiempoReal')?.value ?? 0;
+  const contratos = payload.find(p => p.dataKey === 'contratos')?.value ?? 0;
   const consolidado = payload.find(p => p.dataKey === 'consolidado')?.value ?? 0;
   const fechaMostrar = (() => {
     try {
@@ -27,6 +28,7 @@ const CustomTooltip = ({ active, payload, label }) => {
     <div className="bg-white border border-purple-100 rounded-lg shadow-lg px-4 py-3 text-sm">
       <p className="text-gray-500 text-xs capitalize mb-1">{fechaMostrar}</p>
       <p className="font-bold text-purple-700">Tiempo real: S/ {Number(tiempoReal).toFixed(2)}</p>
+      <p className="font-semibold text-emerald-700">Contratos: S/ {Number(contratos).toFixed(2)}</p>
       <p className="font-semibold text-slate-600">Consolidado: S/ {Number(consolidado).toFixed(2)}</p>
     </div>
   );
@@ -38,12 +40,13 @@ const TendenciasIngresos = ({ tendencias }) => {
     () => (tendencias ?? []).map(t => ({
       ...t,
       tiempoReal: Number(t.tiempoReal ?? t.total ?? 0),
+      contratos: Number(t.contratos ?? 0),
       consolidado: Number(t.consolidado ?? 0),
     })),
     [tendencias]
   );
 
-  const maxVal = useMemo(() => Math.max(...data.map(d => Math.max(d.tiempoReal, d.consolidado)), 0), [data]);
+  const maxVal = useMemo(() => Math.max(...data.map(d => Math.max(d.tiempoReal, d.contratos, d.consolidado)), 0), [data]);
   // Nice Y-axis max
   const yMax = maxVal > 0 ? Math.ceil(maxVal * 1.15 / 50) * 50 : 100;
 
@@ -52,7 +55,7 @@ const TendenciasIngresos = ({ tendencias }) => {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
           📈 Tendencia de Ingresos
-          <span className="text-xs font-normal text-gray-400">operativo vs contable, por día</span>
+          <span className="text-xs font-normal text-gray-400">cobros, contratos y contable, por día</span>
         </h2>
         {data.length > 0 && (
           <span className="text-xs text-gray-400">{data.length} días</span>
@@ -61,6 +64,9 @@ const TendenciasIngresos = ({ tendencias }) => {
       <div className="flex flex-wrap items-center gap-3 mb-3 text-xs">
         <span className="inline-flex items-center gap-1 text-purple-700 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-purple-600" /> Tiempo real (cobros pagados)
+        </span>
+        <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Contratos (abonos)
         </span>
         <span className="inline-flex items-center gap-1 text-slate-600 font-medium">
           <span className="w-2.5 h-2.5 rounded-full bg-slate-500" /> Consolidado (cajas cerradas)
@@ -101,6 +107,13 @@ const TendenciasIngresos = ({ tendencias }) => {
               fill="url(#gradPurple)"
               dot={false}
               activeDot={{ r: 5, strokeWidth: 0, fill: '#7c3aed' }}
+            />
+            <Line
+              type="monotone"
+              dataKey="contratos"
+              stroke="#10b981"
+              strokeWidth={2}
+              dot={false}
             />
             <Line
               type="monotone"

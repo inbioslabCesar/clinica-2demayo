@@ -1,32 +1,94 @@
 
 
-import { useEffect, useState, useCallback } from "react";
-import RecepcionModulo from "../cobro/RecepcionModulo";
-import { BASE_URL } from "../../config/config";
+import { lazy, Suspense, useEffect, useState, useCallback } from "react";
+import { fetchConfigSingleton } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import { Icon } from '@fluentui/react';
 import QuickAccessNav from "../comunes/QuickAccessNav";
 
+const RecepcionModulo = lazy(() => import("../cobro/RecepcionModulo"));
+const DASHBOARD_CACHE_KEY = "dashboard_home_cache_v1";
+const BRAND_STORAGE_KEY = "clinica_brand_cache";
+const DASHBOARD_CACHE_TTL_MS = 60 * 1000;
+
+function readDashboardCache() {
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const ts = Number(parsed?.ts || 0);
+    if (!ts || (Date.now() - ts) > DASHBOARD_CACHE_TTL_MS) {
+      return null;
+    }
+    return {
+      ts,
+      estadisticas: {
+        pacientesHoy: Number(parsed?.estadisticas?.pacientesHoy || 0),
+        consultasHoy: Number(parsed?.estadisticas?.consultasHoy || 0),
+        totalPacientes: Number(parsed?.estadisticas?.totalPacientes || 0),
+      },
+      ultimaHC: parsed?.ultimaHC ? String(parsed.ultimaHC) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeDashboardCache(payload) {
+  try {
+    const previous = readDashboardCache();
+    const next = {
+      ts: Date.now(),
+      estadisticas: payload?.estadisticas || previous?.estadisticas || {
+        pacientesHoy: 0,
+        consultasHoy: 0,
+        totalPacientes: 0,
+      },
+      ultimaHC: payload?.ultimaHC ?? previous?.ultimaHC ?? null,
+    };
+    sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore cache write issues
+  }
+}
+
+function readClinicNameFromBrandCache() {
+  try {
+    const raw = sessionStorage.getItem(BRAND_STORAGE_KEY);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    return String(parsed?.nombre || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 function Dashboard({ usuario }) {
-  const [ultimaHC, setUltimaHC] = useState(null);
-  const [clinicName, setClinicName] = useState('');
-  const [estadisticas, setEstadisticas] = useState({
-    pacientesHoy: 0,
-    consultasHoy: 0,
-    totalPacientes: 0
-  });
+  const cachedDashboard = readDashboardCache();
+  const [ultimaHC, setUltimaHC] = useState(cachedDashboard?.ultimaHC || null);
+  const [clinicName, setClinicName] = useState(readClinicNameFromBrandCache());
+  const [estadisticas, setEstadisticas] = useState(
+    cachedDashboard?.estadisticas || {
+      pacientesHoy: 0,
+      consultasHoy: 0,
+      totalPacientes: 0,
+    }
+  );
 
   // Función para obtener estadísticas reales desde la API
   const obtenerEstadisticas = useCallback(async () => {
     try {
-      const response = await fetch(BASE_URL + "api_estadisticas_dashboard.php");
+      const response = await authFetch("api_estadisticas_dashboard.php");
       const data = await response.json();
       
       if (data.success) {
-        setEstadisticas({
+        const nextStats = {
           pacientesHoy: data.estadisticas.pacientes_hoy,
           consultasHoy: data.estadisticas.consultas_hoy,
           totalPacientes: data.estadisticas.total_pacientes
-        });
+        };
+        setEstadisticas(nextStats);
+        writeDashboardCache({ estadisticas: nextStats });
       } else {
         console.error('Error al obtener estadísticas:', data.error);
         // Mantener valores por defecto en caso de error
@@ -49,12 +111,16 @@ function Dashboard({ usuario }) {
 
   // Función para actualizar la última HC desde RecepcionModulo
   const actualizarUltimaHC = useCallback(() => {
-    fetch(BASE_URL + "api_ultima_hc.php")
+    authFetch("api_ultima_hc.php")
       .then(res => res.json())
       .then(data => {
-        if (data.success) setUltimaHC(data.ultima_hc);
+        if (data.success) {
+          const nextUltimaHC = data.ultima_hc ? String(data.ultima_hc) : null;
+          setUltimaHC(nextUltimaHC);
+          writeDashboardCache({ ultimaHC: nextUltimaHC });
+        }
       });
-  }, [obtenerEstadisticas]);
+  }, []);
 
   useEffect(() => {
     actualizarUltimaHC();
@@ -62,14 +128,19 @@ function Dashboard({ usuario }) {
   }, [usuario?.id, actualizarUltimaHC, obtenerEstadisticas]);
 
   useEffect(() => {
-    fetch(BASE_URL + "api_get_configuracion.php", { credentials: "include" })
-      .then(r => r.json())
+    const cachedName = readClinicNameFromBrandCache();
+    if (cachedName) {
+      setClinicName(cachedName);
+      return undefined;
+    }
+
+    fetchConfigSingleton()
       .then(data => {
         if (data?.success && data.data?.nombre_clinica) {
           setClinicName(String(data.data.nombre_clinica).trim());
         }
       })
-      .catch(() => {});
+        .catch(() => {});
   }, []);
 
   const formatearFecha = () => {
@@ -179,7 +250,9 @@ function Dashboard({ usuario }) {
           </div>
         </div>
         <div className="p-4">
-          <RecepcionModulo onPacienteRegistrado={actualizarUltimaHC} />
+          <Suspense fallback={<div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">Cargando módulo de recepción...</div>}>
+            <RecepcionModulo onPacienteRegistrado={actualizarUltimaHC} />
+          </Suspense>
         </div>
       </div>
     </div>

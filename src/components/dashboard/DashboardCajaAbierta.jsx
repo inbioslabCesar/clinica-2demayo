@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import {
   FaMoneyBillWave,
   FaChartLine,
@@ -39,9 +39,7 @@ export default function DashboardCajaAbierta({
   const cargarDetalles = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}api_detalle_ingresos_hoy.php`, {
-        credentials: "include",
-      });
+      const response = await authFetch("api_detalle_ingresos_hoy.php");
       const data = await response.json();
 
       if (data.success) {
