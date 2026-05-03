@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
 import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen } from "react-icons/fi";
+import { authFetch } from "../utils/apiClient";
 
 const SERVICIOS_IMAGEN = new Set(["rayosx", "ecografia", "tomografia"]);
 function tieneServicioImagen(serviciosTipos) {
@@ -125,8 +125,7 @@ export default function CotizacionesPage() {
         params.set("fecha_fin", filtrosAplicados.fechaFin);
       }
 
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
-        credentials: "include",
+      const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
         cache: "no-store",
         signal: controller.signal,
       });
@@ -148,6 +147,31 @@ export default function CotizacionesPage() {
       }
     }
   }, [filtrosAplicados, limit, page]);
+
+  const abrirCobro = useCallback(async (row) => {
+    const baseId = Number(row?.id || 0);
+    if (baseId <= 0) return;
+
+    let ids = [baseId];
+    try {
+      const res = await authFetch(`api_cotizaciones.php?accion=sugerir_grupo_cobro&cotizacion_id=${baseId}&_t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (data?.success && Array.isArray(data.ids)) {
+        const sugeridos = Array.from(new Set(data.ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)));
+        if (sugeridos.length > 0) {
+          ids = sugeridos;
+        }
+      }
+    } catch {
+      ids = [baseId];
+    }
+
+    const targetId = Number(ids[0] || baseId);
+    const query = ids.length > 1 ? `?ids=${ids.join(",")}` : "";
+    navigate(`/cobrar-cotizacion/${targetId}${query}`);
+  }, [navigate]);
 
   useEffect(() => {
     cargar();
@@ -212,13 +236,20 @@ export default function CotizacionesPage() {
     });
   };
 
-  const badgeEstado = (value) => {
+  const badgeEstado = (value, pagadoConDescuento = 0) => {
     const st = String(value || "").toLowerCase();
+    if (st === "pagado" && Number(pagadoConDescuento || 0) === 1) return "bg-emerald-100 text-emerald-800";
     if (st === "pagado") return "bg-green-100 text-green-700";
     if (st === "parcial") return "bg-amber-100 text-amber-700";
-    if (st === "control") return "bg-sky-100 text-sky-700";
+    if (st === "control" || st === "contrato") return "bg-sky-100 text-sky-700";
     if (st === "anulada") return "bg-red-100 text-red-700";
     return "bg-blue-100 text-blue-700";
+  };
+
+  const labelEstado = (row) => {
+    const st = String(row?.estado || "").toLowerCase();
+    if (st === "pagado" && Number(row?.pagado_con_descuento || 0) === 1) return "pagado con descuento";
+    return row?.estado;
   };
 
   const badgeOrigen = (value) => {
@@ -227,6 +258,17 @@ export default function CotizacionesPage() {
     if (v === "extra") return { cls: "bg-orange-100 text-orange-700", label: "Extra" };
     if (v === "mixto") return { cls: "bg-indigo-100 text-indigo-700", label: "Mixto" };
     return { cls: "bg-slate-100 text-slate-700", label: "Regular" };
+  };
+
+  const badgeOrigenVisual = (row) => {
+    const observaciones = String(row?.observaciones || "").toLowerCase();
+    if (observaciones.includes("paquetes/perfiles")) {
+      if (observaciones.includes("perfil")) {
+        return { cls: "bg-fuchsia-100 text-fuchsia-700", label: "PERFIL" };
+      }
+      return { cls: "bg-violet-100 text-violet-700", label: "PAQUETE" };
+    }
+    return badgeOrigen(row?.origen_cobro_resumen);
   };
 
   const anularCotizacion = useCallback(async (cotizacion) => {
@@ -248,9 +290,8 @@ export default function CotizacionesPage() {
     if (!motivo) return;
 
     try {
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const res = await authFetch("api_cotizaciones.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accion: "anular",
@@ -283,9 +324,7 @@ export default function CotizacionesPage() {
 
       if (!cotizacionObjetivo) {
         try {
-          const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionId}`, {
-            credentials: "include",
-          });
+          const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}`);
           const data = await res.json();
           if (data?.success && data?.cotizacion) {
             cotizacionObjetivo = data.cotizacion;
@@ -339,7 +378,6 @@ export default function CotizacionesPage() {
             <option value="pendiente">Pendiente</option>
             <option value="parcial">Parcial</option>
             <option value="pagado">Pagado</option>
-            <option value="CONTROL">CONTROL</option>
             <option value="anulada">Anulada</option>
           </select>
           <input
@@ -428,7 +466,7 @@ export default function CotizacionesPage() {
                     .map((s) => normalizarServicioTipo(s))
                     .filter(Boolean)
                 ));
-                const cotizacionPagada = ["pagado", "completado"].includes(estadoRow);
+                const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
                 const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
                 const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
                 const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada
@@ -446,7 +484,7 @@ export default function CotizacionesPage() {
                 const laboratorioTitulo = tieneResultadosLaboratorio
                   ? "Ver resultados de laboratorio"
                   : "Gestionar resultados de laboratorio";
-                const origen = badgeOrigen(row.origen_cobro_resumen);
+                const origen = badgeOrigenVisual(row);
                 const contratosIds = String(row.contratos_ids_resumen || "").trim();
                 return (
                   <tr key={row.id} className="border-t align-top">
@@ -495,8 +533,8 @@ export default function CotizacionesPage() {
                     <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.saldo_pendiente ?? 0).toFixed(2)}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-col items-start gap-1">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado)}`}>
-                          {row.estado}
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado, row.pagado_con_descuento)}`}>
+                          {labelEstado(row)}
                         </span>
                         {vencimientoMeta && (
                           <span
@@ -536,9 +574,9 @@ export default function CotizacionesPage() {
 
                               if (consultaId <= 0) {
                                 try {
-                                  const resRef = await fetch(
-                                    `${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
-                                    { credentials: "include", cache: "no-store" }
+                                  const resRef = await authFetch(
+                                    `api_cotizaciones.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
+                                    { cache: "no-store" }
                                   );
                                   const dataRef = await resRef.json();
                                   consultaId = Number(dataRef?.cotizacion?.consulta_ref_id || 0);
@@ -554,9 +592,9 @@ export default function CotizacionesPage() {
                                   }
 
                                   if (consultaId <= 0) {
-                                    const resConsulta = await fetch(
-                                      `${BASE_URL}api_consultas.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
-                                      { credentials: 'include', cache: 'no-store' }
+                                    const resConsulta = await authFetch(
+                                      `api_consultas.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
+                                      { cache: 'no-store' }
                                     );
                                     const dataConsulta = await resConsulta.json();
                                     const consultaResuelta = Array.isArray(dataConsulta?.consultas)
@@ -587,7 +625,7 @@ export default function CotizacionesPage() {
                             <FiBookOpen className="text-sm" />
                           </button>
                         )}
-                        {["pagado", "completado"].includes(String(row.estado || "").toLowerCase()) && tieneServicioImagen(servicios) && (
+                        {["pagado", "completado", "control", "contrato"].includes(String(row.estado || "").toLowerCase()) && tieneServicioImagen(servicios) && (
                           <button
                             onClick={() => navigate(`/imagenes-paciente/${row.paciente_id}?cotizacion_id=${row.id}`)}
                             className={`${actionBtnBase} bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-200`}
@@ -600,9 +638,9 @@ export default function CotizacionesPage() {
                         {(String(row.estado || "").toLowerCase() === "pendiente" || String(row.estado || "").toLowerCase() === "parcial") && (
                           <button
                             disabled={cotizacionVencida}
-                            onClick={() => navigate(`/cobrar-cotizacion/${row.id}`)}
+                            onClick={() => abrirCobro(row)}
                             className={`${actionBtnBase} ${cotizacionVencida ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'}`}
-                            title={cotizacionVencida ? 'Cotización vencida' : 'Cobrar'}
+                            title={cotizacionVencida ? 'Cotización vencida' : 'Cobrar (unificado si aplica)'}
                             aria-label="Cobrar"
                           >
                             <FiDollarSign className="text-sm" />

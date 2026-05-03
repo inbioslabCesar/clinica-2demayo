@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import CobroModuloFinal from "../components/cobro/CobroModuloFinal";
 import Spinner from "../components/comunes/Spinner";
-import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const serviceKeyMap = {
   laboratorio: "laboratorio",
@@ -26,17 +26,33 @@ function normalizarServicioKey(value) {
 
 export default function CobrarCotizacionPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { cotizacionId } = useParams();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cotizacion, setCotizacion] = useState(null);
+  const [cotizacionesSeleccionadas, setCotizacionesSeleccionadas] = useState([]);
   const [paciente, setPaciente] = useState(null);
   const [pagos, setPagos] = useState([]);
   const [montoAbonoInput, setMontoAbonoInput] = useState("");
   const [modoCobro, setModoCobro] = useState("completo");
   const blockedNoticeShownRef = useRef(false);
   const criterioImputacion = "fifo";
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const cotizacionIds = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const idsParam = String(params.get("ids") || "").trim();
+    const ids = [];
+    if (Number(cotizacionId) > 0) {
+      ids.push(Number(cotizacionId));
+    }
+    if (idsParam) {
+      ids.push(...idsParam.split(",").map((value) => Number(String(value).trim())));
+    }
+    return Array.from(new Set(ids.filter((value) => Number.isFinite(value) && value > 0)));
+  }, [cotizacionId, location.search]);
+  const esCobroUnificado = cotizacionIds.length > 1;
   const themePrimarySoft = {
     backgroundColor: "var(--color-primary-light)",
     borderColor: "var(--color-primary-light)",
@@ -51,52 +67,82 @@ export default function CobrarCotizacionPage() {
       setError("");
       try {
         const cacheBuster = Date.now();
-        const [dataCot, dataPagos] = await Promise.all([
-          fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
-            credentials: "include",
-            cache: "no-store",
-          }).then((res) => res.json()),
-          fetch(
-            `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
-            {
-              credentials: "include",
-              cache: "no-store",
+        const cargas = await Promise.all(
+          cotizacionIds.map(async (id) => {
+            const [dataCot, dataPagos] = await Promise.all([
+              authFetch(`api_cotizaciones.php?cotizacion_id=${Number(id)}&_t=${cacheBuster}`, {
+                cache: "no-store",
+              }).then((res) => res.json()),
+              authFetch(`api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(id)}&_t=${cacheBuster}`, {
+                cache: "no-store",
+              }).then((res) => res.json()),
+            ]);
+
+            if (!dataCot?.success || !dataCot?.cotizacion) {
+              throw new Error(dataCot?.error || `No se pudo cargar la cotización #${id}`);
             }
-          ).then((res) => res.json()),
-        ]);
 
-        if (!dataCot?.success || !dataCot?.cotizacion) {
-          throw new Error(dataCot?.error || "No se pudo cargar la cotización");
-        }
-
-        const cot = dataCot.cotizacion;
-        const nombreTemporal = String(cot?.nombre || "").trim();
-        const apellidoTemporal = String(cot?.apellido || "").trim();
-        const nombreCompletoTemporal = `${nombreTemporal} ${apellidoTemporal}`.trim();
-        const pacienteCotizacion = {
-          id: Number(cot?.paciente_id || 0) || null,
-          nombre: nombreCompletoTemporal || "Particular",
-          apellido: "",
-          dni: String(cot?.dni || "").trim(),
-          historia_clinica: String(cot?.historia_clinica || "").trim(),
-        };
+            return {
+              cotizacion: dataCot.cotizacion,
+              pagos: Array.isArray(dataCot?.cotizacion?.pagos)
+                ? dataCot.cotizacion.pagos
+                : (dataPagos?.success && Array.isArray(dataPagos.pagos) ? dataPagos.pagos : []),
+            };
+          })
+        );
 
         if (!mounted) return;
-        const pagosEmbebidos = Array.isArray(cot?.pagos) ? cot.pagos : null;
-        const pagosEndpoint = dataPagos?.success && Array.isArray(dataPagos.pagos) ? dataPagos.pagos : [];
-        
-        // Preferencia: usar pagosEmbebidos si viene en la respuesta de cotizacion (no es null)
-        // Fallback: si no hay embebidos pero endpoint tiene datos, usarlos
-        let pagosFinal = [];
-        if (pagosEmbebidos !== null) {
-          // pagosEmbebidos fue devuelto (desde api_cotizaciones con cotizacion_id), úsalo
-          pagosFinal = pagosEmbebidos;
-        } else if (pagosEndpoint && Array.isArray(pagosEndpoint) && pagosEndpoint.length > 0) {
-          // Si no hay embebidos pero endpoint tiene datos, usa endpoint
-          pagosFinal = pagosEndpoint;
+
+        const cotizacionesCargadas = cargas.map((item) => item.cotizacion);
+        const pacientesIds = Array.from(new Set(cotizacionesCargadas.map((item) => Number(item?.paciente_id || 0)).filter((id) => id > 0)));
+        if (pacientesIds.length > 1) {
+          throw new Error("Las cotizaciones seleccionadas pertenecen a pacientes distintos.");
         }
-        
-        setCotizacion(cot);
+
+        const cotBase = cotizacionesCargadas[0] || null;
+        const nombreTemporal = String(cotBase?.nombre || "").trim();
+        const apellidoTemporal = String(cotBase?.apellido || "").trim();
+        const nombreCompletoTemporal = `${nombreTemporal} ${apellidoTemporal}`.trim();
+        const pacienteCotizacion = {
+          id: Number(cotBase?.paciente_id || 0) || null,
+          nombre: nombreCompletoTemporal || "Particular",
+          apellido: "",
+          dni: String(cotBase?.dni || "").trim(),
+          historia_clinica: String(cotBase?.historia_clinica || "").trim(),
+        };
+
+        const total = cotizacionesCargadas.reduce((acc, item) => acc + Number(item?.total || 0), 0);
+        const totalPagado = cotizacionesCargadas.reduce((acc, item) => acc + Number(item?.total_pagado || 0), 0);
+        const saldoPendiente = cotizacionesCargadas.reduce((acc, item) => {
+          const saldo = Number(item?.saldo_pendiente);
+          if (Number.isFinite(saldo)) {
+            return acc + Math.max(0, saldo);
+          }
+          return acc + Math.max(0, Number(item?.total || 0) - Number(item?.total_pagado || 0));
+        }, 0);
+        const cotizacionMaster = cotBase
+          ? {
+              ...cotBase,
+              id: Number(cotBase.id || cotizacionIds[0] || 0),
+              ids: cotizacionIds,
+              es_unificado: cotizacionIds.length > 1,
+              total,
+              total_pagado: totalPagado,
+              saldo_pendiente: saldoPendiente,
+              estado: saldoPendiente <= 0 ? "pagado" : (totalPagado > 0 ? "parcial" : "pendiente"),
+            }
+          : null;
+
+        const pagosFinal = cargas
+          .flatMap(({ cotizacion: cot, pagos: pagosCot }) => (Array.isArray(pagosCot) ? pagosCot : []).map((pago) => ({
+            ...pago,
+            cotizacion_id: Number(cot?.id || 0),
+          })))
+          .sort((a, b) => String(b?.created_at || "").localeCompare(String(a?.created_at || "")));
+
+        setCotizacionesSeleccionadas(cotizacionesCargadas);
+        setSelectedIds(new Set(cotizacionesCargadas.map((c) => String(c.id))));
+        setCotizacion(cotizacionMaster);
         setPaciente(pacienteCotizacion);
         setPagos(pagosFinal);
       } catch (err) {
@@ -111,41 +157,60 @@ export default function CobrarCotizacionPage() {
     return () => {
       mounted = false;
     };
-  }, [cotizacionId]);
+  }, [cotizacionIds]);
+
+  const cotizacionesActivas = useMemo(() => {
+    if (selectedIds.size === 0) return cotizacionesSeleccionadas;
+    return cotizacionesSeleccionadas.filter((c) => selectedIds.has(String(c.id)));
+  }, [cotizacionesSeleccionadas, selectedIds]);
+
+  const saldoBaseActivo = useMemo(() => {
+    return cotizacionesActivas.reduce((acc, c) => {
+      const s = Number(c?.saldo_pendiente);
+      return acc + (Number.isFinite(s) ? Math.max(0, s) : Math.max(0, Number(c?.total || 0) - Number(c?.total_pagado || 0)));
+    }, 0);
+  }, [cotizacionesActivas]);
 
   const detallesCotizacionActivos = useMemo(() => {
-    const detalles = Array.isArray(cotizacion?.detalles) ? cotizacion.detalles : [];
-    return detalles
-      .filter((d) => {
-        const estadoItem = String(d?.estado_item || "activo").toLowerCase();
-        return estadoItem !== "eliminado" && Number(d?.cantidad || 0) > 0;
-      })
-      .map((d) => ({
-        servicio_tipo: normalizarServicioKey(d.servicio_tipo),
-        servicio_id: Number(d.servicio_id) || null,
-        tarifa_id: Number(d.servicio_id) || null,
-        descripcion: d.descripcion || "Servicio",
-        cantidad: Number(d.cantidad) || 1,
-        precio_unitario: Number(d.precio_unitario) || 0,
-        subtotal: Number(d.subtotal) || (Number(d.precio_unitario) || 0) * (Number(d.cantidad) || 1),
-        cotizacion_id: Number(cotizacion?.id),
-        derivado: Boolean(d.derivado),
-        tipo_derivacion: d.tipo_derivacion || "",
-        valor_derivacion: Number(d.valor_derivacion || 0),
-        laboratorio_referencia: d.laboratorio_referencia || "",
-        medico_id: d.medico_id || null,
-        medico_nombre_completo: d.medico_nombre_completo || undefined,
-        medico_nombre: d.medico_nombre || undefined,
-        medico_apellido: d.medico_apellido || undefined,
-        medico_especialidad: d.especialidad || d.medico_especialidad || undefined,
-      }));
-  }, [cotizacion]);
+    return cotizacionesActivas.flatMap((cot) => {
+      const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+      return detalles
+        .filter((d) => {
+          const estadoItem = String(d?.estado_item || "activo").toLowerCase();
+          return estadoItem !== "eliminado" && Number(d?.cantidad || 0) > 0;
+        })
+        .map((d) => ({
+          cotizacion_detalle_id: Number(d.id) || null,
+          detalle_id: Number(d.id) || null,
+          servicio_tipo: normalizarServicioKey(d.servicio_tipo),
+          servicio_id: Number(d.servicio_id) || null,
+          tarifa_id: Number(d.servicio_id) || null,
+          descripcion: d.descripcion || "Servicio",
+          cantidad: Number(d.cantidad) || 1,
+          precio_unitario: Number(d.precio_unitario) || 0,
+          subtotal: Number(d.subtotal) || (Number(d.precio_unitario) || 0) * (Number(d.cantidad) || 1),
+          cotizacion_id: Number(d.cotizacion_id || cot?.id || 0),
+          consulta_id: Number(d.consulta_id) || null,
+          derivado: Boolean(d.derivado),
+          tipo_derivacion: d.tipo_derivacion || "",
+          valor_derivacion: Number(d.valor_derivacion || 0),
+          laboratorio_referencia: d.laboratorio_referencia || "",
+          medico_id: d.medico_id || null,
+          medico_nombre_completo: d.medico_nombre_completo || undefined,
+          medico_nombre: d.medico_nombre || undefined,
+          medico_apellido: d.medico_apellido || undefined,
+          medico_especialidad: d.especialidad || d.medico_especialidad || undefined,
+        }));
+    });
+  }, [cotizacionesActivas]);
 
   const totalDetallesActivos = useMemo(() => {
     return detallesCotizacionActivos.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
   }, [detallesCotizacionActivos]);
 
   const saldoPendiente = useMemo(() => {
+    // Para cobro unificado, usar el saldo filtrado de las cotizaciones activas seleccionadas
+    if (esCobroUnificado && saldoBaseActivo > 0) return saldoBaseActivo;
     const estadoCot = String(cotizacion?.estado || "").toLowerCase();
     const saldo = Number(cotizacion?.saldo_pendiente);
     if (Number.isFinite(saldo)) {
@@ -176,7 +241,7 @@ export default function CobrarCotizacionPage() {
     }
 
     return Math.max(0, totalDetallesActivos);
-  }, [cotizacion?.saldo_pendiente, cotizacion?.total, cotizacion?.total_pagado, totalDetallesActivos]);
+  }, [cotizacion?.saldo_pendiente, cotizacion?.estado, cotizacion?.total, cotizacion?.total_pagado, totalDetallesActivos, esCobroUnificado, saldoBaseActivo]);
 
   useEffect(() => {
     if (!Number.isFinite(Number(saldoPendiente)) || Number(saldoPendiente) <= 0) {
@@ -284,22 +349,26 @@ export default function CobrarCotizacionPage() {
   const esEstadoBloqueado = estado === "anulada" || estado === "pagado";
 
   const servicioPago = useMemo(() => {
-    const primerTipo = detallesCobro[0]?.servicio_tipo || "procedimiento";
-    const key = normalizarServicioKey(primerTipo);
+    const tipos = Array.from(new Set(detallesCobro.map((detalle) => normalizarServicioKey(detalle?.servicio_tipo || "")).filter(Boolean)));
+    const key = tipos.length === 1 ? tipos[0] : "mixto";
+    const activeIdList = [...selectedIds].map(Number).filter((n) => n > 0);
+    const isMulti = activeIdList.length > 1;
     return {
       key,
-      label: `Cobro de cotización #${cotizacion?.id || ""}`.trim(),
-      cotizacion_id: Number(cotizacion?.id || 0),
+      label: isMulti
+        ? `Cobro unificado de cotizaciones ${activeIdList.map((id) => `#${id}`).join(", ")}`
+        : `Cobro de cotización #${activeIdList[0] || cotizacion?.id || ""}`.trim(),
+      cotizacion_id: Number(activeIdList[0] || cotizacion?.id || 0),
+      cotizacion_ids: activeIdList,
     };
-  }, [cotizacion?.id, detallesCobro]);
+  }, [cotizacion?.id, selectedIds, detallesCobro]);
 
   const recargarCotizacion = async () => {
     try {
       const cacheBuster = Date.now();
-      const res = await fetch(
-        `${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacion?.id)}&_t=${cacheBuster}`,
+      const res = await authFetch(
+        `api_cotizaciones.php?cotizacion_id=${Number(cotizacion?.id)}&_t=${cacheBuster}`,
         {
-          credentials: "include",
           cache: "no-store",
         }
       );
@@ -312,7 +381,7 @@ export default function CobrarCotizacionPage() {
     }
   };
 
-  const manejarCobroCompleto = async (cobroId, _servicio, cobroResumen) => {
+  const manejarCobroCompleto = async (_cobroId, _servicio, _cobroResumen) => {
     try {
       // El backend ya sincroniza la cotización en CobroModule::procesarCobro()
       // Recargar desde servidor para mostrar estado actualizado
@@ -325,9 +394,8 @@ export default function CobrarCotizacionPage() {
       );
       if (tieneConsulta) {
         try {
-          await fetch(`${BASE_URL}api_cotizaciones.php`, {
+          await authFetch("api_cotizaciones.php", {
             method: "POST",
-            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               accion: "crear_consulta_desde_cotizacion",
@@ -356,10 +424,10 @@ export default function CobrarCotizacionPage() {
         await Swal.fire({
           icon: "info",
           title: "Cotización sin saldo pendiente",
-          text: "Esta cotización ya está pagada y no requiere cobro. Te llevaremos al detalle.",
-          confirmButtonText: "Ver detalle",
+          text: "Esta cotización ya está pagada y no requiere cobro. Te llevaremos al listado de cotizaciones.",
+          confirmButtonText: "Ir a cotizaciones",
         });
-        navigate(`/cotizaciones/${Number(cotizacion.id)}/detalle`, { replace: true });
+        navigate("/cotizaciones", { replace: true });
         return;
       }
 
@@ -396,12 +464,18 @@ export default function CobrarCotizacionPage() {
       <div className="max-w-4xl mx-auto p-6">
         <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
           <h2 className="text-lg font-semibold mb-2">
-            {estado === "pagado" ? "Cotización ya pagada" : "Cotización anulada"}
+            {estado === "pagado"
+              ? (esCobroUnificado ? "Cotizaciones ya pagadas" : "Cotización ya pagada")
+              : (esCobroUnificado ? "Cotización no cobrable dentro del grupo" : "Cotización anulada")}
           </h2>
           <p className="text-sm leading-relaxed">
             {estado === "pagado"
-              ? "Esta cotización ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados."
-              : "Esta cotización fue anulada y por seguridad no admite cobros desde esta pantalla."}
+              ? (esCobroUnificado
+                ? "El grupo seleccionado ya no tiene saldo por cobrar. Puedes revisar el detalle individual de las cotizaciones para ver los importes y movimientos registrados."
+                : "Esta cotización ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados.")
+              : (esCobroUnificado
+                ? "Una de las cotizaciones del grupo quedó fuera de estado cobrable. Refresca el listado antes de volver a intentar un cobro unificado."
+                : "Esta cotización fue anulada y por seguridad no admite cobros desde esta pantalla.")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             {estado === "pagado" && (
@@ -434,7 +508,7 @@ export default function CobrarCotizacionPage() {
           Volver
         </button>
         <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded p-4">
-          No hay detalles válidos para procesar el cobro de esta cotización.
+          No hay detalles válidos para procesar {esCobroUnificado ? "este cobro unificado" : "el cobro de esta cotización"}.
         </div>
       </div>
     );
@@ -450,23 +524,86 @@ export default function CobrarCotizacionPage() {
       </button>
 
       <div className="rounded p-4 mb-4 text-sm border" style={themePrimarySoft}>
-        <div><b>Cotización:</b> #{cotizacion.id}</div>
+        <div><b>{esCobroUnificado ? "Cotizaciones" : "Cotización"}:</b> {cotizacionIds.map((id) => `#${id}`).join(", ")}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
-        <div><b>Saldo actual:</b> S/ {Number(cotizacion.saldo_pendiente ?? totalCobro).toFixed(2)}</div>
+        <div><b>Saldo actual:</b> S/ {Number(saldoPendiente).toFixed(2)}</div>
         <div className="mt-2 text-xs text-gray-700">
-          El sistema aplica el pago automáticamente de forma secuencial sobre los servicios pendientes.
+          El sistema aplica el pago automáticamente de forma secuencial sobre los servicios pendientes{esCobroUnificado ? " del grupo seleccionado" : ""}.
         </div>
+
+        {esCobroUnificado && (
+          <div className="mt-3 border-t border-current/20 pt-3">
+            <div className="text-xs font-semibold mb-2">Selecciona los servicios a cobrar en este ticket:</div>
+            <div className="flex flex-col gap-1">
+              {cotizacionesSeleccionadas.map((cot) => {
+                const isSelected = selectedIds.has(String(cot.id));
+                const saldoCot = Math.max(0, Number(cot?.saldo_pendiente ?? cot?.total ?? 0));
+                // Derivar etiqueta del tipo de servicio desde el campo servicios_tipos
+                // (ej: "laboratorio,farmacia") o desde el primer detalle activo.
+                const tiposRaw = String(cot?.servicios_tipos || "").trim();
+                const tiposArr = tiposRaw
+                  ? tiposRaw.split(",").map((t) => t.trim()).filter(Boolean)
+                  : Array.from(new Set((cot?.detalles || []).map((d) => String(d?.servicio_tipo || "").trim()).filter(Boolean)));
+                const labelMap = { laboratorio: "Laboratorio", rayosx: "Rayos X", rayos_x: "Rayos X", rx: "Rayos X", ecografia: "Ecografía", farmacia: "Farmacia", consulta: "Consulta", procedimiento: "Procedimiento", operacion: "Operación", operaciones: "Operación", cirugia: "Cirugía", cirugia_mayor: "Cirugía mayor" };
+                const tipoLabel = tiposArr.length > 0
+                  ? tiposArr.map((t) => labelMap[t.toLowerCase()] || (t.charAt(0).toUpperCase() + t.slice(1))).join(" + ")
+                  : "Servicio";
+                const isLast = isSelected && selectedIds.size === 1;
+                return (
+                  <label
+                    key={cot.id}
+                    className={`flex items-center justify-between rounded px-3 py-2 border cursor-pointer transition-opacity ${
+                      isSelected ? "bg-white border-gray-300" : "bg-gray-100 border-gray-200 opacity-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={isLast}
+                        title={isLast ? "Debe quedar al menos una cotización seleccionada" : ""}
+                        onChange={() => {
+                          setSelectedIds((prev) => {
+                            if (prev.size === 1 && prev.has(String(cot.id))) return prev;
+                            const next = new Set(prev);
+                            if (next.has(String(cot.id))) next.delete(String(cot.id));
+                            else next.add(String(cot.id));
+                            return next;
+                          });
+                        }}
+                        className="w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-medium">#{cot.id}</span>
+                      <span className="text-gray-600">{tipoLabel}</span>
+                    </div>
+                    <span className={`font-semibold tabular-nums ${
+                      isSelected ? "text-gray-800" : "text-gray-400 line-through"
+                    }`}>
+                      S/ {saldoCot.toFixed(2)}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {selectedIds.size < cotizacionIds.length && (
+              <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                {cotizacionIds.length - selectedIds.size} cotización(es) excluida(s) — quedan como <b>pendiente</b> para cobrar después.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-white border rounded-xl p-4 mb-4">
         <h3 className="font-semibold text-gray-800 mb-2">Historial de pagos por fecha</h3>
         {pagos.length === 0 ? (
-          <p className="text-sm text-gray-500">Aún no hay pagos registrados para esta cotización.</p>
+          <p className="text-sm text-gray-500">Aún no hay pagos registrados para {esCobroUnificado ? "las cotizaciones seleccionadas" : "esta cotización"}.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b text-gray-600">
+                  {esCobroUnificado && <th className="text-left py-2 pr-4">Cotización</th>}
                   <th className="text-left py-2 pr-4">Fecha</th>
                   <th className="text-left py-2 pr-4">Tipo</th>
                   <th className="text-left py-2 pr-4">Monto</th>
@@ -484,6 +621,7 @@ export default function CobrarCotizacionPage() {
                   const metodoPago = String(pago?.metodo_pago || "").trim();
                   return (
                     <tr key={pago.id} className="border-b last:border-0 align-top">
+                      {esCobroUnificado && <td className="py-2 pr-4 whitespace-nowrap">#{Number(pago?.cotizacion_id || 0)}</td>}
                       <td className="py-2 pr-4 whitespace-nowrap">{fecha}</td>
                       <td className="py-2 pr-4">{esDescuento ? "Descuento" : "Abono"}</td>
                       <td className={`py-2 pr-4 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>

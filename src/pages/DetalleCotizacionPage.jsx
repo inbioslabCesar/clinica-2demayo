@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import Spinner from "../components/comunes/Spinner";
 import { BASE_URL } from "../config/config";
+import { authFetch } from "../utils/apiClient";
 
 const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -171,8 +172,7 @@ export default function DetalleCotizacionPage() {
       setError("");
       try {
         const cacheBuster = Date.now();
-        const resCot = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
-          credentials: "include",
+        const resCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
           cache: "no-store",
         });
         const dataCot = await resCot.json();
@@ -193,10 +193,9 @@ export default function DetalleCotizacionPage() {
 
         let pagosCargados = Array.isArray(pagosEmbebidos) ? pagosEmbebidos : null;
         if (!Array.isArray(pagosCargados) || pagosCargados.length === 0) {
-          const resPagos = await fetch(
-            `${BASE_URL}api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
+          const resPagos = await authFetch(
+            `api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
             {
-              credentials: "include",
               cache: "no-store",
             }
           );
@@ -205,10 +204,9 @@ export default function DetalleCotizacionPage() {
         }
 
         if ((!Array.isArray(pagosCargados) || pagosCargados.length === 0) && pacienteData.id > 0) {
-          const resCobros = await fetch(
-            `${BASE_URL}api_cobros.php?paciente_id=${Number(pacienteData.id)}&_t=${cacheBuster}`,
+          const resCobros = await authFetch(
+            `api_cobros.php?paciente_id=${Number(pacienteData.id)}&_t=${cacheBuster}`,
             {
-              credentials: "include",
               cache: "no-store",
             }
           );
@@ -261,9 +259,8 @@ export default function DetalleCotizacionPage() {
       };
     }
 
-    fetch(`${BASE_URL}api_get_configuracion.php`, {
+    authFetch("api_get_configuracion.php", {
       method: "GET",
-      credentials: "include",
       cache: "no-store",
     })
       .then((res) => res.json())
@@ -436,48 +433,148 @@ export default function DetalleCotizacionPage() {
       ? `<p style="margin:2px 0;text-align:center;">${escapeHtml(clinicBrand.email)}</p>`
       : "";
 
-    const ticketHtml = `
-      <div style="font-family: monospace; width: 320px; margin: 0 auto; font-size: 12px; color:#111;">
-        ${logoHtml}
-        <h3 style="text-align: center; margin: 0 0 4px;${clinicBrand.nombre_color ? ' color:' + escapeHtml(clinicBrand.nombre_color) + ';' : ''}">${escapeHtml(clinicBrand.nombre || "MI CLINICA")}</h3>
-        ${sloganHtml}
-        ${direccionHtml}
-        ${telefonoHtml}
-        ${celularHtml}
-        ${emailHtml}
-        ${rucHtml}
-        <p style="text-align:center;margin:8px 0 2px;"><strong>COMPROBANTE DE COTIZACION</strong></p>
-        <hr>
-        <p style="margin:4px 0;"><strong>Nro:</strong> ${escapeHtml(numeroComprobante)}</p>
-        <p style="margin:4px 0;"><strong>Cotizacion:</strong> #${Number(cotizacion?.id || 0)}</p>
-        <p style="margin:4px 0;"><strong>Fecha:</strong> ${escapeHtml(fecha)}</p>
-        <p style="margin:4px 0;"><strong>Paciente:</strong> ${escapeHtml(nombrePaciente)}</p>
-        <p style="margin:4px 0;"><strong>DNI:</strong> ${escapeHtml(paciente?.dni || "-")}</p>
-        <p style="margin:4px 0;"><strong>H.C.:</strong> ${escapeHtml(paciente?.historia_clinica || "-")}</p>
-        <hr>
-        <p style="margin:4px 0;"><strong>DETALLE</strong></p>
-        ${detallesHtml}
-        <hr>
-        <p style="margin:4px 0;"><strong>Total bruto:</strong> S/ ${Number(totalItemsBruto || 0).toFixed(2)}</p>
-        ${descuentoAplicado > 0 ? `<p style="margin:4px 0;color:#b45309;"><strong>Descuento aplicado:</strong> -S/ ${Number(descuentoAplicado).toFixed(2)}</p>` : ""}
-        <p style="margin:4px 0;"><strong>Total neto:</strong> S/ ${Number(cotizacion?.total || 0).toFixed(2)}</p>
-        <p style="margin:4px 0;"><strong>Pagado:</strong> S/ ${Number(cotizacion?.total_pagado || 0).toFixed(2)}</p>
-        <p style="margin:4px 0;"><strong>Saldo:</strong> S/ ${Number(cotizacion?.saldo_pendiente || 0).toFixed(2)}</p>
-        ${pagos.length > 0 ? `
-          <hr>
-          <p style="margin:4px 0;"><strong>HISTORIAL DE PAGOS</strong></p>
-          ${pagos.map((p) => {
-            const fechaPago = p?.created_at ? new Date(p.created_at).toLocaleString("es-PE") : "-";
-            const tipoMov = String(p?.tipo_movimiento || "abono").toLowerCase() === "devolucion" ? "Descuento" : "Abono";
-            const metodo = String(p?.metodo_pago || "").trim() || "-";
-            return `<p style="margin:2px 0;">${escapeHtml(fechaPago)} | ${escapeHtml(tipoMov)} S/ ${Number(p?.monto || 0).toFixed(2)} | ${escapeHtml(metodo)} | Saldo S/ ${Number(p?.saldo_nuevo || 0).toFixed(2)}</p>`;
-          }).join("")}
+    const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
+    const contactoLinea = [
+      clinicBrand.telefono ? `Tel: ${escapeHtml(clinicBrand.telefono)}` : "",
+      clinicBrand.celular ? `Cel: ${escapeHtml(clinicBrand.celular)}` : "",
+    ].filter(Boolean).join(" | ");
+
+    const detallesRowsHtml = detallesConNeto.length
+      ? detallesConNeto
+          .map((d) => {
+            const rawDesc = String(d?.descripcion || "Servicio").trim();
+            const descCorta = rawDesc.length > 34 ? `${rawDesc.slice(0, 31)}...` : rawDesc;
+            const desc = escapeHtml(descCorta);
+            const medicoNombre = String(d?.medico_nombre_completo || "").trim();
+            const medicoLabel = (medicoNombre && !rawDesc.toLowerCase().includes(medicoNombre.toLowerCase()))
+              ? ` - ${escapeHtml(medicoNombre.length > 18 ? `${medicoNombre.slice(0, 15)}...` : medicoNombre)}`
+              : "";
+            const cant = Number(d?.cantidad || 1);
+            const neto = Number(d?.subtotal_neto || d?.subtotal || 0);
+            return `<div class="t-row"><div class="t-desc">${desc}${medicoLabel} x${cant}</div><div class="t-amount">${toMoney(neto)}</div></div>`;
+          })
+          .join("")
+      : '<div class="t-meta">Sin items activos</div>';
+
+    const pagosRowsHtml = pagos.length > 0
+      ? pagos.map((p) => {
+          const fechaPago = p?.created_at ? new Date(p.created_at).toLocaleString("es-PE") : "-";
+          const tipoMov = String(p?.tipo_movimiento || "abono").toLowerCase() === "devolucion" ? "Descuento" : "Abono";
+          const metodo = String(p?.metodo_pago || "").trim() || "-";
+          const monto = Number(p?.monto || 0);
+          const saldoNuevo = Number(p?.saldo_nuevo || 0);
+          return `<div class="t-pay">${escapeHtml(fechaPago)} | ${escapeHtml(tipoMov)} ${toMoney(monto)} | ${escapeHtml(metodo)} | Saldo ${toMoney(saldoNuevo)}</div>`;
+        }).join("")
+      : "";
+
+    const ticketCss = `
+      <style>
+        * { box-sizing: border-box; }
+        .ticket-80 {
+          width: 100%;
+          max-width: 320px;
+          margin: 0 auto;
+          padding: 8px 10px;
+          font-family: "Courier New", "Lucida Console", monospace;
+          font-size: 11px;
+          line-height: 1.2;
+          color: #111827;
+        }
+        .ticket-80 .t-center { text-align: center; }
+        .ticket-80 .t-logo { max-height: 48px; max-width: 160px; object-fit: contain; margin: 0 auto 4px; display: block; }
+        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+        .ticket-80 .t-line { margin: 1px 0; }
+        .ticket-80 .t-title { margin: 6px 0 2px; font-weight: 700; text-transform: uppercase; text-align: center; }
+        .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
+        .ticket-80 .t-meta { margin: 1px 0; }
+        .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 700; text-transform: uppercase; }
+        .ticket-80 .t-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 6px;
+          margin: 1px 0;
+        }
+        .ticket-80 .t-desc {
+          flex: 1;
+          min-width: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
+        .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
+        .ticket-80 .t-pay {
+          margin: 1px 0;
+          font-size: 10px;
+          line-height: 1.15;
+          white-space: normal;
+          word-break: break-word;
+        }
+        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #4b5563; }
+        @media print {
+          @page { size: 80mm auto; margin: 2mm; }
+          html, body { margin: 0; padding: 0; }
+          .ticket-80 {
+            width: 76mm;
+            max-width: 76mm;
+            margin: 0;
+            padding: 2.5mm;
+            font-size: 10.5px;
+            line-height: 1.15;
+          }
+          .ticket-80 .t-clinic { font-size: 12px; }
+          .ticket-80 .t-logo { max-height: 40px; margin-bottom: 3px; }
+          .ticket-80 .t-total { font-size: 11.5px; }
+          .ticket-80 .t-pay { font-size: 9.6px; }
+        }
+      </style>`;
+
+    const ticketBody = `
+      <div class="ticket-80">
+        <div class="t-center">
+          ${clinicBrand.logo ? `<img src="${escapeHtml(clinicBrand.logo)}" alt="Logo clinica" class="t-logo" />` : ""}
+          <div class="t-clinic"${clinicBrand.nombre_color ? ` style="color:${escapeHtml(clinicBrand.nombre_color)};"` : ""}>${escapeHtml(clinicBrand.nombre || "MI CLINICA")}</div>
+          ${sloganHtml ? `<div class="t-line">${sloganHtml.replace(/<\/?p[^>]*>/g, "")}</div>` : ""}
+          ${clinicBrand.direccion ? `<div class="t-line">${escapeHtml(clinicBrand.direccion)}</div>` : ""}
+          ${contactoLinea ? `<div class="t-line">${contactoLinea}</div>` : ""}
+          ${emailHtml ? `<div class="t-line">${emailHtml.replace(/<\/?p[^>]*>/g, "")}</div>` : ""}
+          ${clinicBrand.ruc ? `<div class="t-line">RUC: ${escapeHtml(clinicBrand.ruc)}</div>` : ""}
+        </div>
+
+        <div class="t-title">Comprobante de cotizacion</div>
+        <hr class="t-hr" />
+        <div class="t-meta"><strong>Nro:</strong> ${escapeHtml(numeroComprobante)}</div>
+        <div class="t-meta"><strong>Cotizacion:</strong> #${Number(cotizacion?.id || 0)}</div>
+        <div class="t-meta"><strong>Fecha:</strong> ${escapeHtml(fecha)}</div>
+        <div class="t-meta"><strong>Paciente:</strong> ${escapeHtml(nombrePaciente)}</div>
+        <div class="t-meta"><strong>DNI:</strong> ${escapeHtml(paciente?.dni || "-")}</div>
+        <div class="t-meta"><strong>H.C.:</strong> ${escapeHtml(paciente?.historia_clinica || "-")}</div>
+
+        <hr class="t-hr" />
+        <div class="t-section">Detalle</div>
+        ${detallesRowsHtml}
+
+        <hr class="t-hr" />
+        <div class="t-row"><div class="t-desc"><strong>Total bruto</strong></div><div class="t-amount">${toMoney(totalItemsBruto)}</div></div>
+        ${descuentoAplicado > 0 ? `<div class="t-row"><div class="t-desc"><strong>Descuento</strong></div><div class="t-amount">-${toMoney(descuentoAplicado)}</div></div>` : ""}
+        <div class="t-row t-total"><div class="t-desc">Total neto</div><div class="t-amount">${toMoney(cotizacion?.total)}</div></div>
+        <div class="t-row"><div class="t-desc">Pagado</div><div class="t-amount">${toMoney(cotizacion?.total_pagado)}</div></div>
+        <div class="t-row"><div class="t-desc">Saldo</div><div class="t-amount">${toMoney(cotizacion?.saldo_pendiente)}</div></div>
+
+        ${pagosRowsHtml ? `
+          <hr class="t-hr" />
+          <div class="t-section">Historial de pagos</div>
+          ${pagosRowsHtml}
         ` : ""}
-        <hr>
-        <div style="text-align:center; font-size:11px;">Gracias por su preferencia</div>
-        <div style="text-align:center; font-size:10px; margin-top:2px;">Conserve este ticket</div>
+
+        <hr class="t-hr" />
+        <div class="t-note">Gracias por su preferencia</div>
+        <div class="t-note" style="margin-top:2px;">Conserve este ticket</div>
       </div>
     `;
+
+    const ticketHtml = `${ticketCss}${ticketBody}`;
 
     const modal = await Swal.fire({
       title: "",
@@ -496,21 +593,62 @@ export default function DetalleCotizacionPage() {
       return;
     }
 
-    ventana.document.write(`
-      <html>
-        <head>
-          <title>Ticket Cotizacion</title>
-          <style>
-            @page { size: auto; margin: 8mm; }
-            body { margin: 0; padding: 0; }
-          </style>
-        </head>
-        <body>${ticketHtml}</body>
-      </html>
-    `);
+    ventana.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ticket Cotizacion</title>${ticketCss}</head><body>${ticketBody}</body></html>`);
     ventana.document.close();
-    ventana.focus();
-    ventana.print();
+
+    const imprimirVentana = () => {
+      try {
+        ventana.focus();
+        ventana.print();
+      } catch {
+        // noop
+      }
+    };
+
+    const esperarImagenesEImprimir = () => {
+      try {
+        const imagenes = Array.from(ventana.document.images || []);
+        if (imagenes.length === 0) {
+          setTimeout(imprimirVentana, 60);
+          return;
+        }
+
+        let pendientes = imagenes.filter((img) => !img.complete);
+        if (pendientes.length === 0) {
+          setTimeout(imprimirVentana, 60);
+          return;
+        }
+
+        let impreso = false;
+        const finalizar = () => {
+          if (impreso) return;
+          impreso = true;
+          setTimeout(imprimirVentana, 80);
+        };
+
+        const onImgDone = () => {
+          pendientes = pendientes.filter((img) => !img.complete);
+          if (pendientes.length === 0) finalizar();
+        };
+
+        pendientes.forEach((img) => {
+          img.addEventListener("load", onImgDone, { once: true });
+          img.addEventListener("error", onImgDone, { once: true });
+        });
+
+        // Fallback: no bloquear impresión indefinidamente si alguna imagen no reporta evento.
+        setTimeout(finalizar, 1200);
+      } catch {
+        setTimeout(imprimirVentana, 80);
+      }
+    };
+
+    if (ventana.document.readyState === "complete") {
+      esperarImagenesEImprimir();
+    } else {
+      ventana.addEventListener("load", esperarImagenesEImprimir, { once: true });
+      setTimeout(esperarImagenesEImprimir, 250);
+    }
   };
 
   const abrirAnulacion = async () => {
@@ -558,7 +696,32 @@ export default function DetalleCotizacionPage() {
               >Editar cotizacion</button>
             )}
             {puedeCobrar && (
-              <button onClick={() => navigate(`/cobrar-cotizacion/${Number(cotizacion?.id || 0)}`)} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Cobrar</button>
+              <button
+                onClick={async () => {
+                  const cotId = Number(cotizacion?.id || 0);
+                  try {
+                    const res = await authFetch(`${BASE_URL}/api_cotizaciones.php?accion=sugerir_grupo_cobrable&cotizacion_id=${cotId}`);
+                    const data = await res.json();
+                    if (data.success && Array.isArray(data.grupo) && data.grupo.length > 1) {
+                      const lista = data.cotizaciones.map(c => `• ${c.tipo_servicio || c.servicio_tipo || 'Servicio'} — S/ ${Number(c.saldo_pendiente ?? c.total ?? 0).toFixed(2)}`).join('<br>');
+                      const result = await Swal.fire({
+                        title: 'Cobro unificado',
+                        html: `Este paciente tiene <b>${data.grupo.length} cotizaciones pendientes</b> del mismo día:<br><br>${lista}<br><br>Total: <b>S/ ${Number(data.total ?? 0).toFixed(2)}</b><br><br>¿Cobrar todo en un solo ticket?`,
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: 'Sí, cobro unificado',
+                        cancelButtonText: 'Solo esta cotización',
+                      });
+                      if (result.isConfirmed) {
+                        navigate(`/cobrar-cotizacion?ids=${data.grupo.join(',')}`);
+                        return;
+                      }
+                    }
+                  } catch (_) { /* fallback to single */ }
+                  navigate(`/cobrar-cotizacion/${cotId}`);
+                }}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+              >Cobrar</button>
             )}
             {puedeEditar && (
               <button onClick={abrirAnulacion} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Anular</button>

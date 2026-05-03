@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 import { FiSearch, FiUserPlus, FiFileText, FiX } from "react-icons/fi";
 
 export default function CotizadorRapido() {
@@ -31,8 +31,8 @@ export default function CotizadorRapido() {
       setPaciente(null);
 
       try {
-        const res = await fetch(
-          `${BASE_URL}api_pacientes.php?busqueda=${encodeURIComponent(trimmed)}&limit=1`,
+        const res = await authFetch(
+          `api_pacientes.php?busqueda=${encodeURIComponent(trimmed)}&limit=1`,
           { credentials: "include", signal: controller.signal }
         );
         const data = await res.json();

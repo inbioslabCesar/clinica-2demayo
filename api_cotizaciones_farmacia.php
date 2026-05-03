@@ -119,6 +119,46 @@ function resolver_paciente_desde_cotizacion_por_cobro($conn, $cobroId) {
     return $cache[$cobroId];
 }
 
+function resolver_medico_desde_cobro($conn, $cobroId) {
+    static $cache = [];
+    $cobroId = (int)$cobroId;
+    if ($cobroId <= 0) {
+        return '';
+    }
+    if (isset($cache[$cobroId])) {
+        return $cache[$cobroId];
+    }
+
+    if (!table_exists_local($conn, 'cotizacion_movimientos') || !table_exists_local($conn, 'cotizaciones_detalle')) {
+        $cache[$cobroId] = '';
+        return $cache[$cobroId];
+    }
+
+    $sql = "SELECT m.nombre, m.apellido
+            FROM cotizacion_movimientos cm
+            INNER JOIN cotizaciones_detalle cd ON cd.cotizacion_id = cm.cotizacion_id
+            LEFT JOIN medicos m ON m.id = cd.medico_id
+            WHERE cm.cobro_id = ?
+              AND cd.medico_id IS NOT NULL
+              AND cd.medico_id > 0
+            ORDER BY cd.id ASC
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        $cache[$cobroId] = '';
+        return $cache[$cobroId];
+    }
+    $stmt->bind_param('i', $cobroId);
+    if (!$stmt->execute()) {
+        $cache[$cobroId] = '';
+        return $cache[$cobroId];
+    }
+    $row = $stmt->get_result()->fetch_assoc();
+    $medico = trim((string)(($row['nombre'] ?? '') . ' ' . ($row['apellido'] ?? '')));
+    $cache[$cobroId] = $medico;
+    return $cache[$cobroId];
+}
+
 function formatear_paciente($nombre, $apellido = '') {
     $nombre = trim((string)$nombre);
     $apellido = trim((string)$apellido);
@@ -138,6 +178,7 @@ function normalizar_venta_legacy($row) {
         'paciente_dni' => $row['paciente_dni'] ?? '',
         'usuario_id' => isset($row['usuario_id']) ? (int)$row['usuario_id'] : null,
         'usuario_nombre' => $row['usuario_nombre'] ?? '',
+        'medico_nombre' => '',
         'total' => isset($row['total']) ? (float)$row['total'] : 0,
         'estado' => $row['estado'] ?? 'pagado'
     ];
@@ -299,6 +340,7 @@ function obtener_ventas_generales_farmacia($conn, $fecha_inicio = null, $fecha_f
             'paciente_dni' => $pacienteDni,
             'usuario_id' => isset($row['usuario_id']) ? (int)$row['usuario_id'] : null,
             'usuario_nombre' => $row['usuario_nombre'] ?? '',
+            'medico_nombre' => resolver_medico_desde_cobro($conn, $cobroId),
             'total' => round($totalFarmacia, 2),
             'estado' => $row['estado'] ?? 'pagado'
         ];
@@ -392,6 +434,7 @@ function obtener_detalle_venta_general($conn, $cobroId) {
         'paciente_dni' => $pacienteDni,
         'usuario_id' => isset($venta['usuario_id']) ? (int)$venta['usuario_id'] : null,
         'usuario_nombre' => $venta['usuario_nombre'] ?? '',
+        'medico_nombre' => resolver_medico_desde_cobro($conn, $cobroId),
         'total' => round($totalFarmacia, 2),
         'estado' => $venta['estado'] ?? 'pagado',
         'detalles' => $detalles,

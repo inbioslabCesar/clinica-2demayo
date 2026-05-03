@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuoteCart } from "../../context/QuoteCartContext";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../../config/config";
+import { authFetch } from "../../utils/apiClient";
 
 export default function QuoteCartPanel() {
   const navigate = useNavigate();
@@ -41,9 +41,8 @@ export default function QuoteCartPanel() {
   };
 
   const crearConsultaDesdeCarrito = async (item) => {
-    const res = await fetch(`${BASE_URL}api_consultas.php`, {
+    const res = await authFetch("api_consultas.php", {
       method: "POST",
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         paciente_id: Number(cart.patientId),
@@ -158,9 +157,7 @@ export default function QuoteCartPanel() {
   };
 
   const obtenerCotizacionActual = async (cotizacionId) => {
-    const res = await fetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, {
-      credentials: "include",
-    });
+    const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`);
     const data = await res.json();
     if (!data?.success || !data?.cotizacion) {
       throw new Error(data?.error || "No se pudo cargar la cotizacion en edicion");
@@ -256,9 +253,8 @@ export default function QuoteCartPanel() {
         };
       }
 
-      const res = await fetch(`${BASE_URL}api_cotizaciones.php`, {
+      const res = await authFetch("api_cotizaciones.php", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
