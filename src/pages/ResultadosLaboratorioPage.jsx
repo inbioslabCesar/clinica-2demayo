@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 
@@ -7,7 +7,6 @@ export default function ResultadosLaboratorioPage() {
   const [resultados, setResultados] = useState([]);
   const [documentosExternos, setDocumentosExternos] = useState([]);
   const [referenciadosPendientes, setReferenciados] = useState([]);
-  const [examenes, setExamenes] = useState([]);
   const [ordenesConsulta, setOrdenesConsulta] = useState([]);
   const [archivoVisor, setArchivoVisor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -28,10 +27,9 @@ export default function ResultadosLaboratorioPage() {
 
     Promise.all([
       authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}`).then(r => r.json()),
-      authFetch(`api_examenes_laboratorio.php`).then(r => r.json()),
       authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}`).then(r => r.json()),
     ])
-      .then(([resLab, resEx, resOrdenes]) => {
+      .then(([resLab, resOrdenes]) => {
         if (!isMounted) return;
         if (resLab.success) {
           setResultados(resLab.resultados || []);
@@ -42,7 +40,6 @@ export default function ResultadosLaboratorioPage() {
           setError(resLab.error || "No hay resultados");
           setDocumentosExternos([]);
         }
-        setExamenes(resEx.examenes || []);
         setOrdenesConsulta(Array.isArray(resOrdenes?.ordenes) ? resOrdenes.ordenes : []);
       })
       .catch(() => {
@@ -68,17 +65,13 @@ export default function ResultadosLaboratorioPage() {
   }
 
   // Normaliza valores numéricos desde texto (soporta coma decimal y unidades)
-  function normalizeNumber(value) {
+  const normalizeNumber = useCallback((value) => {
     if (value === null || value === undefined) return NaN;
     if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
     let s = String(value).trim();
 
     const hasComma = s.includes(',');
     if (hasComma) {
-      // Regla de negocio:
-      // - coma en grupos de 3 dígitos => miles (eliminar comas)
-      // - coma con 1-2 dígitos => decimal (convertir a punto)
-      // - punto siempre decimal, no se altera
       if (/^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)) {
         s = s.replace(/,/g, '');
       } else {
@@ -90,44 +83,41 @@ export default function ResultadosLaboratorioPage() {
     if (!match) return NaN;
     const n = parseFloat(match[0]);
     return Number.isFinite(n) ? n : NaN;
-  }
+  }, []);
 
-  function formatReferenceNumber(value) {
+  const formatReferenceNumber = useCallback((value) => {
     const n = normalizeNumber(value);
     if (!Number.isFinite(n)) return String(value ?? '').trim();
     return Number(n).toLocaleString('en-US', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 6,
     });
-  }
+  }, [normalizeNumber]);
 
-  // Mapas para nombre, unidad y valores de referencia (array)
-  const idToNombre = {};
-  const idToReferencias = {};
-  for (const ex of examenes) {
-    idToNombre[ex.id] = ex.nombre;
-    idToReferencias[ex.id] = Array.isArray(ex.valores_referenciales) ? ex.valores_referenciales : [];
-  }
-  for (const orden of ordenesConsulta) {
-    const examenesOrden = Array.isArray(orden?.examenes) ? orden.examenes : [];
-    for (const ex of examenesOrden) {
-      const examId = Number(ex?.id || 0);
-      if (examId <= 0) continue;
-      if (!idToNombre[examId] && ex?.nombre) {
-        idToNombre[examId] = ex.nombre;
-      }
-      if ((!Array.isArray(idToReferencias[examId]) || idToReferencias[examId].length === 0) && Array.isArray(ex?.valores_referenciales)) {
-        idToReferencias[examId] = ex.valores_referenciales;
+  // Mapas para nombre y valores de referencia — memoizados para no recalcular en cada render
+  const { idToNombre, idToReferencias } = useMemo(() => {
+    const nombre = {};
+    const refs = {};
+    for (const orden of ordenesConsulta) {
+      const examenesOrden = Array.isArray(orden?.examenes) ? orden.examenes : [];
+      for (const ex of examenesOrden) {
+        const examId = Number(ex?.id || 0);
+        if (examId <= 0) continue;
+        if (!nombre[examId] && ex?.nombre) nombre[examId] = ex.nombre;
+        if ((!Array.isArray(refs[examId]) || refs[examId].length === 0) && Array.isArray(ex?.valores_referenciales)) {
+          refs[examId] = ex.valores_referenciales;
+        }
       }
     }
-  }
+    return { idToNombre: nombre, idToReferencias: refs };
+  }, [ordenesConsulta]);
 
   // Obtiene el parámetro del examen por nombre
-  function normalizeName(s) {
+  const normalizeName = useCallback((s) => {
     if (!s) return "";
     return String(s).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  }
-  function getParametro(paramsList, nombreParam = null) {
+  }, []);
+  const getParametro = useCallback((paramsList, nombreParam = null) => {
     if (!Array.isArray(paramsList) || paramsList.length === 0) return null;
     if (!nombreParam) return null;
     const target = normalizeName(nombreParam);
@@ -137,10 +127,10 @@ export default function ResultadosLaboratorioPage() {
       return normalizeName(p.nombre || '') === target;
     });
     return param || null;
-  }
+  }, [normalizeName]);
 
   // Lógica robusta para obtener min y max (como en LlenarResultadosForm)
-  function getMinMax(param) {
+  const getMinMax = useCallback((param) => {
     let min = null, max = null;
     if (!param) return { min, max };
     // Preferir referencias[0] si existen
@@ -187,10 +177,10 @@ export default function ResultadosLaboratorioPage() {
       if (Number.isFinite(M3)) max = M3;
     }
     return { min, max };
-  }
+  }, [normalizeNumber]);
 
   // Chequea si el valor está fuera de rango (robusto)
-  function fueraDeRango(val, param) {
+  const fueraDeRango = useCallback((val, param) => {
     if (!param) return false;
     if (val === undefined || val === null || val === "") return false;
     const { min, max } = getMinMax(param);
@@ -199,7 +189,7 @@ export default function ResultadosLaboratorioPage() {
     if (min !== null && valNum < min) return true;
     if (max !== null && valNum > max) return true;
     return false;
-  }
+  }, [getMinMax, normalizeNumber]);
 
   return (
     <div className="max-w-4xl mx-auto p-6 bg-white rounded-xl shadow-xl mt-6">
