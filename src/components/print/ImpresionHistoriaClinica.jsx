@@ -12,6 +12,8 @@ const ImpresionHistoriaClinica = ({
   medicamentos,
   resultadosLaboratorio,
   ordenesLaboratorio,
+  ordenesImagen,
+  ordenesProcedimientos,
   medicoInfo,
   configuracionClinica 
 }) => {
@@ -148,6 +150,75 @@ const ImpresionHistoriaClinica = ({
         return Object.entries(resultado.resultados).some(([k, v]) => !isMetaResultKey(k) && v !== null && String(v).trim() !== '');
       })
     : [];
+
+  const toTimestamp = (rawValue) => {
+    const parsed = new Date(String(rawValue || '').replace(' ', 'T'));
+    const ts = parsed.getTime();
+    return Number.isNaN(ts) ? 0 : ts;
+  };
+
+  const tipoImagenLabel = {
+    rx: 'Rayos X',
+    ecografia: 'Ecografía',
+    tomografia: 'Tomografía',
+  };
+
+  const ordenesImagenSolicitadas = Array.isArray(ordenesImagen)
+    ? ordenesImagen
+        .map((orden) => {
+          const servicios = Array.isArray(orden?.servicios_nombres)
+            ? orden.servicios_nombres.filter(Boolean)
+            : Array.isArray(orden?.servicios)
+            ? orden.servicios.map((s) => s?.descripcion || s?.nombre).filter(Boolean)
+            : [];
+          return {
+            id: orden?.id,
+            tipo: tipoImagenLabel[String(orden?.tipo || '').toLowerCase()] || String(orden?.tipo || 'Imagen').trim() || 'Imagen',
+            servicios,
+            fecha: orden?.fecha || orden?.fecha_solicitud || '',
+            estado: String(orden?.estado || '').toLowerCase(),
+          };
+        })
+        .filter((orden) => orden.estado !== 'cancelado' && orden.servicios.length > 0)
+        .sort((a, b) => toTimestamp(b.fecha) - toTimestamp(a.fecha))
+    : [];
+
+  const ordenesProcedimientosSolicitados = Array.isArray(ordenesProcedimientos)
+    ? ordenesProcedimientos
+        .map((orden) => ({
+          id: orden?.id,
+          procedimientos: Array.isArray(orden?.procedimientos)
+            ? orden.procedimientos.map((p) => p?.descripcion || p?.nombre).filter(Boolean)
+            : [],
+          fecha: orden?.fecha || orden?.fecha_solicitud || '',
+          estado: String(orden?.estado || '').toLowerCase(),
+        }))
+        .filter((orden) => orden.estado !== 'cancelado' && orden.procedimientos.length > 0)
+        .sort((a, b) => toTimestamp(b.fecha) - toTimestamp(a.fecha))
+    : [];
+
+  const dayKey = (rawValue) => {
+    const ts = toTimestamp(rawValue);
+    if (!ts) return '';
+    const d = new Date(ts);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const hoyKey = dayKey(new Date());
+
+  const splitByToday = (rows) => {
+    const source = Array.isArray(rows) ? rows : [];
+    return {
+      hoy: source.filter((row) => dayKey(row?.fecha) === hoyKey),
+      anteriores: source.filter((row) => dayKey(row?.fecha) !== hoyKey),
+    };
+  };
+
+  const imagenesAgrupadas = splitByToday(ordenesImagenSolicitadas);
+  const procedimientosAgrupados = splitByToday(ordenesProcedimientosSolicitados);
 
   // Función para mostrar mensaje cuando no hay datos
   const SeccionVacia = ({ titulo, mensaje = "No hay información registrada" }) => (
@@ -491,10 +562,19 @@ const ImpresionHistoriaClinica = ({
             {medicamentos.map((medicamento, index) => {
               const nombreMed = medicamento?.nombre || medicamento?.medicamento || 'Medicamento sin nombre';
               const codigoMed = medicamento?.codigo ? ` (${medicamento.codigo})` : '';
+              const presentacion = medicamento?.presentacion || '';
+              const concentracion = medicamento?.concentracion || '';
+              const laboratorio = medicamento?.laboratorio || '';
               const dosis = medicamento?.dosis || '';
               const frecuencia = medicamento?.frecuencia || '';
               const duracion = medicamento?.duracion || '';
               const obs = medicamento?.observaciones || medicamento?.indicaciones || '';
+
+              const especificaciones = [
+                presentacion ? `Pres: ${presentacion}` : null,
+                concentracion ? `Conc: ${concentracion}` : null,
+                laboratorio ? `Lab: ${laboratorio}` : null,
+              ].filter(Boolean).join(' | ');
 
               const detalles = [
                 dosis ? `D: ${dosis}` : null,
@@ -508,6 +588,7 @@ const ImpresionHistoriaClinica = ({
                   <span className="font-semibold">{index + 1}.</span>{' '}
                   <span className="font-semibold">{nombreMed}</span>
                   <span className="text-gray-600">{codigoMed}</span>
+                  {especificaciones && <span className="text-xs text-blue-700"> [{especificaciones}]</span>}
                   {detalles && <span> - {detalles}</span>}
                 </div>
               );
@@ -579,6 +660,107 @@ const ImpresionHistoriaClinica = ({
         ) : (
           <SeccionVacia titulo="🔬 EXÁMENES DE LABORATORIO SOLICITADOS" mensaje="No se han solicitado exámenes de laboratorio para esta consulta" />
         )
+      )}
+
+      {/* Servicios de apoyo diagnóstico solicitados (imágenes y procedimientos) */}
+      {(ordenesImagenSolicitadas.length > 0 || ordenesProcedimientosSolicitados.length > 0) && (
+        <div className="mb-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
+          <h3 className="font-semibold text-slate-800 mb-1 border-b border-slate-300 text-xs">
+            🧾 SERVICIOS DE APOYO DIAGNÓSTICO SOLICITADOS
+          </h3>
+
+          {ordenesImagenSolicitadas.length > 0 && (
+            <div className="mb-2">
+              <p className="text-xs font-semibold text-slate-700 mb-1">Imágenes diagnósticas</p>
+              {imagenesAgrupadas.hoy.length > 0 && (
+                <div className="mb-1.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 mb-1">Hoy</p>
+                  <div className="space-y-1">
+                    {imagenesAgrupadas.hoy.map((orden, idx) => (
+                      <div key={`img-hoy-${orden.id || idx}`} className="bg-white border border-emerald-200 rounded p-1 text-xs">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="font-semibold text-slate-800">{orden.tipo}</span>
+                          <span className="text-[10px] text-slate-500">{formatearFecha(orden.fecha)}</span>
+                        </div>
+                        <ul className="list-disc pl-5 text-slate-700">
+                          {orden.servicios.map((serv, i) => (
+                            <li key={`img-hoy-${orden.id || idx}-${i}`}>{serv}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {imagenesAgrupadas.anteriores.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-600 mb-1">Anteriores</p>
+                  <div className="space-y-1">
+                    {imagenesAgrupadas.anteriores.map((orden, idx) => (
+                      <div key={`img-ant-${orden.id || idx}`} className="bg-white border border-slate-200 rounded p-1 text-xs">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="font-semibold text-slate-800">{orden.tipo}</span>
+                          <span className="text-[10px] text-slate-500">{formatearFecha(orden.fecha)}</span>
+                        </div>
+                        <ul className="list-disc pl-5 text-slate-700">
+                          {orden.servicios.map((serv, i) => (
+                            <li key={`img-ant-${orden.id || idx}-${i}`}>{serv}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {ordenesProcedimientosSolicitados.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-slate-700 mb-1">Procedimientos</p>
+              {procedimientosAgrupados.hoy.length > 0 && (
+                <div className="mb-1.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 mb-1">Hoy</p>
+                  <div className="space-y-1">
+                    {procedimientosAgrupados.hoy.map((orden, idx) => (
+                      <div key={`proc-hoy-${orden.id || idx}`} className="bg-white border border-emerald-200 rounded p-1 text-xs">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="font-semibold text-slate-800">Solicitud #{orden.id || idx + 1}</span>
+                          <span className="text-[10px] text-slate-500">{formatearFecha(orden.fecha)}</span>
+                        </div>
+                        <ul className="list-disc pl-5 text-slate-700">
+                          {orden.procedimientos.map((proc, i) => (
+                            <li key={`proc-hoy-${orden.id || idx}-${i}`}>{proc}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {procedimientosAgrupados.anteriores.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-600 mb-1">Anteriores</p>
+                  <div className="space-y-1">
+                    {procedimientosAgrupados.anteriores.map((orden, idx) => (
+                      <div key={`proc-ant-${orden.id || idx}`} className="bg-white border border-slate-200 rounded p-1 text-xs">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="font-semibold text-slate-800">Solicitud #{orden.id || idx + 1}</span>
+                          <span className="text-[10px] text-slate-500">{formatearFecha(orden.fecha)}</span>
+                        </div>
+                        <ul className="list-disc pl-5 text-slate-700">
+                          {orden.procedimientos.map((proc, i) => (
+                            <li key={`proc-ant-${orden.id || idx}-${i}`}>{proc}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Resultados de laboratorio - formato comprimido */}

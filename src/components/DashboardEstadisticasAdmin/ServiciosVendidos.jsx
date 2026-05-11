@@ -105,7 +105,7 @@ const ServiciosVendidos = ({
                 {lista.map((s, i) => {
                   const pct = totalGeneral > 0 ? ((Number(s.total || 0) / totalGeneral) * 100).toFixed(1) : '0.0';
                   return (
-                    <tr key={s.tipo + '-' + s.nombre + '-' + s.medico} className="hover:bg-slate-50 transition-colors">
+                    <tr key={i + '-' + s.tipo + '-' + s.nombre + '-' + s.medico} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-2.5 text-gray-400 font-medium">{i + 1}</td>
                       <td className="px-4 py-2.5 font-semibold text-gray-800">{s.nombre}</td>
                       <td className="px-4 py-2.5">

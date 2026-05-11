@@ -19,6 +19,7 @@ export default function CotizarProcedimientosPage() {
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const [medicos, setMedicos] = useState([]);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
 
    const [busqueda, setBusqueda] = useState("");
@@ -51,6 +52,14 @@ export default function CotizarProcedimientosPage() {
       .then(data => {
         if (data.success && data.paciente) setPaciente(data.paciente);
       });
+    // Cargar lista de médicos
+    authFetch(`${BASE_URL}api_medicos.php`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        const lista = Array.isArray(data.medicos) ? data.medicos : (Array.isArray(data) ? data : []);
+        setMedicos(lista);
+      })
+      .catch(() => {});
     // Limpiar selección y mensaje al entrar
     setSeleccionados([]);
     setCantidades({});
@@ -311,7 +320,8 @@ export default function CotizarProcedimientosPage() {
         descripcion,
         cantidad,
         precio_unitario: Number(proc.precio_particular || 0),
-        subtotal: Number(proc.precio_particular || 0) * cantidad
+        subtotal: Number(proc.precio_particular || 0) * cantidad,
+        ...(proc.medico_id ? { medico_id: Number(proc.medico_id) } : {})
       } : null;
     }).filter(Boolean);
   };
@@ -605,8 +615,17 @@ export default function CotizarProcedimientosPage() {
                       />
                       <div className="flex-1">
                         <div className="font-semibold text-gray-800">{proc.descripcion || proc.nombre}</div>
+                        {proc.medico_id && (() => {
+                          const m = medicos.find(x => Number(x.id) === Number(proc.medico_id));
+                          if (!m) return null;
+                          const nombre = `${m.nombres || m.nombre || ''} ${m.apellidos || m.apellido || ''}`.trim();
+                          return (
+                            <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
+                              👨‍⚕️ {nombre}
+                            </span>
+                          );
+                        })()}
                       </div>
-                      <div className="font-bold text-green-700 text-lg">S/ {proc.precio_particular}</div>
                       {seleccionados.includes(proc.id) && (
                         <input
                           type="number"
@@ -638,13 +657,13 @@ export default function CotizarProcedimientosPage() {
                       <div>
                         <span className="font-medium text-gray-900">{proc.descripcion || proc.nombre}</span>
                       </div>
-                      <div className="font-bold text-green-700 text-right">S/ {(proc.precio_particular * cantidad).toFixed(2)}</div>
+                      <div className="text-sm text-gray-700 text-right">{cantidad} procedimiento(s)</div>
                     </li>
                   ) : null;
                 })}
               </ul>
-              <div className="mt-4 text-lg font-bold text-right">
-                Total: <span className="text-green-600">S/ {calcularTotal().toFixed(2)}</span>
+              <div className="mt-4 text-lg font-bold text-right text-gray-800">
+                Total de procedimientos: {seleccionados.length}
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>

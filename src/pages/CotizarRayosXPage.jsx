@@ -662,7 +662,6 @@ export default function CotizarRayosXPage() {
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                      <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
                       <div className="text-xs text-blue-700 mt-1">Doctor: {medicoNombre || "Sin doctor"}</div>
                     </div>
                     {seleccionados.includes(Number(tarifa.id)) ? (
@@ -709,13 +708,12 @@ export default function CotizarRayosXPage() {
                     <li key={tid} className="py-2 flex flex-col md:flex-row justify-between items-center gap-2">
                       <span className="w-full md:w-1/2">{tarifa.descripcion || tarifa.nombre}</span>
                       <span className="w-full md:w-1/4">{cantidad} estudio(s)</span>
-                      <span className="font-bold text-green-700 w-full md:w-1/4">S/ {(tarifa.precio_particular * cantidad).toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}
               </ul>
-              <div className="mt-4 text-lg font-bold text-right">
-                Total: <span className="text-green-600">S/ {calcularTotal().toFixed(2)}</span>
+              <div className="mt-4 text-lg font-bold text-right text-blue-800">
+                Total de estudios: {seleccionados.length}
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>

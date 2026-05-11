@@ -1303,40 +1303,73 @@ class CobroModule
             return;
         }
 
-        $tipos = [];
+        // Filtrar solo los detalles de tipo imagen, uno por servicio
+        $imageDetalles = [];
         foreach ((array)$detalles as $det) {
             $tipoOrden = self::resolverTipoOrdenImagen($det['servicio_tipo'] ?? '', $det['descripcion'] ?? '');
             if ($tipoOrden) {
-                $tipos[$tipoOrden] = true;
+                $imageDetalles[] = [
+                    'detalle_id' => (int)($det['id'] ?? 0),
+                    'tipo'       => $tipoOrden,
+                    'descripcion' => strtoupper(trim($det['descripcion'] ?? '')),
+                ];
             }
         }
-        if (empty($tipos)) {
+        if (empty($imageDetalles)) {
             return;
         }
 
         $hasCotizacionId = self::columnExists($conn, 'ordenes_imagen', 'cotizacion_id');
-        $hasConsultaId = self::columnExists($conn, 'ordenes_imagen', 'consulta_id');
+        $hasConsultaId   = self::columnExists($conn, 'ordenes_imagen', 'consulta_id');
         $hasSolicitadoPor = self::columnExists($conn, 'ordenes_imagen', 'solicitado_por');
         $hasCargaAnticipada = self::columnExists($conn, 'ordenes_imagen', 'carga_anticipada');
 
-        foreach (array_keys($tipos) as $tipo) {
+        // Eliminar órdenes genéricas antiguas (sin token de detalle ni nombre de servicio)
+        // creadas por versiones anteriores de esta función, solo si no tienen archivos adjuntos
+        if ($hasCotizacionId) {
+            $genericIndicaciones = 'Orden creada desde cotización #' . $cotizacionId;
+            $stmtDel = $conn->prepare(
+                'DELETE oi FROM ordenes_imagen oi
+                 LEFT JOIN ordenes_imagen_archivos oia ON oia.orden_id = oi.id
+                 WHERE oi.cotizacion_id = ? AND oi.indicaciones = ? AND oia.id IS NULL'
+            );
+            if ($stmtDel) {
+                $stmtDel->bind_param('is', $cotizacionId, $genericIndicaciones);
+                $stmtDel->execute();
+                $stmtDel->close();
+            }
+        }
+
+        // Crear una orden por cada servicio de imagen con formato token
+        foreach ($imageDetalles as $item) {
+            $tipo        = $item['tipo'];
+            $detalleId   = $item['detalle_id'];
+            $descripcion = $item['descripcion'];
+
+            // Formato token idéntico al de api_cotizaciones.php::crear_ordenes_imagen_cotizacion
+            if ($detalleId > 0) {
+                $indicaciones = "Detalle #{$detalleId} - {$descripcion} | Orden creada desde cotización #{$cotizacionId}";
+            } else {
+                $indicaciones = "{$descripcion} | Orden creada desde cotización #{$cotizacionId}";
+            }
+
+            // Idempotencia por indicaciones exactas (una orden por servicio)
             if ($hasCotizacionId) {
-                $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? LIMIT 1');
+                $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND indicaciones = ? LIMIT 1');
                 if ($stmtChk) {
-                    $stmtChk->bind_param('is', $cotizacionId, $tipo);
+                    $stmtChk->bind_param('is', $cotizacionId, $indicaciones);
                     $stmtChk->execute();
                     $exists = $stmtChk->get_result()->fetch_assoc();
                     $stmtChk->close();
                     if ($exists) {
+                        // Actualizar consulta_id si aún no está asignado
                         if ($hasConsultaId && $consultaId > 0) {
-                            $ordenId = (int)($exists['id'] ?? 0);
-                            if ($ordenId > 0) {
-                                $stmtUp = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
-                                if ($stmtUp) {
-                                    $stmtUp->bind_param('ii', $consultaId, $ordenId);
-                                    $stmtUp->execute();
-                                    $stmtUp->close();
-                                }
+                            $ordenId = (int)$exists['id'];
+                            $stmtUp = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
+                            if ($stmtUp) {
+                                $stmtUp->bind_param('ii', $consultaId, $ordenId);
+                                $stmtUp->execute();
+                                $stmtUp->close();
                             }
                         }
                         continue;
@@ -1344,27 +1377,27 @@ class CobroModule
                 }
             }
 
-            $cols = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
-            $vals = ['?', '?', '?', '?', "'pendiente'"];
-            $types = 'iiss';
-            $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipo, 'Orden creada desde cotización #' . $cotizacionId];
+            $cols   = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
+            $vals   = ['?', '?', '?', '?', "'pendiente'"];
+            $types  = 'iiss';
+            $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipo, $indicaciones];
 
             if ($hasSolicitadoPor) {
-                $cols[] = 'solicitado_por';
-                $vals[] = '?';
-                $types .= 'i';
+                $cols[]   = 'solicitado_por';
+                $vals[]   = '?';
+                $types   .= 'i';
                 $params[] = (int)$usuarioId;
             }
             if ($hasCotizacionId) {
-                $cols[] = 'cotizacion_id';
-                $vals[] = '?';
-                $types .= 'i';
+                $cols[]   = 'cotizacion_id';
+                $vals[]   = '?';
+                $types   .= 'i';
                 $params[] = (int)$cotizacionId;
             }
             if ($hasCargaAnticipada) {
-                $cols[] = 'carga_anticipada';
-                $vals[] = '?';
-                $types .= 'i';
+                $cols[]   = 'carga_anticipada';
+                $vals[]   = '?';
+                $types   .= 'i';
                 $params[] = 0;
             }
 

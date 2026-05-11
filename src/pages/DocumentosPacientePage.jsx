@@ -78,9 +78,13 @@ function formatFecha(str) {
   if (isNaN(d)) return str;
   return d.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
 }
+const esArchivoPermitido = (f) =>
+  f.type === "application/pdf" ||
+  f.type.startsWith("image/") ||
+  f.name.toLowerCase().endsWith(".dcm");
 
 // ─── Componente tarjeta documento ────────────────────────────────────────────
-function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, puedeProcesarLaboratorio, onAbrirLaboratorio, onDescargar }) {
+const DocumentoCard = React.memo(function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, puedeProcesarLaboratorio, onAbrirLaboratorio, onDescargar }) {
   const [lightbox, setLightbox] = useState(null);
   const cfg = TIPO_CONFIG[doc.tipo] || TIPO_CONFIG.otro;
   const ordenCancelada = String(doc?.orden_estado || doc?.estado || '').toLowerCase() === 'cancelada';
@@ -297,7 +301,7 @@ function DocumentoCard({ doc, onEliminar, puedeEliminar, cotizacionResaltada, pu
       )}
     </div>
   );
-}
+});
 
 // ─── Modal subida ─────────────────────────────────────────────────────────────
 function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
@@ -326,11 +330,6 @@ function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
   const [subiendo, setSubiendo] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
-
-  const esArchivoPermitido = (f) =>
-    f.type === "application/pdf" ||
-    f.type.startsWith("image/") ||
-    f.name.toLowerCase().endsWith(".dcm");
 
   const agregarArchivos = (nuevos) => {
     const todos = Array.from(nuevos);
@@ -617,7 +616,8 @@ export default function DocumentosPacientePage({ usuario }) {
   const [tabActivo, setTabActivo]     = useState("todos");
   const [modalSubir, setModalSubir]   = useState(false);
   const [prefillModal, setPrefillModal] = useState(null); // {orden_id, titulo, tipo, cotizacion_id}
-  const [busqueda, setBusqueda]       = useState("");
+  const [busqueda, setBusqueda]             = useState("");
+  const [debouncedBusqueda, setDebouncedBusqueda] = useState("");
 
   // Filtro por cotización derivado de la URL (?cotizacion_id=X)
   const filtroCotizacion = useMemo(() => {
@@ -713,8 +713,8 @@ export default function DocumentosPacientePage({ usuario }) {
     navigate(`/panel-laboratorio?${params.toString()}`);
   }, [navigate, filtroCotizacion, location.pathname, location.search, pacienteId]);
 
-  const cargar = useCallback(async () => {
-    setLoading(true);
+  const cargar = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await authFetch(
         `api_documentos_paciente.php?paciente_id=${pacienteId}`
@@ -735,6 +735,11 @@ export default function DocumentosPacientePage({ usuario }) {
   }, [pacienteId]);
 
   useEffect(() => { cargar(); }, [cargar]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedBusqueda(busqueda), 300);
+    return () => clearTimeout(t);
+  }, [busqueda]);
 
   // Auto-abrir modal pre-llenado si vienen parámetros en la URL
   useEffect(() => {
@@ -773,8 +778,8 @@ export default function DocumentosPacientePage({ usuario }) {
     if (filtroCotizacion) {
       arr = arr.filter((d) => d.cotizacion_id === filtroCotizacion);
     }
-    if (busqueda.trim()) {
-      const q = busqueda.toLowerCase();
+    if (debouncedBusqueda.trim()) {
+      const q = debouncedBusqueda.toLowerCase();
       arr = arr.filter(
         (d) =>
           d.titulo?.toLowerCase().includes(q) ||
@@ -783,7 +788,7 @@ export default function DocumentosPacientePage({ usuario }) {
       );
     }
     return arr;
-  }, [documentos, tabActivo, busqueda, filtroCotizacion]);
+  }, [documentos, tabActivo, debouncedBusqueda, filtroCotizacion]);
 
   const contadores = useMemo(() => ({
     total:      documentos.length,
@@ -792,7 +797,7 @@ export default function DocumentosPacientePage({ usuario }) {
     externo:    documentos.filter((d) => d.origen === "externo").length,
   }), [documentos]);
 
-  const eliminarDocumento = async (documentoId) => {
+  const eliminarDocumento = useCallback(async (documentoId) => {
     const { isConfirmed } = await Swal.fire({
       title: "¿Eliminar documento?",
       text: "Se eliminarán también los archivos adjuntos. Esta acción es irreversible.",
@@ -811,7 +816,7 @@ export default function DocumentosPacientePage({ usuario }) {
       });
       const data = await res.json();
       if (data.success) {
-        cargar();
+        cargar(true);
         Swal.fire({ icon: "success", title: "Eliminado", timer: 1200, showConfirmButton: false });
       } else {
         Swal.fire("Error", data.error || "No se pudo eliminar.", "error");
@@ -819,7 +824,7 @@ export default function DocumentosPacientePage({ usuario }) {
     } catch {
       Swal.fire("Error", "Error de conexión.", "error");
     }
-  };
+  }, [cargar]);
 
   const rutaVolver = useMemo(() => {
     const sp = new URLSearchParams(location.search);
@@ -1007,7 +1012,7 @@ export default function DocumentosPacientePage({ usuario }) {
               timer: 2000,
               showConfirmButton: false,
             });
-            cargar();
+            cargar(true);
           }}
         />
       )}

@@ -760,7 +760,6 @@ export default function CotizarEcografiaPage() {
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                      <div className="text-xs text-gray-500">Precio: S/ {tarifa.precio_particular}</div>
                       <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
                       {coverageStatusByTarifa[Number(tarifa.id)] === 'pending' ? (
                         <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
@@ -813,13 +812,12 @@ export default function CotizarEcografiaPage() {
                     <li key={tid} className="py-2 flex justify-between items-center">
                       <span>{tarifa.descripcion || tarifa.nombre}</span>
                       <span>{cantidad} estudio(s)</span>
-                      <span className="font-bold text-green-700">S/ {(getDisplayPrice(tarifa) * cantidad).toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}
               </ul>
               <div className="text-right text-xl font-bold text-blue-800 flex items-center gap-2">
-                Total: <span>💲</span> S/ {calcularTotal().toFixed(2)}
+                Total de servicios: {seleccionados.length}
               </div>
               <button
                 onClick={agregarAlCarrito}

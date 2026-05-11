@@ -113,6 +113,9 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
     const nuevo = {
       codigo: modoManual ? `MANUAL-${Date.now()}` : medicamentoSel.codigo,
       nombre: modoManual ? nombreManual : medicamentoSel.nombre,
+      presentacion: !modoManual ? (medicamentoSel.presentacion || "") : "",
+      concentracion: !modoManual ? (medicamentoSel.concentracion || "") : "",
+      laboratorio: !modoManual ? (medicamentoSel.laboratorio || "") : "",
       dosis: detalle.dosis,
       frecuencia,
       frecuencia_tipo: detalle.frecuenciaTipo,
@@ -171,7 +174,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       )}
 
       {resultados.length > 0 && !medicamentoSel && (
-        <div className="border rounded bg-white shadow max-h-40 overflow-y-auto mb-2">
+        <div className="border rounded bg-white shadow max-h-60 overflow-y-auto mb-2">
           {resultados.map((m) => (
             (() => {
               const stock = Number(m?.stock || 0);
@@ -179,7 +182,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
               return (
                 <div
                   key={m.id || m.codigo}
-                  className={`px-2 py-1 text-sm flex items-center justify-between gap-2 ${sinStock ? "bg-red-50 text-gray-500 cursor-not-allowed" : "hover:bg-blue-100 cursor-pointer"}`}
+                  className={`px-3 py-2 text-sm flex flex-col gap-1 ${sinStock ? "bg-red-50 text-gray-500 cursor-not-allowed" : "hover:bg-blue-100 cursor-pointer"}`}
                   onClick={() => {
                     if (sinStock) return;
                     setMedicamentoSel(m);
@@ -189,14 +192,30 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                   title={sinStock ? "Sin stock en farmacia" : "Seleccionar medicamento"}
                   aria-disabled={sinStock}
                 >
-                  <span>
-                    {m.nombre} <span className="text-gray-500">({m.codigo})</span>
-                  </span>
-                  {sinStock && (
-                    <span className="text-[11px] font-semibold text-red-700 bg-red-100 border border-red-200 rounded px-2 py-0.5">
-                      Sin Stock
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">
+                      {m.nombre} <span className="text-gray-500 text-xs">({m.codigo})</span>
                     </span>
-                  )}
+                    {sinStock && (
+                      <span className="text-[11px] font-semibold text-red-700 bg-red-100 border border-red-200 rounded px-2 py-0.5">
+                        Sin Stock
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-700 ml-2 space-y-0.5">
+                    {m.presentacion && (
+                      <div><strong>Presentación:</strong> {m.presentacion}</div>
+                    )}
+                    {m.concentracion && (
+                      <div><strong>Concentración:</strong> {m.concentracion}</div>
+                    )}
+                    {m.laboratorio && (
+                      <div><strong>Laboratorio:</strong> {m.laboratorio}</div>
+                    )}
+                    {m.stock !== undefined && (
+                      <div className={sinStock ? "text-red-600" : "text-green-600"}><strong>Stock:</strong> {stock}</div>
+                    )}
+                  </div>
                 </div>
               );
             })()
@@ -206,32 +225,40 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
 
       {(medicamentoSel || modoManual) && (
         <div className="border rounded p-3 bg-blue-50 mb-2 space-y-3">
-          <div className="font-semibold">
+          <div className="text-xs text-gray-600">
             {modoManual ? (
               <>
-                <span>Medicamento manual</span>
+                <span className="font-semibold">Medicamento manual</span>
                 <input
                   type="text"
-                  className="border rounded p-1 w-full mt-2 font-normal"
+                  className="border rounded p-1 w-full mt-2 font-normal text-sm"
                   placeholder="Nombre del medicamento"
                   value={manualNombre}
                   onChange={(e) => setManualNombre(e.target.value)}
                 />
               </>
             ) : (
-              <>
-                {medicamentoSel.nombre}{" "}
-                <span className="text-gray-500">({medicamentoSel.codigo})</span>
-              </>
+              <div className="space-y-0.5">
+                <div className="font-semibold text-gray-800">{medicamentoSel.nombre}</div>
+                <div className="text-xs text-gray-500 flex flex-wrap gap-2">
+                  {medicamentoSel.codigo && <span>Código: {medicamentoSel.codigo}</span>}
+                  {medicamentoSel.presentacion && <span>•</span>}
+                  {medicamentoSel.presentacion && <span>Pres: {medicamentoSel.presentacion}</span>}
+                  {medicamentoSel.concentracion && <span>•</span>}
+                  {medicamentoSel.concentracion && <span>Conc: {medicamentoSel.concentracion}</span>}
+                  {medicamentoSel.laboratorio && <span>•</span>}
+                  {medicamentoSel.laboratorio && <span>Lab: {medicamentoSel.laboratorio}</span>}
+                </div>
+              </div>
             )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Dosis</label>
+              <label className="block text-xs text-gray-500 mb-1 font-medium">Dosis</label>
               <input
                 type="text"
-                className="border rounded p-2 w-full"
+                className="border rounded p-2 w-full text-sm"
                 placeholder="Ej: 500 mg o 1 ampolla"
                 value={detalle.dosis}
                 onChange={(e) => setDetalle((prev) => ({ ...prev, dosis: e.target.value }))}
@@ -239,9 +266,9 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Tipo de frecuencia</label>
+              <label className="block text-xs text-gray-500 mb-1 font-medium">Tipo de frecuencia</label>
               <select
-                className="border rounded p-2 w-full"
+                className="border rounded p-2 w-full text-sm"
                 value={detalle.frecuenciaTipo}
                 onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaTipo: e.target.value }))}
               >
@@ -256,13 +283,13 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {(detalle.frecuenciaTipo === "intervalo_horas" || detalle.frecuenciaTipo === "veces_dia") && (
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                <label className="block text-xs text-gray-500 mb-1 font-medium">
                   {detalle.frecuenciaTipo === "intervalo_horas" ? "Intervalo en horas" : "Veces por día"}
                 </label>
                 <input
                   type="number"
                   min="1"
-                  className="border rounded p-2 w-full"
+                  className="border rounded p-2 w-full text-sm"
                   value={detalle.frecuenciaValor}
                   onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaValor: e.target.value }))}
                 />
@@ -271,10 +298,10 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
 
             {detalle.frecuenciaTipo === "horarios_fijos" && (
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Horas fijas</label>
+                <label className="block text-xs text-gray-500 mb-1 font-medium">Horas fijas</label>
                 <input
                   type="text"
-                  className="border rounded p-2 w-full"
+                  className="border rounded p-2 w-full text-sm"
                   placeholder="Ej: 08:00, 20:00"
                   value={detalle.frecuenciaHoras}
                   onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaHoras: e.target.value }))}
@@ -283,17 +310,17 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Duración</label>
-              <div className="flex gap-2">
+              <label className="block text-xs text-gray-500 mb-1 font-medium">Duración</label>
+              <div className="flex gap-2 items-end">
                 <input
                   type="number"
                   min="1"
-                  className="border rounded p-2 w-28"
+                  className="border rounded p-2 flex-1 text-sm"
                   value={detalle.duracionValor}
                   onChange={(e) => setDetalle((prev) => ({ ...prev, duracionValor: e.target.value }))}
                 />
                 <select
-                  className="border rounded p-2 flex-1"
+                  className="border rounded p-2 text-sm"
                   value={detalle.duracionUnidad}
                   onChange={(e) => setDetalle((prev) => ({ ...prev, duracionUnidad: e.target.value }))}
                 >
@@ -304,8 +331,8 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
             </div>
           </div>
 
-          <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs text-slate-600">
-            <span className="font-semibold text-slate-700">Vista previa:</span>{" "}
+          <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs text-gray-500">
+            <span className="font-medium text-gray-600">Vista previa:</span>{" "}
             {buildFrequencyText({
               frecuenciaTipo: detalle.frecuenciaTipo,
               frecuenciaValor: parsePositiveInteger(detalle.frecuenciaValor),
@@ -319,8 +346,8 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
           </div>
 
           <textarea
-            className="border rounded p-2 w-full"
-            placeholder="Observaciones clínicas"
+            className="border rounded p-2 w-full text-sm"
+            placeholder="Observaciones clínicas (opcional)"
             value={detalle.observaciones}
             onChange={(e) => setDetalle((prev) => ({ ...prev, observaciones: e.target.value }))}
             rows={2}
@@ -329,14 +356,14 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
           <div className="flex gap-2">
             <button
               type="button"
-              className="bg-blue-600 text-white px-3 py-2 rounded"
+              className="bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium"
               onClick={agregarMedicamento}
             >
               Agregar a receta
             </button>
             <button
               type="button"
-              className="bg-gray-400 text-white px-3 py-2 rounded"
+              className="bg-gray-400 text-white px-3 py-2 rounded text-sm font-medium"
               onClick={resetFormulario}
             >
               Cancelar
@@ -346,17 +373,20 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       )}
 
       <div className="mt-2">
-        <h4 className="font-semibold mb-1">Medicamentos seleccionados:</h4>
+        <h4 className="text-xs text-gray-600 font-medium mb-2">Medicamentos seleccionados:</h4>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border rounded min-w-max">
             <thead>
               <tr className="bg-blue-100">
-                <th className="px-2 py-1 whitespace-nowrap">Medicamento</th>
-                <th className="px-2 py-1 whitespace-nowrap">Dosis</th>
-                <th className="px-2 py-1 whitespace-nowrap">Frecuencia</th>
-                <th className="px-2 py-1 whitespace-nowrap">Duración</th>
-                <th className="px-2 py-1 whitespace-nowrap">Observaciones</th>
-                <th className="px-2 py-1 whitespace-nowrap w-16">Quitar</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Medicamento</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Presentación</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Concentración</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Laboratorio</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Dosis</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Frecuencia</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Duración</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Observaciones</th>
+                <th className="px-2 py-1 whitespace-nowrap w-16 text-xs text-gray-700 font-semibold">Quitar</th>
               </tr>
             </thead>
             <tbody>
@@ -368,6 +398,9 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                         {m.nombre} {m.codigo && <span className="text-gray-500">({m.codigo})</span>}
                       </div>
                     </td>
+                    <td className="border px-2 py-1 whitespace-nowrap text-xs">{m.presentacion || "-"}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap text-xs">{m.concentracion || "-"}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap text-xs">{m.laboratorio || "-"}</td>
                     <td className="border px-2 py-1 whitespace-nowrap">{m.dosis}</td>
                     <td className="border px-2 py-1 whitespace-nowrap">{m.frecuencia}</td>
                     <td className="border px-2 py-1 whitespace-nowrap">{m.duracion}</td>

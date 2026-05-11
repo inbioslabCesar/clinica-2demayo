@@ -41,6 +41,40 @@ function column_exists_sync($conn, $tableName, $columnName) {
     return $res && $res->num_rows > 0;
 }
 
+function cotizacion_tiene_externos_activos_sync($conn, $cotizacionId) {
+    if (!column_exists_sync($conn, 'cotizaciones_detalle', 'es_externo')) {
+        return false;
+    }
+    $whereEstado = column_exists_sync($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
+    $stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM cotizaciones_detalle WHERE cotizacion_id = ? AND es_externo = 1{$whereEstado}");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['cnt'] ?? 0) > 0;
+}
+
+function resolver_estado_financiero_cotizacion_sync($conn, $cotizacionId, $total, $pagado) {
+    $total = max(0.0, round((float)$total, 2));
+    $pagado = max(0.0, round((float)$pagado, 2));
+    $saldo = max(0.0, round($total - $pagado, 2));
+
+    if ($total <= 0.00001 && cotizacion_tiene_externos_activos_sync($conn, (int)$cotizacionId)) {
+        return [
+            'estado' => 'informativo',
+            'saldo' => 0.0,
+        ];
+    }
+
+    return [
+        'estado' => ($saldo <= 0.00001) ? 'pagado' : (($pagado > 0.00001) ? 'parcial' : 'pendiente'),
+        'saldo' => $saldo,
+    ];
+}
+
 // Log minimal incoming payload info to help debug failed requests from the UI
 if (is_array($body)) {
     $countItems = is_array($items) ? count($items) : 0;
@@ -316,7 +350,7 @@ try {
         }
     }
 
-    if ($cotizacion_id > 0 && $total_agregado > 0) {
+    if ($cotizacion_id > 0) {
         $stmt_cot = $conn->prepare("SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE");
         if ($stmt_cot) {
             $stmt_cot->bind_param('i', $cotizacion_id);
@@ -328,10 +362,9 @@ try {
 
                 if (column_exists_sync($conn, 'cotizaciones', 'total_pagado') && column_exists_sync($conn, 'cotizaciones', 'saldo_pendiente')) {
                     $pagado = (float)($cot['total_pagado'] ?? 0);
-                    $nuevo_saldo = max(0, $nuevo_total_cot - $pagado);
-                    $nuevo_estado = ($nuevo_saldo <= 0.00001)
-                        ? 'pagado'
-                        : ($pagado > 0 ? 'parcial' : 'pendiente');
+                    $finanzas = resolver_estado_financiero_cotizacion_sync($conn, $cotizacion_id, $nuevo_total_cot, $pagado);
+                    $nuevo_saldo = (float)($finanzas['saldo'] ?? 0);
+                    $nuevo_estado = (string)($finanzas['estado'] ?? 'pendiente');
 
                     if (column_exists_sync($conn, 'cotizaciones', 'version_actual')) {
                         $stmt_up_cot = $conn->prepare("UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ?, version_actual = version_actual + 1, updated_at = NOW() WHERE id = ?");

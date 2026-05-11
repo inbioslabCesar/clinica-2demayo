@@ -138,9 +138,40 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
     if ($cotizId > 0) {
         $cRow = $conn->query("SELECT estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id = $cotizId")->fetch_assoc();
         $orden['cotizacion'] = $cRow ?: null;
+
         $descs = [];
-        $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId ORDER BY id ASC");
-        while ($d = $dRes->fetch_assoc()) $descs[] = $d['descripcion'];
+        $tipoOrden = strtolower(trim((string)($orden['tipo'] ?? '')));
+
+        // Si la orden trae token de detalle en indicaciones, priorizar ese detalle exacto.
+        $detalleTokenId = 0;
+        $indicaciones = (string)($orden['indicaciones'] ?? '');
+        if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+            $detalleTokenId = (int)($m[1] ?? 0);
+        }
+
+        if ($detalleTokenId > 0) {
+            $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId AND id = $detalleTokenId LIMIT 1");
+            if ($dRes && ($d = $dRes->fetch_assoc())) {
+                $descs[] = (string)($d['descripcion'] ?? '');
+            }
+        }
+
+        if (empty($descs)) {
+            $whereTipo = '';
+            if ($tipoOrden === 'ecografia') {
+                $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'ecografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND LOWER(descripcion) LIKE '%ecograf%'))";
+            } elseif ($tipoOrden === 'rx') {
+                $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) IN ('rayosx','rayos_x','rayos x','rx') OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%rayos x%' OR LOWER(descripcion) REGEXP '(^|[^a-z])rx([^a-z]|$)')))";
+            } elseif ($tipoOrden === 'tomografia') {
+                $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'tomografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%tomograf%' OR LOWER(descripcion) LIKE '% tac %' OR LOWER(descripcion) LIKE 'tac %' OR LOWER(descripcion) LIKE '% tac')))";
+            }
+
+            $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId{$whereTipo} ORDER BY id ASC");
+            while ($dRes && ($d = $dRes->fetch_assoc())) {
+                $descs[] = (string)($d['descripcion'] ?? '');
+            }
+        }
+
         $orden['servicios_nombres'] = $descs;
     } else {
         $orden['cotizacion'] = null;
@@ -321,13 +352,13 @@ if ($method === 'POST') {
         $action = $input['action'] ?? ($_POST['action'] ?? '');
 
         if ($action === 'crear') {
-            $consulta_id    = (int)($input['consulta_id'] ?? 0);
-            $paciente_id    = (int)($input['paciente_id'] ?? 0);
-            $tipo           = trim($input['tipo'] ?? 'rx');
-            $indicaciones   = trim($input['indicaciones'] ?? '');
-            $cargaAnticipada = !empty($input['carga_anticipada']) ? 1 : 0;
+            $consulta_id         = (int)($input['consulta_id'] ?? 0);
+            $paciente_id         = (int)($input['paciente_id'] ?? 0);
+            $tipo                = trim($input['tipo'] ?? 'rx');
+            $indicacionesUsuario = trim($input['indicaciones'] ?? '');
+            $cargaAnticipada     = !empty($input['carga_anticipada']) ? 1 : 0;
             // servicios: array of {tarifa_id, descripcion, precio} sent from SolicitudImagenPage
-            $servicios      = is_array($input['servicios'] ?? null) ? $input['servicios'] : [];
+            $servicios = is_array($input['servicios'] ?? null) ? $input['servicios'] : [];
 
             if ($consulta_id <= 0 || $paciente_id <= 0) {
                 echo json_encode(['success' => false, 'error' => 'consulta_id y paciente_id son requeridos']); exit;
@@ -336,51 +367,102 @@ if ($method === 'POST') {
                 echo json_encode(['success' => false, 'error' => 'Tipo no válido']); exit;
             }
 
-            $tipo_e = $conn->real_escape_string($tipo);
-            $ind_e  = $conn->real_escape_string($indicaciones);
-            $stmt   = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?)');
-            $stmt->bind_param('iissii', $consulta_id, $paciente_id, $tipo_e, $ind_e, $usuarioId, $cargaAnticipada);
-            $stmt->execute();
-            $stmt->close();
-            $orden_id = $conn->insert_id;
+            $tipoServMap     = ['rx' => 'rayosx', 'ecografia' => 'ecografia', 'tomografia' => 'procedimientos'];
+            $detalleServTipo = $tipoServMap[$tipo] ?? $tipo;
+            $tipoLabel       = ['rx' => 'Rayos X', 'ecografia' => 'Ecografía', 'tomografia' => 'Tomografía'][$tipo] ?? strtoupper($tipo);
 
-            // Vincular al nodo HC activo de esta consulta
-            $conn->query("UPDATE ordenes_imagen oi INNER JOIN historia_clinica h ON h.consulta_id = oi.consulta_id SET oi.historia_clinica_id = h.id WHERE oi.id = $orden_id AND oi.historia_clinica_id IS NULL");
+            // ── Paso 1: crear cotización primero para obtener cotizaciones_detalle.id ──
+            // Esto permite asignar un token "Detalle #X" por orden, que hace que:
+            //   - adjuntarArchivos() muestre solo la descripción del servicio propio
+            //   - la idempotencia con sincronizar_servicios_clinicos_post_pago_cotizacion funcione
+            $cotizData    = ['cotizacion_id' => null, 'numero_comprobante' => null, 'total' => 0];
+            $detalleIdMap = []; // strtolower(descripcion) → cotizaciones_detalle.id
 
-            // Crear cotización si se enviaron servicios con precios
-            $cotizData = ['cotizacion_id' => null, 'numero_comprobante' => null, 'total' => 0];
-            if (!empty($servicios)) {
-                $detallesCotiz = [];
-                // Map internal tipo to ENUM-compatible servicio_tipo for cotizaciones_detalle
-                $tipoServMap = ['rx' => 'rayosx', 'ecografia' => 'ecografia', 'tomografia' => 'procedimientos'];
-                $detalleServTipo = $tipoServMap[$tipo] ?? $tipo;
+            $detallesCotiz = [];
+            foreach ($servicios as $srv) {
+                $precio = floatval($srv['precio'] ?? 0);
+                if ($precio <= 0) continue;
+                $detallesCotiz[] = [
+                    'servicio_tipo'   => $detalleServTipo,
+                    'servicio_id'     => intval($srv['tarifa_id'] ?? 0),
+                    'descripcion'     => trim((string)($srv['descripcion'] ?? 'Servicio')),
+                    'cantidad'        => 1,
+                    'precio_unitario' => $precio,
+                    'subtotal'        => $precio,
+                ];
+            }
+
+            if (!empty($detallesCotiz)) {
+                $obsPartes      = ["Orden de $tipoLabel desde consulta #$consulta_id"];
+                if ($indicacionesUsuario !== '') $obsPartes[] = $indicacionesUsuario;
+                $obsText        = implode(' | ', $obsPartes);
+                // Usar usuario_id = 0 si es médico (su ID viene de tabla medicos, no usuarios)
+                $usuarioIdCotiz = ($rol === 'medico') ? 0 : $usuarioId;
+                $medicoIdCotiz  = ($rol === 'medico') ? $usuarioId : 0;
+                $cotizData      = crearCotizacionImagen($conn, $paciente_id, $consulta_id, $detallesCotiz, $usuarioIdCotiz, $obsText, $medicoIdCotiz);
+                $cotizIdNew     = intval($cotizData['cotizacion_id']);
+                if ($cotizIdNew > 0) {
+                    // Mapear descripcion → detalle.id para los tokens de cada orden
+                    $dRes = $conn->query("SELECT id, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizIdNew ORDER BY id ASC");
+                    while ($dRes && ($dRow = $dRes->fetch_assoc())) {
+                        $detalleIdMap[strtolower(trim((string)$dRow['descripcion']))] = (int)$dRow['id'];
+                    }
+                }
+            }
+
+            // ── Paso 2: crear UNA orden por cada servicio (o una genérica si no hay servicios) ──
+            $cotizId  = intval($cotizData['cotizacion_id'] ?? 0);
+            $ordenIds = [];
+
+            if (empty($servicios)) {
+                // Sin servicios → orden genérica con indicaciones del usuario
+                $indFinal = $indicacionesUsuario !== '' ? $indicacionesUsuario : strtoupper($tipo);
+                $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?)');
+                $stmt->bind_param('iissii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada);
+                $stmt->execute();
+                $stmt->close();
+                $oid        = (int)$conn->insert_id;
+                $ordenIds[] = $oid;
+                if ($cotizId > 0) {
+                    $conn->query("UPDATE ordenes_imagen SET cotizacion_id = $cotizId WHERE id = $oid");
+                }
+            } else {
                 foreach ($servicios as $srv) {
-                    $precio = floatval($srv['precio'] ?? 0);
-                    if ($precio <= 0) continue;
-                    $detallesCotiz[] = [
-                        'servicio_tipo'   => $detalleServTipo,
-                        'servicio_id'     => intval($srv['tarifa_id'] ?? 0),
-                        'descripcion'     => trim((string)($srv['descripcion'] ?? 'Servicio')),
-                        'cantidad'        => 1,
-                        'precio_unitario' => $precio,
-                        'subtotal'        => $precio,
-                    ];
+                    $desc      = trim((string)($srv['descripcion'] ?? 'Servicio'));
+                    $detalleId = $detalleIdMap[strtolower($desc)] ?? 0;
+
+                    // Formato estricto: compatible con idempotencia de crear_ordenes_imagen_cotizacion
+                    // (payment-sync usa este mismo formato para deduplicar)
+                    if ($detalleId > 0 && $cotizId > 0) {
+                        $indFinal = "Detalle #$detalleId - $desc | Orden creada desde cotización #$cotizId";
+                    } elseif ($cotizId > 0) {
+                        $indFinal = "$desc | Orden creada desde cotización #$cotizId";
+                    } else {
+                        $indFinal = $indicacionesUsuario !== '' ? $indicacionesUsuario : $desc;
+                    }
+
+                    if ($cotizId > 0) {
+                        $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada, cotizacion_id) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?, ?)');
+                        $stmt->bind_param('iissiii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada, $cotizId);
+                    } else {
+                        $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?)');
+                        $stmt->bind_param('iissii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada);
+                    }
+                    $stmt->execute();
+                    $stmt->close();
+                    $ordenIds[] = (int)$conn->insert_id;
                 }
-                if (!empty($detallesCotiz)) {
-                    $tipoLabel = ['rx' => 'Rayos X', 'ecografia' => 'Ecografía', 'tomografia' => 'Tomografía'][$tipo] ?? strtoupper($tipo);
-                    $obsText   = "Orden de $tipoLabel desde consulta #$consulta_id";
-                    // Usar usuario_id = 0 si es médico (su ID viene de tabla medicos, no usuarios)
-                    $usuarioIdCotiz = ($rol === 'medico') ? 0 : $usuarioId;
-                    $medicoIdCotiz  = ($rol === 'medico') ? $usuarioId : 0;
-                    $cotizData = crearCotizacionImagen($conn, $paciente_id, $consulta_id, $detallesCotiz, $usuarioIdCotiz, $obsText, $medicoIdCotiz);
-                    $cotizId   = intval($cotizData['cotizacion_id']);
-                    $conn->query("UPDATE ordenes_imagen SET cotizacion_id = $cotizId WHERE id = $orden_id");
-                }
+            }
+
+            // ── Paso 3: vincular cada orden al nodo HC activo de la consulta ──────────
+            foreach ($ordenIds as $oid) {
+                $conn->query("UPDATE ordenes_imagen oi INNER JOIN historia_clinica h ON h.consulta_id = oi.consulta_id SET oi.historia_clinica_id = h.id WHERE oi.id = $oid AND oi.historia_clinica_id IS NULL");
             }
 
             echo json_encode([
                 'success'            => true,
-                'orden_id'           => $orden_id,
+                'orden_id'           => $ordenIds[0] ?? 0,   // compatibilidad retroactiva
+                'orden_ids'          => $ordenIds,
                 'cotizacion_id'      => $cotizData['cotizacion_id'],
                 'numero_comprobante' => $cotizData['numero_comprobante'],
                 'total'              => $cotizData['total'],
@@ -414,9 +496,10 @@ if ($method === 'POST') {
                 ? " AND estado_item <> 'eliminado'"
                 : '';
 
-            $detRes = $conn->query("SELECT servicio_tipo, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizacion_id" . $whereEstado);
-            $tipos = [];
+            $detRes = $conn->query("SELECT id, servicio_tipo, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizacion_id" . $whereEstado . " ORDER BY id ASC");
+            $detallesImagen = [];
             while ($det = $detRes->fetch_assoc()) {
+                $detalleId = (int)($det['id'] ?? 0);
                 $tipoSrv = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
                 $desc = strtolower(trim((string)($det['descripcion'] ?? '')));
                 $tipoOrden = null;
@@ -438,21 +521,34 @@ if ($method === 'POST') {
                 }
 
                 if ($tipoOrden) {
-                    $tipos[$tipoOrden] = true;
+                    $detallesImagen[] = [
+                        'detalle_id' => $detalleId,
+                        'tipo' => $tipoOrden,
+                        'descripcion' => trim((string)($det['descripcion'] ?? '')),
+                    ];
                 }
             }
 
-            if (empty($tipos)) {
+            if (empty($detallesImagen)) {
                 echo json_encode(['success' => true, 'creadas' => 0, 'tipos' => []]);
                 exit;
             }
 
             $creadas = 0;
             $tiposCreados = [];
-            foreach (array_keys($tipos) as $tipoOrden) {
-                $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? LIMIT 1');
+            foreach ($detallesImagen as $detImg) {
+                $detalleId = (int)$detImg['detalle_id'];
+                $tipoOrden = (string)$detImg['tipo'];
+                $descOrden = trim((string)$detImg['descripcion']);
+                if ($descOrden === '') {
+                    $descOrden = strtoupper($tipoOrden);
+                }
+                $tokenDetalle = $detalleId > 0 ? ('Detalle #' . $detalleId . ' - ') : '';
+                $indicaciones = $tokenDetalle . $descOrden . ' | Orden creada desde cotización #' . $cotizacion_id;
+
+                $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? AND indicaciones = ? LIMIT 1');
                 if ($stmtChk) {
-                    $stmtChk->bind_param('is', $cotizacion_id, $tipoOrden);
+                    $stmtChk->bind_param('iss', $cotizacion_id, $tipoOrden, $indicaciones);
                     $stmtChk->execute();
                     $exists = $stmtChk->get_result()->fetch_assoc();
                     $stmtChk->close();
@@ -463,7 +559,6 @@ if ($method === 'POST') {
 
                 $stmtIns = $conn->prepare("INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, cotizacion_id, carga_anticipada) VALUES (0, ?, ?, ?, 'pendiente', ?, ?, 0)");
                 if ($stmtIns) {
-                    $indicaciones = 'Orden creada desde cotización #' . $cotizacion_id;
                     $stmtIns->bind_param('issii', $paciente_id, $tipoOrden, $indicaciones, $usuarioId, $cotizacion_id);
                     $stmtIns->execute();
                     $stmtIns->close();

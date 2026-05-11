@@ -77,9 +77,10 @@ function saveOneBannerImage($tmpPath, $size, $error, $targetDir, $relativeDir, $
         throw new RuntimeException('No se pudo guardar la imagen');
     }
 
-    $absoluteUrl = getBaseUrlPrefix() . $relativeDir . '/' . $filename;
+    // Devolver URL relativa en lugar de absoluta para mejor compatibilidad
+    $relativeUrl = $relativeDir . '/' . $filename;
 
-    return [$absoluteUrl, $mime];
+    return [$relativeUrl, $mime];
 }
 
 $urls = [];

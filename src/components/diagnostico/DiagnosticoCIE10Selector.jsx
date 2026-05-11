@@ -104,8 +104,30 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
     setDiagnosticos(prev => prev.map(d => d.codigo === codigo ? { ...d, tipo: normalizarTipoDiagnostico(tipo) } : d));
   };
 
+  const primaryActionStyle = {
+    background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))',
+  };
+  const accentPanelStyle = {
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 72%, white)',
+    borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 26%, white)',
+  };
+  const accentTextStyle = { color: 'var(--color-primary-dark, #1d4ed8)' };
+  const accentSoftStyle = { color: 'var(--color-primary, #2563eb)' };
+  const tableHeadStyle = {
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 68%, white)',
+    color: 'var(--color-primary-dark, #1d4ed8)',
+  };
+
   return (
-    <div className="mb-4">
+    <div className="mb-4 cie10-theme">
+      <style>{`
+        .cie10-theme input:focus,
+        .cie10-theme select:focus,
+        .cie10-theme textarea:focus {
+          border-color: var(--color-primary, #2563eb) !important;
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary-light, #dbeafe) 75%, white) !important;
+        }
+      `}</style>
       <h3 className="text-lg font-semibold mb-2 mt-4">Diagnóstico (CIE10)</h3>
       <div className="mb-2 flex flex-col sm:flex-row gap-2 items-stretch">
         <div className="relative flex-1">
@@ -121,7 +143,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
           />
           {cargando && (
             <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2" style={{ borderColor: 'var(--color-primary, #2563eb)', borderTopColor: 'transparent' }}></div>
             </div>
           )}
         </div>
@@ -142,7 +164,9 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
           {sugerencias.map(d => (
             <div
               key={d.id}
-              className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+              className="px-3 py-2 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 50%, white)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
               onClick={() => setSeleccion(d)}
             >
               <div className="flex justify-between items-start">
@@ -150,7 +174,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
                   <div className="font-semibold text-sm text-gray-900">{d.nombre}</div>
                   <div className="text-xs text-gray-600 mt-1">
                     <span className="font-mono bg-gray-100 px-2 py-1 rounded mr-2">{d.codigo}</span>
-                    {d.categoria && <span className="text-blue-600">{d.categoria}</span>}
+                    {d.categoria && <span style={accentSoftStyle}>{d.categoria}</span>}
                     {d.subcategoria && <span className="text-gray-500"> • {d.subcategoria}</span>}
                   </div>
                   {d.descripcion && (
@@ -163,16 +187,16 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
         </div>
       )}
       {seleccion && (
-        <div className="border rounded p-3 bg-blue-50 mb-2">
+        <div className="border rounded p-3 mb-2" style={accentPanelStyle}>
           <div className="mb-2">
             <div className="font-semibold text-lg">{seleccion.nombre}</div>
             <div className="text-sm text-gray-600 mt-1">
-              <span className="font-mono bg-blue-100 px-2 py-1 rounded mr-2">{seleccion.codigo}</span>
-              {seleccion.categoria && <span className="text-blue-600">{seleccion.categoria}</span>}
+              <span className="font-mono px-2 py-1 rounded mr-2" style={{ backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 80%, white)' }}>{seleccion.codigo}</span>
+              {seleccion.categoria && <span style={accentSoftStyle}>{seleccion.categoria}</span>}
               {seleccion.subcategoria && <span className="text-gray-500"> • {seleccion.subcategoria}</span>}
             </div>
             {seleccion.descripcion && (
-              <div className="text-sm text-gray-700 mt-2 p-2 bg-white rounded border-l-4 border-blue-400">
+              <div className="text-sm text-gray-700 mt-2 p-2 bg-white rounded border-l-4" style={{ borderLeftColor: 'var(--color-primary, #2563eb)' }}>
                 {seleccion.descripcion}
               </div>
             )}
@@ -195,7 +219,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
             />
           </div>
           <div className="flex gap-2">
-            <button type="button" className="bg-blue-600 text-white px-3 py-1 rounded" onClick={agregarDiagnostico}>
+            <button type="button" className="text-white px-3 py-1 rounded" style={primaryActionStyle} onClick={agregarDiagnostico}>
               Agregar diagnóstico
             </button>
             <button type="button" className="bg-gray-400 text-white px-3 py-1 rounded" onClick={() => setSeleccion(null)}>
@@ -210,7 +234,7 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
           <div className="overflow-x-auto">
             <table className="w-full text-xs border rounded min-w-max">
               <thead>
-                <tr className="bg-blue-100">
+                <tr style={tableHeadStyle}>
                   <th className="px-2 py-1 whitespace-nowrap">Código</th>
                   <th className="px-2 py-1 whitespace-nowrap">Nombre</th>
                   <th className="px-2 py-1 whitespace-nowrap">Tipo</th>

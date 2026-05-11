@@ -126,6 +126,15 @@ const ImpresionRecetaMedicamentos = ({
             {medicamentos.map((medicamento, index) => (
               <li key={index}>
                 <span className="font-semibold uppercase">{medicamento.nombre || 'Medicamento no especificado'}</span>
+                {medicamento.presentacion && (
+                  <span className="ml-2"><strong>Presentación:</strong> {medicamento.presentacion}</span>
+                )}
+                {medicamento.concentracion && (
+                  <span className="ml-2"><strong>Concentración:</strong> {medicamento.concentracion}</span>
+                )}
+                {medicamento.laboratorio && (
+                  <span className="ml-2"><strong>Laboratorio:</strong> {medicamento.laboratorio}</span>
+                )}
                 {medicamento.dosis && (
                   <span className="ml-2"><strong>Dosis:</strong> {medicamento.dosis}</span>
                 )}

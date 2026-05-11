@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
@@ -71,24 +71,256 @@ function getVencimientoMeta(row) {
   };
 }
 
+// Constantes de estilo fuera del componente — referencia estable, nunca se recrean
+const ACTION_BTN_BASE = "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-transform hover:scale-105";
+const THEME_GRADIENT = { backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)" };
+const THEME_PRIMARY_SOFT = { backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" };
+const THEME_OUTLINE = { color: "var(--color-primary-dark)", borderColor: "var(--color-primary-light)" };
+
+function badgeOrigen(value) {
+  const v = String(value || "regular").toLowerCase();
+  if (v === "contrato") return { cls: "bg-emerald-100 text-emerald-700", label: "Contrato" };
+  if (v === "extra") return { cls: "bg-orange-100 text-orange-700", label: "Extra" };
+  if (v === "mixto") return { cls: "bg-indigo-100 text-indigo-700", label: "Mixto" };
+  return { cls: "bg-slate-100 text-slate-700", label: "Regular" };
+}
+
+function badgeOrigenVisual(row) {
+  const observaciones = String(row?.observaciones || "").toLowerCase();
+  if (observaciones.includes("paquetes/perfiles")) {
+    if (observaciones.includes("perfil")) return { cls: "bg-fuchsia-100 text-fuchsia-700", label: "PERFIL" };
+    return { cls: "bg-violet-100 text-violet-700", label: "PAQUETE" };
+  }
+  return badgeOrigen(row?.origen_cobro_resumen);
+}
+
+// ─── Fila de cotización memoizada ──────────────────────────────────────────────
+// Solo re-renderiza cuando cambian los datos de la fila o los callbacks
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, badgeEstado, labelEstado }) {
+  const estadoRow = String(row.estado || "").toLowerCase();
+  const numeroComprobante = String(row.numero_comprobante || "").trim();
+  const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
+  const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
+  const esParticular = Number(row.paciente_id || 0) <= 0;
+
+  const servicios = useMemo(() => Array.from(new Set(
+    String(row.servicios_tipos || "")
+      .split(",")
+      .map(normalizarServicioTipo)
+      .filter(Boolean)
+  )), [row.servicios_tipos]);
+
+  const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
+  const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
+  const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
+  const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada && servicios.includes("laboratorio") && Number(row.paciente_id || 0) > 0;
+  const puedeAbrirLaboratorio = puedeGestionarLaboratorioDesdeCotizacion || tieneResultadosLaboratorio;
+  const ordenLaboratorioId = Number(row.orden_laboratorio_id || 0);
+  const ordenQuery = ordenLaboratorioId > 0 ? `&orden_id=${ordenLaboratorioId}` : "";
+  const tituloResultado = encodeURIComponent(
+    tieneLaboratorioReferencia
+      ? `Resultado laboratorio referencia - Cot. #${row.id}`
+      : `Resultado laboratorio - Cot. #${row.id}`
+  );
+  const laboratorioUrl = `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&abrir=1&tipo=laboratorio&titulo=${tituloResultado}&back_to=/cotizaciones`;
+  const laboratorioTitulo = tieneResultadosLaboratorio ? "Ver resultados de laboratorio" : "Gestionar resultados de laboratorio";
+  const origen = useMemo(() => badgeOrigenVisual(row), [row]);
+  const contratosIds = String(row.contratos_ids_resumen || "").trim();
+
+  // Handler HC separado con useCallback para evitar función anónima nueva en cada render
+  const handleVerHC = useCallback(async () => {
+    let consultaId = Number(row.consulta_ref_id || 0);
+    if (consultaId <= 0) {
+      try {
+        const resRef = await authFetch(
+          `api_cotizaciones.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
+          { cache: "no-store" }
+        );
+        const dataRef = await resRef.json();
+        consultaId = Number(dataRef?.cotizacion?.consulta_ref_id || 0);
+        if (consultaId <= 0) {
+          const detalleConsulta = Array.isArray(dataRef?.cotizacion?.detalles)
+            ? dataRef.cotizacion.detalles.find((detalle) => (
+              String(detalle?.servicio_tipo || '').trim().toLowerCase() === 'consulta'
+              && Number(detalle?.consulta_id || 0) > 0
+            ))
+            : null;
+          consultaId = Number(detalleConsulta?.consulta_id || 0);
+        }
+        if (consultaId <= 0) {
+          const resConsulta = await authFetch(
+            `api_consultas.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
+            { cache: 'no-store' }
+          );
+          const dataConsulta = await resConsulta.json();
+          const consultaResuelta = Array.isArray(dataConsulta?.consultas) ? dataConsulta.consultas[0] : null;
+          consultaId = Number(consultaResuelta?.id || 0);
+        }
+      } catch {
+        consultaId = 0;
+      }
+    }
+    if (consultaId > 0) {
+      onNavigate(`/historia-clinica-lectura/${row.paciente_id}/${consultaId}?back_to=/cotizaciones`);
+    } else {
+      await Swal.fire({
+        icon: 'warning',
+        title: 'No se encontró la consulta asociada',
+        text: 'Esta cotización no tiene una atención clínica vinculada para abrir la HC en modo lectura.',
+        confirmButtonText: 'Aceptar',
+      });
+    }
+  }, [row.id, row.paciente_id, row.consulta_ref_id, onNavigate]);
+
+  return (
+    <tr className="border-t align-top">
+      <td className="px-3 py-2 font-semibold">
+        <div>#{row.id}</div>
+        {numeroComprobante && (
+          <div className="text-xs font-mono text-indigo-700">{numeroComprobante}</div>
+        )}
+      </td>
+      <td className="px-3 py-2 whitespace-nowrap">{row.fecha}</td>
+      <td className="px-3 py-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="font-medium">{row.nombre} {row.apellido}</div>
+          {esParticular && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-100 text-orange-700">
+              Particular
+            </span>
+          )}
+        </div>
+        <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
+      </td>
+      <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap gap-1">
+          {servicios.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
+            <span
+              key={`${row.id}-${s}`}
+              className="text-xs px-2 py-1 rounded"
+              style={THEME_PRIMARY_SOFT}
+              title="Servicio cotizado"
+            >
+              {estadoRow === "anulada" ? `${s} (anulada)` : s}
+            </span>
+          ))}
+        </div>
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex flex-col gap-1 items-start">
+          <span className={`px-2 py-1 rounded text-xs font-semibold ${origen.cls}`}>{origen.label}</span>
+          {contratosIds && (
+            <span className="text-[11px] text-slate-500">Contrato(s): {contratosIds}</span>
+          )}
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.total || 0).toFixed(2)}</td>
+      <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.saldo_pendiente ?? 0).toFixed(2)}</td>
+      <td className="px-3 py-2">
+        <div className="flex flex-col items-start gap-1">
+          <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado, row.pagado_con_descuento)}`}>
+            {labelEstado(row)}
+          </span>
+          {vencimientoMeta && (
+            <span
+              className={`px-2 py-1 rounded text-xs font-semibold ${vencimientoMeta.className}`}
+              title={vencimientoMeta.detail}
+            >
+              {vencimientoMeta.label}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => onNavigate(`/cotizaciones/${row.id}/detalle`)}
+            className={ACTION_BTN_BASE}
+            style={THEME_OUTLINE}
+            title="Ver detalle"
+            aria-label="Ver detalle"
+          >
+            <FiEye className="text-sm" />
+          </button>
+          {puedeAbrirLaboratorio && (
+            <button
+              onClick={() => onNavigate(laboratorioUrl)}
+              className={`${ACTION_BTN_BASE} ${tieneResultadosLaboratorio ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200'}`}
+              title={laboratorioTitulo}
+              aria-label={laboratorioTitulo}
+            >
+              <FiFileText className="text-sm" />
+            </button>
+          )}
+          {Number(row.paciente_id || 0) > 0 && servicios.includes('consulta') && (
+            <button
+              onClick={handleVerHC}
+              className={`${ACTION_BTN_BASE} bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200`}
+              title="Ver Historia Clínica"
+              aria-label="Ver Historia Clínica"
+            >
+              <FiBookOpen className="text-sm" />
+            </button>
+          )}
+          {["pagado", "completado", "control", "contrato"].includes(estadoRow) && tieneServicioImagen(servicios) && (
+            <button
+              onClick={() => onNavigate(`/imagenes-paciente/${row.paciente_id}?cotizacion_id=${row.id}`)}
+              className={`${ACTION_BTN_BASE} bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-200`}
+              title="Subir / ver imágenes"
+              aria-label="Subir / ver imágenes"
+            >
+              <FiCamera className="text-sm" />
+            </button>
+          )}
+          {(estadoRow === "pendiente" || estadoRow === "parcial") && (
+            <button
+              disabled={cotizacionVencida}
+              onClick={() => onCobrar(row)}
+              className={`${ACTION_BTN_BASE} ${cotizacionVencida ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'}`}
+              title={cotizacionVencida ? 'Cotización vencida' : 'Cobrar (unificado si aplica)'}
+              aria-label="Cobrar"
+            >
+              <FiDollarSign className="text-sm" />
+            </button>
+          )}
+          {estadoRow !== "anulada" && (
+            <button
+              // TODO: re-enable edit for paid quotations when needed (cotizacionPagada guard below)
+              disabled={cotizacionPagada}
+              onClick={() => {
+                if (cotizacionPagada) return;
+                onNavigate(`/seleccionar-servicio?paciente_id=${row.paciente_id}&cotizacion_id=${row.id}&back_to=/cotizaciones&modo=editar`);
+              }}
+              className={`${ACTION_BTN_BASE} ${cotizacionPagada ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50' : ''}`}
+              style={cotizacionPagada ? {} : THEME_OUTLINE}
+              title={cotizacionPagada ? 'No se puede editar una cotización pagada' : 'Editar cotización'}
+              aria-label="Editar cotización"
+            >
+              <FiEdit2 className="text-sm" />
+            </button>
+          )}
+          {estadoRow !== "anulada" && (
+            <button
+              onClick={() => onAnular(row)}
+              className={`${ACTION_BTN_BASE} bg-red-100 text-red-700 border-red-200 hover:bg-red-200`}
+              title="Anular"
+              aria-label="Anular"
+            >
+              <FiSlash className="text-sm" />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+});
+
 export default function CotizacionesPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const autoAnularRef = useRef(false);
   const abortRef = useRef(null);
-
-  const actionBtnBase = "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-transform hover:scale-105";
-  const themeGradient = {
-    backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)",
-  };
-  const themePrimarySoft = {
-    backgroundColor: "var(--color-primary-light)",
-    color: "var(--color-primary-dark)",
-  };
-  const themeOutline = {
-    color: "var(--color-primary-dark)",
-    borderColor: "var(--color-primary-light)",
-  };
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -241,6 +473,7 @@ export default function CotizacionesPage() {
     if (st === "pagado" && Number(pagadoConDescuento || 0) === 1) return "bg-emerald-100 text-emerald-800";
     if (st === "pagado") return "bg-green-100 text-green-700";
     if (st === "parcial") return "bg-amber-100 text-amber-700";
+    if (st === "informativo") return "bg-slate-100 text-slate-700";
     if (st === "control" || st === "contrato") return "bg-sky-100 text-sky-700";
     if (st === "anulada") return "bg-red-100 text-red-700";
     return "bg-blue-100 text-blue-700";
@@ -249,26 +482,8 @@ export default function CotizacionesPage() {
   const labelEstado = (row) => {
     const st = String(row?.estado || "").toLowerCase();
     if (st === "pagado" && Number(row?.pagado_con_descuento || 0) === 1) return "pagado con descuento";
+    if (st === "informativo") return "informativo";
     return row?.estado;
-  };
-
-  const badgeOrigen = (value) => {
-    const v = String(value || "regular").toLowerCase();
-    if (v === "contrato") return { cls: "bg-emerald-100 text-emerald-700", label: "Contrato" };
-    if (v === "extra") return { cls: "bg-orange-100 text-orange-700", label: "Extra" };
-    if (v === "mixto") return { cls: "bg-indigo-100 text-indigo-700", label: "Mixto" };
-    return { cls: "bg-slate-100 text-slate-700", label: "Regular" };
-  };
-
-  const badgeOrigenVisual = (row) => {
-    const observaciones = String(row?.observaciones || "").toLowerCase();
-    if (observaciones.includes("paquetes/perfiles")) {
-      if (observaciones.includes("perfil")) {
-        return { cls: "bg-fuchsia-100 text-fuchsia-700", label: "PERFIL" };
-      }
-      return { cls: "bg-violet-100 text-violet-700", label: "PAQUETE" };
-    }
-    return badgeOrigen(row?.origen_cobro_resumen);
   };
 
   const anularCotizacion = useCallback(async (cotizacion) => {
@@ -378,6 +593,7 @@ export default function CotizacionesPage() {
             <option value="pendiente">Pendiente</option>
             <option value="parcial">Parcial</option>
             <option value="pagado">Pagado</option>
+            <option value="informativo">Informativo</option>
             <option value="anulada">Anulada</option>
           </select>
           <input
@@ -398,21 +614,21 @@ export default function CotizacionesPage() {
           <button
             onClick={() => aplicarRangoDias(1)}
             className="px-3 py-1 rounded"
-            style={themePrimarySoft}
+            style={THEME_PRIMARY_SOFT}
           >
             Hoy
           </button>
           <button
             onClick={() => aplicarRangoDias(7)}
             className="px-3 py-1 rounded"
-            style={themePrimarySoft}
+            style={THEME_PRIMARY_SOFT}
           >
             Ultimos 7 dias
           </button>
           <button
             onClick={() => aplicarRangoDias(30)}
             className="px-3 py-1 rounded"
-            style={themePrimarySoft}
+            style={THEME_PRIMARY_SOFT}
           >
             Ultimos 30 dias
           </button>
@@ -425,7 +641,7 @@ export default function CotizacionesPage() {
         </div>
 
         <div className="flex flex-wrap gap-2 mb-4">
-          <button onClick={filtrar} className="text-white px-4 py-2 rounded" style={themeGradient}>Filtrar</button>
+          <button onClick={filtrar} className="text-white px-4 py-2 rounded" style={THEME_GRADIENT}>Filtrar</button>
           <button onClick={limpiarFiltros} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Limpiar</button>
         </div>
 
@@ -454,228 +670,17 @@ export default function CotizacionesPage() {
                 <tr>
                   <td colSpan={10} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
-              ) : rows.map((row) => {
-                const estadoRow = String(row.estado || "").toLowerCase();
-                const numeroComprobante = String(row.numero_comprobante || "").trim();
-                const vencimientoMeta = getVencimientoMeta(row);
-                const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
-                const esParticular = Number(row.paciente_id || 0) <= 0;
-                const servicios = Array.from(new Set(
-                  String(row.servicios_tipos || "")
-                    .split(",")
-                    .map((s) => normalizarServicioTipo(s))
-                    .filter(Boolean)
-                ));
-                const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
-                const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
-                const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
-                const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada
-                  && servicios.includes("laboratorio")
-                  && Number(row.paciente_id || 0) > 0;
-                const puedeAbrirLaboratorio = puedeGestionarLaboratorioDesdeCotizacion || tieneResultadosLaboratorio;
-                const ordenLaboratorioId = Number(row.orden_laboratorio_id || 0);
-                const ordenQuery = ordenLaboratorioId > 0 ? `&orden_id=${ordenLaboratorioId}` : "";
-                const tituloResultado = encodeURIComponent(
-                  tieneLaboratorioReferencia
-                    ? `Resultado laboratorio referencia - Cot. #${row.id}`
-                    : `Resultado laboratorio - Cot. #${row.id}`
-                );
-                const laboratorioUrl = `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&abrir=1&tipo=laboratorio&titulo=${tituloResultado}&back_to=/cotizaciones`;
-                const laboratorioTitulo = tieneResultadosLaboratorio
-                  ? "Ver resultados de laboratorio"
-                  : "Gestionar resultados de laboratorio";
-                const origen = badgeOrigenVisual(row);
-                const contratosIds = String(row.contratos_ids_resumen || "").trim();
-                return (
-                  <tr key={row.id} className="border-t align-top">
-                    <td className="px-3 py-2 font-semibold">
-                      <div>#{row.id}</div>
-                      {numeroComprobante && (
-                        <div className="text-xs font-mono text-indigo-700">{numeroComprobante}</div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">{row.fecha}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="font-medium">{row.nombre} {row.apellido}</div>
-                        {esParticular && (
-                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-100 text-orange-700">
-                            Particular
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
-                    </td>
-                    <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1">
-                        {servicios.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
-                          <span
-                            key={`${row.id}-${s}`}
-                            className="text-xs px-2 py-1 rounded"
-                            style={themePrimarySoft}
-                            title="Servicio cotizado"
-                          >
-                            {estadoRow === "anulada" ? `${s} (anulada)` : s}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-col gap-1 items-start">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${origen.cls}`}>{origen.label}</span>
-                        {contratosIds && (
-                          <span className="text-[11px] text-slate-500">Contrato(s): {contratosIds}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.total || 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.saldo_pendiente ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-col items-start gap-1">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado, row.pagado_con_descuento)}`}>
-                          {labelEstado(row)}
-                        </span>
-                        {vencimientoMeta && (
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-semibold ${vencimientoMeta.className}`}
-                            title={vencimientoMeta.detail}
-                          >
-                            {vencimientoMeta.label}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => navigate(`/cotizaciones/${row.id}/detalle`)}
-                          className={`${actionBtnBase}`}
-                          style={themeOutline}
-                          title="Ver detalle"
-                          aria-label="Ver detalle"
-                        >
-                          <FiEye className="text-sm" />
-                        </button>
-                        {puedeAbrirLaboratorio && (
-                          <button
-                            onClick={() => navigate(laboratorioUrl)}
-                            className={`${actionBtnBase} ${tieneResultadosLaboratorio ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200'}`}
-                            title={laboratorioTitulo}
-                            aria-label={laboratorioTitulo}
-                          >
-                            <FiFileText className="text-sm" />
-                          </button>
-                        )}
-                        {Number(row.paciente_id || 0) > 0 && servicios.includes('consulta') && (
-                          <button
-                            onClick={async () => {
-                              let consultaId = Number(row.consulta_ref_id || 0);
-
-                              if (consultaId <= 0) {
-                                try {
-                                  const resRef = await authFetch(
-                                    `api_cotizaciones.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
-                                    { cache: "no-store" }
-                                  );
-                                  const dataRef = await resRef.json();
-                                  consultaId = Number(dataRef?.cotizacion?.consulta_ref_id || 0);
-
-                                  if (consultaId <= 0) {
-                                    const detalleConsulta = Array.isArray(dataRef?.cotizacion?.detalles)
-                                      ? dataRef.cotizacion.detalles.find((detalle) => (
-                                        String(detalle?.servicio_tipo || '').trim().toLowerCase() === 'consulta'
-                                        && Number(detalle?.consulta_id || 0) > 0
-                                      ))
-                                      : null;
-                                    consultaId = Number(detalleConsulta?.consulta_id || 0);
-                                  }
-
-                                  if (consultaId <= 0) {
-                                    const resConsulta = await authFetch(
-                                      `api_consultas.php?cotizacion_id=${Number(row.id)}&_t=${Date.now()}`,
-                                      { cache: 'no-store' }
-                                    );
-                                    const dataConsulta = await resConsulta.json();
-                                    const consultaResuelta = Array.isArray(dataConsulta?.consultas)
-                                      ? dataConsulta.consultas[0]
-                                      : null;
-                                    consultaId = Number(consultaResuelta?.id || 0);
-                                  }
-                                } catch {
-                                  consultaId = 0;
-                                }
-                              }
-
-                              if (consultaId > 0) {
-                                navigate(`/historia-clinica-lectura/${row.paciente_id}/${consultaId}?back_to=/cotizaciones`);
-                              } else {
-                                await Swal.fire({
-                                  icon: 'warning',
-                                  title: 'No se encontró la consulta asociada',
-                                  text: 'Esta cotización no tiene una atención clínica vinculada para abrir la HC en modo lectura.',
-                                  confirmButtonText: 'Aceptar',
-                                });
-                              }
-                            }}
-                            className={`${actionBtnBase} bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200`}
-                            title="Ver Historia Clínica"
-                            aria-label="Ver Historia Clínica"
-                          >
-                            <FiBookOpen className="text-sm" />
-                          </button>
-                        )}
-                        {["pagado", "completado", "control", "contrato"].includes(String(row.estado || "").toLowerCase()) && tieneServicioImagen(servicios) && (
-                          <button
-                            onClick={() => navigate(`/imagenes-paciente/${row.paciente_id}?cotizacion_id=${row.id}`)}
-                            className={`${actionBtnBase} bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-200`}
-                            title="Subir / ver imágenes"
-                            aria-label="Subir / ver imágenes"
-                          >
-                            <FiCamera className="text-sm" />
-                          </button>
-                        )}
-                        {(String(row.estado || "").toLowerCase() === "pendiente" || String(row.estado || "").toLowerCase() === "parcial") && (
-                          <button
-                            disabled={cotizacionVencida}
-                            onClick={() => abrirCobro(row)}
-                            className={`${actionBtnBase} ${cotizacionVencida ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'}`}
-                            title={cotizacionVencida ? 'Cotización vencida' : 'Cobrar (unificado si aplica)'}
-                            aria-label="Cobrar"
-                          >
-                            <FiDollarSign className="text-sm" />
-                          </button>
-                        )}
-                        {String(row.estado || "").toLowerCase() !== "anulada" && (
-                          <button
-                            onClick={() => {
-                              navigate(`/seleccionar-servicio?paciente_id=${row.paciente_id}&cotizacion_id=${row.id}&back_to=/cotizaciones&modo=editar`, {
-                                state: { pacienteId: row.paciente_id, cotizacionId: row.id, backTo: "/cotizaciones", modo: "editar" },
-                              });
-                            }}
-                            className={`${actionBtnBase}`}
-                            style={themeOutline}
-                            title="Editar cotización"
-                            aria-label="Editar cotización"
-                          >
-                            <FiEdit2 className="text-sm" />
-                          </button>
-                        )}
-                        {String(row.estado || "").toLowerCase() !== "anulada" && (
-                          <button
-                            onClick={() => anularCotizacion(row)}
-                            className={`${actionBtnBase} bg-red-100 text-red-700 border-red-200 hover:bg-red-200`}
-                            title="Anular"
-                            aria-label="Anular"
-                          >
-                            <FiSlash className="text-sm" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              ) : rows.map((row) => (
+                <CotizacionRow
+                  key={row.id}
+                  row={row}
+                  onCobrar={abrirCobro}
+                  onAnular={anularCotizacion}
+                  onNavigate={navigate}
+                  badgeEstado={badgeEstado}
+                  labelEstado={labelEstado}
+                />
+              ))}
             </tbody>
           </table>
         </div>

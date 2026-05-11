@@ -193,7 +193,7 @@ const MedicoFormModal = ({
                     <input
                       type="text"
                       name="nombre"
-                      value={formData.nombre}
+                      value={formData.nombre || ''}
                       onChange={onChange}
                       className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
                       placeholder="Juan"
@@ -234,7 +234,7 @@ const MedicoFormModal = ({
                   <input
                     type="text"
                     name="especialidad"
-                    value={formData.especialidad}
+                    value={formData.especialidad || ''}
                     onChange={onChange}
                     className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
                     placeholder="Cardiología"
@@ -392,7 +392,7 @@ const MedicoFormModal = ({
                   <input
                     type="email"
                     name="email"
-                    value={formData.email}
+                    value={formData.email || ''}
                     onChange={onChange}
                     className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
                     placeholder={mode === 'create' ? "Se generará automáticamente" : "doctor@ejemplo.com"}
@@ -416,7 +416,7 @@ const MedicoFormModal = ({
                   <input
                     type={mode === 'create' ? "text" : "password"}
                     name="password"
-                    value={formData.password}
+                    value={formData.password || ''}
                     onChange={onChange}
                     className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
                     placeholder={mode === 'create' ? "Se generará automáticamente" : "••••••••"}
@@ -595,46 +595,45 @@ const MedicoFormModal = ({
                   </div>
                 </div>
                 
-                {/* Vista previa del resultado final */}
-                {(formData.nombre || formData.apellido || formData.cmp || previewFirma) && (
-                  <div className="bg-blue-50 rounded-xl p-4">
-                    <h5 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                      Vista Previa - Así aparecerá en los documentos
-                    </h5>
-                    
-                    <div className="bg-white border-2 border-blue-200 rounded-lg p-3 text-center">
-                      {previewFirma && (
-                        <img 
-                          src={previewFirma} 
-                          alt="Firma" 
-                          className="max-h-12 mx-auto object-contain mb-2"
-                        />
-                      )}
-                      <div className="border-t-2 border-gray-300 pt-2">
-                        <div className="text-sm font-medium text-gray-800">
-                          {(formData.abreviatura_profesional || 'Dr(a).')} {formData.nombre} {formData.apellido}
-                        </div>
-                        {formData.especialidad && (
-                          <div className="text-xs text-gray-600">
-                            {formData.especialidad}
-                          </div>
-                        )}
-                        <div className="text-xs text-gray-600">
-                          {(formData.colegio_sigla || '').trim() && (formData.nro_colegiatura || formData.cmp)
-                            ? `${formData.colegio_sigla}: ${formData.nro_colegiatura || formData.cmp}`
-                            : (formData.nro_colegiatura || formData.cmp)
-                              ? `Colegiatura: ${formData.nro_colegiatura || formData.cmp}`
-                              : ''}
-                          {formData.rne && ` - R.N.E ${formData.rne}`}
-                        </div>
+                {/* Vista previa del resultado final - siempre visible */}
+                <div className="bg-blue-50 rounded-xl p-4">
+                  <h5 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    Vista Previa - Así aparecerá en los documentos
+                  </h5>
+                  
+                  <div className="bg-white border-2 border-blue-200 rounded-lg p-3 text-center">
+                    {previewFirma && (
+                      <img 
+                        src={previewFirma} 
+                        alt="Firma" 
+                        className="max-h-12 mx-auto object-contain mb-2"
+                      />
+                    )}
+                    <div className="border-t-2 border-gray-300 pt-2">
+                      <div className="text-sm font-medium text-gray-800">
+                        {(formData.abreviatura_profesional || 'Dr(a).')}{' '}
+                        {(formData.nombre || formData.apellido)
+                          ? `${formData.nombre || ''} ${formData.apellido || ''}`.trim()
+                          : <span className="text-gray-400 italic">Nombre Apellido</span>}
+                      </div>
+                      {formData.especialidad
+                        ? <div className="text-xs text-gray-600">{formData.especialidad}</div>
+                        : <div className="text-xs text-gray-400 italic">Especialidad</div>}
+                      <div className="text-xs text-gray-600">
+                        {(formData.colegio_sigla || '').trim() && (formData.nro_colegiatura || formData.cmp)
+                          ? `${formData.colegio_sigla}: ${formData.nro_colegiatura || formData.cmp}`
+                          : (formData.nro_colegiatura || formData.cmp)
+                            ? `Colegiatura: ${formData.nro_colegiatura || formData.cmp}`
+                            : ''}
+                        {formData.rne && ` - R.N.E ${formData.rne}`}
                       </div>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </form>

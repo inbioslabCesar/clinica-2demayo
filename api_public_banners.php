@@ -11,6 +11,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 function getBaseUrlPrefix() {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? '';
+    // En desarrollo con Vite (5173/5174), generar URLs hacia el servidor PHP
+    // para evitar enlaces que terminen devolviendo HTML en vez de imagen.
+    if ($host !== '') {
+        $hostOnly = preg_replace('/:\\d+$/', '', $host);
+        $port = null;
+        if (preg_match('/:(\\d+)$/', $host, $mPort)) {
+            $port = intval($mPort[1]);
+        }
+        $isLocal = in_array(strtolower($hostOnly), ['localhost', '127.0.0.1', '::1'], true);
+        if ($isLocal && in_array($port, [5173, 5174], true)) {
+            $host = $hostOnly;
+        }
+    }
     $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
     $basePath = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
     if ($basePath === '.' || $basePath === '/') $basePath = '';
@@ -37,7 +50,23 @@ function normalizeImageUrl($url) {
         $path = $parts['path'] ?? '';
         $currentHost = $_SERVER['HTTP_HOST'] ?? '';
 
-        // Si fue guardado como http://localhost/uploads/... en vez de http://localhost/clinica-2demayo/uploads/...
+        // Si es una URL con host diferente al actual, extraer la ruta y reconstruir con el host actual
+        if ($host && $currentHost && strcasecmp($host, $currentHost) !== 0) {
+            // URL como: http://localhost/clinica-2demayo/uploads/... → extraer /uploads/...
+            if (str_starts_with($path, $basePath . '/uploads/')) {
+                return $prefix . substr($path, strlen($basePath));
+            }
+            if (str_starts_with($path, '/uploads/')) {
+                return $prefix . $path;
+            }
+            // Si la ruta tiene /clinica-2demayo/uploads/..., extraerla
+            if (preg_match('#/[a-z0-9_-]+/uploads/#i', $path, $m)) {
+                $uploadPath = substr($path, strpos($path, '/uploads/'));
+                return $prefix . $uploadPath;
+            }
+        }
+
+        // Si mismo host pero sin basePath correcto
         if ($host && $currentHost && strcasecmp($host, $currentHost) === 0) {
             if (str_starts_with($path, '/uploads/') && $basePath !== '' && !str_starts_with($path, $basePath . '/uploads/')) {
                 return $origin . $basePath . $path;

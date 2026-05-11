@@ -74,12 +74,10 @@ if (!move_uploaded_file($tmpPath, $targetPath)) {
     exit;
 }
 
-$scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? '';
-$absoluteUrl = $scheme . '://' . $host . $relativeDir . '/' . $filename;
+$relativeUrl = $relativeDir . '/' . $filename;
 
 echo json_encode([
     'success' => true,
-    'url' => $absoluteUrl,
+    'url' => $relativeUrl,
     'mime' => $mime,
 ]);

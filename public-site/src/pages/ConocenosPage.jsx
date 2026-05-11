@@ -26,26 +26,24 @@ export default function ConocenosPage({
     return () => { cancelled = true }
   }, [])
 
-  const conocenosBanner = useMemo(() => {
-    if (!Array.isArray(banners) || banners.length === 0) return null
-    return banners.find((b) => (b?.imagen_conocenos_url || '').trim() !== '') || banners[0]
+  const conocenosImages = useMemo(() => {
+    if (!Array.isArray(banners) || banners.length === 0) return []
+    return banners
+      .map((b) => (b?.imagen_conocenos_url || '').trim())
+      .filter(Boolean)
+      .map((url) => resolvePublicAssetUrl(url))
   }, [banners])
 
-  const imageCandidates = useMemo(() => {
-    const list = [
-      conocenosBanner?.imagen_conocenos_url || '',
-      conocenosBanner?.imagen_fija_url || '',
-      conocenosBanner?.imagen_url || '',
-    ].map((x) => resolvePublicAssetUrl(x)).filter(Boolean)
-    return Array.from(new Set(list))
-  }, [conocenosBanner])
-
+  const count = conocenosImages.length
   const [imageIndex, setImageIndex] = useState(0)
+  useEffect(() => { setImageIndex(0) }, [count])
   useEffect(() => {
-    setImageIndex(0)
-  }, [conocenosBanner?.id, imageCandidates.length])
+    if (count <= 1) return
+    const id = setInterval(() => setImageIndex((i) => (i + 1) % count), 4000)
+    return () => clearInterval(id)
+  }, [count])
 
-  const conocenosImage = imageCandidates[imageIndex] || ''
+  const conocenosImage = conocenosImages[imageIndex] || ''
   const cards = [
     {
       title: 'Nuestra Misión',
@@ -102,21 +100,37 @@ export default function ConocenosPage({
           </div>
           <div className="flex justify-center">
             <div
-              className="rounded-3xl shadow-xl w-full h-72 flex items-center justify-center overflow-hidden"
+              className="relative rounded-3xl shadow-xl w-full h-72 flex items-center justify-center overflow-hidden"
               style={{ background: 'linear-gradient(135deg, var(--color-primary-light, #fce7f3), var(--color-accent, #e0c3fc)30)' }}
             >
               {conocenosImage ? (
-                <img
-                  src={conocenosImage}
-                  alt="Equipo de la clinica"
-                  className="h-full w-full object-cover"
-                  onError={() => {
-                    setImageIndex((prev) => {
-                      if (prev + 1 < imageCandidates.length) return prev + 1
-                      return prev
-                    })
-                  }}
-                />
+                <>
+                  {conocenosImages.map((imgSrc, i) => (
+                    <img
+                      key={i}
+                      src={imgSrc}
+                      alt={`Equipo ${i + 1}`}
+                      className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-in-out"
+                      style={{ opacity: i === imageIndex ? 1 : 0 }}
+                    />
+                  ))}
+                  {count > 1 && (
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+                      {conocenosImages.map((_, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setImageIndex(i)}
+                          className="w-2.5 h-2.5 rounded-full transition-all duration-300"
+                          style={{
+                            backgroundColor: i === imageIndex ? 'var(--color-primary, #E85D8E)' : 'rgba(255,255,255,0.7)',
+                            transform: i === imageIndex ? 'scale(1.3)' : 'scale(1)',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
               ) : (
                 <img src={publicLogoSrc} alt="Logo" className="object-contain opacity-60" style={{ width: resolvedLogoSize.decorative, height: resolvedLogoSize.decorative }} />
               )}

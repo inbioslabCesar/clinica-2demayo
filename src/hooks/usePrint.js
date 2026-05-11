@@ -144,3 +144,71 @@ export const usePrintReceta = () => {
 
   return { componentRef, handlePrint };
 };
+
+export const usePrintServicios = (documentTitle = 'Servicios Solicitados') => {
+  const componentRef = useRef();
+
+  const handlePrint = useReactToPrint({
+    contentRef: componentRef,
+    documentTitle,
+    onBeforeGetContent: useCallback(() => {
+      return new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+    }, []),
+    pageStyle: `
+      @page {
+        size: A5;
+        margin: 8mm;
+      }
+
+      @media print {
+        body {
+          -webkit-print-color-adjust: exact;
+          color-adjust: exact;
+          font-family: 'Times New Roman', serif;
+        }
+
+        .no-print {
+          display: none !important;
+        }
+      }
+    `
+  });
+
+  return { componentRef, handlePrint };
+};
+
+export const usePrintInformeProcedimiento = (documentTitle = 'Informe de Procedimiento Medico') => {
+  const componentRef = useRef();
+
+  const handlePrint = useReactToPrint({
+    contentRef: componentRef,
+    documentTitle,
+    onBeforeGetContent: useCallback(() => {
+      return new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+    }, []),
+    pageStyle: `
+      @page {
+        size: A4;
+        margin: 12mm;
+      }
+
+      @media print {
+        body {
+          -webkit-print-color-adjust: exact;
+          color-adjust: exact;
+          font-family: 'Times New Roman', serif;
+        }
+
+        .no-print {
+          display: none !important;
+        }
+      }
+    `
+  });
+
+  return { componentRef, handlePrint };
+};

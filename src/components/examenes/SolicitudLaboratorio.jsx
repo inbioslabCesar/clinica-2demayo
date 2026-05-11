@@ -73,11 +73,14 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
       
       const d = await response.json();
       if (d.success) {
+        const fueConsolidada = String(d.modo || '').toLowerCase() === 'consolidada';
         if (d.numero_comprobante) {
           setCotizResult({ numero_comprobante: d.numero_comprobante, total: d.total ?? 0 });
-          setMsg(`✅ Orden enviada · Cotización ${d.numero_comprobante} generada`);
+          setMsg(fueConsolidada
+            ? `✅ Solicitud actualizada · Cotización ${d.numero_comprobante} consolidada`
+            : `✅ Orden enviada · Cotización ${d.numero_comprobante} generada`);
         } else {
-          setMsg("✅ Orden enviada correctamente");
+          setMsg(fueConsolidada ? "✅ Solicitud actualizada correctamente" : "✅ Orden enviada correctamente");
         }
         setExamenes([]);
         setCargaAnticipada(false);

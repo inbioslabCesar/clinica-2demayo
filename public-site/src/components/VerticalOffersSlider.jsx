@@ -132,7 +132,8 @@ export default function VerticalOffersSlider({
                   return (
                     <div
                       key={`${o?.id ?? 'offer'}-${pageIdx}-${idx}`}
-                      className={`rounded-xl border p-4 transition hover:shadow-sm ${v?.wrap || 'bg-white'} ${cardHeightClassName} flex flex-col justify-between`}
+                      className={`rounded-xl border p-4 transition hover:shadow-sm ${cardHeightClassName} flex flex-col justify-between`}
+                      style={v?.wrapStyle || { background: '#fff' }}
                     >
                       <div className="min-w-0">
                         <div className="font-semibold leading-snug line-clamp-1">{o?.titulo || ''}</div>
@@ -143,7 +144,7 @@ export default function VerticalOffersSlider({
 
                       {o?.precio_oferta ? (
                         <div className="mt-2 text-sm">
-                          <span className={`font-semibold ${v?.price || 'text-slate-900'}`}>S/ {o.precio_oferta}</span>
+                          <span className="font-semibold" style={v?.priceStyle || { color: '#0f172a' }}>S/ {o.precio_oferta}</span>
                           {o?.precio_antes ? (
                             <span className="ml-2 text-slate-500 line-through">S/ {o.precio_antes}</span>
                           ) : null}

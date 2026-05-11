@@ -1,5 +1,5 @@
 // Orquesta la vista principal y conecta los componentes
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
 import { authFetch } from "../../utils/apiClient";
@@ -130,21 +130,23 @@ function PacienteList() {
     });
     setModalOpen(true);
   };
-  const handleEditar = (paciente) => {
+  const handleEditar = useCallback((paciente) => {
     setEditData({ ...paciente });
     setModalOpen(true);
-  };
-  const handleRegistroExitoso = () => {
+  }, []);
+  const handleRegistroExitoso = useCallback(() => {
     setModalOpen(false);
     setEditData(null);
     recargarPacientes(); // Recarga los datos desde el backend tras editar/crear
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recargarPacientes]);
 
-  const handleEliminar = async (paciente) => {
+  const handleEliminar = useCallback(async (paciente) => {
     await eliminarPaciente(paciente);
     recargarPacientes(); // Recarga los datos desde el backend tras eliminar
-  };
-  const handleDescargarCaratula = async (paciente) => {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eliminarPaciente, recargarPacientes]);
+  const handleDescargarCaratula = useCallback(async (paciente) => {
     try {
       const url = `${BASE_URL}descargar_caratula_paciente.php?paciente_id=${paciente.id}&_ts=${Date.now()}`;
       const res = await authFetch(url);
@@ -174,7 +176,8 @@ function PacienteList() {
     } catch (err) {
       Swal.fire({ icon: 'error', title: 'Error', text: 'No se pudo descargar la carátula.' });
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Exportar a Excel
   const handleExportarExcel = () => {

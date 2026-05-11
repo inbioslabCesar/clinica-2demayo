@@ -21,10 +21,28 @@ function readJsonBody() {
 function getBaseUrlPrefix() {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host !== '') {
+        $hostOnly = preg_replace('/:\\d+$/', '', $host);
+        $port = null;
+        if (preg_match('/:(\\d+)$/', $host, $mPort)) {
+            $port = intval($mPort[1]);
+        }
+        $isLocal = in_array(strtolower($hostOnly), ['localhost', '127.0.0.1', '::1'], true);
+        if ($isLocal && in_array($port, [5173, 5174], true)) {
+            $host = $hostOnly;
+        }
+    }
     $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
     $basePath = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
     if ($basePath === '.' || $basePath === '/') $basePath = '';
     return [$scheme . '://' . $host, $basePath];
+}
+
+function startsWithCompat($haystack, $needle) {
+    $haystack = (string)$haystack;
+    $needle = (string)$needle;
+    if ($needle === '') return true;
+    return substr($haystack, 0, strlen($needle)) === $needle;
 }
 
 function normalizeImageUrl($url) {
@@ -34,10 +52,10 @@ function normalizeImageUrl($url) {
     [$origin, $basePath] = getBaseUrlPrefix();
     $prefix = $origin . $basePath;
 
-    if (str_starts_with($url, '/uploads/')) {
+    if (startsWithCompat($url, '/uploads/')) {
         return $prefix . $url;
     }
-    if (str_starts_with($url, 'uploads/')) {
+    if (startsWithCompat($url, 'uploads/')) {
         return $prefix . '/' . $url;
     }
 
@@ -46,14 +64,67 @@ function normalizeImageUrl($url) {
         $host = $parts['host'] ?? null;
         $path = $parts['path'] ?? '';
         $currentHost = $_SERVER['HTTP_HOST'] ?? '';
+
+        if ($host && $currentHost && strcasecmp($host, $currentHost) !== 0) {
+            if (startsWithCompat($path, $basePath . '/uploads/')) {
+                return $prefix . substr($path, strlen($basePath));
+            }
+            if (startsWithCompat($path, '/uploads/')) {
+                return $prefix . $path;
+            }
+            if (preg_match('#/[a-z0-9_-]+/uploads/#i', $path)) {
+                $pos = strpos($path, '/uploads/');
+                if ($pos !== false) {
+                    return $prefix . substr($path, $pos);
+                }
+            }
+        }
+
         if ($host && $currentHost && strcasecmp($host, $currentHost) === 0) {
-            if (str_starts_with($path, '/uploads/') && $basePath !== '' && !str_starts_with($path, $basePath . '/uploads/')) {
+            if (startsWithCompat($path, '/uploads/') && $basePath !== '' && !startsWithCompat($path, $basePath . '/uploads/')) {
                 return $origin . $basePath . $path;
             }
         }
     }
 
     return $url;
+}
+
+function normalizeOrdenValue($orden) {
+    $n = intval($orden);
+    return ($n > 0) ? $n : 1;
+}
+
+function reordenarServicios(PDO $pdo, $focusId, $targetOrden) {
+    $focusId = intval($focusId);
+    if ($focusId <= 0) return;
+
+    $stmt = $pdo->query("SELECT id FROM public_servicios ORDER BY orden ASC, id ASC");
+    $ids = array_map(static function ($row) {
+        return intval($row['id'] ?? 0);
+    }, $stmt->fetchAll(PDO::FETCH_ASSOC));
+
+    $ids = array_values(array_filter($ids, static function ($id) {
+        return $id > 0;
+    }));
+
+    $ids = array_values(array_filter($ids, static function ($id) use ($focusId) {
+        return $id !== $focusId;
+    }));
+
+    $targetIndex = normalizeOrdenValue($targetOrden) - 1;
+    $count = count($ids);
+    if ($targetIndex < 0) $targetIndex = 0;
+    if ($targetIndex > $count) $targetIndex = $count;
+
+    array_splice($ids, $targetIndex, 0, [$focusId]);
+
+    $upd = $pdo->prepare("UPDATE public_servicios SET orden=? WHERE id=?");
+    $orden = 1;
+    foreach ($ids as $id) {
+        $upd->execute([$orden, $id]);
+        $orden++;
+    }
 }
 
 try {
@@ -110,7 +181,7 @@ try {
         if (!in_array($imagenTipo, ['normal', 'overlay'], true)) {
             $imagenTipo = 'normal';
         }
-        $orden = isset($data['orden']) ? intval($data['orden']) : 0;
+        $orden = normalizeOrdenValue($data['orden'] ?? 1);
         $activo = isset($data['activo']) ? intval((bool)$data['activo']) : 1;
 
         if ($titulo === '') {
@@ -119,6 +190,7 @@ try {
             exit;
         }
 
+        $pdo->beginTransaction();
         try {
             $stmt = $pdo->prepare("INSERT INTO public_servicios (titulo, descripcion, precio, icono, imagen_url, tipo, imagen_shape, imagen_tipo, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $tipo, $imagenShape, $imagenTipo, $orden, $activo]);
@@ -132,7 +204,10 @@ try {
                 $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $orden, $activo]);
             }
         }
-        echo json_encode(['success' => true, 'id' => intval($pdo->lastInsertId())]);
+        $newId = intval($pdo->lastInsertId());
+        reordenarServicios($pdo, $newId, $orden);
+        $pdo->commit();
+        echo json_encode(['success' => true, 'id' => $newId]);
         exit;
     }
 
@@ -162,7 +237,7 @@ try {
         if (!in_array($imagenTipo, ['normal', 'overlay'], true)) {
             $imagenTipo = 'normal';
         }
-        $orden = isset($data['orden']) ? intval($data['orden']) : 0;
+        $orden = normalizeOrdenValue($data['orden'] ?? 1);
         $activo = isset($data['activo']) ? intval((bool)$data['activo']) : 1;
 
         if ($titulo === '') {
@@ -171,6 +246,7 @@ try {
             exit;
         }
 
+        $pdo->beginTransaction();
         try {
             $stmt = $pdo->prepare("UPDATE public_servicios SET titulo=?, descripcion=?, precio=?, icono=?, imagen_url=?, tipo=?, imagen_shape=?, imagen_tipo=?, orden=?, activo=? WHERE id=?");
             $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $tipo, $imagenShape, $imagenTipo, $orden, $activo, $id]);
@@ -184,6 +260,8 @@ try {
                 $stmt->execute([$titulo, $descripcion, $precio, $icono, $imagenUrl, $orden, $activo, $id]);
             }
         }
+        reordenarServicios($pdo, $id, $orden);
+        $pdo->commit();
         echo json_encode(['success' => true]);
         exit;
     }
@@ -207,6 +285,9 @@ try {
     http_response_code(405);
     echo json_encode(['success' => false, 'error' => 'Método no permitido']);
 } catch (PDOException $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     http_response_code(500);
     echo json_encode(['success' => false, 'error' => 'Error en servicios web']);
 }

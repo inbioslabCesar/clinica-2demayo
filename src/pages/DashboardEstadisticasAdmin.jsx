@@ -106,14 +106,26 @@ const DashboardEstadisticasAdmin = () => {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Filtrado memoizado – evita recalcular en cada render
-  const serviciosFiltrados = useMemo(
-    () => servicios.filter(s =>
+  const serviciosFiltrados = useMemo(() => {
+    const filtered = servicios.filter(s =>
       (!filterTipo || s.tipo === filterTipo) &&
       (!filterNombre || s.nombre === filterNombre) &&
       (!filterMedico || s.medico === filterMedico)
-    ),
-    [servicios, filterTipo, filterNombre, filterMedico]
-  );
+    );
+    // Consolidar filas con mismo tipo+nombre+medico (pueden venir de distintas clasificaciones)
+    const map = new Map();
+    for (const s of filtered) {
+      const k = `${s.tipo}||${s.nombre}||${s.medico}`;
+      if (map.has(k)) {
+        const existing = map.get(k);
+        existing.cantidad = (Number(existing.cantidad) || 0) + (Number(s.cantidad) || 0);
+        existing.total    = (Number(existing.total)    || 0) + (Number(s.total)    || 0);
+      } else {
+        map.set(k, { ...s });
+      }
+    }
+    return Array.from(map.values());
+  }, [servicios, filterTipo, filterNombre, filterMedico]);
 
   const handleExportExcel = useCallback(() => exportToExcel(serviciosFiltrados), [serviciosFiltrados]);
   const handleExportPDF   = useCallback(() => exportToPDF(serviciosFiltrados),   [serviciosFiltrados]);

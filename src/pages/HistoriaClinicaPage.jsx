@@ -9,7 +9,9 @@ import DiagnosticoCIE10Selector from "../components/diagnostico/DiagnosticoCIE10
 import ImpresionHistoriaClinica from "../components/print/ImpresionHistoriaClinica";
 import ImpresionAnalisisLaboratorio from "../components/print/ImpresionAnalisisLaboratorio";
 import ImpresionRecetaMedicamentos from "../components/print/ImpresionRecetaMedicamentos";
-import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintReceta } from "../hooks/usePrint";
+import ImpresionServiciosSolicitados from "../components/print/ImpresionServiciosSolicitados";
+import ImpresionInformeProcedimiento from "../components/print/ImpresionInformeProcedimiento";
+import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintReceta, usePrintServicios, usePrintInformeProcedimiento } from "../hooks/usePrint";
 import { formatColegiatura, formatProfesionalName } from "../utils/profesionalDisplay";
 
 const hcTemplateFlag = String(import.meta.env.VITE_HC_TEMPLATE_ENGINE_READ || "").toLowerCase();
@@ -65,17 +67,21 @@ function HistoriaClinicaPage() {
   const { componentRef: printRef, handlePrint: handlePrintHC } = usePrintHistoriaClinica();
   const { componentRef: printLabRef, handlePrint: handlePrintLab } = usePrintLaboratorio();
   const { componentRef: printRecetaRef, handlePrint: handlePrintReceta } = usePrintReceta();
+  const { componentRef: printImagenRef, handlePrint: handlePrintImagen } = usePrintServicios('Solicitud de Imagenes Diagnosticas');
+  const { componentRef: printProcRef, handlePrint: handlePrintProcedimientos } = usePrintServicios('Solicitud de Procedimientos');
+  const { componentRef: printInformeProcRef, handlePrint: handlePrintInformeProcedimiento } = usePrintInformeProcedimiento('Informe de Procedimiento Medico');
   const [medicoInfo, setMedicoInfo] = useState(null);
   const [configuracionClinica, setConfiguracionClinica] = useState(null);
   const [firmaMedico, setFirmaMedico] = useState(null);
   const [resultadosLab, setResultadosLab] = useState([]);
   const [ordenesLab, setOrdenesLab] = useState([]);
+  const [ordenesImagenPrint, setOrdenesImagenPrint] = useState([]);
+  const [ordenesProcedimientosPrint, setOrdenesProcedimientosPrint] = useState([]);
   const [tratamientoEstado, setTratamientoEstado] = useState({
     loading: false,
     data: null,
     error: "",
   });
-  const [usuarioSesion, setUsuarioSesion] = useState(null);
   const [fechaConsulta, setFechaConsulta] = useState("");
   const [consultaActual, setConsultaActual] = useState(null);
   const [historiasPrevias, setHistoriasPrevias] = useState([]);
@@ -92,18 +98,6 @@ function HistoriaClinicaPage() {
   });
   const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
   const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
-  useEffect(() => {
-    const usuarioRaw = sessionStorage.getItem("usuario");
-    if (usuarioRaw) {
-      try {
-        setUsuarioSesion(JSON.parse(usuarioRaw));
-      } catch {
-        setUsuarioSesion(null);
-      }
-    } else {
-      setUsuarioSesion(null);
-    }
-  }, []);
   useEffect(() => {
     if (!consultaId) return;
     const noCache = `_t=${Date.now()}`;
@@ -128,6 +122,28 @@ function HistoriaClinicaPage() {
         }
       })
       .catch(() => setOrdenesLab([]));
+
+    authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}&${noCache}`, {
+      cache: 'no-store',
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+        const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
+        setOrdenesImagenPrint(activas);
+      })
+      .catch(() => setOrdenesImagenPrint([]));
+
+    authFetch(`api_ordenes_procedimientos.php?consulta_id=${consultaId}&${noCache}`, {
+      cache: 'no-store',
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+        const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
+        setOrdenesProcedimientosPrint(activas);
+      })
+      .catch(() => setOrdenesProcedimientosPrint([]));
   }, [consultaId]);
 
   useEffect(() => {
@@ -322,7 +338,6 @@ function HistoriaClinicaPage() {
   const [bloqueoGuardadoHasta, setBloqueoGuardadoHasta] = useState(0);
   const [diagnosticos, setDiagnosticos] = useState([]);
   const [hcTemplateMeta, setHcTemplateMeta] = useState(null);
-  const [hcTemplateResolution, setHcTemplateResolution] = useState(null);
   const hcRef = useRef(hc);
   const diagnosticosRef = useRef(diagnosticos);
   const bloqueoGuardadoActivo = Date.now() < bloqueoGuardadoHasta;
@@ -445,7 +460,6 @@ function HistoriaClinicaPage() {
         setDraftHydrated(true);
         if (HC_TEMPLATE_ENGINE_READ) {
           setHcTemplateMeta(data.template || null);
-          setHcTemplateResolution(data.template_resolution || null);
         }
       })
       .catch(() => {
@@ -464,6 +478,7 @@ function HistoriaClinicaPage() {
     }, 800);
     return () => window.clearTimeout(timer);
   }, [clearDraft, currentSnapshot, draftHydrated, draftKey, persistDraftNow, readOnly, serverSnapshot]);
+
   useEffect(() => {
     const sections = hcTemplateMeta?.sections;
     if (!sections || typeof sections !== "object") return;
@@ -1211,6 +1226,75 @@ function HistoriaClinicaPage() {
     ecografiaDisponible,
   ]);
 
+  const informeProcedimiento = useMemo(() => {
+    const normalizeKey = (value) => String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .replace(/_+/g, "_");
+
+    const sections = hcTemplateMeta?.sections && typeof hcTemplateMeta.sections === "object"
+      ? hcTemplateMeta.sections
+      : {};
+
+    const sectionEntry = Object.entries(sections).find(([sectionKey]) => {
+      const normalized = normalizeKey(sectionKey);
+      return normalized === "procedimiento_medico"
+        || normalized === "procedimientos_medicos"
+        || normalized === "procedimiento"
+        || normalized.includes("procedimiento");
+    });
+
+    const fieldsFromTemplate = sectionEntry && sectionEntry[1] && typeof sectionEntry[1] === "object" && !Array.isArray(sectionEntry[1])
+      ? Object.keys(sectionEntry[1])
+      : [];
+
+    const fieldsWithValue = [];
+    const existingKeys = new Set();
+
+    fieldsFromTemplate.forEach((fieldKey) => {
+      const value = extraerValorVisible(hc?.[fieldKey]);
+      if (!value) return;
+      existingKeys.add(fieldKey);
+      fieldsWithValue.push({ fieldKey, label: formatFieldLabel(fieldKey), value });
+    });
+
+    const aliasFallback = [
+      "procedimiento",
+      "informe_procedimiento",
+      "procedimiento_medico",
+      "descripcion_procedimiento",
+      "reporte_procedimiento",
+    ];
+
+    aliasFallback.forEach((fieldKey) => {
+      if (existingKeys.has(fieldKey)) return;
+      const value = extraerValorVisible(hc?.[fieldKey]);
+      if (!value) return;
+      existingKeys.add(fieldKey);
+      fieldsWithValue.push({ fieldKey, label: formatFieldLabel(fieldKey), value });
+    });
+
+    const preferred = fieldsWithValue.find((item) => {
+      const normalizedField = normalizeKey(item?.fieldKey);
+      return normalizedField === "procedimiento"
+        || normalizedField === "procedimiento_medico"
+        || normalizedField.includes("procedimiento");
+    }) || fieldsWithValue[0] || null;
+
+    const contenidoPrincipal = String(preferred?.value || "").trim();
+    const camposDetalle = fieldsWithValue.filter((item) => item.fieldKey !== preferred?.fieldKey);
+
+    return {
+      disponible: contenidoPrincipal.length > 0,
+      contenidoPrincipal,
+      camposDetalle,
+    };
+  }, [hc, hcTemplateMeta]);
+  const informeProcedimientoDisponible = Boolean(informeProcedimiento?.disponible);
+
   useEffect(() => {
     // FIX: canOpenHistoryDrawer debe verificar que HC previas fueron realmente cargadas, 
     // no solo que hc_origen_id esté seteado. Evita mostrar botón cuando no hay HC anteriores.
@@ -1258,16 +1342,55 @@ function HistoriaClinicaPage() {
     resumenAsistenteItems,
   ]);
 
+  const themedPageBg = {
+    background: 'linear-gradient(to bottom right, var(--color-primary-light, #eff6ff), #ffffff, color-mix(in srgb, var(--color-accent, #eef2ff) 32%, white))',
+  };
+  const themedHeroIconBg = {
+    background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))',
+  };
+  const themedAccentIconBg = {
+    background: 'linear-gradient(to right, var(--color-secondary, #4f46e5), var(--color-accent, #7c3aed))',
+  };
+  const themedInfoBadgeBg = {
+    background: 'linear-gradient(to right, color-mix(in srgb, var(--color-primary-light, #dbeafe) 72%, white), color-mix(in srgb, var(--color-accent, #c4b5fd) 20%, white))',
+  };
+  const themedSpinnerStyle = {
+    borderColor: 'var(--color-primary, #2563eb)',
+    borderTopColor: 'transparent',
+  };
+  const themedToggleActiveStyle = {
+    borderColor: 'var(--color-accent, #06b6d4)',
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 75%, white)',
+  };
+  const themedToggleIndicatorStyle = {
+    borderColor: 'var(--color-primary, #2563eb)',
+    backgroundColor: 'var(--color-primary, #2563eb)',
+    color: '#fff',
+  };
+  const themedToggleBadgeStyle = {
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 70%, white)',
+    color: 'var(--color-primary-dark, #1d4ed8)',
+  };
+  const primaryActionStyle = {
+    background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))',
+  };
+  const brandActionStyle = {
+    background: 'linear-gradient(to right, var(--color-secondary, #4f46e5), var(--color-accent, #7c3aed))',
+  };
+  const darkBrandActionStyle = {
+    background: 'linear-gradient(to right, var(--color-primary-dark, #1d4ed8), var(--color-secondary, #4f46e5))',
+  };
+
   if (loading) return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={themedPageBg}>
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/50 flex flex-col items-center gap-4">
-        <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="w-16 h-16 border-4 rounded-full animate-spin" style={themedSpinnerStyle}></div>
         <p className="text-gray-600 font-medium">🏥 Cargando historia clínica...</p>
       </div>
     </div>
   );
   if (error) return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={themedPageBg}>
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-red-200 text-center">
         <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
           <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1280,7 +1403,7 @@ function HistoriaClinicaPage() {
     </div>
   );
   if (!paciente) return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={themedPageBg}>
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-gray-200 text-center">
         <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
           <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1299,12 +1422,12 @@ function HistoriaClinicaPage() {
   );
 
   return (
-    <div className="min-h-screen py-4 sm:py-8 px-2 sm:px-4 overflow-x-hidden" style={{ background: 'linear-gradient(to bottom right, var(--color-primary-light, #eff6ff), #ffffff, var(--color-accent, #eef2ff))' }}>
+    <div className="min-h-screen py-4 sm:py-8 px-2 sm:px-4 overflow-x-hidden" style={themedPageBg}>
       <div className="max-w-6xl mx-auto w-full">
         {/* Header profesional de Historia Clínica */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-6 lg:p-8 mb-6 border border-white/50 w-full">
           <div className="flex flex-col sm:flex-row items-center gap-4 mb-6">
-            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))' }}>
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center flex-shrink-0" style={themedHeroIconBg}>
               <svg className="w-6 h-6 sm:w-8 sm:h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
@@ -1320,7 +1443,7 @@ function HistoriaClinicaPage() {
                 }
               </p>
             </div>
-            <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-green-100 to-blue-100 rounded-full flex-shrink-0">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-full flex-shrink-0" style={themedInfoBadgeBg}>
               <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse"></div>
               <span className="text-xs sm:text-sm font-medium text-gray-700">En línea</span>
             </div>
@@ -1371,7 +1494,7 @@ function HistoriaClinicaPage() {
         {/* Datos básicos del paciente en tarjeta moderna */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 mb-6 border border-white/50">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center" style={themedHeroIconBg}>
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
@@ -1395,42 +1518,6 @@ function HistoriaClinicaPage() {
           </div>
           <TriajePaciente triaje={triaje} />
         </div>
-        {readOnly && (
-          <div className="mb-6 p-4 rounded-2xl border bg-blue-50/80 border-blue-200 backdrop-blur-sm">
-            <p className="text-sm font-medium text-blue-800">
-              Vista de solo lectura. No se permiten cambios ni guardado de la historia clínica desde este acceso.
-            </p>
-          </div>
-        )}
-
-        {HC_TEMPLATE_ENGINE_READ && hcTemplateMeta && (
-          <div className="mb-6 p-4 rounded-2xl border bg-indigo-50/80 border-indigo-200 backdrop-blur-sm">
-            <p className="text-sm font-medium text-indigo-800">
-              Plantilla HC activa: {hcTemplateMeta.nombre || hcTemplateMeta.id || "General"}
-            </p>
-            <p className="text-xs text-indigo-700 mt-1">
-              ID: {hcTemplateMeta.id || "medicina_general"} | Version: {hcTemplateMeta.version || "n/a"}
-              {hcTemplateResolution?.resolved_by === "clinica_default"
-                ? " | Modo: por defecto (todas las especialidades)"
-                : hcTemplateResolution?.resolved_by === "consulta_especialidad" || hcTemplateResolution?.resolved_by === "especialidad"
-                  ? ` | Modo: por especialidad${hcTemplateResolution?.especialidad_detectada ? ` (${hcTemplateResolution.especialidad_detectada})` : ""}`
-                  : hcTemplateResolution?.resolved_by
-                    ? ` | ${hcTemplateResolution.resolved_by}`
-                    : ""}
-            </p>
-            {usuarioSesion?.rol === "administrador" && (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => navigate("/configuracion/plantillas-hc")}
-                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs hover:bg-indigo-700"
-                >
-                  Configurar Plantillas HC
-                </button>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Formulario principal de Historia Clínica */}
         <form
@@ -1530,7 +1617,7 @@ function HistoriaClinicaPage() {
           {/* Anamnesis y Examen Físico */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-violet-500 rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={themedAccentIconBg}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -1546,7 +1633,7 @@ function HistoriaClinicaPage() {
           {/* Laboratorio y Apoyo Diagnóstico */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
@@ -1579,7 +1666,7 @@ function HistoriaClinicaPage() {
           {/* Tratamiento y Receta Médica */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-gradient-to-r from-emerald-500 to-green-500 rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={themedHeroIconBg}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
@@ -1604,7 +1691,7 @@ function HistoriaClinicaPage() {
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-gradient-to-r from-sky-500 to-cyan-500 rounded-full flex items-center justify-center">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>
                   <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2-11H7a2 2 0 00-2 2v10a2 2 0 002 2h5m5-11l2 2-6 6H9v-4l6-6z" />
                   </svg>
@@ -1687,7 +1774,7 @@ function HistoriaClinicaPage() {
           </div>
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center gap-3 mb-5">
-              <div className="w-8 h-8 bg-gradient-to-r from-cyan-500 to-sky-500 rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10m-11 9h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v11a2 2 0 002 2z" />
                 </svg>
@@ -1699,23 +1786,25 @@ function HistoriaClinicaPage() {
               <label
                 className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 cursor-pointer transition-all ${
                   hc.proxima_cita?.programar
-                    ? "border-cyan-400 bg-cyan-50/80"
+                    ? ""
                     : "border-slate-300 bg-white"
                 } ${readOnly ? "opacity-70 cursor-not-allowed" : "hover:border-cyan-300"}`}
+                style={hc.proxima_cita?.programar ? themedToggleActiveStyle : undefined}
               >
                 <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
                   <span
                     className={`h-5 w-5 rounded-md border-2 flex items-center justify-center ${
                       hc.proxima_cita?.programar
-                        ? "border-cyan-600 bg-cyan-600 text-white"
+                        ? ""
                         : "border-slate-400 bg-white"
                     }`}
+                    style={hc.proxima_cita?.programar ? themedToggleIndicatorStyle : undefined}
                   >
                     {hc.proxima_cita?.programar ? "✓" : ""}
                   </span>
                   <span>Programar próxima cita al guardar esta HC</span>
                 </div>
-                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${hc.proxima_cita?.programar ? "bg-cyan-100 text-cyan-800" : "bg-slate-100 text-slate-600"}`}>
+                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${hc.proxima_cita?.programar ? "" : "bg-slate-100 text-slate-600"}`} style={hc.proxima_cita?.programar ? themedToggleBadgeStyle : undefined}>
                   {hc.proxima_cita?.programar ? "Activado" : "Desactivado"}
                 </span>
                 <input
@@ -1859,10 +1948,11 @@ function HistoriaClinicaPage() {
           {/* Botones de Acción y Footer Profesional */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3 w-full">
                 <button
                   type="submit"
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none text-sm whitespace-nowrap"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none text-sm whitespace-nowrap"
+                  style={primaryActionStyle}
                   disabled={guardando || readOnly || bloqueoGuardadoActivo}
                 >
                   {readOnly ? (
@@ -1914,7 +2004,8 @@ function HistoriaClinicaPage() {
                       console.warn('Referencia de impresión no disponible');
                     }
                   }}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  style={brandActionStyle}
                   title={firmaMedico ? "Imprimir HC con firma digital" : "Imprimir HC (sin firma digital)"}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1934,13 +2025,76 @@ function HistoriaClinicaPage() {
                       console.warn('Referencia de laboratorio no disponible o sin órdenes de laboratorio');
                     }
                   }}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  style={darkBrandActionStyle}
                   disabled={!ordenesLab || ordenesLab.length === 0}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                   </svg>
                   <span>🔬 Lab</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (printImagenRef.current && ordenesImagenPrint && ordenesImagenPrint.length > 0) {
+                      handlePrintImagen();
+                    } else {
+                      console.warn('Referencia de imagen no disponible o sin órdenes de imagen');
+                    }
+                  }}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  style={brandActionStyle}
+                  disabled={!ordenesImagenPrint || ordenesImagenPrint.length === 0}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                  </svg>
+                  <span>🖼️ Img</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (printProcRef.current && ordenesProcedimientosPrint && ordenesProcedimientosPrint.length > 0) {
+                      handlePrintProcedimientos();
+                    } else {
+                      console.warn('Referencia de procedimientos no disponible o sin órdenes');
+                    }
+                  }}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
+                  disabled={!ordenesProcedimientosPrint || ordenesProcedimientosPrint.length === 0}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M7 7h10M7 17h10M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  <span>🛠️ Proc</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!informeProcedimientoDisponible) {
+                      setMsg("Complete el campo de Procedimiento Medico para emitir el informe.");
+                      return;
+                    }
+                    if (!readOnly && currentSnapshot !== serverSnapshot) {
+                      setMsg("Guarde la HC antes de emitir el informe de procedimiento.");
+                      return;
+                    }
+                    if (printInformeProcRef.current) {
+                      handlePrintInformeProcedimiento();
+                    } else {
+                      console.warn('Referencia de informe de procedimiento no disponible');
+                    }
+                  }}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                  style={darkBrandActionStyle}
+                  disabled={!informeProcedimientoDisponible}
+                  title="Imprimir informe formal del procedimiento medico"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6M8 4h8a2 2 0 012 2v12a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" />
+                  </svg>
+                  <span>📄 Informe Proc</span>
                 </button>
                 <button
                   type="button"
@@ -2565,6 +2719,8 @@ function HistoriaClinicaPage() {
             medicamentos={hc.receta}
             resultadosLaboratorio={resultadosLab}
             ordenesLaboratorio={ordenesLab}
+            ordenesImagen={ordenesImagenPrint}
+            ordenesProcedimientos={ordenesProcedimientosPrint}
             medicoInfo={medicoInfo}
             configuracionClinica={configuracionClinica}
           />
@@ -2590,6 +2746,47 @@ function HistoriaClinicaPage() {
             medicamentos={hc.receta}
             medicoInfo={medicoInfo}
             configuracionClinica={configuracionClinica}
+          />
+        </div>
+      </div>
+      {/* Componente oculto para impresión de Imágenes Diagnósticas */}
+      <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
+        <div ref={printImagenRef}>
+          <ImpresionServiciosSolicitados
+            paciente={paciente}
+            medicoInfo={medicoInfo}
+            firmaMedico={firmaMedico}
+            configuracionClinica={configuracionClinica}
+            ordenes={ordenesImagenPrint}
+            tipo="imagen"
+          />
+        </div>
+      </div>
+      {/* Componente oculto para impresión de Procedimientos */}
+      <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
+        <div ref={printProcRef}>
+          <ImpresionServiciosSolicitados
+            paciente={paciente}
+            medicoInfo={medicoInfo}
+            firmaMedico={firmaMedico}
+            configuracionClinica={configuracionClinica}
+            ordenes={ordenesProcedimientosPrint}
+            tipo="procedimientos"
+          />
+        </div>
+      </div>
+      {/* Componente oculto para impresión de Informe de Procedimiento */}
+      <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
+        <div ref={printInformeProcRef}>
+          <ImpresionInformeProcedimiento
+            paciente={paciente}
+            medicoInfo={medicoInfo}
+            firmaMedico={firmaMedico}
+            configuracionClinica={configuracionClinica}
+            fechaConsultaTexto={fechaConsultaVisible}
+            fechaInforme={new Date()}
+            contenidoPrincipal={informeProcedimiento?.contenidoPrincipal}
+            camposDetalle={informeProcedimiento?.camposDetalle || []}
           />
         </div>
       </div>

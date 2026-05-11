@@ -3,33 +3,6 @@ import { useState, useEffect } from "react";
 import { authFetch } from "../../utils/apiClient";
 
 export default function usePacientes({ initialBusqueda = "", initialPage = 1, initialRowsPerPage = 5, initialFechaDesde = "", initialFechaHasta = "" } = {}) {
-    // Función para recargar pacientes desde el backend
-    const recargarPacientes = (filtros = {}) => {
-      setLoading(true);
-      const params = new URLSearchParams({
-        page,
-        limit: rowsPerPage,
-        busqueda: busqueda.trim(),
-        fecha_desde: filtros.fechaDesde || fechaDesde,
-        fecha_hasta: filtros.fechaHasta || fechaHasta
-      });
-      authFetch(`api_pacientes.php?${params.toString()}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            setPacientes(data.pacientes);
-            setTotalRows(data.total || 0);
-            setTotalPages(data.totalPages || 1);
-          } else {
-            setError(data.error || "Error al cargar pacientes");
-          }
-          setLoading(false);
-        })
-        .catch(() => {
-          setError("Error de conexión con el servidor");
-          setLoading(false);
-        });
-    };
   const [pacientes, setPacientes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -38,17 +11,62 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
   const [totalRows, setTotalRows] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [busqueda, setBusqueda] = useState(initialBusqueda);
+  // debouncedBusqueda: se actualiza 400 ms después de que el usuario deja de escribir
+  const [debouncedBusqueda, setDebouncedBusqueda] = useState(initialBusqueda);
   const [fechaDesde, setFechaDesde] = useState(initialFechaDesde);
   const [fechaHasta, setFechaHasta] = useState(initialFechaHasta);
 
+  // Debounce: cuando busqueda cambia, esperar 400 ms antes de disparar la petición
+  // y resetear la página a 1 para que los resultados sean consistentes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPage(1);
+      setDebouncedBusqueda(busqueda);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [busqueda]);
+
+  // Petición principal: solo dispara cuando los filtros "estabilizados" cambian
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({
       page,
       limit: rowsPerPage,
-      busqueda: busqueda.trim(),
+      busqueda: debouncedBusqueda.trim(),
       fecha_desde: fechaDesde,
       fecha_hasta: fechaHasta
+    });
+    let cancelled = false;
+    authFetch(`api_pacientes.php?${params.toString()}`)
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled) return;
+        if (data.success) {
+          setPacientes(data.pacientes);
+          setTotalRows(data.total || 0);
+          setTotalPages(data.totalPages || 1);
+        } else {
+          setError(data.error || "Error al cargar pacientes");
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("Error de conexión con el servidor");
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [page, rowsPerPage, debouncedBusqueda, fechaDesde, fechaHasta]);
+
+  // Función para recargar pacientes desde el backend (tras crear/editar/eliminar)
+  const recargarPacientes = (filtros = {}) => {
+    setLoading(true);
+    const params = new URLSearchParams({
+      page,
+      limit: rowsPerPage,
+      busqueda: debouncedBusqueda.trim(),
+      fecha_desde: filtros.fechaDesde || fechaDesde,
+      fecha_hasta: filtros.fechaHasta || fechaHasta
     });
     authFetch(`api_pacientes.php?${params.toString()}`)
       .then(res => res.json())
@@ -66,7 +84,7 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
         setError("Error de conexión con el servidor");
         setLoading(false);
       });
-  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
+  };
 
 
   // Crear o editar paciente

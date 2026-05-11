@@ -24,7 +24,7 @@ function UsuarioModal({ open, onClose, initialData, onSave, loading }) {
         {/* Modal */}
         <div className="inline-block align-bottom bg-white rounded-t-2xl sm:rounded-2xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full w-full max-h-full">
           {/* Header del modal */}
-          <div className="bg-purple-800 px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between">
+          <div className="px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between" style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #1d4ed8), var(--color-secondary, #4f46e5))' }}>
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -33,7 +33,8 @@ function UsuarioModal({ open, onClose, initialData, onSave, loading }) {
             </h3>
             <button
               onClick={onClose}
-              className="bg-purple-700 hover:bg-purple-600 text-white p-2 rounded-full transition-colors"
+              className="text-white p-2 rounded-full transition-colors"
+              style={{ backgroundColor: 'color-mix(in srgb, var(--color-primary-dark, #1d4ed8) 70%, white)' }}
               aria-label="Cerrar"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -252,11 +253,50 @@ function UsuarioList() {
         );
     }
   };
+
+  const primaryActionStyle = {
+    background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))',
+  };
+  const secondaryActionStyle = {
+    background: 'linear-gradient(to right, var(--color-secondary, #4f46e5), var(--color-accent, #7c3aed))',
+  };
+  const titleStyle = { color: 'var(--color-primary-dark, #1d4ed8)' };
+  const filterPanelStyle = {
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 28%, white)',
+    borderColor: 'color-mix(in srgb, var(--color-accent, #a78bfa) 22%, white)',
+  };
+  const tableHeadStyle = {
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 72%, white)',
+    color: 'var(--color-primary-dark, #1d4ed8)',
+  };
+  const hoverRowStyle = {
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 36%, white)',
+  };
+  const cardStyle = {
+    background: 'linear-gradient(to bottom right, color-mix(in srgb, var(--color-primary-light, #dbeafe) 55%, white), color-mix(in srgb, var(--color-accent, #ddd6fe) 18%, white))',
+    borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 20%, white)',
+  };
+  const cardTitleStyle = { color: 'var(--color-primary-dark, #1d4ed8)' };
+  const cardAccentStyle = { color: 'var(--color-primary, #2563eb)' };
+  const activePageStyle = {
+    color: 'var(--color-primary-dark, #1d4ed8)',
+    backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 65%, white)',
+    borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 26%, white)',
+  };
+
   return (
-    <div className="p-4 bg-white rounded shadow">
+    <div className="p-4 bg-white rounded shadow usuario-list-theme">
+      <style>{`
+        .usuario-list-theme input:focus,
+        .usuario-list-theme select:focus,
+        .usuario-list-theme textarea:focus {
+          border-color: var(--color-primary, #2563eb) !important;
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary-light, #dbeafe) 75%, white) !important;
+        }
+      `}</style>
       {/* Header con título */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3">
-        <h2 className="text-xl font-bold text-purple-800 flex items-center gap-2">
+        <h2 className="text-xl font-bold flex items-center gap-2" style={titleStyle}>
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
           </svg>
@@ -267,7 +307,8 @@ function UsuarioList() {
         <div className="hidden sm:flex flex-wrap items-center gap-2">
           <button 
             onClick={handleAgregar}
-            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-bold transition-colors flex items-center gap-2"
+            className="text-white px-4 py-2 rounded-lg font-bold transition-colors flex items-center gap-2"
+            style={primaryActionStyle}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -276,7 +317,8 @@ function UsuarioList() {
           </button>
           <button 
             onClick={() => exportarExcel(usuariosFiltrados)}
-            className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+            className="text-white px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+            style={secondaryActionStyle}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -291,7 +333,8 @@ function UsuarioList() {
         <div className="flex gap-2 mb-3">
           <button 
             onClick={handleAgregar}
-            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-3 rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
+            className="flex-1 text-white px-4 py-3 rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
+            style={primaryActionStyle}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -302,7 +345,8 @@ function UsuarioList() {
         <div className="flex gap-2">
           <button 
             onClick={() => exportarExcel(usuariosFiltrados)}
-            className="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1 text-sm"
+            className="flex-1 text-white px-3 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1 text-sm"
+            style={secondaryActionStyle}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -313,7 +357,7 @@ function UsuarioList() {
       </div>
 
       {/* Filtros y búsqueda */}
-      <div className="bg-gray-50 rounded-lg p-4 mb-4 space-y-4">
+      <div className="rounded-lg p-4 mb-4 space-y-4 border" style={filterPanelStyle}>
         {/* Buscador */}
         <div className="relative">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -326,7 +370,7 @@ function UsuarioList() {
             value={busqueda}
             onChange={e => { setBusqueda(e.target.value); setPage(1); }}
             placeholder="Buscar por usuario, nombre, DNI o profesión"
-            className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400"
           />
           {busqueda && (
             <button
@@ -348,7 +392,7 @@ function UsuarioList() {
             <select 
               value={filtroRol} 
               onChange={e => { setFiltroRol(e.target.value); setPage(1); }} 
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
             >
               {roles.map(r => (
                 <option key={r} value={r}>
@@ -364,7 +408,7 @@ function UsuarioList() {
             <select 
               value={rowsPerPage} 
               onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1); }} 
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
             >
               {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n} usuarios</option>)}
             </select>
@@ -393,7 +437,7 @@ function UsuarioList() {
           <div className="hidden lg:block overflow-x-auto w-full">
             <table className="min-w-full text-sm border">
               <thead>
-                <tr className="bg-blue-100">
+                <tr style={tableHeadStyle}>
                   <th className="px-2 py-1 border">Usuario</th>
                   <th className="px-2 py-1 border">Nombre</th>
                   <th className="px-2 py-1 border">DNI</th>
@@ -406,7 +450,7 @@ function UsuarioList() {
               </thead>
               <tbody>
                 {usuariosPagina.map(u => (
-                  <tr key={u.id} className="hover:bg-blue-50">
+                  <tr key={u.id} className="transition-colors" onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = hoverRowStyle.backgroundColor; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}>
                     <td className="border px-2 py-1 font-medium">{u.usuario}</td>
                     <td className="border px-2 py-1">{u.nombre}</td>
                     <td className="border px-2 py-1">{u.dni}</td>
@@ -442,11 +486,11 @@ function UsuarioList() {
           {/* Vista de tarjetas para móviles y tablets */}
           <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-4">
             {usuariosPagina.map(u => (
-              <div key={u.id} className="bg-gradient-to-br from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+              <div key={u.id} className="rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow border" style={cardStyle}>
                 {/* Header con usuario y acciones */}
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                    <div className="text-lg font-bold text-purple-800">@{u.usuario}</div>
+                    <div className="text-lg font-bold" style={cardTitleStyle}>@{u.usuario}</div>
                     <div className="text-sm text-gray-600">DNI: {u.dni}</div>
                   </div>
                   <div className="flex gap-1">
@@ -474,7 +518,7 @@ function UsuarioList() {
                 {/* Información del usuario */}
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="font-medium text-blue-800">{u.nombre}</span>
+                    <span className="font-medium" style={cardTitleStyle}>{u.nombre}</span>
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getRoleColor(u.rol)}`}>
                       {getRoleIcon(u.rol)}
                       <span className="ml-1">{u.rol}</span>
@@ -483,14 +527,14 @@ function UsuarioList() {
                   
                   {u.profesion && (
                     <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4" style={cardAccentStyle} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2-2v2m8 0V6a2 2 0 012 2v6a2 2 0 01-2 2H8a2 2 0 01-2-2V8a2 2 0 012-2h8z" />
                       </svg>
-                      <span className="text-sm text-blue-700 font-medium">{u.profesion}</span>
+                      <span className="text-sm font-medium" style={cardAccentStyle}>{u.profesion}</span>
                     </div>
                   )}
 
-                  <div className="pt-2 border-t border-blue-200 flex justify-between items-center">
+                  <div className="pt-2 border-t flex justify-between items-center" style={{ borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 18%, white)' }}>
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                       u.activo === 1 || u.activo === "1" 
                         ? 'bg-green-100 text-green-800 border border-green-200' 
@@ -530,7 +574,7 @@ function UsuarioList() {
           </button>
           
           <div className="flex items-center gap-1">
-            <span className="px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg">
+            <span className="px-3 py-2 text-sm font-medium border rounded-lg" style={activePageStyle}>
               {page}
             </span>
             <span className="px-2 text-sm text-gray-500">de</span>

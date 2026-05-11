@@ -1,42 +1,94 @@
 import React, { useEffect, useState } from 'react'
 import { getServicios } from '../api/publicApi'
 import ServiceIcon from '../components/ServiceIcon'
+import ConsultButton from '../components/ShoppingCart/ConsultButton'
 
-export default function ServiciosPage() {
+export default function ServiciosPage({ configuracion = {} }) {
+  // Normalizar número de WhatsApp para wa.me
+  function normalizePhone(raw) {
+    let digits = String(raw || '').replace(/\D/g, '')
+    if (!digits) return ''
+    if (digits.startsWith('0')) digits = digits.slice(1)
+    if (digits.length === 9 && digits.startsWith('9')) digits = '51' + digits
+    return digits
+  }
+  const whatsappNumero = normalizePhone(configuracion?.celular)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [servicios, setServicios] = useState([])
 
   const variants = [
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-blue-200/60 hover:bg-white/90 hover:ring-blue-300/60',
-      iconWrap: 'bg-blue-50 border-blue-200',
-      icon: 'text-blue-700',
+      wrapStyle: {
+        background: 'rgba(255,255,255,0.82)',
+        borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 20%, white)',
+        boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-primary-light, #dbeafe) 65%, white)',
+      },
+      iconWrapStyle: {
+        backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 72%, white)',
+        borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 24%, white)',
+      },
+      iconStyle: { color: 'var(--color-primary-dark, #1d4ed8)' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-purple-200/60 hover:bg-white/90 hover:ring-purple-300/60',
-      iconWrap: 'bg-purple-50 border-purple-200',
-      icon: 'text-purple-700',
+      wrapStyle: {
+        background: 'rgba(255,255,255,0.82)',
+        borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 18%, white)',
+        boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent, #c4b5fd) 45%, white)',
+      },
+      iconWrapStyle: {
+        backgroundColor: 'color-mix(in srgb, var(--color-accent, #ddd6fe) 26%, white)',
+        borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 20%, white)',
+      },
+      iconStyle: { color: 'var(--color-secondary, #4f46e5)' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-emerald-200/60 hover:bg-white/90 hover:ring-emerald-300/60',
-      iconWrap: 'bg-emerald-50 border-emerald-200',
-      icon: 'text-emerald-700',
+      wrapStyle: {
+        background: 'rgba(255,255,255,0.82)',
+        borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 14%, white)',
+        boxShadow: '0 0 0 1px color-mix(in srgb, #86efac 55%, white)',
+      },
+      iconWrapStyle: {
+        backgroundColor: 'color-mix(in srgb, #dcfce7 78%, white)',
+        borderColor: 'color-mix(in srgb, #22c55e 22%, white)',
+      },
+      iconStyle: { color: '#15803d' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-amber-200/60 hover:bg-white/90 hover:ring-amber-300/60',
-      iconWrap: 'bg-amber-50 border-amber-200',
-      icon: 'text-amber-700',
+      wrapStyle: {
+        background: 'rgba(255,255,255,0.82)',
+        borderColor: 'color-mix(in srgb, #f59e0b 18%, white)',
+        boxShadow: '0 0 0 1px color-mix(in srgb, #fde68a 62%, white)',
+      },
+      iconWrapStyle: {
+        backgroundColor: 'color-mix(in srgb, #fef3c7 80%, white)',
+        borderColor: 'color-mix(in srgb, #f59e0b 22%, white)',
+      },
+      iconStyle: { color: '#b45309' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-rose-200/60 hover:bg-white/90 hover:ring-rose-300/60',
-      iconWrap: 'bg-rose-50 border-rose-200',
-      icon: 'text-rose-700',
+      wrapStyle: {
+        background: 'rgba(255,255,255,0.82)',
+        borderColor: 'color-mix(in srgb, #fb7185 18%, white)',
+        boxShadow: '0 0 0 1px color-mix(in srgb, #fecdd3 56%, white)',
+      },
+      iconWrapStyle: {
+        backgroundColor: 'color-mix(in srgb, #ffe4e6 82%, white)',
+        borderColor: 'color-mix(in srgb, #fb7185 20%, white)',
+      },
+      iconStyle: { color: '#be123c' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-indigo-200/60 hover:bg-white/90 hover:ring-indigo-300/60',
-      iconWrap: 'bg-indigo-50 border-indigo-200',
-      icon: 'text-indigo-700',
+      wrapStyle: {
+        background: 'rgba(255,255,255,0.82)',
+        borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 18%, white)',
+        boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-primary-light, #dbeafe) 48%, white)',
+      },
+      iconWrapStyle: {
+        backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #eef2ff) 74%, white)',
+        borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 20%, white)',
+      },
+      iconStyle: { color: 'var(--color-secondary, #4f46e5)' },
     },
   ]
   useEffect(() => {
@@ -80,11 +132,12 @@ export default function ServiciosPage() {
             return (
               <article
                 key={s.id}
-                className={`rounded-2xl border p-5 transition hover:shadow-sm ${v.wrap}`}
+                className="rounded-2xl border p-5 transition hover:shadow-sm"
+                style={v.wrapStyle}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`shrink-0 h-12 w-12 rounded-2xl border flex items-center justify-center ${v.iconWrap}`}>
-                    <ServiceIcon name={s.icono} className={`${v.icon} text-xl`} />
+                  <div className="shrink-0 h-12 w-12 rounded-2xl border flex items-center justify-center" style={v.iconWrapStyle}>
+                    <ServiceIcon name={s.icono} className="text-xl" style={v.iconStyle} />
                   </div>
                   <div className="min-w-0">
                     <h2 className="font-semibold">{s.titulo}</h2>
@@ -98,10 +151,15 @@ export default function ServiciosPage() {
                     alt={s.titulo}
                     className="w-full h-44 object-cover rounded-xl mt-4"
                     loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
                   />
                 ) : null}
 
                 {s.precio ? <p className="mt-4 text-sm font-semibold">S/ {s.precio}</p> : null}
+
+                <ConsultButton nombreServicio={s.titulo} whatsappNumero={whatsappNumero} />
               </article>
             )
           })}

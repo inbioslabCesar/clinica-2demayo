@@ -29,6 +29,7 @@ function formatBytes(b) {
 function esArchivoPermitido(f) {
   return f.type === "application/pdf" || f.type.startsWith("image/") || f.name.toLowerCase().endsWith(".dcm");
 }
+const cotizEstadoPagado = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
 
 // ── Modal de subida de archivos ───────────────────────────────────────────────
 function ModalSubir({ orden, onClose, onSubido }) {
@@ -41,7 +42,7 @@ function ModalSubir({ orden, onClose, onSubido }) {
     const todos     = Array.from(files);
     const permitidos = todos.filter(esArchivoPermitido);
     if (permitidos.length < todos.length) {
-      Swal.fire("Archivos ignorados", "Solo se aceptan: PDF, imágenes (JPG/PNG/WebP/GIF/BMP) y DICOM (.dcm).", "warning");
+      Swal.fire("Archivos ignorados", "Solo se aceptan: PDF, imágenes (JPG/PNG/WebP/GIF/BMP/TIFF) y DICOM (.dcm).", "warning");
     }
     setArchivos((p) => [...p, ...permitidos]);
   };
@@ -86,7 +87,15 @@ function ModalSubir({ orden, onClose, onSubido }) {
           <div>
             <h3 className="text-white font-bold text-base">{tipo.emoji} Subir archivos — {tipo.label}</h3>
             <p className="text-white/70 text-xs mt-0.5">
-              {orden.indicaciones ? `Indicaciones: ${orden.indicaciones}` : "Sin indicaciones específicas"}
+              {(() => {
+                // Strip internal token "Detalle #N - " and " | Orden creada desde cotización #N"
+                const raw = String(orden.indicaciones || "");
+                const cleaned = raw
+                  .replace(/^Detalle\s*#\d+\s*-\s*/i, "")
+                  .replace(/\s*\|\s*Orden creada desde cotizaci[oó]n\s*#\d+/i, "")
+                  .trim();
+                return cleaned ? `Indicaciones: ${cleaned}` : "Sin indicaciones específicas";
+              })()}
             </p>
           </div>
           <button onClick={onClose} disabled={subiendo} className="text-white/70 hover:text-white transition">
@@ -104,7 +113,7 @@ function ModalSubir({ orden, onClose, onSubido }) {
           >
             <FaCloudUploadAlt className="text-4xl text-gray-400 mx-auto mb-2" />
             <p className="text-sm text-gray-600 font-medium">Arrastra archivos o haz clic para seleccionar</p>
-            <p className="text-xs text-gray-400 mt-1">PDF · Imágenes (JPG, PNG, WebP) · DICOM (.dcm) · Máx 100 MB</p>
+            <p className="text-xs text-gray-400 mt-1">PDF · Imágenes (JPG, PNG, WebP, GIF, BMP, TIFF) · DICOM (.dcm) · Máx 100 MB</p>
             <input ref={fileRef} type="file" multiple accept="application/pdf,image/*,.dcm" className="hidden" onChange={(e) => agregar(e.target.files)} />
           </div>
 
@@ -143,12 +152,10 @@ function ModalSubir({ orden, onClose, onSubido }) {
 }
 
 // ── Tarjeta de orden ──────────────────────────────────────────────────────────
-function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
+const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
   const [lightbox, setLightbox]         = useState(null);
   const [toggling, setToggling]         = useState(false);
   const tipo = TIPO_INFO[orden.tipo] || { label: orden.tipo, emoji: "🩻", color: "gray" };
-
-  const cotizEstadoPagado = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
 
   const cotizPagada =
     parseInt(orden.carga_anticipada) === 1 ||
@@ -199,7 +206,12 @@ function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
         <div className="flex items-center gap-2">
           <span className="text-xl">{tipo.emoji}</span>
           <div>
-            <span className="font-bold text-gray-800 text-sm">{tipo.label}</span>
+            <span className="font-bold text-gray-800 text-sm">
+              {tipo.label}
+              {Array.isArray(orden.servicios_nombres) && orden.servicios_nombres.length > 0 && (
+                <span className="font-normal text-gray-600"> — {orden.servicios_nombres.join(" · ")}</span>
+              )}
+            </span>
             {Number(orden.cotizacion_id || 0) > 0 && (
               <p className="text-[11px] text-gray-500 mt-0.5">
                 Orden creada desde cotización #{orden.cotizacion_id}
@@ -342,9 +354,9 @@ function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
       )}
     </div>
   );
-}
+});
 
-// ── Página principal ──────────────────────────────────────────────────────────
+// ── Página principal ───────────────────────────────────────────────────────────
 export default function OrdenesImagenPacientePage() {
   const { pacienteId } = useParams();
   const navigate       = useNavigate();
@@ -355,14 +367,21 @@ export default function OrdenesImagenPacientePage() {
   const [paciente, setPaciente]       = useState(null);
   const [ordenSubir, setOrdenSubir]   = useState(null); // orden para el modal
   const [intentadoGenerarDesdeCotizacion, setIntentadoGenerarDesdeCotizacion] = useState(false);
+  const ordenesRef = useRef([]);
 
   const cotizacionIdFiltro = Number(new URLSearchParams(location.search).get("cotizacion_id") || 0);
 
-  const cargar = useCallback(() => {
-    setLoading(true);
+  const cargar = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     authFetch(`api_ordenes_imagen.php?paciente_id=${pacienteId}`)
       .then((r) => r.json())
-      .then((d) => { if (d.success) setOrdenes(d.ordenes || []); })
+      .then((d) => {
+        if (d.success) {
+          const list = d.ordenes || [];
+          setOrdenes(list);
+          ordenesRef.current = list;
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [pacienteId]);
@@ -386,7 +405,7 @@ export default function OrdenesImagenPacientePage() {
       if (cotizacionIdFiltro <= 0) return;
       if (intentadoGenerarDesdeCotizacion) return;
 
-      const existeOrden = ordenes.some(
+      const existeOrden = ordenesRef.current.some(
         (o) => Number(o.cotizacion_id || 0) === Number(cotizacionIdFiltro)
       );
       if (existeOrden) return;
@@ -404,7 +423,7 @@ export default function OrdenesImagenPacientePage() {
         });
         const data = await res.json();
         if (data?.success && Number(data.creadas || 0) > 0) {
-          cargar();
+          cargar(true); // silent: no mostrar spinner en la recarga
         }
       } catch {
         // no-op
@@ -412,7 +431,7 @@ export default function OrdenesImagenPacientePage() {
     };
 
     generarSiCorresponde();
-  }, [loading, cotizacionIdFiltro, intentadoGenerarDesdeCotizacion, ordenes, pacienteId, cargar]);
+  }, [loading, cotizacionIdFiltro, intentadoGenerarDesdeCotizacion, pacienteId, cargar]);
 
   const ordenesBase = cotizacionIdFiltro > 0
     ? ordenes.filter((o) => Number(o.cotizacion_id || 0) === Number(cotizacionIdFiltro))

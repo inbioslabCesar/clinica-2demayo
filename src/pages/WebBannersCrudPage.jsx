@@ -53,7 +53,10 @@ export default function WebBannersCrudPage() {
 
   function openNew() {
     setEditingId(null)
-    setForm(emptyForm)
+    const nextOrden = items.length > 0
+      ? Math.max(...items.map(i => Number(i.orden ?? 0))) + 1
+      : 1
+    setForm({ ...emptyForm, orden: nextOrden })
     setImagenFiles([])
     setImagenFijaFile(null)
     setImagenConocenosFile(null)
@@ -195,6 +198,17 @@ export default function WebBannersCrudPage() {
         const urlsToUse = uploadedUrls.length > 0 ? uploadedUrls : basePayload.imagen_url ? [basePayload.imagen_url] : []
         if (urlsToUse.length === 0) throw new Error('La imagen es requerida')
 
+        const hasStaticImages = !!(
+          uploadedFijaUrl ||
+          uploadedConocenosUrl ||
+          String(basePayload.imagen_fija_url || '').trim() ||
+          String(basePayload.imagen_conocenos_url || '').trim()
+        )
+
+        if (urlsToUse.length > 1 && hasStaticImages) {
+          throw new Error('Para evitar cruces, al crear varios banners solo se permite imagen de carrusel. Configura imagen fija y Conocenos en un banner individual.')
+        }
+
         for (let i = 0; i < urlsToUse.length; i++) {
           const fileName = imagenFiles?.[i]?.name || ''
           const suggestedTitle = fileName.replace(/\.[^.]+$/, '')
@@ -202,8 +216,8 @@ export default function WebBannersCrudPage() {
           const payload = {
             ...basePayload,
             imagen_url: urlsToUse[i],
-            imagen_fija_url: uploadedFijaUrl ? uploadedFijaUrl : basePayload.imagen_fija_url,
-            imagen_conocenos_url: uploadedConocenosUrl ? uploadedConocenosUrl : basePayload.imagen_conocenos_url,
+            imagen_fija_url: urlsToUse.length === 1 ? (uploadedFijaUrl ? uploadedFijaUrl : basePayload.imagen_fija_url) : null,
+            imagen_conocenos_url: urlsToUse.length === 1 ? (uploadedConocenosUrl ? uploadedConocenosUrl : basePayload.imagen_conocenos_url) : null,
             orden: basePayload.orden + i,
             titulo: (basePayload.titulo || '').trim() ? basePayload.titulo : suggestedTitle,
           }
@@ -254,6 +268,28 @@ export default function WebBannersCrudPage() {
     }
   }
 
+  function renderImageLinkWithThumb(url, label) {
+    if (!url) return null
+    return (
+      <div className="mt-1 flex items-center gap-2">
+        <a className="text-xs text-blue-700 hover:underline" href={url} target="_blank" rel="noreferrer">
+          Ver imagen ({label})
+        </a>
+        <a href={url} target="_blank" rel="noreferrer" title={`Abrir imagen ${label}`}>
+          <img
+            src={url}
+            alt={`Miniatura ${label}`}
+            className="h-10 w-16 rounded border border-gray-300 object-cover bg-gray-50"
+            loading="lazy"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+            }}
+          />
+        </a>
+      </div>
+    )
+  }
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between gap-3 mb-4">
@@ -282,25 +318,9 @@ export default function WebBannersCrudPage() {
                   <td className="p-2">
                     <div className="font-semibold">{it.titulo || '(sin título)'}</div>
                     {it.subtitulo ? <div className="text-xs text-gray-600">{it.subtitulo}</div> : null}
-                    {it.imagen_url ? (
-                      <a className="text-xs text-blue-700 hover:underline" href={it.imagen_url} target="_blank" rel="noreferrer">
-                        Ver imagen (carrusel)
-                      </a>
-                    ) : null}
-                    {it.imagen_fija_url ? (
-                      <div>
-                        <a className="text-xs text-blue-700 hover:underline" href={it.imagen_fija_url} target="_blank" rel="noreferrer">
-                          Ver imagen (fija)
-                        </a>
-                      </div>
-                    ) : null}
-                    {it.imagen_conocenos_url ? (
-                      <div>
-                        <a className="text-xs text-blue-700 hover:underline" href={it.imagen_conocenos_url} target="_blank" rel="noreferrer">
-                          Ver imagen (Conocenos)
-                        </a>
-                      </div>
-                    ) : null}
+                    {renderImageLinkWithThumb(it.imagen_url, 'carrusel')}
+                    {renderImageLinkWithThumb(it.imagen_fija_url, 'fija')}
+                    {renderImageLinkWithThumb(it.imagen_conocenos_url, 'Conocenos')}
                   </td>
                   <td className="p-2">{it.orden ?? 0}</td>
                   <td className="p-2">{it.activo ? 'Sí' : 'No'}</td>
@@ -339,28 +359,115 @@ export default function WebBannersCrudPage() {
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-semibold">Imagen URL</label>
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-semibold">Imagen URL</label>
+              {form.imagen_url ? (
+                <button
+                  type="button"
+                  className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
+                  onClick={() => setForm((f) => ({ ...f, imagen_url: '' }))}
+                >
+                  Limpiar
+                </button>
+              ) : null}
+            </div>
             <input className="w-full border rounded px-3 py-2" value={form.imagen_url} onChange={(e) => setForm((f) => ({ ...f, imagen_url: e.target.value }))} placeholder="Se llenará automáticamente al subir" />
+            {form.imagen_url ? (
+              <div className="mt-2 flex items-center gap-2">
+                <a className="text-xs text-blue-700 hover:underline" href={form.imagen_url} target="_blank" rel="noreferrer">
+                  Ver imagen actual (carrusel)
+                </a>
+                <a href={form.imagen_url} target="_blank" rel="noreferrer" title="Abrir imagen carrusel">
+                  <img
+                    src={form.imagen_url}
+                    alt="Preview carrusel"
+                    className="h-10 w-16 rounded border border-gray-300 object-cover bg-gray-50"
+                    loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
+                  />
+                </a>
+              </div>
+            ) : null}
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-semibold">Imagen fija URL (opcional)</label>
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-semibold">Imagen fija URL (opcional)</label>
+              {form.imagen_fija_url ? (
+                <button
+                  type="button"
+                  className="text-xs px-2 py-1 rounded border border-red-300 text-red-700 hover:bg-red-50"
+                  onClick={() => setForm((f) => ({ ...f, imagen_fija_url: '' }))}
+                >
+                  Quitar imagen fija
+                </button>
+              ) : null}
+            </div>
             <input
               className="w-full border rounded px-3 py-2"
               value={form.imagen_fija_url}
               onChange={(e) => setForm((f) => ({ ...f, imagen_fija_url: e.target.value }))}
               placeholder="Se llenará automáticamente al subir"
             />
+            {form.imagen_fija_url ? (
+              <div className="mt-2 flex items-center gap-2">
+                <a className="text-xs text-blue-700 hover:underline" href={form.imagen_fija_url} target="_blank" rel="noreferrer">
+                  Ver imagen actual (fija)
+                </a>
+                <a href={form.imagen_fija_url} target="_blank" rel="noreferrer" title="Abrir imagen fija">
+                  <img
+                    src={form.imagen_fija_url}
+                    alt="Preview fija"
+                    className="h-10 w-16 rounded border border-gray-300 object-cover bg-gray-50"
+                    loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
+                  />
+                </a>
+              </div>
+            ) : null}
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-semibold">Imagen Conocenos URL (opcional)</label>
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-semibold">Imagen Conocenos URL (opcional)</label>
+              {form.imagen_conocenos_url ? (
+                <button
+                  type="button"
+                  className="text-xs px-2 py-1 rounded border border-red-300 text-red-700 hover:bg-red-50"
+                  onClick={() => setForm((f) => ({ ...f, imagen_conocenos_url: '' }))}
+                >
+                  Quitar imagen Conocenos
+                </button>
+              ) : null}
+            </div>
             <input
               className="w-full border rounded px-3 py-2"
               value={form.imagen_conocenos_url}
               onChange={(e) => setForm((f) => ({ ...f, imagen_conocenos_url: e.target.value }))}
               placeholder="Se llenara automaticamente al subir"
             />
+            {form.imagen_conocenos_url ? (
+              <div className="mt-2 flex items-center gap-2">
+                <a className="text-xs text-blue-700 hover:underline" href={form.imagen_conocenos_url} target="_blank" rel="noreferrer">
+                  Ver imagen actual (Conocenos)
+                </a>
+                <a href={form.imagen_conocenos_url} target="_blank" rel="noreferrer" title="Abrir imagen Conocenos">
+                  <img
+                    src={form.imagen_conocenos_url}
+                    alt="Preview Conocenos"
+                    className="h-10 w-16 rounded border border-gray-300 object-cover bg-gray-50"
+                    loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
+                  />
+                </a>
+              </div>
+            ) : null}
           </div>
 
           <div className="md:col-span-2">
@@ -379,7 +486,7 @@ export default function WebBannersCrudPage() {
             <p className="text-xs text-gray-600 mt-1">
               {editingId
                 ? 'Si seleccionas una imagen, se subirá y reemplazará la URL.'
-                : 'Puedes seleccionar varias imágenes: se crearán varios banners automáticamente.'}
+                : 'Puedes seleccionar varias imágenes: se crearán varios banners de carrusel automáticamente.'}
             </p>
             <p className="text-xs text-blue-700 mt-1">
               Medida recomendada para carrusel: 1920 x 680 px (relación 2.8:1). Mínimo sugerido: 1600 x 560 px.
@@ -401,6 +508,7 @@ export default function WebBannersCrudPage() {
               }}
             />
             <p className="text-xs text-gray-600 mt-1">Esta imagen se usará en la sección fija de la Home.</p>
+            <p className="text-xs text-amber-700 mt-1">Si creas varios banners a la vez, esta imagen no se aplicará para evitar cruces.</p>
           </div>
 
           <div className="md:col-span-2">
@@ -415,6 +523,7 @@ export default function WebBannersCrudPage() {
               }}
             />
             <p className="text-xs text-gray-600 mt-1">Esta imagen se usara en la seccion Conocenos de las landings clasica y premium.</p>
+            <p className="text-xs text-amber-700 mt-1">Si creas varios banners a la vez, esta imagen no se aplicará para evitar cruces.</p>
             <p className="text-xs text-blue-700 mt-1">Medida recomendada: 1600 x 1000 px (relacion 8:5). Minimo sugerido: 1200 x 750 px.</p>
           </div>
 

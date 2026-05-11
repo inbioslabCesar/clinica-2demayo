@@ -11,10 +11,28 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 function getBaseUrlPrefix() {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host !== '') {
+        $hostOnly = preg_replace('/:\\d+$/', '', $host);
+        $port = null;
+        if (preg_match('/:(\\d+)$/', $host, $mPort)) {
+            $port = intval($mPort[1]);
+        }
+        $isLocal = in_array(strtolower($hostOnly), ['localhost', '127.0.0.1', '::1'], true);
+        if ($isLocal && in_array($port, [5173, 5174], true)) {
+            $host = $hostOnly;
+        }
+    }
     $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
     $basePath = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
     if ($basePath === '.' || $basePath === '/') $basePath = '';
     return [$scheme . '://' . $host, $basePath];
+}
+
+function startsWithCompat($haystack, $needle) {
+    $haystack = (string)$haystack;
+    $needle = (string)$needle;
+    if ($needle === '') return true;
+    return substr($haystack, 0, strlen($needle)) === $needle;
 }
 
 function normalizeImageUrl($url) {
@@ -24,10 +42,10 @@ function normalizeImageUrl($url) {
     [$origin, $basePath] = getBaseUrlPrefix();
     $prefix = $origin . $basePath;
 
-    if (str_starts_with($url, '/uploads/')) {
+    if (startsWithCompat($url, '/uploads/')) {
         return $prefix . $url;
     }
-    if (str_starts_with($url, 'uploads/')) {
+    if (startsWithCompat($url, 'uploads/')) {
         return $prefix . '/' . $url;
     }
 
@@ -36,8 +54,24 @@ function normalizeImageUrl($url) {
         $host = $parts['host'] ?? null;
         $path = $parts['path'] ?? '';
         $currentHost = $_SERVER['HTTP_HOST'] ?? '';
+
+        if ($host && $currentHost && strcasecmp($host, $currentHost) !== 0) {
+            if (startsWithCompat($path, $basePath . '/uploads/')) {
+                return $prefix . substr($path, strlen($basePath));
+            }
+            if (startsWithCompat($path, '/uploads/')) {
+                return $prefix . $path;
+            }
+            if (preg_match('#/[a-z0-9_-]+/uploads/#i', $path)) {
+                $pos = strpos($path, '/uploads/');
+                if ($pos !== false) {
+                    return $prefix . substr($path, $pos);
+                }
+            }
+        }
+
         if ($host && $currentHost && strcasecmp($host, $currentHost) === 0) {
-            if (str_starts_with($path, '/uploads/') && $basePath !== '' && !str_starts_with($path, $basePath . '/uploads/')) {
+            if (startsWithCompat($path, '/uploads/') && $basePath !== '' && !startsWithCompat($path, $basePath . '/uploads/')) {
                 return $origin . $basePath . $path;
             }
         }

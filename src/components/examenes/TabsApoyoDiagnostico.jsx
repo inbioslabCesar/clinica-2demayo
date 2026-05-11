@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ResultadosLaboratorio from "./ResultadosLaboratorio";
+import SolicitudProcedimientos from "./SolicitudProcedimientos";
 import { authFetch } from "../../utils/apiClient";
 
 // ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
@@ -27,7 +28,14 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
     authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}`)
       .then((r) => r.json())
       .then((d) => {
-        if (d.success) setOrdenes((d.ordenes || []).filter((o) => o.tipo === tipo));
+        if (d.success) {
+          setOrdenes(
+            (d.ordenes || []).filter((o) => {
+              const estado = String(o?.estado || '').toLowerCase();
+              return o.tipo === tipo && estado !== 'cancelado';
+            })
+          );
+        }
       })
       .catch(() => {})
       .finally(() => setLoadingOrdenes(false));
@@ -56,10 +64,15 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
     return <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">⏳ Pendiente pago · {cot.numero_comprobante}</span>;
   };
 
-  const puedeVer = (ord) =>
-    ord.estado === "completado" ||
-    parseInt(ord.carga_anticipada) === 1 ||
-    esPagada(ord.cotizacion);
+  const puedeVer = (ord) => {
+    const estado = String(ord?.estado || '').toLowerCase();
+    if (estado === 'cancelado') return false;
+    return (
+      ord.estado === "completado" ||
+      parseInt(ord.carga_anticipada) === 1 ||
+      esPagada(ord.cotizacion)
+    );
+  };
 
   return (
     <div>
@@ -258,6 +271,10 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "tomografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
         </button>
+        <button type="button" onClick={() => cambiarTab("procedimientos")}
+          className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
+          🛠️ <span className="hidden sm:inline">Procedimientos</span><span className="sm:hidden">Proc</span>
+        </button>
       </div>
       <div className="border rounded-b bg-white p-3 overflow-hidden">
         {tab === "laboratorio" && (
@@ -351,6 +368,9 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
         )}
         {tab === "tomografia" && (
           <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
+        )}
+        {tab === "procedimientos" && (
+          <SolicitudProcedimientos consultaId={consultaId} />
         )}
       </div>
     </div>

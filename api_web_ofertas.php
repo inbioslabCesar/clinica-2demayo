@@ -18,10 +18,124 @@ function readJsonBody() {
     return is_array($data) ? $data : [];
 }
 
+function getBaseUrlPrefix() {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host !== '') {
+        $hostOnly = preg_replace('/:\\d+$/', '', $host);
+        $port = null;
+        if (preg_match('/:(\\d+)$/', $host, $mPort)) {
+            $port = intval($mPort[1]);
+        }
+        $isLocal = in_array(strtolower($hostOnly), ['localhost', '127.0.0.1', '::1'], true);
+        if ($isLocal && in_array($port, [5173, 5174], true)) {
+            $host = $hostOnly;
+        }
+    }
+    $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+    $basePath = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
+    if ($basePath === '.' || $basePath === '/') $basePath = '';
+    return [$scheme . '://' . $host, $basePath];
+}
+
+function startsWithCompat($haystack, $needle) {
+    $haystack = (string)$haystack;
+    $needle = (string)$needle;
+    if ($needle === '') return true;
+    return substr($haystack, 0, strlen($needle)) === $needle;
+}
+
+function normalizeImageUrl($url) {
+    $url = trim((string)$url);
+    if ($url === '') return $url;
+
+    [$origin, $basePath] = getBaseUrlPrefix();
+    $prefix = $origin . $basePath;
+
+    if (startsWithCompat($url, '/uploads/')) {
+        return $prefix . $url;
+    }
+    if (startsWithCompat($url, 'uploads/')) {
+        return $prefix . '/' . $url;
+    }
+
+    if (preg_match('#^https?://#i', $url)) {
+        $parts = parse_url($url);
+        $host = $parts['host'] ?? null;
+        $path = $parts['path'] ?? '';
+        $currentHost = $_SERVER['HTTP_HOST'] ?? '';
+
+        if ($host && $currentHost && strcasecmp($host, $currentHost) !== 0) {
+            if (startsWithCompat($path, $basePath . '/uploads/')) {
+                return $prefix . substr($path, strlen($basePath));
+            }
+            if (startsWithCompat($path, '/uploads/')) {
+                return $prefix . $path;
+            }
+            if (preg_match('#/[a-z0-9_-]+/uploads/#i', $path)) {
+                $pos = strpos($path, '/uploads/');
+                if ($pos !== false) {
+                    return $prefix . substr($path, $pos);
+                }
+            }
+        }
+
+        if ($host && $currentHost && strcasecmp($host, $currentHost) === 0) {
+            if (startsWithCompat($path, '/uploads/') && $basePath !== '' && !startsWithCompat($path, $basePath . '/uploads/')) {
+                return $origin . $basePath . $path;
+            }
+        }
+    }
+
+    return $url;
+}
+
+function normalizeOrdenValue($orden) {
+    $n = intval($orden);
+    return ($n > 0) ? $n : 1;
+}
+
+function reordenarOfertas(PDO $pdo, $focusId, $targetOrden) {
+    $focusId = intval($focusId);
+    if ($focusId <= 0) return;
+
+    $stmt = $pdo->query("SELECT id FROM public_ofertas ORDER BY orden ASC, id ASC");
+    $ids = array_map(static function ($row) {
+        return intval($row['id'] ?? 0);
+    }, $stmt->fetchAll(PDO::FETCH_ASSOC));
+
+    $ids = array_values(array_filter($ids, static function ($id) {
+        return $id > 0;
+    }));
+
+    $ids = array_values(array_filter($ids, static function ($id) use ($focusId) {
+        return $id !== $focusId;
+    }));
+
+    $targetIndex = normalizeOrdenValue($targetOrden) - 1;
+    $count = count($ids);
+    if ($targetIndex < 0) $targetIndex = 0;
+    if ($targetIndex > $count) $targetIndex = $count;
+
+    array_splice($ids, $targetIndex, 0, [$focusId]);
+
+    $upd = $pdo->prepare("UPDATE public_ofertas SET orden=? WHERE id=?");
+    $orden = 1;
+    foreach ($ids as $id) {
+        $upd->execute([$orden, $id]);
+        $orden++;
+    }
+}
+
 try {
     if ($method === 'GET') {
         $stmt = $pdo->query("SELECT id, titulo, descripcion, precio_antes, precio_oferta, fecha_inicio, fecha_fin, imagen_url, orden, activo FROM public_ofertas ORDER BY orden ASC, id DESC");
-        echo json_encode(['success' => true, 'ofertas' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+        $ofertas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($ofertas as &$o) {
+            $o['imagen_url'] = normalizeImageUrl($o['imagen_url'] ?? '');
+        }
+        unset($o);
+        echo json_encode(['success' => true, 'ofertas' => $ofertas]);
         exit;
     }
 
@@ -34,7 +148,7 @@ try {
         $fechaInicio = $data['fecha_inicio'] ?? null;
         $fechaFin = $data['fecha_fin'] ?? null;
         $imagenUrl = $data['imagen_url'] ?? null;
-        $orden = isset($data['orden']) ? intval($data['orden']) : 0;
+        $orden = normalizeOrdenValue($data['orden'] ?? 1);
         $activo = isset($data['activo']) ? intval((bool)$data['activo']) : 1;
 
         if ($titulo === '') {
@@ -43,9 +157,13 @@ try {
             exit;
         }
 
+        $pdo->beginTransaction();
         $stmt = $pdo->prepare("INSERT INTO public_ofertas (titulo, descripcion, precio_antes, precio_oferta, fecha_inicio, fecha_fin, imagen_url, orden, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->execute([$titulo, $descripcion, $precioAntes, $precioOferta, $fechaInicio, $fechaFin, $imagenUrl, $orden, $activo]);
-        echo json_encode(['success' => true, 'id' => intval($pdo->lastInsertId())]);
+        $newId = intval($pdo->lastInsertId());
+        reordenarOfertas($pdo, $newId, $orden);
+        $pdo->commit();
+        echo json_encode(['success' => true, 'id' => $newId]);
         exit;
     }
 
@@ -65,7 +183,7 @@ try {
         $fechaInicio = $data['fecha_inicio'] ?? null;
         $fechaFin = $data['fecha_fin'] ?? null;
         $imagenUrl = $data['imagen_url'] ?? null;
-        $orden = isset($data['orden']) ? intval($data['orden']) : 0;
+        $orden = normalizeOrdenValue($data['orden'] ?? 1);
         $activo = isset($data['activo']) ? intval((bool)$data['activo']) : 1;
 
         if ($titulo === '') {
@@ -74,8 +192,11 @@ try {
             exit;
         }
 
+        $pdo->beginTransaction();
         $stmt = $pdo->prepare("UPDATE public_ofertas SET titulo=?, descripcion=?, precio_antes=?, precio_oferta=?, fecha_inicio=?, fecha_fin=?, imagen_url=?, orden=?, activo=? WHERE id=?");
         $stmt->execute([$titulo, $descripcion, $precioAntes, $precioOferta, $fechaInicio, $fechaFin, $imagenUrl, $orden, $activo, $id]);
+        reordenarOfertas($pdo, $id, $orden);
+        $pdo->commit();
         echo json_encode(['success' => true]);
         exit;
     }
@@ -98,6 +219,9 @@ try {
     http_response_code(405);
     echo json_encode(['success' => false, 'error' => 'Método no permitido']);
 } catch (PDOException $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     http_response_code(500);
     echo json_encode(['success' => false, 'error' => 'Error en ofertas web']);
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom'
 import HomePage from './pages/HomePage.jsx'
 import HomePageLanding from './pages/HomePageLanding.jsx'
@@ -6,6 +6,9 @@ import ConocenosPage from './pages/ConocenosPage.jsx'
 import ServiciosPage from './pages/ServiciosPage.jsx'
 import OfertasPage from './pages/OfertasPage.jsx'
 import PublicFooter from './components/PublicFooter.jsx'
+import CartToggleButton from './components/ShoppingCart/CartToggleButton.jsx'
+import CartPanel from './components/ShoppingCart/CartPanel.jsx'
+import { CartProvider } from './context/CartContext.jsx'
 import { getConfiguracion, PUBLIC_API_BASE } from './api/publicApi.js'
 import { resolvePublicLogoSize } from './utils/logoSizing.js'
 import { sanitizeFontSize, sanitizeHexColor } from './utils/branding.js'
@@ -158,6 +161,17 @@ function getDefaultSistemaUrl() {
 
 const SISTEMA_URL = ((import.meta.env.VITE_SISTEMA_URL || getDefaultSistemaUrl()) + '').replace(/\/+$/, '') + '/'
 
+// Normalizar número a E.164 para wa.me (sin +, solo dígitos con código de país)
+function normalizePhone(raw) {
+  let digits = String(raw || '').replace(/\D/g, '')
+  if (!digits) return ''
+  // Quitar cero inicial de marcado local (ej. 0980... -> 980...)
+  if (digits.startsWith('0')) digits = digits.slice(1)
+  // Si tiene 9 dígitos y empieza con 9 -> número peruano sin código de país -> agregar 51
+  if (digits.length === 9 && digits.startsWith('9')) digits = '51' + digits
+  return digits
+}
+
 function NavItem({ to, children }) {
   return (
     <NavLink
@@ -214,11 +228,13 @@ function IconClose(props) {
 
 function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const headerRef = useRef(null)
   const location = useLocation()
   const safeClinicName = String(clinicName || '').trim()
   const brandNameColor = sanitizeHexColor(configuracion?.nombre_color, 'var(--color-primary, #E85D8E)')
   const brandNameFontSize = sanitizeFontSize(configuracion?.nombre_font_size, 'clamp(1.05rem,1.6vw,1.5rem)')
   const sloganColor = sanitizeHexColor(configuracion?.slogan_color, 'var(--color-secondary, #3A4FA3)')
+  const whatsappNumero = normalizePhone(configuracion?.celular)
 
   useEffect(() => {
     const routeLabel = location.pathname === '/servicios'
@@ -246,13 +262,24 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [mobileOpen])
 
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      const height = Math.ceil(headerRef.current?.getBoundingClientRect?.().height || 64)
+      document.documentElement.style.setProperty('--public-header-height', `${height}px`)
+    }
+
+    updateHeaderHeight()
+    window.addEventListener('resize', updateHeaderHeight)
+    return () => window.removeEventListener('resize', updateHeaderHeight)
+  }, [clinicName, configuracion?.slogan, logoSize?.header])
+
   return (
     <div className="min-h-screen relative text-slate-900 overflow-x-hidden">
       <div aria-hidden className="absolute inset-0" style={{ background: 'linear-gradient(to right, var(--color-sidebar-from, #4f46e5), var(--color-sidebar-via, #7e22ce), var(--color-accent, #34d399))' }} />
       <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-white/10" />
 
       <div className="relative">
-        <header className="sticky top-0 inset-x-0 z-50 border-b border-white/30 bg-white/80 backdrop-blur">
+        <header ref={headerRef} className="sticky top-0 inset-x-0 z-50 border-b border-white/30 bg-white/80 backdrop-blur">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
             <Link to="/" className="flex items-center gap-3">
               <img
@@ -283,6 +310,8 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
               >
                 Iniciar sesión
               </a>
+
+              <CartToggleButton />
 
               <button
                 type="button"
@@ -358,12 +387,13 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
           <Routes>
             <Route path="/" element={<HomePage sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
             <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
-            <Route path="/servicios" element={<ServiciosPage />} />
-            <Route path="/ofertas" element={<OfertasPage />} />
+            <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
+            <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
           </Routes>
         </main>
 
         <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} logoSize={logoSize} />
+        <CartPanel whatsappNumero={whatsappNumero} />
       </div>
     </div>
   )
@@ -372,11 +402,13 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
 /* ── Landing layout shell (Design 2) ── */
 function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize }) {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const headerRef = useRef(null)
   const location = useLocation()
   const safeClinicName = String(clinicName || '').trim()
   const brandNameColor = sanitizeHexColor(configuracion?.nombre_color, 'var(--color-primary, #E85D8E)')
   const brandNameFontSize = sanitizeFontSize(configuracion?.nombre_font_size, '1.25rem')
   const sloganColor = sanitizeHexColor(configuracion?.slogan_color, 'var(--color-secondary, #3A4FA3)')
+  const whatsappNumero = normalizePhone(configuracion?.celular)
 
   useEffect(() => {
     const labels = { '/': 'Inicio', '/servicios': 'Servicios', '/ofertas': 'Ofertas', '/conocenos': 'Conócenos' }
@@ -393,10 +425,21 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
     return () => window.removeEventListener('keydown', h)
   }, [mobileOpen])
 
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      const height = Math.ceil(headerRef.current?.getBoundingClientRect?.().height || 64)
+      document.documentElement.style.setProperty('--public-header-height', `${height}px`)
+    }
+
+    updateHeaderHeight()
+    window.addEventListener('resize', updateHeaderHeight)
+    return () => window.removeEventListener('resize', updateHeaderHeight)
+  }, [clinicName, configuracion?.slogan, logoSize?.landingHeader])
+
   return (
     <div className="min-h-screen bg-white text-slate-900 overflow-x-hidden">
       {/* Sticky header */}
-      <header className="fixed top-0 inset-x-0 z-50 bg-white/90 backdrop-blur shadow-sm">
+      <header ref={headerRef} className="fixed top-0 inset-x-0 z-50 bg-white/90 backdrop-blur shadow-sm">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <Link to="/" className="flex items-center gap-3">
             <img
@@ -429,6 +472,7 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
             >
               Iniciar sesión
             </a>
+            <CartToggleButton />
             <button
               type="button"
               className="md:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-800"
@@ -464,14 +508,15 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
       <main className="pt-28">
         <Routes>
           <Route path="/" element={<HomePageLanding sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
-          <Route path="/servicios" element={<ServiciosPage />} />
-          <Route path="/ofertas" element={<OfertasPage />} />
+          <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
+          <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
           <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
         </Routes>
       </main>
 
       {/* 2-level footer */}
       <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} logoSize={logoSize} />
+      <CartPanel whatsappNumero={whatsappNumero} />
     </div>
   )
 }
@@ -492,6 +537,12 @@ function WhatsAppButton({ phone }) {
       </svg>
     </a>
   )
+}
+
+function FloatingWhatsApp({ phone }) {
+  const location = useLocation()
+  if (location.pathname === '/ofertas') return null
+  return <WhatsAppButton phone={phone} />
 }
 
 export default function App() {
@@ -596,23 +647,14 @@ export default function App() {
 
   const Shell = publicLayout === 'landing' ? AppShellLanding : AppShell
 
-  // Normalizar número a E.164 para wa.me (sin +, solo dígitos con código de país)
-  function normalizePhone(raw) {
-    let digits = String(raw || '').replace(/\D/g, '')
-    if (!digits) return ''
-    // Quitar cero inicial de marcado local (ej. 0980... → 980...)
-    if (digits.startsWith('0')) digits = digits.slice(1)
-    // Si tiene 9 dígitos y empieza con 9 → número peruano sin código de país → agregar 51
-    if (digits.length === 9 && digits.startsWith('9')) digits = '51' + digits
-    return digits
-  }
-
   const celular = normalizePhone(configuracion?.celular)
 
   return (
-    <BrowserRouter>
-      <Shell configuracion={configuracion} clinicName={clinicName} publicLogoSrc={publicLogoSrc} logoSize={publicLogoSize} />
-      {celular.length >= 10 && <WhatsAppButton phone={celular} />}
-    </BrowserRouter>
+    <CartProvider>
+      <BrowserRouter>
+        <Shell configuracion={configuracion} clinicName={clinicName} publicLogoSrc={publicLogoSrc} logoSize={publicLogoSize} />
+        {celular.length >= 10 && <FloatingWhatsApp phone={celular} />}
+      </BrowserRouter>
+    </CartProvider>
   )
 }

@@ -1,6 +1,6 @@
-import React from "react";
+import React, { memo } from "react";
 
-function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, page, setPage, totalPages }) {
+const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, page, setPage, totalPages }) {
   return (
     <>
       <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -113,6 +113,6 @@ function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratul
       </div>
     </>
   );
-}
+});
 
 export default PacienteListCards;

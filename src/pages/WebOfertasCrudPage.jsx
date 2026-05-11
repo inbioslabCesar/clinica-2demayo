@@ -47,6 +47,32 @@ function getVigenciaTone(item) {
   }
 }
 
+function OfertaThumb({ src, alt, className = 'h-12 w-20' }) {
+  const [broken, setBroken] = useState(false)
+
+  useEffect(() => {
+    setBroken(false)
+  }, [src])
+
+  if (!src || broken) {
+    return (
+      <div className={`${className} rounded border bg-gray-50 text-gray-400 text-[11px] flex items-center justify-center`}>
+        Sin imagen
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={`${className} rounded border object-cover`}
+      loading="lazy"
+      onError={() => setBroken(true)}
+    />
+  )
+}
+
 export default function WebOfertasCrudPage() {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
@@ -54,6 +80,7 @@ export default function WebOfertasCrudPage() {
   const [form, setForm] = useState(emptyForm)
   const [editingId, setEditingId] = useState(null)
   const [imagenFile, setImagenFile] = useState(null)
+  const [imagenPreviewUrl, setImagenPreviewUrl] = useState('')
 
   const endpoint = useMemo(() => `${BASE_URL}api_web_ofertas.php`, [])
   const uploadEndpoint = useMemo(() => `${BASE_URL}api_web_ofertas_upload.php`, [])
@@ -76,9 +103,25 @@ export default function WebOfertasCrudPage() {
     load()
   }, [load])
 
+  useEffect(() => {
+    if (!imagenFile) {
+      setImagenPreviewUrl('')
+      return
+    }
+    const objectUrl = URL.createObjectURL(imagenFile)
+    setImagenPreviewUrl(objectUrl)
+    return () => {
+      URL.revokeObjectURL(objectUrl)
+    }
+  }, [imagenFile])
+
   function openNew() {
     setEditingId(null)
-    setForm(emptyForm)
+    const ordenes = items
+      .map((i) => Number(i?.orden ?? 0))
+      .filter((n) => Number.isFinite(n))
+    const nextOrden = ordenes.length > 0 ? Math.max(...ordenes) + 1 : 1
+    setForm({ ...emptyForm, orden: nextOrden })
     setImagenFile(null)
     setOpen(true)
   }
@@ -198,7 +241,9 @@ export default function WebOfertasCrudPage() {
             <thead className="bg-gray-100">
               <tr>
                 <th className="p-2 text-left">Título</th>
+                <th className="p-2 text-left">Miniatura</th>
                 <th className="p-2 text-left">Oferta</th>
+                <th className="p-2 text-left">Orden</th>
                 <th className="p-2 text-left">Vigencia</th>
                 <th className="p-2 text-left">Activo</th>
                 <th className="p-2 text-left">Acciones</th>
@@ -210,7 +255,11 @@ export default function WebOfertasCrudPage() {
                 return (
                 <tr key={it.id} className="border-t">
                   <td className="p-2">{it.titulo}</td>
+                  <td className="p-2">
+                    <OfertaThumb src={it.imagen_url || ''} alt={it.titulo || 'Oferta'} />
+                  </td>
                   <td className="p-2">{it.precio_oferta ?? ''}</td>
+                  <td className="p-2">{Number(it.orden || 0)}</td>
                   <td className="p-2">
                     <span
                       className="inline-block rounded-full border px-3 py-1 text-xs font-semibold"
@@ -237,7 +286,7 @@ export default function WebOfertasCrudPage() {
               })}
               {items.length === 0 && (
                 <tr>
-                  <td className="p-4 text-gray-600" colSpan={5}>
+                  <td className="p-4 text-gray-600" colSpan={7}>
                     No hay ofertas.
                   </td>
                 </tr>
@@ -270,6 +319,14 @@ export default function WebOfertasCrudPage() {
             <p className="text-xs text-gray-600 mt-1">
               Si seleccionas una imagen, se subirá y reemplazará la URL.
             </p>
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-gray-600 mb-1">Miniatura actual</p>
+              <OfertaThumb
+                src={imagenPreviewUrl || form.imagen_url || ''}
+                alt={form.titulo || 'Oferta'}
+                className="h-20 w-36"
+              />
+            </div>
           </div>
           <div className="md:col-span-2">
             <label className="block text-sm font-semibold">Descripción</label>

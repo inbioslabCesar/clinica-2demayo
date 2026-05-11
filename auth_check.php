@@ -41,6 +41,7 @@ if (isset($_SESSION['usuario'])) {
     $isDisponibilidadMedicos = strpos($_SERVER['SCRIPT_NAME'], 'api_disponibilidad_medicos.php') !== false;
     $isTarifas = strpos($_SERVER['SCRIPT_NAME'], 'api_tarifas.php') !== false;
     $isOrdenesLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_laboratorio.php') !== false;
+    $isOrdenesProcedimientos = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_procedimientos.php') !== false;
     $isResultadosLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_resultados_laboratorio.php') !== false;
     $isTriaje = strpos($_SERVER['SCRIPT_NAME'], 'api_triaje.php') !== false;
     $isTratamientosEnfermeria = strpos($_SERVER['SCRIPT_NAME'], 'api_tratamientos_enfermeria.php') !== false
@@ -85,7 +86,7 @@ if (isset($_SESSION['usuario'])) {
     if ($isExamenesLab || $isMedicamentos) {
         $rolesPermitidos[] = 'medico';
     }
-    if ($isConsultas || $isDisponibilidadMedicos || $isOrdenesLaboratorio || $isResultadosLaboratorio) {
+    if ($isConsultas || $isDisponibilidadMedicos || $isOrdenesLaboratorio || $isOrdenesProcedimientos || $isResultadosLaboratorio) {
         $rolesPermitidos[] = 'medico';
     }
     // Enfermería necesita consultar listado de consultas para el módulo de triaje.

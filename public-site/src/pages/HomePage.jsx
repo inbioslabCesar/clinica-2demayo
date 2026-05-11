@@ -32,11 +32,15 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
   const heroSlides = useMemo(() => {
     if (loading) return []
     if (!banners.length) return undefined
-    return banners.map((x) => ({
+
+    const heroBanners = banners.filter((x) => String(x?.imagen_url || '').trim() !== '')
+    if (!heroBanners.length) return undefined
+
+    return heroBanners.map((x) => ({
       id: x.id,
       title: x.titulo || '',
       subtitle: x.subtitulo || '',
-      imageSrc: resolvePublicAssetUrl(x.imagen_url || x.imagen_fija_url || ''),
+      imageSrc: resolvePublicAssetUrl(x.imagen_url || ''),
       showWhiteOverlay: x.overlay_blanco === 0 ? false : true,
       textSide: x.texto_lado === 'right' ? 'right' : 'left',
       titleColor: x.titulo_color || null,
@@ -47,27 +51,26 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
     }))
   }, [loading, banners])
 
-  const conocenosBanner = useMemo(() => {
-    if (!Array.isArray(banners) || banners.length === 0) return null
-    return banners.find((b) => (b?.imagen_conocenos_url || '').trim() !== '') || banners[0]
+  const homeFijaImages = useMemo(() => {
+    if (!Array.isArray(banners) || banners.length === 0) return []
+    return banners
+      .map((b) => (b?.imagen_fija_url || '').trim())
+      .filter(Boolean)
+      .map((url) => resolvePublicAssetUrl(url))
   }, [banners])
 
-  const conocenosImageCandidates = useMemo(() => {
-    const list = [
-      conocenosBanner?.imagen_conocenos_url || '',
-      conocenosBanner?.imagen_fija_url || '',
-      conocenosBanner?.imagen_url || '',
-    ].map((x) => resolvePublicAssetUrl(x)).filter(Boolean)
-    return Array.from(new Set(list))
-  }, [conocenosBanner])
+  const homeFijaCount = homeFijaImages.length
+  const [homeFijaImageIndex, setHomeFijaImageIndex] = useState(0)
 
-  const [conocenosImageIndex, setConocenosImageIndex] = useState(0)
+  useEffect(() => { setHomeFijaImageIndex(0) }, [homeFijaCount])
 
   useEffect(() => {
-    setConocenosImageIndex(0)
-  }, [conocenosBanner?.id, conocenosImageCandidates.length])
+    if (homeFijaCount <= 1) return
+    const id = setInterval(() => setHomeFijaImageIndex((i) => (i + 1) % homeFijaCount), 4000)
+    return () => clearInterval(id)
+  }, [homeFijaCount])
 
-  const conocenosImageSrc = conocenosImageCandidates[conocenosImageIndex] || ''
+  const homeFijaImageSrc = homeFijaImages[homeFijaImageIndex] || ''
 
   const [ubicacionQuery, setUbicacionQuery] = useState('')
   const [ubicacionError, setUbicacionError] = useState('')
@@ -276,44 +279,44 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
 
   const serviceVariants = [
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-blue-200/60 hover:bg-white/90 hover:ring-blue-300/60',
-      iconWrap: 'bg-blue-50 border-blue-200',
-      icon: 'text-blue-700',
+      wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 20%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-primary-light, #dbeafe) 65%, white)' },
+      iconWrapStyle: { backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 72%, white)', borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 24%, white)' },
+      iconStyle: { color: 'var(--color-primary-dark, #1d4ed8)' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-purple-200/60 hover:bg-white/90 hover:ring-purple-300/60',
-      iconWrap: 'bg-purple-50 border-purple-200',
-      icon: 'text-purple-700',
+      wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent, #c4b5fd) 45%, white)' },
+      iconWrapStyle: { backgroundColor: 'color-mix(in srgb, var(--color-accent, #ddd6fe) 26%, white)', borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 20%, white)' },
+      iconStyle: { color: 'var(--color-secondary, #4f46e5)' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-emerald-200/60 hover:bg-white/90 hover:ring-emerald-300/60',
-      iconWrap: 'bg-emerald-50 border-emerald-200',
-      icon: 'text-emerald-700',
+      wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, #22c55e 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, #bbf7d0 56%, white)' },
+      iconWrapStyle: { backgroundColor: 'color-mix(in srgb, #dcfce7 78%, white)', borderColor: 'color-mix(in srgb, #22c55e 22%, white)' },
+      iconStyle: { color: '#15803d' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-amber-200/60 hover:bg-white/90 hover:ring-amber-300/60',
-      iconWrap: 'bg-amber-50 border-amber-200',
-      icon: 'text-amber-700',
+      wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, #f59e0b 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, #fde68a 60%, white)' },
+      iconWrapStyle: { backgroundColor: 'color-mix(in srgb, #fef3c7 80%, white)', borderColor: 'color-mix(in srgb, #f59e0b 22%, white)' },
+      iconStyle: { color: '#b45309' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-rose-200/60 hover:bg-white/90 hover:ring-rose-300/60',
-      iconWrap: 'bg-rose-50 border-rose-200',
-      icon: 'text-rose-700',
+      wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, #fb7185 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, #fecdd3 58%, white)' },
+      iconWrapStyle: { backgroundColor: 'color-mix(in srgb, #ffe4e6 82%, white)', borderColor: 'color-mix(in srgb, #fb7185 20%, white)' },
+      iconStyle: { color: '#be123c' },
     },
     {
-      wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-indigo-200/60 hover:bg-white/90 hover:ring-indigo-300/60',
-      iconWrap: 'bg-indigo-50 border-indigo-200',
-      icon: 'text-indigo-700',
+      wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-primary-light, #dbeafe) 48%, white)' },
+      iconWrapStyle: { backgroundColor: 'color-mix(in srgb, var(--color-primary-light, #eef2ff) 74%, white)', borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 20%, white)' },
+      iconStyle: { color: 'var(--color-secondary, #4f46e5)' },
     },
   ]
 
   const offerVariants = [
-    { wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-blue-200/60 hover:bg-white/90 hover:ring-blue-300/60', price: 'text-blue-800' },
-    { wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-purple-200/60 hover:bg-white/90 hover:ring-purple-300/60', price: 'text-purple-800' },
-    { wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-emerald-200/60 hover:bg-white/90 hover:ring-emerald-300/60', price: 'text-emerald-800' },
-    { wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-amber-200/60 hover:bg-white/90 hover:ring-amber-300/60', price: 'text-amber-800' },
-    { wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-rose-200/60 hover:bg-white/90 hover:ring-rose-300/60', price: 'text-rose-800' },
-    { wrap: 'bg-white/80 backdrop-blur border-white/40 ring-1 ring-indigo-200/60 hover:bg-white/90 hover:ring-indigo-300/60', price: 'text-indigo-800' },
+    { wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, var(--color-primary, #2563eb) 20%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-primary-light, #dbeafe) 65%, white)' }, priceStyle: { color: 'var(--color-primary-dark, #1d4ed8)' } },
+    { wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-accent, #c4b5fd) 45%, white)' }, priceStyle: { color: 'var(--color-secondary, #4f46e5)' } },
+    { wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, #22c55e 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, #bbf7d0 56%, white)' }, priceStyle: { color: '#15803d' } },
+    { wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, #f59e0b 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, #fde68a 60%, white)' }, priceStyle: { color: '#b45309' } },
+    { wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, #fb7185 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, #fecdd3 58%, white)' }, priceStyle: { color: '#be123c' } },
+    { wrapStyle: { background: 'rgba(255,255,255,0.82)', borderColor: 'color-mix(in srgb, var(--color-secondary, #4f46e5) 18%, white)', boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-primary-light, #dbeafe) 48%, white)' }, priceStyle: { color: 'var(--color-secondary, #4f46e5)' } },
   ]
 
   useEffect(() => {
@@ -417,12 +420,13 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
                 {servicios.map((s, idx) => {
                   const v = serviceVariants[idx % serviceVariants.length]
                   return (
-                    <article key={s.id} className={`rounded-xl border p-4 hover:shadow-sm transition ${v.wrap}`}>
+                    <article key={s.id} className="rounded-xl border p-4 hover:shadow-sm transition" style={v.wrapStyle}>
                       <div className="flex items-start gap-3">
                         <div
-                          className={`shrink-0 h-10 w-10 rounded-full border flex items-center justify-center ${v.iconWrap}`}
+                          className="shrink-0 h-10 w-10 rounded-full border flex items-center justify-center"
+                          style={v.iconWrapStyle}
                         >
-                          <ServiceIcon name={s.icono} className={v.icon} />
+                          <ServiceIcon name={s.icono} style={v.iconStyle} />
                         </div>
                         <div className="min-w-0">
                           <div className="font-semibold leading-snug">{s.titulo}</div>
@@ -461,22 +465,33 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
       <section className="rounded-2xl border bg-white/90 backdrop-blur p-4 sm:p-6">
         <div className="grid md:grid-cols-2 gap-6 items-stretch">
           <div className="relative overflow-hidden rounded-2xl border min-h-[320px]" style={{ background: 'linear-gradient(to bottom right, var(--color-login-from, #0f172a), var(--color-secondary, #2563eb))' }}>
-            {conocenosImageSrc ? (
+            {homeFijaImages.map((src, i) => (
               <img
-                src={conocenosImageSrc}
-                alt={conocenosBanner.titulo || clinicName}
-                className="absolute inset-0 h-full w-full object-cover"
-                loading="eager"
-                fetchPriority="high"
+                key={i}
+                src={src}
+                alt={clinicName}
+                className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ease-in-out"
+                style={{ opacity: i === homeFijaImageIndex ? 1 : 0 }}
+                loading={i === 0 ? 'eager' : 'lazy'}
                 decoding="async"
-                onError={() => {
-                  setConocenosImageIndex((prev) => {
-                    if (prev + 1 < conocenosImageCandidates.length) return prev + 1
-                    return prev
-                  })
-                }}
               />
-            ) : null}
+            ))}
+            {homeFijaCount > 1 && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 z-20">
+                {homeFijaImages.map((_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setHomeFijaImageIndex(i)}
+                    className="w-2.5 h-2.5 rounded-full transition-all duration-300"
+                    style={{
+                      backgroundColor: i === homeFijaImageIndex ? 'var(--color-primary, #E85D8E)' : 'rgba(255,255,255,0.7)',
+                      transform: i === homeFijaImageIndex ? 'scale(1.3)' : 'scale(1)',
+                    }}
+                  />
+                ))}
+              </div>
+            )}
             <div aria-hidden className="absolute inset-0 bg-gradient-to-r from-black/40 via-black/10 to-transparent" />
             <div className="relative z-10 p-6 h-full flex items-end">
               <div className="flex items-center gap-3">
@@ -586,7 +601,7 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
                   value={ubicacionQuery}
                   onChange={(e) => setUbicacionQuery(e.target.value)}
                   placeholder="Buscar por distrito o dirección…"
-                  className="w-full rounded-2xl border bg-white px-12 py-3 text-base outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full rounded-2xl border bg-white px-12 py-3 text-base outline-none focus:ring-2 focus:ring-[var(--color-primary-light)]"
                 />
               </div>
               <button

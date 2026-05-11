@@ -234,14 +234,14 @@ const useMedicos = () => {
     setEditModal(true);
     setEditForm({
       id: medico.id,
-      nombre: medico.nombre,
+      nombre: medico.nombre || '',
       apellido: medico.apellido || '',
-      especialidad: medico.especialidad,
+      especialidad: medico.especialidad || '',
       tipo_profesional: medico.tipo_profesional || 'medico',
       abreviatura_profesional: medico.abreviatura_profesional || 'Dr(a).',
       colegio_sigla: medico.colegio_sigla || 'CMP',
       nro_colegiatura: medico.nro_colegiatura || medico.cmp || '',
-      email: medico.email,
+      email: medico.email || '',
       password: '',
       cmp: medico.cmp || '',
       rne: medico.rne || '',

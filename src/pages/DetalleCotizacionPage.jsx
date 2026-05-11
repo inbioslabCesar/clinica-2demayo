@@ -71,6 +71,16 @@ function limpiarDescripcionConsulta(descripcion) {
   return raw;
 }
 
+function resolverDescripcionDetalle(detalle) {
+  const esExterno = Number(detalle?.es_externo || 0) === 1 || Number(detalle?.incluir_en_cobro ?? 1) === 0;
+  const nombreExterno = String(detalle?.nombre_externo || "").trim();
+  const descripcionBase = String(detalle?.descripcion || "").trim();
+  if (esExterno) {
+    return nombreExterno || descripcionBase || "Medicamento externo / no disponible";
+  }
+  return descripcionBase || "-";
+}
+
 function clavePagoServicio(tipo, servicioId) {
   return `${normalizarServicio(tipo)}:${Number(servicioId || 0)}`;
 }
@@ -410,9 +420,11 @@ export default function DetalleCotizacionPage() {
     const detallesHtml = detallesConNeto.length
       ? detallesConNeto
           .map((d) => {
-            const rawDesc = String(d?.descripcion || "Servicio");
+            const rawDesc = resolverDescripcionDetalle(d);
             const desc = escapeHtml(rawDesc);
             const medicoNombre = String(d?.medico_nombre_completo || "").trim();
+            const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
+            const tagExterno = esExterno ? ' [Externo]' : '';
             // Agrega el médico solo si su nombre no está ya dentro de la descripción
             const medicoLabel = (medicoNombre && !rawDesc.toLowerCase().includes(medicoNombre.toLowerCase()))
               ? ` - ${escapeHtml(medicoNombre)}`
@@ -421,7 +433,7 @@ export default function DetalleCotizacionPage() {
             const descItem = Number(d?.descuento_item || 0);
             const neto = Number(d?.subtotal_neto || d?.subtotal || 0).toFixed(2);
             const descuentoTxt = descItem > 0 ? `<span style="color:#b45309;"> (Desc. S/ ${descItem.toFixed(2)})</span>` : "";
-            return `<div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0;"><span>${desc}${medicoLabel} x${cant}${descuentoTxt}</span><strong>S/ ${neto}</strong></div>`;
+            return `<div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0;"><span>${desc}${tagExterno}${medicoLabel} x${cant}${descuentoTxt}</span><strong>S/ ${neto}</strong></div>`;
           })
           .join("")
       : "<div>Sin items activos</div>";
@@ -442,16 +454,18 @@ export default function DetalleCotizacionPage() {
     const detallesRowsHtml = detallesConNeto.length
       ? detallesConNeto
           .map((d) => {
-            const rawDesc = String(d?.descripcion || "Servicio").trim();
+            const rawDesc = resolverDescripcionDetalle(d);
             const descCorta = rawDesc.length > 34 ? `${rawDesc.slice(0, 31)}...` : rawDesc;
             const desc = escapeHtml(descCorta);
             const medicoNombre = String(d?.medico_nombre_completo || "").trim();
+            const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
+            const tagExterno = esExterno ? ' [Ext]' : '';
             const medicoLabel = (medicoNombre && !rawDesc.toLowerCase().includes(medicoNombre.toLowerCase()))
               ? ` - ${escapeHtml(medicoNombre.length > 18 ? `${medicoNombre.slice(0, 15)}...` : medicoNombre)}`
               : "";
             const cant = Number(d?.cantidad || 1);
             const neto = Number(d?.subtotal_neto || d?.subtotal || 0);
-            return `<div class="t-row"><div class="t-desc">${desc}${medicoLabel} x${cant}</div><div class="t-amount">${toMoney(neto)}</div></div>`;
+            return `<div class="t-row"><div class="t-desc">${desc}${tagExterno}${medicoLabel} x${cant}</div><div class="t-amount">${toMoney(neto)}</div></div>`;
           })
           .join("")
       : '<div class="t-meta">Sin items activos</div>';
@@ -700,13 +714,14 @@ export default function DetalleCotizacionPage() {
                 onClick={async () => {
                   const cotId = Number(cotizacion?.id || 0);
                   try {
-                    const res = await authFetch(`${BASE_URL}/api_cotizaciones.php?accion=sugerir_grupo_cobrable&cotizacion_id=${cotId}`);
+                    const res = await authFetch(`api_cotizaciones.php?accion=sugerir_grupo_cobro&cotizacion_id=${cotId}`);
                     const data = await res.json();
                     if (data.success && Array.isArray(data.grupo) && data.grupo.length > 1) {
-                      const lista = data.cotizaciones.map(c => `• ${c.tipo_servicio || c.servicio_tipo || 'Servicio'} — S/ ${Number(c.saldo_pendiente ?? c.total ?? 0).toFixed(2)}`).join('<br>');
+                      const lista = data.grupo.map(c => `• ${c.servicios_tipos || 'Servicio'} — S/ ${Number(c.saldo_pendiente ?? c.total ?? 0).toFixed(2)}`).join('<br>');
+                      const totalGrupo = data.grupo.reduce((acc, c) => acc + Number(c.saldo_pendiente ?? c.total ?? 0), 0);
                       const result = await Swal.fire({
                         title: 'Cobro unificado',
-                        html: `Este paciente tiene <b>${data.grupo.length} cotizaciones pendientes</b> del mismo día:<br><br>${lista}<br><br>Total: <b>S/ ${Number(data.total ?? 0).toFixed(2)}</b><br><br>¿Cobrar todo en un solo ticket?`,
+                        html: `Este paciente tiene <b>${data.grupo.length} cotizaciones pendientes</b> del mismo día:<br><br>${lista}<br><br>Total: <b>S/ ${totalGrupo.toFixed(2)}</b><br><br>¿Cobrar todo en un solo ticket?`,
                         icon: 'question',
                         showCancelButton: true,
                         confirmButtonText: 'Sí, cobro unificado',
@@ -790,11 +805,19 @@ export default function DetalleCotizacionPage() {
                   <td className="px-3 py-2">{labelServicio(d.servicio_tipo)}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span>
-                        {normalizarServicio(d?.servicio_tipo) === "consulta"
-                          ? limpiarDescripcionConsulta(d?.descripcion)
-                          : (d.descripcion || "-")}
-                      </span>
+                      {(() => {
+                        const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
+                        const descripcionDetalle = resolverDescripcionDetalle(d);
+                        const texto = normalizarServicio(d?.servicio_tipo) === "consulta"
+                          ? limpiarDescripcionConsulta(descripcionDetalle)
+                          : descripcionDetalle;
+                        return <span>{texto}</span>;
+                      })()}
+                      {(Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap bg-slate-100 text-slate-700 border-slate-200">
+                          Externo / no cobrable
+                        </span>
+                      )}
                       {(Number(d.derivado) === 1) && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)", borderColor: "var(--color-primary-light)" }}>
                           🔗 Referenciado

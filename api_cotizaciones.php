@@ -1127,7 +1127,8 @@ function total_detalles($detalles) {
 
 function total_detalles_cotizacion_activos($conn, $cotizacionId) {
     $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
-    $stmt = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");
+    $whereCobro = column_exists($conn, 'cotizaciones_detalle', 'incluir_en_cobro') ? " AND incluir_en_cobro = 1" : '';
+    $stmt = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}{$whereCobro}");
     if (!$stmt) {
         return 0.0;
     }
@@ -1136,6 +1137,42 @@ function total_detalles_cotizacion_activos($conn, $cotizacionId) {
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     return round((float)($row['total'] ?? 0), 2);
+}
+
+function cotizacion_tiene_externos_activos($conn, $cotizacionId) {
+    if (!column_exists($conn, 'cotizaciones_detalle', 'es_externo')) {
+        return false;
+    }
+
+    $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
+    $stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM cotizaciones_detalle WHERE cotizacion_id = ? AND es_externo = 1{$whereEstado}");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['cnt'] ?? 0) > 0;
+}
+
+function resolver_estado_financiero_cotizacion($conn, $cotizacionId, $total, $pagado) {
+    $total = max(0.0, round((float)$total, 2));
+    $pagado = max(0.0, round((float)$pagado, 2));
+    $saldo = max(0.0, round($total - $pagado, 2));
+
+    if ($total <= 0.00001 && cotizacion_tiene_externos_activos($conn, (int)$cotizacionId)) {
+        return [
+            'estado' => 'informativo',
+            'saldo' => 0.0,
+        ];
+    }
+
+    $estado = $saldo <= 0.00001 ? 'pagado' : ($pagado > 0.00001 ? 'parcial' : 'pendiente');
+    return [
+        'estado' => $estado,
+        'saldo' => $saldo,
+    ];
 }
 
 function normalizar_tipo_servicio_cotizacion($servicioTipo) {
@@ -1825,25 +1862,46 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
     if (!table_exists($conn, 'ordenes_imagen')) return;
     if ($cotizacionId <= 0 || $pacienteId <= 0 || empty($detalles)) return;
 
-    $tipos = [];
+    $detallesImagen = [];
     foreach ($detalles as $det) {
         $tipo = resolver_tipo_orden_imagen($det['servicio_tipo'] ?? '', $det['descripcion'] ?? '');
-        if ($tipo) {
-            $tipos[$tipo] = true;
+        if (!$tipo) continue;
+
+        $detalleId = (int)($det['id'] ?? 0);
+        $descripcion = trim((string)($det['descripcion'] ?? ''));
+        if ($descripcion === '') {
+            $descripcion = strtoupper($tipo);
         }
+
+        $detallesImagen[] = [
+            'tipo' => $tipo,
+            'detalle_id' => $detalleId,
+            'descripcion' => $descripcion,
+        ];
     }
-    if (empty($tipos)) return;
+    if (empty($detallesImagen)) return;
 
     $hasCotizacionId = column_exists($conn, 'ordenes_imagen', 'cotizacion_id');
     $hasSolicitadoPor = column_exists($conn, 'ordenes_imagen', 'solicitado_por');
     $hasCargaAnticipada = column_exists($conn, 'ordenes_imagen', 'carga_anticipada');
     $usuarioId = get_user_id_from_session();
 
-    foreach (array_keys($tipos) as $tipoOrden) {
+    foreach ($detallesImagen as $detImg) {
+        $tipoOrden = (string)$detImg['tipo'];
+        $detalleId = (int)$detImg['detalle_id'];
+        $descripcionItem = (string)$detImg['descripcion'];
+
+        $tokenDetalle = $detalleId > 0 ? ('Detalle #' . $detalleId) : null;
+        $indicaciones = ($tokenDetalle ? ($tokenDetalle . ' - ') : '')
+            . $descripcionItem
+            . ' | Orden creada desde cotización #'
+            . $cotizacionId;
+
         if ($hasCotizacionId) {
-            $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? LIMIT 1');
+            // Idempotencia por cotizacion + tipo + indicaciones (incluye token de detalle)
+            $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? AND indicaciones = ? LIMIT 1');
             if ($stmtChk) {
-                $stmtChk->bind_param('is', $cotizacionId, $tipoOrden);
+                $stmtChk->bind_param('iss', $cotizacionId, $tipoOrden, $indicaciones);
                 $stmtChk->execute();
                 $exists = $stmtChk->get_result()->fetch_assoc();
                 $stmtChk->close();
@@ -1867,7 +1925,7 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
         $cols = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
         $vals = ['?', '?', '?', '?', "'pendiente'"];
         $types = 'iiss';
-        $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipoOrden, 'Orden creada desde cotización #' . $cotizacionId];
+        $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipoOrden, $indicaciones];
 
         if ($hasSolicitadoPor) {
             $cols[] = 'solicitado_por';
@@ -2179,8 +2237,9 @@ function registrar_cotizacion($conn, $data) {
         $totalReal = total_detalles_cotizacion_activos($conn, $cotizacionId);
         $debeSincronizarClinico = false;
         if ($hasSaldoV2) {
-            $saldoReal = max(0, $totalReal);
-            $estadoReal = $saldoReal <= 0 ? 'pagado' : 'pendiente';
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $totalReal, 0);
+            $saldoReal = (float)($finanzas['saldo'] ?? 0);
+            $estadoReal = (string)($finanzas['estado'] ?? 'pendiente');
             $stmtSaldo = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = 0, saldo_pendiente = ?, estado = ? WHERE id = ?");
             if (!$stmtSaldo) {
                 throw new Exception('No se pudo preparar la sincronización de total/saldo');
@@ -2191,12 +2250,14 @@ function registrar_cotizacion($conn, $data) {
             }
             $debeSincronizarClinico = ($estadoReal === 'pagado');
         } else {
-            $stmtTotal = $conn->prepare("UPDATE cotizaciones SET total = ? WHERE id = ?");
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $totalReal, 0);
+            $estadoReal = (string)($finanzas['estado'] ?? 'pendiente');
+            $stmtTotal = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
             if ($stmtTotal) {
-                $stmtTotal->bind_param("di", $totalReal, $cotizacionId);
+                $stmtTotal->bind_param("dsi", $totalReal, $estadoReal, $cotizacionId);
                 $stmtTotal->execute();
             }
-            $debeSincronizarClinico = ($totalReal <= 0.00001);
+            $debeSincronizarClinico = ($estadoReal === 'pagado');
         }
         registrar_movimientos_lab_ref_desde_cotizacion($conn, $pacienteId, $detalles, $usuarioId, $cotizacionId);
         crear_ordenes_lab_cotizacion($conn, $cotizacionId, $pacienteId, $detalles);
@@ -2316,19 +2377,22 @@ function editar_cotizacion($conn, $data) {
         $nuevoEstado = strtolower((string)($cot['estado'] ?? 'pendiente'));
         if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
             $pagado = isset($cot['total_pagado']) ? (float)$cot['total_pagado'] : 0;
-            $saldo = max(0, $nuevoTotal - $pagado);
-            $nuevoEstado = $saldo <= 0 ? 'pagado' : ($pagado > 0 ? 'parcial' : 'pendiente');
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $nuevoTotal, $pagado);
+            $saldo = (float)($finanzas['saldo'] ?? 0);
+            $nuevoEstado = (string)($finanzas['estado'] ?? 'pendiente');
 
             if (column_exists($conn, 'cotizaciones', 'version_actual')) {
                 $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ?, version_actual = version_actual + 1, updated_at = NOW() WHERE id = ?");
                 $stmtUp->bind_param("ddsi", $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
             } else {
-                $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
-                $stmtUp->bind_param("dsi", $nuevoTotal, $nuevoEstado, $cotizacionId);
+                $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
+                $stmtUp->bind_param("ddsi", $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
             }
         } else {
-            $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ? WHERE id = ?");
-            $stmtUp->bind_param("di", $nuevoTotal, $cotizacionId);
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $nuevoTotal, 0);
+            $nuevoEstado = (string)($finanzas['estado'] ?? 'pendiente');
+            $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
+            $stmtUp->bind_param("dsi", $nuevoTotal, $nuevoEstado, $cotizacionId);
         }
         $stmtUp->execute();
 
@@ -2432,8 +2496,9 @@ function crear_adenda_cotizacion($conn, $data) {
         $totalReal = total_detalles_cotizacion_activos($conn, $nuevaId);
         $estadoAdenda = 'pendiente';
         if ($hasSaldoV2) {
-            $saldoReal = max(0, $totalReal);
-            $estadoReal = $saldoReal <= 0 ? 'pagado' : 'pendiente';
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $nuevaId, $totalReal, 0);
+            $saldoReal = (float)($finanzas['saldo'] ?? 0);
+            $estadoReal = (string)($finanzas['estado'] ?? 'pendiente');
             $estadoAdenda = $estadoReal;
             $stmtSync = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = 0, saldo_pendiente = ?, estado = ? WHERE id = ?");
             if ($stmtSync) {
@@ -2441,10 +2506,11 @@ function crear_adenda_cotizacion($conn, $data) {
                 $stmtSync->execute();
             }
         } else {
-            $estadoAdenda = $totalReal <= 0.00001 ? 'pagado' : 'pendiente';
-            $stmtSync = $conn->prepare("UPDATE cotizaciones SET total = ? WHERE id = ?");
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $nuevaId, $totalReal, 0);
+            $estadoAdenda = (string)($finanzas['estado'] ?? 'pendiente');
+            $stmtSync = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
             if ($stmtSync) {
-                $stmtSync->bind_param("di", $totalReal, $nuevaId);
+                $stmtSync->bind_param("dsi", $totalReal, $estadoAdenda, $nuevaId);
                 $stmtSync->execute();
             }
         }

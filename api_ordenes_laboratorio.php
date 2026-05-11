@@ -452,6 +452,103 @@ if (!function_exists('crearCotizacionDesdeOrden')) {
     }
 }
 
+if (!function_exists('ol_normalize_examenes_ids')) {
+    function ol_normalize_examenes_ids($raw)
+    {
+        $out = [];
+        foreach ((array)$raw as $it) {
+            $id = is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it);
+            if ($id > 0) {
+                $out[] = $id;
+            }
+        }
+        return array_values(array_unique($out));
+    }
+}
+
+if (!function_exists('ol_build_detalles_laboratorio_cotizacion')) {
+    function ol_build_detalles_laboratorio_cotizacion(mysqli $conn, array $examenIds)
+    {
+        $detalles = [];
+        $ids = ol_normalize_examenes_ids($examenIds);
+        if (empty($ids)) {
+            return $detalles;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = "SELECT id, nombre, precio_publico FROM examenes_laboratorio WHERE id IN ($placeholders)";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return $detalles;
+        }
+        $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $precio = floatval($row['precio_publico'] ?? 0);
+            $detalles[] = [
+                'servicio_tipo' => 'laboratorio',
+                'servicio_id' => intval($row['id']),
+                'descripcion' => (string)($row['nombre'] ?? ''),
+                'cantidad' => 1,
+                'precio_unitario' => $precio,
+                'subtotal' => $precio,
+            ];
+        }
+        $stmt->close();
+
+        return $detalles;
+    }
+}
+
+if (!function_exists('ol_recalcular_total_cotizacion')) {
+    function ol_recalcular_total_cotizacion(mysqli $conn, int $cotizacionId)
+    {
+        $whereEstado = ol_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND estado_item <> 'eliminado'"
+            : '';
+
+        $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");
+        if (!$stmtTotal) {
+            return;
+        }
+        $stmtTotal->bind_param('i', $cotizacionId);
+        $stmtTotal->execute();
+        $row = $stmtTotal->get_result()->fetch_assoc();
+        $stmtTotal->close();
+        $total = round((float)($row['total'] ?? 0), 2);
+
+        if (ol_column_exists($conn, 'cotizaciones', 'total_pagado') && ol_column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+            $stmtPag = $conn->prepare('SELECT COALESCE(total_pagado, 0) AS total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+            $pagado = 0.0;
+            if ($stmtPag) {
+                $stmtPag->bind_param('i', $cotizacionId);
+                $stmtPag->execute();
+                $rowPag = $stmtPag->get_result()->fetch_assoc();
+                $stmtPag->close();
+                $pagado = (float)($rowPag['total_pagado'] ?? 0);
+            }
+
+            $saldo = max(0.0, round($total - $pagado, 2));
+            $estado = $saldo <= 0.00001 ? 'pagado' : ($pagado > 0.00001 ? 'parcial' : 'pendiente');
+            $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
+            if ($stmtUp) {
+                $stmtUp->bind_param('ddsi', $total, $saldo, $estado, $cotizacionId);
+                $stmtUp->execute();
+                $stmtUp->close();
+            }
+            return;
+        }
+
+        $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ? WHERE id = ?');
+        if ($stmtUp) {
+            $stmtUp->bind_param('di', $total, $cotizacionId);
+            $stmtUp->execute();
+            $stmtUp->close();
+        }
+    }
+}
+
 switch ($method) {
     case 'POST':
         ol_ensure_write_schema($conn);
@@ -488,17 +585,9 @@ switch ($method) {
 
         try {
             if ($consulta_id !== null) {
-                // ── Orden generada desde consulta médica ──────────────────────────────
-                $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
-                $stmt->bind_param('isi', $consulta_id, $json, $cargaAnticipada);
-                if (!$stmt->execute()) throw new Exception($stmt->error);
-                $stmt->close();
-                $ordenId = $conn->insert_id;
+                // ── Upsert desde consulta médica: consolidar en orden pendiente existente ──
+                $conn->begin_transaction();
 
-                // Vincular al nodo HC activo de esta consulta
-                $conn->query("UPDATE ordenes_laboratorio ol INNER JOIN historia_clinica h ON h.consulta_id = ol.consulta_id SET ol.historia_clinica_id = h.id WHERE ol.id = $ordenId AND ol.historia_clinica_id IS NULL");
-
-                // Obtener paciente_id desde consultas
                 $stmtPac = $conn->prepare('SELECT paciente_id FROM consultas WHERE id = ? LIMIT 1');
                 $stmtPac->bind_param('i', $consulta_id);
                 $stmtPac->execute();
@@ -506,52 +595,151 @@ switch ($method) {
                 $stmtPac->close();
                 $pacienteIdCotiz = $rowPac ? intval($rowPac['paciente_id']) : 0;
 
-                if ($pacienteIdCotiz > 0) {
-                    $stmtFixPacienteOrden = $conn->prepare('UPDATE ordenes_laboratorio SET paciente_id = ? WHERE id = ? AND (paciente_id IS NULL OR paciente_id = 0)');
-                    if ($stmtFixPacienteOrden) {
-                        $stmtFixPacienteOrden->bind_param('ii', $pacienteIdCotiz, $ordenId);
-                        $stmtFixPacienteOrden->execute();
-                        $stmtFixPacienteOrden->close();
+                $incomingExamIds = ol_normalize_examenes_ids($examenes);
+                if (empty($incomingExamIds)) {
+                    throw new Exception('No hay examenes validos para registrar');
+                }
+
+                $stmtFindPend = $conn->prepare("SELECT id, examenes, cotizacion_id, paciente_id, carga_anticipada
+                                                FROM ordenes_laboratorio
+                                                WHERE consulta_id = ? AND LOWER(COALESCE(estado, 'pendiente')) = 'pendiente'
+                                                ORDER BY id DESC LIMIT 1 FOR UPDATE");
+                $stmtFindPend->bind_param('i', $consulta_id);
+                $stmtFindPend->execute();
+                $ordenPendiente = $stmtFindPend->get_result()->fetch_assoc();
+                $stmtFindPend->close();
+
+                $ordenId = 0;
+                $cotizacionIdOrden = 0;
+                $modoOperacion = 'creada';
+                $examenesFinales = $incomingExamIds;
+
+                if ($ordenPendiente) {
+                    $ordenId = intval($ordenPendiente['id'] ?? 0);
+                    $cotizacionIdOrden = intval($ordenPendiente['cotizacion_id'] ?? 0);
+                    $prevExamIds = ol_normalize_examenes_ids(json_decode((string)($ordenPendiente['examenes'] ?? '[]'), true) ?: []);
+                    $examenesFinales = array_values(array_unique(array_merge($prevExamIds, $incomingExamIds)));
+                    $jsonFinal = json_encode($examenesFinales);
+                    $cargaFinal = (intval($ordenPendiente['carga_anticipada'] ?? 0) === 1 || $cargaAnticipada === 1) ? 1 : 0;
+
+                    $stmtUpOrden = $conn->prepare('UPDATE ordenes_laboratorio SET examenes = ?, carga_anticipada = ?, paciente_id = CASE WHEN (paciente_id IS NULL OR paciente_id = 0) THEN ? ELSE paciente_id END WHERE id = ?');
+                    $stmtUpOrden->bind_param('siii', $jsonFinal, $cargaFinal, $pacienteIdCotiz, $ordenId);
+                    if (!$stmtUpOrden->execute()) {
+                        throw new Exception($stmtUpOrden->error);
+                    }
+                    $stmtUpOrden->close();
+                    $modoOperacion = 'consolidada';
+                } else {
+                    $jsonFinal = json_encode($examenesFinales);
+                    $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
+                    $stmt->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
+                    if (!$stmt->execute()) throw new Exception($stmt->error);
+                    $stmt->close();
+                    $ordenId = $conn->insert_id;
+
+                    // Vincular al nodo HC activo de esta consulta
+                    $conn->query("UPDATE ordenes_laboratorio ol INNER JOIN historia_clinica h ON h.consulta_id = ol.consulta_id SET ol.historia_clinica_id = h.id WHERE ol.id = $ordenId AND ol.historia_clinica_id IS NULL");
+
+                    if ($pacienteIdCotiz > 0) {
+                        $stmtFixPacienteOrden = $conn->prepare('UPDATE ordenes_laboratorio SET paciente_id = ? WHERE id = ? AND (paciente_id IS NULL OR paciente_id = 0)');
+                        if ($stmtFixPacienteOrden) {
+                            $stmtFixPacienteOrden->bind_param('ii', $pacienteIdCotiz, $ordenId);
+                            $stmtFixPacienteOrden->execute();
+                            $stmtFixPacienteOrden->close();
+                        }
                     }
                 }
 
-                // Construir detalles de cotización a partir de examenes_laboratorio
-                $detallesCotiz = [];
-                $examenIdsInt  = array_map('intval', array_filter((array)$examenes, 'is_numeric'));
-                if (!empty($examenIdsInt) && $pacienteIdCotiz > 0) {
-                    $inPlaceholders = implode(',', $examenIdsInt);
-                    $resPrecios = $conn->query("SELECT id, nombre, precio_publico FROM examenes_laboratorio WHERE id IN ($inPlaceholders)");
-                    while ($rowEx = $resPrecios->fetch_assoc()) {
-                        $precio = floatval($rowEx['precio_publico'] ?? 0);
-                        $detallesCotiz[] = [
-                            'servicio_tipo'  => 'laboratorio',
-                            'servicio_id'    => intval($rowEx['id']),
-                            'descripcion'    => $rowEx['nombre'],
-                            'cantidad'       => 1,
-                            'precio_unitario'=> $precio,
-                            'subtotal'       => $precio,
-                        ];
-                    }
-                }
-
+                $detallesCotiz = ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales);
                 $cotizData = ['cotizacion_id' => null, 'numero_comprobante' => null, 'total' => 0];
+
                 if (!empty($detallesCotiz) && $pacienteIdCotiz > 0) {
-                    // Usar usuario_id = 0 si es médico (su ID viene de tabla medicos, no usuarios)
-                    $rolCreador = $sessionUsuario['rol'] ?? '';
-                    $usuarioIdCotiz = ($rolCreador === 'medico') ? 0 : intval($sessionUsuario['id'] ?? 0);
-                    $obsText = 'Orden de laboratorio desde consulta #' . $consulta_id;
-                    $cotizData = crearCotizacionDesdeOrden($conn, $pacienteIdCotiz, $consulta_id, $detallesCotiz, $usuarioIdCotiz, $obsText);
-                    $cotizId = intval($cotizData['cotizacion_id']);
-                    $conn->query("UPDATE ordenes_laboratorio SET cotizacion_id = $cotizId WHERE id = $ordenId");
+                    $cotizacionEditable = false;
+                    if ($cotizacionIdOrden > 0) {
+                        $stmtCot = $conn->prepare('SELECT id, estado, numero_comprobante FROM cotizaciones WHERE id = ? FOR UPDATE');
+                        if ($stmtCot) {
+                            $stmtCot->bind_param('i', $cotizacionIdOrden);
+                            $stmtCot->execute();
+                            $rowCot = $stmtCot->get_result()->fetch_assoc();
+                            $stmtCot->close();
+                            if ($rowCot) {
+                                $estadoCot = strtolower(trim((string)($rowCot['estado'] ?? 'pendiente')));
+                                $cotizacionEditable = in_array($estadoCot, ['pendiente', 'parcial'], true);
+                            }
+                        }
+                    }
+
+                    if ($cotizacionIdOrden > 0 && $cotizacionEditable) {
+                        $hasConsultaDetalle = ol_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+                        if ($hasConsultaDetalle) {
+                            $stmtDelLab = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'");
+                            $stmtDelLab->bind_param('ii', $cotizacionIdOrden, $consulta_id);
+                        } else {
+                            $stmtDelLab = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'");
+                            $stmtDelLab->bind_param('i', $cotizacionIdOrden);
+                        }
+                        if ($stmtDelLab) {
+                            $stmtDelLab->execute();
+                            $stmtDelLab->close();
+                        }
+
+                        foreach ($detallesCotiz as $d) {
+                            $servTipo = $conn->real_escape_string($d['servicio_tipo']);
+                            $servId = intval($d['servicio_id']);
+                            $desc = $conn->real_escape_string($d['descripcion']);
+                            $cant = intval($d['cantidad'] ?? 1);
+                            $pu = floatval($d['precio_unitario']);
+                            $sub = floatval($d['subtotal']);
+                            if ($hasConsultaDetalle) {
+                                $conn->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, consulta_id) VALUES ($cotizacionIdOrden, '$servTipo', $servId, '$desc', $cant, $pu, $sub, $consulta_id)");
+                            } else {
+                                $conn->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES ($cotizacionIdOrden, '$servTipo', $servId, '$desc', $cant, $pu, $sub)");
+                            }
+                        }
+
+                        ol_recalcular_total_cotizacion($conn, $cotizacionIdOrden);
+
+                        $stmtOut = $conn->prepare('SELECT numero_comprobante, total FROM cotizaciones WHERE id = ? LIMIT 1');
+                        if ($stmtOut) {
+                            $stmtOut->bind_param('i', $cotizacionIdOrden);
+                            $stmtOut->execute();
+                            $rowOut = $stmtOut->get_result()->fetch_assoc();
+                            $stmtOut->close();
+                            $cotizData = [
+                                'cotizacion_id' => $cotizacionIdOrden,
+                                'numero_comprobante' => $rowOut['numero_comprobante'] ?? null,
+                                'total' => (float)($rowOut['total'] ?? 0),
+                            ];
+                        }
+                    } else {
+                        // Usar usuario_id = 0 si es médico (su ID viene de tabla medicos, no usuarios)
+                        $rolCreador = $sessionUsuario['rol'] ?? '';
+                        $usuarioIdCotiz = ($rolCreador === 'medico') ? 0 : intval($sessionUsuario['id'] ?? 0);
+                        $obsText = 'Orden de laboratorio desde consulta #' . $consulta_id;
+                        $cotizData = crearCotizacionDesdeOrden($conn, $pacienteIdCotiz, $consulta_id, $detallesCotiz, $usuarioIdCotiz, $obsText);
+                        $cotizIdNuevo = intval($cotizData['cotizacion_id']);
+
+                        if ($cotizIdNuevo > 0) {
+                            $stmtLink = $conn->prepare('UPDATE ordenes_laboratorio SET cotizacion_id = ? WHERE id = ?');
+                            if ($stmtLink) {
+                                $stmtLink->bind_param('ii', $cotizIdNuevo, $ordenId);
+                                $stmtLink->execute();
+                                $stmtLink->close();
+                            }
+                        }
+                    }
                 }
+
+                $conn->commit();
 
                 echo json_encode([
-                    'success'            => true,
-                    'orden_id'           => $ordenId,
-                    'paciente_id'        => $pacienteIdCotiz,
-                    'cotizacion_id'      => $cotizData['cotizacion_id'],
+                    'success' => true,
+                    'modo' => $modoOperacion,
+                    'orden_id' => $ordenId,
+                    'paciente_id' => $pacienteIdCotiz,
+                    'cotizacion_id' => $cotizData['cotizacion_id'],
                     'numero_comprobante' => $cotizData['numero_comprobante'],
-                    'total'              => $cotizData['total'],
+                    'total' => $cotizData['total'],
                 ]);
             } else if ($paciente_id && $cobro_id !== null) {
                 // Orden cotizada directamente. Si ya existe una orden para esta cotización, actualizar cobro_id en lugar de duplicar.

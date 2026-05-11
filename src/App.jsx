@@ -172,10 +172,16 @@ function RequireCajaAbierta({ children }) {
   return children;
 }
 
+// Cache compartido para evitar re-verificar en cada navegación.
+// TTL de 2 minutos: suficiente para no generar falsos positivos por errores transitorios.
+const CAJA_CACHE_TTL_MS = 2 * 60 * 1000;
+const cajaCache = { ts: 0, abierta: true };
+
 function CajaAperturaGuard({ usuario }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const [state, setState] = useState({ loading: false, cajaAbierta: true });
+  // Inicializar loading:true para evitar el flash de modal antes del primer resultado.
+  const [state, setState] = useState({ loading: true, cajaAbierta: true });
 
   const rol = String(usuario?.rol || "").toLowerCase();
   const aplicaBloqueo = rol === "administrador" || rol === "recepcionista";
@@ -191,21 +197,36 @@ function CajaAperturaGuard({ usuario }) {
       return;
     }
 
+    // Si el último resultado sigue vigente, usarlo directamente sin nueva llamada.
+    const ahora = Date.now();
+    if (ahora - cajaCache.ts < CAJA_CACHE_TTL_MS) {
+      setState({ loading: false, cajaAbierta: cajaCache.abierta });
+      return;
+    }
+
     let activo = true;
 
+    // Escuchar evento de apertura manual de caja para invalidar el cache inmediatamente.
+    const onAperturaExterna = () => {
+      cajaCache.ts = 0;
+    };
+    window.addEventListener("caja-apertura-realizada", onAperturaExterna);
+
     const verificar = async () => {
-      setState((prev) => ({ ...prev, loading: true }));
       try {
         const response = await authFetch("api_caja_verificar.php", { cache: "no-store" });
         const data = await response.json();
         const cajaAbierta = Boolean(data?.success && data?.caja_abierta);
         if (activo) {
+          cajaCache.ts = Date.now();
+          cajaCache.abierta = cajaAbierta;
           setState({ loading: false, cajaAbierta });
         }
       } catch {
-        // Fail-closed: bloquear por seguridad si no se puede validar.
+        // Fail-open en error transitorio: no bloquear al usuario por un fallo de red.
+        // Si la caja realmente está cerrada, el backend rechazará el cobro de todas formas.
         if (activo) {
-          setState({ loading: false, cajaAbierta: false });
+          setState({ loading: false, cajaAbierta: true });
         }
       }
     };
@@ -213,6 +234,7 @@ function CajaAperturaGuard({ usuario }) {
     verificar();
     return () => {
       activo = false;
+      window.removeEventListener("caja-apertura-realizada", onAperturaExterna);
     };
   }, [aplicaBloqueo, location.key]);
 
@@ -225,7 +247,11 @@ function CajaAperturaGuard({ usuario }) {
     <ModalAperturaCaja
       open
       mensaje="¡Atención! No puedes realizar operaciones sin una caja activa."
-      onIrReporteCaja={() => navigate("/contabilidad")}
+      onIrReporteCaja={() => {
+        // Invalidar cache para que al volver se re-verifique.
+        cajaCache.ts = 0;
+        navigate("/contabilidad");
+      }}
     />
   );
 }
@@ -244,6 +270,12 @@ function App() {
     sessionStorage.removeItem("medico");
     localStorage.removeItem("enfermero_panel_tab");
   };
+
+  // Capturar si había sesión en sessionStorage ANTES del primer render.
+  // Si estaba vacío el usuario debe hacer login manual; no auto-restaurar desde cookie PHP.
+  const hadSessionOnMount = React.useRef(
+    Boolean(sessionStorage.getItem("usuario") || sessionStorage.getItem("medico"))
+  );
 
   const [usuario, setUsuario] = useState(() => {
     // Restaurar usuario o medico desde sessionStorage si existe
@@ -280,6 +312,10 @@ function App() {
   };
 
   useEffect(() => {
+    // Solo validar contra el backend si había una sesión activa en sessionStorage.
+    // Si sessionStorage estaba vacío, el usuario debe ingresar manualmente sus credenciales.
+    if (!hadSessionOnMount.current) return;
+
     let activo = true;
 
     const validarSesionBackend = async () => {

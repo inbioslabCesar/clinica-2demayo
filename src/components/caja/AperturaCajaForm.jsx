@@ -40,6 +40,7 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
       });
       const data = await res.json();
       if (data.success) {
+        window.dispatchEvent(new CustomEvent("caja-apertura-realizada"));
         Swal.fire("Caja abierta", "La caja se abrió correctamente.", "success");
         if (onApertura) onApertura();
       } else {

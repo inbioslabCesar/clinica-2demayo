@@ -18,6 +18,19 @@ class HonorarioModule {
         return in_array($metodo, $permitidos, true) ? $metodo : 'efectivo';
     }
 
+    private static function normalizarTipoServicioMovimiento($servicioTipo) {
+        $tipo = strtolower(trim((string)$servicioTipo));
+        if ($tipo === 'rayos_x' || $tipo === 'rayos x' || $tipo === 'rx') return 'rayosx';
+        if ($tipo === 'procedimiento' || $tipo === 'procedimientos') return 'procedimientos';
+        if ($tipo === 'cirugia' || $tipo === 'cirugias') return 'cirugias';
+        if ($tipo === 'tratamiento' || $tipo === 'tratamientos') return 'tratamientos';
+        if ($tipo === 'emergencia' || $tipo === 'emergencias') return 'emergencias';
+        if ($tipo === 'operaciones') return 'operacion';
+
+        $permitidos = ['consulta', 'rayosx', 'ecografia', 'ocupacional', 'procedimientos', 'cirugias', 'tratamientos', 'emergencias', 'operacion', 'hospitalizacion'];
+        return in_array($tipo, $permitidos, true) ? $tipo : 'consulta';
+    }
+
     private static function calcularDatosMovimiento($detalleConsulta, $tarifa, $servicio_key, $metodo_pago) {
         // Determinar tipo de precio
         $tipo_precio = 'particular';
@@ -82,7 +95,7 @@ class HonorarioModule {
             'paciente_id' => isset($detalleConsulta['paciente_id']) ? intval($detalleConsulta['paciente_id']) : null,
             'tarifa_id' => isset($tarifa['id']) ? intval($tarifa['id']) : null,
             'tipo_precio' => $tipo_precio,
-            'tipo_servicio' => strtolower(trim((string)$servicio_key)),
+            'tipo_servicio' => self::normalizarTipoServicioMovimiento($servicio_key),
             'descripcion' => (string)($tarifa['descripcion'] ?? ($detalleConsulta['descripcion'] ?? 'Servicio médico')),
             'tarifa_total' => $tarifa_total,
             'monto_clinica' => $monto_clinica,
@@ -109,7 +122,7 @@ class HonorarioModule {
         $paciente_id = $datos['paciente_id'];
         $tarifa_id = $datos['tarifa_id'];
         $tipo_precio = $datos['tipo_precio'];
-        $tipo_servicio = $datos['tipo_servicio'];
+        $tipo_servicio = self::normalizarTipoServicioMovimiento($datos['tipo_servicio'] ?? 'consulta');
         $descripcion = $datos['descripcion'];
         $tarifa_total = $datos['tarifa_total'];
         $monto_clinica = $datos['monto_clinica'];

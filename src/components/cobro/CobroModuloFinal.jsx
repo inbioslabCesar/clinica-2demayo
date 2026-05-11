@@ -10,6 +10,7 @@ function CobroModulo({
   onCobroCompleto,
   onCancelar,
   detalles,
+  detallesSeleccionados,
   total: _total,
   modoCobro,
   onModoCobroChange,
@@ -130,6 +131,46 @@ function CobroModulo({
     }
     return [];
   }, [detalles]);
+
+  const buildDetalleKey = (detalle, index) => {
+    return String(
+      detalle?.cotizacion_detalle_id
+      || detalle?.detalle_id
+      || `${detalle?.cotizacion_id || 0}-${detalle?.servicio_id || 0}-${index}`
+    );
+  };
+
+  const montoAplicadoPorDetalle = useMemo(() => {
+    const map = new Map();
+    detallesCobro.forEach((item, index) => {
+      const key = buildDetalleKey(item, index);
+      map.set(key, Number(item?.subtotal || 0));
+    });
+    return map;
+  }, [detallesCobro]);
+
+  const detallesRender = useMemo(() => {
+    const base = Array.isArray(detallesSeleccionados) && detallesSeleccionados.length > 0
+      ? detallesSeleccionados
+      : detallesCobro;
+
+    if (modoCobro !== 'parcial') {
+      return base.map((item, index) => ({
+        ...item,
+        subtotal_mostrar: Number(item?.subtotal || 0),
+      }));
+    }
+
+    return base.map((item, index) => {
+      const key = buildDetalleKey(item, index);
+      const aplicado = Number(montoAplicadoPorDetalle.get(key) || 0);
+      return {
+        ...item,
+        subtotal_mostrar: aplicado,
+        subtotal_original: Number(item?.subtotal || 0),
+      };
+    });
+  }, [detallesSeleccionados, detallesCobro, modoCobro, montoAplicadoPorDetalle]);
 
   const montoOriginal = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
 let descuento = 0;
@@ -676,30 +717,50 @@ if (tipoDescuento === 'porcentaje') {
                 )}
 
                 <div className="mt-2 text-xs text-gray-600 rounded-md bg-blue-50 px-2 py-1">
-                  {modoCobro === 'parcial' ? 'Adelanto de hoy:' : 'Cobro automático de hoy:'} S/ {Number(montoObjetivoCobro || 0).toFixed(2)} de un saldo pendiente de S/ {Number(saldoPendiente || 0).toFixed(2)}.
+                  {modoCobro === 'parcial' ? 'Adelanto de hoy:' : 'Cobro automático de hoy:'} S/ {totalCobro.toFixed(2)} de un saldo pendiente de S/ {Number(saldoPendiente || 0).toFixed(2)}.
                 </div>
               </div>
             )}
             <h4 className="font-semibold mb-2 text-blue-700 flex items-center gap-2 text-lg"><span className="text-blue-400">🧾</span> Detalle del Servicio</h4>
-            {detallesCobro.map((detalle, index) => {
-              let precio = detalle.subtotal;
-              if ((typeof precio !== 'number' || precio <= 0) && typeof detalle.precio_publico === 'number') {
+            {detallesRender.map((detalle, index) => {
+              let precio = detalle.subtotal_mostrar;
+              if (
+                modoCobro !== 'parcial'
+                && (typeof precio !== 'number' || precio <= 0)
+                && typeof detalle.precio_publico === 'number'
+              ) {
                 precio = detalle.precio_publico;
               }
               const medicoNombre = String(
                 detalle.medico_nombre_completo
                 || `${detalle.medico_nombre || ''} ${detalle.medico_apellido || ''}`
               ).trim();
+              const pendienteServicio = Math.max(
+                0,
+                Number(detalle?.subtotal_original || 0) - Number(detalle?.subtotal_mostrar || 0)
+              );
+              const key = buildDetalleKey(detalle, index);
               return (
-                <div key={index} className="flex justify-between items-center text-base">
+                <div key={key} className="flex justify-between items-center text-base">
                   <span>
                     {detalle.descripcion}
                     {Number(detalle?.cotizacion_id || 0) > 0 && Array.isArray(servicio?.cotizacion_ids) && servicio.cotizacion_ids.length > 1 ? (
                       <span className="block text-xs text-slate-500">Cotización #{Number(detalle.cotizacion_id)}</span>
                     ) : null}
+                    {modoCobro === 'parcial' ? (
+                      <span className="block text-xs text-gray-500">
+                        Aplicado hoy: S/ {Number(detalle?.subtotal_mostrar || 0).toFixed(2)}
+                        {Number(detalle?.subtotal_original || 0) > 0 ? ` de S/ ${Number(detalle.subtotal_original).toFixed(2)}` : ''}
+                      </span>
+                    ) : null}
+                    {modoCobro === 'parcial' ? (
+                      <span className="block text-xs text-amber-700">
+                        Pendiente en servicio: S/ {pendienteServicio.toFixed(2)}
+                      </span>
+                    ) : null}
                     {medicoNombre ? <span className="block text-xs text-gray-500">{medicoNombre}</span> : null}
                   </span>
-                  <span className="font-bold">S/ {precio > 0 ? precio.toFixed(2) : '—'}</span>
+                  <span className="font-bold">S/ {Math.max(0, Number(precio || 0)).toFixed(2)}</span>
                 </div>
               );
             })}

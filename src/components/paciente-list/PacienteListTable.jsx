@@ -1,6 +1,6 @@
-import React from "react";
+import React, { memo } from "react";
 
-function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, sortBy, sortDir, handleSort, page, setPage, totalPages }) {
+const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, sortBy, sortDir, handleSort, page, setPage, totalPages }) {
   return (
     <div className="hidden lg:block overflow-x-auto w-full">
       <table className="min-w-full text-sm border">
@@ -71,6 +71,6 @@ function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratul
       </div>
     </div>
   );
-}
+});
 
 export default PacienteListTable;

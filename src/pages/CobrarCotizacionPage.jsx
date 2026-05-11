@@ -217,7 +217,11 @@ export default function CobrarCotizacionPage() {
       return detalles
         .filter((d) => {
           const estadoItem = String(d?.estado_item || "activo").toLowerCase();
-          return estadoItem !== "eliminado" && Number(d?.cantidad || 0) > 0;
+          const esExterno = Number(d?.es_externo || 0) === 1;
+          const incluirEnCobro = d?.incluir_en_cobro === undefined
+            ? !esExterno
+            : Number(d?.incluir_en_cobro || 0) === 1;
+          return estadoItem !== "eliminado" && Number(d?.cantidad || 0) > 0 && incluirEnCobro;
         })
         .map((d) => ({
           cotizacion_detalle_id: Number(d.id) || null,
@@ -240,6 +244,8 @@ export default function CobrarCotizacionPage() {
           medico_nombre: d.medico_nombre || undefined,
           medico_apellido: d.medico_apellido || undefined,
           medico_especialidad: d.especialidad || d.medico_especialidad || undefined,
+          es_externo: Number(d.es_externo || 0) === 1,
+          incluir_en_cobro: d.incluir_en_cobro === undefined ? 1 : Number(d.incluir_en_cobro || 0),
         }));
     });
   }, [cotizacionesActivas]);
@@ -386,7 +392,7 @@ export default function CobrarCotizacionPage() {
   }, [detallesCobro]);
 
   const estado = String(cotizacion?.estado || "").toLowerCase();
-  const esEstadoBloqueado = estado === "anulada" || estado === "pagado";
+  const esEstadoBloqueado = estado === "anulada" || estado === "pagado" || estado === "informativo";
 
   const servicioPago = useMemo(() => {
     const tipos = Array.from(new Set(detallesCobro.map((detalle) => normalizarServicioKey(detalle?.servicio_tipo || "")).filter(Boolean)));
@@ -471,6 +477,17 @@ export default function CobrarCotizacionPage() {
         return;
       }
 
+      if (estado === "informativo") {
+        await Swal.fire({
+          icon: "info",
+          title: "Cotización informativa",
+          text: "Esta cotización solo tiene medicamentos externos/no cobrables y no admite cobro en caja.",
+          confirmButtonText: "Ir a cotizaciones",
+        });
+        navigate("/cotizaciones", { replace: true });
+        return;
+      }
+
       await Swal.fire({
         icon: "warning",
         title: "Cotización anulada",
@@ -502,20 +519,26 @@ export default function CobrarCotizacionPage() {
   if (esEstadoBloqueado) {
     return (
       <div className="max-w-4xl mx-auto p-6">
-        <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+        <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : (estado === "informativo" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-amber-50 border-amber-200 text-amber-800")}`}>
           <h2 className="text-lg font-semibold mb-2">
             {estado === "pagado"
               ? (esCobroUnificado ? "Cotizaciones ya pagadas" : "Cotización ya pagada")
-              : (esCobroUnificado ? "Cotización no cobrable dentro del grupo" : "Cotización anulada")}
+              : (estado === "informativo"
+                ? (esCobroUnificado ? "Cotización informativa dentro del grupo" : "Cotización informativa")
+                : (esCobroUnificado ? "Cotización no cobrable dentro del grupo" : "Cotización anulada"))}
           </h2>
           <p className="text-sm leading-relaxed">
             {estado === "pagado"
               ? (esCobroUnificado
                 ? "El grupo seleccionado ya no tiene saldo por cobrar. Puedes revisar el detalle individual de las cotizaciones para ver los importes y movimientos registrados."
                 : "Esta cotización ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados.")
-              : (esCobroUnificado
-                ? "Una de las cotizaciones del grupo quedó fuera de estado cobrable. Refresca el listado antes de volver a intentar un cobro unificado."
-                : "Esta cotización fue anulada y por seguridad no admite cobros desde esta pantalla.")}
+              : (estado === "informativo"
+                ? (esCobroUnificado
+                  ? "Una de las cotizaciones del grupo contiene únicamente ítems informativos/no cobrables. Refresca el listado antes de volver a intentar un cobro unificado."
+                  : "Esta cotización contiene únicamente ítems informativos/no cobrables y no admite cobros desde esta pantalla.")
+                : (esCobroUnificado
+                  ? "Una de las cotizaciones del grupo quedó fuera de estado cobrable. Refresca el listado antes de volver a intentar un cobro unificado."
+                  : "Esta cotización fue anulada y por seguridad no admite cobros desde esta pantalla."))}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             {estado === "pagado" && (
@@ -683,9 +706,11 @@ export default function CobrarCotizacionPage() {
       </div>
 
       <CobroModuloFinal
+        key={[...selectedIds].sort().join(",")}
         paciente={paciente}
         servicio={servicioPago}
         detalles={detallesCobro}
+        detallesSeleccionados={detallesCotizacionActivos}
         total={totalCobro}
         modoCobro={modoCobro}
         onModoCobroChange={setModoCobro}

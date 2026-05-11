@@ -420,13 +420,45 @@ function ConfiguracionPage() {
     setCaratulaPreview('');
   };
 
+  const themedPageBg = {
+    background: 'linear-gradient(to bottom right, var(--color-primary-light, #eff6ff), #ffffff, color-mix(in srgb, var(--color-accent, #eef2ff) 26%, white))',
+  };
+  const themedTitleStyle = {
+    color: 'var(--color-primary-dark, #1d4ed8)',
+  };
+  const themedSpinnerStyle = {
+    borderColor: 'var(--color-primary, #2563eb)',
+    borderTopColor: 'transparent',
+  };
+  const primaryButtonStyle = {
+    background: 'linear-gradient(to right, var(--color-primary, #2563eb), var(--color-secondary, #4f46e5))',
+  };
+  const secondaryButtonStyle = {
+    background: 'linear-gradient(to right, var(--color-secondary, #4f46e5), var(--color-accent, #7c3aed))',
+  };
+  const themedInfoPanelStyle = {
+    background: 'color-mix(in srgb, var(--color-primary-light, #dbeafe) 42%, white)',
+    borderColor: 'color-mix(in srgb, var(--color-accent, #a78bfa) 35%, white)',
+  };
+  const themedInfoTitleStyle = {
+    color: 'var(--color-primary-dark, #1d4ed8)',
+  };
+
   return (
-    <div className="container mx-auto p-6">
-      <h1 className="text-3xl font-bold mb-6 text-blue-800">⚙️ Configuración del Sistema</h1>
+    <div className="container mx-auto p-6 config-theme-page" style={themedPageBg}>
+      <style>{`
+        .config-theme-page input:focus,
+        .config-theme-page select:focus,
+        .config-theme-page textarea:focus {
+          border-color: var(--color-primary, #2563eb) !important;
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary-light, #dbeafe) 75%, white) !important;
+        }
+      `}</style>
+      <h1 className="text-3xl font-bold mb-6" style={themedTitleStyle}>⚙️ Configuración del Sistema</h1>
       
       {cargandoDatos ? (
         <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4" style={themedSpinnerStyle}></div>
           <p className="text-gray-600">Cargando configuración...</p>
         </div>
       ) : (
@@ -618,7 +650,8 @@ function ConfiguracionPage() {
                   type="button"
                   onClick={uploadLogo}
                   disabled={uploadingLogo}
-                  className="bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 disabled:bg-gray-300 text-sm"
+                  className="text-white px-3 py-1 rounded-md disabled:bg-gray-300 text-sm"
+                  style={secondaryButtonStyle}
                 >
                   {uploadingLogo ? 'Subiendo...' : 'Subir Logo'}
                 </button>
@@ -857,7 +890,8 @@ function ConfiguracionPage() {
               <button
                 onClick={guardarConfiguracion}
                 disabled={loading}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition-colors"
+                className="text-white px-6 py-3 rounded-lg disabled:bg-gray-400 font-medium transition-colors"
+                style={primaryButtonStyle}
               >
                 {loading ? (
                   <div className="flex items-center">
@@ -876,8 +910,8 @@ function ConfiguracionPage() {
       {/* Sección de Avatar y Colores */}
       <AvatarColorConfig />
 
-      <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <h3 className="text-lg font-semibold text-yellow-800 mb-2">ℹ️ Información del Sistema</h3>
+      <div className="mt-6 border rounded-lg p-4" style={themedInfoPanelStyle}>
+        <h3 className="text-lg font-semibold mb-2" style={themedInfoTitleStyle}>ℹ️ Información del Sistema</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
           <div>
             <strong>Versión:</strong> 1.0.0

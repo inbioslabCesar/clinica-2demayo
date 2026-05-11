@@ -6,6 +6,32 @@ import Modal from '../components/comunes/Modal.jsx'
 
 const emptyForm = { titulo: '', descripcion: '', precio: '', icono: '', orden: 0, activo: true, tipo: 'clasico', imagen_shape: 'rounded', imagen_tipo: 'normal' }
 
+function ServicioThumb({ src, alt, className = 'h-12 w-20' }) {
+  const [broken, setBroken] = useState(false)
+
+  useEffect(() => {
+    setBroken(false)
+  }, [src])
+
+  if (!src || broken) {
+    return (
+      <div className={`${className} rounded border bg-gray-50 text-gray-400 text-[11px] flex items-center justify-center`}>
+        Sin imagen
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={`${className} rounded border object-cover`}
+      loading="lazy"
+      onError={() => setBroken(true)}
+    />
+  )
+}
+
 export default function WebServiciosCrudPage() {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
@@ -13,6 +39,7 @@ export default function WebServiciosCrudPage() {
   const [form, setForm] = useState(emptyForm)
   const [editingId, setEditingId] = useState(null)
   const [imagenFile, setImagenFile] = useState(null)
+  const [imagenPreviewUrl, setImagenPreviewUrl] = useState('')
 
   const endpoint = useMemo(() => `${BASE_URL}api_web_servicios.php`, [])
   const uploadEndpoint = useMemo(() => `${BASE_URL}api_web_servicios_upload.php`, [])
@@ -35,9 +62,25 @@ export default function WebServiciosCrudPage() {
     load()
   }, [load])
 
+  useEffect(() => {
+    if (!imagenFile) {
+      setImagenPreviewUrl('')
+      return
+    }
+    const objectUrl = URL.createObjectURL(imagenFile)
+    setImagenPreviewUrl(objectUrl)
+    return () => {
+      URL.revokeObjectURL(objectUrl)
+    }
+  }, [imagenFile])
+
   function openNew() {
     setEditingId(null)
-    setForm(emptyForm)
+    const ordenes = items
+      .map((i) => Number(i?.orden ?? 0))
+      .filter((n) => Number.isFinite(n))
+    const nextOrden = ordenes.length > 0 ? Math.max(...ordenes) + 1 : 1
+    setForm({ ...emptyForm, orden: nextOrden })
     setImagenFile(null)
     setOpen(true)
   }
@@ -155,8 +198,10 @@ export default function WebServiciosCrudPage() {
             <thead className="bg-gray-100">
               <tr>
                 <th className="p-2 text-left">Título</th>
+                <th className="p-2 text-left">Miniatura</th>
                 <th className="p-2 text-left">Forma</th>
-                <th className="p-2 text-left">Imagen</th>
+                <th className="p-2 text-left">Tipo imagen</th>
+                <th className="p-2 text-left">Orden</th>
                 <th className="p-2 text-left">Activo</th>
                 <th className="p-2 text-left">Acciones</th>
               </tr>
@@ -165,6 +210,9 @@ export default function WebServiciosCrudPage() {
               {items.map((it) => (
                 <tr key={it.id} className="border-t">
                   <td className="p-2">{it.titulo}</td>
+                  <td className="p-2">
+                    <ServicioThumb src={it.imagen_url || ''} alt={it.titulo || 'Servicio'} />
+                  </td>
                   <td className="p-2">
                     <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                       {it.imagen_shape === 'square' ? '◻' : it.imagen_shape === 'circle' ? '●' : '◐'}
@@ -175,6 +223,7 @@ export default function WebServiciosCrudPage() {
                       {it.imagen_tipo === 'overlay' ? 'Overlay' : 'Normal'}
                     </span>
                   </td>
+                  <td className="p-2">{Number(it.orden || 0)}</td>
                   <td className="p-2">{it.activo ? 'Sí' : 'No'}</td>
                   <td className="p-2 flex gap-2">
                     <button className="px-3 py-1 rounded bg-yellow-500 text-white" onClick={() => openEdit(it)}>
@@ -188,7 +237,7 @@ export default function WebServiciosCrudPage() {
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td className="p-4 text-gray-600" colSpan={5}>
+                  <td className="p-4 text-gray-600" colSpan={7}>
                     No hay servicios.
                   </td>
                 </tr>
@@ -240,6 +289,14 @@ export default function WebServiciosCrudPage() {
             <p className="text-xs text-gray-600 mt-1">
               Si seleccionas una imagen, se subirá y reemplazará la URL.
             </p>
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-gray-600 mb-1">Miniatura actual</p>
+              <ServicioThumb
+                src={imagenPreviewUrl || form.imagen_url || ''}
+                alt={form.titulo || 'Servicio'}
+                className="h-20 w-36"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-sm font-semibold">Forma de Imagen</label>
@@ -265,6 +322,11 @@ export default function WebServiciosCrudPage() {
               <option value="premium">Premium</option>
             </select>
             <p className="text-xs text-gray-600 mt-1">Define cómo se mostrará en la landing web.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold">Orden</label>
+            <input className="w-full border rounded px-3 py-2" type="number" min="1" value={form.orden} onChange={(e) => setForm((f) => ({ ...f, orden: e.target.value }))} />
+            <p className="text-xs text-gray-600 mt-1">La lista se reordena automáticamente de forma secuencial.</p>
           </div>
           <div className="md:col-span-2 flex items-center gap-2">
             <input type="checkbox" checked={!!form.activo} onChange={(e) => setForm((f) => ({ ...f, activo: e.target.checked }))} />

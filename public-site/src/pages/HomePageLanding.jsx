@@ -92,7 +92,7 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
                 <div className="absolute inset-0 animate-pulse bg-white/25" />
               </div>
               {banners.map((b, i) => {
-                const srcPath = b?.imagen_url || b?.imagen_fija_url || ''
+                const srcPath = b?.imagen_url || ''
                 const src = srcPath ? resolvePublicAssetUrl(srcPath) : null
                 if (!src) return null
                 return (
@@ -185,21 +185,20 @@ function ServicesSection({ servicios, loading }) {
 }
 
 /* ── About Section ── */
-function AboutSection({ clinicName, banner }) {
-  const imageCandidates = [
-    banner?.imagen_conocenos_url || '',
-    banner?.imagen_fija_url || '',
-    banner?.imagen_url || '',
-  ].map((x) => String(x || '').trim()).filter(Boolean)
+function AboutSection({ clinicName, images = [] }) {
+  const count = images.length
+  const [idx, setIdx] = useState(0)
 
-  const uniqueCandidates = Array.from(new Set(imageCandidates))
-  const [aboutImgIndex, setAboutImgIndex] = useState(0)
+  useEffect(() => { setIdx(0) }, [count])
 
   useEffect(() => {
-    setAboutImgIndex(0)
-  }, [banner?.id, uniqueCandidates.length])
+    if (count <= 1) return
+    const id = setInterval(() => setIdx((i) => (i + 1) % count), 4000)
+    return () => clearInterval(id)
+  }, [count])
 
-  const aboutImg = uniqueCandidates[aboutImgIndex] ? resolvePublicAssetUrl(uniqueCandidates[aboutImgIndex]) : null
+  const src = images[idx] || null
+
   return (
     <section className="py-16 px-4 bg-gray-50/50">
       <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-10 items-center">
@@ -223,18 +222,34 @@ function AboutSection({ clinicName, banner }) {
           </Link>
         </div>
         <div className="flex justify-center">
-          {aboutImg ? (
-            <img
-              src={aboutImg}
-              alt="Nosotros"
-              className="rounded-3xl shadow-xl max-h-[400px] object-cover w-full"
-              onError={() => {
-                setAboutImgIndex((prev) => {
-                  if (prev + 1 < uniqueCandidates.length) return prev + 1
-                  return prev
-                })
-              }}
-            />
+          {src ? (
+            <div className="relative rounded-3xl shadow-xl w-full max-h-[400px] overflow-hidden">
+              {images.map((imgSrc, i) => (
+                <img
+                  key={i}
+                  src={imgSrc}
+                  alt={`Nosotros ${i + 1}`}
+                  className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-in-out"
+                  style={{ opacity: i === idx ? 1 : 0, position: i === 0 ? 'relative' : 'absolute' }}
+                />
+              ))}
+              {count > 1 && (
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+                  {images.map((_, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setIdx(i)}
+                      className="w-2.5 h-2.5 rounded-full transition-all duration-300"
+                      style={{
+                        backgroundColor: i === idx ? 'var(--color-primary, #E85D8E)' : 'rgba(255,255,255,0.7)',
+                        transform: i === idx ? 'scale(1.3)' : 'scale(1)',
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             <div className="rounded-3xl shadow-xl w-full h-72 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200">
               <span className="text-gray-400 text-lg">Imagen no disponible</span>
@@ -449,14 +464,18 @@ export default function HomePageLanding({
     return () => { cancelled = true }
   }, [])
 
-  const aboutBanner = banners.find((b) => (b?.imagen_conocenos_url || '').trim() !== '') || banners[1] || banners[0] || null
+  const heroBanners = banners.filter((b) => (b?.imagen_url || '').trim() !== '')
+  const aboutImages = banners
+    .map((b) => (b?.imagen_fija_url || '').trim())
+    .filter(Boolean)
+    .map((url) => resolvePublicAssetUrl(url))
 
   return (
     <div className="-mt-28">
       <HeroSection
         clinicName={clinicName}
         publicLogoSrc={publicLogoSrc}
-        banners={banners}
+        banners={heroBanners}
         sistemaUrl={sistemaUrl}
         slogan={configuracion?.slogan}
         sloganColor={configuracion?.slogan_color}
@@ -465,7 +484,7 @@ export default function HomePageLanding({
         logoSize={resolvedLogoSize}
       />
       <ServicesSection servicios={servicios} loading={loading} />
-      <AboutSection clinicName={clinicName} banner={aboutBanner} />
+      <AboutSection clinicName={clinicName} images={aboutImages} />
       <div className="max-w-6xl mx-auto px-4 grid md:grid-cols-2 gap-6">
         <TestimonialsSection />
         <FAQSection />
