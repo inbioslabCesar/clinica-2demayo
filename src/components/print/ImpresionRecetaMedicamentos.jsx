@@ -195,7 +195,7 @@ const ImpresionRecetaMedicamentos = ({
           <div className="text-center">
             {/* Firma digital del médico */}
             {medicoInfo?.firma && (
-              <div className="mb-2">
+              <div className="mt-0 mb-[-10px]">
                 <img 
                   src={medicoInfo.firma} 
                   alt="Firma digital del médico" 

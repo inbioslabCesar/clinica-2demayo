@@ -843,7 +843,7 @@ const ImpresionHistoriaClinica = ({
           <div className="text-center pie-firma">
             {/* Firma digital del médico */}
             {medicoInfo?.firma && (
-              <div className="mb-4 firma-digital">
+              <div className="mt-0 mb-[-10px] firma-digital">
                 <img 
                   src={medicoInfo.firma} 
                   alt="Firma digital del médico" 
@@ -853,13 +853,13 @@ const ImpresionHistoriaClinica = ({
             )}
             
             <div className="border-t-2 border-gray-400 pt-2 min-w-[200px]">
-              <p className="font-semibold text-sm">
+              <p className="font-semibold text-xs leading-tight">
                 {formatProfesionalName(medicoInfo || {})}
               </p>
-              <p className="text-xs text-gray-600">{medicoInfo?.especialidad}</p>
-              <p className="text-xs text-gray-600">{formatColegiatura(medicoInfo || {})}</p>
+              <p className="text-[10px] leading-tight text-gray-600">{medicoInfo?.especialidad}</p>
+              <p className="text-[10px] leading-tight text-gray-600">{formatColegiatura(medicoInfo || {})}</p>
               {medicoInfo?.rne && (
-                <p className="text-xs text-gray-600">RNE: {medicoInfo.rne}</p>
+                <p className="text-[10px] leading-tight text-gray-600">RNE: {medicoInfo.rne}</p>
               )}
               
               {/* Mensaje si no hay firma */}

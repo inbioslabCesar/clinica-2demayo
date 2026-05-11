@@ -152,20 +152,19 @@ export default function ImpresionInformeProcedimiento({
 
             <div className="text-center">
               {firmaSolicitante && (
-                <div className="mb-1">
+                <div className="mt-0 mb-[-10px]">
                   <img
                     src={firmaSolicitante}
                     alt="Firma del medico"
-                    className="mx-auto"
-                    style={{ maxHeight: "64px", maxWidth: "220px", objectFit: "contain" }}
+                    className="mx-auto bg-transparent p-0 firma-img-procedimientos"
                   />
                 </div>
               )}
               <div className="border-t border-slate-800 pt-1">
-                <p className="font-semibold text-sm text-slate-900">{formatProfesionalName(medicoInfo || {})}</p>
-                <p className="text-xs text-slate-700">{medicoInfo?.especialidad || "-"}</p>
-                <p className="text-xs text-slate-700">{formatColegiatura(medicoInfo || {})}</p>
-                {medicoInfo?.rne && <p className="text-xs text-slate-700">RNE: {medicoInfo.rne}</p>}
+                <p className="font-semibold text-xs leading-tight text-slate-900">{formatProfesionalName(medicoInfo || {})}</p>
+                <p className="text-[10px] leading-tight text-slate-700">{medicoInfo?.especialidad || "-"}</p>
+                <p className="text-[10px] leading-tight text-slate-700">{formatColegiatura(medicoInfo || {})}</p>
+                {medicoInfo?.rne && <p className="text-[10px] leading-tight text-slate-700">RNE: {medicoInfo.rne}</p>}
                 {!firmaSolicitante && (
                   <div className="mt-1 mb-1 h-9 flex items-center justify-center border border-dashed border-slate-400 text-xs text-slate-500">
                     [Firma Manual]

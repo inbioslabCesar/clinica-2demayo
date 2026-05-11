@@ -89,7 +89,8 @@ html, body, #root {
 
 	.firma-img-receta,
 	.firma-img-lab,
-	.firma-img-servicios {
+	.firma-img-servicios,
+	.firma-img-procedimientos {
 		max-width: 200px !important;
 		height: 80px !important;
 		width: auto !important;
@@ -124,9 +125,19 @@ html, body, #root {
 	.a5-receta-print .firma-img-receta,
 	.a5-lab-print .firma-img-lab,
 	.a5-servicios-print .firma-img-servicios {
-		max-width: 130px !important;
-		height: 48px !important;
+		max-width: 200px !important;
+		height: 72px !important;
 		width: auto !important;
+	}
+
+	/* Reducir tamaño de firmas en HC e Informe de Procedimiento al imprimir */
+	@media print {
+		.firma-img-hc,
+		.firma-img-procedimientos {
+			max-width: 200px !important;
+			height: 72px !important;
+			width: auto !important;
+		}
 	}
 }
 

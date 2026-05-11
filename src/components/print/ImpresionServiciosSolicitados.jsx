@@ -210,12 +210,11 @@ export default function ImpresionServiciosSolicitados({
 
           <div className="text-center">
             {firmaSolicitante && (
-              <div className="mb-2">
+              <div className="mt-0 mb-[-10px]">
                 <img
                   src={firmaSolicitante}
                   alt="Firma digital del médico"
                   className="mx-auto bg-transparent p-0 firma-img-servicios"
-                  style={{ maxHeight: "44px", maxWidth: "140px", objectFit: "contain" }}
                 />
               </div>
             )}

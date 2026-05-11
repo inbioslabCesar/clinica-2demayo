@@ -191,7 +191,7 @@ const ImpresionAnalisisLaboratorio = ({
           <div className="text-center">
             {/* Firma digital del médico */}
             {firmaSolicitante && (
-              <div className="mb-2">
+              <div className="mt-0 mb-[-10px]">
                 <img 
                   src={firmaSolicitante} 
                   alt="Firma digital del médico" 
