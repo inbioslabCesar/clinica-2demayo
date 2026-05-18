@@ -1235,17 +1235,27 @@ function HistoriaClinicaPage() {
       .replace(/^_+|_+$/g, "")
       .replace(/_+/g, "_");
 
+    const isProcedureLikeKey = (value) => {
+      const normalized = normalizeKey(value);
+      if (!normalized) return false;
+      return (
+        normalized === "procedimiento_medico"
+        || normalized === "procedimientos_medicos"
+        || normalized === "procedimiento"
+        || normalized === "procedimientos"
+        || normalized === "informe_procedimiento"
+        || normalized === "informe_medico"
+        || normalized.includes("procedimiento")
+        || normalized.includes("procedim")
+        || normalized.includes("porcedim")
+      );
+    };
+
     const sections = hcTemplateMeta?.sections && typeof hcTemplateMeta.sections === "object"
       ? hcTemplateMeta.sections
       : {};
 
-    const sectionEntry = Object.entries(sections).find(([sectionKey]) => {
-      const normalized = normalizeKey(sectionKey);
-      return normalized === "procedimiento_medico"
-        || normalized === "procedimientos_medicos"
-        || normalized === "procedimiento"
-        || normalized.includes("procedimiento");
-    });
+    const sectionEntry = Object.entries(sections).find(([sectionKey]) => isProcedureLikeKey(sectionKey));
 
     const fieldsFromTemplate = sectionEntry && sectionEntry[1] && typeof sectionEntry[1] === "object" && !Array.isArray(sectionEntry[1])
       ? Object.keys(sectionEntry[1])
@@ -1265,8 +1275,13 @@ function HistoriaClinicaPage() {
       "procedimiento",
       "informe_procedimiento",
       "procedimiento_medico",
+      "procedimientos",
+      "procedimientos_medicos",
+      "informe_medico",
       "descripcion_procedimiento",
       "reporte_procedimiento",
+      "porcedimiento_medico",
+      "porcedimientos_medicos",
     ];
 
     aliasFallback.forEach((fieldKey) => {
@@ -1277,12 +1292,7 @@ function HistoriaClinicaPage() {
       fieldsWithValue.push({ fieldKey, label: formatFieldLabel(fieldKey), value });
     });
 
-    const preferred = fieldsWithValue.find((item) => {
-      const normalizedField = normalizeKey(item?.fieldKey);
-      return normalizedField === "procedimiento"
-        || normalizedField === "procedimiento_medico"
-        || normalizedField.includes("procedimiento");
-    }) || fieldsWithValue[0] || null;
+    const preferred = fieldsWithValue.find((item) => isProcedureLikeKey(item?.fieldKey)) || fieldsWithValue[0] || null;
 
     const contenidoPrincipal = String(preferred?.value || "").trim();
     const camposDetalle = fieldsWithValue.filter((item) => item.fieldKey !== preferred?.fieldKey);
@@ -2746,6 +2756,7 @@ function HistoriaClinicaPage() {
             medicamentos={hc.receta}
             medicoInfo={medicoInfo}
             configuracionClinica={configuracionClinica}
+            diagnosticos={diagnosticos}
           />
         </div>
       </div>

@@ -397,6 +397,7 @@ class CobroModule
         $types = str_repeat('i', count($cotizacionIds));
         $sql = "SELECT id, paciente_id, estado, total, total_pagado, saldo_pendiente, "
             . (self::columnExists($conn, 'cotizaciones', 'fecha_vencimiento') ? 'fecha_vencimiento' : 'NULL AS fecha_vencimiento')
+            . ", " . (self::columnExists($conn, 'cotizaciones', 'referencia_origen') ? 'referencia_origen' : 'NULL AS referencia_origen')
             . " FROM cotizaciones WHERE id IN ($placeholders) FOR UPDATE";
 
         $stmt = $conn->prepare($sql);
@@ -1767,6 +1768,15 @@ class CobroModule
             $data['monto_descuento'] = $montoDescuento;
             $data['total'] = $totalCobro;
             $data['cotizacion_ids'] = $cotizacionIdsFlujo;
+            if (empty(trim((string)($data['referencia_origen'] ?? ''))) && !empty($cotizacionesBloqueadas)) {
+                foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
+                    $refOrigenCot = trim((string)($cotizacionBloqueada['referencia_origen'] ?? ''));
+                    if ($refOrigenCot !== '') {
+                        $data['referencia_origen'] = $refOrigenCot;
+                        break;
+                    }
+                }
+            }
 
             // Validar que exista una caja abierta antes de cualquier registro
             $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
@@ -2178,6 +2188,7 @@ class CobroModule
     public static function registrarCobro($conn, $data)
     {
         $observaciones = $data['observaciones'] ?? '';
+        $referenciaOrigen = trim((string)($data['referencia_origen'] ?? ''));
         if (!$data['paciente_id'] || $data['paciente_id'] === 'null') {
             $nombre_paciente = trim((string)($data['paciente_nombre'] ?? '')) ?: 'Cliente particular';
             $dni_paciente = $data['paciente_dni'] ?? '';
@@ -2187,8 +2198,14 @@ class CobroModule
     $usuario_id_param = (int)($_SESSION['usuario']['id'] ?? ($data['usuario_id'] ?? 0));
         $total_param = $data['total'];
         $tipo_pago_param = $data['tipo_pago'];
-        $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, 'pagado', ?)");
-        $stmt->bind_param("iidss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones);
+        $hasReferenciaOrigen = self::columnExists($conn, 'cobros', 'referencia_origen');
+        if ($hasReferenciaOrigen) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen) VALUES (?, ?, ?, ?, 'pagado', ?, ?)");
+            $stmt->bind_param("iidsss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen);
+        } else {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, 'pagado', ?)");
+            $stmt->bind_param("iidss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones);
+        }
         $stmt->execute();
         $cobro_id = $conn->insert_id;
         // Insertar detalles del cobro

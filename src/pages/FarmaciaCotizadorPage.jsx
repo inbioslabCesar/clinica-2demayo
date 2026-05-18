@@ -9,6 +9,7 @@ import { authFetch } from "../utils/apiClient";
 
 export default function FarmaciaCotizadorPage({ usuario }) {
   const FETCH_TIMEOUT_MS = 12000;
+  const SWAL_WIDE_WIDTH = 720;
 
   const fetchJsonWithTimeout = async (url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) => {
     const controller = new AbortController();
@@ -90,6 +91,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     const nombreManualCompleto = `${manualNombres} ${manualApellidos}`.trim();
     const pacienteNombrePayload = (pacienteDatos?.nombre || nombreManualCompleto || 'Particular').trim();
     const pacienteDniPayload = String(pacienteDatos?.dni || manualDni || '').trim();
+    const referenciaOrigenPayload = String(referenciaOrigen || '').trim();
 
     if (!cotizacionId && seleccionados.length === 0) {
       setMensaje("Selecciona al menos un medicamento.");
@@ -144,6 +146,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         title: 'Carrito activo detectado',
         text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
         icon: 'warning',
+        width: SWAL_WIDE_WIDTH,
         showCancelButton: true,
         confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
         cancelButtonText: 'Cancelar',
@@ -177,6 +180,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : null,
           paciente_nombre: pacienteNombrePayload,
           paciente_dni: pacienteDniPayload,
+          referencia_origen: referenciaOrigenPayload,
           total,
           detalles: detallesFinales,
           observaciones: 'Cotización registrada desde cotizador de Farmacia',
@@ -232,6 +236,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           ? {
               icon: 'success',
               title: cotizacionId ? 'Cotización actualizada' : 'Enviado a recepción',
+              width: SWAL_WIDE_WIDTH,
               html: `<div class="text-left">
                 <div><b>Código:</b> ${numeroComprobante}</div>
                 <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
@@ -245,6 +250,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           : {
               icon: 'success',
               title: cotizacionId ? 'Cotización actualizada' : 'Cotización registrada',
+              width: SWAL_WIDE_WIDTH,
               html: cotizacionId
                 ? `<div>Cotización <b>${numeroComprobante}</b> actualizada correctamente.</div>`
                 : `<div class="text-left">
@@ -359,6 +365,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const [manualDni, setManualDni] = useState("");
   const [manualNombres, setManualNombres] = useState("");
   const [manualApellidos, setManualApellidos] = useState("");
+  const [referenciaOrigen, setReferenciaOrigen] = useState("");
   // const usuarioId = 1; // Cambia por el usuario actual
   const [mensaje, setMensaje] = useState("");
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
@@ -369,23 +376,51 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const [cotizacionPendienteMedico, setCotizacionPendienteMedico] = useState(null); // {id, numero, total} | null
   const [buscandoPendiente, setBuscandoPendiente] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+  const [medicamentosVisibles, setMedicamentosVisibles] = useState([]);
 
-  const recargarMedicamentos = async () => {
-    const data = await fetchJsonWithTimeout("api_medicamentos.php", { credentials: "include" });
+  const recargarMedicamentos = async (busquedaParam = "") => {
+    const q = String(busquedaParam || "").trim();
+    const params = new URLSearchParams();
+    if (q.length >= 2) {
+      params.set("busqueda", q);
+      params.set("limite", "120");
+    } else {
+      params.set("limite", "120");
+      params.set("pagina", "1");
+    }
+    const data = await fetchJsonWithTimeout(`api_medicamentos.php?${params.toString()}`, { credentials: "include" });
     const meds = data.medicamentos || data || [];
-    setMedicamentos(meds);
-    const unidades = {};
-    meds.forEach((m) => {
-      unidades[m.id] = m.unidades_por_caja || 30;
+    setMedicamentos((prev) => {
+      const map = new Map((prev || []).map((m) => [String(m.id), m]));
+      meds.forEach((m) => {
+        map.set(String(m.id), m);
+      });
+      return Array.from(map.values());
     });
-    setUnidadesPorCaja(unidades);
+    setMedicamentosVisibles(Array.isArray(meds) ? meds : []);
+    setUnidadesPorCaja((prev) => {
+      const unidades = { ...(prev || {}) };
+      meds.forEach((m) => {
+        unidades[m.id] = m.unidades_por_caja || 30;
+      });
+      return unidades;
+    });
   };
 
   useEffect(() => {
-    recargarMedicamentos().catch(() => {
+    recargarMedicamentos("").catch(() => {
       // Si falla la recarga inicial, mantener el estado actual.
     });
   }, []);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      recargarMedicamentos(busqueda).catch(() => {
+        // Si falla la búsqueda, mantener listado visible actual.
+      });
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [busqueda]);
 
   // Consultar estado de caja al entrar a la página
   useEffect(() => {
@@ -578,11 +613,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     Swal.fire('Listo', `Se agregaron ${cantidadAgregada} medicamento(s) al carrito.`, 'success');
   };
 
-  const filtrarMedicamentos = medicamentos.filter(
-    (m) =>
-      m.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-      (m.codigo && m.codigo.toLowerCase().includes(busqueda.toLowerCase()))
-  );
+  const filtrarMedicamentos = medicamentosVisibles;
 
   const mostrarPanelDerecho = seleccionados.length > 0;
 
@@ -619,6 +650,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         title: 'Eliminar del cobro',
         text: 'Esta acción quitará el producto del cobro y repondrá stock. ¿Continuar?',
         icon: 'warning',
+        width: SWAL_WIDE_WIDTH,
         showCancelButton: true,
         confirmButtonText: 'Continuar',
         cancelButtonText: 'Cancelar',
@@ -907,6 +939,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         title: 'Confirmar reducción/eliminación',
         text: 'Se reducirá la cantidad (o se eliminarán ítems) del cobro y se repondrá stock. ¿Continuar?',
         icon: 'warning',
+        width: SWAL_WIDE_WIDTH,
         showCancelButton: true,
         confirmButtonText: 'Continuar',
         cancelButtonText: 'Cancelar',
@@ -1127,6 +1160,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
               setManualDni("");
               setManualNombres("");
               setManualApellidos("");
+              setReferenciaOrigen("");
               setBusquedaIntentada(true);
               setMensaje("");
               // Reset estado previo de búsqueda pendiente
@@ -1191,6 +1225,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
               setPacienteDatos(null);
               setMostrarManual(false);
               setBusquedaIntentada(false);
+              setReferenciaOrigen("");
               setCotizacionPendienteMedico(null);
               setSeleccionados([]);
               setCantidades({});
@@ -1232,6 +1267,14 @@ export default function FarmaciaCotizadorPage({ usuario }) {
               onChange={(e) => setManualApellidos(e.target.value)}
               placeholder="Apellidos (opcional)"
               className="border px-2 py-1 rounded w-40"
+            />
+            <input
+              type="text"
+              value={referenciaOrigen}
+              onChange={(e) => setReferenciaOrigen(e.target.value)}
+              placeholder="Referencia origen (opcional)"
+              className="border px-2 py-1 rounded w-72"
+              maxLength={255}
             />
           </div>
         )}
@@ -1275,13 +1318,11 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         <div className={`grid grid-cols-1 gap-4 ${mostrarPanelDerecho ? 'md:grid-cols-2' : ''}`}>
           {/* Columna izquierda: lista de medicamentos para cotizar */}
           <div className="col-span-1">
-            {medicamentos.length === 0 ? (
+            {medicamentosVisibles.length === 0 ? (
               <div className="text-center text-gray-500 py-8">
-                No hay medicamentos registrados en el sistema.
-              </div>
-            ) : filtrarMedicamentos.length === 0 ? (
-              <div className="text-center text-gray-500 py-8">
-                Sin coincidencias para "{busqueda}".
+                {busqueda.trim().length >= 2
+                  ? `Sin coincidencias para "${busqueda}".`
+                  : "No hay medicamentos registrados en el sistema."}
               </div>
             ) : (
               <div className="max-h-96 overflow-y-auto">

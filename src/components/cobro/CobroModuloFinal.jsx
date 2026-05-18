@@ -248,6 +248,7 @@ if (tipoDescuento === 'porcentaje') {
         usuario_nombre: usuario.nombre || '',
         paciente_nombre: nombrePacienteCompleto,
         paciente_dni: dniPaciente,
+        referencia_origen: String(servicio?.referencia_origen || paciente?.referencia_origen || '').trim(),
         total: Math.max(montoOriginal - descuento, 0),
         monto_original: montoOriginal,
         monto_descuento: descuento,

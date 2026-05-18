@@ -9,13 +9,34 @@ error_reporting(E_ALL);
 
 $method = $_SERVER['REQUEST_METHOD'];
 
+/**
+ * Obtiene entero positivo desde query string con límites seguros.
+ */
+function get_int_query_param(string $key, int $default, int $min = 1, int $max = 500): int {
+    if (!isset($_GET[$key])) return $default;
+    $value = filter_var($_GET[$key], FILTER_VALIDATE_INT);
+    if ($value === false) return $default;
+    if ($value < $min) return $min;
+    if ($value > $max) return $max;
+    return $value;
+}
+
 switch ($method) {
     case 'GET':
+    $limite = get_int_query_param('limite', 0, 1, 500);
+    $pagina = get_int_query_param('pagina', 1, 1, 1000000);
+    $offset = ($pagina - 1) * $limite;
+
     // Buscar medicamentos por coincidencia
     if (isset($_GET['busqueda']) && strlen($_GET['busqueda']) > 1) {
         $busqueda = '%' . $_GET['busqueda'] . '%';
-        $stmt = $conn->prepare("SELECT * FROM medicamentos WHERE nombre LIKE ? OR codigo LIKE ? ORDER BY nombre");
-        $stmt->bind_param("ss", $busqueda, $busqueda);
+        if ($limite > 0) {
+            $stmt = $conn->prepare("SELECT * FROM medicamentos WHERE nombre LIKE ? OR codigo LIKE ? ORDER BY nombre LIMIT ? OFFSET ?");
+            $stmt->bind_param("ssii", $busqueda, $busqueda, $limite, $offset);
+        } else {
+            $stmt = $conn->prepare("SELECT * FROM medicamentos WHERE nombre LIKE ? OR codigo LIKE ? ORDER BY nombre");
+            $stmt->bind_param("ss", $busqueda, $busqueda);
+        }
         $stmt->execute();
         $result = $stmt->get_result();
         $medicamentos = [];
@@ -32,6 +53,9 @@ switch ($method) {
     }
     // Si no hay búsqueda, devuelve toda la lista (opcional)
     $sql = "SELECT * FROM medicamentos ORDER BY nombre";
+    if ($limite > 0) {
+        $sql .= " LIMIT " . (int)$limite . " OFFSET " . (int)$offset;
+    }
     $result = $conn->query($sql);
     $medicamentos = [];
     while ($row = $result->fetch_assoc()) {

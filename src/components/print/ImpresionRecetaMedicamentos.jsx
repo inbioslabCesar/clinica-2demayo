@@ -5,7 +5,8 @@ const ImpresionRecetaMedicamentos = ({
   paciente, 
   medicamentos,
   medicoInfo,
-  configuracionClinica 
+  configuracionClinica,
+  diagnosticos,
 }) => {
   const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
   const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
@@ -36,197 +37,240 @@ const ImpresionRecetaMedicamentos = ({
     });
   };
 
+  const diagnosticosArray = Array.isArray(diagnosticos) ? diagnosticos : [];
+  const medicamentosArray = Array.isArray(medicamentos) ? medicamentos : [];
+
   return (
-    <div className="bg-white max-w-2xl mx-auto print:shadow-none print:max-w-none a5-receta-print" style={{ 
-      minHeight: '210mm', // A5 format
-      maxWidth: '148mm',   // A5 width
-      padding: '8mm',
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '10px',
-      lineHeight: 1.2
-    }}>
-      {/* Encabezado estilo receta médica compacto */}
-      <div className="border-2 border-black p-2 mb-4">
-        <div className="flex items-center justify-between border-b border-black pb-2 mb-3">
-          {/* Logo e información de la clínica - compacto */}
-          <div className="flex items-center gap-2">
-            <img 
-              src={logoSrc} 
-              alt={configuracionClinica?.nombre_clinica || 'Logo'} 
-              className="h-10 w-auto"
-            />
-            <div>
-              <h1 className="text-sm font-bold text-black uppercase leading-tight">
-                {configuracionClinica?.nombre_clinica || 'MI CLÍNICA'}
-              </h1>
-              {configuracionClinica?.slogan && (
-                <p className="text-xs font-medium" style={{ color: configuracionClinica.slogan_color || '#374151' }}>
-                  {configuracionClinica.slogan}
+    <div
+      className="receta-a4-landscape bg-white text-slate-900 print:text-black"
+      style={{
+        width: "277mm",
+        height: "190mm",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 0,
+        overflow: "hidden",
+        boxSizing: "border-box",
+        fontFamily: "Arial, sans-serif",
+        fontSize: "11px",
+        lineHeight: 1.18,
+      }}
+    >
+      <section
+        className="relative h-full overflow-hidden border-r border-dashed border-slate-400"
+        style={{ padding: "3mm 3mm 2.5mm 3mm" }}
+      >
+        <img
+          src={logoSrc}
+          alt=""
+          className="pointer-events-none absolute inset-0 m-auto w-3/4 opacity-[0.03]"
+          style={{ filter: "grayscale(100%)" }}
+        />
+
+        <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
+          <header className="flex items-start justify-between gap-2 border-b border-slate-900 pb-1">
+            <div className="flex min-w-0 items-start gap-2">
+              <img
+                src={logoSrc}
+                alt={configuracionClinica?.nombre_clinica || "Logo"}
+                className="h-12 w-auto shrink-0 object-contain"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-bold uppercase leading-tight">
+                  {configuracionClinica?.nombre_clinica || "MI CLINICA"}
                 </p>
-              )}
-              <p className="text-xs text-black">{configuracionClinica?.direccion || 'Dirección de la clínica'}</p>
-              <p className="text-xs text-black">
-                Tel: {configuracionClinica?.telefono || '123-456-789'}
-              </p>
-              {configuracionClinica?.ruc && (
-                <p className="text-xs text-black">RUC: {configuracionClinica.ruc}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Información del médico - compacto */}
-          <div className="text-right">
-            <h2 className="text-sm font-bold text-black leading-tight">
-              {formatProfesionalName(medicoInfo || {})}
-            </h2>
-            <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
-            <p className="text-xs text-black">{formatColegiatura(medicoInfo || {})}</p>
-            {medicoInfo?.rne && (
-              <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Título del documento - compacto */}
-        <div className="text-center mb-2">
-          <h2 className="text-lg font-bold text-black border-b border-black pb-1">
-            💊 RECETA MÉDICA
-          </h2>
-          <div className="flex justify-between text-xs text-black mt-1">
-            <span>Fecha: {formatearFecha(new Date())}</span>
-            <span>Hora: {formatearHora(new Date())}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Datos del paciente en formato receta - compacto */}
-      <div className="border border-black p-2 mb-3">
-        <h3 className="text-sm font-bold text-black mb-2 border-b border-black pb-1">
-          👤 DATOS DEL PACIENTE
-        </h3>
-        <div className="grid grid-cols-1 gap-1 text-xs">
-          <p className="text-black"><strong>Paciente:</strong> {nombrePaciente} {apellidoPaciente}</p>
-          <div className="grid grid-cols-3 gap-2">
-            <p className="text-black"><strong>DNI:</strong> {paciente?.dni}</p>
-            <p className="text-black"><strong>Edad:</strong> {paciente?.edad} años</p>
-            <p className="text-black"><strong>Sexo:</strong> {paciente?.sexo}</p>
-          </div>
-        </div>
-      </div>
-
-
-
-      {/* Lista de medicamentos prescritos - tipo lista compacta */}
-      <div className="border border-black p-2 mb-3" style={{ minHeight: '80px' }}>
-        <h3 className="text-sm font-bold text-black mb-2 border-b border-black pb-1">
-          💊 MEDICAMENTOS PRESCRITOS
-        </h3>
-        {medicamentos && medicamentos.length > 0 ? (
-          <ul className="list-disc pl-5 text-xs text-black space-y-1">
-            {medicamentos.map((medicamento, index) => (
-              <li key={index}>
-                <span className="font-semibold uppercase">{medicamento.nombre || 'Medicamento no especificado'}</span>
-                {medicamento.presentacion && (
-                  <span className="ml-2"><strong>Presentación:</strong> {medicamento.presentacion}</span>
+                {configuracionClinica?.slogan && (
+                  <p className="text-[11px] leading-tight" style={{ color: configuracionClinica.slogan_color || "#374151" }}>
+                    {configuracionClinica.slogan}
+                  </p>
                 )}
-                {medicamento.concentracion && (
-                  <span className="ml-2"><strong>Concentración:</strong> {medicamento.concentracion}</span>
-                )}
-                {medicamento.laboratorio && (
-                  <span className="ml-2"><strong>Laboratorio:</strong> {medicamento.laboratorio}</span>
-                )}
-                {medicamento.dosis && (
-                  <span className="ml-2"><strong>Dosis:</strong> {medicamento.dosis}</span>
-                )}
-                {medicamento.frecuencia && (
-                  <span className="ml-2"><strong>Frecuencia:</strong> {medicamento.frecuencia}</span>
-                )}
-                {medicamento.duracion && (
-                  <span className="ml-2"><strong>Duración:</strong> {medicamento.duracion}</span>
-                )}
-                {medicamento.observaciones && (
-                  <span className="ml-2 italic"><strong>Obs:</strong> {medicamento.observaciones}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-xs text-black italic text-center py-4">
-            No se han prescrito medicamentos.
-          </p>
-        )}
-      </div>
-
-      {/* Instrucciones y advertencias - compacto */}
-      <div className="space-y-2 mb-4">
-        <div className="border border-black p-2">
-          <h3 className="text-xs font-bold text-black mb-1">📋 INSTRUCCIONES</h3>
-          <div className="text-xs text-black space-y-1">
-            <p>• Tomar según indicación médica</p>
-            <p>• Completar tratamiento</p>
-            <p>• Contactar médico si efectos adversos</p>
-          </div>
-        </div>
-        
-        <div className="border border-red-500 bg-red-50 p-2">
-          <h3 className="text-xs font-bold text-red-800 mb-1">⚠️ ADVERTENCIAS</h3>
-          <p className="text-xs text-red-800">• Receta personal e intransferible • Fuera del alcance de niños</p>
-        </div>
-      </div>
-
-      {/* Pie de página con firmas - compacto */}
-      <div className="border-t border-black pt-3 mt-4">
-        <div className="flex justify-between items-end text-xs">
-          {/* Espacio para sello farmacia */}
-          <div className="text-center">
-            <div className="w-20 h-16 border border-dashed border-gray-400 flex items-center justify-center mb-1">
-              <span className="text-xs text-gray-500 text-center leading-tight">SELLO<br/>FARMACIA</span>
-            </div>
-            <p className="text-xs text-black font-bold">DESPACHADO</p>
-          </div>
-
-          {/* Información de emisión */}
-          <div className="text-center">
-            <p className="text-xs text-gray-600">Emitido: {formatearFecha(new Date())}</p>
-            <p className="text-xs text-gray-600">Válido 30 días</p>
-          </div>
-          
-          {/* Firma del médico */}
-          <div className="text-center">
-            {/* Firma digital del médico */}
-            {medicoInfo?.firma && (
-              <div className="mt-0 mb-[-10px]">
-                <img 
-                  src={medicoInfo.firma} 
-                  alt="Firma digital del médico" 
-                  className="mx-auto bg-transparent p-0 firma-img-receta"
-                
-                />
+                <p className="text-[11px] leading-tight">RUC: {configuracionClinica?.ruc || "-"}</p>
+                <p className="text-[11px] leading-tight">Dirección: {configuracionClinica?.direccion || "-"}</p>
+                <p className="text-[11px] leading-tight">Tel: {configuracionClinica?.telefono || "-"}</p>
               </div>
-            )}
-            
-            <div className="border-t border-black pt-1 min-w-24">
-              <p className="font-bold text-black text-xs">
-                {formatProfesionalName(medicoInfo || {})}
-              </p>
-              <p className="text-xs text-black">{medicoInfo?.especialidad}</p>
-              <p className="text-xs text-black">{formatColegiatura(medicoInfo || {})}</p>
-              {medicoInfo?.rne && (
-                <p className="text-xs text-black">RNE: {medicoInfo.rne}</p>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-xs font-bold leading-tight">{formatProfesionalName(medicoInfo || {})}</p>
+              <p className="text-[11px] leading-tight">{medicoInfo?.especialidad}</p>
+              <p className="text-[11px] leading-tight">{formatColegiatura(medicoInfo || {})}</p>
+              {medicoInfo?.rne && <p className="text-[11px] leading-tight">RNE: {medicoInfo.rne}</p>}
+            </div>
+          </header>
+
+          <div className="mt-1 flex items-center justify-between border-b border-slate-900 pb-1">
+            <p className="text-sm font-bold tracking-wide">RECETA MEDICA</p>
+            <div className="text-[11px] text-slate-700">
+              <span className="mr-3">Fecha: {formatearFecha(new Date())}</span>
+              <span>Hora: {formatearHora(new Date())}</span>
+            </div>
+          </div>
+
+          <section className="mt-1 border border-slate-900 p-1.5">
+            <p className="mb-0.5 border-b border-slate-300 text-[11px] font-semibold uppercase">Datos del paciente</p>
+            <div className="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[11px] leading-tight">
+              <p className="col-span-3"><span className="font-semibold">Paciente:</span> {nombrePaciente} {apellidoPaciente}</p>
+              <p><span className="font-semibold">DNI:</span> {paciente?.dni || "-"}</p>
+              <p><span className="font-semibold">Edad:</span> {paciente?.edad ? `${paciente.edad} años` : "-"}</p>
+              <p><span className="font-semibold">Sexo:</span> {paciente?.sexo || "-"}</p>
+            </div>
+          </section>
+
+          {diagnosticosArray.length > 0 && (
+            <section className="mt-1 border border-slate-900 p-1.5">
+              <p className="mb-0.5 border-b border-slate-300 text-[11px] font-semibold uppercase">Diagnóstico</p>
+              <div className="space-y-0.5 text-[11px] leading-tight">
+                {diagnosticosArray.map((diagnostico, index) => (
+                  <p key={index}>
+                    <span className="font-semibold">{diagnostico.codigo || diagnostico.cie10_codigo || ""}</span>
+                    {(diagnostico.codigo || diagnostico.cie10_codigo) ? " - " : ""}
+                    {diagnostico.descripcion || diagnostico.cie10_descripcion || diagnostico.nombre || ""}
+                  </p>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="mt-1 flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-900 p-1.5">
+            <div className="mb-1 flex items-center justify-between border-b border-slate-300 pb-0.5">
+              <p className="text-sm font-bold">Rp/ Medicamentos</p>
+              <p className="text-[11px] text-slate-600">Lista prescrita</p>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {medicamentosArray.length > 0 ? (
+                <div className="divide-y divide-slate-200">
+                  {medicamentosArray.map((medicamento, index) => (
+                    <article key={index} className="py-0.5">
+                      <div className="flex gap-1.5">
+                        <div className="w-6 shrink-0 text-[10px] font-semibold">{index + 1}.</div>
+                        <div className="min-w-0 flex-1 space-y-0.5 leading-[1]">
+                          <p className="text-[10px] font-semibold uppercase leading-[1]">
+                            {medicamento.nombre || "Medicamento no especificado"}
+                            {medicamento.codigo && <span className="ml-1 font-normal text-slate-600">({medicamento.codigo})</span>}
+                          </p>
+                          <p className="text-[10px] leading-[1] text-slate-800">
+                            {[
+                              medicamento.presentacion,
+                              medicamento.concentracion,
+                              medicamento.laboratorio,
+                            ]
+                              .filter(Boolean)
+                              .join(" - ") || "Sin presentación / concentración / laboratorio"}
+                          </p>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] italic text-slate-500">Sin medicamentos registrados.</p>
               )}
-              
-              {/* Mensaje si no hay firma */}
-              {!medicoInfo?.firma && (
-                <div className="mt-1 mb-2 h-8 flex items-center justify-center border border-dashed border-gray-400 text-xs text-gray-500">
-                  [Firma Manual]
+            </div>
+          </section>
+
+          <footer className="mt-1 flex shrink-0 items-end justify-between gap-3 border-t border-slate-900 pt-1">
+            <div className="text-[11px] text-slate-700">
+              <p className="font-semibold uppercase">Despachado</p>
+              <p>Emitido: {formatearFecha(new Date())}</p>
+              <p>Válido 30 días</p>
+            </div>
+            <div className="flex flex-col items-center justify-end text-center">
+              <div className="flex h-20 w-28 items-center justify-center border border-dashed border-slate-400">
+                <span className="text-[11px] leading-tight text-slate-500">SELLO FARMACIA</span>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </section>
+
+      <section
+        className="relative h-full overflow-hidden"
+        style={{ padding: "3mm 3mm 2.5mm 3mm" }}
+      >
+        <img
+          src={logoSrc}
+          alt=""
+          className="pointer-events-none absolute inset-0 m-auto w-3/4 opacity-[0.03]"
+          style={{ filter: "grayscale(100%)" }}
+        />
+
+        <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
+          <header className="border-b border-slate-900 pb-1 text-right">
+            <p className="text-xs font-bold leading-tight">{formatProfesionalName(medicoInfo || {})}</p>
+            <p className="text-[11px] leading-tight">{medicoInfo?.especialidad}</p>
+            <p className="text-[11px] leading-tight">{formatColegiatura(medicoInfo || {})}</p>
+            {medicoInfo?.rne && <p className="text-[11px] leading-tight">RNE: {medicoInfo.rne}</p>}
+          </header>
+
+          <div className="mt-1 border-b border-slate-900 pb-1 text-center">
+            <p className="text-sm font-bold tracking-wide">INDICACIONES</p>
+          </div>
+
+          <section className="mt-1 flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-900 p-1.5">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {medicamentosArray.length > 0 ? (
+                <div className="divide-y divide-slate-200">
+                  {medicamentosArray.map((medicamento, index) => (
+                    <article key={index} className="py-0.5">
+                      <div className="flex gap-1.5">
+                        <div className="w-6 shrink-0 text-[10px] font-semibold">{index + 1}.</div>
+                        <div className="min-w-0 flex-1 space-y-0.5 leading-[1]">
+                          <p className="text-[10px] font-semibold uppercase leading-[1]">{medicamento.nombre || "Medicamento"}</p>
+                          <p className="text-[10px] leading-[1] text-slate-800">
+                            <span className="font-semibold">Dosis:</span> {medicamento.dosis || "-"}
+                            <span className="mx-1 text-slate-400">|</span>
+                            <span className="font-semibold">Frecuencia:</span> {medicamento.frecuencia || "-"}
+                            <span className="mx-1 text-slate-400">|</span>
+                            <span className="font-semibold">Duración:</span> {medicamento.duracion || "-"}
+                          </p>
+                          {medicamento.observaciones && (
+                            <p className="text-[10px] leading-[1] text-slate-800">
+                              Obs: {medicamento.observaciones}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] italic text-slate-500">Sin indicaciones.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="mt-1 shrink-0 border border-rose-300 bg-rose-50 p-1.5 text-[11px] text-rose-800">
+            <p className="font-semibold uppercase">Advertencias</p>
+            <p>Receta personal e intransferible. Fuera del alcance de niños.</p>
+          </section>
+
+          <footer className="mt-1 flex shrink-0 justify-end border-t border-slate-900 pt-1">
+            <div className="flex flex-col items-center justify-end text-center">
+              {medicoInfo?.firma && (
+                <div className="mb-[-10px]">
+                  <img
+                    src={medicoInfo.firma}
+                    alt="Firma digital del médico"
+                    className="firma-img-receta mx-auto block max-h-20 w-auto bg-transparent p-0"
+                  />
                 </div>
               )}
-              
-              <p className="text-xs text-black font-bold">FIRMA MÉDICO</p>
+              {!medicoInfo?.firma && (
+                <div className="mb-[-10px] flex h-20 w-40 items-center justify-center border border-dashed border-slate-400">
+                  <span className="text-[11px] text-slate-500">[Firma Manual]</span>
+                </div>
+              )}
+              <div className="min-w-40 border-t border-slate-900 pt-1 text-[11px] leading-tight">
+                <p className="font-bold">{formatProfesionalName(medicoInfo || {})}</p>
+                <p>{medicoInfo?.especialidad}</p>
+                <p>{formatColegiatura(medicoInfo || {})}</p>
+                {medicoInfo?.rne && <p>RNE: {medicoInfo.rne}</p>}
+                <p className="mt-1 font-bold uppercase">Firma médico</p>
+              </div>
             </div>
-          </div>
+          </footer>
         </div>
-      </div>
+      </section>
     </div>
   );
 };

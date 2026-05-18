@@ -137,8 +137,8 @@ export default function FarmaciaVentasPage() {
     const doc = new jsPDF();
     doc.text("Ventas de Farmacia", 14, 14);
     autoTable(doc, {
-      head: [["Fecha", "Referencia", "Paciente", "DNI", "Médico", "Vendido por", "Total", "Estado"]],
-      body: ventas.map(v => [v.fecha, v.referencia || "-", v.paciente_nombre || "-", v.paciente_dni || "-", v.medico_nombre || "Venta directa", v.usuario_nombre || v.usuario_id, v.total, v.estado]),
+      head: [["Fecha", "Referencia", "Ref. origen", "Paciente", "DNI", "Médico", "Vendido por", "Total", "Estado"]],
+      body: ventas.map(v => [v.fecha, v.referencia || "-", v.referencia_origen || "-", v.paciente_nombre || "-", v.paciente_dni || "-", v.medico_nombre || "Venta directa", v.usuario_nombre || v.usuario_id, v.total, v.estado]),
     });
     doc.save("ventas_farmacia.pdf");
   };
@@ -149,6 +149,7 @@ export default function FarmaciaVentasPage() {
     const ws = XLSX.utils.json_to_sheet(ventas.map(v => ({
       Fecha: v.fecha,
       Referencia: v.referencia || "-",
+      "Referencia Origen": v.referencia_origen || "-",
       Paciente: v.paciente_nombre || "-",
       DNI: v.paciente_dni || "-",
       "Médico": v.medico_nombre || "Venta directa",
@@ -225,6 +226,7 @@ export default function FarmaciaVentasPage() {
                 <tr style={{ background: "var(--color-primary-light)" }}>
                   <th className="p-2">Fecha</th>
                   <th className="p-2">Referencia</th>
+                  <th className="p-2">Ref. origen</th>
                   <th className="p-2">Paciente</th>
                   <th className="p-2">DNI</th>
                   <th className="p-2">Médico</th>
@@ -239,6 +241,7 @@ export default function FarmaciaVentasPage() {
                   <tr key={`${v.source}-${v.id}`} className="border-b">
                     <td className="p-2">{v.fecha}</td>
                     <td className="p-2 font-medium">{v.referencia || "-"}</td>
+                    <td className="p-2">{v.referencia_origen || "-"}</td>
                     <td className="p-2">{v.paciente_nombre || "-"}</td>
                     <td className="p-2">{v.paciente_dni || "-"}</td>
                     <td className="p-2">{v.medico_nombre || "Venta directa"}</td>
@@ -268,6 +271,7 @@ export default function FarmaciaVentasPage() {
                   </div>
                 </div>
                 <div className="mt-3 space-y-1 text-sm text-gray-700">
+                  <div><b>Ref. origen:</b> {v.referencia_origen || "-"}</div>
                   <div><b>DNI:</b> {v.paciente_dni || "-"}</div>
                   <div><b>Médico:</b> {v.medico_nombre || "Venta directa"}</div>
                   <div><b>Vendido por:</b> {v.usuario_nombre || v.usuario_id}</div>
@@ -292,7 +296,7 @@ export default function FarmaciaVentasPage() {
       {/* Modal de detalles */}
       {modalOpen && detalleVenta && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg relative max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-[min(96vw,980px)] max-w-none relative max-h-[90vh] overflow-hidden flex flex-col">
               <button
                 className="absolute top-2 right-2 text-gray-500 text-xl"
                 onClick={() => {
@@ -307,6 +311,7 @@ export default function FarmaciaVentasPage() {
             <h3 className="text-xl font-bold mb-2" style={{ color: "var(--color-secondary)" }}>Detalle de Venta</h3>
             <div className="mb-2 text-sm text-gray-700">
               <div><b>Referencia:</b> {detalleVenta.referencia || "-"}</div>
+              <div><b>Referencia origen:</b> {detalleVenta.referencia_origen || "-"}</div>
               <div><b>Paciente:</b> {detalleVenta.paciente_nombre || "-"}</div>
               <div><b>DNI:</b> {detalleVenta.paciente_dni || "-"}</div>
               <div><b>Médico:</b> {detalleVenta.medico_nombre || "Venta directa"}</div>
@@ -314,14 +319,14 @@ export default function FarmaciaVentasPage() {
               <div><b>Fecha:</b> {detalleVenta.fecha}</div>
               <div><b>Total:</b> S/ {detalleVenta.total}</div>
             </div>
-            <div className="overflow-y-scroll overflow-x-auto h-[44vh]">
-              <table className="w-full text-sm border mb-2 min-w-[520px]">
+            <div className="overflow-y-auto overflow-x-hidden h-[44vh]">
+              <table className="w-full text-sm border mb-2 table-fixed">
                 <thead>
                   <tr style={{ background: "var(--color-primary-light)" }}>
-                    <th className="p-2">Medicamento</th>
-                    <th className="p-2">Cantidad</th>
-                    <th className="p-2">Precio Unitario</th>
-                    <th className="p-2">Subtotal</th>
+                    <th className="p-2 w-[52%]">Medicamento</th>
+                    <th className="p-2 w-[14%]">Cantidad</th>
+                    <th className="p-2 w-[17%]">Precio Unitario</th>
+                    <th className="p-2 w-[17%]">Subtotal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -336,10 +341,10 @@ export default function FarmaciaVentasPage() {
                   ) : (
                     detalles.map((d, index) => (
                       <tr key={d.id || `${d.descripcion}-${index}`}>
-                        <td className="p-2">{d.descripcion}</td>
-                        <td className="p-2">{d.cantidad}</td>
-                        <td className="p-2">S/ {d.precio_unitario}</td>
-                        <td className="p-2">S/ {d.subtotal}</td>
+                        <td className="p-2 break-words">{d.descripcion}</td>
+                        <td className="p-2 whitespace-nowrap">{d.cantidad}</td>
+                        <td className="p-2 whitespace-nowrap">S/ {d.precio_unitario}</td>
+                        <td className="p-2 whitespace-nowrap">S/ {d.subtotal}</td>
                       </tr>
                     ))
                   )}

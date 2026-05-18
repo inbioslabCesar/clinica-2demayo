@@ -145,6 +145,17 @@ const STORAGE_KEY = "apoyo_diagnostico_tab";
 
 export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate }) {
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
+  const rolActual = React.useMemo(() => {
+    try {
+      const rawUsuario = sessionStorage.getItem("usuario");
+      const rawMedico = sessionStorage.getItem("medico");
+      const payload = rawUsuario ? JSON.parse(rawUsuario) : (rawMedico ? JSON.parse(rawMedico) : null);
+      return String(payload?.rol || "").toLowerCase();
+    } catch {
+      return "";
+    }
+  }, []);
+  const debeBloquearProcedimientos = rolActual === "administrador" || rolActual === "recepcionista";
 
   const cambiarTab = (t) => {
     sessionStorage.setItem(STORAGE_KEY, t);
@@ -153,13 +164,27 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   const [examenes, setExamenes] = useState([]);
   const navigate = useNavigate();
 
-  const navigateWithDraft = (path) => {
+  const navigateWithDraft = useCallback((path) => {
     try {
       if (typeof onBeforeNavigate === "function") onBeforeNavigate();
     } catch {
       // No bloquear navegacion por errores de guardado local.
     }
     navigate(path);
+  }, [navigate, onBeforeNavigate]);
+
+  useEffect(() => {
+    if (tab === "procedimientos" && debeBloquearProcedimientos) {
+      navigateWithDraft("/usuarios");
+    }
+  }, [tab, debeBloquearProcedimientos, navigateWithDraft]);
+
+  const abrirTabProcedimientos = () => {
+    if (debeBloquearProcedimientos) {
+      navigateWithDraft("/usuarios");
+      return;
+    }
+    cambiarTab("procedimientos");
   };
 
   // Cargar lista de exámenes para mapear IDs a nombres
@@ -271,7 +296,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "tomografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
         </button>
-        <button type="button" onClick={() => cambiarTab("procedimientos")}
+        <button type="button" onClick={abrirTabProcedimientos}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🛠️ <span className="hidden sm:inline">Procedimientos</span><span className="sm:hidden">Proc</span>
         </button>

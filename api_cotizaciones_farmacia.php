@@ -64,6 +64,31 @@ function table_exists_local($conn, $tableName) {
     return $exists;
 }
 
+function column_exists_local($conn, $tableName, $columnName) {
+    static $cache = [];
+    $tableName = trim((string)$tableName);
+    $columnName = trim((string)$columnName);
+    if ($tableName === '' || $columnName === '') {
+        return false;
+    }
+    $key = $tableName . '::' . $columnName;
+    if (array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+
+    $stmt = $conn->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1");
+    if (!$stmt) {
+        $cache[$key] = false;
+        return false;
+    }
+    $stmt->bind_param('ss', $tableName, $columnName);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = $res && $res->num_rows > 0;
+    $cache[$key] = $exists;
+    return $exists;
+}
+
 function resolver_paciente_desde_cotizacion_por_cobro($conn, $cobroId) {
     static $cache = [];
     $cobroId = (int)$cobroId;
@@ -172,6 +197,7 @@ function normalizar_venta_legacy($row) {
         'source' => 'legacy',
         'origen' => 'farmacia',
         'referencia' => sprintf('F%06d', (int)$row['id']),
+        'referencia_origen' => trim((string)($row['referencia_origen'] ?? '')),
         'fecha' => $row['fecha'],
         'paciente_id' => isset($row['paciente_id']) ? (int)$row['paciente_id'] : null,
         'paciente_nombre' => trim((string)($row['paciente_nombre'] ?? '')) !== '' ? $row['paciente_nombre'] : 'Particular',
@@ -233,6 +259,10 @@ function extraer_detalles_farmacia_desde_json($descripcionJson, $fallbackRow = n
  */
 function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $fecha_fin, $buscar) {
     $offset = ($page - 1) * $limit;
+    $hasRefLegacy = column_exists_local($conn, 'cotizaciones_farmacia', 'referencia_origen');
+    $hasRefCobros = column_exists_local($conn, 'cobros', 'referencia_origen');
+    $selectRefLegacy = $hasRefLegacy ? "NULLIF(TRIM(cf.referencia_origen), '')" : 'NULL';
+    $selectRefCobros = $hasRefCobros ? "NULLIF(TRIM(c.referencia_origen), '')" : 'NULL';
 
     $whereLegacy  = '1=1';
     $whereGeneral = "c.estado <> 'anulado'
@@ -269,7 +299,8 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
             COALESCE(u.nombre, 'Sistema')                                           AS usuario_nombre,
             cf.total                                                                AS total,
             cf.estado,
-            NULL                                                                    AS observaciones
+            NULL                                                                    AS observaciones,
+            {$selectRefLegacy}                                                      AS referencia_origen
         FROM cotizaciones_farmacia cf
         LEFT JOIN pacientes p ON p.id = cf.paciente_id
         LEFT JOIN usuarios u ON u.id = cf.usuario_id
@@ -296,7 +327,8 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
                 WHERE cd2.cobro_id = c.id
             ), 0)                                                                   AS total,
             c.estado,
-            c.observaciones
+            c.observaciones,
+            {$selectRefCobros}                                                      AS referencia_origen
         FROM cobros c
         LEFT JOIN pacientes p ON p.id = c.paciente_id
         LEFT JOIN usuarios u ON u.id = c.usuario_id
@@ -309,9 +341,9 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
     $searchTypes  = '';
     if ($buscar !== '') {
         $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $buscar) . '%';
-        $searchWhere  = '(paciente_nombre LIKE ? OR paciente_dni LIKE ? OR referencia LIKE ? OR usuario_nombre LIKE ?)';
-        $searchParams = [$like, $like, $like, $like];
-        $searchTypes  = 'ssss';
+        $searchWhere  = '(paciente_nombre LIKE ? OR paciente_dni LIKE ? OR referencia LIKE ? OR usuario_nombre LIKE ? OR referencia_origen LIKE ?)';
+        $searchParams = [$like, $like, $like, $like, $like];
+        $searchTypes  = 'sssss';
     }
 
     $allParams = array_merge($unionParams, $searchParams);
@@ -390,6 +422,7 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
             'source'          => $row['source'],
             'origen'          => $row['source'] === 'legacy' ? 'farmacia' : 'cobro',
             'referencia'      => $row['referencia'],
+            'referencia_origen' => trim((string)($row['referencia_origen'] ?? '')),
             'fecha'           => $row['fecha'],
             'paciente_id'     => isset($row['paciente_id']) ? (int)$row['paciente_id'] : null,
             'paciente_nombre' => $row['paciente_nombre'] ?? 'Particular',
@@ -406,6 +439,9 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
 }
 
 function obtener_detalle_venta_general($conn, $cobroId) {
+    $selectReferenciaOrigen = column_exists_local($conn, 'cobros', 'referencia_origen')
+        ? 'c.referencia_origen'
+        : 'NULL AS referencia_origen';
     $stmt = $conn->prepare("SELECT
             c.id,
             c.paciente_id,
@@ -414,6 +450,7 @@ function obtener_detalle_venta_general($conn, $cobroId) {
             c.total,
             c.estado,
             c.observaciones,
+            {$selectReferenciaOrigen},
             p.nombre,
             p.apellido,
             p.dni,
@@ -484,6 +521,7 @@ function obtener_detalle_venta_general($conn, $cobroId) {
         'source' => 'general',
         'origen' => 'cobro',
         'referencia' => sprintf('C%06d', $cobroId),
+        'referencia_origen' => trim((string)($venta['referencia_origen'] ?? '')),
         'fecha' => $venta['fecha_cobro'],
         'paciente_id' => isset($venta['paciente_id']) ? (int)$venta['paciente_id'] : null,
         'paciente_nombre' => $pacienteNombre,
@@ -509,6 +547,8 @@ switch($method) {
         $conn->begin_transaction();
         try {
             $observaciones = $data['observaciones'] ?? '';
+            $referenciaOrigen = trim((string)($data['referencia_origen'] ?? ''));
+            $hasReferenciaOrigenLegacy = column_exists_local($conn, 'cotizaciones_farmacia', 'referencia_origen');
             // Si paciente_id existe, usarlo. Si no, guardar paciente_dni y paciente_nombre en campos extra
             if (isset($data['paciente_id'])) {
                 $stmt = $conn->prepare("INSERT INTO cotizaciones_farmacia (paciente_id, usuario_id, total, estado, observaciones) VALUES (?, ?, ?, 'pagado', ?)");
@@ -519,6 +559,14 @@ switch($method) {
             }
             $stmt->execute();
             $cotizacion_id = $conn->insert_id;
+            if ($hasReferenciaOrigenLegacy) {
+                $stmtRef = $conn->prepare("UPDATE cotizaciones_farmacia SET referencia_origen = ? WHERE id = ?");
+                if ($stmtRef) {
+                    $stmtRef->bind_param("si", $referenciaOrigen, $cotizacion_id);
+                    $stmtRef->execute();
+                    $stmtRef->close();
+                }
+            }
             $stmt_detalle = $conn->prepare("INSERT INTO cotizaciones_farmacia_detalle (cotizacion_id, medicamento_id, descripcion, cantidad, precio_unitario, subtotal) VALUES (?, ?, ?, ?, ?, ?)");
             foreach ($data['detalles'] as $detalle) {
                 $stmt_detalle->bind_param("iisiid", $cotizacion_id, $detalle['medicamento_id'], $detalle['descripcion'], $detalle['cantidad'], $detalle['precio_unitario'], $detalle['subtotal']);

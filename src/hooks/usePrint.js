@@ -116,27 +116,26 @@ export const usePrintReceta = () => {
     }, []),
     pageStyle: `
       @page {
-        size: A4;
-        margin: 15mm;
+        size: A4 landscape;
+        margin: 10mm;
       }
       
       @media print {
         body {
           -webkit-print-color-adjust: exact;
           color-adjust: exact;
-          font-family: 'Times New Roman', serif;
+          print-color-adjust: exact;
+          margin: 0;
+          padding: 0;
         }
         
         .no-print {
           display: none !important;
         }
-        
-        .print\\:border-black {
-          border-color: black !important;
-        }
-        
-        .print\\:text-black {
-          color: black !important;
+
+        .receta-a4-landscape {
+          width: 277mm !important;
+          height: 190mm !important;
         }
       }
     `

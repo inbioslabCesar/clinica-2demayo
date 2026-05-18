@@ -2149,6 +2149,7 @@ function registrar_cotizacion($conn, $data) {
     $pacienteId = isset($data['paciente_id']) ? (int)$data['paciente_id'] : 0;
     $pacienteNombreTmp = trim((string)($data['paciente_nombre'] ?? ''));
     $pacienteDniTmp = trim((string)($data['paciente_dni'] ?? ''));
+    $referenciaOrigen = trim((string)($data['referencia_origen'] ?? ''));
     $observaciones = trim((string)($data['observaciones'] ?? ''));
     if ($pacienteId <= 0) {
         $metaParticular = '[PARTICULAR]';
@@ -2159,6 +2160,7 @@ function registrar_cotizacion($conn, $data) {
     $total = isset($data['total']) ? (float)$data['total'] : total_detalles($detalles);
     $hasSaldoV2 = column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente');
     $hasFechaVencimiento = column_exists($conn, 'cotizaciones', 'fecha_vencimiento');
+    $hasReferenciaOrigen = column_exists($conn, 'cotizaciones', 'referencia_origen');
     $origen = strtolower(trim((string)($data['origen'] ?? '')));
     $vencimientoHorasRaw = isset($data['vencimiento_horas']) ? (int)$data['vencimiento_horas'] : 0;
     $vencimientoHoras = $vencimientoHorasRaw > 0 ? min(720, $vencimientoHorasRaw) : 0;
@@ -2225,6 +2227,16 @@ function registrar_cotizacion($conn, $data) {
         }
         $stmt->execute();
         $cotizacionId = (int)$conn->insert_id;
+
+        if ($hasReferenciaOrigen) {
+            $refGuardar = ($referenciaOrigen !== '') ? $referenciaOrigen : null;
+            $stmtRef = $conn->prepare("UPDATE cotizaciones SET referencia_origen = ? WHERE id = ?");
+            if ($stmtRef) {
+                $stmtRef->bind_param("si", $refGuardar, $cotizacionId);
+                $stmtRef->execute();
+                $stmtRef->close();
+            }
+        }
 
         if (column_exists($conn, 'cotizaciones', 'numero_comprobante')) {
             $numero = sprintf("Q%06d", $cotizacionId);

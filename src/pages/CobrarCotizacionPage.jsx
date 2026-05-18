@@ -406,8 +406,9 @@ export default function CobrarCotizacionPage() {
         : `Cobro de cotización #${activeIdList[0] || cotizacion?.id || ""}`.trim(),
       cotizacion_id: Number(activeIdList[0] || cotizacion?.id || 0),
       cotizacion_ids: activeIdList,
+      referencia_origen: String(cotizacion?.referencia_origen || "").trim(),
     };
-  }, [cotizacion?.id, selectedIds, detallesCobro]);
+  }, [cotizacion?.id, cotizacion?.referencia_origen, selectedIds, detallesCobro]);
 
   const recargarCotizacion = async () => {
     try {
