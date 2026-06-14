@@ -29,7 +29,7 @@ const LINK_CATALOG = {
     permiso: "ver_contabilidad",
   },
   cotizaciones: {
-    label: "Cotizaciones",
+    label: "Atenciones",
     to: "/cotizaciones",
     icon: FiFileText,
     permiso: "ver_cotizaciones",

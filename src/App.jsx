@@ -136,6 +136,201 @@ function RouteErrorBoundary({ children }) {
 
 const ROUTER_BASENAME = APP_BASE_PATH.replace(/\/+$/, "") || "/";
 
+async function fetchInfraDiagnosis(fallbackDetail = "") {
+  const fallback = String(fallbackDetail || "").trim() || "No fue posible conectar con el backend";
+  try {
+    const r = await authFetch("api_health.php", { cache: "no-store" });
+    const payload = await r.json().catch(() => null);
+    const checks = payload?.checks && typeof payload.checks === "object" ? payload.checks : null;
+    const statusCode = String(payload?.status_code || "").trim();
+
+    if (checks?.db?.ok === false) {
+      const message = String(checks?.db?.message || "Base de datos no disponible").trim();
+      const detail = message || fallback;
+      return { detail: statusCode ? `${detail} (${statusCode})` : detail, checks };
+    }
+
+    if (!r.ok) {
+      const message = String(payload?.error || payload?.message || `HTTP ${r.status}`).trim();
+      const detail = message || fallback;
+      return { detail: statusCode ? `${detail} (${statusCode})` : detail, checks };
+    }
+
+    if (checks?.app?.ok === false) {
+      const message = String(checks?.app?.message || "Backend no disponible").trim();
+      const detail = message || fallback;
+      return { detail: statusCode ? `${detail} (${statusCode})` : detail, checks };
+    }
+
+    return {
+      detail: fallback,
+      checks,
+    };
+  } catch {
+    return {
+      detail: fallback,
+      checks: null,
+    };
+  }
+}
+
+function getSupportAdvice(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  switch (normalized) {
+    case "DB_DOWN":
+      return "Verificar servicio MySQL/MariaDB y credenciales activas de la instancia.";
+    case "DB_INIT_FAILED":
+      return "Revisar extensiones de PHP para MySQLi y configuracion de runtime (DB_HOST/DB_PORT).";
+    case "UNHEALTHY":
+      return "Confirmar conectividad backend->BD y revisar logs de PHP para detalles del fallo.";
+    case "APP_DOWN":
+      return "Validar que Apache/Nginx y PHP-FPM esten arriba y sin errores fatales.";
+    case "APP_OK":
+      return "Backend operativo; enfocar diagnostico en conectividad o disponibilidad de BD.";
+    default:
+      return "Reintentar y, si persiste, validar estado de backend, base de datos y red local.";
+  }
+}
+
+function SistemaNoDisponible({ detail, checks, onRetry, onGoToLogin }) {
+  const [copyState, setCopyState] = useState("idle");
+  const host = String(window.location.hostname || "").toLowerCase();
+  const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  const publicUrl = isLocalHost
+    ? `${window.location.protocol}//${host}:5174/`
+    : `${window.location.origin}/`;
+  const appCode = String(checks?.app?.code || "APP_UNKNOWN");
+  const dbCode = String(checks?.db?.code || "DB_UNKNOWN");
+  const [incidentId] = useState(() => {
+    const safeApp = appCode.replace(/[^A-Z0-9_]/gi, "").slice(0, 8).toUpperCase() || "APPUNK";
+    const safeDb = dbCode.replace(/[^A-Z0-9_]/gi, "").slice(0, 8).toUpperCase() || "DBUNK";
+    const stamp = Date.now().toString(36).toUpperCase();
+    return `INC-${safeApp}-${safeDb}-${stamp}`;
+  });
+  const supportAdvice = checks?.db?.ok === false
+    ? getSupportAdvice(dbCode)
+    : getSupportAdvice(appCode);
+
+  const buildDiagnosticText = () => {
+    const lines = [
+      "Diagnostico de contingencia",
+      `Incidencia: ${incidentId}`,
+      `Fecha: ${new Date().toISOString()}`,
+      `Host: ${window.location.host}`,
+      `Detalle: ${String(detail || "Sin detalle")}`,
+      `App code: ${appCode}`,
+      `DB code: ${dbCode}`,
+      `App ok: ${checks?.app?.ok === false ? "false" : "true"}`,
+      `DB ok: ${checks?.db?.ok === false ? "false" : "true"}`,
+      `Accion sugerida: ${supportAdvice}`,
+    ];
+    return lines.join("\n");
+  };
+
+  const copyDiagnostic = async () => {
+    const payload = buildDiagnosticText();
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload);
+        setCopyState("ok");
+      } else {
+        throw new Error("clipboard_api_unavailable");
+      }
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = payload;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(ta);
+        setCopyState(copied ? "ok" : "error");
+      } catch {
+        setCopyState("error");
+      }
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-100">
+      <div className="w-full max-w-2xl bg-white border border-slate-200 shadow-lg rounded-2xl p-8">
+        <h1 className="text-2xl font-bold text-slate-900">Sistema temporalmente no disponible</h1>
+        <p className="mt-3 text-slate-700">
+          Detectamos un problema de conectividad con el backend o la base de datos.
+          Tu sesion no fue cerrada automaticamente.
+        </p>
+        {detail ? (
+          <p className="mt-2 text-sm text-slate-500">Detalle tecnico: {detail}</p>
+        ) : null}
+        <p className="mt-1 text-xs text-slate-500">Incidencia: {incidentId}</p>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Estado app</p>
+            <p className="text-sm font-semibold text-slate-800">
+              {checks?.app?.ok === false ? "Error" : "Operativo"}
+            </p>
+            <p className="text-xs mt-1 text-slate-500">
+              Codigo: {appCode}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Estado base de datos</p>
+            <p className="text-sm font-semibold text-slate-800">
+              {checks?.db?.ok === false ? "Sin conexion" : "Operativa"}
+            </p>
+            <p className="text-xs mt-1 text-slate-500">
+              Codigo: {dbCode}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-amber-700">Accion sugerida</p>
+          <p className="text-sm text-amber-900">{supportAdvice}</p>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition"
+          >
+            Reintentar conexion
+          </button>
+          <button
+            type="button"
+            onClick={onGoToLogin}
+            className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition"
+          >
+            Ir a login
+          </button>
+          <a
+            href={publicUrl}
+            className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition"
+          >
+            Abrir portal publico
+          </a>
+          <button
+            type="button"
+            onClick={copyDiagnostic}
+            className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition"
+          >
+            Copiar diagnostico
+          </button>
+        </div>
+        {copyState === "ok" ? (
+          <p className="mt-2 text-sm text-emerald-700">Diagnostico copiado al portapapeles.</p>
+        ) : null}
+        {copyState === "error" ? (
+          <p className="mt-2 text-sm text-rose-700">No se pudo copiar automaticamente el diagnostico.</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function RequireCajaAbierta({ children }) {
   const location = useLocation();
   const [estado, setEstado] = useState({ loading: true, abierta: true });
@@ -298,6 +493,13 @@ function App() {
     return null;
   });
 
+  const [authBootstrap, setAuthBootstrap] = useState(() => ({
+    phase: hadSessionOnMount.current ? "checking" : "idle",
+    detail: "",
+    checks: null,
+  }));
+  const [authRetryNonce, setAuthRetryNonce] = useState(0);
+
   // Logout sin render intermedio para evitar parpadeo visual
   const handleLogout = () => {
     authFetch("api_logout.php", {
@@ -311,29 +513,71 @@ function App() {
     window.location.replace(BASE_URL);
   };
 
+  const goToLoginManual = () => {
+    hadSessionOnMount.current = false;
+    clearClientSessionState();
+    setUsuario(null);
+    setAuthBootstrap({ phase: "idle", detail: "", checks: null });
+  };
+
   useEffect(() => {
     // Solo validar contra el backend si había una sesión activa en sessionStorage.
     // Si sessionStorage estaba vacío, el usuario debe ingresar manualmente sus credenciales.
-    if (!hadSessionOnMount.current) return;
+    if (!hadSessionOnMount.current) {
+      setAuthBootstrap((prev) => (prev.phase === "idle" ? prev : { phase: "idle", detail: "", checks: null }));
+      return;
+    }
 
     let activo = true;
+    setAuthBootstrap({ phase: "checking", detail: "", checks: null });
 
     const validarSesionBackend = async () => {
       try {
         const r = await authFetch("api_auth_status.php", {
           cache: "no-store",
         });
+
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) {
+            if (activo) {
+              clearClientSessionState();
+              setUsuario(null);
+              setAuthBootstrap({ phase: "idle", detail: "", checks: null });
+            }
+            return;
+          }
+
+          let errorDetail = `HTTP ${r.status}`;
+          try {
+            const dataErr = await r.json();
+            if (dataErr?.error) {
+              errorDetail = String(dataErr.error);
+            }
+          } catch {
+            // keep fallback detail
+          }
+
+          if (activo) {
+            const infra = await fetchInfraDiagnosis(errorDetail);
+            if (!activo) return;
+            setAuthBootstrap({ phase: "infra_error", detail: infra.detail, checks: infra.checks });
+          }
+          return;
+        }
+
         const data = await r.json().catch(() => null);
         const autenticado = Boolean(data?.success) && Boolean(data?.authenticated);
 
         if (!autenticado && activo) {
           clearClientSessionState();
           setUsuario(null);
+          setAuthBootstrap({ phase: "idle", detail: "", checks: null });
           return;
         }
 
         if (autenticado && activo && data?.usuario && typeof data.usuario === "object") {
           setUsuario(hydrateUsuario(data.usuario));
+          setAuthBootstrap({ phase: "ok", detail: "", checks: null });
           return;
         }
 
@@ -346,12 +590,17 @@ function App() {
             permisos: Array.isArray(data?.permisos) ? data.permisos : [],
           };
           setUsuario(hydrateUsuario(usuarioFromBackend));
+          setAuthBootstrap({ phase: "ok", detail: "", checks: null });
         }
       } catch {
         if (activo) {
-          sessionStorage.removeItem("usuario");
-          sessionStorage.removeItem("medico");
-          setUsuario(null);
+          const infra = await fetchInfraDiagnosis("No fue posible conectar con el backend");
+          if (!activo) return;
+          setAuthBootstrap({
+            phase: "infra_error",
+            detail: infra.detail,
+            checks: infra.checks,
+          });
         }
       }
     };
@@ -360,7 +609,7 @@ function App() {
     return () => {
       activo = false;
     };
-  }, []);
+  }, [authRetryNonce]);
 
   useEffect(() => {
     // Si cambia el usuario, sincronizar sessionStorage
@@ -446,6 +695,18 @@ function App() {
   return (
     <ThemeProvider>
     <QuoteCartProvider>
+      {authBootstrap.phase === "infra_error" ? (
+        <SistemaNoDisponible
+          detail={authBootstrap.detail}
+          checks={authBootstrap.checks}
+          onRetry={() => setAuthRetryNonce((prev) => prev + 1)}
+          onGoToLogin={goToLoginManual}
+        />
+      ) : null}
+      {authBootstrap.phase === "checking" ? (
+        <div className="p-8 text-center">Validando sesion...</div>
+      ) : null}
+      {authBootstrap.phase === "infra_error" || authBootstrap.phase === "checking" ? null : (
       <BrowserRouter basename={ROUTER_BASENAME}>
         {usuario ? (
           <>
@@ -1270,6 +1531,7 @@ function App() {
           </Suspense>
         )}
     </BrowserRouter>
+      )}
     </QuoteCartProvider>
     </ThemeProvider>
   );

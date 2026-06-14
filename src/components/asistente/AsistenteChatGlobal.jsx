@@ -9,6 +9,7 @@ const SOPORTE_WHATSAPP = '51945241682';
 const CATEGORIAS_ICONOS = {
   'Caja':           '💰',
   'Pacientes':      '👤',
+  'Atenciones':     '📋',
   'Cotizaciones':   '📋',
   'Consultas':      '📅',
   'Historia Clínica': '🏥',
@@ -47,8 +48,8 @@ const SUGERENCIAS_POR_ROL = {
   ],
   recepcionista: [
     { id: 'rol-rec-1', categoria: 'Pacientes', pregunta: '¿Cómo registro un paciente nuevo?' },
-    { id: 'rol-rec-2', categoria: 'Cotizaciones', pregunta: '¿Cómo hago una cotización?' },
-    { id: 'rol-rec-3', categoria: 'Cotizaciones', pregunta: '¿Cómo cobro una cotización?' },
+    { id: 'rol-rec-2', categoria: 'Atenciones', pregunta: '¿Cómo hago una cotización?' },
+    { id: 'rol-rec-3', categoria: 'Atenciones', pregunta: '¿Cómo cobro una cotización?' },
     { id: 'rol-rec-4', categoria: 'Caja', pregunta: '¿Cómo abro la caja?' },
   ],
 };
@@ -58,11 +59,18 @@ const CATEGORIAS_PERMITIDAS_POR_ROL = {
   laboratorista: ['Laboratorio'],
   quimico: ['Farmacia'],
   enfermero: ['Consultas', 'Historia Clínica', 'Pacientes'],
-  recepcionista: ['Caja', 'Pacientes', 'Cotizaciones', 'Consultas'],
+  recepcionista: ['Caja', 'Pacientes', 'Atenciones', 'Cotizaciones', 'Consultas'],
 };
 
 function icono(cat) {
-  return CATEGORIAS_ICONOS[cat] ?? '❓';
+  return CATEGORIAS_ICONOS[normalizarCategoria(cat)] ?? '❓';
+}
+
+function normalizarCategoria(categoriaRaw) {
+  const categoria = String(categoriaRaw || '').trim();
+  const categoriaLower = categoria.toLowerCase();
+  if (categoriaLower === 'cotizaciones' || categoriaLower === 'atenciones') return 'Atenciones';
+  return categoria;
 }
 
 function normalizarRol(rolRaw) {
@@ -73,11 +81,14 @@ function normalizarRol(rolRaw) {
 
 function filtrarPorRol(items, rolRaw) {
   const rol = normalizarRol(rolRaw);
-  const permitidas = CATEGORIAS_PERMITIDAS_POR_ROL[rol] || null;
+  const permitidasRaw = CATEGORIAS_PERMITIDAS_POR_ROL[rol] || null;
+  const permitidas = Array.isArray(permitidasRaw)
+    ? permitidasRaw.map((cat) => normalizarCategoria(cat))
+    : null;
   const list = Array.isArray(items) ? items : [];
   if (!permitidas) return list;
   return list.filter((item) => {
-    const categoria = String(item?.categoria || '').trim();
+    const categoria = normalizarCategoria(item?.categoria || '');
     if (!categoria) return true;
     return permitidas.includes(categoria);
   });
@@ -300,6 +311,7 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
         tipo: 'asistente',
         texto: `Perfecto, ya estoy contigo en esta HC. ${resumenTexto}`,
         accionAbrirHistorial: hcContexto.canOpenHistoryDrawer,
+        accionConsultaId: consultaId,
       });
 
       hcResumenMostradoRef.current = { consultaId, enviado: true };
@@ -441,7 +453,7 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
       const saludoPersonal = nombreCordial ? `${saludoHora}, ${nombreCordial}.` : `${saludoHora}.`;
       agregarMensaje({
         tipo: 'asistente',
-        texto: `${saludoPersonal} Estoy muy bien y listo para ayudarte.\n\n¿En que te acompano hoy? Si quieres, puedo guiarte paso a paso en HC, consultas, laboratorio o cotizaciones.`,
+        texto: `${saludoPersonal} Estoy muy bien y listo para ayudarte.\n\n¿En que te acompano hoy? Si quieres, puedo guiarte paso a paso en HC, consultas, laboratorio o atenciones.`,
         relacionadas: sugerenciasRol.slice(0, 4).map(s => ({ id: s.id, pregunta: s.pregunta, categoria: s.categoria })),
       });
       setCargando(false);
@@ -552,10 +564,11 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
 
       if (data.tipo === 'respuesta' && data.resultado) {
         const relacionadasFiltradas = filtrarPorRol(data.relacionadas || [], rolActual);
+        const categoriaVisible = normalizarCategoria(data.resultado.categoria);
         setIntentosAclaracion(0);
         agregarMensaje({
           tipo:        'asistente',
-          texto:       `${icono(data.resultado.categoria)} **${data.resultado.categoria}**\n\n${data.resultado.respuesta}`,
+          texto:       `${icono(categoriaVisible)} **${categoriaVisible}**\n\n${data.resultado.respuesta}`,
           relacionadas: relacionadasFiltradas,
           onRelacionada: (p) => () => enviarPregunta(p),
         });
@@ -777,7 +790,11 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
                     </button>
                   </div>
                 )}
-                {msg.accionAbrirHistorial && (
+                {msg.accionAbrirHistorial
+                  && hcContexto.canOpenHistoryDrawer
+                  && Number(msg.accionConsultaId || 0) > 0
+                  && Number(msg.accionConsultaId || 0) === Number(hcContexto.consultaId || 0)
+                  && (
                   <div className="mt-2 border-t border-slate-100 pt-2">
                     <button
                       type="button"
@@ -827,16 +844,19 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
               </div>
             ) : categorias.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
-                {filtrarPorRol(categorias, rolActual).map(c => (
+                {filtrarPorRol(categorias, rolActual).map((c, idx) => {
+                  const categoriaVisible = normalizarCategoria(c.categoria);
+                  return (
                   <button
-                    key={c.categoria}
+                    key={`${c.categoria}-${idx}`}
                     type="button"
                     onClick={() => manejarCategoria(c.categoria)}
                     className="text-[11px] bg-white border border-slate-200 text-slate-700 hover:bg-violet-50 hover:border-violet-300 rounded-full px-2.5 py-1 transition-colors leading-none"
                   >
-                    {icono(c.categoria)} {c.categoria}
+                    {icono(categoriaVisible)} {categoriaVisible}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
+import { calcularCantidadTotalReceta } from "../../utils/calcularCantidadReceta";
 
 const emptyDetalle = {
   dosis: "",
@@ -110,6 +111,14 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       duracionUnidad: detalle.duracionUnidad,
     });
 
+    const cantidad_total = calcularCantidadTotalReceta({
+      frecuencia_tipo: detalle.frecuenciaTipo,
+      frecuencia_valor: frecuenciaValor,
+      frecuencia_horas: frecuenciaHoras,
+      duracion_valor: duracionValor,
+      duracion_unidad: detalle.duracionUnidad
+    });
+
     const nuevo = {
       codigo: modoManual ? `MANUAL-${Date.now()}` : medicamentoSel.codigo,
       nombre: modoManual ? nombreManual : medicamentoSel.nombre,
@@ -124,6 +133,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       duracion,
       duracion_valor: duracionValor,
       duracion_unidad: detalle.duracionUnidad,
+      cantidad_total: cantidad_total,
       observaciones: detalle.observaciones,
       manual: modoManual,
       origen: modoManual ? "manual" : "catalogo",
@@ -385,6 +395,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Dosis</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Frecuencia</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Duración</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Cantidad Total</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Observaciones</th>
                 <th className="px-2 py-1 whitespace-nowrap w-16 text-xs text-gray-700 font-semibold">Quitar</th>
               </tr>
@@ -404,6 +415,18 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                     <td className="border px-2 py-1 whitespace-nowrap">{m.dosis}</td>
                     <td className="border px-2 py-1 whitespace-nowrap">{m.frecuencia}</td>
                     <td className="border px-2 py-1 whitespace-nowrap">{m.duracion}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap text-center font-semibold text-green-700">
+                      {(() => {
+                        const cant = m.cantidad_total || calcularCantidadTotalReceta({
+                          frecuencia_tipo: m.frecuencia_tipo,
+                          frecuencia_valor: m.frecuencia_valor,
+                          frecuencia_horas: m.frecuencia_horas || [],
+                          duracion_valor: m.duracion_valor,
+                          duracion_unidad: m.duracion_unidad
+                        });
+                        return cant ? `${cant} unid.` : "-";
+                      })()}
+                    </td>
                     <td className="border px-2 py-1 max-w-xs truncate" title={m.observaciones}>{m.observaciones}</td>
                     <td className="border px-2 py-1 text-center">
                       <button
@@ -419,7 +442,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                 ))
               ) : (
                 <tr>
-                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={6}>
+                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={10}>
                     No hay medicamentos seleccionados
                   </td>
                 </tr>

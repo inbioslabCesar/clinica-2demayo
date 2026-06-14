@@ -130,6 +130,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       const cobroData = {
         paciente_id: paciente.id,
         usuario_id: usuario.id,
+        referencia_origen: String(servicio?.referencia_origen || paciente?.referencia_origen || '').trim(),
         total: Math.max(montoOriginal - descuento, 0),
         monto_original: montoOriginal,
         monto_descuento: descuento,
@@ -167,6 +168,12 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
 
   const mostrarComprobante = async (cobroId, datosComprobante) => {
     const fechaHora = new Date().toLocaleString('es-PE');
+    const referenciaOrigenCobro = String(
+      datosComprobante?.referencia_origen
+      || servicio?.referencia_origen
+      || paciente?.referencia_origen
+      || ''
+    ).trim();
     
     const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
     const contactoLinea = [
@@ -197,15 +204,16 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
           font-size: 11px;
           line-height: 1.2;
           color: #111827;
+          font-weight: 700;
         }
         .ticket-80 .t-center { text-align: center; }
-        .ticket-80 .t-logo { height: 44px; margin: 0 auto 4px; display: block; }
-        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
-        .ticket-80 .t-line { margin: 1px 0; }
+        .ticket-80 .t-logo { height: 46px; margin: 0 auto 4px; display: block; image-rendering: -webkit-optimize-contrast; filter: contrast(1.15) saturate(1.05); }
+        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 800; letter-spacing: 0.2px; }
+        .ticket-80 .t-line { margin: 1px 0; font-weight: 700; }
         .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
-        .ticket-80 .t-title { font-weight: 700; text-transform: uppercase; margin: 0 0 4px; }
-        .ticket-80 .t-meta { margin: 1px 0; }
-        .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 700; text-transform: uppercase; }
+        .ticket-80 .t-title { font-weight: 800; text-transform: uppercase; margin: 0 0 4px; }
+        .ticket-80 .t-meta { margin: 1px 0; font-weight: 700; }
+        .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 800; text-transform: uppercase; }
         .ticket-80 .t-row {
           display: flex;
           justify-content: space-between;
@@ -222,10 +230,10 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
         }
         .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
         .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
-        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #4b5563; }
+        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #111827; font-weight: 700; }
         @media print {
           @page { size: 80mm auto; margin: 2mm; }
-          html, body { margin: 0; padding: 0; }
+          html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .ticket-80 {
             width: 76mm;
             max-width: 76mm;
@@ -235,7 +243,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
             line-height: 1.15;
           }
           .ticket-80 .t-clinic { font-size: 12px; }
-          .ticket-80 .t-logo { height: 38px; margin-bottom: 3px; }
+          .ticket-80 .t-logo { height: 40px; margin-bottom: 3px; }
           .ticket-80 .t-total { font-size: 11.5px; }
         }
       </style>`;
@@ -257,6 +265,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
         <div class="t-meta">Paciente: ${paciente.nombre} ${paciente.apellido}</div>
         <div class="t-meta">DNI: ${paciente.dni}</div>
         <div class="t-meta">H.C.: ${paciente.historia_clinica}</div>
+        ${referenciaOrigenCobro ? `<div class="t-meta">Referencia origen: ${referenciaOrigenCobro}</div>` : ''}
 
         <hr class="t-hr" />
         <div class="t-section">Detalle</div>

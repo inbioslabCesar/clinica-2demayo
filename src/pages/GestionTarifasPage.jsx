@@ -19,11 +19,7 @@ const serviciosMedicos = [
   { value: "rayosx", label: "Rayos X" },
   { value: "ecografia", label: "Ecografía" },
   { value: "operacion", label: "Operaciones/Cirugías Mayores" },
-  { value: "ocupacional", label: "Medicina Ocupacional" },
   { value: "procedimientos", label: "Procedimientos Médicos" },
-  { value: "cirugias", label: "Cirugías Menores" },
-  { value: "tratamientos", label: "Tratamientos Especializados" },
-  { value: "emergencias", label: "Emergencias" },
 ];
 const todosLosServicios = [...serviciosMedicos];
 

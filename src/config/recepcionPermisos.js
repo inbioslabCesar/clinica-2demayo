@@ -10,7 +10,7 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_modulo_quimico", label: "Modulo quimico / farmacia" },
   { key: "ver_contabilidad", label: "Contabilidad y reportes" },
   { key: "ver_paquetes_perfiles", label: "Paquetes y Perfiles" },
-  { key: "ver_cotizaciones", label: "Cotizaciones" },
+  { key: "ver_cotizaciones", label: "Atenciones" },
   { key: "ver_contratos", label: "Contratos" },
   { key: "ver_lista_consultas", label: "Lista de Consultas" },
   { key: "ver_recordatorios_citas", label: "Recordatorios de Citas" },

@@ -234,6 +234,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   };
 
   const getTipoConsultaMeta = (consulta) => {
+    const origen = String(consulta?.origen_creacion || '').trim().toLowerCase();
+    if (origen === 'reservada_sin_turno') {
+      return {
+        label: 'Reservada sin turno',
+        icon: '🕘',
+        className: 'bg-cyan-100 text-cyan-800 border-cyan-200'
+      };
+    }
+
     const tipo = String(consulta?.tipo_consulta || '').trim().toLowerCase();
     if (tipo === 'espontanea' || tipo === 'espontánea') {
       return {

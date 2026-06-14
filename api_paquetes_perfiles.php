@@ -63,6 +63,30 @@ function pp_generate_code(): string {
     return 'PAK-' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4);
 }
 
+function pp_get_current_exam_version_id(PDO $pdo, int $examId): int {
+    static $cache = [];
+    if ($examId <= 0) return 0;
+    if (isset($cache[$examId])) {
+        return $cache[$examId];
+    }
+
+    if (!pp_table_exists($pdo, 'examenes_laboratorio_versiones')) {
+        $cache[$examId] = 0;
+        return 0;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT id
+         FROM examenes_laboratorio_versiones
+         WHERE examen_id = ?
+         ORDER BY version_num DESC, id DESC
+         LIMIT 1"
+    );
+    $stmt->execute([$examId]);
+    $cache[$examId] = (int)($stmt->fetchColumn() ?: 0);
+    return $cache[$examId];
+}
+
 function pp_fetch_catalog(PDO $pdo, string $sourceType, string $q, int $limit): array {
     $qLike = '%' . $q . '%';
     $limit = max(1, min(100, $limit));
@@ -114,12 +138,14 @@ function pp_fetch_catalog(PDO $pdo, string $sourceType, string $q, int $limit): 
         );
         $stmt->execute([$qLike]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return array_map(function ($r) {
+        return array_map(function ($r) use ($pdo) {
+            $examId = (int)$r['id'];
             return [
                 'source_type' => 'laboratorio',
-                'source_id' => (int)$r['id'],
+                'source_id' => $examId,
                 'descripcion' => (string)$r['nombre'],
                 'precio' => (float)$r['precio_publico'],
+                'examen_version_id' => pp_get_current_exam_version_id($pdo, $examId),
                 'medico_id' => null,
                 'medico_nombre' => '',
             ];
@@ -168,6 +194,7 @@ function pp_validate_item(array $item): array {
         'item_orden' => (int)($item['item_orden'] ?? 1),
         'source_type' => $sourceType,
         'source_id' => isset($item['source_id']) && $item['source_id'] !== '' ? (int)$item['source_id'] : null,
+        'examen_version_id' => isset($item['examen_version_id']) && $item['examen_version_id'] !== '' ? (int)$item['examen_version_id'] : null,
         'medico_id' => isset($item['medico_id']) && $item['medico_id'] !== '' ? (int)$item['medico_id'] : null,
         'descripcion_snapshot' => $descripcion,
         'cantidad' => $cantidad,
@@ -240,6 +267,17 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
              VALUES (?, ?, ?, ?, ?, 1)"
         );
 
+        $hasVersionRefTable = pp_table_exists($pdo, 'paquetes_perfiles_items_version_ref');
+        $hasExamVersionsTable = pp_table_exists($pdo, 'examenes_laboratorio_versiones');
+        $stmtVersionRef = null;
+        if ($hasVersionRefTable) {
+            $stmtVersionRef = $pdo->prepare(
+                "INSERT INTO paquetes_perfiles_items_version_ref
+                 (paquete_item_id, examen_id, examen_version_id, version_num, hash_contenido, estado_compatibilidad, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, 'vigente', NOW(), NOW())"
+            );
+        }
+
         $order = 1;
         foreach ($items as $rawItem) {
             $it = pp_validate_item($rawItem);
@@ -271,6 +309,23 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
                 $porc = isset($regla['porcentaje_medico']) && $regla['porcentaje_medico'] !== '' ? (float)$regla['porcentaje_medico'] : null;
                 $obs = isset($regla['observaciones']) ? trim((string)$regla['observaciones']) : null;
                 $stmtRegla->execute([$itemId, $modo, $montoFijo, $porc, $obs]);
+            }
+
+            if ($stmtVersionRef && $it['source_type'] === 'laboratorio' && !empty($it['source_id'])) {
+                $examId = (int)$it['source_id'];
+                $examVersionId = (int)($it['examen_version_id'] ?? 0);
+                if ($examVersionId <= 0 && $hasExamVersionsTable) {
+                    $examVersionId = pp_get_current_exam_version_id($pdo, $examId);
+                }
+
+                if ($examVersionId > 0) {
+                    $stmtVer = $pdo->prepare("SELECT version_num, hash_contenido FROM examenes_laboratorio_versiones WHERE id = ? LIMIT 1");
+                    $stmtVer->execute([$examVersionId]);
+                    $rowVer = $stmtVer->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $versionNum = isset($rowVer['version_num']) ? (int)$rowVer['version_num'] : null;
+                    $hashContenido = isset($rowVer['hash_contenido']) ? (string)$rowVer['hash_contenido'] : null;
+                    $stmtVersionRef->execute([$itemId, $examId, $examVersionId, $versionNum, $hashContenido]);
+                }
             }
             $order++;
         }
@@ -366,11 +421,17 @@ try {
             if ($includeItems && !empty($rows)) {
                 $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
                 $ph = implode(',', array_fill(0, count($ids), '?'));
+                $hasVersionRefTable = pp_table_exists($pdo, 'paquetes_perfiles_items_version_ref');
+                $selectVersionRef = $hasVersionRefTable ? 'vr.examen_version_id AS examen_version_id,' : '';
+                $joinVersionRef = $hasVersionRefTable ? ' LEFT JOIN paquetes_perfiles_items_version_ref vr ON vr.paquete_item_id = i.id ' : ' ';
+
                 $stmtItems = $pdo->prepare(
-                    "SELECT i.*, hr.modo_honorario, hr.monto_fijo_medico, hr.porcentaje_medico, hr.observaciones AS honorario_observaciones,
+                          "SELECT i.*, hr.modo_honorario, hr.monto_fijo_medico, hr.porcentaje_medico, hr.observaciones AS honorario_observaciones,
+                              {$selectVersionRef}
                            TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre_snapshot
                      FROM paquetes_perfiles_items i
                      LEFT JOIN paquetes_perfiles_items_honorario_reglas hr ON hr.paquete_item_id = i.id
+                     {$joinVersionRef}
                      LEFT JOIN medicos m ON m.id = i.medico_id
                      WHERE i.paquete_id IN ({$ph}) AND i.activo = 1
                      ORDER BY i.paquete_id ASC, i.item_orden ASC, i.id ASC"
@@ -421,11 +482,17 @@ try {
                 pp_respond(['success' => false, 'error' => 'Paquete no encontrado'], 404);
             }
 
-            $stmtItems = $pdo->prepare(
-                 "SELECT i.*, hr.modo_honorario, hr.monto_fijo_medico, hr.porcentaje_medico, hr.observaciones AS honorario_observaciones,
+              $hasVersionRefTable = pp_table_exists($pdo, 'paquetes_perfiles_items_version_ref');
+            $selectVersionRef = $hasVersionRefTable ? 'vr.examen_version_id AS examen_version_id,' : '';
+              $joinVersionRef = $hasVersionRefTable ? ' LEFT JOIN paquetes_perfiles_items_version_ref vr ON vr.paquete_item_id = i.id ' : ' ';
+
+              $stmtItems = $pdo->prepare(
+                   "SELECT i.*, hr.modo_honorario, hr.monto_fijo_medico, hr.porcentaje_medico, hr.observaciones AS honorario_observaciones,
+                       {$selectVersionRef}
                         TRIM(CONCAT(COALESCE(m.nombre, ''), ' ', COALESCE(m.apellido, ''))) AS medico_nombre_snapshot
                  FROM paquetes_perfiles_items i
                  LEFT JOIN paquetes_perfiles_items_honorario_reglas hr ON hr.paquete_item_id = i.id
+                  {$joinVersionRef}
                   LEFT JOIN medicos m ON m.id = i.medico_id
                  WHERE i.paquete_id = ? AND i.activo = 1
                  ORDER BY i.item_orden ASC, i.id ASC"

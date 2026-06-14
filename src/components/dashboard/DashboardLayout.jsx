@@ -288,7 +288,7 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
             <div className="w-12 h-0.5 bg-white/30 rounded-full mt-2"></div>
           </div>
           <nav
-            className="flex flex-col gap-3 px-4 flex-1"
+            className="flex flex-col gap-3 px-4"
             style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
           >
             {usuario?.rol === 'medico' && <SidebarMedico onClose={onClose} />}
@@ -312,7 +312,7 @@ function Sidebar({ open, onClose, onLogout, usuario, logoSrc, clinicName, logoSi
             )}
           </nav>
 
-          <div className="mt-auto p-4">
+          <div className="p-4 pt-1">
             <button 
               onClick={onLogout} 
               className="group w-full bg-gradient-to-r from-red-600 via-red-700 to-rose-800 text-white font-bold rounded-xl py-3 px-4 shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 flex items-center justify-center gap-3 relative overflow-hidden"

@@ -367,6 +367,12 @@ if (tipoDescuento === 'porcentaje') {
       Number(servicio?.cotizacion_id || 0),
     ].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)));
     const cotizacionId = cotizacionIdsTicket[0] || 0;
+    const referenciaOrigenCobro = String(
+      datosComprobante?.referencia_origen
+      || servicio?.referencia_origen
+      || paciente?.referencia_origen
+      || ''
+    ).trim();
     const tieneSaldoPendiente = Number.isFinite(Number(saldoPendiente)) && Number(saldoPendiente) > 0;
     const esCobroCotizacion = cotizacionIdsTicket.length > 0 && tieneSaldoPendiente;
     const saldoAnteriorCobro = Math.max(0, Number(saldoPendiente || 0));
@@ -500,15 +506,16 @@ if (tipoDescuento === 'porcentaje') {
           font-size: 11px;
           line-height: 1.2;
           color: #111827;
+          font-weight: 700;
         }
         .ticket-80 .t-center { text-align: center; }
-        .ticket-80 .t-logo { height: 48px; margin: 0 auto 4px; display: block; }
-        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
-        .ticket-80 .t-line { margin: 1px 0; }
+        .ticket-80 .t-logo { height: 50px; margin: 0 auto 4px; display: block; image-rendering: -webkit-optimize-contrast; filter: contrast(1.15) saturate(1.05); }
+        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 800; letter-spacing: 0.2px; }
+        .ticket-80 .t-line { margin: 1px 0; font-weight: 700; }
         .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
-        .ticket-80 .t-title { font-weight: 700; text-transform: uppercase; margin: 0 0 4px; }
-        .ticket-80 .t-meta { margin: 1px 0; }
-        .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 700; text-transform: uppercase; }
+        .ticket-80 .t-title { font-weight: 800; text-transform: uppercase; margin: 0 0 4px; }
+        .ticket-80 .t-meta { margin: 1px 0; font-weight: 700; }
+        .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 800; text-transform: uppercase; }
         .ticket-80 .t-row {
           display: flex;
           justify-content: space-between;
@@ -525,10 +532,10 @@ if (tipoDescuento === 'porcentaje') {
         }
         .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
         .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
-        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #4b5563; }
+        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #111827; font-weight: 700; }
         @media print {
           @page { size: 80mm auto; margin: 2mm; }
-          html, body { margin: 0; padding: 0; }
+          html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .ticket-80 {
             width: 76mm;
             max-width: 76mm;
@@ -538,7 +545,7 @@ if (tipoDescuento === 'porcentaje') {
             line-height: 1.15;
           }
           .ticket-80 .t-clinic { font-size: 12px; }
-          .ticket-80 .t-logo { height: 40px; margin-bottom: 3px; }
+          .ticket-80 .t-logo { height: 42px; margin-bottom: 3px; }
           .ticket-80 .t-total { font-size: 11.5px; }
         }
       </style>`;
@@ -560,7 +567,8 @@ if (tipoDescuento === 'porcentaje') {
         <div class="t-meta">Paciente: ${nombreCompleto}</div>
         <div class="t-meta">DNI: ${dniPaciente || '-'}</div>
         <div class="t-meta">H.C.: ${historiaClinicaPaciente || '-'}</div>
-        ${cotizacionIdsTicket.length > 0 ? `<div class="t-meta">Cotizaciones: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
+        ${cotizacionIdsTicket.length > 0 ? `<div class="t-meta">Atenciones: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
+        ${referenciaOrigenCobro ? `<div class="t-meta">Referencia origen: ${referenciaOrigenCobro}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Consulta: ${tipoConsulta}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Fecha consulta: ${fechaConsultaFmt || 'No registrada'}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Hora consulta: ${horaConsulta || 'No registrada'}</div>` : ''}
@@ -579,7 +587,7 @@ if (tipoDescuento === 'porcentaje') {
 
         ${mostrarResumenSaldo ? `
           <div class="t-section">Resumen saldo</div>
-          ${esCobroCotizacion ? `<div class="t-meta">${cotizacionIdsTicket.length > 1 ? 'Cotizaciones' : 'Cotización'}: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
+          ${esCobroCotizacion ? `<div class="t-meta">${cotizacionIdsTicket.length > 1 ? 'Atenciones' : 'Atención'}: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
           <div class="t-meta">Aplicación: ${esAdelantoCobro ? 'Adelanto' : 'Pago completo'}</div>
           <div class="t-row"><div class="t-desc">Saldo anterior</div><div class="t-amount">${toMoney(saldoAnteriorCobro)}</div></div>
           <div class="t-row"><div class="t-desc">Abono aplicado</div><div class="t-amount">${toMoney(abonoAplicadoCobro)}</div></div>
@@ -746,7 +754,7 @@ if (tipoDescuento === 'porcentaje') {
                   <span>
                     {detalle.descripcion}
                     {Number(detalle?.cotizacion_id || 0) > 0 && Array.isArray(servicio?.cotizacion_ids) && servicio.cotizacion_ids.length > 1 ? (
-                      <span className="block text-xs text-slate-500">Cotización #{Number(detalle.cotizacion_id)}</span>
+                      <span className="block text-xs text-slate-500">Atención #{Number(detalle.cotizacion_id)}</span>
                     ) : null}
                     {modoCobro === 'parcial' ? (
                       <span className="block text-xs text-gray-500">
