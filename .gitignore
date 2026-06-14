@@ -101,6 +101,7 @@ composer.phar
 *.tmp
 *.temp
 *.bak
+_tmp_resultado_*.pdf
 tmp/mpdf/mpdf/ttfontdata/*.json
 
 # Deployment archives
