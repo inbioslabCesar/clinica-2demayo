@@ -37,6 +37,7 @@ clinica-config/
 debug_session*.txt
 session_debug.php
 *.sql.backup
+/sql/
 backup/
 uploads/
 # Permitir versionar carpetas vacías necesarias para hosting
@@ -100,6 +101,7 @@ composer.phar
 *.tmp
 *.temp
 *.bak
+tmp/mpdf/mpdf/ttfontdata/*.json
 
 # Deployment archives
 *.zip
