@@ -16,6 +16,10 @@ export default function SidebarMedico({ onClose }) {
         <Icon iconName="Calendar" className="text-xl" />
         Disponibilidad
       </Link>
+      <Link to="/suplencia-pacientes" className="py-2 px-3 rounded-lg hover:bg-white/70 font-medium flex items-center gap-2" style={itemStyle} onClick={onClose}>
+        <Icon iconName="Switch" className="text-xl" />
+        Pacientes por Suplencia
+      </Link>
     </>
   );
 }

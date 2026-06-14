@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/continuidad_clinica_helper.php';
 
 if (!function_exists('op_column_exists')) {
     function op_column_exists(mysqli $conn, $table, $column)
@@ -310,17 +311,10 @@ if ($method === 'GET') {
     }
 
     if ($esSesionMedico) {
-        $stmtOwner = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
-        if ($stmtOwner) {
-            $stmtOwner->bind_param('i', $consultaId);
-            $stmtOwner->execute();
-            $owner = $stmtOwner->get_result()->fetch_assoc();
-            $stmtOwner->close();
-            if (!$owner || (int)($owner['medico_id'] ?? 0) !== $medicoSesionId) {
-                http_response_code(403);
-                echo json_encode(['success' => false, 'error' => 'No autorizado para ver esta consulta']);
-                exit;
-            }
+        if (!continuidad_can_access_consulta($conn, $consultaId, $medicoSesionId, 'read')) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'No autorizado para ver esta consulta']);
+            exit;
         }
     }
 
@@ -339,17 +333,10 @@ if ($method === 'POST') {
     }
 
     if ($esSesionMedico) {
-        $stmtOwner = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
-        if ($stmtOwner) {
-            $stmtOwner->bind_param('i', $consultaId);
-            $stmtOwner->execute();
-            $owner = $stmtOwner->get_result()->fetch_assoc();
-            $stmtOwner->close();
-            if (!$owner || (int)($owner['medico_id'] ?? 0) !== $medicoSesionId) {
-                http_response_code(403);
-                echo json_encode(['success' => false, 'error' => 'No autorizado para editar esta consulta']);
-                exit;
-            }
+        if (!continuidad_can_access_consulta($conn, $consultaId, $medicoSesionId, 'write')) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'No autorizado para editar esta consulta']);
+            exit;
         }
     }
 
