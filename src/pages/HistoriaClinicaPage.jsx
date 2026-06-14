@@ -62,6 +62,7 @@ function HistoriaClinicaPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
+  const navigationState = location.state && typeof location.state === 'object' ? location.state : null;
   const readOnly = location.pathname.startsWith('/historia-clinica-lectura') || searchParams.get('read_only') === '1';
   const backTo = searchParams.get('back_to') || '';
   const { componentRef: printRef, handlePrint: handlePrintHC } = usePrintHistoriaClinica();
@@ -98,6 +99,38 @@ function HistoriaClinicaPage() {
   });
   const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
   const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
+  const restoreHistorialRef = useRef(false);
+  const clearHistoryRestoreState = useCallback(() => {
+    if (!navigationState) return;
+
+    const restoreKeys = [
+      'openHistoryDrawer',
+      'restoreHistoryDrawer',
+      'showHistoryDetail',
+      'restoreHistoryDetail',
+      'historyConsultaId',
+      'historyIndex',
+    ];
+
+    const hasRestoreState = restoreKeys.some((key) => Object.prototype.hasOwnProperty.call(navigationState, key));
+    if (!hasRestoreState) return;
+
+    const nextState = { ...navigationState };
+    restoreKeys.forEach((key) => {
+      delete nextState[key];
+    });
+
+    navigate(`${location.pathname}${location.search || ''}`, {
+      replace: true,
+      state: Object.keys(nextState).length > 0 ? nextState : undefined,
+    });
+  }, [location.pathname, location.search, navigate, navigationState]);
+
+  const cerrarDrawerHistorial = useCallback(() => {
+    setDrawerHistorialAbierto(false);
+    clearHistoryRestoreState();
+  }, [clearHistoryRestoreState]);
+
   useEffect(() => {
     if (!consultaId) return;
     const noCache = `_t=${Date.now()}`;
@@ -338,10 +371,35 @@ function HistoriaClinicaPage() {
   const [bloqueoGuardadoHasta, setBloqueoGuardadoHasta] = useState(0);
   const [diagnosticos, setDiagnosticos] = useState([]);
   const [hcTemplateMeta, setHcTemplateMeta] = useState(null);
+  const [hcTemplateResolution, setHcTemplateResolution] = useState(null);
   const hcRef = useRef(hc);
   const diagnosticosRef = useRef(diagnosticos);
   const bloqueoGuardadoActivo = Date.now() < bloqueoGuardadoHasta;
   const draftKey = useMemo(() => buildDraftStorageKey(consultaId, pacienteId), [consultaId, pacienteId]);
+
+  const hcTemplateDebug = useMemo(() => {
+    const tplId = String(hcTemplateMeta?.id || '').trim();
+    const tplVersion = String(hcTemplateMeta?.version || '').trim();
+    const source = String(hcTemplateMeta?.source || '').trim();
+    const resolvedBy = String(hcTemplateResolution?.resolved_by || '').trim();
+    const policyMode = String(hcTemplateResolution?.policy_mode || '').trim();
+
+    const sourceLabelMap = {
+      clinica_override: 'Clínica',
+      clinica_default: 'Clínica (default)',
+      builtin: 'Sistema',
+    };
+
+    return {
+      hasTemplate: tplId !== '',
+      templateLabel: tplVersion ? `${tplId} v${tplVersion}` : tplId,
+      sourceLabel: sourceLabelMap[source] || source || 'No definido',
+      resolvedBy: resolvedBy || 'default',
+      policyMode: policyMode || 'auto',
+      isFallbackBuiltin: source === 'builtin',
+      isDefaultFallback: resolvedBy === 'clinica_default_fallback',
+    };
+  }, [hcTemplateMeta, hcTemplateResolution]);
 
   useEffect(() => {
     hcRef.current = hc;
@@ -460,6 +518,7 @@ function HistoriaClinicaPage() {
         setDraftHydrated(true);
         if (HC_TEMPLATE_ENGINE_READ) {
           setHcTemplateMeta(data.template || null);
+          setHcTemplateResolution(data.template_resolution || null);
         }
       })
       .catch(() => {
@@ -898,6 +957,51 @@ function HistoriaClinicaPage() {
     return () => window.removeEventListener('hc-assistant-open-history-drawer', handleOpenHistoryDrawer);
   }, [consultaActual?.hc_origen_id]);
 
+  useEffect(() => {
+    if (restoreHistorialRef.current) return;
+    if (!navigationState) return;
+
+    const shouldOpenDrawer = Boolean(navigationState.openHistoryDrawer || navigationState.restoreHistoryDrawer);
+    const shouldShowDetail = Boolean(navigationState.showHistoryDetail || navigationState.restoreHistoryDetail);
+
+    if (shouldOpenDrawer) {
+      setDrawerHistorialAbierto(true);
+    }
+    if (shouldShowDetail) {
+      setMostrarHcAnterior(true);
+    }
+
+    if (shouldOpenDrawer || shouldShowDetail) {
+      restoreHistorialRef.current = true;
+    }
+  }, [navigationState]);
+
+  useEffect(() => {
+    if (!navigationState || !Array.isArray(historiasPrevias) || historiasPrevias.length === 0) return;
+
+    const targetConsultaId = Number(navigationState.historyConsultaId || 0);
+    const targetIndexRaw = Number(navigationState.historyIndex || 0);
+    let nextIndex = -1;
+
+    if (targetConsultaId > 0) {
+      nextIndex = historiasPrevias.findIndex((item) => Number(item?.consulta_id || 0) === targetConsultaId);
+    }
+
+    if (nextIndex < 0) {
+      nextIndex = Math.max(0, Math.min(Number.isFinite(targetIndexRaw) ? targetIndexRaw : 0, historiasPrevias.length - 1));
+    }
+
+    setIndiceHistoriaPrevia(nextIndex);
+    if (navigationState.openHistoryDrawer || navigationState.restoreHistoryDrawer) {
+      setDrawerHistorialAbierto(true);
+    }
+    if (navigationState.showHistoryDetail || navigationState.restoreHistoryDetail) {
+      setMostrarHcAnterior(true);
+    }
+
+    clearHistoryRestoreState();
+  }, [clearHistoryRestoreState, navigationState, historiasPrevias]);
+
   const irHistoriaAnterior = () => {
     if (totalHistoriasPrevias <= 0) return;
     setIndiceHistoriaPrevia((prev) => Math.min(prev + 1, totalHistoriasPrevias - 1));
@@ -960,6 +1064,33 @@ function HistoriaClinicaPage() {
         : `${basePath}${rawPath}`;
     } else if (basePath) {
       normalizedPath = `${basePath}/${rawPath.replace(/^\/+/, '')}`;
+    }
+
+    // Para rutas internas del SPA, navegar en la misma pestaña para conservar
+    // el contexto de sesión del frontend (sessionStorage) y evitar redirecciones a login.
+    if (normalizedPath.startsWith('/')) {
+      let routePath = normalizedPath;
+      if (basePath && routePath.startsWith(`${basePath}/`)) {
+        routePath = routePath.slice(basePath.length) || '/';
+      } else if (basePath && routePath === basePath) {
+        routePath = '/';
+      }
+
+      const backToPath = `${location.pathname}${location.search || ''}`;
+      const section = routePath.includes('/visor-imagen/') ? 'ecografia' : 'laboratorio';
+      navigate(routePath, {
+        state: {
+          backTo: backToPath,
+          backState: {
+            openHistoryDrawer: true,
+            showHistoryDetail: Boolean(mostrarHcAnterior),
+            historyConsultaId: Number(hcAnterior?.consulta_id || 0),
+            historyIndex: Number(indiceHistoriaPrevia || 0),
+            section,
+          },
+        },
+      });
+      return;
     }
 
     window.open(normalizedPath, '_blank', 'noopener,noreferrer');
@@ -1308,7 +1439,16 @@ function HistoriaClinicaPage() {
   useEffect(() => {
     // FIX: canOpenHistoryDrawer debe verificar que HC previas fueron realmente cargadas, 
     // no solo que hc_origen_id esté seteado. Evita mostrar botón cuando no hay HC anteriores.
-    const tieneHcPreviasDisponibles = (totalHistoriasPrevias && totalHistoriasPrevias > 0 && !hcAnteriorLoading && !hcAnteriorError);
+    const consultaActualId = Number(consultaActual?.id || 0);
+    const consultaObjetivoId = Number(consultaId || 0);
+    const contextoConsultaListo = consultaObjetivoId > 0 && consultaActualId === consultaObjetivoId;
+    const tieneHcPreviasDisponibles = Boolean(
+      contextoConsultaListo
+      && totalHistoriasPrevias
+      && totalHistoriasPrevias > 0
+      && !hcAnteriorLoading
+      && !hcAnteriorError
+    );
     
     const payload = {
       source: 'historia-clinica',
@@ -1342,6 +1482,7 @@ function HistoriaClinicaPage() {
       }));
     };
   }, [
+    consultaActual?.id,
     consultaActual?.hc_origen_id,
     consultaId,
     pacienteId,
@@ -1634,6 +1775,30 @@ function HistoriaClinicaPage() {
               </div>
               <h2 className="text-lg font-semibold text-gray-800">📝 Anamnesis y Examen Físico</h2>
             </div>
+            {HC_TEMPLATE_ENGINE_READ && (
+              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                {hcTemplateDebug.hasTemplate ? (
+                  <>
+                    <span className="font-semibold text-slate-800">Plantilla activa:</span> {hcTemplateDebug.templateLabel}
+                    <span className="mx-2 text-slate-400">|</span>
+                    <span className="font-semibold text-slate-800">Origen:</span> {hcTemplateDebug.sourceLabel}
+                    <span className="mx-2 text-slate-400">|</span>
+                    <span className="font-semibold text-slate-800">Resolución:</span> {hcTemplateDebug.resolvedBy}
+                    <span className="mx-2 text-slate-400">|</span>
+                    <span className="font-semibold text-slate-800">Modo:</span> {hcTemplateDebug.policyMode}
+                    {(hcTemplateDebug.isFallbackBuiltin || hcTemplateDebug.isDefaultFallback) && (
+                      <span className="ml-2 inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                        Fallback activo
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-amber-700 font-semibold">
+                    No se resolvió plantilla HC. Se aplicará esquema mínimo para evitar errores de renderizado.
+                  </span>
+                )}
+              </div>
+            )}
             <FormularioHistoriaClinica
               hc={hc}
               setHc={setHc}
@@ -2225,7 +2390,7 @@ function HistoriaClinicaPage() {
         <>
           <div
             className={`fixed inset-0 z-40 bg-slate-900/40 transition-opacity duration-300 ${drawerHistorialAbierto ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-            onClick={() => setDrawerHistorialAbierto(false)}
+            onClick={cerrarDrawerHistorial}
           />
           <aside
             className={`fixed top-0 right-0 z-50 h-screen w-full sm:w-[92vw] lg:w-[40vw] bg-slate-50 border-l border-slate-200 shadow-2xl transition-transform duration-300 ${drawerHistorialAbierto ? 'translate-x-0' : 'translate-x-full'}`}
@@ -2236,7 +2401,7 @@ function HistoriaClinicaPage() {
                 <p className="text-sm font-semibold text-slate-800">Historial Clínico Previo</p>
                 <button
                   type="button"
-                  onClick={() => setDrawerHistorialAbierto(false)}
+                  onClick={cerrarDrawerHistorial}
                   className="w-8 h-8 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
                   title="Cerrar historial"
                 >

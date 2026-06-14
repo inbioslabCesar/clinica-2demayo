@@ -1637,13 +1637,22 @@ function hc_resolver_parent_canonico($conn, $hcId, $consultaId) {
     // 3. Resolver parent
     $parentHcId = 0;
 
-    // 3a. Si viene de proxima cita de HC anterior → hc_origen_id almacena consultas.id del evento padre
-    //     (normalización canónica: hc_origen_id es siempre consultas.id, nunca historia_clinica.id).
-    //     Buscamos la HC cuya consulta_id coincida con hc_origen_id.
+    // 3a. Si viene de proxima cita de HC anterior, hc_origen_id puede existir en dos formatos
+    // históricos: historia_clinica.id (actual) o consultas.id (legacy). Resolver ambos de forma
+    // determinista y filtrando por el mismo paciente para evitar enlaces cruzados incorrectos.
     if ($hcOrigenId > 0) {
-        $stmtP = $conn->prepare('SELECT id FROM historia_clinica WHERE consulta_id = ? LIMIT 1');
+        $stmtP = $conn->prepare(
+            'SELECT h.id,
+                    CASE WHEN h.id = ? THEN 1 ELSE 2 END AS prioridad
+             FROM historia_clinica h
+             INNER JOIN consultas c ON c.id = h.consulta_id
+             WHERE c.paciente_id = ?
+               AND (h.id = ? OR h.consulta_id = ?)
+             ORDER BY prioridad ASC, h.id DESC
+             LIMIT 1'
+        );
         if ($stmtP) {
-            $stmtP->bind_param('i', $hcOrigenId);
+            $stmtP->bind_param('iiii', $hcOrigenId, $pacienteId, $hcOrigenId, $hcOrigenId);
             $stmtP->execute();
             $rP = $stmtP->get_result()->fetch_assoc();
             $stmtP->close();
@@ -2313,6 +2322,70 @@ function hc_resolve_template_for_hc($conn, $consultaId, $datos) {
     return [$templateMeta, $templateResolution];
 }
 
+function hc_prepare_template_for_save($conn, $consultaId, $datos) {
+    if (!is_array($datos)) {
+        return $datos;
+    }
+
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0) {
+        return $datos;
+    }
+
+    $policy = hc_get_template_policy($conn);
+    $mode = (string)($policy['mode'] ?? 'auto');
+
+    $templateId = '';
+    $templateVersion = '';
+    if (isset($datos['template']) && is_array($datos['template'])) {
+        $templateId = trim((string)($datos['template']['id'] ?? ''));
+        $templateVersion = trim((string)($datos['template']['version'] ?? ''));
+    }
+
+    $templateIdNorm = strtolower($templateId);
+    $isLegacyGeneric = in_array($templateIdNorm, ['medicina_general', 'default'], true);
+
+    // En modo auto, si no viene plantilla o viene una generica legacy,
+    // fijar la plantilla resuelta por especialidad para mantener coherencia.
+    $forceAutoResolve = ($mode === 'auto') && ($templateId === '' || $isLegacyGeneric);
+    // En modo single, siempre fijar la plantilla resuelta por politica actual.
+    $forceSingleResolve = ($mode === 'single');
+
+    $resolveOptions = [
+        'consulta_id' => $consultaId,
+    ];
+
+    if (!$forceAutoResolve && !$forceSingleResolve && $templateId !== '') {
+        $resolveOptions['template_id'] = $templateId;
+        if ($templateVersion !== '') {
+            $resolveOptions['version'] = $templateVersion;
+        }
+    }
+
+    $resolved = hc_resolve_template($conn, $resolveOptions);
+    if (!is_array($resolved) || !($resolved['success'] ?? false)) {
+        return $datos;
+    }
+
+    $tpl = $resolved['template'] ?? null;
+    if (!is_array($tpl)) {
+        return $datos;
+    }
+
+    $resolvedId = trim((string)($tpl['id'] ?? ''));
+    if ($resolvedId === '') {
+        return $datos;
+    }
+
+    $resolvedVersion = trim((string)($tpl['version'] ?? ''));
+    $datos['template'] = [
+        'id' => $resolvedId,
+        'version' => $resolvedVersion,
+    ];
+
+    return $datos;
+}
+
 function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 30) {
     $consultaIdActual = (int)$consultaIdActual;
     if ($consultaIdActual <= 0) return [];
@@ -2807,6 +2880,7 @@ switch ($method) {
 
         if (is_array($datos)) {
             $datos = hc_sanitizar_diagnosticos($datos);
+            $datos = hc_prepare_template_for_save($conn, (int)$consulta_id, $datos);
         }
 
         // Verificar si ya existe HC para esta consulta

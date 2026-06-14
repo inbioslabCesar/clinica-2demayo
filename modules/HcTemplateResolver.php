@@ -179,21 +179,12 @@ function hc_find_template_id_by_specialty($conn, $specialty, $clinicKey = '') {
     $hasClinicCol = hc_column_exists_hc_templates($conn, 'clinic_key');
     $sql = 'SELECT template_id, nombre' . ($hasClinicCol ? ', clinic_key' : ', NULL AS clinic_key') . ' FROM hc_templates WHERE activo = 1';
 
-    $stmt = null;
-    if ($hasClinicCol && $clinicKey !== '') {
-        $sql .= ' AND (clinic_key = ? OR clinic_key IS NULL OR clinic_key = "")';
-        $sql .= ' ORDER BY (clinic_key = ?) DESC, id DESC';
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            return '';
-        }
-        $stmt->bind_param('ss', $clinicKey, $clinicKey);
-    } else {
-        $sql .= ' ORDER BY id DESC';
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            return '';
-        }
+    // No filtrar por clinic_key aqui: primero detectamos coincidencia por especialidad,
+    // luego ponderamos preferencia de clinica actual / plantilla global.
+    $sql .= ' ORDER BY id DESC';
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return '';
     }
 
     $stmt->execute();
@@ -225,6 +216,39 @@ function hc_find_template_id_by_specialty($conn, $specialty, $clinicKey = '') {
         } elseif ($tplSlug !== '' && strpos($tplSlug, $slug) !== false) {
             $score = 70;
         }
+
+        // Sin match de especialidad no entra a competir.
+        if ($score <= 0) {
+            continue;
+        }
+
+        // Preferencia por clinic_key (cuando existe), sin bloquear fallback cruzado.
+        $clinicScore = 0;
+        if ($hasClinicCol) {
+            $rowClinicKey = trim((string)($row['clinic_key'] ?? ''));
+            $rowClinicSlug = hc_slugify_text($rowClinicKey);
+            $targetClinicSlug = hc_slugify_text($clinicKey);
+
+            if ($clinicKey !== '') {
+                if ($rowClinicKey === '') {
+                    // Plantilla global: segunda mejor opcion.
+                    $clinicScore = 15;
+                } elseif (strcasecmp($rowClinicKey, $clinicKey) === 0) {
+                    // Match exacto de clinica: prioridad maxima.
+                    $clinicScore = 30;
+                } elseif ($rowClinicSlug !== '' && $targetClinicSlug !== '' && $rowClinicSlug === $targetClinicSlug) {
+                    // Match normalizado por slug para tolerar variantes de texto.
+                    $clinicScore = 28;
+                }
+            } else {
+                // Si no hay clinic_key objetivo, favorecer plantillas globales.
+                if ($rowClinicKey === '') {
+                    $clinicScore = 8;
+                }
+            }
+        }
+
+        $score += $clinicScore;
 
         if ($score > $bestScore) {
             $bestScore = $score;

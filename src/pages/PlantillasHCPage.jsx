@@ -13,6 +13,7 @@ const DEFAULT_FIELDS_TEXT =
 
 const EXCLUDED_TEMPLATE_SECTION_KEYS = new Set(["plan"]);
 const EXCLUDED_TEMPLATE_FIELD_KEYS = new Set(["tratamiento"]);
+const COMMON_ACRONYMS = new Set(["fur", "ram", "tbc", "epoc", "hta", "dm", "dm2", "vih", "its", "ira"]);
 
 let localIdCounter = 0;
 
@@ -38,12 +39,18 @@ function humanizeKey(key) {
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+    .split(" ")
+    .map((token) => {
+      const lower = token.toLowerCase();
+      if (COMMON_ACRONYMS.has(lower)) return lower.toUpperCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
 }
 
 function normalizeFieldMeta(rawMeta = {}) {
   const allowedTypes = new Set(["text", "textarea", "number", "select"]);
-  const allowedWidths = new Set(["quarter", "third", "half", "full"]);
+  const allowedWidths = new Set(["sixth", "quarter", "third", "half", "full"]);
 
   const rawType = String(rawMeta?.type || "textarea").trim().toLowerCase();
   const rawWidth = String(rawMeta?.width || "half").trim().toLowerCase();
@@ -62,6 +69,7 @@ function normalizeFieldMeta(rawMeta = {}) {
     rows: Number.isFinite(rowsRaw) ? Math.max(1, Math.min(8, Math.trunc(rowsRaw))) : 2,
     options: Array.from(new Set(optionsRaw.map((opt) => String(opt).trim()).filter(Boolean))),
     breakAfter: Boolean(rawMeta?.breakAfter ?? rawMeta?.break_after ?? false),
+    label: String(rawMeta?.label || "").trim(),
   };
 }
 
@@ -134,7 +142,7 @@ function sectionsToBuilder(sections = {}) {
     if (!fields || typeof fields !== "object" || Array.isArray(fields)) return accumulator;
 
     const fieldDrafts = Object.entries(fields).map(([fieldKey, fieldMeta]) =>
-      createFieldDraft(humanizeKey(fieldKey), fieldMeta)
+      createFieldDraft(String(fieldMeta?.label || "").trim() || humanizeKey(fieldKey), fieldMeta)
     );
 
     accumulator.push({
@@ -156,12 +164,14 @@ function builderToSections(builderSections = []) {
       const fieldKey = normalizeKeySegment(field.title, `campo_${fieldIndex + 1}`);
       if (!uniqueFields[fieldKey]) {
         const normalizedMeta = normalizeFieldMeta(field);
+        const fieldLabel = String(field.title || "").trim();
         uniqueFields[fieldKey] = {
           type: normalizedMeta.type,
           width: normalizedMeta.width,
           rows: normalizedMeta.rows,
           options: normalizedMeta.options,
           break_after: normalizedMeta.breakAfter,
+          label: fieldLabel,
         };
       }
     });
@@ -276,6 +286,8 @@ export default function PlantillasHCPage() {
 
   const widthToPreviewClass = (width) => {
     switch (String(width || "half")) {
+      case "sixth":
+        return "col-span-12 md:col-span-2";
       case "quarter":
         return "col-span-12 md:col-span-3";
       case "third":
@@ -1133,6 +1145,7 @@ export default function PlantillasHCPage() {
                                           value={field.width || "half"}
                                           onChange={(e) => updateFieldConfig(section.id, field.id, { width: e.target.value })}
                                         >
+                                          <option value="sixth">Mini (1/6)</option>
                                           <option value="quarter">Corto (1/4)</option>
                                           <option value="third">Medio (1/3)</option>
                                           <option value="half">Normal (1/2)</option>

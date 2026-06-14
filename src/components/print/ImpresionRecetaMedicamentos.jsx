@@ -1,4 +1,5 @@
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
+import { calcularCantidadTotalReceta } from "../../utils/calcularCantidadReceta";
 import { BASE_URL } from "../../config/config.js";
 
 const ImpresionRecetaMedicamentos = ({ 
@@ -222,6 +223,18 @@ const ImpresionRecetaMedicamentos = ({
                             <span className="font-semibold">Frecuencia:</span> {medicamento.frecuencia || "-"}
                             <span className="mx-1 text-slate-400">|</span>
                             <span className="font-semibold">Duración:</span> {medicamento.duracion || "-"}
+                            {(() => {
+                              const cantidadTotal = calcularCantidadTotalReceta(medicamento);
+                              if (cantidadTotal) {
+                                return (
+                                  <>
+                                    <span className="mx-1 text-slate-400">|</span>
+                                    <span className="font-semibold">Cantidad Total:</span> {cantidadTotal} unidades
+                                  </>
+                                );
+                              }
+                              return null;
+                            })()}
                           </p>
                           {medicamento.observaciones && (
                             <p className="text-[10px] leading-[1] text-slate-800">

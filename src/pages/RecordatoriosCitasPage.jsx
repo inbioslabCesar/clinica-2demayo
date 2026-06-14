@@ -14,6 +14,8 @@ const ESTADOS_GESTION = [
   { value: "cancelado", label: "Cancelado" },
 ];
 
+const ORDER_STORAGE_KEY = "recordatorios_citas_orden_v1";
+
 function estadoBadgeClasses(estado) {
   switch (estado) {
     case "confirmado":
@@ -90,7 +92,12 @@ function esConsultaHcProxima(item) {
   return String(item?.origen_consulta || "") === "hc_proxima";
 }
 
+function esConsultaReservadaSinTurno(item) {
+  return String(item?.origen_consulta || "") === "reservada_sin_turno";
+}
+
 function tipoConsultaLabel(item) {
+  if (esConsultaReservadaSinTurno(item)) return "Reservada sin turno";
   const tipo = String(item?.tipo_consulta || "").toLowerCase();
   if (tipo === "programada") return "Programada";
   if (tipo === "espontanea") return "Espontanea";
@@ -98,6 +105,9 @@ function tipoConsultaLabel(item) {
 }
 
 function tipoConsultaBadge(item) {
+  if (esConsultaReservadaSinTurno(item)) {
+    return "bg-cyan-100 text-cyan-700 border-cyan-200";
+  }
   const tipo = String(item?.tipo_consulta || "").toLowerCase();
   if (tipo === "programada") {
     return "bg-sky-100 text-sky-700 border-sky-200";
@@ -139,6 +149,15 @@ function obtenerPrioridad(item) {
 export default function RecordatoriosCitasPage() {
   const navigate = useNavigate();
 
+  const initialOrdenCitas = (() => {
+    try {
+      const stored = window.localStorage.getItem(ORDER_STORAGE_KEY);
+      return stored === "fecha" ? "fecha" : "prioridad";
+    } catch {
+      return "prioridad";
+    }
+  })();
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -151,6 +170,7 @@ export default function RecordatoriosCitasPage() {
   const [busqueda, setBusqueda] = useState("");
   const [soloSinGestion, setSoloSinGestion] = useState(false);
   const [vistaRapida, setVistaRapida] = useState("todas");
+  const [ordenCitas, setOrdenCitas] = useState(initialOrdenCitas);
   const [filaActivaId, setFilaActivaId] = useState(null);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -222,6 +242,14 @@ export default function RecordatoriosCitasPage() {
     setPage(1);
   }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ORDER_STORAGE_KEY, ordenCitas);
+    } catch {
+      // Si localStorage no está disponible, se conserva el comportamiento en memoria.
+    }
+  }, [ordenCitas]);
+
   const pendientesUrgentes = useMemo(
     () => items.filter((item) => {
       const d = diasParaCita(item.fecha);
@@ -270,6 +298,17 @@ export default function RecordatoriosCitasPage() {
       return { ...item, prioridad, diasRestantes };
     });
 
+    if (ordenCitas === "fecha") {
+      enriched.sort((a, b) => {
+        const fa = `${a.fecha || ""} ${String(a.hora || "").slice(0, 5)}`;
+        const fb = `${b.fecha || ""} ${String(b.hora || "").slice(0, 5)}`;
+        const cmp = fa.localeCompare(fb);
+        if (cmp !== 0) return cmp;
+        return Number(a.id || 0) - Number(b.id || 0);
+      });
+      return enriched;
+    }
+
     enriched.sort((a, b) => {
       if (a.prioridad.orden !== b.prioridad.orden) {
         return a.prioridad.orden - b.prioridad.orden;
@@ -285,7 +324,7 @@ export default function RecordatoriosCitasPage() {
     });
 
     return enriched;
-  }, [itemsVista]);
+  }, [itemsVista, ordenCitas]);
 
   const resumenPrioridad = useMemo(() => ({
     critico: Number(prioridadGlobal.critico || 0),
@@ -454,6 +493,7 @@ export default function RecordatoriosCitasPage() {
                 <option value="agendada">Agendada</option>
                 <option value="hc_proxima">HC proxima</option>
                 <option value="cotizador">Cotizador</option>
+                <option value="reservada_sin_turno">Reservada sin turno</option>
               </select>
             </div>
 
@@ -465,6 +505,18 @@ export default function RecordatoriosCitasPage() {
                 onChange={(e) => setBusqueda(e.target.value)}
                 placeholder="Paciente, medico, DNI, telefono o ID"
               />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Orden</label>
+              <select
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                value={ordenCitas}
+                onChange={(e) => setOrdenCitas(e.target.value)}
+              >
+                <option value="prioridad">Por prioridad</option>
+                <option value="fecha">Por fecha</option>
+              </select>
             </div>
 
             <div className="flex items-end gap-2">

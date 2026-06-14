@@ -2,6 +2,7 @@
 // Fields handled by dedicated sections elsewhere on the HC page — skip them here.
 const EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template"]);
 const EXCLUDED_SECTIONS = new Set(["plan", "tratamiento", "receta"]);
+const COMMON_ACRONYMS = new Set(["fur", "ram", "tbc", "epoc", "hta", "dm", "dm2", "vih", "its", "ira"]);
 
 // Shown when no template is configured yet so the form is never blank.
 const DEFAULT_TEMPLATE_SECTIONS = {
@@ -28,15 +29,18 @@ function normalizeFieldMeta(rawMeta = {}) {
 
   return {
     type: ["text", "textarea", "number", "select"].includes(type) ? type : "textarea",
-    width: ["quarter", "third", "half", "full"].includes(width) ? width : "half",
+    width: ["sixth", "quarter", "third", "half", "full"].includes(width) ? width : "half",
     rows: Number.isFinite(rowsRaw) ? Math.max(1, Math.min(8, Math.trunc(rowsRaw))) : 2,
     options: optionsRaw,
     breakAfter: Boolean(rawMeta?.breakAfter ?? rawMeta?.break_after ?? false),
+    label: String(rawMeta?.label || "").trim(),
   };
 }
 
 function widthToClass(width) {
   switch (width) {
+    case "sixth":
+      return "col-span-12 md:col-span-2";
     case "quarter":
       return "col-span-12 md:col-span-3";
     case "third":
@@ -49,12 +53,24 @@ function widthToClass(width) {
   }
 }
 
-function formatFieldLabel(fieldKey) {
-  if (!fieldKey) return "Campo";
-  if (fieldKey.toLowerCase() === "fur") return "FUR";
-  return fieldKey
+function formatFieldLabel(fieldKey, explicitLabel = "") {
+  const custom = String(explicitLabel || "").trim();
+  if (custom) return custom;
+
+  const key = String(fieldKey || "").trim();
+  if (!key) return "Campo";
+
+  return key
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((token) => {
+      const lower = token.toLowerCase();
+      if (COMMON_ACRONYMS.has(lower)) return lower.toUpperCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
 }
 
 export default function FormularioHistoriaClinica({ hc, setHc, templateSections = {} }) {
@@ -90,7 +106,7 @@ export default function FormularioHistoriaClinica({ hc, setHc, templateSections 
               const nodes = [
                 <div key={fieldKey} className={widthToClass(meta.width)}>
                 <label className="block font-semibold mb-1 text-sm">
-                  {formatFieldLabel(fieldKey)}:
+                  {formatFieldLabel(fieldKey, meta.label)}:
                 </label>
 
                 {meta.type === "select" ? (

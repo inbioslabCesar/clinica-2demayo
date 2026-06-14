@@ -125,7 +125,7 @@ if ($method === 'GET') {
         $params[] = $estadoGestion;
     }
 
-    if (in_array($origenConsulta, ['agendada', 'cotizador', 'hc_proxima'], true)) {
+    if (in_array($origenConsulta, ['agendada', 'cotizador', 'hc_proxima', 'reservada_sin_turno'], true)) {
         $where[] = 'COALESCE(NULLIF(TRIM(c.origen_creacion), ""), CASE'
               . ' WHEN c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0 THEN "hc_proxima"'
               . ' WHEN cot_ref.cotizacion_id IS NOT NULL THEN "cotizador"'

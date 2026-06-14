@@ -61,6 +61,7 @@ function hc_templates_normalize_sections($sections) {
                 'rows' => 2,
                 'options' => [],
                 'break_after' => false,
+                'label' => '',
             ];
 
             if (is_array($fieldDefault)) {
@@ -70,7 +71,7 @@ function hc_templates_normalize_sections($sections) {
                 }
 
                 $rawWidth = strtolower(trim((string)($fieldDefault['width'] ?? 'half')));
-                if (in_array($rawWidth, ['quarter', 'third', 'half', 'full'], true)) {
+                if (in_array($rawWidth, ['sixth', 'quarter', 'third', 'half', 'full'], true)) {
                     $normalized['width'] = $rawWidth;
                 }
 
@@ -94,6 +95,11 @@ function hc_templates_normalize_sections($sections) {
 
                 $rawBreak = $fieldDefault['break_after'] ?? ($fieldDefault['breakAfter'] ?? false);
                 $normalized['break_after'] = filter_var($rawBreak, FILTER_VALIDATE_BOOLEAN);
+
+                $rawLabel = trim((string)($fieldDefault['label'] ?? ''));
+                if ($rawLabel !== '') {
+                    $normalized['label'] = $rawLabel;
+                }
             }
 
             $sectionFields[$fKey] = $normalized;

@@ -219,6 +219,7 @@ const ImpresionHistoriaClinica = ({
 
   const imagenesAgrupadas = splitByToday(ordenesImagenSolicitadas);
   const procedimientosAgrupados = splitByToday(ordenesProcedimientosSolicitados);
+  const COMMON_ACRONYMS = new Set(['fur', 'ram', 'tbc', 'epoc', 'hta', 'dm', 'dm2', 'vih', 'its', 'ira']);
 
   // Función para mostrar mensaje cuando no hay datos
   const SeccionVacia = ({ titulo, mensaje = "No hay información registrada" }) => (
@@ -232,11 +233,23 @@ const ImpresionHistoriaClinica = ({
     </div>
   );
 
-  const formatFieldLabel = (fieldKey) => {
+  const formatFieldLabel = (fieldKey, explicitLabel = '') => {
+    const custom = String(explicitLabel || '').trim();
+    if (custom) return custom;
+
     const key = String(fieldKey || '').trim();
     if (!key) return 'Campo';
-    if (key.toLowerCase() === 'fur') return 'FUR';
-    return key.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+    return key
+      .replace(/_/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .map((token) => {
+        const lower = token.toLowerCase();
+        if (COMMON_ACRONYMS.has(lower)) return lower.toUpperCase();
+        return lower.charAt(0).toUpperCase() + lower.slice(1);
+      })
+      .join(' ');
   };
 
   const normalizeFieldMeta = (rawMeta = {}) => {
@@ -249,15 +262,18 @@ const ImpresionHistoriaClinica = ({
 
     return {
       type: ['text', 'textarea', 'number', 'select'].includes(type) ? type : 'textarea',
-      width: ['quarter', 'third', 'half', 'full'].includes(width) ? width : 'half',
+      width: ['sixth', 'quarter', 'third', 'half', 'full'].includes(width) ? width : 'half',
       rows: Number.isFinite(rowsRaw) ? Math.max(1, Math.min(8, Math.trunc(rowsRaw))) : 2,
       options: optionsRaw,
       breakAfter: Boolean(rawMeta?.breakAfter ?? rawMeta?.break_after ?? false),
+      label: String(rawMeta?.label || '').trim(),
     };
   };
 
   const widthToClass = (width) => {
     switch (width) {
+      case 'sixth':
+        return 'col-span-12 md:col-span-2';
       case 'quarter':
         return 'col-span-12 md:col-span-3';
       case 'third':
@@ -273,6 +289,8 @@ const ImpresionHistoriaClinica = ({
   const widthToPrintClass = (width) => {
     // Para impresión, usamos los estilos directos sin breakpoints
     switch (width) {
+      case 'sixth':
+        return 'col-span-2';
       case 'quarter':
         return 'col-span-3';
       case 'third':
@@ -501,7 +519,7 @@ const ImpresionHistoriaClinica = ({
                 {fieldsWithData.flatMap(({ fieldKey, meta }) => {
                   const nodes = [
                     <div key={`${sectionKey}_${fieldKey}`} className={widthToPrintClass(meta.width)}>
-                    <strong className="text-xs">{formatFieldLabel(fieldKey)}:</strong>
+                    <strong className="text-xs">{formatFieldLabel(fieldKey, meta.label)}:</strong>
                     <p className="mt-0.5 p-1 bg-white rounded border whitespace-pre-wrap break-all text-xs">{hc[fieldKey]}</p>
                     </div>
                   ];
