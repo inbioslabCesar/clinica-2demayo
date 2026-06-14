@@ -12,10 +12,11 @@ import { CartProvider } from './context/CartContext.jsx'
 import { getConfiguracion, PUBLIC_API_BASE } from './api/publicApi.js'
 import { resolvePublicLogoSize } from './utils/logoSizing.js'
 import { sanitizeFontSize, sanitizeHexColor } from './utils/branding.js'
+import { buildScopedStorageKey } from './utils/storageScope.js'
 
-const PUBLIC_BRAND_CACHE_KEY = 'public_brand_cache'
-const PUBLIC_THEME_CACHE_KEY = 'public_theme_cache'
-const PUBLIC_CONFIG_CACHE_KEY = 'public_config_cache'
+const PUBLIC_BRAND_CACHE_KEY = buildScopedStorageKey('public_brand_cache')
+const PUBLIC_THEME_CACHE_KEY = buildScopedStorageKey('public_theme_cache')
+const PUBLIC_CONFIG_CACHE_KEY = buildScopedStorageKey('public_config_cache')
 const FALLBACK_PUBLIC_LOGO = `${import.meta.env.BASE_URL}2demayo.svg`
 
 function readStorageValue(key) {

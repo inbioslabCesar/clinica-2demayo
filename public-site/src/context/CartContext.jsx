@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
+import { buildScopedStorageKey } from '../utils/storageScope.js'
 
 const CartContext = createContext(null)
+const CART_STORAGE_KEY = buildScopedStorageKey('cartOfertas')
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value)
@@ -30,7 +32,7 @@ export function CartProvider({ children }) {
   // Cargar carrito desde sessionStorage al montar
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem('cartOfertas')
+      const saved = sessionStorage.getItem(CART_STORAGE_KEY)
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed)) {
@@ -48,7 +50,7 @@ export function CartProvider({ children }) {
   useEffect(() => {
     if (!isHydrated) return
     try {
-      sessionStorage.setItem('cartOfertas', JSON.stringify(items))
+      sessionStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items))
     } catch {
       // Ignorar errores de almacenamiento
     }

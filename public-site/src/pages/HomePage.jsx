@@ -8,11 +8,15 @@ import VerticalOffersSlider from '../components/VerticalOffersSlider'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
 import { sanitizeFontSize, sanitizeHexColor } from '../utils/branding'
 import { resolvePublicAssetUrl } from '../utils/publicAssetUrl'
+import { buildScopedStorageKey } from '../utils/storageScope.js'
 
 function clampIndex(value, length) {
   if (length <= 0) return 0
   return ((value % length) + length) % length
 }
+
+const PACIENTES_BASE_KEY = buildScopedStorageKey('public_pacientes_base')
+const PACIENTES_START_TS_KEY = buildScopedStorageKey('public_pacientes_start_ts')
 
 export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`, clinicName = 'Portal de Salud', configuracion, logoSize }) {
 
@@ -77,12 +81,14 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
 
   const pacientesElegidosBase = Number(import.meta.env.VITE_PUBLIC_PACIENTES_ELEGIDOS || 25000)
 
-  const mapQuery = ((import.meta.env.VITE_PUBLIC_MAP_QUERY || configuracion?.nombre_clinica || clinicName || 'Portal de Salud') + '').trim()
-  const mapDestination = ((import.meta.env.VITE_PUBLIC_MAP_DESTINATION || configuracion?.direccion || mapQuery) + '').trim()
+  const mapDestination = ((import.meta.env.VITE_PUBLIC_MAP_DESTINATION || configuracion?.direccion || '') + '').trim()
+  const mapEmbedFromDestination = mapDestination
+    ? `https://www.google.com/maps?q=${encodeURIComponent(mapDestination)}&output=embed`
+    : ''
   const mapsEmbedSrc = ((
     configuracion?.google_maps_embed ||
     import.meta.env.VITE_PUBLIC_MAP_EMBED_SRC ||
-    'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3947.1003684427533!2d-74.54990752410586!3d-8.391788584656554!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x91a3bd84abc5f5db%3A0x72cd3f56488f2aed!2sPolicl%C3%ADnico%20Dos%20de%20Mayo!5e0!3m2!1ses-419!2spe!4v1767937155771!5m2!1ses-419!2spe'
+    mapEmbedFromDestination
   ) + '').trim()
   const mapsSearchUrl = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`
   const mapsDirectionsUrl = (origin, dest) => {
@@ -102,13 +108,13 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
   const [pacientesElegidosLive, setPacientesElegidosLive] = useState(() => {
     const base = Number.isFinite(pacientesElegidosBase) && pacientesElegidosBase > 0 ? Math.floor(pacientesElegidosBase) : 0
     try {
-      const storedBase = Number(sessionStorage.getItem('public_pacientes_base'))
-      const storedTs = Number(sessionStorage.getItem('public_pacientes_start_ts'))
+      const storedBase = Number(sessionStorage.getItem(PACIENTES_BASE_KEY))
+      const storedTs = Number(sessionStorage.getItem(PACIENTES_START_TS_KEY))
       if (Number.isFinite(storedBase) && storedBase > 0 && Number.isFinite(storedTs) && storedTs > 0) {
         return Math.max(0, Math.floor(storedBase + (Date.now() - storedTs) / 1000))
       }
-      sessionStorage.setItem('public_pacientes_base', String(base))
-      sessionStorage.setItem('public_pacientes_start_ts', String(Date.now()))
+      sessionStorage.setItem(PACIENTES_BASE_KEY, String(base))
+      sessionStorage.setItem(PACIENTES_START_TS_KEY, String(Date.now()))
     } catch {
       // ignore
     }
@@ -122,8 +128,8 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
     const tick = () => {
       setPacientesElegidosLive(() => {
         try {
-          const storedBase = Number(sessionStorage.getItem('public_pacientes_base'))
-          const storedTs = Number(sessionStorage.getItem('public_pacientes_start_ts'))
+          const storedBase = Number(sessionStorage.getItem(PACIENTES_BASE_KEY))
+          const storedTs = Number(sessionStorage.getItem(PACIENTES_START_TS_KEY))
           const useBase = Number.isFinite(storedBase) && storedBase > 0 ? Math.floor(storedBase) : base
           const useTs = Number.isFinite(storedTs) && storedTs > 0 ? storedTs : Date.now()
           return Math.max(0, Math.floor(useBase + (Date.now() - useTs) / 1000))
@@ -576,15 +582,19 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
               Encuentra cómo llegar y revisa la ubicación en Google Maps.
             </div>
           </div>
-          <a
-            href={mapsDirectionsUrl('', mapDestination)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-semibold hover:underline"
-            style={{ color: 'var(--color-secondary, #2563eb)' }}
-          >
-            Ver ubicación en Google Maps ↗
-          </a>
+          {mapDestination ? (
+            <a
+              href={mapsDirectionsUrl('', mapDestination)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold hover:underline"
+              style={{ color: 'var(--color-secondary, #2563eb)' }}
+            >
+              Ver ubicación en Google Maps ↗
+            </a>
+          ) : (
+            <span className="text-sm text-slate-500">Ubicación no disponible temporalmente.</span>
+          )}
         </div>
 
         <div className="mt-6 grid lg:grid-cols-2 gap-6 items-stretch">
@@ -616,37 +626,45 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
 
             <div className="rounded-2xl border bg-white p-4">
               <div className="font-semibold" style={{ color: 'var(--color-primary, #1e293b)' }}>{clinicName}</div>
-              <div className="text-slate-700">{mapDestination}</div>
-              <div className="mt-3 flex flex-wrap gap-3">
-                <a
-                  href={mapsDirectionsUrl('', mapDestination)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 rounded-xl text-white text-base font-semibold hover:opacity-90 transition-colors"
-                  style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
-                >
-                  Cómo llegar
-                </a>
-                <a
-                  href={mapsSearchUrl(mapDestination)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 rounded-xl border text-base font-semibold text-slate-900 hover:bg-slate-50 transition"
-                >
-                  Abrir en Maps
-                </a>
-              </div>
+              <div className="text-slate-700">{mapDestination || 'Ubicación no disponible temporalmente.'}</div>
+              {mapDestination ? (
+                <div className="mt-3 flex flex-wrap gap-3">
+                  <a
+                    href={mapsDirectionsUrl('', mapDestination)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 rounded-xl text-white text-base font-semibold hover:opacity-90 transition-colors"
+                    style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
+                  >
+                    Cómo llegar
+                  </a>
+                  <a
+                    href={mapsSearchUrl(mapDestination)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 rounded-xl border text-base font-semibold text-slate-900 hover:bg-slate-50 transition"
+                  >
+                    Abrir en Maps
+                  </a>
+                </div>
+              ) : null}
             </div>
           </div>
 
           <div className="rounded-2xl overflow-hidden border bg-white min-h-[360px]">
-            <iframe
-              title="Mapa"
-              src={mapsEmbedSrc}
-              className="h-full w-full"
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
+            {mapsEmbedSrc ? (
+              <iframe
+                title="Mapa"
+                src={mapsEmbedSrc}
+                className="h-full w-full"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            ) : (
+              <div className="h-full w-full flex items-center justify-center text-center p-6 text-slate-500">
+                No se pudo cargar la ubicación en este momento.
+              </div>
+            )}
           </div>
         </div>
       </section>

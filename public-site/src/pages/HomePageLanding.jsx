@@ -344,10 +344,14 @@ function FAQSection() {
 /* ── Contact / Map Section ── */
 function ContactMapSection({ configuracion }) {
   const cfg = configuracion || {}
+  const mapDestination = (cfg.direccion || '').trim()
+  const mapEmbedFromDestination = mapDestination
+    ? `https://www.google.com/maps?q=${encodeURIComponent(mapDestination)}&output=embed`
+    : ''
   const mapsEmbedSrc = ((
     cfg.google_maps_embed ||
     import.meta.env.VITE_PUBLIC_MAP_EMBED_SRC ||
-    'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3947.1003684427533!2d-74.54990752410586!3d-8.391788584656554!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x91a3bd84abc5f5db%3A0x72cd3f56488f2aed!2sPolicl%C3%ADnico%20Dos%20de%20Mayo!5e0!3m2!1ses-419!2spe!4v1767937155771!5m2!1ses-419!2spe'
+    mapEmbedFromDestination
   ) + '').trim()
 
   const direccion = (cfg.direccion || '').trim()
@@ -415,15 +419,21 @@ function ContactMapSection({ configuracion }) {
           <div>
             <h3 className="text-lg font-bold mb-3" style={{ color: 'var(--color-secondary, #3A4FA3)' }}>Ubicación</h3>
             <div className="rounded-xl overflow-hidden border border-gray-200 h-48">
-              <iframe
-                src={mapsEmbedSrc}
-                width="100%"
-                height="100%"
-                style={{ border: 0 }}
-                allowFullScreen=""
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
+              {mapsEmbedSrc ? (
+                <iframe
+                  src={mapsEmbedSrc}
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0 }}
+                  allowFullScreen=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              ) : (
+                <div className="h-full w-full flex items-center justify-center text-center p-4 text-sm text-gray-500">
+                  Ubicación no disponible temporalmente.
+                </div>
+              )}
             </div>
           </div>
         </div>
