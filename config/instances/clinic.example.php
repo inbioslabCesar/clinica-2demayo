@@ -14,3 +14,4 @@ return [
     'DB_USER' => 'u330560936_clinicas',
     'DB_PASS' => '41950361Cesar$',
 ];
+
