@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
+import { normalizeOrdenArchivos } from "../utils/ordenesImagenUrl";
 import Spinner from "../components/comunes/Spinner";
 import DicomViewer from "../components/visor/DicomViewer";
 import {
@@ -172,7 +173,7 @@ export default function VisorImagenPage() {
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
-          setOrden(d.orden);
+          setOrden(normalizeOrdenArchivos(d.orden));
           setSelectedIdx(0);
         } else {
           setError(d.error || "No se pudo cargar la orden");

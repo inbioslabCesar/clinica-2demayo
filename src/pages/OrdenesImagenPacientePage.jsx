@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
+import { normalizeOrdenArchivos } from "../utils/ordenesImagenUrl";
 import Spinner from "../components/comunes/Spinner";
 import Swal from "sweetalert2";
 import {
@@ -377,7 +378,9 @@ export default function OrdenesImagenPacientePage() {
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
-          const list = d.ordenes || [];
+          const list = Array.isArray(d.ordenes)
+            ? d.ordenes.map(normalizeOrdenArchivos)
+            : [];
           setOrdenes(list);
           ordenesRef.current = list;
         }
