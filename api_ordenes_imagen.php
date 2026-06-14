@@ -12,6 +12,7 @@ if (!$usuario || !in_array($rol, $rolesPermitidos)) {
     header('Content-Type: application/json');
     echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
     exit;
+
 }
 
 header('Content-Type: application/json; charset=utf-8');
@@ -57,30 +58,16 @@ $conn->query("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 
-// ─── Helper: construir URL base ───────────────────────────────────────────────
-function getBaseUrl(): string {
-    $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+// ─── Helper: construir ruta pública del endpoint actual ──────────────────────
+function getApiEndpointPath(string $fileName = 'api_ordenes_imagen.php'): string {
+    $scriptName = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    $dir = trim((string)dirname($scriptName));
 
-    if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
-        $scheme = explode(',', (string)$_SERVER['HTTP_X_FORWARDED_PROTO'])[0];
+    if ($dir === '' || $dir === '.' || $dir === '\\' || $dir === '/') {
+        return '/' . ltrim($fileName, '/');
     }
 
-    $host = $_SERVER['HTTP_X_FORWARDED_HOST'] ?? ($_SERVER['HTTP_HOST'] ?? 'localhost');
-
-    // In dev-tunnels/reverse proxies, prefer browser-facing host when backend sees localhost:*.
-    if (stripos((string)$host, 'localhost') !== false) {
-        $origin = $_SERVER['HTTP_ORIGIN'] ?? $_SERVER['HTTP_REFERER'] ?? '';
-        if (!empty($origin)) {
-            $originHost = parse_url((string)$origin, PHP_URL_HOST);
-            $originPort = parse_url((string)$origin, PHP_URL_PORT);
-            if (!empty($originHost)) {
-                $host = $originHost . ($originPort ? ':' . $originPort : '');
-            }
-        }
-    }
-
-    $host = trim(explode(',', (string)$host)[0]);
-    return $scheme . '://' . $host . '/clinica-2demayo/';
+    return rtrim($dir, '/') . '/' . ltrim($fileName, '/');
 }
 
 // ─── Helper: crear cotización desde orden de imagen ───────────────────────────
@@ -118,6 +105,7 @@ if (!function_exists('crearCotizacionImagen')) {
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
     $oid     = (int)$orden['id'];
+    $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
     $orden['archivos'] = [];
     $res = $conn->query("SELECT * FROM ordenes_imagen_archivos WHERE orden_id = $oid ORDER BY fecha ASC");
     while ($a = $res->fetch_assoc()) {
@@ -129,7 +117,7 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
             'mime_type'       => $mt,
             'es_imagen'       => str_starts_with($mt, 'image/'),
             'es_dicom'        => $mt === 'application/dicom',
-            'url'             => '/api_ordenes_imagen.php?action=download&archivo_id=' . $a['id'],
+            'url'             => $downloadBaseUrl . '?action=download&archivo_id=' . $a['id'],
             'fecha'           => $a['fecha'],
         ];
     }

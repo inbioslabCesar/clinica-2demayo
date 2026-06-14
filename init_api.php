@@ -1,6 +1,17 @@
 <?php
 // init_api.php
 
+if (!ob_get_level()) {
+    ob_start(function ($buffer) {
+        static $bomStripped = false;
+        if (!$bomStripped) {
+            $buffer = preg_replace('/^\xEF\xBB\xBF/', '', $buffer);
+            $bomStripped = true;
+        }
+        return $buffer;
+    });
+}
+
 if (!function_exists('api_debug_enabled')) {
     function api_debug_enabled(): bool
     {

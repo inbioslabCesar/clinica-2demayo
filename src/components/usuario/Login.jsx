@@ -166,6 +166,54 @@ function Login({ onLogin }) {
     return { isValid: true };
   };
 
+  const hydrateFromBackendSession = async () => {
+    try {
+      const res = await authFetch("api_auth_status.php", {
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => null);
+      const autenticado = Boolean(res.ok && data?.success && data?.authenticated);
+      if (!autenticado) {
+        return false;
+      }
+
+      const backendUsuario = data?.usuario && typeof data.usuario === "object"
+        ? data.usuario
+        : {
+            id: data?.usuario_id ?? null,
+            nombre: data?.nombre ?? "",
+            rol: data?.rol ?? "",
+            usuario: typeof data?.usuario === "string" ? data.usuario : "",
+            permisos: Array.isArray(data?.permisos) ? data.permisos : [],
+          };
+
+      const usuarioNormalizado = {
+        ...backendUsuario,
+        permisos: normalizePermisos(backendUsuario?.permisos || []),
+      };
+
+      if (usuarioNormalizado.rol === 'medico') {
+        sessionStorage.removeItem('usuario');
+        sessionStorage.removeItem('user_role');
+        sessionStorage.setItem('medico', JSON.stringify(usuarioNormalizado));
+      } else {
+        sessionStorage.removeItem('medico');
+        sessionStorage.setItem('usuario', JSON.stringify(usuarioNormalizado));
+        if (usuarioNormalizado.rol) {
+          sessionStorage.setItem('user_role', usuarioNormalizado.rol);
+        } else {
+          sessionStorage.setItem('user_role', 'recepcionista');
+        }
+      }
+
+      onLogin && onLogin(usuarioNormalizado);
+      navigate("/");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -288,6 +336,9 @@ function Login({ onLogin }) {
           navigate("/");
           return;
         }
+      }
+      if (await hydrateFromBackendSession()) {
+        return;
       }
       setError("Usuario o contraseña incorrectos");
     } catch {
