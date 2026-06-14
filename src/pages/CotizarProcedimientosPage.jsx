@@ -606,13 +606,7 @@ export default function CotizarProcedimientosPage() {
               <div className="bg-white rounded-lg shadow border border-gray-200">
                 <ul className="divide-y divide-gray-100">
                   {procedimientosFiltrados.map(proc => (
-                    <li key={proc.id} className="flex items-center px-4 py-3 hover:bg-blue-50 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={seleccionados.includes(proc.id)}
-                        onChange={() => seleccionados.includes(proc.id) ? quitarSeleccion(proc.id) : agregarSeleccion(proc.id)}
-                        className="mr-3 accent-orange-600 w-5 h-5"
-                      />
+                    <li key={proc.id} className="flex items-center gap-4 px-4 py-3 hover:bg-blue-50 transition-colors">
                       <div className="flex-1">
                         <div className="font-semibold text-gray-800">{proc.descripcion || proc.nombre}</div>
                         {proc.medico_id && (() => {
@@ -626,14 +620,30 @@ export default function CotizarProcedimientosPage() {
                           );
                         })()}
                       </div>
-                      {seleccionados.includes(proc.id) && (
-                        <input
-                          type="number"
-                          min={1}
-                          value={cantidades[proc.id] || 1}
-                          onChange={e => actualizarCantidad(proc.id, Math.max(1, Number(e.target.value)))}
-                          className="border rounded-lg px-2 w-16 bg-white ml-2"
-                        />
+                      <div className="min-w-[110px] text-right">
+                        <div className="font-bold text-green-700 text-lg leading-none">S/ {Number(proc.precio_particular || 0).toFixed(2)}</div>
+                      </div>
+                      {seleccionados.includes(proc.id) ? (
+                        <>
+                          <input
+                            type="number"
+                            min={1}
+                            value={cantidades[proc.id] || 1}
+                            onChange={e => actualizarCantidad(proc.id, Math.max(1, Number(e.target.value)))}
+                            className="border rounded-lg px-2 w-16 bg-white"
+                          />
+                          <button
+                            onClick={() => quitarSeleccion(proc.id)}
+                            className="w-10 h-10 flex items-center justify-center rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-xl shadow transition"
+                            aria-label="Quitar"
+                          >✕</button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => agregarSeleccion(proc.id)}
+                          className="w-10 h-10 flex items-center justify-center rounded-full bg-green-100 hover:bg-green-200 text-green-700 text-xl shadow transition"
+                          aria-label="Agregar"
+                        >+</button>
                       )}
                     </li>
                   ))}
@@ -652,18 +662,23 @@ export default function CotizarProcedimientosPage() {
                 {seleccionados.map(pid => {
                   const proc = procedimientos.find(p => p.id === pid);
                   const cantidad = cantidades[pid] || 1;
+                  const subtotal = Number(proc?.precio_particular || 0) * cantidad;
                   return proc ? (
                     <li key={pid} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
                         <span className="font-medium text-gray-900">{proc.descripcion || proc.nombre}</span>
                       </div>
                       <div className="text-sm text-gray-700 text-right">{cantidad} procedimiento(s)</div>
+                      <div className="text-sm font-bold text-green-700 text-right">S/ {subtotal.toFixed(2)}</div>
                     </li>
                   ) : null;
                 })}
               </ul>
               <div className="mt-4 text-lg font-bold text-right text-gray-800">
                 Total de procedimientos: {seleccionados.length}
+              </div>
+              <div className="mt-1 text-lg font-bold text-right text-green-700">
+                Total: S/ {calcularTotal().toFixed(2)}
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>

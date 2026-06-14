@@ -658,11 +658,15 @@ export default function CotizarRayosXPage() {
             <ul className="divide-y divide-gray-100">
               {tarifasFiltradas.map(tarifa => {
                 const medicoNombre = obtenerNombreMedicoTarifa(tarifa);
+                const precioMostrar = Number(tarifa.precio_particular || 0).toFixed(2);
                 return (
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
                       <div className="text-xs text-blue-700 mt-1">Doctor: {medicoNombre || "Sin doctor"}</div>
+                    </div>
+                    <div className="min-w-[110px] text-right">
+                      <div className="font-bold text-green-700 text-lg leading-none">S/ {precioMostrar}</div>
                     </div>
                     {seleccionados.includes(Number(tarifa.id)) ? (
                       <>
@@ -704,16 +708,21 @@ export default function CotizarRayosXPage() {
                 {seleccionados.map(tid => {
                   const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
                   const cantidad = cantidades[tid] || 1;
+                  const subtotal = Number(tarifa?.precio_particular || 0) * cantidad;
                   return tarifa ? (
                     <li key={tid} className="py-2 flex flex-col md:flex-row justify-between items-center gap-2">
                       <span className="w-full md:w-1/2">{tarifa.descripcion || tarifa.nombre}</span>
                       <span className="w-full md:w-1/4">{cantidad} estudio(s)</span>
+                      <span className="w-full md:w-1/4 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}
               </ul>
               <div className="mt-4 text-lg font-bold text-right text-blue-800">
                 Total de estudios: {seleccionados.length}
+              </div>
+              <div className="mt-1 text-lg font-bold text-right text-green-700">
+                Total: S/ {calcularTotal().toFixed(2)}
               </div>
               <div className="flex gap-3 mt-4 justify-end">
                 <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>

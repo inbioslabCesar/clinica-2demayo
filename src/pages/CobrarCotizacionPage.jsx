@@ -79,7 +79,7 @@ export default function CobrarCotizacionPage() {
             ]);
 
             if (!dataCot?.success || !dataCot?.cotizacion) {
-              throw new Error(dataCot?.error || `No se pudo cargar la cotización #${id}`);
+              throw new Error(dataCot?.error || `No se pudo cargar la atención #${id}`);
             }
 
             return {
@@ -96,7 +96,7 @@ export default function CobrarCotizacionPage() {
         const cotizacionesCargadas = cargas.map((item) => item.cotizacion);
         const pacientesIds = Array.from(new Set(cotizacionesCargadas.map((item) => Number(item?.paciente_id || 0)).filter((id) => id > 0)));
         if (pacientesIds.length > 1) {
-          throw new Error("Las cotizaciones seleccionadas pertenecen a pacientes distintos.");
+          throw new Error("Las atenciones seleccionadas pertenecen a pacientes distintos.");
         }
 
         const cotBase = cotizacionesCargadas[0] || null;
@@ -402,7 +402,7 @@ export default function CobrarCotizacionPage() {
     return {
       key,
       label: isMulti
-        ? `Cobro unificado de cotizaciones ${activeIdList.map((id) => `#${id}`).join(", ")}`
+        ? `Cobro unificado de atenciones ${activeIdList.map((id) => `#${id}`).join(", ")}`
         : `Cobro de cotización #${activeIdList[0] || cotizacion?.id || ""}`.trim(),
       cotizacion_id: Number(activeIdList[0] || cotizacion?.id || 0),
       cotizacion_ids: activeIdList,
@@ -470,9 +470,9 @@ export default function CobrarCotizacionPage() {
       if (estado === "pagado") {
         await Swal.fire({
           icon: "info",
-          title: "Cotización sin saldo pendiente",
-          text: "Esta cotización ya está pagada y no requiere cobro. Te llevaremos al listado de cotizaciones.",
-          confirmButtonText: "Ir a cotizaciones",
+          title: "Atención sin saldo pendiente",
+          text: "Esta cotización ya está pagada y no requiere cobro. Te llevaremos al listado de atenciones.",
+          confirmButtonText: "Ir a Atenciones",
         });
         navigate("/cotizaciones", { replace: true });
         return;
@@ -481,9 +481,9 @@ export default function CobrarCotizacionPage() {
       if (estado === "informativo") {
         await Swal.fire({
           icon: "info",
-          title: "Cotización informativa",
+          title: "Atención informativa",
           text: "Esta cotización solo tiene medicamentos externos/no cobrables y no admite cobro en caja.",
-          confirmButtonText: "Ir a cotizaciones",
+          confirmButtonText: "Ir a Atenciones",
         });
         navigate("/cotizaciones", { replace: true });
         return;
@@ -491,9 +491,9 @@ export default function CobrarCotizacionPage() {
 
       await Swal.fire({
         icon: "warning",
-        title: "Cotización anulada",
+        title: "Atención anulada",
         text: "Esta cotización está anulada y no permite registrar cobros.",
-        confirmButtonText: "Ir a cotizaciones",
+        confirmButtonText: "Ir a Atenciones",
       });
       navigate("/cotizaciones", { replace: true });
     };
@@ -523,23 +523,23 @@ export default function CobrarCotizacionPage() {
         <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : (estado === "informativo" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-amber-50 border-amber-200 text-amber-800")}`}>
           <h2 className="text-lg font-semibold mb-2">
             {estado === "pagado"
-              ? (esCobroUnificado ? "Cotizaciones ya pagadas" : "Cotización ya pagada")
+              ? (esCobroUnificado ? "Atenciones ya pagadas" : "Atención ya pagada")
               : (estado === "informativo"
-                ? (esCobroUnificado ? "Cotización informativa dentro del grupo" : "Cotización informativa")
-                : (esCobroUnificado ? "Cotización no cobrable dentro del grupo" : "Cotización anulada"))}
+                ? (esCobroUnificado ? "Atención informativa dentro del grupo" : "Atención informativa")
+                : (esCobroUnificado ? "Atención no cobrable dentro del grupo" : "Atención anulada"))}
           </h2>
           <p className="text-sm leading-relaxed">
             {estado === "pagado"
               ? (esCobroUnificado
-                ? "El grupo seleccionado ya no tiene saldo por cobrar. Puedes revisar el detalle individual de las cotizaciones para ver los importes y movimientos registrados."
-                : "Esta cotización ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados.")
+                ? "El grupo seleccionado ya no tiene saldo por cobrar. Puedes revisar el detalle individual de las atenciones para ver los importes y movimientos registrados."
+                : "Esta atención ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados.")
               : (estado === "informativo"
                 ? (esCobroUnificado
-                  ? "Una de las cotizaciones del grupo contiene únicamente ítems informativos/no cobrables. Refresca el listado antes de volver a intentar un cobro unificado."
-                  : "Esta cotización contiene únicamente ítems informativos/no cobrables y no admite cobros desde esta pantalla.")
+                  ? "Una de las atenciones del grupo contiene únicamente ítems informativos/no cobrables. Refresca el listado antes de volver a intentar un cobro unificado."
+                  : "Esta atención contiene únicamente ítems informativos/no cobrables y no admite cobros desde esta pantalla.")
                 : (esCobroUnificado
-                  ? "Una de las cotizaciones del grupo quedó fuera de estado cobrable. Refresca el listado antes de volver a intentar un cobro unificado."
-                  : "Esta cotización fue anulada y por seguridad no admite cobros desde esta pantalla."))}
+                  ? "Una de las atenciones del grupo quedó fuera de estado cobrable. Refresca el listado antes de volver a intentar un cobro unificado."
+                  : "Esta atención fue anulada y por seguridad no admite cobros desde esta pantalla."))}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             {estado === "pagado" && (
@@ -547,14 +547,14 @@ export default function CobrarCotizacionPage() {
                 onClick={() => navigate(`/cotizaciones/${Number(cotizacion?.id || 0)}/detalle`)}
                 className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700"
               >
-                Ver detalle de cotización
+                Ver detalle de atención
               </button>
             )}
             <button
               onClick={() => navigate("/cotizaciones")}
               className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
             >
-              Ir a cotizaciones
+              Ir a Atenciones
             </button>
           </div>
         </div>
@@ -584,11 +584,11 @@ export default function CobrarCotizacionPage() {
         onClick={() => navigate("/cotizaciones")}
         className="mb-4 bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
       >
-        Volver a cotizaciones
+        Volver a Atenciones
       </button>
 
       <div className="rounded p-4 mb-4 text-sm border" style={themePrimarySoft}>
-        <div><b>{esCobroUnificado ? "Cotizaciones" : "Cotización"}:</b> {cotizacionIds.map((id) => `#${id}`).join(", ")}</div>
+        <div><b>{esCobroUnificado ? "Atenciones" : "Atención"}:</b> {cotizacionIds.map((id) => `#${id}`).join(", ")}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
         <div><b>Saldo actual:</b> S/ {Number(saldoPendiente).toFixed(2)}</div>
         <div className="mt-2 text-xs text-gray-700">
@@ -625,7 +625,7 @@ export default function CobrarCotizacionPage() {
                         type="checkbox"
                         checked={isSelected}
                         disabled={isLast}
-                        title={isLast ? "Debe quedar al menos una cotización seleccionada" : ""}
+                        title={isLast ? "Debe quedar al menos una atención seleccionada" : ""}
                         onChange={() => {
                           setSelectedIds((prev) => {
                             if (prev.size === 1 && prev.has(String(cot.id))) return prev;
@@ -651,7 +651,7 @@ export default function CobrarCotizacionPage() {
             </div>
             {selectedIds.size < cotizacionIds.length && (
               <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                {cotizacionIds.length - selectedIds.size} cotización(es) excluida(s) — quedan como <b>pendiente</b> para cobrar después.
+                {cotizacionIds.length - selectedIds.size} atención(es) excluida(s) — quedan como <b>pendiente</b> para cobrar después.
               </div>
             )}
           </div>
@@ -661,13 +661,13 @@ export default function CobrarCotizacionPage() {
       <div className="bg-white border rounded-xl p-4 mb-4">
         <h3 className="font-semibold text-gray-800 mb-2">Historial de pagos por fecha</h3>
         {pagos.length === 0 ? (
-          <p className="text-sm text-gray-500">Aún no hay pagos registrados para {esCobroUnificado ? "las cotizaciones seleccionadas" : "esta cotización"}.</p>
+          <p className="text-sm text-gray-500">Aún no hay pagos registrados para {esCobroUnificado ? "las atenciones seleccionadas" : "esta atención"}.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b text-gray-600">
-                  {esCobroUnificado && <th className="text-left py-2 pr-4">Cotización</th>}
+                  {esCobroUnificado && <th className="text-left py-2 pr-4">Atención</th>}
                   <th className="text-left py-2 pr-4">Fecha</th>
                   <th className="text-left py-2 pr-4">Tipo</th>
                   <th className="text-left py-2 pr-4">Monto</th>

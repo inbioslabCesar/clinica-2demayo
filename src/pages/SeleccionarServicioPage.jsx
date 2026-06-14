@@ -66,7 +66,7 @@ export default function SeleccionarServicioPage() {
   const textoVolver = rutaVolver === '/pacientes'
     ? 'Volver a Pacientes'
     : rutaVolver === '/cotizaciones'
-      ? 'Volver a Cotizaciones'
+      ? 'Volver a Atenciones'
       : 'Volver al Dashboard';
 
     const [procedimientos, setProcedimientos] = useState([]);
@@ -77,7 +77,7 @@ export default function SeleccionarServicioPage() {
         .then(r => r.json())
         .then(data => {
           if (data.success && Array.isArray(data.tarifas)) {
-            const EXCLUIR_SERVICIOS = ["consulta", "laboratorio", "farmacia", "ecografia", "rayosx", "ocupacional"];
+            const EXCLUIR_SERVICIOS = ["consulta", "laboratorio", "farmacia", "ecografia", "rayosx"];
             const proc = data.tarifas.filter(t =>
               t.activo === 1 && !EXCLUIR_SERVICIOS.includes(t.servicio_tipo)
             ).map(t => ({
@@ -166,7 +166,7 @@ export default function SeleccionarServicioPage() {
               className="text-white px-4 py-2 rounded font-bold"
               style={themeGradient}
               onClick={() => navigate(isEditCotizacion ? '/cotizaciones' : (rutaVolver === '/pacientes' ? -1 : rutaVolver))}
-            >{isEditCotizacion ? 'Volver a Cotizaciones' : textoVolver}</button>
+            >{isEditCotizacion ? 'Volver a Atenciones' : textoVolver}</button>
           </div>
           {paciente ? (
             <div className="rounded-lg p-4 md:p-5 mb-4" style={themePrimarySoft}>
@@ -277,18 +277,7 @@ export default function SeleccionarServicioPage() {
                   style={themePrimaryBorder}
                   onClick={() => navigate(`/cotizar-operacion/${paciente.id}${editSuffix}`)}
                 ><span>🩼</span><span className="whitespace-normal">Operaciones/Cirugías Mayores</span> <span className="text-yellow-500">💰</span></button>
-                <button
-                  className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white font-semibold text-sm md:text-[15px] leading-tight text-center"
-                  style={themePrimaryBorder}
-                  onClick={() => {
-                    Swal.fire({
-                      title: "Página en construcción",
-                      text: "La funcionalidad de Medicina Ocupacional estará disponible próximamente.",
-                      icon: "info",
-                      confirmButtonText: "OK"
-                    });
-                  }}
-                ><span>👨‍⚕️</span><span className="whitespace-normal">Medicina Ocupacional</span> <span className="text-yellow-500">💰</span></button>
+
               </div>
               <div className="mt-2 text-xs text-gray-500 flex gap-4 items-center">
                 <span>💰 = Requiere pago previo</span>

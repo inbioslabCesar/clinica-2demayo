@@ -315,40 +315,84 @@ export default function ConsumoPacientePage() {
     const logoHtml = clinicBrand.logo
       ? `<div style="width:100%;display:flex;justify-content:center;align-items:center;margin:0 0 8px 0;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="display:block;margin:0 auto;height:52px;max-width:170px;object-fit:contain;object-position:center;" /></div>`
       : '';
-    const ticketHtml = `
-      <div style="font-family: monospace; width: 320px; margin: 0 auto;">
-        ${logoHtml}
-        <h3 style="text-align: center; margin-bottom: 4px;${clinicBrand.nombre_color ? ' color:' + clinicBrand.nombre_color + ';' : ''}">${clinicBrand.name}</h3>
-        ${clinicBrand.slogan ? `<p style="text-align:center;margin:0 0 4px;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + clinicBrand.slogan_color + ';' : ''}">${clinicBrand.slogan}</p>` : ''}
-        ${clinicBrand.direccion ? `<p style="text-align:center;margin:2px 0;font-size:11px;">${clinicBrand.direccion}</p>` : ''}
-        ${clinicBrand.telefono ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Tel: ${clinicBrand.telefono}</p>` : ''}
-        ${clinicBrand.celular ? `<p style="text-align:center;margin:2px 0;font-size:11px;">Cel: ${clinicBrand.celular}</p>` : ''}
-        ${clinicBrand.ruc ? `<p style="text-align:center;margin:2px 0;font-size:11px;">RUC: ${clinicBrand.ruc}</p>` : ''}
-        <hr>
-        <p><strong>COMPROBANTE DE PAGO #${modalDetalle.cobro_id || ''}</strong></p>
-        <p>Fecha: ${fechaHora}</p>
-        <p>Paciente: ${nombreCompleto}</p>
-        <p>DNI: ${consumo.dni}</p>
-        <p>H.C.: ${consumo.historia_clinica}</p>
-        <hr>
-        <p><strong>DETALLE:</strong></p>
+    const ticketCss = `
+      <style>
+        * { box-sizing: border-box; }
+        .ticket-80 {
+          width: 100%;
+          max-width: 320px;
+          margin: 0 auto;
+          padding: 8px 10px;
+          font-family: "Courier New", "Lucida Console", monospace;
+          font-size: 11px;
+          line-height: 1.2;
+          color: #111827;
+          font-weight: 700;
+        }
+        .ticket-80 .t-center { text-align: center; }
+        .ticket-80 .t-logo { height: 52px; max-width: 170px; object-fit: contain; object-position: center; margin: 0 auto 6px; display: block; image-rendering: -webkit-optimize-contrast; filter: contrast(1.15) saturate(1.05); }
+        .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 800; letter-spacing: 0.2px; }
+        .ticket-80 .t-line { margin: 1px 0; font-weight: 700; }
+        .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
+        .ticket-80 .t-title { font-weight: 800; text-transform: uppercase; margin: 0 0 4px; }
+        .ticket-80 .t-meta { margin: 1px 0; font-weight: 700; }
+        .ticket-80 .t-row { display: flex; justify-content: space-between; gap: 6px; margin: 1px 0; }
+        .ticket-80 .t-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
+        .ticket-80 .t-total { font-size: 12px; font-weight: 800; }
+        .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #111827; font-weight: 700; }
+        @media print {
+          @page { size: 80mm auto; margin: 2mm; }
+          html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .ticket-80 {
+            width: 76mm;
+            max-width: 76mm;
+            margin: 0;
+            padding: 2.5mm;
+            font-size: 10.5px;
+            line-height: 1.15;
+          }
+          .ticket-80 .t-clinic { font-size: 12px; }
+          .ticket-80 .t-logo { height: 42px; margin-bottom: 3px; }
+        }
+      </style>`;
+
+    const ticketBody = `
+      <div class="ticket-80">
+        <div class="t-center">
+          ${logoHtml}
+          <div class="t-clinic"${clinicBrand.nombre_color ? ` style="color:${clinicBrand.nombre_color};"` : ''}>${clinicBrand.name}</div>
+          ${clinicBrand.slogan ? `<div class="t-line" style="font-style:italic;${clinicBrand.slogan_color ? `color:${clinicBrand.slogan_color};` : ''}">${clinicBrand.slogan}</div>` : ''}
+          ${clinicBrand.direccion ? `<div class="t-line">${clinicBrand.direccion}</div>` : ''}
+          ${clinicBrand.telefono ? `<div class="t-line">Tel: ${clinicBrand.telefono}</div>` : ''}
+          ${clinicBrand.celular ? `<div class="t-line">Cel: ${clinicBrand.celular}</div>` : ''}
+          ${clinicBrand.ruc ? `<div class="t-line">RUC: ${clinicBrand.ruc}</div>` : ''}
+        </div>
+        <hr class="t-hr" />
+        <div class="t-title">COMPROBANTE DE PAGO #${modalDetalle.cobro_id || ''}</div>
+        <div class="t-meta">Fecha: ${fechaHora}</div>
+        <div class="t-meta">Paciente: ${nombreCompleto}</div>
+        <div class="t-meta">DNI: ${consumo.dni}</div>
+        <div class="t-meta">H.C.: ${consumo.historia_clinica}</div>
+        <hr class="t-hr" />
+        <div class="t-title">DETALLE</div>
         ${modalDetallesCobro.map(d => {
           const servicio = d.servicio_tipo || d.servicio || modalDetalle.servicio;
           const medico = requiereMedico(servicio) ? resolverNombreMedicoDetalle(d) : '';
           const medicoTxt = medico ? ` - ${medico}` : '';
-          return `<p>${d.descripcion}${medicoTxt} x${d.cantidad || 1} .... S/ ${(d.subtotal || d.monto).toFixed(2)}</p>`;
-        }
-        ).join('')}
-        <hr>
-        <p>Total original: S/ ${montoBruto.toFixed(2)}</p>
-        ${descuentoAplicado > 0 ? `<p style="color:#b45309;">Descuento: -S/ ${descuentoAplicado.toFixed(2)}</p>` : ''}
-        <p style="font-weight:bold; font-size:17px; color:#008000;">TOTAL COBRADO: S/ ${montoCobrado.toFixed(2)}</p>
-        <p>Tipo de pago: ${tipoPago}</p>
-        <p>Cobertura: ${cobertura}</p>
-        <hr>
-        <div style="text-align: center; font-size: 12px;">Gracias por su preferencia<br>Conserve este comprobante</div>
+          return `<div class="t-row"><div class="t-desc">${d.descripcion}${medicoTxt} x${d.cantidad || 1}</div><div class="t-amount">S/ ${(d.subtotal || d.monto).toFixed(2)}</div></div>`;
+        }).join('')}
+        <hr class="t-hr" />
+        <div class="t-meta">Total original: S/ ${montoBruto.toFixed(2)}</div>
+        ${descuentoAplicado > 0 ? `<div class="t-meta" style="color:#92400e;">Descuento: -S/ ${descuentoAplicado.toFixed(2)}</div>` : ''}
+        <div class="t-meta t-total">TOTAL COBRADO: S/ ${montoCobrado.toFixed(2)}</div>
+        <div class="t-meta">Tipo de pago: ${tipoPago}</div>
+        <div class="t-meta">Cobertura: ${cobertura}</div>
+        <hr class="t-hr" />
+        <div class="t-note">Gracias por su preferencia<br>Conserve este comprobante</div>
       </div>
     `;
+    const ticketHtml = `${ticketCss}${ticketBody}`;
     Swal.fire({
       title: 'Ticket de Cobro',
       html: ticketHtml,
@@ -359,7 +403,7 @@ export default function ConsumoPacientePage() {
     }).then((result) => {
       if (result.isConfirmed) {
         const ventana = window.open('', '_blank', 'width=400,height=600');
-        ventana.document.write(`<html><head><title>Ticket</title></head><body>${ticketHtml}</body></html>`);
+        ventana.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ticket</title>${ticketCss}</head><body>${ticketBody}</body></html>`);
         ventana.document.close();
         ventana.print();
       }

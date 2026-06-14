@@ -47,6 +47,7 @@ function buildPackageComponents(pkg, cotizacionId) {
       return {
         source_type: String(it.source_type || "procedimiento"),
         source_id: Number(it.source_id || 0),
+        examen_version_id: Number(it.examen_version_id || 0) || null,
         servicio_tipo: normalizeServiceType(it.source_type),
         servicio_id: Number(it.source_id || 0),
         descripcion_snapshot: String(it.descripcion_snapshot || ""),
@@ -97,10 +98,11 @@ function getPackageServiceTypes(pkg) {
 function buildDetalleKey(detalle) {
   const tipo = normalizeServiceType(detalle?.servicio_tipo || detalle?.source_type || "");
   const servicioId = Number(detalle?.servicio_id || detalle?.source_id || 0);
+  const examenVersionId = Number(detalle?.examen_version_id || detalle?.version_id || 0);
   const descripcion = String(detalle?.descripcion || detalle?.descripcion_snapshot || "").trim().toLowerCase();
   const cantidad = Number(detalle?.cantidad || 1).toFixed(2);
   const precioUnitario = Number(detalle?.precio_unitario ?? detalle?.precio_lista_snapshot ?? 0).toFixed(2);
-  return `${tipo}::${servicioId}::${descripcion}::${cantidad}::${precioUnitario}`;
+  return `${tipo}::${servicioId}::${examenVersionId}::${descripcion}::${cantidad}::${precioUnitario}`;
 }
 
 export default function CotizarPaquetesPerfilesPage() {

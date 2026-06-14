@@ -46,6 +46,7 @@ function FormularioAgendarConsulta({
           >
             <option value="programada">Programada</option>
             <option value="espontanea">Espontánea</option>
+            <option value="reservada_sin_turno">Reservada sin turno</option>
           </select>
         </div>
         <label className="font-semibold mb-1">

@@ -1249,7 +1249,7 @@ export default function CotizarLaboratorioPage() {
         <div className="w-full md:sticky md:top-8 h-fit flex flex-col md:max-w-xl">
           {seleccionados.length > 0 && (
             <div className="mb-6 w-full">
-              <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
+              <h4 className="font-semibold text-gray-700 mb-2">Resumen de Cotización</h4>
               <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
                 {seleccionados.map(exId => {
                   const exIdNum = Number(exId);
@@ -1260,9 +1260,10 @@ export default function CotizarLaboratorioPage() {
                   const basePrecio = tarifa ? tarifa.precio_particular : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
                   const precio = basePrecio === "-" ? "-" : getDisplayPrice(exIdNum, basePrecio);
                   const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
+                  const cantidad = 1;
                   return (
                     <li key={exIdNum} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
+                      <div className="flex-1">
                         <span className="font-medium text-gray-900">{ex?.nombre}</span>
                         {!coberturaResuelta && (
                           <span className="block text-xs text-slate-500 mt-1">Verificando cobertura...</span>
@@ -1277,7 +1278,8 @@ export default function CotizarLaboratorioPage() {
                           <span className="block text-xs text-gray-400">Tiempo: {ex.tiempo_resultado}</span>
                         )}
                       </div>
-                      <div className="font-bold text-green-700 text-right">S/ {precioMostrar}</div>
+                      <div className="w-28 text-right text-sm text-gray-700">{cantidad} examen(es)</div>
+                      <div className="w-28 text-right font-bold text-green-700">S/ {precioMostrar}</div>
                     </li>
                   );
                 })}

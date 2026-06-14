@@ -756,6 +756,7 @@ export default function CotizarEcografiaPage() {
                 if (tarifa && tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
                   medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
                 }
+                const precioMostrar = Number(getDisplayPrice(tarifa) || 0).toFixed(2);
                 return (
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
@@ -768,6 +769,9 @@ export default function CotizarEcografiaPage() {
                       ) : (
                         <div className="text-xs text-amber-700 mt-1">Se cobrara si la seleccionas</div>
                       )}
+                    </div>
+                    <div className="min-w-[110px] text-right">
+                      <div className="font-bold text-green-700 text-lg leading-none">S/ {precioMostrar}</div>
                     </div>
                     {seleccionados.includes(Number(tarifa.id)) ? (
                       <>
@@ -808,16 +812,21 @@ export default function CotizarEcografiaPage() {
                 {seleccionados.map(tid => {
                   const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
                   const cantidad = cantidades[tid] || 1;
+                  const subtotal = Number(getDisplayPrice(tarifa) || 0) * cantidad;
                   return tarifa ? (
                     <li key={tid} className="py-2 flex justify-between items-center">
-                      <span>{tarifa.descripcion || tarifa.nombre}</span>
-                      <span>{cantidad} estudio(s)</span>
+                      <span className="flex-1">{tarifa.descripcion || tarifa.nombre}</span>
+                      <span className="w-28 text-right">{cantidad} estudio(s)</span>
+                      <span className="w-28 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}
               </ul>
               <div className="text-right text-xl font-bold text-blue-800 flex items-center gap-2">
                 Total de servicios: {seleccionados.length}
+              </div>
+              <div className="text-right text-xl font-bold text-green-700 mt-1">
+                Total: S/ {calcularTotal().toFixed(2)}
               </div>
               <button
                 onClick={agregarAlCarrito}

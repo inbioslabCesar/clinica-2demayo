@@ -29,6 +29,11 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const consultaIdNum = Number(resolvedConsultaId || 0);
   const isEditingConsulta = hasEditIntent;
   const [tipoConsulta, setTipoConsulta] = useState("programada");
+  const esReservaSinTurno = tipoConsulta === "reservada_sin_turno";
+  const tipoConsultaPersistible = esReservaSinTurno ? "programada" : tipoConsulta;
+  const resolverOrigenCreacion = (origenFallback = "agendada") => (
+    esReservaSinTurno ? "reservada_sin_turno" : origenFallback
+  );
   const [detallesConsulta, setDetallesConsulta] = useState([]);
   const [totalConsulta, setTotalConsulta] = useState(0);
   const [medicos, setMedicos] = useState([]);
@@ -570,8 +575,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
           medico_id: Number(medicoId),
           fecha,
           hora,
-          tipo_consulta: tipoConsulta || "programada",
-            origen_creacion: "cotizador",
+          tipo_consulta: tipoConsultaPersistible || "programada",
+          origen_creacion: resolverOrigenCreacion("cotizador"),
         }),
       });
       const dataConsulta = await resConsulta.json();
@@ -653,8 +658,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
             medico_id: Number(medicoId),
             fecha,
             hora,
-            tipo_consulta: tipoConsulta,
-            origen_creacion: "cotizador",
+            tipo_consulta: tipoConsultaPersistible,
+            origen_creacion: resolverOrigenCreacion("cotizador"),
           }),
         });
         const dataCrear = await resCrear.json();
@@ -705,7 +710,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
           medico_id: Number(medicoId),
           fecha,
           hora,
-          tipo_consulta: tipoConsulta,
+          tipo_consulta: tipoConsultaPersistible,
         }),
       });
 
@@ -749,7 +754,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   };
 
   const validarCajaParaEspontanea = async () => {
-    if (tipoConsulta !== "espontanea") return true;
+    if (tipoConsulta !== "espontanea" || esReservaSinTurno) return true;
 
     const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}');
     const usuarioSesionId = Number(usuario?.id || 0);
@@ -783,7 +788,8 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
         medico_id: medicoId,
         fecha,
         hora,
-        tipo_consulta: tipoConsulta,
+        tipo_consulta: tipoConsultaPersistible,
+        origen_creacion: resolverOrigenCreacion("agendada"),
       }),
     });
 
@@ -1049,7 +1055,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
       await MySwal.fire({
         icon: "warning",
         title: "Pago registrado con observación",
-        text: `${errorCotizacion}. Revisa la cotización de esta consulta en el módulo de Cotizaciones.`,
+        text: `${errorCotizacion}. Revisa la cotización de esta consulta en el módulo de Atenciones.`,
         confirmButtonText: "Entendido",
       });
 

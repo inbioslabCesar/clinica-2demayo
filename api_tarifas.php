@@ -28,11 +28,8 @@ function getTiposServicio() {
         'rayosx' => 'Rayos X',
         'ecografia' => 'Ecografía',
         'farmacia' => 'Farmacia',
-        'ocupacional' => 'Medicina Ocupacional',
         'procedimientos' => 'Procedimientos Médicos',
-        'cirugias' => 'Cirugías Menores',
-        'tratamientos' => 'Tratamientos Especializados',
-        'emergencias' => 'Atención de Emergencias'
+        'operacion' => 'Operaciones/Cirugías Mayores'
     ];
 }
 
@@ -137,8 +134,7 @@ switch($method) {
         
         // Servicios médicos gestionables
         $serviciosGestionables = [
-            'consulta', 'rayosx', 'ecografia', 'operacion', 'ocupacional',
-            'procedimientos', 'cirugias', 'tratamientos', 'emergencias', 'hospitalizacion'
+            'consulta', 'rayosx', 'ecografia', 'operacion', 'procedimientos'
         ];
         $tarifas = obtenerTodasLasTarifas($conn);
         if ($tipo) {
@@ -180,9 +176,10 @@ switch($method) {
     $monto_medico = isset($data['monto_medico']) ? floatval($data['monto_medico']) : null;
     $monto_clinica = isset($data['monto_clinica']) ? floatval($data['monto_clinica']) : null;
         
-        // Validar que no sea farmacia o laboratorio
-        if ($servicio_tipo === 'farmacia' || $servicio_tipo === 'laboratorio') {
-            echo json_encode(['success' => false, 'error' => 'Los precios de farmacia y laboratorio se gestionan desde sus módulos específicos']);
+        // Validar tipos no gestionables desde este módulo
+        $tiposNoGestionables = ['farmacia', 'laboratorio', 'ocupacional', 'cirugias', 'tratamientos', 'emergencias', 'hospitalizacion'];
+        if (in_array($servicio_tipo, $tiposNoGestionables)) {
+            echo json_encode(['success' => false, 'error' => 'Este tipo de servicio no se gestiona desde Gestión de Tarifas']);
             break;
         }
         
@@ -237,6 +234,12 @@ switch($method) {
         
         if ($id <= 0) {
             echo json_encode(['success' => false, 'error' => 'ID inválido']);
+            break;
+        }
+
+        $tiposNoGestionables = ['farmacia', 'laboratorio', 'ocupacional', 'cirugias', 'tratamientos', 'emergencias', 'hospitalizacion'];
+        if (in_array($servicio_tipo, $tiposNoGestionables)) {
+            echo json_encode(['success' => false, 'error' => 'Este tipo de servicio no se gestiona desde Gestión de Tarifas']);
             break;
         }
         

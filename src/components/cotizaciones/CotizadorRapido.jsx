@@ -70,7 +70,7 @@ export default function CotizadorRapido() {
   return (
     <div className="mb-5 rounded-xl border-2 p-4" style={{ borderColor: "var(--color-primary-light)", backgroundColor: "var(--color-primary-light, #f3f0ff)" }}>
       <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--color-primary-dark)" }}>
-        Nueva cotización rápida
+        Nueva atención rápida
       </p>
 
       {/* Input */}

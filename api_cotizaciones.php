@@ -112,6 +112,241 @@ function column_exists($conn, $table, $column) {
     return isset($cache[$table][$column]);
 }
 
+if (!function_exists('decode_valores_referenciales_any')) {
+    function decode_valores_referenciales_any($raw) {
+        if ($raw === null || $raw === '') return [];
+
+        $value = $raw;
+        for ($i = 0; $i < 3; $i++) {
+            if (is_string($value)) {
+                $decoded = json_decode($value, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    break;
+                }
+                $value = $decoded;
+                continue;
+            }
+            break;
+        }
+
+        if (!is_array($value)) return [];
+
+        // Compatibilidad: algunos registros antiguos guardaron un solo objeto.
+        if (isset($value['nombre']) || isset($value['titulo']) || isset($value['tipo']) || isset($value['referencias'])) {
+            return [$value];
+        }
+
+        return $value;
+    }
+}
+
+function ensure_cotizaciones_detalle_snapshot_column($conn) {
+    if (!table_exists($conn, 'cotizaciones_detalle')) {
+        return false;
+    }
+    if (!column_exists($conn, 'cotizaciones_detalle', 'snapshot_json')) {
+        $conn->query("ALTER TABLE cotizaciones_detalle ADD COLUMN snapshot_json LONGTEXT DEFAULT NULL AFTER laboratorio_referencia");
+    }
+    return column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
+}
+
+function get_exam_version_id_from_payload($detalle) {
+    if (!is_array($detalle)) return 0;
+    $cand = [
+        $detalle['examen_version_id'] ?? null,
+        $detalle['version_id'] ?? null,
+        $detalle['snapshot_json']['version_id'] ?? null,
+    ];
+    foreach ($cand as $v) {
+        $num = (int)$v;
+        if ($num > 0) return $num;
+    }
+    return 0;
+}
+
+function get_current_exam_version_id($conn, $examenId) {
+    $examenId = (int)$examenId;
+    if ($examenId <= 0) return 0;
+    if (!table_exists($conn, 'examenes_laboratorio_versiones')) return 0;
+
+    $stmt = $conn->prepare(
+        "SELECT id
+         FROM examenes_laboratorio_versiones
+         WHERE examen_id = ?
+         ORDER BY version_num DESC, id DESC
+         LIMIT 1"
+    );
+    if (!$stmt) return 0;
+    $stmt->bind_param('i', $examenId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['id'] ?? 0);
+}
+
+function get_exam_version_snapshot($conn, $examenId, $versionId = 0) {
+    if (!table_exists($conn, 'examenes_laboratorio_versiones')) return null;
+
+    $examenId = (int)$examenId;
+    $versionId = (int)$versionId;
+    if ($examenId <= 0) return null;
+
+    if ($versionId > 0) {
+        $stmt = $conn->prepare(
+            "SELECT id, examen_id, version_num, hash_contenido,
+                    nombre_snapshot, categoria_snapshot, metodologia_snapshot, valores_referenciales_snapshot,
+                    precio_publico_snapshot, precio_convenio_snapshot, tipo_tubo_snapshot, tipo_frasco_snapshot,
+                    tiempo_resultado_snapshot, condicion_paciente_snapshot, preanalitica_snapshot
+             FROM examenes_laboratorio_versiones
+             WHERE id = ? AND examen_id = ?
+             LIMIT 1"
+        );
+        if ($stmt) {
+            $stmt->bind_param('ii', $versionId, $examenId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row) return $row;
+        }
+    }
+
+    $stmt = $conn->prepare(
+        "SELECT id, examen_id, version_num, hash_contenido,
+                nombre_snapshot, categoria_snapshot, metodologia_snapshot, valores_referenciales_snapshot,
+                precio_publico_snapshot, precio_convenio_snapshot, tipo_tubo_snapshot, tipo_frasco_snapshot,
+                tiempo_resultado_snapshot, condicion_paciente_snapshot, preanalitica_snapshot
+         FROM examenes_laboratorio_versiones
+         WHERE examen_id = ?
+         ORDER BY version_num DESC, id DESC
+         LIMIT 1"
+    );
+    if (!$stmt) return null;
+    $stmt->bind_param('i', $examenId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function persistir_snapshot_versionado_detalle($conn, $cotizacionId, $detalleId, $detalle, $snapshotPayload, $usuarioId = 0) {
+    if (!table_exists($conn, 'cotizaciones_detalle_snapshot_versionado')) return;
+    $cotizacionId = (int)$cotizacionId;
+    $detalleId = (int)$detalleId;
+    if ($cotizacionId <= 0 || $detalleId <= 0 || !is_array($snapshotPayload) || empty($snapshotPayload)) return;
+
+    $servicioTipo = (string)($detalle['servicio_tipo'] ?? 'laboratorio');
+    $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : null;
+    $examenId = isset($snapshotPayload['id']) ? (int)$snapshotPayload['id'] : (isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : null);
+    $versionId = isset($snapshotPayload['version_id']) ? (int)$snapshotPayload['version_id'] : get_exam_version_id_from_payload($detalle);
+    $fuente = isset($snapshotPayload['version_id']) && (int)$snapshotPayload['version_id'] > 0 ? 'version_examen' : 'detalle_snapshot';
+    $hash = isset($snapshotPayload['hash_contenido']) ? (string)$snapshotPayload['hash_contenido'] : null;
+    $snapshotJson = json_encode($snapshotPayload, JSON_UNESCAPED_UNICODE);
+    if ($snapshotJson === false) return;
+    $uid = $usuarioId > 0 ? (int)$usuarioId : null;
+
+    $stmt = $conn->prepare(
+        "INSERT INTO cotizaciones_detalle_snapshot_versionado
+         (cotizacion_id, cotizacion_detalle_id, servicio_tipo, servicio_id, examen_id, examen_version_id, fuente_snapshot, hash_contenido, snapshot_json, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           servicio_tipo = VALUES(servicio_tipo),
+           servicio_id = VALUES(servicio_id),
+           examen_id = VALUES(examen_id),
+           examen_version_id = VALUES(examen_version_id),
+           fuente_snapshot = VALUES(fuente_snapshot),
+           hash_contenido = VALUES(hash_contenido),
+           snapshot_json = VALUES(snapshot_json),
+           created_by = VALUES(created_by),
+           created_at = NOW()"
+    );
+    if (!$stmt) return;
+
+    $stmt->bind_param('iisiiisssi', $cotizacionId, $detalleId, $servicioTipo, $servicioId, $examenId, $versionId, $fuente, $hash, $snapshotJson, $uid);
+    $stmt->execute();
+    $stmt->close();
+}
+
+function build_laboratorio_snapshot_payload($conn, $detalle) {
+    $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : 0;
+    if ($servicioId <= 0) {
+        return null;
+    }
+
+    if (!empty($detalle['snapshot_json'])) {
+        $decoded = json_decode((string)$detalle['snapshot_json'], true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+
+    $versionId = get_exam_version_id_from_payload($detalle);
+    $versionSnapshot = get_exam_version_snapshot($conn, $servicioId, $versionId);
+    if ($versionSnapshot) {
+        $valoresReferenciales = [];
+        if (!empty($versionSnapshot['valores_referenciales_snapshot'])) {
+            $decoded = decode_valores_referenciales_any($versionSnapshot['valores_referenciales_snapshot']);
+            if (is_array($decoded)) {
+                $valoresReferenciales = $decoded;
+            }
+        }
+
+        return [
+            'id' => (int)$versionSnapshot['examen_id'],
+            'version_id' => (int)$versionSnapshot['id'],
+            'version_num' => (int)$versionSnapshot['version_num'],
+            'hash_contenido' => (string)($versionSnapshot['hash_contenido'] ?? ''),
+            'nombre' => (string)($versionSnapshot['nombre_snapshot'] ?? ''),
+            'descripcion' => (string)($versionSnapshot['nombre_snapshot'] ?? ''),
+            'metodologia' => (string)($versionSnapshot['metodologia_snapshot'] ?? ''),
+            'condicion_paciente' => (string)($versionSnapshot['condicion_paciente_snapshot'] ?? ''),
+            'tiempo_resultado' => (string)($versionSnapshot['tiempo_resultado_snapshot'] ?? ''),
+            'valores_referenciales' => $valoresReferenciales,
+            'precio_publico' => isset($versionSnapshot['precio_publico_snapshot']) ? (float)$versionSnapshot['precio_publico_snapshot'] : null,
+            'precio_convenio' => isset($versionSnapshot['precio_convenio_snapshot']) ? (float)$versionSnapshot['precio_convenio_snapshot'] : null,
+            'tipo_tubo' => (string)($versionSnapshot['tipo_tubo_snapshot'] ?? ''),
+            'tipo_frasco' => (string)($versionSnapshot['tipo_frasco_snapshot'] ?? ''),
+            'preanalitica' => (string)($versionSnapshot['preanalitica_snapshot'] ?? ''),
+        ];
+    }
+
+    $stmt = $conn->prepare(
+        "SELECT id, nombre, metodologia, condicion_paciente, tiempo_resultado, valores_referenciales
+         FROM examenes_laboratorio
+         WHERE id = ?
+         LIMIT 1"
+    );
+    if (!$stmt) {
+        return null;
+    }
+
+    $stmt->bind_param('i', $servicioId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return null;
+    }
+
+    $valoresReferenciales = [];
+    if (!empty($row['valores_referenciales'])) {
+        $decoded = decode_valores_referenciales_any($row['valores_referenciales']);
+        if (is_array($decoded)) {
+            $valoresReferenciales = $decoded;
+        }
+    }
+
+    return [
+        'id' => (int)$row['id'],
+        'version_id' => get_current_exam_version_id($conn, (int)$row['id']),
+        'nombre' => (string)($row['nombre'] ?? ''),
+        'descripcion' => (string)($row['nombre'] ?? ''),
+        'metodologia' => (string)($row['metodologia'] ?? ''),
+        'condicion_paciente' => (string)($row['condicion_paciente'] ?? ''),
+        'tiempo_resultado' => (string)($row['tiempo_resultado'] ?? ''),
+        'valores_referenciales' => $valoresReferenciales,
+    ];
+}
+
 function detectar_consumo_contrato_agenda_mismo_dia($conn, $pacienteId, $servicioTipo, $servicioId, $fechaRefDia) {
     $pacienteId = (int)$pacienteId;
     $servicioId = (int)$servicioId;
@@ -805,6 +1040,8 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
     $hasContratoPacienteServicioId = column_exists($conn, 'cotizaciones_detalle', 'contrato_paciente_servicio_id');
     $hasOrigenCobro = column_exists($conn, 'cotizaciones_detalle', 'origen_cobro');
     $hasMontoListaReferencial = column_exists($conn, 'cotizaciones_detalle', 'monto_lista_referencial');
+    $hasExamenVersionId = column_exists($conn, 'cotizaciones_detalle', 'examen_version_id');
+    $hasSnapshotJson = ensure_cotizaciones_detalle_snapshot_column($conn);
 
     $pacienteIdCotizacion = 0;
     $stmtPac = $conn->prepare('SELECT paciente_id FROM cotizaciones WHERE id = ? LIMIT 1');
@@ -832,6 +1069,11 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
         $tipoDeriv = isset($detalle['tipo_derivacion']) ? (string)$detalle['tipo_derivacion'] : '';
         $valorDeriv = isset($detalle['valor_derivacion']) ? (float)$detalle['valor_derivacion'] : 0;
         $labRef = isset($detalle['laboratorio_referencia']) ? (string)$detalle['laboratorio_referencia'] : '';
+        $snapshotPayload = null;
+        if ($hasSnapshotJson && strtolower(trim((string)$servicioTipo)) === 'laboratorio') {
+            $snapshotPayload = build_laboratorio_snapshot_payload($conn, $detalle);
+        }
+        $snapshotJson = $snapshotPayload ? json_encode($snapshotPayload, JSON_UNESCAPED_UNICODE) : null;
         $metaContrato = [
             'origen_cobro' => 'regular',
             'contrato_paciente_id' => 0,
@@ -869,93 +1111,191 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
 
         if ($usaDetalleV2) {
             if ($usaCamposDerivacion) {
-                $stmt = $conn->prepare(
-                    "INSERT INTO cotizaciones_detalle
-                     (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, derivado, tipo_derivacion, valor_derivacion, laboratorio_referencia, estado_item, version_item, editado_por, editado_en, motivo_edicion)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', 1, ?, NOW(), ?)"
-                );
+                if ($hasSnapshotJson) {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle
+                         (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, derivado, tipo_derivacion, valor_derivacion, laboratorio_referencia, snapshot_json, estado_item, version_item, editado_por, editado_en, motivo_edicion)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', 1, ?, NOW(), ?)"
+                    );
+                } else {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle
+                         (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, derivado, tipo_derivacion, valor_derivacion, laboratorio_referencia, estado_item, version_item, editado_por, editado_en, motivo_edicion)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', 1, ?, NOW(), ?)"
+                    );
+                }
             } else {
-                $stmt = $conn->prepare(
-                    "INSERT INTO cotizaciones_detalle
-                     (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, estado_item, version_item, editado_por, editado_en, motivo_edicion)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', 1, ?, NOW(), ?)"
-                );
+                if ($hasSnapshotJson) {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle
+                         (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, snapshot_json, estado_item, version_item, editado_por, editado_en, motivo_edicion)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activo', 1, ?, NOW(), ?)"
+                    );
+                } else {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle
+                         (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, estado_item, version_item, editado_por, editado_en, motivo_edicion)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', 1, ?, NOW(), ?)"
+                    );
+                }
             }
             if (!$stmt) {
                 throw new Exception('Error preparando detalle v2: ' . $conn->error);
             }
             if ($usaCamposDerivacion) {
-                $stmt->bind_param(
-                    "isisiddisdsis",
-                    $cotizacionId,
-                    $servicioTipo,
-                    $servicioId,
-                    $descripcion,
-                    $cantidad,
-                    $precio,
-                    $subtotal,
-                    $derivado,
-                    $tipoDeriv,
-                    $valorDeriv,
-                    $labRef,
-                    $usuarioId,
-                    $motivoEdicion
-                );
+                if ($hasSnapshotJson) {
+                    $stmt->bind_param(
+                        "isisiddisdssis",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $derivado,
+                        $tipoDeriv,
+                        $valorDeriv,
+                        $labRef,
+                        $snapshotJson,
+                        $usuarioId,
+                        $motivoEdicion
+                    );
+                } else {
+                    $stmt->bind_param(
+                        "isisiddisdsis",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $derivado,
+                        $tipoDeriv,
+                        $valorDeriv,
+                        $labRef,
+                        $usuarioId,
+                        $motivoEdicion
+                    );
+                }
             } else {
-                $stmt->bind_param(
-                    "isisiddis",
-                    $cotizacionId,
-                    $servicioTipo,
-                    $servicioId,
-                    $descripcion,
-                    $cantidad,
-                    $precio,
-                    $subtotal,
-                    $usuarioId,
-                    $motivoEdicion
-                );
+                if ($hasSnapshotJson) {
+                    $stmt->bind_param(
+                        "isisiddsis",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $snapshotJson,
+                        $usuarioId,
+                        $motivoEdicion
+                    );
+                } else {
+                    $stmt->bind_param(
+                        "isisiddis",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $usuarioId,
+                        $motivoEdicion
+                    );
+                }
             }
         } else {
             if ($usaCamposDerivacion) {
-                $stmt = $conn->prepare(
-                    "INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, derivado, tipo_derivacion, valor_derivacion, laboratorio_referencia)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                );
+                if ($hasSnapshotJson) {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, derivado, tipo_derivacion, valor_derivacion, laboratorio_referencia, snapshot_json)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    );
+                } else {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, derivado, tipo_derivacion, valor_derivacion, laboratorio_referencia)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    );
+                }
             } else {
-                $stmt = $conn->prepare(
-                    "INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)"
-                );
+                if ($hasSnapshotJson) {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, snapshot_json)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                    );
+                } else {
+                    $stmt = $conn->prepare(
+                        "INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    );
+                }
             }
             if (!$stmt) {
                 throw new Exception('Error preparando detalle: ' . $conn->error);
             }
             if ($usaCamposDerivacion) {
-                $stmt->bind_param(
-                    "isisiddisds",
-                    $cotizacionId,
-                    $servicioTipo,
-                    $servicioId,
-                    $descripcion,
-                    $cantidad,
-                    $precio,
-                    $subtotal,
-                    $derivado,
-                    $tipoDeriv,
-                    $valorDeriv,
-                    $labRef
-                );
+                if ($hasSnapshotJson) {
+                    $stmt->bind_param(
+                        "isisiddisdss",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $derivado,
+                        $tipoDeriv,
+                        $valorDeriv,
+                        $labRef,
+                        $snapshotJson
+                    );
+                } else {
+                    $stmt->bind_param(
+                        "isisiddisds",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $derivado,
+                        $tipoDeriv,
+                        $valorDeriv,
+                        $labRef
+                    );
+                }
             } else {
-                $stmt->bind_param(
-                    "isisidd",
-                    $cotizacionId,
-                    $servicioTipo,
-                    $servicioId,
-                    $descripcion,
-                    $cantidad,
-                    $precio,
-                    $subtotal
-                );
+                if ($hasSnapshotJson) {
+                    $stmt->bind_param(
+                        "isisidds",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal,
+                        $snapshotJson
+                    );
+                } else {
+                    $stmt->bind_param(
+                        "isisidd",
+                        $cotizacionId,
+                        $servicioTipo,
+                        $servicioId,
+                        $descripcion,
+                        $cantidad,
+                        $precio,
+                        $subtotal
+                    );
+                }
             }
         }
         if ($stmt) {
@@ -963,6 +1303,21 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
 
             // Mantener trazabilidad clínica de consulta cuando el esquema lo soporte.
             $detalleId = (int)$conn->insert_id;
+            $versionIdDetalle = get_exam_version_id_from_payload($detalle);
+            if ($versionIdDetalle <= 0 && is_array($snapshotPayload)) {
+                $versionIdDetalle = (int)($snapshotPayload['version_id'] ?? 0);
+            }
+            if ($hasExamenVersionId && $detalleId > 0 && strtolower(trim((string)$servicioTipo)) === 'laboratorio' && $versionIdDetalle > 0) {
+                $stmtVer = $conn->prepare("UPDATE cotizaciones_detalle SET examen_version_id = ? WHERE id = ?");
+                if ($stmtVer) {
+                    $stmtVer->bind_param('ii', $versionIdDetalle, $detalleId);
+                    $stmtVer->execute();
+                    $stmtVer->close();
+                }
+            }
+            if ($detalleId > 0 && strtolower(trim((string)$servicioTipo)) === 'laboratorio' && is_array($snapshotPayload) && !empty($snapshotPayload)) {
+                persistir_snapshot_versionado_detalle($conn, (int)$cotizacionId, $detalleId, (array)$detalle, $snapshotPayload, (int)$usuarioId);
+            }
             if ($detalleId > 0 && ($hasConsultaId || $hasMedicoId || $hasContratoPacienteId || $hasContratoPacienteServicioId || $hasOrigenCobro || $hasMontoListaReferencial)) {
                 $consultaId = isset($detalle['consulta_id']) ? (int)$detalle['consulta_id'] : 0;
                 $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
@@ -1752,13 +2107,100 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
     // Mantener una sola orden interna por cotización con todos los exámenes de laboratorio,
     // incluso los derivados, para permitir carga documental y de resultados en panel.
     $examIds = [];
+    $examPayload = [];
+    $fallbackByExamId = [];
     foreach ($detalles as $det) {
         if (strtolower(trim((string)($det['servicio_tipo'] ?? ''))) !== 'laboratorio') continue;
         $sId = intval($det['servicio_id'] ?? 0);
-        if ($sId > 0) $examIds[] = $sId;
+        if ($sId > 0) {
+            $examIds[] = $sId;
+            if (!isset($fallbackByExamId[$sId])) {
+                $fallbackByExamId[$sId] = $det;
+            }
+        }
     }
     $examIds = array_values(array_unique($examIds));
     if (empty($examIds)) return;
+
+    if ($cotizacionId > 0 && table_exists($conn, 'cotizaciones_detalle')) {
+        $hasSnapshotJson = column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
+        $hasExamenVersion = column_exists($conn, 'cotizaciones_detalle', 'examen_version_id');
+        $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
+        $selectSnapshot = $hasSnapshotJson ? ', snapshot_json' : '';
+        $selectVersion = $hasExamenVersion ? ', examen_version_id' : '';
+        $stmtDet = $conn->prepare(
+            "SELECT servicio_id, descripcion{$selectSnapshot}{$selectVersion}
+             FROM cotizaciones_detalle
+             WHERE cotizacion_id = ?
+               AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'{$whereEstado}
+             ORDER BY id ASC"
+        );
+        if ($stmtDet) {
+            $stmtDet->bind_param('i', $cotizacionId);
+            $stmtDet->execute();
+            $rowsDet = $stmtDet->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtDet->close();
+
+            foreach ($rowsDet as $rd) {
+                $sid = (int)($rd['servicio_id'] ?? 0);
+                if ($sid <= 0 || isset($examPayload[$sid])) continue;
+                $payload = [
+                    'id' => $sid,
+                    'descripcion' => (string)($rd['descripcion'] ?? ''),
+                    'nombre' => (string)($rd['descripcion'] ?? ''),
+                ];
+                if ($hasSnapshotJson && !empty($rd['snapshot_json'])) {
+                    $decoded = json_decode((string)$rd['snapshot_json'], true);
+                    if (is_array($decoded)) {
+                        $payload['snapshot_json'] = $decoded;
+                        if (isset($decoded['valores_referenciales']) && is_array($decoded['valores_referenciales'])) {
+                            $payload['valores_referenciales'] = $decoded['valores_referenciales'];
+                        }
+                    }
+                }
+                $versionId = $hasExamenVersion ? (int)($rd['examen_version_id'] ?? 0) : 0;
+                if ($versionId <= 0 && isset($payload['snapshot_json']['version_id'])) {
+                    $versionId = (int)$payload['snapshot_json']['version_id'];
+                }
+                if ($versionId > 0) {
+                    $payload['examen_version_id'] = $versionId;
+                    if (isset($payload['snapshot_json']) && is_array($payload['snapshot_json'])) {
+                        $payload['snapshot_json']['version_id'] = $versionId;
+                    }
+                }
+                $examPayload[$sid] = $payload;
+            }
+        }
+    }
+
+    foreach ($examIds as $sid) {
+        if (isset($examPayload[$sid])) continue;
+        $det = isset($fallbackByExamId[$sid]) && is_array($fallbackByExamId[$sid]) ? $fallbackByExamId[$sid] : [];
+        $payload = [
+            'id' => $sid,
+            'descripcion' => (string)($det['descripcion'] ?? ''),
+            'nombre' => (string)($det['descripcion'] ?? ''),
+        ];
+        if (!empty($det['snapshot_json']) && is_array($det['snapshot_json'])) {
+            $payload['snapshot_json'] = $det['snapshot_json'];
+            if (isset($det['snapshot_json']['valores_referenciales']) && is_array($det['snapshot_json']['valores_referenciales'])) {
+                $payload['valores_referenciales'] = $det['snapshot_json']['valores_referenciales'];
+            }
+        }
+        $versionId = get_exam_version_id_from_payload((array)$det);
+        if ($versionId > 0) {
+            $payload['examen_version_id'] = $versionId;
+            if (isset($payload['snapshot_json']) && is_array($payload['snapshot_json'])) {
+                $payload['snapshot_json']['version_id'] = $versionId;
+            }
+        }
+        $examPayload[$sid] = $payload;
+    }
+
+    $json = json_encode(!empty($examPayload) ? array_values($examPayload) : $examIds, JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        $json = json_encode($examIds);
+    }
 
     // Si ya existe una orden para esta cotización, actualizarla y reactivarla si quedó cancelada.
     $chkCol = $conn->query("SHOW COLUMNS FROM ordenes_laboratorio LIKE 'cotizacion_id'");
@@ -1770,7 +2212,6 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
             $stmtChk->execute();
             $exists = $stmtChk->get_result()->fetch_assoc();
             $stmtChk->close();
-            $json = json_encode($examIds);
             if (!empty($exists['id'])) {
                 $ordenId = (int)$exists['id'];
                 if ($hasConsultaCol && $consultaId > 0) {
@@ -1791,7 +2232,6 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
                 return;
             }
         }
-        $json = json_encode($examIds);
         if ($hasConsultaCol) {
             $stmt = $conn->prepare("INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, consulta_id) VALUES (?, ?, ?, ?)");
             if ($stmt) {
@@ -1809,7 +2249,6 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
             }
         }
     } else {
-        $json = json_encode($examIds);
         $hasConsultaCol = column_exists($conn, 'ordenes_laboratorio', 'consulta_id');
         if ($hasConsultaCol) {
             $stmt = $conn->prepare("INSERT INTO ordenes_laboratorio (examenes, paciente_id, consulta_id) VALUES (?, ?, ?)");
@@ -3602,6 +4041,7 @@ switch ($method) {
         $hasDerivado = column_exists($conn, 'cotizaciones_detalle', 'derivado');
         $hasNumeroComprobante = column_exists($conn, 'cotizaciones', 'numero_comprobante');
         $hasFechaVencimiento = column_exists($conn, 'cotizaciones', 'fecha_vencimiento');
+        $hasReferenciaOrigenList = column_exists($conn, 'cotizaciones', 'referencia_origen');
         $hasLabCotizacion = column_exists($conn, 'ordenes_laboratorio', 'cotizacion_id');
 
         $where = [];
@@ -3662,6 +4102,7 @@ switch ($method) {
                 c.fecha,
                 " . ($hasNumeroComprobante ? "c.numero_comprobante," : "NULL AS numero_comprobante,") . "
                 " . ($hasFechaVencimiento ? "c.fecha_vencimiento," : "NULL AS fecha_vencimiento,") . "
+                " . ($hasReferenciaOrigenList ? "c.referencia_origen," : "NULL AS referencia_origen,") . "
                 c.total,
                 c.total_pagado,
                 c.saldo_pendiente,

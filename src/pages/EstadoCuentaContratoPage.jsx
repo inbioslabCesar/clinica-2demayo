@@ -347,15 +347,16 @@ export default function EstadoCuentaContratoPage() {
             font-size: 11px;
             line-height: 1.2;
             color: #111827;
+            font-weight: 700;
           }
           .ticket-80 .t-center { text-align: center; }
-          .ticket-80 .t-logo { height: 48px; margin: 0 auto 4px; display: block; }
-          .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
-          .ticket-80 .t-line { margin: 1px 0; }
+          .ticket-80 .t-logo { height: 50px; margin: 0 auto 4px; display: block; image-rendering: -webkit-optimize-contrast; filter: contrast(1.15) saturate(1.05); }
+          .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 800; letter-spacing: 0.2px; }
+          .ticket-80 .t-line { margin: 1px 0; font-weight: 700; }
           .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
-          .ticket-80 .t-title { font-weight: 700; text-transform: uppercase; margin: 0 0 4px; }
-          .ticket-80 .t-meta { margin: 1px 0; }
-          .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 700; text-transform: uppercase; }
+          .ticket-80 .t-title { font-weight: 800; text-transform: uppercase; margin: 0 0 4px; }
+          .ticket-80 .t-meta { margin: 1px 0; font-weight: 700; }
+          .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 800; text-transform: uppercase; }
           .ticket-80 .t-row {
             display: flex;
             justify-content: space-between;
@@ -372,10 +373,10 @@ export default function EstadoCuentaContratoPage() {
           }
           .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
           .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
-          .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #4b5563; }
+          .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #111827; font-weight: 700; }
           @media print {
             @page { size: 80mm auto; margin: 2mm; }
-            html, body { margin: 0; padding: 0; }
+            html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .ticket-80 {
               width: 76mm;
               max-width: 76mm;
@@ -385,7 +386,7 @@ export default function EstadoCuentaContratoPage() {
               line-height: 1.15;
             }
             .ticket-80 .t-clinic { font-size: 12px; }
-            .ticket-80 .t-logo { height: 40px; margin-bottom: 3px; }
+            .ticket-80 .t-logo { height: 42px; margin-bottom: 3px; }
             .ticket-80 .t-total { font-size: 11.5px; }
           }
         </style>`;

@@ -125,6 +125,10 @@ export default function ContratosPage() {
   const [loadingContratos, setLoadingContratos] = useState(false);
 
   const totalItems = useMemo(() => (Array.isArray(form.items) ? form.items.length : 0), [form.items]);
+  const plantillasActivas = useMemo(
+    () => (Array.isArray(rows) ? rows.filter((r) => String(r?.estado || "").trim().toLowerCase() === "activo") : []),
+    [rows]
+  );
   const totalPagesPlantillas = useMemo(() => Math.max(1, Math.ceil(n(totalPlantillas) / Math.max(1, n(limitPlantilla)))), [limitPlantilla, totalPlantillas]);
   const totalPagesContratos = useMemo(() => Math.max(1, Math.ceil(n(totalContratos) / Math.max(1, n(limitContrato)))), [limitContrato, totalContratos]);
 
@@ -591,6 +595,11 @@ export default function ContratosPage() {
       });
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "No se pudo cambiar estado");
+      if (estadoDestino === "activo") {
+        Swal.fire("Listo", "Contrato activado", "success");
+      } else if (estadoDestino === "pendiente") {
+        Swal.fire("Listo", "Contrato desactivado", "success");
+      }
       loadContratos();
     } catch (err) {
       Swal.fire("Error", err?.message || "No se pudo cambiar estado", "error");
@@ -669,7 +678,10 @@ export default function ContratosPage() {
                 <tr><td colSpan={6} className="px-2 py-3 text-center text-gray-500">Cargando...</td></tr>
               ) : rows.length === 0 ? (
                 <tr><td colSpan={6} className="px-2 py-3 text-center text-gray-500">Sin plantillas</td></tr>
-              ) : rows.map((r) => (
+              ) : rows.map((r) => {
+                  const estadoPlantilla = String(r.estado || "").trim().toLowerCase();
+                  const esActivaPlantilla = estadoPlantilla === "activo";
+                  return (
                 <tr key={r.id} className="border-t">
                   <td className="px-2 py-2">{r.codigo}</td>
                   <td className="px-2 py-2">{r.nombre}</td>
@@ -679,13 +691,14 @@ export default function ContratosPage() {
                   <td className="px-2 py-2">
                     <div className="flex gap-2 justify-center">
                       <button onClick={() => editPlantilla(r)} className="px-2 py-1 rounded bg-blue-100 text-blue-700">Editar</button>
-                      <button onClick={() => cambiarEstadoPlantilla(r.id, r.estado === "activo" ? "inactivo" : "activo")} className="px-2 py-1 rounded bg-amber-100 text-amber-700">
-                        {r.estado === "activo" ? "Inactivar" : "Activar"}
+                      <button onClick={() => cambiarEstadoPlantilla(r.id, esActivaPlantilla ? "inactivo" : "activo")} className="px-2 py-1 rounded bg-amber-100 text-amber-700">
+                        {esActivaPlantilla ? "Inactivar" : "Activar"}
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                  );
+                })}
             </tbody>
           </table>
         </div>
@@ -927,7 +940,7 @@ export default function ContratosPage() {
           </div>
           <select className="border rounded px-2 py-2" value={formContrato.plantilla_id} onChange={(e) => setFormContrato((p) => ({ ...p, plantilla_id: e.target.value }))}>
             <option value="">Selecciona plantilla</option>
-            {rows.map((r) => <option key={r.id} value={r.id}>{r.codigo} - {r.nombre}</option>)}
+            {plantillasActivas.map((r) => <option key={r.id} value={r.id}>{r.codigo} - {r.nombre}</option>)}
           </select>
           <input className="border rounded px-2 py-2" type="date" value={formContrato.fecha_inicio} onChange={(e) => setFormContrato((p) => ({ ...p, fecha_inicio: e.target.value }))} />
           <input className="border rounded px-2 py-2" type="date" value={formContrato.fecha_fin} onChange={(e) => setFormContrato((p) => ({ ...p, fecha_fin: e.target.value }))} />
@@ -1037,7 +1050,13 @@ export default function ContratosPage() {
                 <tr><td colSpan={7} className="px-2 py-3 text-center text-gray-500">Cargando...</td></tr>
               ) : contratos.length === 0 ? (
                 <tr><td colSpan={7} className="px-2 py-3 text-center text-gray-500">Sin contratos</td></tr>
-              ) : contratos.map((c) => (
+              ) : contratos.map((c) => {
+                  const estadoContrato = String(c.estado || "").trim().toLowerCase();
+                  const esContratoActivo = estadoContrato === "activo";
+                  const esEstadoTerminal = ["cancelado", "finalizado", "liquidado"].includes(estadoContrato);
+                  const puedeFinalizar = !["finalizado", "cancelado", "liquidado"].includes(estadoContrato);
+                  const puedeCancelar = !["cancelado", "finalizado", "liquidado"].includes(estadoContrato);
+                  return (
                 <tr key={c.id} className="border-t">
                   <td className="px-2 py-2">#{c.id}</td>
                   <td className="px-2 py-2">{c.paciente_id} {String(c.paciente_nombre || "").trim()} {String(c.paciente_apellido || "").trim()}</td>
@@ -1058,13 +1077,25 @@ export default function ContratosPage() {
                   <td className="px-2 py-2">
                     <div className="flex flex-wrap justify-end gap-2">
                       <button className="px-2 py-1 rounded bg-blue-100 text-blue-700" onClick={() => editarContratoPaciente(c)}>Editar</button>
-                      <button className="px-2 py-1 rounded bg-emerald-100 text-emerald-700" onClick={() => cambiarEstadoContrato(c.id, "activo")}>Activar</button>
-                      <button className="px-2 py-1 rounded bg-violet-100 text-violet-700" onClick={() => cambiarEstadoContrato(c.id, "finalizado")}>Finalizar</button>
-                      <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => cambiarEstadoContrato(c.id, "cancelado")}>Cancelar</button>
+                      <button
+                        className={`px-2 py-1 rounded ${esContratoActivo ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"} ${esEstadoTerminal ? "opacity-50 cursor-not-allowed" : ""}`}
+                        onClick={() => cambiarEstadoContrato(c.id, esContratoActivo ? "pendiente" : "activo")}
+                        disabled={esEstadoTerminal}
+                        title={esEstadoTerminal ? "No disponible para contratos finalizados/cancelados/liquidados" : ""}
+                      >
+                        {esContratoActivo ? "Desactivar" : "Activar"}
+                      </button>
+                      {puedeFinalizar && (
+                        <button className="px-2 py-1 rounded bg-violet-100 text-violet-700" onClick={() => cambiarEstadoContrato(c.id, "finalizado")}>Finalizar</button>
+                      )}
+                      {puedeCancelar && (
+                        <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => cambiarEstadoContrato(c.id, "cancelado")}>Cancelar</button>
+                      )}
                     </div>
                   </td>
                 </tr>
-              ))}
+                  );
+                })}
             </tbody>
           </table>
         </div>

@@ -117,12 +117,7 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const puedeAbrirLaboratorio = puedeGestionarLaboratorioDesdeCotizacion || tieneResultadosLaboratorio;
   const ordenLaboratorioId = Number(row.orden_laboratorio_id || 0);
   const ordenQuery = ordenLaboratorioId > 0 ? `&orden_id=${ordenLaboratorioId}` : "";
-  const tituloResultado = encodeURIComponent(
-    tieneLaboratorioReferencia
-      ? `Resultado laboratorio referencia - Cot. #${row.id}`
-      : `Resultado laboratorio - Cot. #${row.id}`
-  );
-  const laboratorioUrl = `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&abrir=1&tipo=laboratorio&titulo=${tituloResultado}&back_to=/cotizaciones`;
+  const laboratorioUrl = `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&back_to=/cotizaciones`;
   const laboratorioTitulo = tieneResultadosLaboratorio ? "Ver resultados de laboratorio" : "Gestionar resultados de laboratorio";
   const origen = useMemo(() => badgeOrigenVisual(row), [row]);
   const contratosIds = String(row.contratos_ids_resumen || "").trim();
@@ -193,6 +188,7 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
       </td>
       <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
+      <td className="px-3 py-2 text-xs text-slate-600">{String(row.referencia_origen || "").trim() || "-"}</td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {servicios.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
@@ -569,7 +565,7 @@ export default function CotizacionesPage() {
     <div className="max-w-full mx-auto p-4 md:p-8">
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-          <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Cotizaciones</h2>
+          <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Atenciones</h2>
           <div className="text-sm text-gray-600">Total registros: <b>{total}</b></div>
         </div>
 
@@ -653,6 +649,7 @@ export default function CotizacionesPage() {
                 <th className="px-3 py-2 text-left">Fecha</th>
                 <th className="px-3 py-2 text-left">Paciente</th>
                 <th className="px-3 py-2 text-left">Quién cotizó</th>
+                <th className="px-3 py-2 text-left">Referencia origen</th>
                 <th className="px-3 py-2 text-left">Servicios</th>
                 <th className="px-3 py-2 text-left">Origen/Contrato</th>
                 <th className="px-3 py-2 text-right">Total</th>
@@ -664,11 +661,11 @@ export default function CotizacionesPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
+                  <td colSpan={11} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
+                  <td colSpan={11} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
               ) : rows.map((row) => (
                 <CotizacionRow

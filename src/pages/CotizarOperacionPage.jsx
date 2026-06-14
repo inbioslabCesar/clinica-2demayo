@@ -629,6 +629,9 @@ export default function CotizarOperacionPage() {
                       })()}
                     </div>
                   </div>
+                  <div className="min-w-[110px] text-right">
+                    <div className="font-bold text-green-700 text-lg leading-none">S/ {Number(tarifa.precio_particular || 0).toFixed(2)}</div>
+                  </div>
                   {seleccionados.includes(Number(tarifa.id)) ? (
                     <>
                       <input
@@ -667,16 +670,21 @@ export default function CotizarOperacionPage() {
                 {seleccionados.map(tid => {
                   const tarifa = tarifas.find(t => t.id === tid);
                   const cantidad = cantidades[tid] || 1;
+                  const subtotal = Number(tarifa?.precio_particular || 0) * cantidad;
                   return tarifa ? (
                     <li key={tid} className="py-2 flex justify-between items-center">
-                      <span>{tarifa.descripcion || tarifa.nombre}</span>
-                      <span>{cantidad} estudio(s)</span>
+                      <span className="flex-1">{tarifa.descripcion || tarifa.nombre}</span>
+                      <span className="w-28 text-right">{cantidad} estudio(s)</span>
+                      <span className="w-28 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
                     </li>
                   ) : null;
                 })}
               </ul>
               <div className="text-right text-xl font-bold text-blue-800 flex items-center gap-2">
                 Total de servicios: {seleccionados.length}
+              </div>
+              <div className="text-right text-xl font-bold text-green-700 mt-1">
+                Total: S/ {calcularTotal().toFixed(2)}
               </div>
               <button
                 onClick={agregarAlCarrito}

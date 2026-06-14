@@ -12,11 +12,10 @@ const serviciosBase = [
   { key: "farmacia", label: "Farmacia", icon: "💊", requiresPayment: true },
   { key: "rayosx", label: "Rayos X", icon: "🩻", requiresPayment: true },
   { key: "ecografia", label: "Ecografía", icon: "🩺", requiresPayment: true },
-  { key: "operacion", label: "Operaciones/Cirugías Mayores", icon: "🩼", requiresPayment: true },
-  { key: "ocupacional", label: "Medicina Ocupacional", icon: "👷‍⚕️", requiresPayment: true }
+  { key: "operacion", label: "Operaciones/Cirugías Mayores", icon: "🩼", requiresPayment: true }
 ];
 
-const EXCLUIR_SERVICIOS = ["consulta", "laboratorio", "farmacia", "ecografia", "rayosx", "ocupacional"];
+const EXCLUIR_SERVICIOS = ["consulta", "laboratorio", "farmacia", "ecografia", "rayosx"];
 
 function ServiciosSelector({ paciente }) {
   const navigate = useNavigate();
@@ -57,13 +56,6 @@ function ServiciosSelector({ paciente }) {
       navigate(`/cotizar-ecografia/${paciente.id}`);
     } else if (servicio.key === "operacion") {
       navigate(`/cotizar-operacion/${paciente.id}`);
-    } else if (servicio.key === "ocupacional") {
-      Swal.fire({
-        title: "Página en construcción",
-        text: "La funcionalidad de Medicina Ocupacional estará disponible próximamente.",
-        icon: "info",
-        confirmButtonText: "OK"
-      });
     } else if (servicio.key === "procedimiento") {
       // Navegar a la página de cotización de procedimientos (flujo igual que laboratorio)
       navigate(`/cotizar-procedimientos/${paciente.id}`);
@@ -156,43 +148,19 @@ function ServiciosSelector({ paciente }) {
       </p>
       
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {serviciosBase.map((servicio) => {
-          if (servicio.key === "ocupacional") {
-            return (
-              <button
-                key={servicio.key}
-                onClick={() => {
-                  Swal.fire({
-                    title: "Página en construcción",
-                    text: "La funcionalidad de Medicina Ocupacional estará disponible próximamente.",
-                    icon: "info",
-                    confirmButtonText: "OK"
-                  });
-                }}
-                className="flex items-center justify-center gap-2 p-4 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors font-medium text-blue-700 hover:text-blue-800"
-              >
-                <span className="text-2xl">{servicio.icon}</span>
-                <span>{servicio.label}</span>
-                {servicio.requiresPayment && (
-                  <span className="text-green-600 text-sm">💰</span>
-                )}
-              </button>
-            );
-          }
-          return (
-            <button
-              key={servicio.key}
-              onClick={() => manejarSeleccionServicio(servicio)}
-              className="flex items-center justify-center gap-2 p-4 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors font-medium text-blue-700 hover:text-blue-800"
-            >
-              <span className="text-2xl">{servicio.icon}</span>
-              <span>{servicio.label}</span>
-              {servicio.requiresPayment && (
-                <span className="text-green-600 text-sm">💰</span>
-              )}
-            </button>
-          );
-        })}
+        {serviciosBase.map((servicio) => (
+          <button
+            key={servicio.key}
+            onClick={() => manejarSeleccionServicio(servicio)}
+            className="flex items-center justify-center gap-2 p-4 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors font-medium text-blue-700 hover:text-blue-800"
+          >
+            <span className="text-2xl">{servicio.icon}</span>
+            <span>{servicio.label}</span>
+            {servicio.requiresPayment && (
+              <span className="text-green-600 text-sm">💰</span>
+            )}
+          </button>
+        ))}
 
         <button
           key="procedimientos"

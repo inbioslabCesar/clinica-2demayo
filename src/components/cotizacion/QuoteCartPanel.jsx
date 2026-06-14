@@ -41,6 +41,11 @@ export default function QuoteCartPanel() {
   };
 
   const crearConsultaDesdeCarrito = async (item) => {
+    const tipoConsultaItem = String(item?.consultaTipoConsulta || "programada").toLowerCase();
+    const esReservaSinTurno = tipoConsultaItem === "reservada_sin_turno";
+    const tipoConsultaPersistible = esReservaSinTurno ? "programada" : (item.consultaTipoConsulta || "programada");
+    const origenCreacion = esReservaSinTurno ? "reservada_sin_turno" : "cotizador";
+
     const res = await authFetch("api_consultas.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -49,8 +54,8 @@ export default function QuoteCartPanel() {
         medico_id: Number(item.consultaMedicoId),
         fecha: item.consultaFecha,
         hora: item.consultaHora,
-        tipo_consulta: item.consultaTipoConsulta || "programada",
-        origen_creacion: "cotizador",
+        tipo_consulta: tipoConsultaPersistible,
+        origen_creacion: origenCreacion,
       }),
     });
     const data = await res.json();
@@ -377,7 +382,7 @@ export default function QuoteCartPanel() {
                 onClick={() => navigate("/cotizaciones")}
                 className="w-full py-2 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700"
               >
-                Ir a Cotizaciones
+                Ir a Atenciones
               </button>
               <button
                 onClick={clearCart}

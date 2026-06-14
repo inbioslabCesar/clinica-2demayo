@@ -261,25 +261,34 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
     $offset = ($page - 1) * $limit;
     $hasRefLegacy = column_exists_local($conn, 'cotizaciones_farmacia', 'referencia_origen');
     $hasRefCobros = column_exists_local($conn, 'cobros', 'referencia_origen');
+    $hasRefCot    = column_exists_local($conn, 'cotizaciones', 'referencia_origen');
     $selectRefLegacy = $hasRefLegacy ? "NULLIF(TRIM(cf.referencia_origen), '')" : 'NULL';
     $selectRefCobros = $hasRefCobros ? "NULLIF(TRIM(c.referencia_origen), '')" : 'NULL';
+    $selectRefCot    = $hasRefCot    ? "NULLIF(TRIM(cot.referencia_origen), '')" : 'NULL';
 
-    $whereLegacy  = '1=1';
-    $whereGeneral = "c.estado <> 'anulado'
+    $whereLegacy     = '1=1';
+    $whereGeneral    = "c.estado <> 'anulado'
         AND EXISTS (
             SELECT 1 FROM cobros_detalle cdx
             WHERE cdx.cobro_id = c.id
               AND (cdx.servicio_tipo = 'farmacia'
                    OR cdx.descripcion LIKE '%\\\"servicio_tipo\\\":\\\"farmacia\\\"%')
         )";
+    $whereCotizacion = "LOWER(TRIM(cot.estado)) IN ('pendiente', 'parcial')
+        AND EXISTS (
+            SELECT 1 FROM cotizaciones_detalle cdx2
+            WHERE cdx2.cotizacion_id = cot.id
+              AND LOWER(TRIM(cdx2.servicio_tipo)) = 'farmacia'
+        )";
 
     $unionParams = [];
     $unionTypes  = '';
     if ($fecha_inicio && $fecha_fin) {
-        $whereLegacy  .= ' AND DATE(cf.fecha) BETWEEN ? AND ?';
-        $whereGeneral .= ' AND DATE(c.fecha_cobro) BETWEEN ? AND ?';
-        $unionParams   = [$fecha_inicio, $fecha_fin, $fecha_inicio, $fecha_fin];
-        $unionTypes    = 'ssss';
+        $whereLegacy     .= ' AND DATE(cf.fecha) BETWEEN ? AND ?';
+        $whereGeneral    .= ' AND DATE(c.fecha_cobro) BETWEEN ? AND ?';
+        $whereCotizacion .= ' AND DATE(cot.fecha) BETWEEN ? AND ?';
+        $unionParams      = [$fecha_inicio, $fecha_fin, $fecha_inicio, $fecha_fin, $fecha_inicio, $fecha_fin];
+        $unionTypes       = 'ssssss';
     }
 
     $unionSql = "
@@ -333,6 +342,30 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
         LEFT JOIN pacientes p ON p.id = c.paciente_id
         LEFT JOIN usuarios u ON u.id = c.usuario_id
         WHERE $whereGeneral
+
+        UNION ALL
+
+        SELECT
+            cot.id                                                                  AS id,
+            'cotizacion'                                                            AS source,
+            CONCAT('Q', LPAD(cot.id, 6, '0'))                                      AS referencia,
+            cot.fecha                                                               AS fecha,
+            cot.paciente_id,
+            COALESCE(
+                NULLIF(TRIM(CONCAT(COALESCE(p.nombre,''), ' ', COALESCE(p.apellido,''))), ''),
+                'Particular'
+            )                                                                       AS paciente_nombre,
+            COALESCE(p.dni, '')                                                     AS paciente_dni,
+            cot.usuario_id,
+            COALESCE(u.nombre, 'Sistema')                                           AS usuario_nombre,
+            cot.total                                                               AS total,
+            cot.estado,
+            cot.observaciones,
+            {$selectRefCot}                                                         AS referencia_origen
+        FROM cotizaciones cot
+        LEFT JOIN pacientes p ON p.id = cot.paciente_id
+        LEFT JOIN usuarios u ON u.id = cot.usuario_id
+        WHERE $whereCotizacion
     ";
 
     // Filtro de búsqueda aplicado sobre el resultado del UNION
@@ -408,19 +441,23 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
         $medico = '';
         if ($row['source'] === 'general') {
             $medico = $medicoNombrePorCobro[(int)$row['id']] ?? '';
-            // Fallback de paciente desde observaciones solo si el campo viene vacío
-            if (($row['paciente_nombre'] ?? '') === 'Particular' && ($row['paciente_dni'] ?? '') === '') {
-                $tmp = extraer_paciente_temporal_desde_observaciones($row['observaciones'] ?? '');
-                if (trim((string)($tmp['nombre'] ?? '')) !== '') {
-                    $row['paciente_nombre'] = $tmp['nombre'];
-                }
-                $row['paciente_dni'] = trim((string)($tmp['dni'] ?? ''));
+        }
+
+        // Para cobros y cotizaciones, intentar rescatar particular manual desde observaciones
+        // cuando en el listado llegó como Particular sin DNI.
+        if (($row['source'] === 'general' || $row['source'] === 'cotizacion')
+            && ($row['paciente_nombre'] ?? '') === 'Particular'
+            && ($row['paciente_dni'] ?? '') === '') {
+            $tmp = extraer_paciente_temporal_desde_observaciones($row['observaciones'] ?? '');
+            if (trim((string)($tmp['nombre'] ?? '')) !== '') {
+                $row['paciente_nombre'] = $tmp['nombre'];
             }
+            $row['paciente_dni'] = trim((string)($tmp['dni'] ?? ''));
         }
         $ventas[] = [
             'id'              => (int)$row['id'],
             'source'          => $row['source'],
-            'origen'          => $row['source'] === 'legacy' ? 'farmacia' : 'cobro',
+            'origen'          => $row['source'] === 'legacy' ? 'farmacia' : ($row['source'] === 'cotizacion' ? 'cotizacion' : 'cobro'),
             'referencia'      => $row['referencia'],
             'referencia_origen' => trim((string)($row['referencia_origen'] ?? '')),
             'fecha'           => $row['fecha'],
@@ -436,6 +473,96 @@ function listar_ventas_farmacia_paginado($conn, $page, $limit, $fecha_inicio, $f
     }
 
     return ['ventas' => $ventas, 'total' => $total];
+}
+
+function obtener_detalle_venta_cotizacion($conn, $cotizacionId) {
+    $selectRefOrigen = column_exists_local($conn, 'cotizaciones', 'referencia_origen')
+        ? 'cot.referencia_origen'
+        : 'NULL AS referencia_origen';
+    $stmt = $conn->prepare("SELECT
+            cot.id,
+            cot.paciente_id,
+            cot.usuario_id,
+            cot.fecha,
+            cot.total,
+            cot.saldo_pendiente,
+            cot.estado,
+            cot.observaciones,
+            {$selectRefOrigen},
+            p.nombre,
+            p.apellido,
+            p.dni,
+            u.nombre AS usuario_nombre
+        FROM cotizaciones cot
+        LEFT JOIN pacientes p ON p.id = cot.paciente_id
+        LEFT JOIN usuarios u ON u.id = cot.usuario_id
+        WHERE cot.id = ?");
+    if (!$stmt) {
+        respond(['success' => false, 'error' => 'Error al preparar detalle cotización: ' . $conn->error], 500);
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    if (!$stmt->execute()) {
+        respond(['success' => false, 'error' => 'Error al consultar cotización: ' . $stmt->error], 500);
+    }
+    $cot = $stmt->get_result()->fetch_assoc();
+    if (!$cot) {
+        respond(['success' => false, 'error' => 'Cotización no encontrada'], 404);
+    }
+
+    $stmtDet = $conn->prepare("SELECT id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'farmacia'");
+    if (!$stmtDet) {
+        respond(['success' => false, 'error' => 'Error al preparar detalle: ' . $conn->error], 500);
+    }
+    $stmtDet->bind_param('i', $cotizacionId);
+    $stmtDet->execute();
+    $detalleRows = $stmtDet->get_result()->fetch_all(MYSQLI_ASSOC);
+
+    $detalles = [];
+    foreach ($detalleRows as $dr) {
+        $detalles[] = [
+            'id'              => (int)$dr['id'],
+            'medicamento_id'  => (int)($dr['servicio_id'] ?? 0),
+            'medicamento'     => $dr['descripcion'] ?? '',
+            'cantidad'        => (float)($dr['cantidad'] ?? 1),
+            'precio_unitario' => (float)($dr['precio_unitario'] ?? 0),
+            'subtotal'        => (float)($dr['subtotal'] ?? 0),
+        ];
+    }
+
+    if (empty($detalles)) {
+        respond(['success' => false, 'error' => 'La cotización no tiene ítems de farmacia'], 404);
+    }
+
+    $pacienteNombre = formatear_paciente($cot['nombre'] ?? '', $cot['apellido'] ?? '');
+    $pacienteDni    = trim((string)($cot['dni'] ?? ''));
+    if ($pacienteNombre === 'Particular' && $pacienteDni === '') {
+        $tmp = extraer_paciente_temporal_desde_observaciones($cot['observaciones'] ?? '');
+        if (trim((string)($tmp['nombre'] ?? '')) !== '') {
+            $pacienteNombre = $tmp['nombre'];
+        }
+        $pacienteDni = trim((string)($tmp['dni'] ?? ''));
+    }
+
+    $totalFarmacia = array_sum(array_column($detalles, 'subtotal'));
+
+    return [
+        'id'               => $cotizacionId,
+        'source'           => 'cotizacion',
+        'origen'           => 'cotizacion',
+        'referencia'       => sprintf('Q%06d', $cotizacionId),
+        'referencia_origen'=> trim((string)($cot['referencia_origen'] ?? '')),
+        'fecha'            => $cot['fecha'],
+        'paciente_id'      => isset($cot['paciente_id']) ? (int)$cot['paciente_id'] : null,
+        'paciente_nombre'  => $pacienteNombre,
+        'paciente_dni'     => $pacienteDni,
+        'usuario_id'       => isset($cot['usuario_id']) ? (int)$cot['usuario_id'] : null,
+        'usuario_nombre'   => $cot['usuario_nombre'] ?? '',
+        'medico_nombre'    => '',
+        'total'            => round($totalFarmacia, 2),
+        'estado'           => $cot['estado'] ?? 'pendiente',
+        'saldo_pendiente'  => round((float)($cot['saldo_pendiente'] ?? $totalFarmacia), 2),
+        'detalles'         => $detalles,
+    ];
 }
 
 function obtener_detalle_venta_general($conn, $cobroId) {
@@ -602,6 +729,11 @@ switch($method) {
         if (isset($_GET['cotizacion_id'])) {
             $ventaId = (int)$_GET['cotizacion_id'];
             $source = trim((string)($_GET['source'] ?? 'legacy'));
+
+            if ($source === 'cotizacion') {
+                $venta = obtener_detalle_venta_cotizacion($conn, $ventaId);
+                respond(['success' => true, 'cotizacion' => $venta]);
+            }
 
             if ($source === 'general') {
                 $venta = obtener_detalle_venta_general($conn, $ventaId);

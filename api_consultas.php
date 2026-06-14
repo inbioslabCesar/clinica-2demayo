@@ -639,6 +639,12 @@ switch ($method) {
             }
         }
 
+        // Si la consulta está vinculada a agenda de contrato, solo se muestra al médico
+        // cuando el evento ya fue atendido/espontáneo para evitar visibilidad anticipada.
+        if ($esSesionMedico && columna_existe_local($conn, 'agenda_contrato', 'consulta_id')) {
+            $where[] = "(NOT EXISTS (SELECT 1 FROM agenda_contrato agp WHERE agp.consulta_id = consultas.id) OR EXISTS (SELECT 1 FROM agenda_contrato aga WHERE aga.consulta_id = consultas.id AND LOWER(TRIM(COALESCE(aga.estado_evento, ''))) IN ('atendido', 'espontaneo')))";
+        }
+
         $whereSql = count($where) ? (' WHERE ' . implode(' AND ', $where)) : '';
 
         $statsSql = 'SELECT COUNT(*) AS total, '
@@ -765,9 +771,18 @@ switch ($method) {
         if (strlen($hora) == 5 && substr_count($hora, ':') == 1) {
             $hora = $hora . ':00';
         }
-        // Solo validar caja abierta para consultas espontáneas
+        // Reglas de flujo:
+        // - espontanea: mantiene validación de caja en fecha seleccionada.
+        // - reservada_sin_turno: permite reservar sin validar caja ni disponibilidad del bloque.
         $tipo_consulta = $data['tipo_consulta'] ?? 'programada';
-        if ($tipo_consulta === 'espontanea') {
+        $origen_creacion = trim((string)($data['origen_creacion'] ?? 'agendada'));
+        if (!in_array($origen_creacion, ['agendada', 'cotizador', 'hc_proxima', 'reservada_sin_turno'], true)) {
+            $origen_creacion = 'agendada';
+        }
+
+        $es_reservada_sin_turno = ($origen_creacion === 'reservada_sin_turno');
+
+        if ($tipo_consulta === 'espontanea' && !$es_reservada_sin_turno) {
             $usuario_id = $_SESSION['usuario']['id'] ?? null;
             // Normalizar fecha a Y-m-d
             $fecha_consulta = date('Y-m-d', strtotime($fecha));
@@ -789,22 +804,18 @@ switch ($method) {
                 exit;
             }
         }
-        $tipo_consulta = $data['tipo_consulta'] ?? 'programada';
-        $origen_creacion = trim((string)($data['origen_creacion'] ?? 'agendada'));
-        if (!in_array($origen_creacion, ['agendada', 'cotizador', 'hc_proxima'], true)) {
-            $origen_creacion = 'agendada';
-        }
 
         // === VALIDACIÓN ATÓMICA DE CUPOS / CONFLICTOS ===
         // Para programada: valida bloque y cupos.
-        // Para espontánea: permite cualquier hora, pero mantiene validación de conflicto exacto.
+        // Para espontánea/reservada_sin_turno: permite cualquier hora, pero mantiene validación de conflicto exacto.
         $es_espontanea = ($tipo_consulta === 'espontanea');
+        $omitir_validacion_disponibilidad = $es_espontanea || $es_reservada_sin_turno;
         $conn->begin_transaction();
         try {
             $totalSlots = null;
             $agendadas = null;
 
-            if (!$es_espontanea) {
+            if (!$omitir_validacion_disponibilidad) {
                 // 1. Bloquear el bloque de disponibilidad para este médico/fecha/hora
                 //    FOR UPDATE previene lecturas concurrentes del mismo bloque.
                 $stmtBloque = $conn->prepare(
@@ -904,7 +915,7 @@ switch ($method) {
                 'success'          => true,
                 'id'               => $nuevaId,
             ];
-            if (!$es_espontanea && $totalSlots !== null && $agendadas !== null) {
+            if (!$omitir_validacion_disponibilidad && $totalSlots !== null && $agendadas !== null) {
                 $responseOk['cupos_restantes'] = $totalSlots - $agendadas - 1;
             }
             echo json_encode($responseOk);

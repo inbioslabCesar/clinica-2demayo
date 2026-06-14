@@ -25,7 +25,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     }
   };
 
-  const imprimirTicketRecepcion = ({ codigo, paciente, total, vencimiento }) => {
+  const imprimirTicketRecepcion = ({ codigo, paciente, total, vencimiento, referenciaOrigen }) => {
     const fechaEmision = new Date().toLocaleString();
     const html = `<!doctype html>
 <html>
@@ -33,12 +33,19 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     <meta charset="utf-8" />
     <title>Ticket de cobro</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 20px; }
+      body { font-family: "Courier New", "Lucida Console", monospace; margin: 20px; color: #111827; font-weight: 700; }
       .box { border: 1px dashed #666; padding: 12px; max-width: 360px; }
-      h2 { margin: 0 0 8px; font-size: 18px; }
+      h2 { margin: 0 0 8px; font-size: 18px; font-weight: 800; text-transform: uppercase; }
       .code { font-size: 28px; font-weight: 700; letter-spacing: 1px; margin: 8px 0; }
-      .row { margin: 4px 0; font-size: 14px; }
-      .muted { color: #555; font-size: 12px; margin-top: 10px; }
+      .row { margin: 4px 0; font-size: 14px; font-weight: 700; }
+      .muted { color: #111827; font-size: 12px; margin-top: 10px; font-weight: 700; }
+      @media print {
+        @page { size: 80mm auto; margin: 2mm; }
+        html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        body { width: 76mm; max-width: 76mm; padding: 2.5mm; font-size: 10.5px; line-height: 1.15; }
+        .box { max-width: 100%; }
+        .code { font-size: 26px; }
+      }
     </style>
   </head>
   <body>
@@ -47,6 +54,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
       <div class="row"><strong>Codigo:</strong></div>
       <div class="code">${codigo}</div>
       <div class="row"><strong>Paciente:</strong> ${paciente}</div>
+      ${referenciaOrigen ? `<div class="row"><strong>Referencia origen:</strong> ${referenciaOrigen}</div>` : ""}
       <div class="row"><strong>Total:</strong> S/ ${Number(total || 0).toFixed(2)}</div>
       <div class="row"><strong>Vence:</strong> ${vencimiento || "No definido"}</div>
       <div class="muted">Emitido: ${fechaEmision}</div>
@@ -239,6 +247,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
               width: SWAL_WIDE_WIDTH,
               html: `<div class="text-left">
                 <div><b>Código:</b> ${numeroComprobante}</div>
+                ${referenciaOrigenPayload ? `<div><b>Referencia origen:</b> ${referenciaOrigenPayload}</div>` : ''}
                 <div><b>Total:</b> S/ ${Number(total || 0).toFixed(2)}</div>
                 <div><b>Vence:</b> ${fechaVencimientoTexto || 'No definido'}</div>
                 <div class="mt-2">Entrega este código en recepción para buscar la cotización y cobrar.</div>
@@ -260,7 +269,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                 <div class="mt-2">Cotización registrada correctamente.</div>
               </div>`,
               showDenyButton: false,
-              confirmButtonText: cotizacionId ? 'Continuar' : 'Ir a cotizaciones',
+              confirmButtonText: cotizacionId ? 'Continuar' : 'Ir a Atenciones',
             };
         dialog = await Swal.fire(swalOpts);
       }
@@ -277,6 +286,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         imprimirTicketRecepcion({
           codigo: numeroComprobante,
           paciente: pacienteNombrePayload || 'Particular',
+          referenciaOrigen: referenciaOrigenPayload,
           total,
           vencimiento: fechaVencimientoTexto,
         });
@@ -505,11 +515,25 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   }, [location.search]);
 
   // Calcular precio de venta
+  const parseDecimal = (value) => {
+    if (value === null || value === undefined || value === "") return 0;
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    const normalized = String(value).replace(',', '.').trim();
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
   const getPrecioVenta = (med) => {
     if (!med) return 0;
-    const precio = Number(med.precio_compra || 0);
-    const margen = Number(med.margen_ganancia || 0);
-    return precio + (precio * margen) / 100;
+    const precioCompra = parseDecimal(med.precio_compra);
+    const margen = parseDecimal(med.margen_ganancia);
+
+    if (precioCompra > 0) {
+      return precioCompra + (precioCompra * margen) / 100;
+    }
+
+    const precioDirecto = parseDecimal(med.precio_venta ?? med.precio ?? 0);
+    return precioDirecto > 0 ? precioDirecto : 0;
   };
 
   const construirDetallesSeleccionados = () => {
@@ -1329,6 +1353,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
               <ul className="divide-y divide-gray-100">
                 {filtrarMedicamentos.map((med) => {
                   const unidadesCaja = unidadesPorCaja[med.id] || 30;
+                  const precioVenta = getPrecioVenta(med);
+                  const precioCaja = precioVenta * unidadesCaja;
                   const stockUnidades = Number(med.stock || 0);
                   const stockCajas = Math.floor(stockUnidades / unidadesCaja);
                   const sinStockUnidad = stockUnidades <= 0;
@@ -1347,10 +1373,18 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                         <div className="text-xs text-gray-500 flex gap-2 items-center">
                           <span>📦 {stockCajas} cajas</span>
                           <span>💊 {stockUnidades} unidades</span>
-                          <span>
-                            💲 S/ {getPrecioVenta(med).toFixed(2)} / unidad
-                          </span>
                         </div>
+                      </div>
+                      <div className="min-w-[170px] text-right">
+                        {precioVenta > 0 ? (
+                          <>
+                            <div className="font-bold text-green-700 text-lg leading-none">S/ {precioVenta.toFixed(2)}</div>
+                            <div className="text-xs text-emerald-700 font-semibold">por unidad</div>
+                            <div className="text-xs text-blue-700 font-semibold mt-1">S/ {precioCaja.toFixed(2)} / caja</div>
+                          </>
+                        ) : (
+                          <div className="text-xs font-semibold text-amber-700">Precio no configurado</div>
+                        )}
                       </div>
                       {seleccionados.includes(String(med.id)) ? (
                         <>

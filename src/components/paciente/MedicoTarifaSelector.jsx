@@ -7,7 +7,9 @@ import React, { useState, useRef, useEffect } from "react";
 function MedicoTarifaSelector({
   tarifas = [],
   medicoId,
+  tarifaId,
   setMedicoId,
+  setTarifaId,
   setHora,
   coverageByTarifa = {},
 }) {
@@ -19,8 +21,8 @@ function MedicoTarifaSelector({
     String(coverageByTarifa[Number(tarifa?.id)]?.origen_cobro || "") === "contrato";
 
   const tarifaSeleccionada = tarifas.find(
-    (t) => String(t.medico_id) === String(medicoId)
-  );
+    (t) => Number(t.id) === Number(tarifaId)
+  ) || tarifas.find((t) => String(t.medico_id) === String(medicoId));
 
   const labelSeleccionado = tarifaSeleccionada
     ? `${tarifaSeleccionada.medico_abreviatura_profesional || "Dr(a)."} ${tarifaSeleccionada.medico_nombre} ${tarifaSeleccionada.medico_apellido}`
@@ -48,6 +50,9 @@ function MedicoTarifaSelector({
 
   const handleSelect = (tarifa) => {
     setMedicoId(tarifa.medico_id);
+    if (typeof setTarifaId === "function") {
+      setTarifaId(String(tarifa.id || ""));
+    }
     setHora("");
     setQuery("");
     setOpen(false);
@@ -56,6 +61,9 @@ function MedicoTarifaSelector({
   const handleClear = (e) => {
     e.stopPropagation();
     setMedicoId("");
+    if (typeof setTarifaId === "function") {
+      setTarifaId("");
+    }
     setHora("");
     setQuery("");
     setOpen(false);
@@ -127,7 +135,9 @@ function MedicoTarifaSelector({
             filtered.map((tarifa, idx) => {
               const cubierta = esCubierta(tarifa);
               const precio = Number(tarifa.precio_particular || 0);
-              const isSelected = String(tarifa.medico_id) === String(medicoId);
+              const isSelected = Number(tarifaId) > 0
+                ? Number(tarifa.id) === Number(tarifaId)
+                : String(tarifa.medico_id) === String(medicoId);
 
               return (
                 <li
