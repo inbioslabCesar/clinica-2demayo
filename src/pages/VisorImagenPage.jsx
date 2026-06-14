@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import Spinner from "../components/comunes/Spinner";
 import DicomViewer from "../components/visor/DicomViewer";
@@ -147,7 +147,13 @@ function ImageViewer({ src, nombre }) {
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function VisorImagenPage() {
   const { ordenId } = useParams();
+  const location = useLocation();
   const navigate    = useNavigate();
+  const returnState = location.state && typeof location.state === 'object' ? location.state : null;
+  const backTo = typeof returnState?.backTo === 'string' && returnState.backTo.trim() !== '' ? returnState.backTo : '';
+  const backState = returnState?.backState && typeof returnState.backState === 'object'
+    ? returnState.backState
+    : null;
 
   const [orden, setOrden]       = useState(null);
   const [loading, setLoading]   = useState(true);
@@ -200,7 +206,18 @@ export default function VisorImagenPage() {
   if (error) return (
     <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center text-white">
       <p className="text-red-400 text-lg mb-4">⚠ {error}</p>
-      <button onClick={() => navigate(-1)} className="bg-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-600">← Volver</button>
+      <button
+        onClick={() => {
+          if (backTo) {
+            navigate(backTo, { state: backState || undefined });
+            return;
+          }
+          navigate(-1);
+        }}
+        className="bg-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-600"
+      >
+        ← Volver
+      </button>
     </div>
   );
 
@@ -216,7 +233,13 @@ export default function VisorImagenPage() {
       {/* ── Barra superior ─────────────────────────────────────────────────── */}
       <div className="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center flex-wrap gap-3">
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (backTo) {
+              navigate(backTo, { state: backState || undefined });
+              return;
+            }
+            navigate(-1);
+          }}
           className="text-gray-400 hover:text-white transition flex items-center gap-1.5 text-sm"
         >
           <FaChevronLeft /> Volver

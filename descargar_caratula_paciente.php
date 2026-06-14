@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 require_once __DIR__ . '/init_api.php';
 require_once 'config_pdf.php';
 

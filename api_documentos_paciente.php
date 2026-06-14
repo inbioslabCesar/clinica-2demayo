@@ -248,6 +248,7 @@ if ($method === 'GET') {
 
     // Obtener nombres de exámenes en batch
     $allExamIds = [];
+    $allCotizacionIds = [];
     foreach ($ordenes_rows as $row) {
         $raw = json_decode((string)($row['examenes_json'] ?? '[]'), true);
         if (!is_array($raw)) continue;
@@ -255,8 +256,14 @@ if ($method === 'GET') {
             $id = is_array($ex) ? intval($ex['id'] ?? 0) : intval($ex);
             if ($id > 0) $allExamIds[] = $id;
         }
+
+        $cid = intval($row['cotizacion_id'] ?? 0);
+        if ($cid > 0) {
+            $allCotizacionIds[] = $cid;
+        }
     }
     $allExamIds = array_unique($allExamIds);
+    $allCotizacionIds = array_values(array_unique($allCotizacionIds));
     $examNombres = [];
     if (!empty($allExamIds)) {
         $placeholders = implode(',', array_fill(0, count($allExamIds), '?'));
@@ -270,16 +277,79 @@ if ($method === 'GET') {
         $stmtEx->close();
     }
 
+    $cotizacionSnapshotsPorId = [];
+    if (!empty($allCotizacionIds)) {
+        $placeholders = implode(',', array_fill(0, count($allCotizacionIds), '?'));
+        $types = str_repeat('i', count($allCotizacionIds));
+        $stmtSnap = $conn->prepare(
+            "SELECT cotizacion_id, servicio_id, descripcion
+             FROM cotizaciones_detalle
+             WHERE servicio_tipo = 'laboratorio' AND cotizacion_id IN ($placeholders)
+             ORDER BY cotizacion_id ASC, id ASC"
+        );
+        if ($stmtSnap) {
+            $stmtSnap->bind_param($types, ...$allCotizacionIds);
+            $stmtSnap->execute();
+            $rowsSnap = $stmtSnap->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtSnap->close();
+
+            foreach ($rowsSnap as $snapRow) {
+                $cid = intval($snapRow['cotizacion_id'] ?? 0);
+                $sid = intval($snapRow['servicio_id'] ?? 0);
+                if ($cid <= 0 || $sid <= 0) continue;
+                if (!isset($cotizacionSnapshotsPorId[$cid])) {
+                    $cotizacionSnapshotsPorId[$cid] = [];
+                }
+                if (!isset($cotizacionSnapshotsPorId[$cid][$sid])) {
+                    $cotizacionSnapshotsPorId[$cid][$sid] = (string)($snapRow['descripcion'] ?? '');
+                }
+            }
+        }
+    }
+
+    $normalizeDocExamName = function ($value) {
+        $value = trim((string)$value);
+        if ($value === '') return '';
+        $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+        if ($ascii !== false) {
+            $value = $ascii;
+        }
+        $value = strtolower($value);
+        $value = preg_replace('/[-_\s]+/', ' ', $value);
+        $value = preg_replace('/[^a-z0-9 ]/', '', $value);
+        return trim((string)$value);
+    };
+
     foreach ($ordenes_rows as $row) {
         $examenes = [];
         $raw = json_decode((string)($row['examenes_json'] ?? '[]'), true);
         if (is_array($raw)) {
             foreach ($raw as $ex) {
                 $id = is_array($ex) ? intval($ex['id'] ?? 0) : intval($ex);
-                $nombre = is_array($ex) && !empty($ex['nombre'])
-                    ? $ex['nombre']
-                    : ($examNombres[$id] ?? ('Examen #' . $id));
-                if ($id > 0) $examenes[] = $nombre;
+                if ($id <= 0) continue;
+
+                $snapshotNombre = '';
+                if (!empty($row['cotizacion_id'])) {
+                    $cid = intval($row['cotizacion_id']);
+                    if (isset($cotizacionSnapshotsPorId[$cid][$id])) {
+                        $snapshotNombre = trim((string)$cotizacionSnapshotsPorId[$cid][$id]);
+                    }
+                }
+
+                $nombreCatalogo = is_array($ex) && !empty($ex['nombre'])
+                    ? trim((string)$ex['nombre'])
+                    : trim((string)($examNombres[$id] ?? ('Examen #' . $id)));
+
+                $nombreFinal = $nombreCatalogo;
+                if ($snapshotNombre !== '') {
+                    $snapshotNorm = $normalizeDocExamName($snapshotNombre);
+                    $catalogNorm = $normalizeDocExamName($nombreCatalogo);
+                    if ($catalogNorm === '' || ($snapshotNorm !== '' && $snapshotNorm !== $catalogNorm)) {
+                        $nombreFinal = $snapshotNombre;
+                    }
+                }
+
+                $examenes[] = $nombreFinal;
             }
         }
 

@@ -101,9 +101,16 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     if (codigo) directCandidates.push(`${idText}__${codigo}`);
     if (nombre) directCandidates.push(`${idText}__${nombre}`);
 
+    let firstDirectMatch = null;
     for (const key of directCandidates) {
       if (Object.prototype.hasOwnProperty.call(source, key)) {
-        return key;
+        if (firstDirectMatch === null) {
+          firstDirectMatch = key;
+        }
+        const raw = source[key];
+        if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+          return key;
+        }
       }
     }
 
@@ -113,24 +120,59 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     const uniqueTokens = Array.from(new Set(targetTokens.filter(Boolean)));
     if (uniqueTokens.length === 0) return null;
 
+    let firstTokenMatch = null;
     const prefix = `${idText}__`;
     for (const key of Object.keys(source)) {
       if (!String(key).startsWith(prefix)) continue;
       const suffix = String(key).slice(prefix.length);
       const keyToken = normalizeParamToken(suffix);
       if (keyToken && uniqueTokens.includes(keyToken)) {
-        return key;
+        if (firstTokenMatch === null) {
+          firstTokenMatch = key;
+        }
+        const raw = source[key];
+        if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+          return key;
+        }
       }
     }
 
-    return null;
+    return firstDirectMatch || firstTokenMatch || null;
   };
 
   const getResultValueForParam = (source, examId, param, defaultValue = '') => {
     const matchKey = findResultadoKeyForParam(source, examId, param);
-    if (!matchKey) return defaultValue;
-    const raw = source[matchKey];
-    return raw === null || raw === undefined ? defaultValue : raw;
+    if (matchKey) {
+      const raw = source[matchKey];
+      return raw === null || raw === undefined ? defaultValue : raw;
+    }
+
+    if (!source || typeof source !== 'object') return defaultValue;
+
+    const directExamKey = String(examId);
+    if (Object.prototype.hasOwnProperty.call(source, directExamKey)) {
+      const rawDirect = source[directExamKey];
+      if (rawDirect !== null && rawDirect !== undefined && String(rawDirect).trim() !== '') {
+        return rawDirect;
+      }
+    }
+
+    const prefix = `${String(examId)}__`;
+    const fallbackKeys = Object.keys(source).filter((key) => {
+      const keyText = String(key);
+      if (!keyText.startsWith(prefix)) return false;
+      if (keyText.endsWith('__imprimir_examen')) return false;
+      if (keyText.endsWith('__alarma_activa')) return false;
+      if (keyText.endsWith('__alarma_dias')) return false;
+      const raw = source[key];
+      return raw !== null && raw !== undefined && String(raw).trim() !== '';
+    });
+
+    if (fallbackKeys.length === 1) {
+      return source[fallbackKeys[0]];
+    }
+
+    return defaultValue;
   };
 
   const normalizeExamName = (value) =>
@@ -148,8 +190,18 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       ? examenesArray.find(ex => (typeof ex === 'object' && String(ex?.id) === idText))
       : null;
 
-    const examNameFromOrder = (exOrdenDetalle && exOrdenDetalle.nombre) || (exObj && exObj.nombre) || '';
+    const examNameFromOrder = (exOrdenDetalle && (exOrdenDetalle.snapshot_nombre || exOrdenDetalle.descripcion_snapshot || exOrdenDetalle.nombre || exOrdenDetalle.descripcion)) || (exObj && exObj.nombre) || '';
+    const catalogName = String((exObj && exObj.nombre) || '').trim();
+    const orderName = String(examNameFromOrder || '').trim();
+    const catalogoCoincideConSnapshot = !orderName || !catalogName || normalizeExamName(orderName) === normalizeExamName(catalogName);
     const exObjResolved = (() => {
+      const orderHasParams = exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) && exOrdenDetalle.valores_referenciales.length > 0;
+      if (orderHasParams) return exOrdenDetalle;
+
+      if (!catalogoCoincideConSnapshot) {
+        return exOrdenDetalle || null;
+      }
+
       const byIdHasParams = exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0;
       if (byIdHasParams) return exObj;
 
@@ -488,14 +540,27 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       };
     }
     // límites unilaterales
-    const mMin = s.match(/(?:>=|≥|desde|mayor\s*a?)\s*(-?\d[\d\.,]*)/i);
-    const mMax = s.match(/(?:<=|≤|hasta|menor\s*a?)\s*(-?\d[\d\.,]*)/i);
+    const mMin = s.match(/(?:>=|≥|>|desde|mayor\s*a?)\s*(-?\d[\d\.,]*)/i);
+    const mMax = s.match(/(?:<=|≤|<|hasta|menor\s*a?)\s*(-?\d[\d\.,]*)/i);
     const min = mMin ? normalizeNumber(mMin[1]) : null;
     const max = mMax ? normalizeNumber(mMax[1]) : null;
+    let finalMin = Number.isFinite(min) ? min : null;
+    let finalMax = Number.isFinite(max) ? max : null;
+
+    if (finalMin !== null && finalMax !== null && finalMin > finalMax) {
+      const tmp = finalMin;
+      finalMin = finalMax;
+      finalMax = tmp;
+    }
+
     return {
-      min: Number.isFinite(min) ? min : null,
-      max: Number.isFinite(max) ? max : null,
+      min: finalMin,
+      max: finalMax,
     };
+  }
+
+  function hasMeaningfulValue(value) {
+    return value !== undefined && value !== null && String(value).trim() !== "";
   }
 
   const handleChange = (e) => {
@@ -704,17 +769,23 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     const paciente = getPacienteContext();
     const referenciaAplicada = getApplicableReference(param, paciente);
 
-    if (param && param.min !== null && param.min !== "") {
+    if (param && hasMeaningfulValue(param.min)) {
       const m = normalizeNumber(param.min);
       if (Number.isFinite(m)) min = m;
+    } else if (param && hasMeaningfulValue(param.valor_min)) {
+      const mAlt = normalizeNumber(param.valor_min);
+      if (Number.isFinite(mAlt)) min = mAlt;
     } else if (referenciaAplicada) {
       const mRef = normalizeNumber(referenciaAplicada.valor_min);
       if (Number.isFinite(mRef)) min = mRef;
     }
 
-    if (param && param.max !== null && param.max !== "") {
+    if (param && hasMeaningfulValue(param.max)) {
       const M = normalizeNumber(param.max);
       if (Number.isFinite(M)) max = M;
+    } else if (param && hasMeaningfulValue(param.valor_max)) {
+      const MAlt = normalizeNumber(param.valor_max);
+      if (Number.isFinite(MAlt)) max = MAlt;
     } else if (referenciaAplicada) {
       const MRef = normalizeNumber(referenciaAplicada.valor_max);
       if (Number.isFinite(MRef)) max = MRef;
@@ -902,9 +973,19 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                 const exOrdenDetalle = Array.isArray(orden.examenes)
                   ? orden.examenes.find(ex => (typeof ex === 'object' && ex.id == id))
                   : null;
-                const examNameFromOrder = (exOrdenDetalle && exOrdenDetalle.nombre) || (exObj && exObj.nombre) || '';
+                const examNameFromOrder = (exOrdenDetalle && (exOrdenDetalle.snapshot_nombre || exOrdenDetalle.descripcion_snapshot || exOrdenDetalle.nombre || exOrdenDetalle.descripcion)) || (exObj && exObj.nombre) || '';
+                const catalogName = String((exObj && exObj.nombre) || '').trim();
+                const orderName = String(examNameFromOrder || '').trim();
+                const catalogoCoincideConSnapshot = !orderName || !catalogName || normalizeExamName(orderName) === normalizeExamName(catalogName);
 
                 const exObjResolved = (() => {
+                  const orderHasParams = exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) && exOrdenDetalle.valores_referenciales.length > 0;
+                  if (orderHasParams) return exOrdenDetalle;
+
+                  if (!catalogoCoincideConSnapshot) {
+                    return exOrdenDetalle || null;
+                  }
+
                   const byIdHasParams = exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0;
                   if (byIdHasParams) return exObj;
 
@@ -933,6 +1014,72 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   return isTipoTitulo(param.tipo) || isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo) || isTipoParametro(param.tipo);
                 });
 
+                if ((!Array.isArray(paramsList) || paramsList.length === 0 || !hasRenderableParams) && orderName) {
+                  const genericKey = `${id}__${orderName}`;
+                  const genericValue = getResultValueForParam(resultados, id, { nombre: orderName, codigo_interno: '' }, '');
+
+                  return (
+                    <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                      <div className="flex items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
+                            🧪
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-bold text-gray-900">{orderName}</h4>
+                            <p className="text-sm text-gray-600">Complete el resultado solicitado</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                          <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={isExamPrintable(id)}
+                              onChange={(e) => handlePrintToggle(id, e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Imprimir este examen</span>
+                          </label>
+                          <div className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isExamAlarmActive(id)}
+                                onChange={(e) => handleAlarmToggle(id, e.target.checked, suggestedAlarmDays)}
+                                className="h-4 w-4"
+                              />
+                              <span>Alarma</span>
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={getExamAlarmDays(id)}
+                              onChange={(e) => handleAlarmDaysChange(id, e.target.value)}
+                              disabled={!isExamAlarmActive(id)}
+                              className="w-14 px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100 disabled:text-gray-400"
+                              placeholder={suggestedAlarmDays ? String(suggestedAlarmDays) : 'días'}
+                            />
+                            <span className="text-xs text-gray-500">días</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-semibold text-gray-700">{orderName}</label>
+                        <input
+                          type="text"
+                          name={genericKey}
+                          value={genericValue}
+                          onChange={handleChange}
+                          className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                          placeholder="Ingrese el valor"
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (Array.isArray(paramsList) && paramsList.length > 0 && hasRenderableParams) {
                   // Construir un mapa nombre->valor para este examen usando la lista efectiva de parámetros
                   // Incluir también codigo_interno como clave para que fórmulas sobrevivan renombrados
@@ -946,7 +1093,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                       }
                     }
                   });
-                  const examName = (exObjResolved && exObjResolved.nombre) || (exOrdenDetalle && exOrdenDetalle.nombre) || `Examen ${id}`;
+                  const examName = (exOrdenDetalle && (exOrdenDetalle.snapshot_nombre || exOrdenDetalle.descripcion_snapshot || exOrdenDetalle.nombre || exOrdenDetalle.descripcion)) || (exObjResolved && exObjResolved.nombre) || `Examen ${id}`;
 
                   return (
                     <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">

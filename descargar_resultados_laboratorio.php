@@ -80,11 +80,99 @@ if (!empty($orden['paciente_id'])) {
 
 $resultados_map = json_decode($row['resultados'], true) ?: [];
 $examenes_ids = [];
+$orderSnapshotsPorId = [];
+$cotizacionSnapshotsPorId = [];
+$hasSnapshotJsonDetalle = pdf_column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
 if ($orden && !empty($orden['examenes'])) {
     $examenes_ids = json_decode($orden['examenes'], true);
     if (!is_array($examenes_ids)) {
         $examenes_ids = [];
     }
+
+    foreach ($examenes_ids as $it) {
+        if (!is_array($it)) continue;
+        $sid = intval($it['id'] ?? 0);
+        if ($sid <= 0 || isset($orderSnapshotsPorId[$sid])) continue;
+
+        $snapshotJson = null;
+        if (!empty($it['snapshot_json']) && is_array($it['snapshot_json'])) {
+            $snapshotJson = $it['snapshot_json'];
+        }
+
+        $orderSnapshotsPorId[$sid] = [
+            'descripcion' => trim((string)($it['nombre'] ?? $it['descripcion'] ?? '')),
+            'snapshot_json' => $snapshotJson,
+            'raw' => $it,
+        ];
+    }
+}
+
+if (!empty($orden['cotizacion_id']) && $hasSnapshotJsonDetalle) {
+    $cid = intval($orden['cotizacion_id']);
+    $stmtSnap = $conn->prepare(
+        "SELECT servicio_id, descripcion, snapshot_json
+         FROM cotizaciones_detalle
+         WHERE cotizacion_id = ? AND servicio_tipo = 'laboratorio'
+         ORDER BY id ASC"
+    );
+    if ($stmtSnap) {
+        $stmtSnap->bind_param('i', $cid);
+        $stmtSnap->execute();
+        $rowsSnap = $stmtSnap->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmtSnap->close();
+
+        foreach ($rowsSnap as $snapRow) {
+            $sid = intval($snapRow['servicio_id'] ?? 0);
+            if ($sid <= 0 || isset($cotizacionSnapshotsPorId[$sid])) continue;
+            $snapshotJson = null;
+            if (!empty($snapRow['snapshot_json'])) {
+                $decodedSnapshot = json_decode((string)$snapRow['snapshot_json'], true);
+                if (is_array($decodedSnapshot)) {
+                    $snapshotJson = $decodedSnapshot;
+                }
+            }
+            $cotizacionSnapshotsPorId[$sid] = [
+                'descripcion' => trim((string)($snapRow['descripcion'] ?? '')),
+                'snapshot_json' => $snapshotJson,
+            ];
+        }
+    }
+}
+
+function normalize_exam_name_for_pdf($value)
+{
+    $value = trim((string)$value);
+    if ($value === '') return '';
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+    if ($ascii !== false) {
+        $value = $ascii;
+    }
+    $value = strtolower($value);
+    $value = preg_replace('/[-_\s]+/', ' ', $value);
+    $value = preg_replace('/[^a-z0-9 ]/', '', $value);
+    return trim((string)$value);
+}
+
+function pdf_column_exists(mysqli $conn, $table, $column)
+{
+    static $cache = [];
+    if (!isset($cache[$table])) {
+        $cache[$table] = [];
+        $stmt = $conn->prepare("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?");
+        if ($stmt) {
+            $stmt->bind_param('s', $table);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($rowCol = $res->fetch_assoc()) {
+                $name = (string)($rowCol['COLUMN_NAME'] ?? '');
+                if ($name !== '') {
+                    $cache[$table][$name] = true;
+                }
+            }
+            $stmt->close();
+        }
+    }
+    return isset($cache[$table][$column]);
 }
 
 $examenes_detalle = [];
@@ -105,9 +193,75 @@ if (!empty($examenes_ids)) {
             $r['valores_referenciales'] = !empty($r['valores_referenciales'])
                 ? (json_decode($r['valores_referenciales'], true) ?: [])
                 : [];
+
+            $sid = intval($r['id'] ?? 0);
+            if ($sid > 0 && !empty($orderSnapshotsPorId[$sid])) {
+                $orderData = $orderSnapshotsPorId[$sid];
+                $snapshotNombre = trim((string)($orderData['descripcion'] ?? ''));
+                $snapshotJson = is_array($orderData['snapshot_json'] ?? null) ? $orderData['snapshot_json'] : null;
+                $rawOrder = is_array($orderData['raw'] ?? null) ? $orderData['raw'] : null;
+
+                if ($snapshotJson) {
+                    $r = array_merge($r, $snapshotJson);
+                } elseif ($rawOrder) {
+                    $r = array_merge($r, $rawOrder);
+                }
+
+                $nombreCatalogo = trim((string)($r['nombre'] ?? ''));
+                if ($snapshotNombre !== '') {
+                    $snapshotNorm = normalize_exam_name_for_pdf($snapshotNombre);
+                    $catalogNorm = normalize_exam_name_for_pdf($nombreCatalogo);
+                    if ($catalogNorm === '' || ($snapshotNorm !== '' && $snapshotNorm !== $catalogNorm)) {
+                        $r['nombre'] = $snapshotNombre;
+                        $r['descripcion'] = $snapshotNombre;
+                        $r['snapshot_nombre'] = $snapshotNombre;
+                    }
+                }
+            } elseif ($sid > 0 && !empty($cotizacionSnapshotsPorId[$sid])) {
+                $snapshotData = $cotizacionSnapshotsPorId[$sid];
+                $snapshotNombre = trim((string)($snapshotData['descripcion'] ?? ''));
+                $snapshotJson = is_array($snapshotData['snapshot_json'] ?? null) ? $snapshotData['snapshot_json'] : null;
+                if ($snapshotJson) {
+                    $r = array_merge($r, $snapshotJson);
+                }
+                $nombreCatalogo = trim((string)($r['nombre'] ?? ''));
+                if ($snapshotNombre !== '') {
+                    $snapshotNorm = normalize_exam_name_for_pdf($snapshotNombre);
+                    $catalogNorm = normalize_exam_name_for_pdf($nombreCatalogo);
+                    if ($catalogNorm === '' || ($snapshotNorm !== '' && $snapshotNorm !== $catalogNorm)) {
+                        $r['nombre'] = $snapshotNombre;
+                        $r['descripcion'] = $snapshotNombre;
+                        $r['snapshot_nombre'] = $snapshotNombre;
+                    }
+                }
+            }
+
             $examenes_detalle[$r['id']] = $r;
         }
         $stmt->close();
+
+        foreach ($unique as $sid) {
+            $sid = intval($sid);
+            if ($sid <= 0 || isset($examenes_detalle[$sid]) || empty($orderSnapshotsPorId[$sid])) continue;
+
+            $orderData = $orderSnapshotsPorId[$sid];
+            $rawOrder = is_array($orderData['raw'] ?? null) ? $orderData['raw'] : [];
+            $snapshotJson = is_array($orderData['snapshot_json'] ?? null) ? $orderData['snapshot_json'] : [];
+
+            $base = [
+                'id' => $sid,
+                'nombre' => (string)($orderData['descripcion'] ?? ('Examen ' . $sid)),
+                'descripcion' => (string)($orderData['descripcion'] ?? ('Examen ' . $sid)),
+                'valores_referenciales' => [],
+            ];
+            if (!empty($rawOrder)) {
+                $base = array_merge($base, $rawOrder);
+            }
+            if (!empty($snapshotJson)) {
+                $base = array_merge($base, $snapshotJson);
+            }
+            $examenes_detalle[$sid] = $base;
+        }
     }
 }
 
@@ -135,9 +289,16 @@ $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInte
     if ($codigo !== '') $directKeys[] = $idText . '__' . $codigo;
     if ($nombre !== '') $directKeys[] = $idText . '__' . $nombre;
 
+    $firstDirectMatch = null;
     foreach ($directKeys as $k) {
         if (array_key_exists($k, $map)) {
-            return $map[$k];
+            if ($firstDirectMatch === null) {
+                $firstDirectMatch = $k;
+            }
+            $raw = $map[$k];
+            if ($raw !== null && trim((string)$raw) !== '') {
+                return $raw;
+            }
         }
     }
 
@@ -145,19 +306,57 @@ $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInte
     if ($codigo !== '') $targetTokens[] = normalize_resultado_key_token($codigo);
     if ($nombre !== '') $targetTokens[] = normalize_resultado_key_token($nombre);
     $targetTokens = array_values(array_unique(array_filter($targetTokens)));
-    if (empty($targetTokens)) {
-        return '';
+    if (!empty($targetTokens)) {
+        $firstTokenMatch = null;
+        $prefix = $idText . '__';
+        foreach ($map as $k => $v) {
+            $key = (string)$k;
+            if (strpos($key, $prefix) !== 0) continue;
+            $suffix = substr($key, strlen($prefix));
+            $token = normalize_resultado_key_token($suffix);
+            if ($token !== '' && in_array($token, $targetTokens, true)) {
+                if ($firstTokenMatch === null) {
+                    $firstTokenMatch = $key;
+                }
+                if ($v !== null && trim((string)$v) !== '') {
+                    return $v;
+                }
+            }
+        }
+
+        if ($firstDirectMatch !== null && array_key_exists($firstDirectMatch, $map)) {
+            return $map[$firstDirectMatch];
+        }
+        if ($firstTokenMatch !== null && array_key_exists($firstTokenMatch, $map)) {
+            return $map[$firstTokenMatch];
+        }
+    }
+
+    if (array_key_exists($idText, $map)) {
+        $rawDirect = $map[$idText];
+        if ($rawDirect !== null && trim((string)$rawDirect) !== '') {
+            return $rawDirect;
+        }
     }
 
     $prefix = $idText . '__';
+    $firstNonMetaValue = null;
     foreach ($map as $k => $v) {
         $key = (string)$k;
         if (strpos($key, $prefix) !== 0) continue;
-        $suffix = substr($key, strlen($prefix));
-        $token = normalize_resultado_key_token($suffix);
-        if ($token !== '' && in_array($token, $targetTokens, true)) {
+        if (substr($key, -18) === '__imprimir_examen') continue;
+        if (substr($key, -15) === '__alarma_activa') continue;
+        if (substr($key, -13) === '__alarma_dias') continue;
+        if ($firstNonMetaValue === null) {
+            $firstNonMetaValue = $v;
+        }
+        if ($v !== null && trim((string)$v) !== '') {
             return $v;
         }
+    }
+
+    if ($firstNonMetaValue !== null) {
+        return $firstNonMetaValue;
     }
 
     return '';
@@ -468,6 +667,33 @@ if (empty($examenes_detalle)) {
         }
 
         $examenesImpresos++;
+        $snapshotNombreExamen = trim((string)($ex['snapshot_nombre'] ?? ''));
+        $catalogNombreExamen = trim((string)($ex['nombre'] ?? ''));
+        $usarFormatoGenerico = $snapshotNombreExamen !== ''
+            && normalize_exam_name_for_pdf($snapshotNombreExamen) !== ''
+            && normalize_exam_name_for_pdf($snapshotNombreExamen) !== normalize_exam_name_for_pdf($catalogNombreExamen);
+
+        if ($usarFormatoGenerico) {
+            $nombreMostrar = $snapshotNombreExamen;
+            $valorResultado = $resolveResultadoValor($resultados_map, $exId, $snapshotNombreExamen, '');
+            if ($valorResultado === '') {
+                foreach ($resultados_map as $rawKey => $rawValue) {
+                    if (strpos((string)$rawKey, $exId . '__') === 0 && $rawValue !== '' && $rawValue !== null) {
+                        $valorResultado = $rawValue;
+                        break;
+                    }
+                }
+            }
+
+            $rowsHtml .= '<tr>'
+                . '<td style="padding:5px 7px;font-weight:bold;">' . h($nombreMostrar) . '</td>'
+                . '<td style="padding:5px 7px;text-align:center;color:#9ca3af;">-</td>'
+                . '<td style="padding:5px 7px;text-align:center;font-weight:bold;color:#111827;">' . h((string)$valorResultado) . '</td>'
+                . '<td style="padding:5px 7px;text-align:center;color:#9ca3af;">-</td>'
+                . '<td style="padding:5px 7px;color:#9ca3af;">Valores históricos no disponibles en el catálogo actual</td>'
+                . '</tr>';
+            continue;
+        }
 
         if (!empty($ex['valores_referenciales'])) {
             foreach ($ex['valores_referenciales'] as $param) {

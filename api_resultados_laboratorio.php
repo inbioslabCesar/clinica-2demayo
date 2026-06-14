@@ -94,6 +94,71 @@ if (!function_exists('merge_resultados_preservando_historico')) {
     }
 }
 
+if (!function_exists('compact_resultados_aliases')) {
+    function compact_resultados_aliases($resultados)
+    {
+        if (!is_array($resultados)) {
+            return [];
+        }
+
+        $agrupados = [];
+        foreach ($resultados as $key => $value) {
+            $keyText = (string)$key;
+            if ($keyText === '' || strpos($keyText, '__') === false) {
+                continue;
+            }
+
+            if (rl_str_ends_with($keyText, '__alarma_activa') || rl_str_ends_with($keyText, '__alarma_dias') || rl_str_ends_with($keyText, '__imprimir_examen')) {
+                continue;
+            }
+
+            list($examIdText, $suffix) = explode('__', $keyText, 2);
+            $examId = intval($examIdText);
+            $token = preg_replace('/_+/', '_', preg_replace('/[^a-z0-9_]/', '', str_replace(['-', ' '], '_', strtolower(trim(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', (string)$suffix) ?: (string)$suffix)))));
+            $token = trim((string)$token, '_');
+            if ($examId <= 0 || $token === '') {
+                continue;
+            }
+
+            if (!isset($agrupados[$examId])) {
+                $agrupados[$examId] = [];
+            }
+            if (!isset($agrupados[$examId][$token])) {
+                $agrupados[$examId][$token] = [];
+            }
+            $agrupados[$examId][$token][] = $keyText;
+        }
+
+        foreach ($agrupados as $tokensPorExamen) {
+            foreach ($tokensPorExamen as $keysGrupo) {
+                if (count($keysGrupo) <= 1) {
+                    continue;
+                }
+
+                $hasMeaningful = false;
+                foreach ($keysGrupo as $groupKey) {
+                    if (array_key_exists($groupKey, $resultados) && is_result_value_meaningful($resultados[$groupKey])) {
+                        $hasMeaningful = true;
+                        break;
+                    }
+                }
+
+                if (!$hasMeaningful) {
+                    continue;
+                }
+
+                foreach ($keysGrupo as $groupKey) {
+                    if (array_key_exists($groupKey, $resultados) && !is_result_value_meaningful($resultados[$groupKey])) {
+                        unset($resultados[$groupKey]);
+                    }
+                }
+            }
+        }
+
+        return $resultados;
+    }
+}
+
 if (!function_exists('calculate_order_progress')) {
     function calculate_order_progress($conn, $resultados, $rawExamenes)
     {
@@ -104,13 +169,53 @@ if (!function_exists('calculate_order_progress')) {
         }
 
         $requiredByExam = [];
-        if (!empty($examIds)) {
-            $placeholders = implode(',', array_fill(0, count($examIds), '?'));
-            $types = str_repeat('i', count($examIds));
+        $snapshotByExam = [];
+        if (is_string($rawExamenes)) {
+            $decodedRaw = json_decode($rawExamenes, true);
+            $rawExamenes = is_array($decodedRaw) ? $decodedRaw : [];
+        }
+        if (is_array($rawExamenes)) {
+            foreach ($rawExamenes as $rawExam) {
+                if (!is_array($rawExam)) continue;
+                $examId = intval($rawExam['id'] ?? 0);
+                if ($examId <= 0) continue;
+
+                $values = [];
+                if (isset($rawExam['snapshot_json']) && is_array($rawExam['snapshot_json']) && isset($rawExam['snapshot_json']['valores_referenciales']) && is_array($rawExam['snapshot_json']['valores_referenciales'])) {
+                    $values = $rawExam['snapshot_json']['valores_referenciales'];
+                } elseif (isset($rawExam['valores_referenciales']) && is_array($rawExam['valores_referenciales'])) {
+                    $values = $rawExam['valores_referenciales'];
+                }
+
+                if (!empty($values)) {
+                    $snapshotByExam[$examId] = $values;
+                }
+            }
+        }
+
+        foreach ($snapshotByExam as $examId => $values) {
+            $requiredByExam[$examId] = [];
+            foreach ($values as $param) {
+                if (!is_array($param)) continue;
+                $tipo = strtolower(trim((string)($param['tipo'] ?? 'Parámetro')));
+                $nombre = trim((string)($param['nombre'] ?? ''));
+                if ($nombre === '') continue;
+                if ($tipo === '' || $tipo === 'parámetro' || $tipo === 'parametro' || $tipo === 'texto largo' || $tipo === 'campo') {
+                    $requiredByExam[$examId][] = $examId . '__' . $nombre;
+                }
+            }
+        }
+
+        $missingExamIds = array_values(array_filter($examIds, function ($examId) use ($snapshotByExam) {
+            return !isset($snapshotByExam[$examId]);
+        }));
+        if (!empty($missingExamIds)) {
+            $placeholders = implode(',', array_fill(0, count($missingExamIds), '?'));
+            $types = str_repeat('i', count($missingExamIds));
             $sqlReq = "SELECT id, valores_referenciales FROM examenes_laboratorio WHERE id IN ($placeholders)";
             $stmtReq = $conn->prepare($sqlReq);
             if ($stmtReq) {
-                $stmtReq->bind_param($types, ...$examIds);
+                $stmtReq->bind_param($types, ...$missingExamIds);
                 $stmtReq->execute();
                 $resReq = $stmtReq->get_result();
                 while ($rowReq = $resReq->fetch_assoc()) {
@@ -184,6 +289,130 @@ if (!function_exists('calculate_order_progress')) {
 
         $porcentaje = $total > 0 ? intval(round(($completos / $total) * 100)) : 0;
         return ['total' => $total, 'completos' => $completos, 'porcentaje' => $porcentaje];
+    }
+}
+
+if (!function_exists('rl_decode_valores_referenciales_snapshot')) {
+    function rl_decode_valores_referenciales_snapshot($raw)
+    {
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+
+        $value = $raw;
+        for ($i = 0; $i < 3; $i++) {
+            if (is_string($value)) {
+                $decoded = json_decode($value, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    break;
+                }
+                $value = $decoded;
+                continue;
+            }
+            break;
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        if (isset($value['nombre']) || isset($value['titulo']) || isset($value['tipo']) || isset($value['referencias'])) {
+            return [$value];
+        }
+
+        return $value;
+    }
+}
+
+if (!function_exists('rl_order_examenes_needs_snapshot')) {
+    function rl_order_examenes_needs_snapshot($rawExamenes)
+    {
+        if (is_string($rawExamenes)) {
+            $decoded = json_decode($rawExamenes, true);
+            $rawExamenes = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($rawExamenes) || empty($rawExamenes)) {
+            return false;
+        }
+
+        foreach ($rawExamenes as $item) {
+            if (is_numeric($item)) {
+                return true;
+            }
+            if (!is_array($item)) {
+                return true;
+            }
+
+            $hasSnapshotJson = isset($item['snapshot_json']) && is_array($item['snapshot_json']) && !empty($item['snapshot_json']);
+            $hasValores = isset($item['valores_referenciales']) && is_array($item['valores_referenciales']) && !empty($item['valores_referenciales']);
+            $hasMethod = isset($item['metodologia']) && trim((string)$item['metodologia']) !== '';
+
+            if (!$hasSnapshotJson && (!$hasValores || !$hasMethod)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('rl_build_order_examenes_snapshot')) {
+    function rl_build_order_examenes_snapshot(mysqli $conn, $rawExamenes)
+    {
+        $ids = normalize_exam_ids_from_raw($rawExamenes);
+        if (empty($ids)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $conn->prepare("SELECT id, nombre, metodologia, condicion_paciente, tiempo_resultado, valores_referenciales, precio_publico FROM examenes_laboratorio WHERE id IN ($placeholders)");
+        if (!$stmt) {
+            return [];
+        }
+
+        $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $catalog = [];
+        while ($row = $res->fetch_assoc()) {
+            $id = intval($row['id'] ?? 0);
+            if ($id <= 0) continue;
+            $values = rl_decode_valores_referenciales_snapshot($row['valores_referenciales'] ?? '[]');
+            $snapshotJson = [
+                'id' => $id,
+                'nombre' => (string)($row['nombre'] ?? ''),
+                'descripcion' => (string)($row['nombre'] ?? ''),
+                'metodologia' => (string)($row['metodologia'] ?? ''),
+                'condicion_paciente' => (string)($row['condicion_paciente'] ?? ''),
+                'tiempo_resultado' => (string)($row['tiempo_resultado'] ?? ''),
+                'valores_referenciales' => $values,
+            ];
+            $catalog[$id] = [
+                'id' => $id,
+                'nombre' => (string)($row['nombre'] ?? ''),
+                'descripcion' => (string)($row['nombre'] ?? ''),
+                'metodologia' => (string)($row['metodologia'] ?? ''),
+                'condicion_paciente' => (string)($row['condicion_paciente'] ?? ''),
+                'tiempo_resultado' => (string)($row['tiempo_resultado'] ?? ''),
+                'valores_referenciales' => $values,
+                'precio_publico' => floatval($row['precio_publico'] ?? 0),
+                'servicio_tipo' => 'laboratorio',
+                'servicio_id' => $id,
+                'cantidad' => 1,
+                'precio_unitario' => floatval($row['precio_publico'] ?? 0),
+                'subtotal' => floatval($row['precio_publico'] ?? 0),
+                'snapshot_json' => $snapshotJson,
+            ];
+        }
+        $stmt->close();
+
+        $out = [];
+        foreach ($ids as $id) {
+            if (isset($catalog[$id])) {
+                $out[] = $catalog[$id];
+            }
+        }
+        return $out;
     }
 }
 
@@ -652,6 +881,23 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Orden de laboratorio no encontrada']);
             exit;
         }
+
+        if (rl_order_examenes_needs_snapshot($orden['examenes'] ?? [])) {
+            $snapshotOrden = rl_build_order_examenes_snapshot($conn, $orden['examenes'] ?? []);
+            if (!empty($snapshotOrden)) {
+                $jsonOrdenSnapshot = json_encode($snapshotOrden, JSON_UNESCAPED_UNICODE);
+                if ($jsonOrdenSnapshot !== false) {
+                    $stmtFreeze = $conn->prepare('UPDATE ordenes_laboratorio SET examenes = ? WHERE id = ?');
+                    if ($stmtFreeze) {
+                        $stmtFreeze->bind_param('si', $jsonOrdenSnapshot, $orden['id']);
+                        $stmtFreeze->execute();
+                        $stmtFreeze->close();
+                        $orden['examenes'] = $jsonOrdenSnapshot;
+                    }
+                }
+            }
+        }
+
         if (isset($orden['estado']) && strtolower((string)$orden['estado']) === 'cancelada') {
             echo json_encode(['success' => false, 'error' => 'La orden de laboratorio está cancelada']);
             exit;
@@ -670,6 +916,7 @@ switch ($method) {
             $resultadosPersistir = merge_resultados_preservando_historico($existingResultados, $resultados);
         }
 
+        $resultadosPersistir = compact_resultados_aliases($resultadosPersistir);
         $json = json_encode($resultadosPersistir);
         $hasMeaningfulResults = resultados_has_meaningful_values($resultadosPersistir);
 

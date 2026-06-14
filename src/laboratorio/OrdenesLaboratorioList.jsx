@@ -234,7 +234,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     return examenes.map(ex => {
       // ex puede ser un objeto {id, nombre} o un ID numérico/string
       if (ex && typeof ex === 'object') {
-        return ex.nombre || ex.descripcion || `#${ex.id}`;
+        return ex.snapshot_nombre || ex.descripcion_snapshot || ex.nombre || ex.descripcion || `#${ex.id}`;
       }
       const exObj = examenesDisponibles.find(e => e.id == ex);
       return exObj ? exObj.nombre : String(ex);

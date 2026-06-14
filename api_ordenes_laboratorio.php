@@ -466,8 +466,40 @@ if (!function_exists('ol_normalize_examenes_ids')) {
     }
 }
 
-if (!function_exists('ol_build_detalles_laboratorio_cotizacion')) {
-    function ol_build_detalles_laboratorio_cotizacion(mysqli $conn, array $examenIds)
+if (!function_exists('ol_decode_valores_referenciales_snapshot')) {
+    function ol_decode_valores_referenciales_snapshot($raw)
+    {
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+
+        $value = $raw;
+        for ($i = 0; $i < 3; $i++) {
+            if (is_string($value)) {
+                $decoded = json_decode($value, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    break;
+                }
+                $value = $decoded;
+                continue;
+            }
+            break;
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        if (isset($value['nombre']) || isset($value['titulo']) || isset($value['tipo']) || isset($value['referencias'])) {
+            return [$value];
+        }
+
+        return $value;
+    }
+}
+
+if (!function_exists('ol_build_examenes_snapshot')) {
+    function ol_build_examenes_snapshot(mysqli $conn, array $examenIds)
     {
         $detalles = [];
         $ids = ol_normalize_examenes_ids($examenIds);
@@ -476,26 +508,76 @@ if (!function_exists('ol_build_detalles_laboratorio_cotizacion')) {
         }
 
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $sql = "SELECT id, nombre, precio_publico FROM examenes_laboratorio WHERE id IN ($placeholders)";
+        $sql = "SELECT id, nombre, metodologia, condicion_paciente, tiempo_resultado, valores_referenciales, precio_publico FROM examenes_laboratorio WHERE id IN ($placeholders)";
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
             return $detalles;
         }
+
         $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
         $stmt->execute();
         $res = $stmt->get_result();
+        $snapshotPorId = [];
         while ($row = $res->fetch_assoc()) {
-            $precio = floatval($row['precio_publico'] ?? 0);
+            $row['id'] = intval($row['id'] ?? 0);
+            $row['valores_referenciales'] = ol_decode_valores_referenciales_snapshot($row['valores_referenciales'] ?? '[]');
+            if ($row['id'] > 0) {
+                $snapshotPorId[$row['id']] = $row;
+            }
+        }
+        $stmt->close();
+
+        foreach ($ids as $id) {
+            if (!isset($snapshotPorId[$id])) {
+                continue;
+            }
+
+            $examen = $snapshotPorId[$id];
+            $precio = floatval($examen['precio_publico'] ?? 0);
             $detalles[] = [
+                'id' => $id,
+                'nombre' => (string)($examen['nombre'] ?? ''),
+                'metodologia' => (string)($examen['metodologia'] ?? ''),
+                'condicion_paciente' => (string)($examen['condicion_paciente'] ?? ''),
+                'tiempo_resultado' => (string)($examen['tiempo_resultado'] ?? ''),
+                'valores_referenciales' => $examen['valores_referenciales'] ?? [],
+                'precio_publico' => $precio,
                 'servicio_tipo' => 'laboratorio',
-                'servicio_id' => intval($row['id']),
-                'descripcion' => (string)($row['nombre'] ?? ''),
+                'servicio_id' => $id,
+                'descripcion' => (string)($examen['nombre'] ?? ''),
                 'cantidad' => 1,
                 'precio_unitario' => $precio,
                 'subtotal' => $precio,
             ];
         }
-        $stmt->close();
+
+        return $detalles;
+    }
+}
+
+if (!function_exists('ol_build_detalles_laboratorio_cotizacion')) {
+    function ol_build_detalles_laboratorio_cotizacion(mysqli $conn, array $examenIds)
+    {
+        $detalles = [];
+        $snapshot = ol_build_examenes_snapshot($conn, $examenIds);
+
+        foreach ($snapshot as $item) {
+            $detalles[] = [
+                'id' => intval($item['id'] ?? 0),
+                'nombre' => (string)($item['nombre'] ?? ''),
+                'metodologia' => (string)($item['metodologia'] ?? ''),
+                'condicion_paciente' => (string)($item['condicion_paciente'] ?? ''),
+                'tiempo_resultado' => (string)($item['tiempo_resultado'] ?? ''),
+                'valores_referenciales' => $item['valores_referenciales'] ?? [],
+                'precio_publico' => floatval($item['precio_publico'] ?? 0),
+                'servicio_tipo' => 'laboratorio',
+                'servicio_id' => intval($item['id'] ?? 0),
+                'descripcion' => (string)($item['nombre'] ?? ''),
+                'cantidad' => 1,
+                'precio_unitario' => floatval($item['precio_publico'] ?? 0),
+                'subtotal' => floatval($item['precio_publico'] ?? 0),
+            ];
+        }
 
         return $detalles;
     }
@@ -560,7 +642,7 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Faltan exámenes para la orden']);
             exit;
         }
-        $json = json_encode($examenes);
+        $json = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, ol_normalize_examenes_ids($examenes)));
         $paciente_id = $data['paciente_id'] ?? null;
         $cobro_id = isset($data['cobro_id']) && is_numeric($data['cobro_id']) ? intval($data['cobro_id']) : null;
         $cotizacion_id_entrada = isset($data['cotizacion_id']) && is_numeric($data['cotizacion_id']) ? intval($data['cotizacion_id']) : null;
@@ -619,7 +701,7 @@ switch ($method) {
                     $cotizacionIdOrden = intval($ordenPendiente['cotizacion_id'] ?? 0);
                     $prevExamIds = ol_normalize_examenes_ids(json_decode((string)($ordenPendiente['examenes'] ?? '[]'), true) ?: []);
                     $examenesFinales = array_values(array_unique(array_merge($prevExamIds, $incomingExamIds)));
-                    $jsonFinal = json_encode($examenesFinales);
+                    $jsonFinal = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales));
                     $cargaFinal = (intval($ordenPendiente['carga_anticipada'] ?? 0) === 1 || $cargaAnticipada === 1) ? 1 : 0;
 
                     $stmtUpOrden = $conn->prepare('UPDATE ordenes_laboratorio SET examenes = ?, carga_anticipada = ?, paciente_id = CASE WHEN (paciente_id IS NULL OR paciente_id = 0) THEN ? ELSE paciente_id END WHERE id = ?');
@@ -630,7 +712,7 @@ switch ($method) {
                     $stmtUpOrden->close();
                     $modoOperacion = 'consolidada';
                 } else {
-                    $jsonFinal = json_encode($examenesFinales);
+                    $jsonFinal = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales));
                     $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
                     $stmt->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
                     if (!$stmt->execute()) throw new Exception($stmt->error);
@@ -1092,6 +1174,7 @@ switch ($method) {
         };
 
         $examenesIdsPorOrden = [];
+        $examenesRawPorOrden = [];
         $allExamenesIds = [];
         $allCotizacionIds = [];
         $allCobroIds = [];
@@ -1104,11 +1187,20 @@ switch ($method) {
             }
 
             $examenesIdsRaw = json_decode($rowBase['examenes'], true) ?: [];
+            $examenesRawPorOrden[$orderId] = [];
             $examenesIds = array_values(array_filter(array_map(function ($it) {
                 return is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it);
             }, $examenesIdsRaw), function ($v) {
                 return $v > 0;
             }));
+            foreach ($examenesIdsRaw as $it) {
+                if (is_array($it) && isset($it['id'])) {
+                    $eid = intval($it['id']);
+                    if ($eid > 0) {
+                        $examenesRawPorOrden[$orderId][$eid] = $it;
+                    }
+                }
+            }
             $examenesIdsPorOrden[$orderId] = $examenesIds;
             foreach ($examenesIds as $eid) {
                 $allExamenesIds[] = $eid;
@@ -1224,6 +1316,45 @@ switch ($method) {
             $cargarDerivadosCotizacion($cotizPendientesDesdeCobro);
         }
 
+        $cotizacionSnapshotsPorId = [];
+        $hasSnapshotJsonDetalle = ol_column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
+        if (!empty($allCotizacionIds)) {
+            $placeholders = implode(',', array_fill(0, count($allCotizacionIds), '?'));
+            $selectSnapshotJson = $hasSnapshotJsonDetalle ? ', snapshot_json' : '';
+            $sqlLabSnap = "SELECT cotizacion_id, servicio_id, descripcion{$selectSnapshotJson} FROM cotizaciones_detalle WHERE servicio_tipo = 'laboratorio' AND cotizacion_id IN ($placeholders) ORDER BY cotizacion_id ASC, id ASC";
+            $stmtLabSnap = $conn->prepare($sqlLabSnap);
+            if ($stmtLabSnap) {
+                $stmtLabSnap->bind_param(str_repeat('i', count($allCotizacionIds)), ...$allCotizacionIds);
+                $stmtLabSnap->execute();
+                $rowsLabSnap = $stmtLabSnap->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmtLabSnap->close();
+
+                foreach ($rowsLabSnap as $snapRow) {
+                    $cid = intval($snapRow['cotizacion_id'] ?? 0);
+                    $sid = intval($snapRow['servicio_id'] ?? 0);
+                    if ($cid <= 0 || $sid <= 0) {
+                        continue;
+                    }
+                    if (!isset($cotizacionSnapshotsPorId[$cid])) {
+                        $cotizacionSnapshotsPorId[$cid] = [];
+                    }
+                    if (!isset($cotizacionSnapshotsPorId[$cid][$sid])) {
+                        $snapshotJson = null;
+                        if ($hasSnapshotJsonDetalle && !empty($snapRow['snapshot_json'])) {
+                            $decodedSnapshot = json_decode((string)$snapRow['snapshot_json'], true);
+                            if (is_array($decodedSnapshot)) {
+                                $snapshotJson = $decodedSnapshot;
+                            }
+                        }
+                        $cotizacionSnapshotsPorId[$cid][$sid] = [
+                            'descripcion' => (string)($snapRow['descripcion'] ?? ''),
+                            'snapshot_json' => $snapshotJson,
+                        ];
+                    }
+                }
+            }
+        }
+
         $resultadoPorOrden = [];
         if (!empty($allOrderIds)) {
             $placeholders = implode(',', array_fill(0, count($allOrderIds), '?'));
@@ -1249,13 +1380,53 @@ switch ($method) {
             $examenes_ids = $examenesIdsPorOrden[$orderId] ?? [];
             $examenes_detalle = [];
             foreach ($examenes_ids as $eid) {
-                if (isset($examenCatalogo[$eid])) {
-                    $examenes_detalle[] = $examenCatalogo[$eid];
+                $catalogoActual = $examenCatalogo[$eid] ?? null;
+                $snapshotOrden = $examenesRawPorOrden[$orderId][$eid] ?? null;
+                $snapshotCotizacion = null;
+                $cotizId = intval($row['cotizacion_id'] ?? 0);
+                if ($cotizId > 0 && isset($cotizacionSnapshotsPorId[$cotizId][$eid])) {
+                    $snapshotCotizacion = $cotizacionSnapshotsPorId[$cotizId][$eid];
                 }
+
+                $detalleBase = [];
+                if (is_array($snapshotOrden) && !empty($snapshotOrden['snapshot_json'])) {
+                    $detalleBase = $snapshotOrden['snapshot_json'];
+                } elseif (is_array($snapshotCotizacion) && !empty($snapshotCotizacion['snapshot_json'])) {
+                    $detalleBase = $snapshotCotizacion['snapshot_json'];
+                } elseif (is_array($snapshotOrden) && !empty($snapshotOrden)) {
+                    $detalleBase = $snapshotOrden;
+                } elseif (is_array($catalogoActual) && !empty($catalogoActual)) {
+                    $detalleBase = $catalogoActual;
+                } elseif (is_array($snapshotCotizacion) && !empty($snapshotCotizacion)) {
+                    $detalleBase = [
+                        'id' => $eid,
+                        'nombre' => (string)($snapshotCotizacion['descripcion'] ?? ''),
+                        'descripcion' => (string)($snapshotCotizacion['descripcion'] ?? ''),
+                        'valores_referenciales' => [],
+                    ];
+                }
+
+                if (empty($detalleBase)) {
+                    continue;
+                }
+
+                if (is_array($snapshotCotizacion) && !empty($snapshotCotizacion['descripcion'])) {
+                    $snapshotNombre = trim((string)$snapshotCotizacion['descripcion']);
+                    $nombreActual = trim((string)($detalleBase['nombre'] ?? $detalleBase['descripcion'] ?? ''));
+                    if ($snapshotNombre !== '' && $snapshotNombre !== $nombreActual) {
+                        $detalleBase['nombre'] = $snapshotNombre;
+                        $detalleBase['descripcion'] = $snapshotNombre;
+                        // Mantener parametros historicos disponibles para evitar ocultar
+                        // campos/resultados cuando solo cambia el nombre del examen.
+                        $detalleBase['snapshot_nombre'] = $snapshotNombre;
+                        $detalleBase['snapshot_origen'] = 'cotizacion';
+                    }
+                }
+
+                $examenes_detalle[] = $detalleBase;
             }
 
             $derivadoMap = [];
-            $cotizId = intval($row['cotizacion_id'] ?? 0);
             if ($hasDerivadoCol && $cotizId > 0 && isset($derivadosPorCotizacion[$cotizId])) {
                 $derivadoMap = $derivadosPorCotizacion[$cotizId];
             }
