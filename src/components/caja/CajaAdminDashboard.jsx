@@ -6,6 +6,7 @@ import Modal from "../comunes/Modal";
 import CajaActionButtons from "./CajaActionButtons";
 import CajaResumenDiario from "./CajaResumenDiario";
 import CajaRecepcionistasResumen from "./CajaRecepcionistasResumen";
+import ModalCorregirApertura from "./ModalCorregirApertura";
 
 
 export default function CajaAdminDashboard() {
@@ -13,8 +14,10 @@ export default function CajaAdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cajaAbierta, setCajaAbierta] = useState(false);
+  const [cajaActual, setCajaActual] = useState(null);
   const [usuario, setUsuario] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showCorregirAperturaModal, setShowCorregirAperturaModal] = useState(false);
   // ...existing code...
 
   // Función para cargar resumen (reutilizable)
@@ -26,7 +29,24 @@ export default function CajaAdminDashboard() {
       if (data.success) {
         setResumen(data);
         setError("");
-        setCajaAbierta(data.caja_abierta === true || data.caja_abierta === 1);
+        const abierta = data.caja_abierta === true || data.caja_abierta === 1;
+        setCajaAbierta(abierta);
+
+        if (abierta) {
+          try {
+            const rCaja = await authFetch("api_caja_actual.php", { cache: "no-store" });
+            const dataCaja = await rCaja.json();
+            if (dataCaja?.success && dataCaja?.caja) {
+              setCajaActual(dataCaja.caja);
+            } else {
+              setCajaActual(null);
+            }
+          } catch {
+            setCajaActual(null);
+          }
+        } else {
+          setCajaActual(null);
+        }
       } else {
         setError(data.error || "Error al cargar resumen");
       }
@@ -52,7 +72,12 @@ export default function CajaAdminDashboard() {
     <div className="max-w-7xl mx-auto p-2 sm:p-8 bg-white rounded-xl shadow-lg">
       <div className="flex flex-col gap-4">
         <div className="w-full flex flex-col sm:flex-row sm:justify-between gap-2 sm:gap-4">
-          <CajaActionButtons cajaAbierta={cajaAbierta} usuario={usuario} setShowModal={setShowModal} />
+          <CajaActionButtons
+            cajaAbierta={cajaAbierta}
+            usuario={usuario}
+            setShowModal={setShowModal}
+            onCorregirApertura={() => setShowCorregirAperturaModal(true)}
+          />
         </div>
         <Modal open={showModal} onClose={() => setShowModal(false)}>
           <div className="p-2 sm:p-4">
@@ -69,6 +94,13 @@ export default function CajaAdminDashboard() {
         <div className="w-full">
           <CajaResumenDiario resumen={resumen} />
         </div>
+        <ModalCorregirApertura
+          open={showCorregirAperturaModal}
+          cajaActual={cajaActual}
+          usuario={usuario}
+          onClose={() => setShowCorregirAperturaModal(false)}
+          onUpdated={fetchResumen}
+        />
         {usuario && usuario.rol === "administrador" && (
           <div className="w-full">
             <CajaRecepcionistasResumen cajasRecep={resumen.cajas_resumen ? resumen.cajas_resumen.filter(caja => {

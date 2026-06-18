@@ -32,7 +32,8 @@ if (isset($_SESSION['usuario'])) {
     $isCajaBasica = strpos($_SERVER['SCRIPT_NAME'], 'api_caja_abrir.php') !== false ||
                     strpos($_SERVER['SCRIPT_NAME'], 'api_caja_cerrar.php') !== false ||
                     strpos($_SERVER['SCRIPT_NAME'], 'api_caja_estado.php') !== false ||
-                    strpos($_SERVER['SCRIPT_NAME'], 'api_caja_actual.php') !== false;
+                    strpos($_SERVER['SCRIPT_NAME'], 'api_caja_actual.php') !== false ||
+                    strpos($_SERVER['SCRIPT_NAME'], 'api_caja_corregir_apertura.php') !== false;
     $isReabrirCaja = strpos($_SERVER['SCRIPT_NAME'], 'api_reabrir_caja.php') !== false ||
                      strpos($_SERVER['SCRIPT_NAME'], 'api_cajas_cerradas.php') !== false;
     $isHonorariosMedicos = strpos($_SERVER['SCRIPT_NAME'], 'api_honorarios_medicos') !== false ||

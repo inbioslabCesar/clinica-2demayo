@@ -1,7 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 
-export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal }) {
+export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal, onCorregirApertura }) {
   const navigate = useNavigate();
   const userRole = usuario?.rol || sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
   return (
@@ -20,6 +20,14 @@ export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal }
           onClick={() => navigate("/contabilidad/cerrar-caja")}
         >
           Cerrar Caja
+        </button>
+      )}
+      {cajaAbierta && usuario && (
+        <button
+          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-amber-600 hover:to-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+          onClick={() => onCorregirApertura && onCorregirApertura()}
+        >
+          Corregir Apertura
         </button>
       )}
       <button
