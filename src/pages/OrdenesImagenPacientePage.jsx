@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import { normalizeOrdenArchivos } from "../utils/ordenesImagenUrl";
 import Spinner from "../components/comunes/Spinner";
+import CardInformeImagenologia from "../components/imagenologia/CardInformeImagenologia";
 import Swal from "sweetalert2";
 import {
   FaCloudUploadAlt, FaImage, FaFilePdf, FaFileMedical,
@@ -153,7 +154,7 @@ function ModalSubir({ orden, onClose, onSubido }) {
 }
 
 // ── Tarjeta de orden ──────────────────────────────────────────────────────────
-const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, navigate }) {
+const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, navigate, pacienteNombre, medicoNombre }) {
   const [lightbox, setLightbox]         = useState(null);
   const [toggling, setToggling]         = useState(false);
   const tipo = TIPO_INFO[orden.tipo] || { label: orden.tipo, emoji: "🩻", color: "gray" };
@@ -342,6 +343,16 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
             </button>
           )}
         </div>
+
+        <div className="mt-3">
+          <CardInformeImagenologia
+            ordenImagenId={Number(orden.id || 0)}
+            tipoExamen={String(orden.tipo || "")}
+            pacienteNombre={pacienteNombre}
+            medicoNombre={medicoNombre}
+            onInformeActualizado={onRecargar}
+          />
+        </div>
       </div>
 
       {/* Lightbox */}
@@ -369,6 +380,15 @@ export default function OrdenesImagenPacientePage() {
   const [ordenSubir, setOrdenSubir]   = useState(null); // orden para el modal
   const [intentadoGenerarDesdeCotizacion, setIntentadoGenerarDesdeCotizacion] = useState(false);
   const ordenesRef = useRef([]);
+  const medicoNombreSesion = React.useMemo(() => {
+    try {
+      const raw = sessionStorage.getItem("usuario") || sessionStorage.getItem("medico") || "null";
+      const data = JSON.parse(raw);
+      return String(data?.nombre || "");
+    } catch {
+      return "";
+    }
+  }, []);
 
   const cotizacionIdFiltro = Number(new URLSearchParams(location.search).get("cotizacion_id") || 0);
 
@@ -535,6 +555,8 @@ export default function OrdenesImagenPacientePage() {
                 onSubir={setOrdenSubir}
                 onRecargar={cargar}
                 navigate={navigate}
+                pacienteNombre={`${paciente?.nombres || paciente?.nombre || ""} ${paciente?.apellidos || paciente?.apellido || ""}`.trim()}
+                medicoNombre={medicoNombreSesion}
               />
             ))}
           </div>

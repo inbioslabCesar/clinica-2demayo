@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ResultadosLaboratorio from "./ResultadosLaboratorio";
 import SolicitudProcedimientos from "./SolicitudProcedimientos";
+import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologiaHC";
 import { authFetch } from "../../utils/apiClient";
 
 // ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
@@ -135,6 +136,14 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
             Solicitado: {new Date(ord.fecha).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" })}
             {ord.archivos?.length > 0 && ` · ${ord.archivos.length} archivo(s) adjunto(s)`}
           </p>
+
+          <div className="mt-2">
+            <VisorInformeImagenologiaHC
+              ordenImagenId={Number(ord.id || 0)}
+              servicioNombre={ord.servicios_nombres?.[0] || label}
+              pacienteNombre={""}
+            />
+          </div>
         </div>
       ))}
     </div>

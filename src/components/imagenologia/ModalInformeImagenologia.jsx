@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FiX, FiDownload, FiSave, FiLoader } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { authFetch } from '../../utils/authFetch';
+import { authFetch } from '../../utils/apiClient';
 
 /**
  * ModalInformeImagenologia
@@ -17,8 +17,7 @@ export default function ModalInformeImagenologia({
   onSaved
 }) {
   const [loading, setLoading] = useState(true);
-  const [saving, setLoading] = useState(false);
-  const [plantillas, setPlantillas] = useState([]);
+  const [saving, setSaving] = useState(false);
   const [plantillaSeleccionada, setPlantillaSeleccionada] = useState(null);
   const [informe, setInforme] = useState(null);
   const [contenido, setContenido] = useState({});
@@ -30,15 +29,16 @@ export default function ModalInformeImagenologia({
   useEffect(() => {
     if (!open || !ordenImagenId) return;
 
+    const tipoPlantilla = tipoExamen === 'rx' ? 'rayosx' : tipoExamen;
+
     setLoading(true);
     Promise.all([
-      authFetch(`api_imagenologia_plantillas.php?tipo=${tipoExamen}`),
+      authFetch(`api_imagenologia_plantillas.php?tipo=${tipoPlantilla}`),
       authFetch(`api_imagenologia_informes.php?orden_imagen_id=${ordenImagenId}`)
     ])
       .then(([resPlant, resInf]) => Promise.all([resPlant.json(), resInf.json()]))
       .then(([dataPlant, dataInf]) => {
-        if (dataPlant.success && dataPlant.plantillas.length > 0) {
-          setPlantillas(dataPlant.plantillas);
+        if (dataPlant.success && Array.isArray(dataPlant.plantillas) && dataPlant.plantillas.length > 0) {
           setPlantillaSeleccionada(dataPlant.plantillas[0]);
         }
 
@@ -76,7 +76,7 @@ export default function ModalInformeImagenologia({
   const handleGuardar = useCallback(async () => {
     if (!ordenImagenId) return;
 
-    setLoading(true);
+    setSaving(true);
     try {
       const response = await authFetch('api_imagenologia_informes.php', {
         method: 'POST',
@@ -93,7 +93,7 @@ export default function ModalInformeImagenologia({
       const data = await response.json();
       if (data.success) {
         Swal.fire('Éxito', 'Informe guardado exitosamente', 'success');
-        setInforme(data);
+        setInforme((prev) => ({ ...(prev || {}), id: data.informe_id, estado }));
         if (onSaved) onSaved();
       } else {
         Swal.fire('Error', data.error || 'No se pudo guardar el informe', 'error');
@@ -102,17 +102,12 @@ export default function ModalInformeImagenologia({
       console.error('Error al guardar:', err);
       Swal.fire('Error', 'Error de conexión', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }, [ordenImagenId, titulo, contenido, plantillaSeleccionada, estado, onSaved]);
 
   // ─ Generar PDF ──────────────────────────────────────────────────────────
   const handleGenerarPdf = useCallback(async () => {
-    if (!informe || !informe.id) {
-      Swal.fire('Error', 'Debe guardar el informe primero', 'warning');
-      return;
-    }
-
     setGenerandoPdf(true);
     try {
       // Primero guardar si hay cambios
@@ -133,25 +128,32 @@ export default function ModalInformeImagenologia({
         throw new Error(saveData.error || 'No se pudo guardar antes de generar PDF');
       }
 
+      const informeId = informe?.id || saveData.informe_id;
+      if (!informeId) {
+        throw new Error('No se pudo resolver el ID del informe para generar el PDF');
+      }
+
       // Luego generar PDF
       const pdfResponse = await authFetch('api_imagenologia_generar_pdf.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ informe_id: informe.id || saveData.informe_id })
+        body: JSON.stringify({ informe_id: informeId })
       });
 
       const pdfData = await pdfResponse.json();
       if (pdfData.success) {
         setEstado('completado');
+        setInforme((prev) => ({ ...(prev || {}), id: informeId, estado: 'completado', pdf_path: pdfData.pdf_path || prev?.pdf_path || null }));
         Swal.fire('Éxito', 'PDF generado correctamente', 'success');
         
-        // Ofrecersalida
+        // Descargar archivo generado
         if (pdfData.pdf_url) {
           const link = document.createElement('a');
           link.href = pdfData.pdf_url;
-          link.download = `informe_imagenologia_${informe.id}.pdf`;
+          link.download = `informe_imagenologia_${informeId}.pdf`;
           link.click();
         }
+        if (onSaved) onSaved();
       } else {
         Swal.fire('Error', pdfData.error || 'No se pudo generar el PDF', 'error');
       }
@@ -161,7 +163,7 @@ export default function ModalInformeImagenologia({
     } finally {
       setGenerandoPdf(false);
     }
-  }, [informe, ordenImagenId, titulo, contenido, plantillaSeleccionada]);
+  }, [informe, ordenImagenId, titulo, contenido, plantillaSeleccionada, onSaved]);
 
   if (!open) return null;
 
@@ -331,7 +333,7 @@ export default function ModalInformeImagenologia({
           </button>
           <button
             onClick={handleGenerarPdf}
-            disabled={generandoPdf || !informe}
+            disabled={generandoPdf || loading || saving}
             className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2 transition"
           >
             {generandoPdf ? <FiLoader className="animate-spin" /> : <FiDownload />}

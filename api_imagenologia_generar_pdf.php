@@ -51,7 +51,7 @@ if ($informeId <= 0) {
 $stmt = $mysqli->prepare('
     SELECT ii.*, 
            oi.tipo as tipo_examen, oi.indicaciones,
-           p.nombres, p.apellidos, p.fecha_nacimiento, p.numero_identidad,
+        p.nombre, p.apellido, p.fecha_nacimiento, p.dni,
            m.nombre as medico_nombre, m.especialidad
     FROM imagenologia_informes ii
     INNER JOIN ordenes_imagen oi ON oi.id = ii.orden_imagen_id
@@ -96,7 +96,7 @@ $contenido = $informe['contenido_json'] ? json_decode($informe['contenido_json']
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. Construir HTML para PDF
 // ═══════════════════════════════════════════════════════════════════════════
-$pacienteNombre = trim((string)($informe['apellidos'] ?? '') . ' ' . (string)($informe['nombres'] ?? ''));
+$pacienteNombre = trim((string)($informe['apellido'] ?? '') . ' ' . (string)($informe['nombre'] ?? ''));
 $medicoNombre = (string)($informe['medico_nombre'] ?? 'Dr. [Médico no especificado]');
 $especialidad = (string)($informe['especialidad'] ?? '');
 $fechaHoy = date('d/m/Y H:i');
@@ -238,7 +238,7 @@ $html = '
 <!-- INFORMACIÓN DEL PACIENTE -->
 <div class="patient-info">
     <div><span class="field-label">Paciente:</span> ' . htmlspecialchars($pacienteNombre) . '</div>
-    <div><span class="field-label">Nº Identidad:</span> ' . htmlspecialchars($informe['numero_identidad'] ?? '') . '</div>
+    <div><span class="field-label">DNI:</span> ' . htmlspecialchars($informe['dni'] ?? '') . '</div>
     <div><span class="field-label">Médico:</span> ' . htmlspecialchars($medicoNombre) . ($especialidad ? ' (' . htmlspecialchars($especialidad) . ')' : '') . '</div>
 </div>
 
@@ -387,7 +387,7 @@ try {
         $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
         $usuarioNombre = (string)($_SESSION['usuario']['nombre'] ?? 'Sistema');
         $tipoHist = 'generacion_pdf';
-        $stmtHist->bind_param('iissss', $informeId, $informeId, $usuarioId, $usuarioNombre, $tipoHist, $ahora);
+        $stmtHist->bind_param('iiisss', $informeId, $informeId, $usuarioId, $usuarioNombre, $tipoHist, $ahora);
         $stmtHist->execute();
         $stmtHist->close();
     }

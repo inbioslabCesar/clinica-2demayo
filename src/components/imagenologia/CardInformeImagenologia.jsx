@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { FiFileText, FiEdit3, FiEye, FiDownload } from 'react-icons/fi';
+import { FiFileText, FiEdit3, FiDownload } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { authFetch } from '../../utils/authFetch';
+import { authFetch } from '../../utils/apiClient';
 import ModalInformeImagenologia from './ModalInformeImagenologia';
 
 /**
@@ -119,7 +119,7 @@ export default function CardInformeImagenologia({
             {/* Información del informe */}
             <div className="mb-3 text-sm text-gray-700">
               <p className="text-xs text-gray-600">
-                Redactado por: <strong>{informe.medico_id === 1 ? medicoNombre : 'Médico'}</strong>
+                Redactado por: <strong>{medicoNombre || `Médico #${informe.medico_id || '-'}`}</strong>
               </p>
               {informe.fecha_redaccion && (
                 <p className="text-xs text-gray-600">

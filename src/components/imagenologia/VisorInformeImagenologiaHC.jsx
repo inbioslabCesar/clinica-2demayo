@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FiDownload, FiEye, FiChevronDown } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { authFetch } from '../../utils/authFetch';
+import { authFetch } from '../../utils/apiClient';
 
 /**
  * VisorInformeImagenologiaHC
@@ -128,7 +128,7 @@ export default function VisorInformeImagenologiaHC({
 
           {/* Secciones del informe */}
           <div className="space-y-4 mb-4">
-            {informe.plantilla_json?.sections?.map((section) => {
+            {Array.isArray(informe.plantilla_json?.sections) ? informe.plantilla_json.sections.map((section) => {
               const sectionData = contenido[section.id];
               if (!sectionData) return null;
 
@@ -153,7 +153,27 @@ export default function VisorInformeImagenologiaHC({
                   </div>
                 </div>
               );
-            })}
+            }) : Object.entries(contenido).map(([sectionKey, sectionData]) => (
+              <div key={sectionKey}>
+                <h4 className="font-semibold text-sm text-blue-900 mb-2 capitalize">
+                  {sectionKey.replace(/_/g, ' ')}
+                </h4>
+                <div className="text-sm text-gray-700 space-y-1 pl-3 border-l-3 border-blue-300">
+                  {typeof sectionData === 'object' ? (
+                    Object.entries(sectionData || {}).map(([key, value]) =>
+                      value ? (
+                        <div key={key}>
+                          <strong className="text-gray-800">{key}:</strong>{' '}
+                          <p className="text-gray-600 ml-4 mb-2">{value}</p>
+                        </div>
+                      ) : null
+                    )
+                  ) : (
+                    <p className="text-gray-600">{String(sectionData || '')}</p>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Botón descargar PDF */}

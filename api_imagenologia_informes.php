@@ -117,7 +117,8 @@ if ($method === 'POST') {
     // Obtener historia_clinica_id si existe
     $historiaCbId = 0;
     if ($consultaId > 0) {
-        $stmtHc = $mysqli->prepare('SELECT id FROM historia_clinica WHERE consulta_id = ? ORDER BY created_at DESC LIMIT 1');
+        // La tabla historia_clinica no siempre tiene created_at; usar id DESC como criterio estable.
+        $stmtHc = $mysqli->prepare('SELECT id FROM historia_clinica WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
         if ($stmtHc) {
             $stmtHc->bind_param('i', $consultaId);
             $stmtHc->execute();
@@ -174,7 +175,7 @@ if ($method === 'POST') {
         ');
         
         if ($stmtHist) {
-            $stmtHist->bind_param('iissss', $informeId, $informeId, $contenidoJsonStr, $usuarioId, $usuarioNombre, $tipoRecambio, $ahora);
+            $stmtHist->bind_param('iisisss', $informeId, $informeId, $contenidoJsonStr, $usuarioId, $usuarioNombre, $tipoRecambio, $ahora);
             $stmtHist->execute();
             $stmtHist->close();
         }
@@ -198,7 +199,7 @@ if ($method === 'POST') {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ');
         
-        $stmt->bind_param('iiiiiiisssiss',
+        $stmt->bind_param('iiiiiissssssss',
             $ordenImagenId, $cotizacionId, $pacienteId, $consultaId, $historiaCbId,
             $usuarioId, $titulo, $contenidoJsonStr, $plantillaJsonStr, $estado,
             $fechaRedaccion, $ahora, $ahora, $ahora
