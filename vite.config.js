@@ -43,6 +43,11 @@ export default defineConfig({
         changeOrigin: false,
         secure: false,
       }
+        ,'/descargar_informe_imagenologia.php': {
+          target: apiProxyTarget,
+          changeOrigin: false,
+          secure: false,
+        }
     }
   },
   optimizeDeps: {
