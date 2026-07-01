@@ -28,6 +28,189 @@ if (!$usuario || !in_array($rol, ['medico', 'administrador'])) {
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+function normalizar_clave_informe(string $texto): string {
+    $texto = trim(mb_strtolower($texto, 'UTF-8'));
+    $map = [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+        'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u',
+        'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u',
+        'ñ' => 'n'
+    ];
+    $texto = strtr($texto, $map);
+    $texto = preg_replace('/\?+/', '', $texto);
+    $texto = preg_replace('/[^a-z0-9]+/u', '', $texto);
+    return (string)$texto;
+}
+
+function resolver_clave_seccion(string $keyNormalizada, array $clavesPlantilla): string {
+    if ($keyNormalizada === '' || isset($clavesPlantilla[$keyNormalizada])) {
+        return $keyNormalizada;
+    }
+
+    $bestKey = '';
+    $bestDistance = 99;
+    foreach (array_keys($clavesPlantilla) as $candidateKey) {
+        $distance = levenshtein($keyNormalizada, (string)$candidateKey);
+        if ($distance < $bestDistance) {
+            $bestDistance = $distance;
+            $bestKey = (string)$candidateKey;
+        }
+    }
+
+    return ($bestKey !== '' && $bestDistance <= 2) ? $bestKey : $keyNormalizada;
+}
+
+function sanitizar_contenido_informe(array $contenidoJson, $plantillaJson): array {
+    if (!is_array($plantillaJson)) {
+        return $contenidoJson;
+    }
+
+    $sections = [];
+    if (isset($plantillaJson['sections']) && is_array($plantillaJson['sections'])) {
+        $sections = $plantillaJson['sections'];
+    } elseif (isset($plantillaJson['estructura_json']['sections']) && is_array($plantillaJson['estructura_json']['sections'])) {
+        $sections = $plantillaJson['estructura_json']['sections'];
+    }
+
+    if (empty($sections)) {
+        return $contenidoJson;
+    }
+
+    $plantillaPorSeccion = [];
+    foreach ($sections as $section) {
+        $sid = (string)($section['id'] ?? '');
+        if ($sid === '') {
+            continue;
+        }
+        $keys = [];
+        foreach ((array)($section['campos'] ?? []) as $campo) {
+            $cid = (string)($campo['id'] ?? '');
+            if ($cid === '') {
+                continue;
+            }
+            $nk = normalizar_clave_informe($cid);
+            if ($nk !== '' && !isset($keys[$nk])) {
+                $keys[$nk] = $cid;
+            }
+        }
+        $plantillaPorSeccion[$sid] = $keys;
+    }
+
+    foreach ($contenidoJson as $sectionId => $sectionData) {
+        if (!is_array($sectionData)) {
+            continue;
+        }
+
+        $sectionIdStr = (string)$sectionId;
+        $clavesPlantilla = $plantillaPorSeccion[$sectionIdStr] ?? [];
+        if (empty($clavesPlantilla)) {
+            continue;
+        }
+
+        $lockedEmpty = [];
+        foreach ($sectionData as $rawKey => $rawValue) {
+            $rawKeyStr = (string)$rawKey;
+            $rawNorm = normalizar_clave_informe($rawKeyStr);
+            $resolved = resolver_clave_seccion($rawNorm, $clavesPlantilla);
+            if ($resolved === '') {
+                continue;
+            }
+            $valueTrim = trim((string)$rawValue);
+            if ($valueTrim === '' && isset($clavesPlantilla[$resolved])) {
+                $lockedEmpty[$resolved] = true;
+            }
+        }
+
+        $nuevoSection = [];
+        $metaByResolved = [];
+        foreach ($sectionData as $rawKey => $rawValue) {
+            $rawKeyStr = (string)$rawKey;
+            $rawNorm = normalizar_clave_informe($rawKeyStr);
+            $resolved = resolver_clave_seccion($rawNorm, $clavesPlantilla);
+            if ($resolved === '') {
+                continue;
+            }
+
+            if (!isset($clavesPlantilla[$resolved])) {
+                $nuevoSection[$rawKeyStr] = $rawValue;
+                continue;
+            }
+
+            $canonicalKey = (string)$clavesPlantilla[$resolved];
+            $valueTrim = trim((string)$rawValue);
+
+            if (isset($lockedEmpty[$resolved])) {
+                $nuevoSection[$canonicalKey] = '';
+                continue;
+            }
+
+            if ($valueTrim === '') {
+                if (!isset($nuevoSection[$canonicalKey])) {
+                    $nuevoSection[$canonicalKey] = '';
+                }
+                continue;
+            }
+
+            $isExactTemplateKey = ($rawNorm === $resolved);
+            $priority = $isExactTemplateKey ? 2 : 1;
+            $existingPriority = $metaByResolved[$resolved]['priority'] ?? -1;
+            if ($priority >= $existingPriority) {
+                $nuevoSection[$canonicalKey] = $valueTrim;
+                $metaByResolved[$resolved] = ['priority' => $priority];
+            }
+        }
+
+        $contenidoJson[$sectionIdStr] = $nuevoSection;
+    }
+
+    return $contenidoJson;
+}
+
+function resolver_medico_responsable_informe(mysqli $conn, array $orden): int {
+    $medicoId = (int)($orden['medico_id'] ?? 0);
+    $consultaId = (int)($orden['consulta_id'] ?? 0);
+    $cotizacionId = (int)($orden['cotizacion_id'] ?? 0);
+
+    if ($medicoId > 0) {
+        return $medicoId;
+    }
+
+    if ($cotizacionId > 0) {
+        $detalleTokenId = 0;
+        $indicaciones = (string)($orden['indicaciones'] ?? '');
+        if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+            $detalleTokenId = (int)($m[1] ?? 0);
+        }
+
+        if ($detalleTokenId > 0) {
+            $stmtDet = $conn->prepare('SELECT medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND id = ? LIMIT 1');
+            if ($stmtDet) {
+                $stmtDet->bind_param('ii', $cotizacionId, $detalleTokenId);
+                $stmtDet->execute();
+                $rowDet = $stmtDet->get_result()->fetch_assoc();
+                $stmtDet->close();
+                $medicoId = (int)($rowDet['medico_id'] ?? 0);
+                if ($consultaId <= 0) {
+                    $consultaId = (int)($rowDet['consulta_id'] ?? 0);
+                }
+            }
+        }
+    }
+
+    if ($medicoId <= 0 && $consultaId > 0) {
+        $stmtCons = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+        if ($stmtCons) {
+            $stmtCons->bind_param('i', $consultaId);
+            $stmtCons->execute();
+            $rowCons = $stmtCons->get_result()->fetch_assoc();
+            $stmtCons->close();
+            $medicoId = (int)($rowCons['medico_id'] ?? 0);
+        }
+    }
+
+    return max(0, $medicoId);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GET: Obtener informe por orden_imagen_id o id
 // ═══════════════════════════════════════════════════════════════════════════
@@ -38,7 +221,16 @@ if ($method === 'GET') {
     if ($ordenImagenId > 0) {
         // Obtener por orden_imagen_id
         $stmt = $mysqli->prepare('
-            SELECT * FROM imagenologia_informes 
+            SELECT ii.*,
+                   COALESCE(mi.nombre, mo.nombre, mc.nombre) AS medico_nombre,
+                   COALESCE(mi.apellido, mo.apellido, mc.apellido) AS medico_apellido,
+                   COALESCE(mi.especialidad, mo.especialidad, mc.especialidad) AS medico_especialidad
+            FROM imagenologia_informes ii
+            LEFT JOIN ordenes_imagen oi ON oi.id = ii.orden_imagen_id
+            LEFT JOIN consultas c ON c.id = oi.consulta_id
+            LEFT JOIN medicos mi ON mi.id = ii.medico_id
+            LEFT JOIN medicos mo ON mo.id = oi.medico_id
+            LEFT JOIN medicos mc ON mc.id = c.medico_id
             WHERE orden_imagen_id = ?
             LIMIT 1
         ');
@@ -46,7 +238,16 @@ if ($method === 'GET') {
     } elseif ($informeId > 0) {
         // Obtener por informe id
         $stmt = $mysqli->prepare('
-            SELECT * FROM imagenologia_informes 
+            SELECT ii.*,
+                   COALESCE(mi.nombre, mo.nombre, mc.nombre) AS medico_nombre,
+                   COALESCE(mi.apellido, mo.apellido, mc.apellido) AS medico_apellido,
+                   COALESCE(mi.especialidad, mo.especialidad, mc.especialidad) AS medico_especialidad
+            FROM imagenologia_informes ii
+            LEFT JOIN ordenes_imagen oi ON oi.id = ii.orden_imagen_id
+            LEFT JOIN consultas c ON c.id = oi.consulta_id
+            LEFT JOIN medicos mi ON mi.id = ii.medico_id
+            LEFT JOIN medicos mo ON mo.id = oi.medico_id
+            LEFT JOIN medicos mc ON mc.id = c.medico_id
             WHERE id = ?
             LIMIT 1
         ');
@@ -65,6 +266,7 @@ if ($method === 'GET') {
         // Decodificar JSONs
         $informe['contenido_json'] = $informe['contenido_json'] ? json_decode($informe['contenido_json'], true) : [];
         $informe['plantilla_json'] = $informe['plantilla_json'] ? json_decode($informe['plantilla_json'], true) : null;
+        $informe['contenido_json'] = sanitizar_contenido_informe((array)$informe['contenido_json'], $informe['plantilla_json']);
         
         echo json_encode(['success' => true, 'informe' => $informe]);
     } else {
@@ -84,6 +286,7 @@ if ($method === 'POST') {
     $contenidoJson = isset($input['contenido_json']) ? (is_array($input['contenido_json']) ? $input['contenido_json'] : json_decode($input['contenido_json'], true)) : [];
     $titulo = trim((string)($input['titulo'] ?? ''));
     $plantillaJson = isset($input['plantilla_json']) ? (is_array($input['plantilla_json']) ? $input['plantilla_json'] : json_decode($input['plantilla_json'], true)) : null;
+    $contenidoJson = sanitizar_contenido_informe((array)$contenidoJson, $plantillaJson);
     
     if ($ordenImagenId <= 0) {
         http_response_code(400);
@@ -92,7 +295,7 @@ if ($method === 'POST') {
     }
     
     // Validar que la orden existe
-    $stmtOrd = $mysqli->prepare('SELECT id, paciente_id, consulta_id, cotizacion_id, tipo FROM ordenes_imagen WHERE id = ?');
+    $stmtOrd = $mysqli->prepare('SELECT id, paciente_id, consulta_id, cotizacion_id, medico_id, tipo, indicaciones FROM ordenes_imagen WHERE id = ?');
     if (!$stmtOrd) {
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => 'Error de preparación de query']);
@@ -113,6 +316,16 @@ if ($method === 'POST') {
     $pacienteId = (int)$orden['paciente_id'];
     $consultaId = (int)$orden['consulta_id'];
     $cotizacionId = (int)($orden['cotizacion_id'] ?? 0);
+    $medicoResponsableId = resolver_medico_responsable_informe($mysqli, $orden);
+
+    if ($medicoResponsableId > 0 && (int)($orden['medico_id'] ?? 0) <= 0) {
+        $stmtSyncOrden = $mysqli->prepare('UPDATE ordenes_imagen SET medico_id = ? WHERE id = ?');
+        if ($stmtSyncOrden) {
+            $stmtSyncOrden->bind_param('ii', $medicoResponsableId, $ordenImagenId);
+            $stmtSyncOrden->execute();
+            $stmtSyncOrden->close();
+        }
+    }
     
     // Obtener historia_clinica_id si existe
     $historiaCbId = 0;
@@ -147,10 +360,45 @@ if ($method === 'POST') {
     if ($existente) {
         // ─ UPDATE: Actualizar informe existente ─────────────────────────────
         $informeId = (int)$existente['id'];
+
+        $stmtActual = $mysqli->prepare('SELECT titulo, contenido_json, estado FROM imagenologia_informes WHERE id = ? LIMIT 1');
+        $actualTitulo = '';
+        $actualContenidoJson = '';
+        $actualEstado = '';
+        if ($stmtActual) {
+            $stmtActual->bind_param('i', $informeId);
+            $stmtActual->execute();
+            $actualRow = $stmtActual->get_result()->fetch_assoc();
+            $stmtActual->close();
+            if ($actualRow) {
+                $actualTitulo = (string)($actualRow['titulo'] ?? '');
+                $actualContenidoJson = (string)($actualRow['contenido_json'] ?? '');
+                $actualEstado = (string)($actualRow['estado'] ?? '');
+            }
+        }
+
+        $nuevoContenidoCanon = json_encode(json_decode((string)$contenidoJsonStr, true), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $actualContenidoCanon = json_encode(json_decode((string)$actualContenidoJson, true), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $sinCambios = (
+            trim($actualTitulo) === trim((string)$titulo)
+            && trim($actualEstado) === trim((string)$estado)
+            && (string)$actualContenidoCanon === (string)$nuevoContenidoCanon
+        );
+
+        if ($sinCambios) {
+            echo json_encode([
+                'success' => true,
+                'informe_id' => $informeId,
+                'mensaje' => 'Sin cambios para guardar',
+                'accion' => 'sin_cambios'
+            ]);
+            exit;
+        }
         
         $stmt = $mysqli->prepare('
             UPDATE imagenologia_informes 
             SET 
+                medico_id = ?,
                 titulo = ?,
                 contenido_json = ?,
                 plantilla_json = ?,
@@ -160,7 +408,7 @@ if ($method === 'POST') {
             WHERE id = ?
         ');
         
-        $stmt->bind_param('ssssssi', $titulo, $contenidoJsonStr, $plantillaJsonStr, $estado, $ahora, $ahora, $informeId);
+        $stmt->bind_param('issssssi', $medicoResponsableId, $titulo, $contenidoJsonStr, $plantillaJsonStr, $estado, $ahora, $ahora, $informeId);
         $stmt->execute();
         $stmt->close();
         
@@ -170,7 +418,7 @@ if ($method === 'POST') {
             INSERT INTO imagenologia_informes_historial (
                 informe_id, version, contenido_nuevo, usuario_id, usuario_nombre, tipo_cambio, created_at
             ) SELECT 
-                ?, (SELECT MAX(version) + 1 FROM imagenologia_informes_historial WHERE informe_id = ?),
+                ?, (SELECT COALESCE(MAX(version), 0) + 1 FROM imagenologia_informes_historial WHERE informe_id = ?),
                 ?, ?, ?, ?, ?
         ');
         
@@ -201,7 +449,7 @@ if ($method === 'POST') {
         
         $stmt->bind_param('iiiiiissssssss',
             $ordenImagenId, $cotizacionId, $pacienteId, $consultaId, $historiaCbId,
-            $usuarioId, $titulo, $contenidoJsonStr, $plantillaJsonStr, $estado,
+            $medicoResponsableId, $titulo, $contenidoJsonStr, $plantillaJsonStr, $estado,
             $fechaRedaccion, $ahora, $ahora, $ahora
         );
         

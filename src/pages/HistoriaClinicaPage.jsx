@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { APP_BASE_PATH, BASE_URL } from "../config/config";
 import { authFetch } from "../utils/apiClient";
 import TabsApoyoDiagnostico from "../components/examenes/TabsApoyoDiagnostico";
+import VisorInformeImagenologiaHC from "../components/imagenologia/VisorInformeImagenologiaHC";
 import { FormularioHistoriaClinica, TriajePaciente, DatosPaciente, TratamientoPaciente } from "../components/paciente";
 import DiagnosticoCIE10Selector from "../components/diagnostico/DiagnosticoCIE10Selector";
 import ImpresionHistoriaClinica from "../components/print/ImpresionHistoriaClinica";
@@ -533,10 +534,21 @@ function HistoriaClinicaPage() {
         clearDraft();
         return;
       }
+      // Solo persistir draft en sessionStorage, no hacer guardado automático en BD.
+      // El guardado debe ser explícito: solo cuando usuario hace click en "Guardar"
       persistDraftNow();
     }, 800);
     return () => window.clearTimeout(timer);
   }, [clearDraft, currentSnapshot, draftHydrated, draftKey, persistDraftNow, readOnly, serverSnapshot]);
+
+  // Auto-close success modal after 2 seconds
+  useEffect(() => {
+    if (!mostrarModalGuardado) return;
+    const timer = window.setTimeout(() => {
+      setMostrarModalGuardado(false);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [mostrarModalGuardado]);
 
   useEffect(() => {
     const sections = hcTemplateMeta?.sections;
@@ -1034,8 +1046,12 @@ function HistoriaClinicaPage() {
   const apoyoDiagnosticoPrevio = hcAnterior?.apoyo_diagnostico || null;
   const apoyoLaboratorio = apoyoDiagnosticoPrevio?.laboratorio || null;
   const apoyoEcografia = apoyoDiagnosticoPrevio?.ecografia || null;
+  const apoyoRx = apoyoDiagnosticoPrevio?.rx || null;
+  const apoyoTomografia = apoyoDiagnosticoPrevio?.tomografia || null;
   const laboratorioDisponible = Boolean(apoyoLaboratorio?.has_resultados);
   const ecografiaDisponible = Boolean(apoyoEcografia?.has_resultados) && Number(apoyoEcografia?.ultima_orden_id || 0) > 0;
+  const rxDisponible = Boolean(apoyoRx?.has_resultados) && Number(apoyoRx?.ultima_orden_id || 0) > 0;
+  const tomografiaDisponible = Boolean(apoyoTomografia?.has_resultados) && Number(apoyoTomografia?.ultima_orden_id || 0) > 0;
   const fuenteLaboratorioLabel = (() => {
     const resultados = Number(apoyoLaboratorio?.resultados || 0);
     const documentos = Number(apoyoLaboratorio?.documentos || 0);
@@ -1045,6 +1061,8 @@ function HistoriaClinicaPage() {
     return 'Sin fuente';
   })();
   const fuenteEcografiaLabel = ecografiaDisponible ? 'Visor de imágenes' : 'Sin fuente';
+  const fuenteRxLabel = rxDisponible ? 'Visor de imágenes' : 'Sin fuente';
+  const fuenteTomografiaLabel = tomografiaDisponible ? 'Visor de imágenes' : 'Sin fuente';
 
   const abrirRecursoHistorialPrevio = (targetPath) => {
     const rawPath = String(targetPath || '').trim();
@@ -2711,6 +2729,95 @@ function HistoriaClinicaPage() {
                               <span className="shrink-0 text-[11px] text-slate-400">Sin datos</span>
                             )}
                           </div>
+
+                          {ecografiaDisponible && Number(apoyoEcografia?.ultima_orden_id || 0) > 0 && (
+                            <div className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-2">
+                              <p className="mb-2 text-[11px] font-semibold text-violet-800">
+                                Informe de imagenología (HC previa)
+                              </p>
+                              <VisorInformeImagenologiaHC
+                                ordenImagenId={Number(apoyoEcografia?.ultima_orden_id || 0)}
+                                servicioNombre="Ecografía"
+                                pacienteNombre={`${paciente?.nombre || ""} ${paciente?.apellido || ""}`.trim() || "Paciente"}
+                              />
+                            </div>
+                          )}
+
+                          <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-2 py-2">
+                            <div>
+                              <p className="font-medium text-slate-800">Rayos X</p>
+                              <p className="mt-0.5 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                                Fuente: {fuenteRxLabel}
+                              </p>
+                              <p className="text-[11px] text-slate-600">
+                                {rxDisponible
+                                  ? `Archivos detectados (${Number(apoyoRx?.archivos || 0)})`
+                                  : 'No hay resultados disponibles'}
+                              </p>
+                            </div>
+                            {rxDisponible ? (
+                              <button
+                                type="button"
+                                onClick={() => abrirRecursoHistorialPrevio(apoyoRx?.target || `/visor-imagen/${Number(apoyoRx?.ultima_orden_id || 0)}`)}
+                                className="shrink-0 px-2 py-1 rounded bg-sky-600 text-white text-[11px] hover:bg-sky-700"
+                              >
+                                Abrir visor
+                              </button>
+                            ) : (
+                              <span className="shrink-0 text-[11px] text-slate-400">Sin datos</span>
+                            )}
+                          </div>
+
+                          {rxDisponible && Number(apoyoRx?.ultima_orden_id || 0) > 0 && (
+                            <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-2">
+                              <p className="mb-2 text-[11px] font-semibold text-sky-800">
+                                Informe de Rayos X (HC previa)
+                              </p>
+                              <VisorInformeImagenologiaHC
+                                ordenImagenId={Number(apoyoRx?.ultima_orden_id || 0)}
+                                servicioNombre="Rayos X"
+                                pacienteNombre={`${paciente?.nombre || ""} ${paciente?.apellido || ""}`.trim() || "Paciente"}
+                              />
+                            </div>
+                          )}
+
+                          <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-2 py-2">
+                            <div>
+                              <p className="font-medium text-slate-800">Tomografía</p>
+                              <p className="mt-0.5 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                                Fuente: {fuenteTomografiaLabel}
+                              </p>
+                              <p className="text-[11px] text-slate-600">
+                                {tomografiaDisponible
+                                  ? `Archivos detectados (${Number(apoyoTomografia?.archivos || 0)})`
+                                  : 'No hay resultados disponibles'}
+                              </p>
+                            </div>
+                            {tomografiaDisponible ? (
+                              <button
+                                type="button"
+                                onClick={() => abrirRecursoHistorialPrevio(apoyoTomografia?.target || `/visor-imagen/${Number(apoyoTomografia?.ultima_orden_id || 0)}`)}
+                                className="shrink-0 px-2 py-1 rounded bg-amber-600 text-white text-[11px] hover:bg-amber-700"
+                              >
+                                Abrir visor
+                              </button>
+                            ) : (
+                              <span className="shrink-0 text-[11px] text-slate-400">Sin datos</span>
+                            )}
+                          </div>
+
+                          {tomografiaDisponible && Number(apoyoTomografia?.ultima_orden_id || 0) > 0 && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2">
+                              <p className="mb-2 text-[11px] font-semibold text-amber-800">
+                                Informe de Tomografía (HC previa)
+                              </p>
+                              <VisorInformeImagenologiaHC
+                                ordenImagenId={Number(apoyoTomografia?.ultima_orden_id || 0)}
+                                servicioNombre="Tomografía"
+                                pacienteNombre={`${paciente?.nombre || ""} ${paciente?.apellido || ""}`.trim() || "Paciente"}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
 

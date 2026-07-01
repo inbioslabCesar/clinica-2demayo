@@ -2127,6 +2127,17 @@ function hc_get_apoyo_resumen_por_consultas($conn, $consultaIds) {
         return [];
     }
 
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+
+    $hasOrdenesLab = hc_table_exists($conn, 'ordenes_laboratorio');
+    $hasResultadosLab = hc_table_exists($conn, 'resultados_laboratorio');
+    $hasDocsPac = hc_table_exists($conn, 'documentos_externos_paciente');
+    $hasDocsArc = hc_table_exists($conn, 'documentos_externos_archivos');
+    $hasOrdenesImg = hc_table_exists($conn, 'ordenes_imagen');
+    $hasOrdenesImgArch = hc_table_exists($conn, 'ordenes_imagen_archivos');
+    $hasInformesImg = hc_table_exists($conn, 'imagenologia_informes');
+
     $resumen = [];
     foreach ($ids as $cid) {
         $resumen[$cid] = [
@@ -2143,21 +2154,34 @@ function hc_get_apoyo_resumen_por_consultas($conn, $consultaIds) {
                 'ordenes' => 0,
                 'archivos' => 0,
                 'ultima_orden_id' => null,
+                'ultima_orden_any' => null,
                 'target' => null,
+                'informe_id' => null,
+                'informe_estado' => null,
+            ],
+            'rx' => [
+                'has_resultados' => false,
+                'ordenes' => 0,
+                'archivos' => 0,
+                'ultima_orden_id' => null,
+                'ultima_orden_any' => null,
+                'target' => null,
+                'informe_id' => null,
+                'informe_estado' => null,
+            ],
+            'tomografia' => [
+                'has_resultados' => false,
+                'ordenes' => 0,
+                'archivos' => 0,
+                'ultima_orden_id' => null,
+                'ultima_orden_any' => null,
+                'target' => null,
+                'informe_id' => null,
+                'informe_estado' => null,
             ],
         ];
     }
 
-    $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    $types = str_repeat('i', count($ids));
-    $hasOrdenesLab = hc_table_exists($conn, 'ordenes_laboratorio');
-    $hasResultadosLab = hc_table_exists($conn, 'resultados_laboratorio');
-    $hasDocsPac = hc_table_exists($conn, 'documentos_externos_paciente');
-    $hasDocsArc = hc_table_exists($conn, 'documentos_externos_archivos');
-    $hasOrdenesImg = hc_table_exists($conn, 'ordenes_imagen');
-    $hasOrdenesImgArch = hc_table_exists($conn, 'ordenes_imagen_archivos');
-
-    // Resumen de órdenes de laboratorio por consulta.
     if ($hasOrdenesLab) {
         $stmtOrdenesLab = $conn->prepare(
             "SELECT consulta_id, COUNT(*) AS total_ordenes
@@ -2179,7 +2203,6 @@ function hc_get_apoyo_resumen_por_consultas($conn, $consultaIds) {
         }
     }
 
-    // Resultados de laboratorio por consulta directa.
     if ($hasResultadosLab) {
         $stmtResultadosLab = $conn->prepare(
             "SELECT consulta_id, COUNT(*) AS total_resultados
@@ -2200,7 +2223,6 @@ function hc_get_apoyo_resumen_por_consultas($conn, $consultaIds) {
             }
         }
 
-        // Resultados asociados por orden_id sin duplicar los que ya traen consulta_id.
         if ($hasOrdenesLab) {
             $stmtResultadosPorOrden = $conn->prepare(
                 "SELECT ol.consulta_id, COUNT(rl.id) AS total_resultados
@@ -2225,7 +2247,6 @@ function hc_get_apoyo_resumen_por_consultas($conn, $consultaIds) {
         }
     }
 
-    // Documentos externos vinculados a órdenes de laboratorio (adjuntos PDF/imagen).
     if ($hasOrdenesLab && $hasDocsPac && $hasDocsArc) {
         $stmtDocs = $conn->prepare(
             "SELECT ol.consulta_id, COUNT(dea.id) AS total_documentos
@@ -2249,48 +2270,126 @@ function hc_get_apoyo_resumen_por_consultas($conn, $consultaIds) {
         }
     }
 
-    // Ecografías: última orden con archivos y total de órdenes/archivos por consulta.
-    if ($hasOrdenesImg && $hasOrdenesImgArch) {
-        $stmtEco = $conn->prepare(
+    if ($hasOrdenesImg) {
+        $joinArch = $hasOrdenesImgArch
+            ? ' LEFT JOIN ordenes_imagen_archivos oia ON oia.orden_id = oi.id '
+            : '';
+        $archCountExpr = $hasOrdenesImgArch ? 'COUNT(oia.id)' : '0';
+        $ultimaConArchivoExpr = $hasOrdenesImgArch
+            ? 'MAX(CASE WHEN oia.id IS NOT NULL THEN oi.id ELSE NULL END)'
+            : 'NULL';
+
+        $stmtImg = $conn->prepare(
             "SELECT oi.consulta_id,
+                    CASE
+                      WHEN LOWER(TRIM(COALESCE(oi.tipo, ''))) IN ('rx','rayosx','rayos_x','rayos x') THEN 'rx'
+                      WHEN LOWER(TRIM(COALESCE(oi.tipo, ''))) = 'tomografia' THEN 'tomografia'
+                      ELSE 'ecografia'
+                    END AS tipo_norm,
                     COUNT(DISTINCT oi.id) AS total_ordenes,
-                    COUNT(oia.id) AS total_archivos,
-                    MAX(CASE WHEN oia.id IS NOT NULL THEN oi.id ELSE NULL END) AS ultima_orden_con_archivo
+                    $archCountExpr AS total_archivos,
+                    $ultimaConArchivoExpr AS ultima_orden_con_archivo,
+                    MAX(oi.id) AS ultima_orden_any
              FROM ordenes_imagen oi
-             LEFT JOIN ordenes_imagen_archivos oia ON oia.orden_id = oi.id
+             $joinArch
              WHERE oi.consulta_id IN ($placeholders)
-               AND LOWER(COALESCE(oi.tipo, '')) = 'ecografia'
-             GROUP BY oi.consulta_id"
+               AND LOWER(TRIM(COALESCE(oi.tipo, ''))) IN ('ecografia','tomografia','rx','rayosx','rayos_x','rayos x')
+             GROUP BY oi.consulta_id, tipo_norm"
         );
-        if ($stmtEco) {
-            $stmtEco->bind_param($types, ...$ids);
-            $stmtEco->execute();
-            $rows = $stmtEco->get_result()->fetch_all(MYSQLI_ASSOC);
-            $stmtEco->close();
+
+        if ($stmtImg) {
+            $stmtImg->bind_param($types, ...$ids);
+            $stmtImg->execute();
+            $rows = $stmtImg->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtImg->close();
+
             foreach ($rows as $row) {
                 $cid = (int)($row['consulta_id'] ?? 0);
-                if ($cid > 0 && isset($resumen[$cid])) {
-                    $archivos = (int)($row['total_archivos'] ?? 0);
-                    $ultimaOrden = (int)($row['ultima_orden_con_archivo'] ?? 0);
-                    $resumen[$cid]['ecografia']['ordenes'] = (int)($row['total_ordenes'] ?? 0);
-                    $resumen[$cid]['ecografia']['archivos'] = $archivos;
-                    $resumen[$cid]['ecografia']['ultima_orden_id'] = $ultimaOrden > 0 ? $ultimaOrden : null;
-                    $resumen[$cid]['ecografia']['target'] = $ultimaOrden > 0 ? ('/visor-imagen/' . $ultimaOrden) : null;
+                $tipoNorm = trim((string)($row['tipo_norm'] ?? ''));
+                if ($cid <= 0 || !isset($resumen[$cid]) || !isset($resumen[$cid][$tipoNorm])) {
+                    continue;
+                }
+
+                $archivos = (int)($row['total_archivos'] ?? 0);
+                $ultimaConArchivo = (int)($row['ultima_orden_con_archivo'] ?? 0);
+                $ultimaAny = (int)($row['ultima_orden_any'] ?? 0);
+
+                $resumen[$cid][$tipoNorm]['ordenes'] = (int)($row['total_ordenes'] ?? 0);
+                $resumen[$cid][$tipoNorm]['archivos'] = $archivos;
+                $resumen[$cid][$tipoNorm]['ultima_orden_any'] = $ultimaAny > 0 ? $ultimaAny : null;
+                $resumen[$cid][$tipoNorm]['ultima_orden_id'] = $ultimaConArchivo > 0 ? $ultimaConArchivo : null;
+                $resumen[$cid][$tipoNorm]['target'] = $ultimaConArchivo > 0 ? ('/visor-imagen/' . $ultimaConArchivo) : null;
+            }
+        }
+
+        if ($hasInformesImg) {
+            $stmtInf = $conn->prepare(
+                "SELECT oi.consulta_id,
+                        CASE
+                          WHEN LOWER(TRIM(COALESCE(oi.tipo, ''))) IN ('rx','rayosx','rayos_x','rayos x') THEN 'rx'
+                          WHEN LOWER(TRIM(COALESCE(oi.tipo, ''))) = 'tomografia' THEN 'tomografia'
+                          ELSE 'ecografia'
+                        END AS tipo_norm,
+                        MAX(ii.id) AS informe_id,
+                        MAX(oi.id) AS ultima_orden_informe,
+                        SUBSTRING_INDEX(GROUP_CONCAT(ii.estado ORDER BY ii.id DESC SEPARATOR ','), ',', 1) AS informe_estado
+                 FROM ordenes_imagen oi
+                 INNER JOIN imagenologia_informes ii ON ii.orden_imagen_id = oi.id
+                 WHERE oi.consulta_id IN ($placeholders)
+                   AND LOWER(TRIM(COALESCE(oi.tipo, ''))) IN ('ecografia','tomografia','rx','rayosx','rayos_x','rayos x')
+                 GROUP BY oi.consulta_id, tipo_norm"
+            );
+
+            if ($stmtInf) {
+                $stmtInf->bind_param($types, ...$ids);
+                $stmtInf->execute();
+                $rowsInf = $stmtInf->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmtInf->close();
+
+                foreach ($rowsInf as $row) {
+                    $cid = (int)($row['consulta_id'] ?? 0);
+                    $tipoNorm = trim((string)($row['tipo_norm'] ?? ''));
+                    if ($cid <= 0 || !isset($resumen[$cid]) || !isset($resumen[$cid][$tipoNorm])) {
+                        continue;
+                    }
+
+                    $informeId = (int)($row['informe_id'] ?? 0);
+                    $ordenInforme = (int)($row['ultima_orden_informe'] ?? 0);
+
+                    $resumen[$cid][$tipoNorm]['informe_id'] = $informeId > 0 ? $informeId : null;
+                    $resumen[$cid][$tipoNorm]['informe_estado'] = trim((string)($row['informe_estado'] ?? '')) ?: null;
+
+                    if ((int)($resumen[$cid][$tipoNorm]['ultima_orden_id'] ?? 0) <= 0 && $ordenInforme > 0) {
+                        $resumen[$cid][$tipoNorm]['ultima_orden_id'] = $ordenInforme;
+                        $resumen[$cid][$tipoNorm]['target'] = '/visor-imagen/' . $ordenInforme;
+                    }
                 }
             }
         }
     }
 
-    foreach ($resumen as $cid => &$item) {
+    foreach ($resumen as &$item) {
         $lab = $item['laboratorio'];
         $eco = $item['ecografia'];
+        $rx = $item['rx'];
+        $tomo = $item['tomografia'];
 
         $item['laboratorio']['has_resultados'] = (
             (int)($lab['resultados'] ?? 0) > 0
             || (int)($lab['documentos'] ?? 0) > 0
         );
-
-        $item['ecografia']['has_resultados'] = (int)($eco['archivos'] ?? 0) > 0;
+        $item['ecografia']['has_resultados'] = (
+            (int)($eco['archivos'] ?? 0) > 0
+            || (int)($eco['informe_id'] ?? 0) > 0
+        );
+        $item['rx']['has_resultados'] = (
+            (int)($rx['archivos'] ?? 0) > 0
+            || (int)($rx['informe_id'] ?? 0) > 0
+        );
+        $item['tomografia']['has_resultados'] = (
+            (int)($tomo['archivos'] ?? 0) > 0
+            || (int)($tomo['informe_id'] ?? 0) > 0
+        );
     }
     unset($item);
 
@@ -2536,7 +2635,30 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
                 'ordenes' => 0,
                 'archivos' => 0,
                 'ultima_orden_id' => null,
+                'ultima_orden_any' => null,
                 'target' => null,
+                'informe_id' => null,
+                'informe_estado' => null,
+            ],
+            'rx' => [
+                'has_resultados' => false,
+                'ordenes' => 0,
+                'archivos' => 0,
+                'ultima_orden_id' => null,
+                'ultima_orden_any' => null,
+                'target' => null,
+                'informe_id' => null,
+                'informe_estado' => null,
+            ],
+            'tomografia' => [
+                'has_resultados' => false,
+                'ordenes' => 0,
+                'archivos' => 0,
+                'ultima_orden_id' => null,
+                'ultima_orden_any' => null,
+                'target' => null,
+                'informe_id' => null,
+                'informe_estado' => null,
             ],
         ];
     }

@@ -2316,6 +2316,7 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
             'tipo' => $tipo,
             'detalle_id' => $detalleId,
             'descripcion' => $descripcion,
+            'medico_id' => (int)($det['medico_id'] ?? 0),
         ];
     }
     if (empty($detallesImagen)) return;
@@ -2323,12 +2324,14 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
     $hasCotizacionId = column_exists($conn, 'ordenes_imagen', 'cotizacion_id');
     $hasSolicitadoPor = column_exists($conn, 'ordenes_imagen', 'solicitado_por');
     $hasCargaAnticipada = column_exists($conn, 'ordenes_imagen', 'carga_anticipada');
+    $hasMedicoId = column_exists($conn, 'ordenes_imagen', 'medico_id');
     $usuarioId = get_user_id_from_session();
 
     foreach ($detallesImagen as $detImg) {
         $tipoOrden = (string)$detImg['tipo'];
         $detalleId = (int)$detImg['detalle_id'];
         $descripcionItem = (string)$detImg['descripcion'];
+        $medicoResponsableId = (int)($detImg['medico_id'] ?? 0);
 
         $tokenDetalle = $detalleId > 0 ? ('Detalle #' . $detalleId) : null;
         $indicaciones = ($tokenDetalle ? ($tokenDetalle . ' - ') : '')
@@ -2371,6 +2374,12 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
             $vals[] = '?';
             $types .= 'i';
             $params[] = $usuarioId;
+        }
+        if ($hasMedicoId) {
+            $cols[] = 'medico_id';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = $medicoResponsableId;
         }
         if ($hasCotizacionId) {
             $cols[] = 'cotizacion_id';

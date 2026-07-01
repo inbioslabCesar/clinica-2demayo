@@ -19,11 +19,13 @@ export default function ModalInformeImagenologia({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [plantillaSeleccionada, setPlantillaSeleccionada] = useState(null);
+  const [todasLasPlantillas, setTodasLasPlantillas] = useState([]);
   const [informe, setInforme] = useState(null);
   const [contenido, setContenido] = useState({});
   const [titulo, setTitulo] = useState('');
   const [estado, setEstado] = useState('borrador');
   const [generandoPdf, setGenerandoPdf] = useState(false);
+  const medicoMostrado = [informe?.medico_nombre, informe?.medico_apellido].filter(Boolean).join(' ') || medicoNombre;
 
   // ─ Cargar plantillas y informe existente ─────────────────────────────────
   useEffect(() => {
@@ -39,7 +41,15 @@ export default function ModalInformeImagenologia({
       .then(([resPlant, resInf]) => Promise.all([resPlant.json(), resInf.json()]))
       .then(([dataPlant, dataInf]) => {
         if (dataPlant.success && Array.isArray(dataPlant.plantillas) && dataPlant.plantillas.length > 0) {
-          setPlantillaSeleccionada(dataPlant.plantillas[0]);
+          setTodasLasPlantillas(dataPlant.plantillas);
+          // Si hay un informe existente con plantilla guardada, usarla; sino la primera activa
+          const plantillaInforme = dataInf?.informe?.plantilla_json;
+          const matchPorNombre = plantillaInforme
+            ? dataPlant.plantillas.find((p) => p.nombre === plantillaInforme?.nombre)
+            : null;
+          setPlantillaSeleccionada(matchPorNombre || dataPlant.plantillas[0]);
+        } else {
+          setTodasLasPlantillas([]);
         }
 
         if (dataInf.success && dataInf.informe) {
@@ -198,7 +208,7 @@ export default function ModalInformeImagenologia({
                   <label className="block text-sm font-medium mb-1">Médico</label>
                   <input
                     type="text"
-                    value={medicoNombre}
+                    value={medicoMostrado}
                     disabled
                     className="w-full px-3 py-2 bg-gray-100 rounded border opacity-50"
                   />
@@ -215,14 +225,35 @@ export default function ModalInformeImagenologia({
                 </div>
               </div>
 
-              {/* Plantilla seleccionada */}
-              {plantillaSeleccionada && (
+              {/* Selector de plantilla */}
+              {todasLasPlantillas.length > 1 ? (
                 <div className="mb-6 p-4 bg-blue-50 rounded border border-blue-200">
-                  <p className="text-sm text-blue-900">
-                    <strong>Plantilla en uso:</strong> {plantillaSeleccionada.nombre}
+                  <label className="block text-sm font-semibold text-blue-900 mb-2">
+                    Plantilla del informe
+                  </label>
+                  <select
+                    value={plantillaSeleccionada?.id ?? ''}
+                    onChange={(e) => {
+                      const p = todasLasPlantillas.find((pl) => String(pl.id) === String(e.target.value));
+                      if (p) setPlantillaSeleccionada(p);
+                    }}
+                    className="w-full px-3 py-2 border border-blue-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    {todasLasPlantillas.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Cambia la plantilla para modificar las secciones del informe.
                   </p>
                 </div>
-              )}
+              ) : plantillaSeleccionada ? (
+                <div className="mb-6 p-4 bg-blue-50 rounded border border-blue-200">
+                  <p className="text-sm text-blue-900">
+                    <strong>Plantilla:</strong> {plantillaSeleccionada.nombre}
+                  </p>
+                </div>
+              ) : null}
 
               {/* Secciones dinámicas */}
               <div className="space-y-6">

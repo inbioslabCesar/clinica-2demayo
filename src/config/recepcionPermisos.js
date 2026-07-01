@@ -19,6 +19,7 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_web_banners", label: "Web banners" },
   { key: "ver_configuracion", label: "Configuración" },
   { key: "ver_plantillas_hc", label: "Plantillas HC" },
+  { key: "ver_plantillas_imagen", label: "Plantillas Imagenología" },
   { key: "ver_tema", label: "Personalización" },
   { key: "ver_reabrir_caja", label: "Reabrir Cajas" }
 ];

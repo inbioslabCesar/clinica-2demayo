@@ -119,7 +119,7 @@ export default function CardInformeImagenologia({
             {/* Información del informe */}
             <div className="mb-3 text-sm text-gray-700">
               <p className="text-xs text-gray-600">
-                Redactado por: <strong>{medicoNombre || `Médico #${informe.medico_id || '-'}`}</strong>
+                Redactado por: <strong>{[informe.medico_nombre, informe.medico_apellido].filter(Boolean).join(' ') || medicoNombre || `Médico #${informe.medico_id || '-'}`}</strong>
               </p>
               {informe.fecha_redaccion && (
                 <p className="text-xs text-gray-600">

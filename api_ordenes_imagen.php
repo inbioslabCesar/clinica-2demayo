@@ -23,6 +23,7 @@ $conn->query("
         id             INT AUTO_INCREMENT PRIMARY KEY,
         consulta_id    INT NOT NULL,
         paciente_id    INT NOT NULL,
+        medico_id      INT DEFAULT NULL,
         tipo           VARCHAR(30) NOT NULL DEFAULT 'rx',
         indicaciones   TEXT,
         estado         VARCHAR(20) NOT NULL DEFAULT 'pendiente',
@@ -31,12 +32,14 @@ $conn->query("
         cotizacion_id  INT DEFAULT NULL,
         carga_anticipada TINYINT(1) NOT NULL DEFAULT 0,
         INDEX idx_oi_consulta (consulta_id),
-        INDEX idx_oi_paciente (paciente_id)
+        INDEX idx_oi_paciente (paciente_id),
+        INDEX idx_oi_medico (medico_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 
 // Migraciones para tablas ya existentes
 $migrImagen = [
+    'medico_id'       => 'ALTER TABLE ordenes_imagen ADD COLUMN medico_id INT DEFAULT NULL',
     'cotizacion_id'   => 'ALTER TABLE ordenes_imagen ADD COLUMN cotizacion_id INT DEFAULT NULL',
     'carga_anticipada'=> 'ALTER TABLE ordenes_imagen ADD COLUMN carga_anticipada TINYINT(1) NOT NULL DEFAULT 0',
 ];
@@ -102,6 +105,81 @@ if (!function_exists('crearCotizacionImagen')) {
     }
 }
 
+if (!function_exists('resolverMedicoResponsableOrdenImagen')) {
+    function resolverMedicoResponsableOrdenImagen(mysqli $conn, array $orden): array {
+        $ordenId = (int)($orden['id'] ?? 0);
+        $medicoId = (int)($orden['medico_id'] ?? 0);
+        $consultaId = (int)($orden['consulta_id'] ?? 0);
+        $cotizId = (int)($orden['cotizacion_id'] ?? 0);
+
+        if ($medicoId <= 0 && $cotizId > 0) {
+            $detalleTokenId = 0;
+            $indicaciones = (string)($orden['indicaciones'] ?? '');
+            if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+                $detalleTokenId = (int)($m[1] ?? 0);
+            }
+
+            if ($detalleTokenId > 0) {
+                $stmtDet = $conn->prepare('SELECT medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND id = ? LIMIT 1');
+                if ($stmtDet) {
+                    $stmtDet->bind_param('ii', $cotizId, $detalleTokenId);
+                    $stmtDet->execute();
+                    $rowDet = $stmtDet->get_result()->fetch_assoc();
+                    $stmtDet->close();
+                    $medicoId = (int)($rowDet['medico_id'] ?? 0);
+                    if ($consultaId <= 0) {
+                        $consultaId = (int)($rowDet['consulta_id'] ?? 0);
+                    }
+                }
+            }
+        }
+
+        if ($medicoId <= 0 && $consultaId > 0) {
+            $stmtCons = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+            if ($stmtCons) {
+                $stmtCons->bind_param('i', $consultaId);
+                $stmtCons->execute();
+                $rowCons = $stmtCons->get_result()->fetch_assoc();
+                $stmtCons->close();
+                $medicoId = (int)($rowCons['medico_id'] ?? 0);
+            }
+        }
+
+        $info = [
+            'medico_id' => $medicoId,
+            'medico_responsable_nombre' => null,
+            'medico_responsable_apellido' => null,
+            'medico_responsable_especialidad' => null,
+        ];
+
+        if ($medicoId > 0) {
+            $stmtMed = $conn->prepare('SELECT nombre, apellido, especialidad FROM medicos WHERE id = ? LIMIT 1');
+            if ($stmtMed) {
+                $stmtMed->bind_param('i', $medicoId);
+                $stmtMed->execute();
+                $rowMed = $stmtMed->get_result()->fetch_assoc();
+                $stmtMed->close();
+                if ($rowMed) {
+                    $info['medico_responsable_nombre'] = trim((string)($rowMed['nombre'] ?? ''));
+                    $info['medico_responsable_apellido'] = trim((string)($rowMed['apellido'] ?? ''));
+                    $info['medico_responsable_especialidad'] = trim((string)($rowMed['especialidad'] ?? ''));
+                }
+            }
+        }
+
+        if ($ordenId > 0 && $medicoId > 0 && (int)($orden['medico_id'] ?? 0) <= 0) {
+            $stmtUpd = $conn->prepare('UPDATE ordenes_imagen SET medico_id = ? WHERE id = ?');
+            if ($stmtUpd) {
+                $stmtUpd->bind_param('ii', $medicoId, $ordenId);
+                $stmtUpd->execute();
+                $stmtUpd->close();
+            }
+        }
+
+        return $info;
+    }
+}
+
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
     $oid     = (int)$orden['id'];
@@ -121,7 +199,13 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
             'fecha'           => $a['fecha'],
         ];
     }
-    // Enriquecer con estado de la cotización y nombres de servicios
+    // Enriquecer con medico responsable, estado de la cotización y nombres de servicios
+    $medInfo = resolverMedicoResponsableOrdenImagen($conn, $orden);
+    $orden['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
+    $orden['medico_responsable_nombre'] = $medInfo['medico_responsable_nombre'];
+    $orden['medico_responsable_apellido'] = $medInfo['medico_responsable_apellido'];
+    $orden['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
+
     $cotizId = (int)($orden['cotizacion_id'] ?? 0);
     if ($cotizId > 0) {
         $cRow = $conn->query("SELECT estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id = $cotizId")->fetch_assoc();
@@ -391,9 +475,12 @@ if ($method === 'POST') {
                 $cotizIdNew     = intval($cotizData['cotizacion_id']);
                 if ($cotizIdNew > 0) {
                     // Mapear descripcion → detalle.id para los tokens de cada orden
-                    $dRes = $conn->query("SELECT id, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizIdNew ORDER BY id ASC");
+                    $dRes = $conn->query("SELECT id, descripcion, medico_id FROM cotizaciones_detalle WHERE cotizacion_id = $cotizIdNew ORDER BY id ASC");
                     while ($dRes && ($dRow = $dRes->fetch_assoc())) {
-                        $detalleIdMap[strtolower(trim((string)$dRow['descripcion']))] = (int)$dRow['id'];
+                        $detalleIdMap[strtolower(trim((string)$dRow['descripcion']))] = [
+                            'id' => (int)$dRow['id'],
+                            'medico_id' => (int)($dRow['medico_id'] ?? 0),
+                        ];
                     }
                 }
             }
@@ -417,7 +504,9 @@ if ($method === 'POST') {
             } else {
                 foreach ($servicios as $srv) {
                     $desc      = trim((string)($srv['descripcion'] ?? 'Servicio'));
-                    $detalleId = $detalleIdMap[strtolower($desc)] ?? 0;
+                    $detalleMeta = $detalleIdMap[strtolower($desc)] ?? ['id' => 0, 'medico_id' => 0];
+                    $detalleId = (int)($detalleMeta['id'] ?? 0);
+                    $medicoResponsableId = (int)($detalleMeta['medico_id'] ?? 0);
 
                     // Formato estricto: compatible con idempotencia de crear_ordenes_imagen_cotizacion
                     // (payment-sync usa este mismo formato para deduplicar)
@@ -430,11 +519,11 @@ if ($method === 'POST') {
                     }
 
                     if ($cotizId > 0) {
-                        $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada, cotizacion_id) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?, ?)');
-                        $stmt->bind_param('iissiii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada, $cotizId);
+                        $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, medico_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada, cotizacion_id) VALUES (?, ?, ?, ?, ?, \'pendiente\', ?, ?, ?)');
+                        $stmt->bind_param('iiissiii', $consulta_id, $paciente_id, $medicoResponsableId, $tipo, $indFinal, $usuarioId, $cargaAnticipada, $cotizId);
                     } else {
-                        $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?)');
-                        $stmt->bind_param('iissii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada);
+                        $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, medico_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, ?, \'pendiente\', ?, ?)');
+                        $stmt->bind_param('iiissii', $consulta_id, $paciente_id, $medicoResponsableId, $tipo, $indFinal, $usuarioId, $cargaAnticipada);
                     }
                     $stmt->execute();
                     $stmt->close();
@@ -484,7 +573,7 @@ if ($method === 'POST') {
                 ? " AND estado_item <> 'eliminado'"
                 : '';
 
-            $detRes = $conn->query("SELECT id, servicio_tipo, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizacion_id" . $whereEstado . " ORDER BY id ASC");
+            $detRes = $conn->query("SELECT id, servicio_tipo, descripcion, medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = $cotizacion_id" . $whereEstado . " ORDER BY id ASC");
             $detallesImagen = [];
             while ($det = $detRes->fetch_assoc()) {
                 $detalleId = (int)($det['id'] ?? 0);
@@ -513,6 +602,8 @@ if ($method === 'POST') {
                         'detalle_id' => $detalleId,
                         'tipo' => $tipoOrden,
                         'descripcion' => trim((string)($det['descripcion'] ?? '')),
+                        'medico_id' => (int)($det['medico_id'] ?? 0),
+                        'consulta_id' => (int)($det['consulta_id'] ?? 0),
                     ];
                 }
             }
@@ -528,6 +619,8 @@ if ($method === 'POST') {
                 $detalleId = (int)$detImg['detalle_id'];
                 $tipoOrden = (string)$detImg['tipo'];
                 $descOrden = trim((string)$detImg['descripcion']);
+                $medicoResponsableId = (int)($detImg['medico_id'] ?? 0);
+                $consultaRelacionadaId = (int)($detImg['consulta_id'] ?? 0);
                 if ($descOrden === '') {
                     $descOrden = strtoupper($tipoOrden);
                 }
@@ -545,9 +638,9 @@ if ($method === 'POST') {
                     }
                 }
 
-                $stmtIns = $conn->prepare("INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, cotizacion_id, carga_anticipada) VALUES (0, ?, ?, ?, 'pendiente', ?, ?, 0)");
+                $stmtIns = $conn->prepare("INSERT INTO ordenes_imagen (consulta_id, paciente_id, medico_id, tipo, indicaciones, estado, solicitado_por, cotizacion_id, carga_anticipada) VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, 0)");
                 if ($stmtIns) {
-                    $stmtIns->bind_param('issii', $paciente_id, $tipoOrden, $indicaciones, $usuarioId, $cotizacion_id);
+                    $stmtIns->bind_param('iiissii', $consultaRelacionadaId, $paciente_id, $medicoResponsableId, $tipoOrden, $indicaciones, $usuarioId, $cotizacion_id);
                     $stmtIns->execute();
                     $stmtIns->close();
                     $creadas++;

@@ -75,7 +75,12 @@ export default function VisorInformeImagenologiaHC({
     <div className="border border-blue-200 rounded-lg bg-blue-50 overflow-hidden">
       {/* Encabezado desplegable */}
       <button
-        onClick={() => setExpandido(!expandido)}
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setExpandido(!expandido);
+        }}
         className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100 transition"
       >
         <div className="flex items-center gap-3 flex-1 text-left">
@@ -112,7 +117,7 @@ export default function VisorInformeImagenologiaHC({
           {/* Información del médico */}
           <div className="mb-4 pb-4 border-b border-gray-200 text-xs">
             <p>
-              <strong className="text-blue-900">Médico:</strong> {informe.medico_id ? 'Dr.' : 'Sistema'}
+              <strong className="text-blue-900">Médico:</strong> {[informe.medico_nombre, informe.medico_apellido].filter(Boolean).join(' ') || (informe.medico_id ? `Dr. #${informe.medico_id}` : 'Sistema')}
             </p>
             {informe.fecha_redaccion && (
               <p>
@@ -179,6 +184,7 @@ export default function VisorInformeImagenologiaHC({
           {/* Botón descargar PDF */}
           {informe.estado === 'completado' && (
             <button
+              type="button"
               onClick={handleDescargarPdf}
               disabled={descargando}
               className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 transition"

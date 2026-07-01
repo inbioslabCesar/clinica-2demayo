@@ -46,17 +46,52 @@ if ($informeId <= 0) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 0. Obtener configuración de clínica
+// ═══════════════════════════════════════════════════════════════════════════
+$nombreClinica = 'Clínica';
+$direccion = '';
+$telefono = '';
+$email = '';
+$ruc = '';
+$website = '';
+$logoUrl = '';
+
+$stmtConfig = $mysqli->prepare('SELECT nombre_clinica, direccion, telefono, email, ruc, website, logo_url FROM configuracion_clinica LIMIT 1');
+if ($stmtConfig) {
+    $stmtConfig->execute();
+    $configRow = $stmtConfig->get_result()->fetch_assoc();
+    $stmtConfig->close();
+    if ($configRow) {
+        $nombreClinica = trim((string)($configRow['nombre_clinica'] ?? 'Clínica'));
+        $direccion = trim((string)($configRow['direccion'] ?? ''));
+        $telefono = trim((string)($configRow['telefono'] ?? ''));
+        $email = trim((string)($configRow['email'] ?? ''));
+        $ruc = trim((string)($configRow['ruc'] ?? ''));
+        $website = trim((string)($configRow['website'] ?? ''));
+        $logoUrl = trim((string)($configRow['logo_url'] ?? ''));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 1. Obtener informe
 // ═══════════════════════════════════════════════════════════════════════════
 $stmt = $mysqli->prepare('
     SELECT ii.*, 
-           oi.tipo as tipo_examen, oi.indicaciones,
+              oi.tipo as tipo_examen, oi.indicaciones, oi.medico_id AS orden_medico_id,
         p.nombre, p.apellido, p.fecha_nacimiento, p.dni,
-           m.nombre as medico_nombre, m.especialidad
+           mi.nombre as medico_nombre,
+           mi.apellido as medico_apellido,
+           mi.especialidad as especialidad,
+           mi.abreviatura_profesional as abreviatura_profesional,
+           mi.colegio_sigla as colegio_sigla,
+           mi.nro_colegiatura as nro_colegiatura,
+           mi.cmp as cmp,
+           mi.rne as rne,
+           mi.firma as firma
     FROM imagenologia_informes ii
     INNER JOIN ordenes_imagen oi ON oi.id = ii.orden_imagen_id
     LEFT JOIN pacientes p ON p.id = ii.paciente_id
-    LEFT JOIN medicos m ON m.id = ii.medico_id
+    LEFT JOIN medicos mi ON mi.id = ii.medico_id
     WHERE ii.id = ?
     LIMIT 1
 ');
@@ -93,13 +128,48 @@ $stmt->close();
 // ═══════════════════════════════════════════════════════════════════════════
 $contenido = $informe['contenido_json'] ? json_decode($informe['contenido_json'], true) : [];
 
+function normalizar_clave_pdf(string $texto): string {
+    $texto = trim(mb_strtolower($texto, 'UTF-8'));
+    $map = [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+        'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u',
+        'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u',
+        'ñ' => 'n'
+    ];
+    $texto = strtr($texto, $map);
+    $texto = preg_replace('/\?+/', '', $texto);
+    $texto = preg_replace('/[^a-z0-9]+/u', '', $texto);
+    return (string)$texto;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. Construir HTML para PDF
 // ═══════════════════════════════════════════════════════════════════════════
 $pacienteNombre = trim((string)($informe['apellido'] ?? '') . ' ' . (string)($informe['nombre'] ?? ''));
-$medicoNombre = (string)($informe['medico_nombre'] ?? 'Dr. [Médico no especificado]');
+$medicoNombreBase = trim(((string)($informe['medico_nombre'] ?? '')) . ' ' . ((string)($informe['medico_apellido'] ?? '')));
+$abreviaturaProfesional = trim((string)($informe['abreviatura_profesional'] ?? ''));
+$medicoNombre = trim(($abreviaturaProfesional !== '' ? ($abreviaturaProfesional . ' ') : '') . $medicoNombreBase);
+if ($medicoNombre === '') {
+    $medicoNombre = 'Dr. [Médico no especificado]';
+}
 $especialidad = (string)($informe['especialidad'] ?? '');
+$colegiaturaSigla = trim((string)($informe['colegio_sigla'] ?? ''));
+$colegiaturaNumero = trim((string)($informe['nro_colegiatura'] ?? ''));
+$cmp = trim((string)($informe['cmp'] ?? ''));
+$rne = trim((string)($informe['rne'] ?? ''));
+$firmaMedico = trim((string)($informe['firma'] ?? ''));
 $fechaHoy = date('d/m/Y H:i');
+
+$colegiaturaPartes = [];
+if ($colegiaturaSigla !== '' && $colegiaturaNumero !== '') {
+    $colegiaturaPartes[] = $colegiaturaSigla . ': ' . $colegiaturaNumero;
+} elseif ($cmp !== '') {
+    $colegiaturaPartes[] = 'CMP: ' . $cmp;
+}
+if ($rne !== '') {
+    $colegiaturaPartes[] = 'RNE: ' . $rne;
+}
+$colegiaturaTexto = implode(' - ', $colegiaturaPartes);
 
 $html = '
 <!DOCTYPE html>
@@ -161,6 +231,16 @@ $html = '
             font-size: 11px;
             line-height: 1.5;
             text-align: justify;
+            margin-bottom: 6px;
+        }
+        .field-row {
+            margin-bottom: 8px;
+        }
+        .field-name {
+            font-weight: bold;
+            color: #1f2937;
+            display: block;
+            margin-bottom: 2px;
         }
         .images-container {
             margin-top: 20px;
@@ -209,6 +289,18 @@ $html = '
             margin-right: auto;
             padding-top: 5px;
         }
+        .signature-image {
+            max-width: 180px;
+            max-height: 70px;
+            margin: 0 auto 8px auto;
+            display: block;
+            object-fit: contain;
+        }
+        .signature-meta {
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+        }
         .footer {
             text-align: center;
             font-size: 9px;
@@ -229,11 +321,51 @@ $html = '
 <body>
 
 <!-- ENCABEZADO -->
-<div class="header">
-    <div class="header-title">INFORME DE IMAGENOLOGÍA</div>
-    <div class="header-subtitle">Clínica 2 de Mayo</div>
-    <div class="header-subtitle">Fecha de emisión: ' . htmlspecialchars($fechaHoy) . '</div>
-</div>
+<table style="width: 100%; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 3px solid #0066cc;">
+    <tr>
+        <!-- Columna 1: Logo -->
+        <td style="width: 20%; text-align: center; vertical-align: middle;">
+            ' . (!empty($logoUrl) ? '<img src="' . htmlspecialchars($logoUrl) . '" style="max-width: 100px; max-height: 100px; object-fit: contain;">' : '') . '
+        </td>
+        
+        <!-- Columna 2: Datos de clínica -->
+        <td style="width: 60%; text-align: center; vertical-align: middle; padding: 0 15px;">
+            <div style="font-size: 20px; font-weight: bold; color: #0066cc; margin-bottom: 8px;">' . htmlspecialchars($nombreClinica) . '</div>
+            
+            <table style="width: 100%; margin: 0 auto;">
+                <tr>
+                    <td style="text-align: center; padding: 2px 0; font-size: 9px; color: #333;">
+                        ' . ($direccion ? '<div>' . htmlspecialchars($direccion) . '</div>' : '') . '
+                    </td>
+                </tr>
+                <tr>
+                    <td style="text-align: center; padding: 2px 0; font-size: 9px; color: #333;">
+                        ' . ($telefono ? 'Teléfono: ' . htmlspecialchars($telefono) : '') . '
+                        ' . ($email && $telefono ? ' | ' : '') . '
+                        ' . ($email ? 'Email: ' . htmlspecialchars($email) : '') . '
+                    </td>
+                </tr>
+                <tr>
+                    <td style="text-align: center; padding: 2px 0; font-size: 9px; color: #333;">
+                        ' . ($website ? 'Web: ' . htmlspecialchars($website) : '') . '
+                        ' . ($ruc && $website ? ' | ' : '') . '
+                        ' . ($ruc ? 'RUC: ' . htmlspecialchars($ruc) : '') . '
+                    </td>
+                </tr>
+            </table>
+        </td>
+        
+        <!-- Columna 3: Título del informe -->
+        <td style="width: 20%; text-align: right; vertical-align: middle;">
+            <div style="font-size: 13px; font-weight: bold; color: #0066cc; line-height: 1.3;">
+                INFORME DE<br>IMAGENOLOGÍA
+            </div>
+            <div style="font-size: 8px; color: #666; margin-top: 5px;">
+                ' . htmlspecialchars($fechaHoy) . '
+            </div>
+        </td>
+    </tr>
+</table>
 
 <!-- INFORMACIÓN DEL PACIENTE -->
 <div class="patient-info">
@@ -253,26 +385,151 @@ $html = '
 
 // Iterar sobre el contenido del informe (hallazgos, conclusión, etc.)
 $plantilla = $informe['plantilla_json'] ? json_decode($informe['plantilla_json'], true) : [];
-if ($plantilla && isset($plantilla['sections'])) {
-    foreach ($plantilla['sections'] as $section) {
+$plantillaSections = [];
+if (isset($plantilla['sections']) && is_array($plantilla['sections'])) {
+    $plantillaSections = $plantilla['sections'];
+} elseif (isset($plantilla['estructura_json']['sections']) && is_array($plantilla['estructura_json']['sections'])) {
+    $plantillaSections = $plantilla['estructura_json']['sections'];
+}
+
+if (!empty($plantillaSections)) {
+    foreach ($plantillaSections as $section) {
         $sectionId = (string)($section['id'] ?? '');
         $sectionNombre = (string)($section['nombre'] ?? $sectionId);
         
         if ($sectionId && isset($contenido[$sectionId])) {
             $html .= '<div class="section-title">' . htmlspecialchars($sectionNombre) . '</div>';
-            
+
             if (is_array($contenido[$sectionId])) {
-                foreach ($contenido[$sectionId] as $fieldId => $fieldValue) {
-                    if (!empty($fieldValue)) {
-                        $html .= '<div class="content">';
-                        $html .= '<strong>' . htmlspecialchars($fieldId) . ':</strong> ';
-                        $html .= htmlspecialchars($fieldValue);
-                        $html .= '</div>';
+                $labelMap = [];
+                foreach ((array)($section['campos'] ?? []) as $campo) {
+                    $campoId = (string)($campo['id'] ?? '');
+                    $campoLabel = (string)($campo['label'] ?? $campoId);
+                    if ($campoId !== '') {
+                        $labelMap[normalizar_clave_pdf($campoId)] = $campoLabel;
+                    }
+                    if ($campoLabel !== '') {
+                        $labelMap[normalizar_clave_pdf($campoLabel)] = $campoLabel;
                     }
                 }
+
+                $camposRender = [];
+                $ordenCampos = [];
+                $templateKeys = array_keys($labelMap);
+                $emptyLockedKeys = [];
+
+                foreach ($contenido[$sectionId] as $fieldId => $fieldValue) {
+                    $fieldIdRaw = (string)$fieldId;
+                    if (strpos($fieldIdRaw, '?') !== false) {
+                        continue;
+                    }
+                    $fieldKey = normalizar_clave_pdf($fieldIdRaw);
+                    $resolvedKey = $fieldKey;
+
+                    if ($resolvedKey !== '' && !isset($labelMap[$resolvedKey]) && !empty($templateKeys)) {
+                        $bestKey = '';
+                        $bestDistance = 99;
+                        foreach ($templateKeys as $candidateKey) {
+                            $distance = levenshtein($resolvedKey, (string)$candidateKey);
+                            if ($distance < $bestDistance) {
+                                $bestDistance = $distance;
+                                $bestKey = (string)$candidateKey;
+                            }
+                        }
+                        if ($bestKey !== '' && $bestDistance <= 2) {
+                            $resolvedKey = $bestKey;
+                        }
+                    }
+
+                    if (isset($labelMap[$resolvedKey]) && trim((string)$fieldValue) === '') {
+                        $emptyLockedKeys[$resolvedKey] = true;
+                    }
+                }
+
+                foreach ($contenido[$sectionId] as $fieldId => $fieldValue) {
+                    if ($fieldValue === null || $fieldValue === '') {
+                        continue;
+                    }
+
+                    $fieldIdRaw = (string)$fieldId;
+                    if (strpos($fieldIdRaw, '?') !== false) {
+                        continue;
+                    }
+                    $fieldValueRaw = trim((string)$fieldValue);
+                    if ($fieldValueRaw === '') {
+                        continue;
+                    }
+
+                    $fieldKey = normalizar_clave_pdf($fieldIdRaw);
+                    $resolvedKey = $fieldKey;
+
+                    // Si la clave no existe en plantilla, buscar la más cercana para absorber mojibake (ej: ri??ones -> rinones).
+                    if ($resolvedKey !== '' && !isset($labelMap[$resolvedKey]) && !empty($templateKeys)) {
+                        $bestKey = '';
+                        $bestDistance = 99;
+                        foreach ($templateKeys as $candidateKey) {
+                            $distance = levenshtein($resolvedKey, (string)$candidateKey);
+                            if ($distance < $bestDistance) {
+                                $bestDistance = $distance;
+                                $bestKey = (string)$candidateKey;
+                            }
+                        }
+                        if ($bestKey !== '' && $bestDistance <= 2) {
+                            $resolvedKey = $bestKey;
+                        }
+                    }
+
+                    $fieldLabel = $labelMap[$resolvedKey]
+                        ?? ucwords(str_replace('_', ' ', preg_replace('/\?+/', '', $fieldIdRaw)));
+                    $dedupeKey = $resolvedKey !== '' ? $resolvedKey : normalizar_clave_pdf($fieldLabel);
+                    if ($dedupeKey === '') {
+                        $dedupeKey = md5($fieldIdRaw);
+                    }
+
+                    // Si el usuario dejó vacío el campo canónico, no mostrar valores heredados de aliases viejos.
+                    if (isset($emptyLockedKeys[$dedupeKey])) {
+                        continue;
+                    }
+
+                    if (!isset($camposRender[$dedupeKey])) {
+                        $camposRender[$dedupeKey] = [
+                            'label' => $fieldLabel,
+                            'values' => []
+                        ];
+                        $ordenCampos[] = $dedupeKey;
+                    }
+
+                    if (!in_array($fieldValueRaw, $camposRender[$dedupeKey]['values'], true)) {
+                        $camposRender[$dedupeKey]['values'][] = $fieldValueRaw;
+                    }
+                }
+
+                foreach ($ordenCampos as $campoKey) {
+                    $fieldLabel = (string)$camposRender[$campoKey]['label'];
+                    $fieldValueText = implode("\n", (array)$camposRender[$campoKey]['values']);
+                    $html .= '<div class="field-row">';
+                    $html .= '<span class="field-name">' . htmlspecialchars($fieldLabel) . '</span>';
+                    $html .= '<div class="content">' . nl2br(htmlspecialchars($fieldValueText)) . '</div>';
+                    $html .= '</div>';
+                }
             } else {
-                $html .= '<div class="content">' . htmlspecialchars($contenido[$sectionId]) . '</div>';
+                $html .= '<div class="content">' . nl2br(htmlspecialchars((string)$contenido[$sectionId])) . '</div>';
             }
+        }
+    }
+} else {
+    foreach ($contenido as $sectionKey => $sectionData) {
+        $html .= '<div class="section-title">' . htmlspecialchars(ucwords(str_replace('_', ' ', (string)$sectionKey))) . '</div>';
+        if (is_array($sectionData)) {
+            foreach ($sectionData as $fieldId => $fieldValue) {
+                if ($fieldValue === null || $fieldValue === '') continue;
+                $html .= '<div class="field-row">';
+                $html .= '<span class="field-name">' . htmlspecialchars(ucwords(str_replace('_', ' ', (string)$fieldId))) . '</span>';
+                $html .= '<div class="content">' . nl2br(htmlspecialchars((string)$fieldValue)) . '</div>';
+                $html .= '</div>';
+            }
+        } elseif ($sectionData !== null && $sectionData !== '') {
+            $html .= '<div class="content">' . nl2br(htmlspecialchars((string)$sectionData)) . '</div>';
         }
     }
 }
@@ -311,14 +568,39 @@ if (!empty($archivos)) {
 // FIRMA
 // ═══════════════════════════════════════════════════════════════════════════
 $html .= '<div class="signature-section">
-    <div>Realizado por:</div>
-    <div class="signature-line"></div>
-    <div>' . htmlspecialchars($medicoNombre) . '</div>
-</div>
+    <div>Realizado por:</div>';
+
+if ($firmaMedico !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaMedico)) {
+    $html .= '<img class="signature-image" src="' . $firmaMedico . '" alt="Firma del médico">';
+} else {
+    $html .= '<div class="signature-line"></div>';
+}
+
+$html .= '<div>' . htmlspecialchars($medicoNombre) . '</div>';
+
+if ($especialidad !== '') {
+    $html .= '<div class="signature-meta">' . htmlspecialchars($especialidad) . '</div>';
+}
+if ($colegiaturaTexto !== '') {
+    $html .= '<div class="signature-meta">' . htmlspecialchars($colegiaturaTexto) . '</div>';
+}
+
+$html .= '</div>
 
 <!-- PIE DE PÁGINA -->
-<div class="footer">
-    Documento generado electrónicamente el ' . htmlspecialchars($fechaHoy) . ' | Clínica 2 de Mayo
+<div class="footer" style="border-top: 2px solid #0066cc; padding-top: 10px; margin-top: 20px;">
+    <div style="font-size: 9px; color: #333; margin-bottom: 4px; font-weight: bold;">
+        ' . htmlspecialchars($nombreClinica) . '
+    </div>
+    <div style="font-size: 8px; color: #666; margin-bottom: 2px;">
+        ' . ($direccion ? htmlspecialchars($direccion) . ' | ' : '') .
+        ($telefono ? htmlspecialchars($telefono) . ' | ' : '') .
+        ($email ? htmlspecialchars($email) . ' | ' : '') .
+        ($website ? htmlspecialchars($website) : '') . '
+    </div>
+    <div style="font-size: 8px; color: #999;">
+        Documento generado electrónicamente el ' . htmlspecialchars($fechaHoy) . ' | RUC: ' . htmlspecialchars($ruc) . '
+    </div>
 </div>
 
 </body>
@@ -379,7 +661,7 @@ try {
         INSERT INTO imagenologia_informes_historial (
             informe_id, version, usuario_id, usuario_nombre, tipo_cambio, created_at
         ) SELECT 
-            ?, (SELECT MAX(version) + 1 FROM imagenologia_informes_historial WHERE informe_id = ?),
+            ?, (SELECT COALESCE(MAX(version), 0) + 1 FROM imagenologia_informes_historial WHERE informe_id = ?),
             ?, ?, ?, ?
     ');
     

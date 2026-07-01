@@ -5,6 +5,11 @@
 -- FECHA: 2026-06-23
 -- ============================================================================
 
+SET NAMES utf8mb4;
+SET character_set_client = utf8mb4;
+SET character_set_connection = utf8mb4;
+SET character_set_results = utf8mb4;
+
 -- Limpiar plantillas existentes (solo en desarrollo)
 DELETE FROM imagenologia_plantillas WHERE tipo_examen IN ('ecografia', 'rayosx', 'tomografia');
 

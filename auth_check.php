@@ -43,6 +43,9 @@ if (isset($_SESSION['usuario'])) {
     $isTarifas = strpos($_SERVER['SCRIPT_NAME'], 'api_tarifas.php') !== false;
     $isOrdenesLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_laboratorio.php') !== false;
     $isOrdenesProcedimientos = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_procedimientos.php') !== false;
+    $isOrdenesImagen = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_imagen.php') !== false;
+    $isInformesImagenologia = strpos($_SERVER['SCRIPT_NAME'], 'api_imagenologia_informes.php') !== false;
+    $isGenerarPdfImagenologia = strpos($_SERVER['SCRIPT_NAME'], 'api_imagenologia_generar_pdf.php') !== false;
     $isResultadosLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_resultados_laboratorio.php') !== false;
     $isContinuidadClinica = strpos($_SERVER['SCRIPT_NAME'], 'api_continuidad_clinica.php') !== false;
     $isTriaje = strpos($_SERVER['SCRIPT_NAME'], 'api_triaje.php') !== false;
@@ -88,7 +91,16 @@ if (isset($_SESSION['usuario'])) {
     if ($isExamenesLab || $isMedicamentos) {
         $rolesPermitidos[] = 'medico';
     }
-    if ($isConsultas || $isDisponibilidadMedicos || $isOrdenesLaboratorio || $isOrdenesProcedimientos || $isResultadosLaboratorio) {
+    if (
+        $isConsultas ||
+        $isDisponibilidadMedicos ||
+        $isOrdenesLaboratorio ||
+        $isOrdenesProcedimientos ||
+        $isOrdenesImagen ||
+        $isInformesImagenologia ||
+        $isGenerarPdfImagenologia ||
+        $isResultadosLaboratorio
+    ) {
         $rolesPermitidos[] = 'medico';
     }
     if ($isContinuidadClinica) {

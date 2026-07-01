@@ -380,16 +380,6 @@ export default function OrdenesImagenPacientePage() {
   const [ordenSubir, setOrdenSubir]   = useState(null); // orden para el modal
   const [intentadoGenerarDesdeCotizacion, setIntentadoGenerarDesdeCotizacion] = useState(false);
   const ordenesRef = useRef([]);
-  const medicoNombreSesion = React.useMemo(() => {
-    try {
-      const raw = sessionStorage.getItem("usuario") || sessionStorage.getItem("medico") || "null";
-      const data = JSON.parse(raw);
-      return String(data?.nombre || "");
-    } catch {
-      return "";
-    }
-  }, []);
-
   const cotizacionIdFiltro = Number(new URLSearchParams(location.search).get("cotizacion_id") || 0);
 
   const cargar = useCallback((silent = false) => {
@@ -556,7 +546,7 @@ export default function OrdenesImagenPacientePage() {
                 onRecargar={cargar}
                 navigate={navigate}
                 pacienteNombre={`${paciente?.nombres || paciente?.nombre || ""} ${paciente?.apellidos || paciente?.apellido || ""}`.trim()}
-                medicoNombre={medicoNombreSesion}
+                medicoNombre={`${ord?.medico_responsable_nombre || ""} ${ord?.medico_responsable_apellido || ""}`.trim()}
               />
             ))}
           </div>
