@@ -102,7 +102,9 @@ function buildDetalleKey(detalle) {
   const descripcion = String(detalle?.descripcion || detalle?.descripcion_snapshot || "").trim().toLowerCase();
   const cantidad = Number(detalle?.cantidad || 1).toFixed(2);
   const precioUnitario = Number(detalle?.precio_unitario ?? detalle?.precio_lista_snapshot ?? 0).toFixed(2);
-  return `${tipo}::${servicioId}::${examenVersionId}::${descripcion}::${cantidad}::${precioUnitario}`;
+  const fechaProgramada = String(detalle?.fecha_programada || "").slice(0, 10);
+  const horaProgramada = String(detalle?.hora_programada || "").slice(0, 5);
+  return `${tipo}::${servicioId}::${examenVersionId}::${descripcion}::${cantidad}::${precioUnitario}::${fechaProgramada}::${horaProgramada}`;
 }
 
 export default function CotizarPaquetesPerfilesPage() {
@@ -121,10 +123,48 @@ export default function CotizarPaquetesPerfilesPage() {
   const [loading, setLoading] = useState(false);
   const [schemaWarning, setSchemaWarning] = useState(null);
   const [visibleCount, setVisibleCount] = useState(LIST_INITIAL_VISIBLE);
+  const [programacionPorPaquete, setProgramacionPorPaquete] = useState({});
 
   const sp = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const cotizacionId = Number(sp.get("cotizacion_id") || 0);
   const isEditingCotizacion = cotizacionId > 0 && !Boolean(sp.get("cobro_id"));
+
+  const getLimaDate = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Lima",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const year = parts.find((p) => p.type === "year")?.value;
+    const month = parts.find((p) => p.type === "month")?.value;
+    const day = parts.find((p) => p.type === "day")?.value;
+    return `${year}-${month}-${day}`;
+  };
+
+  const getDefaultTime = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Lima",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    const minute = parts.find((p) => p.type === "minute")?.value;
+    return `${hour}:${minute}`;
+  };
+
+  const getProgramacionPaquete = (paqueteId) => {
+    const pid = Number(paqueteId || 0);
+    const actual = programacionPorPaquete[pid];
+    if (actual?.fecha_programada || actual?.hora_programada) return actual;
+    return {
+      fecha_programada: getLimaDate(),
+      hora_programada: getDefaultTime(),
+    };
+  };
 
   useEffect(() => {
     const qParam = String(sp.get("q") || "").trim();
@@ -226,6 +266,21 @@ export default function CotizarPaquetesPerfilesPage() {
     return rows.filter((r) => selected.includes(Number(r.id)));
   }, [rows, selected]);
 
+  useEffect(() => {
+    setProgramacionPorPaquete((prev) => {
+      const next = {};
+      selectedRows.forEach((row) => {
+        const current = prev?.[row.id];
+        if (current?.fecha_programada || current?.hora_programada) {
+          next[row.id] = current;
+          return;
+        }
+        next[row.id] = getProgramacionPaquete(row.id);
+      });
+      return next;
+    });
+  }, [selectedRows]);
+
   const toggleComponentFilter = (typeValue) => {
     const val = String(typeValue || "").trim();
     if (!val) return;
@@ -264,11 +319,14 @@ export default function CotizarPaquetesPerfilesPage() {
     return selectedRows.map((row) => {
       const qty = Math.max(1, Number(quantities[row.id] || 1));
       const price = Number(row.precio_global_venta || 0);
+      const programacion = getProgramacionPaquete(row.id);
       const components = buildPackageComponents(row, cotizacionId).map((it) => ({
         ...it,
         cantidad: Number((it.cantidad * qty).toFixed(2)),
         subtotal: Number((it.subtotal * qty).toFixed(2)),
         subtotal_snapshot: Number((it.subtotal_snapshot * qty).toFixed(2)),
+        fecha_programada: programacion.fecha_programada,
+        hora_programada: programacion.hora_programada,
       }));
 
       return {
@@ -283,6 +341,8 @@ export default function CotizarPaquetesPerfilesPage() {
         packageType: String(row.tipo || "paquete"),
         componentes: components,
         cotizacionId,
+        fechaProgramada: programacion.fecha_programada,
+        horaProgramada: programacion.hora_programada,
       };
     });
   };
@@ -337,6 +397,8 @@ export default function CotizarPaquetesPerfilesPage() {
         paquete_codigo: it.packageCode,
         paquete_tipo: it.packageType,
         componentes: Array.isArray(it.componentes) ? it.componentes : [],
+        fecha_programada: String(it.fechaProgramada || ""),
+        hora_programada: String(it.horaProgramada || ""),
         cotizacion_id: Number(it.cotizacionId || 0) || null,
       }));
 
@@ -593,20 +655,55 @@ export default function CotizarPaquetesPerfilesPage() {
               {selectedRows.map((row) => {
                 const qty = Math.max(1, Number(quantities[row.id] || 1));
                 const subtotal = Number(row.precio_global_venta || 0) * qty;
+                const programacion = getProgramacionPaquete(row.id);
                 return (
-                  <li key={`sel-${row.id}`} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium text-gray-900">{row.nombre}</div>
-                      <div className="text-xs text-gray-500">{row.codigo} | {row.tipo} | x{qty}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {getPackageServiceBadges(row).map((badge) => (
-                          <span key={`sel-${row.id}-${badge}`} className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
-                            {badge}
-                          </span>
-                        ))}
+                  <li key={`sel-${row.id}`} className="py-2 flex flex-col gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="font-medium text-gray-900">{row.nombre}</div>
+                        <div className="text-xs text-gray-500">{row.codigo} | {row.tipo} | x{qty}</div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {getPackageServiceBadges(row).map((badge) => (
+                            <span key={`sel-${row.id}-${badge}`} className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
                       </div>
+                      <div className="font-bold text-green-700 text-right">S/ {subtotal.toFixed(2)}</div>
                     </div>
-                    <div className="font-bold text-green-700 text-right">S/ {subtotal.toFixed(2)}</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs font-semibold text-gray-600">Fecha programada</span>
+                        <input
+                          type="date"
+                          value={programacion.fecha_programada}
+                          onChange={(e) => setProgramacionPorPaquete((prev) => ({
+                            ...prev,
+                            [row.id]: {
+                              ...getProgramacionPaquete(row.id),
+                              fecha_programada: e.target.value,
+                            },
+                          }))}
+                          className="border rounded-lg px-2 py-1 bg-white"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs font-semibold text-gray-600">Hora programada</span>
+                        <input
+                          type="time"
+                          value={programacion.hora_programada}
+                          onChange={(e) => setProgramacionPorPaquete((prev) => ({
+                            ...prev,
+                            [row.id]: {
+                              ...getProgramacionPaquete(row.id),
+                              hora_programada: e.target.value,
+                            },
+                          }))}
+                          className="border rounded-lg px-2 py-1 bg-white"
+                        />
+                      </label>
+                    </div>
                   </li>
                 );
               })}
@@ -619,6 +716,7 @@ export default function CotizarPaquetesPerfilesPage() {
                 onClick={() => {
                   setSelected([]);
                   setQuantities({});
+                  setProgramacionPorPaquete({});
                 }}
                 className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200"
               >

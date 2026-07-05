@@ -15,6 +15,7 @@ export default function CotizarEcografiaPage() {
     const [medicos, setMedicos] = useState([]);
     const [seleccionados, setSeleccionados] = useState([]);
     const [cantidades, setCantidades] = useState({});
+    const [programacionPorTarifa, setProgramacionPorTarifa] = useState({});
     const [mensaje, setMensaje] = useState("");
     const [coverageByTarifa, setCoverageByTarifa] = useState({});
     const [coverageStatusByTarifa, setCoverageStatusByTarifa] = useState({});
@@ -63,6 +64,24 @@ export default function CotizarEcografiaPage() {
   const getDisplayPrice = (tarifa) => String(getCoberturaTarifa(tarifa?.id)?.origen_cobro || '') === 'contrato'
     ? 0
     : Number(tarifa?.precio_particular || 0);
+
+  const getHoraProgramadaDefault = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Lima',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === 'hour')?.value;
+    const minute = parts.find((p) => p.type === 'minute')?.value;
+    return `${hour}:${minute}`;
+  };
+
+  const crearProgramacionDefault = () => ({
+    fecha: getLimaDate(),
+    hora: getHoraProgramadaDefault(),
+  });
 
   useEffect(() => {
     authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, {
@@ -436,6 +455,34 @@ export default function CotizarEcografiaPage() {
     const nid = Number(id);
     setCantidades(cant => ({ ...cant, [nid]: cantidad }));
   };
+
+  useEffect(() => {
+    if (!Array.isArray(seleccionados)) return;
+    setProgramacionPorTarifa((prev) => {
+      const next = {};
+      seleccionados.forEach((id) => {
+        const key = Number(id);
+        const actual = prev[key];
+        next[key] = {
+          fecha: actual?.fecha || getLimaDate(),
+          hora: actual?.hora || getHoraProgramadaDefault(),
+        };
+      });
+      return next;
+    });
+  }, [seleccionados]);
+
+  const actualizarProgramacion = (tarifaId, campo, valor) => {
+    const key = Number(tarifaId);
+    setProgramacionPorTarifa((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || crearProgramacionDefault()),
+        [campo]: valor,
+      },
+    }));
+  };
+
   const calcularTotal = () => {
     return seleccionados.reduce((total, tid) => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
@@ -467,7 +514,9 @@ export default function CotizarEcografiaPage() {
         medico_id: tarifa.medico_id || "",
         medico_nombre,
         especialidad: tarifa.especialidad || "",
-        paciente_id: paciente?.id
+        paciente_id: paciente?.id,
+        fecha_programada: programacionPorTarifa[Number(tid)]?.fecha || getLimaDate(),
+        hora_programada: programacionPorTarifa[Number(tid)]?.hora || getHoraProgramadaDefault(),
       } : null;
     }).filter(Boolean);
   };
@@ -766,9 +815,7 @@ export default function CotizarEcografiaPage() {
                         <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
                       ) : String(getCoberturaTarifa(tarifa.id)?.origen_cobro || '') === 'contrato' ? (
                         <div className="text-xs text-green-700 mt-1 font-semibold">Cubierta hoy por contrato</div>
-                      ) : (
-                        <div className="text-xs text-amber-700 mt-1">Se cobrara si la seleccionas</div>
-                      )}
+                      ) : null}
                     </div>
                     <div className="min-w-[110px] text-right">
                       <div className="font-bold text-green-700 text-lg leading-none">S/ {precioMostrar}</div>
@@ -813,11 +860,35 @@ export default function CotizarEcografiaPage() {
                   const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
                   const cantidad = cantidades[tid] || 1;
                   const subtotal = Number(getDisplayPrice(tarifa) || 0) * cantidad;
+                  const programacion = programacionPorTarifa[Number(tid)] || crearProgramacionDefault();
                   return tarifa ? (
-                    <li key={tid} className="py-2 flex justify-between items-center">
-                      <span className="flex-1">{tarifa.descripcion || tarifa.nombre}</span>
-                      <span className="w-28 text-right">{cantidad} estudio(s)</span>
-                      <span className="w-28 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
+                    <li key={tid} className="py-2">
+                      <div className="flex justify-between items-center gap-3">
+                        <span className="flex-1">{tarifa.descripcion || tarifa.nombre}</span>
+                        <span className="w-28 text-right">{cantidad} estudio(s)</span>
+                        <span className="w-28 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="text-xs text-slate-700 flex flex-col gap-1">
+                          Fecha programada
+                          <input
+                            type="date"
+                            value={programacion.fecha || ''}
+                            min={getLimaDate()}
+                            onChange={(e) => actualizarProgramacion(tid, 'fecha', e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                        <label className="text-xs text-slate-700 flex flex-col gap-1">
+                          Hora programada
+                          <input
+                            type="time"
+                            value={programacion.hora || ''}
+                            onChange={(e) => actualizarProgramacion(tid, 'hora', e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                      </div>
                     </li>
                   ) : null;
                 })}

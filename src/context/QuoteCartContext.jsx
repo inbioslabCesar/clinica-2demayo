@@ -25,6 +25,10 @@ function buildItemKey(item) {
         String(item.packageType || serviceType),
       ].join("::")
     : "";
+  const scheduleKey = [
+    String(item.fechaProgramada || item.fecha_programada || ""),
+    String(item.horaProgramada || item.hora_programada || ""),
+  ].join("::");
   const consultaKey = serviceType === "consulta"
     ? [
         Number(item.consultaId || 0),
@@ -45,6 +49,7 @@ function buildItemKey(item) {
     item.derivado ? Number(item.valorDerivacion || 0).toFixed(2) : "0.00",
     item.derivado ? (item.laboratorioReferencia || "") : "",
     packageKey,
+    scheduleKey,
     consultaKey,
   ].join("::");
 }
@@ -115,6 +120,8 @@ export function QuoteCartProvider({ children }) {
           tipoDerivacion: raw.tipoDerivacion || "",
           valorDerivacion: Number(raw.valorDerivacion || 0),
           laboratorioReferencia: raw.laboratorioReferencia || "",
+          fechaProgramada: raw.fechaProgramada || raw.fecha_programada || "",
+          horaProgramada: raw.horaProgramada || raw.hora_programada || "",
           // Metadata de consulta (solo para serviceType=consulta)
           consultaMedicoId: raw.consultaMedicoId || null,
           consultaFecha: raw.consultaFecha || "",
@@ -138,6 +145,8 @@ export function QuoteCartProvider({ children }) {
           old.consultaHora = old.consultaHora || normalized.consultaHora || "";
           old.consultaTipoConsulta = old.consultaTipoConsulta || normalized.consultaTipoConsulta || "";
           old.consultaId = old.consultaId || normalized.consultaId || null;
+          old.fechaProgramada = old.fechaProgramada || normalized.fechaProgramada || "";
+          old.horaProgramada = old.horaProgramada || normalized.horaProgramada || "";
           map.set(normalized.key, old);
         } else {
           map.set(normalized.key, normalized);

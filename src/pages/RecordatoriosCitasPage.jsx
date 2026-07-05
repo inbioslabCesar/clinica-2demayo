@@ -88,6 +88,195 @@ function consultaAtendidaEnHC(item) {
   return Number(item?.hc_tiene_registro || 0) === 1;
 }
 
+function esRecordatorioFaltaCancelar(item) {
+  return String(item?.recordatorio_tipo || "") === "falta_cancelar";
+}
+
+function esRecordatorioAgendaServicio(item) {
+  return String(item?.origen_consulta || "") === "agenda_servicio" && Number(item?.cotizacion_id || 0) > 0;
+}
+
+function compararFechaHoraItem(a, b) {
+  const fa = `${String(a?.fecha || "")} ${String(a?.hora || "").slice(0, 5)}`;
+  const fb = `${String(b?.fecha || "")} ${String(b?.hora || "").slice(0, 5)}`;
+  return fa.localeCompare(fb);
+}
+
+function parseFechaHora(item) {
+  const fecha = String(item?.fecha || "").trim();
+  const hora = String(item?.hora || "").trim().slice(0, 5) || "00:00";
+  if (!fecha) return null;
+  const d = new Date(`${fecha}T${hora}:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function minutosDistancia(a, b) {
+  const da = parseFechaHora(a);
+  const db = parseFechaHora(b);
+  if (!da || !db) return Number.POSITIVE_INFINITY;
+  return Math.abs(da.getTime() - db.getTime()) / 60000;
+}
+
+function servicioTokensDesdeItem(item) {
+  const raw = String(item?.servicios_label || "").trim();
+  if (raw) {
+    return raw
+      .split("+")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  const fallback = String(tipoServicioLabel(item)).trim();
+  return fallback ? [fallback] : [];
+}
+
+function consolidarPagoGrupo(agendas) {
+  const lista = Array.isArray(agendas) ? agendas : [];
+  const conCobro = lista.filter((item) => Number(item?.cotizacion_id || 0) > 0 || Number(item?.saldo_pendiente || 0) > 0 || ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()));
+  const saldoPositivo = conCobro.find((item) => Number(item?.saldo_pendiente || 0) > 0) || null;
+  const pagado = conCobro.find((item) => ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()) && Number(item?.saldo_pendiente || 0) <= 0) || null;
+  const conCotizacion = conCobro.find((item) => Number(item?.cotizacion_id || 0) > 0) || null;
+
+  if (saldoPositivo) {
+    return {
+      saldo_pendiente: Number(saldoPositivo.saldo_pendiente || 0),
+      cotizacion_estado: String(saldoPositivo.cotizacion_estado || "").toLowerCase(),
+      cotizacion_id: Number(saldoPositivo.cotizacion_id || 0),
+    };
+  }
+
+  if (pagado) {
+    return {
+      saldo_pendiente: 0,
+      cotizacion_estado: String(pagado.cotizacion_estado || "pagado").toLowerCase(),
+      cotizacion_id: Number(pagado.cotizacion_id || 0),
+    };
+  }
+
+  if (conCotizacion) {
+    return {
+      saldo_pendiente: Number(conCotizacion.saldo_pendiente || 0),
+      cotizacion_estado: String(conCotizacion.cotizacion_estado || "").toLowerCase(),
+      cotizacion_id: Number(conCotizacion.cotizacion_id || 0),
+    };
+  }
+
+  return {
+    saldo_pendiente: 0,
+    cotizacion_estado: "",
+    cotizacion_id: 0,
+  };
+}
+
+function agruparRecordatoriosAgendaServicio(items) {
+  const grupos = new Map();
+  const salida = [];
+
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!esRecordatorioAgendaServicio(item)) {
+      salida.push({ ...item });
+      continue;
+    }
+
+    const key = `cotizacion-${Number(item.cotizacion_id || 0)}`;
+    const existente = grupos.get(key);
+    if (!existente) {
+      const base = { ...item, _agenda_items: [{ ...item }] };
+      grupos.set(key, base);
+      salida.push(base);
+      continue;
+    }
+
+    existente._agenda_items.push({ ...item });
+  }
+
+  // Unir consulta del mismo paciente (origen cotizador, sin cotizacion_id) al paquete
+  // cuando cae cercana en tiempo a un grupo agenda_servicio del mismo paciente.
+  for (let i = 0; i < salida.length; i += 1) {
+    const item = salida[i];
+    if (esRecordatorioAgendaServicio(item)) continue;
+
+    const esConsultaCotizador =
+      String(item?.servicio_tipo || "").toLowerCase().trim() === "consulta"
+      && String(item?.origen_consulta || "") !== "agenda_servicio";
+
+    if (!esConsultaCotizador) continue;
+
+    let mejorGrupo = null;
+    let mejorDistancia = Number.POSITIVE_INFINITY;
+    let mejorCoincideCotizacion = false;
+    const cotizacionItem = Number(item?.cotizacion_id || 0);
+    for (const candidato of salida) {
+      if (!esRecordatorioAgendaServicio(candidato)) continue;
+      const mismoPaciente = Number(candidato?.paciente_id || 0) > 0 && Number(candidato?.paciente_id || 0) === Number(item?.paciente_id || 0);
+      if (!mismoPaciente) continue;
+      const tienePaquete = String(candidato?.servicios_label || "").includes("+");
+      if (!tienePaquete) continue;
+
+      const cotizacionCandidato = Number(candidato?.cotizacion_id || 0);
+      const coincideCotizacion = cotizacionItem > 0 && cotizacionCandidato > 0 && cotizacionItem === cotizacionCandidato;
+      const distancia = coincideCotizacion ? 0 : minutosDistancia(candidato, item);
+
+      if (coincideCotizacion) {
+        mejorGrupo = candidato;
+        mejorDistancia = 0;
+        mejorCoincideCotizacion = true;
+        break;
+      }
+
+      if (distancia < mejorDistancia) {
+        mejorDistancia = distancia;
+        mejorGrupo = candidato;
+      }
+    }
+
+    // Ventana amplia para cubrir caso típico: consulta hoy y servicios programados después.
+    if (mejorGrupo && (mejorCoincideCotizacion || mejorDistancia <= (30 * 24 * 60))) {
+      const agendaItems = Array.isArray(mejorGrupo._agenda_items) ? mejorGrupo._agenda_items : [{ ...mejorGrupo }];
+      agendaItems.push({ ...item, _fusionado_desde_consulta: true });
+      mejorGrupo._agenda_items = agendaItems;
+      salida.splice(i, 1);
+      i -= 1;
+    }
+  }
+
+  for (const item of salida) {
+    const agendas = Array.isArray(item._agenda_items) ? [...item._agenda_items] : [];
+    if (agendas.length <= 1) {
+      if (agendas.length === 1) {
+        const unico = agendas[0];
+        item.servicios_label = String(unico.servicios_label || item.servicios_label || "").trim();
+      }
+      continue;
+    }
+
+    agendas.sort(compararFechaHoraItem);
+    const agendasReferencia = agendas.filter((ag) => !ag?._fusionado_desde_consulta);
+    const agendasBase = agendasReferencia.length > 0 ? agendasReferencia : agendas;
+    const serviciosTokens = agendas.flatMap(servicioTokensDesdeItem);
+    const serviciosUnicos = Array.from(new Set(serviciosTokens));
+    const medicosUnicos = Array.from(new Set(agendas.map((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim()).filter(Boolean)));
+    const primerAgendaConMedico = agendas.find((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim() !== "") || null;
+    const fechasUnicas = Array.from(new Set(agendasBase.map((ag) => String(ag.fecha || "").trim()).filter(Boolean)));
+    const pagoConsolidado = consolidarPagoGrupo(agendas);
+
+    item.servicio_tipo = "paquete";
+    item.servicios_label = serviciosUnicos.join(" + ") || "Paquete";
+    item.agendas_count = agendasBase.length;
+    item.servicios_count = serviciosUnicos.length;
+    item.fechas_count = fechasUnicas.length;
+    item.medico_nombre = medicosUnicos.length > 1 ? "Varios" : (primerAgendaConMedico?.medico_nombre || agendasBase[0]?.medico_nombre || item.medico_nombre || "");
+    item.medico_apellido = medicosUnicos.length > 1 ? "médicos" : (primerAgendaConMedico?.medico_apellido || agendasBase[0]?.medico_apellido || item.medico_apellido || "");
+    item.fecha = agendasBase[0]?.fecha || item.fecha || "";
+    item.hora = agendasBase[0]?.hora || item.hora || "";
+    item.fecha_fin = agendasBase[agendasBase.length - 1]?.fecha || item.fecha_fin || "";
+    item.hora_fin = agendasBase[agendasBase.length - 1]?.hora || item.hora_fin || "";
+    item._pago_grupo = pagoConsolidado;
+  }
+
+  return salida;
+}
+
 function esConsultaHcProxima(item) {
   return String(item?.origen_consulta || "") === "hc_proxima";
 }
@@ -118,10 +307,58 @@ function tipoConsultaBadge(item) {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
+function tipoServicioLabel(item) {
+  const tipo = String(item?.servicio_tipo || "").toLowerCase().trim();
+  const serviciosLabel = String(item?.servicios_label || '').trim();
+  if (serviciosLabel !== '') return serviciosLabel;
+  if (tipo === "rayosx" || tipo === "rayos_x" || tipo === "rayos x") return "Rayos X";
+  if (tipo === "ecografia") return "Ecografía";
+  if (tipo === "laboratorio") return "Laboratorio";
+  if (tipo === "farmacia") return "Farmacia";
+  if (tipo === "consulta") return "Consulta";
+  if (tipo === "procedimiento") return "Procedimiento";
+  if (tipo === "operacion") return "Operación";
+  if (tipo === "hospitalizacion") return "Hospitalización";
+  return tipo.charAt(0).toUpperCase() + tipo.slice(1);
+}
+
+function tipoServicioBadge(item) {
+  const tipo = String(item?.servicio_tipo || "").toLowerCase().trim();
+  if (tipo === "paquete" || tipo === "perfil") return "bg-violet-100 text-violet-700 border-violet-200";
+  if (tipo === "consulta") return "bg-sky-100 text-sky-700 border-sky-200";
+  if (tipo === "ecografia") return "bg-violet-100 text-violet-700 border-violet-200";
+  if (tipo === "laboratorio") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  if (tipo === "farmacia") return "bg-amber-100 text-amber-700 border-amber-200";
+  if (tipo === "rayosx" || tipo === "rayos_x" || tipo === "rayos x") return "bg-indigo-100 text-indigo-700 border-indigo-200";
+  if (tipo === "procedimiento") return "bg-orange-100 text-orange-700 border-orange-200";
+  if (tipo === "operacion") return "bg-rose-100 text-rose-700 border-rose-200";
+  if (tipo === "hospitalizacion") return "bg-teal-100 text-teal-700 border-teal-200";
+  return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+function pagoServicioLabel(item) {
+  const pago = item?._pago_grupo || item;
+  const saldo = Number(pago?.saldo_pendiente || 0);
+  const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  if (saldo > 0) return `Saldo S/ ${saldo.toFixed(2)}`;
+  if (estado === "pagado" || estado === "pagada") return "Pagado";
+  if (Number(pago?.cotizacion_id || 0) > 0) return "Sin saldo";
+  return "Sin cobro";
+}
+
+function pagoServicioBadge(item) {
+  const pago = item?._pago_grupo || item;
+  const saldo = Number(pago?.saldo_pendiente || 0);
+  const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
+  if (estado === "pagado" || estado === "pagada") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  if (Number(pago?.cotizacion_id || 0) > 0) return "bg-slate-100 text-slate-700 border-slate-200";
+  return "bg-slate-50 text-slate-500 border-slate-200";
+}
+
 function obtenerPrioridad(item) {
   const dias = diasParaCita(item?.fecha);
   const estado = String(item?.estado_gestion || "pendiente");
-  const sinTelefono = !String(item?.paciente_telefono || "").trim();
 
   if (consultaAtendidaEnHC(item)) {
     return { nivel: "atendido", etiqueta: "Atendido", orden: 4, badge: "bg-violet-100 text-violet-700 border-violet-200" };
@@ -131,19 +368,15 @@ function obtenerPrioridad(item) {
     return { nivel: "resuelto", etiqueta: "Resuelto", orden: 5, badge: "bg-emerald-100 text-emerald-700 border-emerald-200" };
   }
 
-  if (dias === 0 && ["pendiente", "no_contesta"].includes(estado)) {
+  if (dias === 0) {
     return { nivel: "critico", etiqueta: "Critico", orden: 0, badge: "bg-rose-100 text-rose-700 border-rose-200" };
   }
 
-  if ((dias === 1 && ["pendiente", "no_contesta"].includes(estado)) || (sinTelefono && estado !== "confirmado")) {
+  if (Number.isFinite(dias) && dias >= 1 && dias <= 3) {
     return { nivel: "alto", etiqueta: "Alto", orden: 1, badge: "bg-amber-100 text-amber-700 border-amber-200" };
   }
 
-  if (["pendiente", "contactado", "no_contesta", "reprogramar"].includes(estado)) {
-    return { nivel: "normal", etiqueta: "Normal", orden: 2, badge: "bg-sky-100 text-sky-700 border-sky-200" };
-  }
-
-  return { nivel: "bajo", etiqueta: "Bajo", orden: 3, badge: "bg-slate-100 text-slate-700 border-slate-200" };
+  return { nivel: "normal", etiqueta: "Normal", orden: 2, badge: "bg-sky-100 text-sky-700 border-sky-200" };
 }
 
 export default function RecordatoriosCitasPage() {
@@ -152,9 +385,9 @@ export default function RecordatoriosCitasPage() {
   const initialOrdenCitas = (() => {
     try {
       const stored = window.localStorage.getItem(ORDER_STORAGE_KEY);
-      return stored === "fecha" ? "fecha" : "prioridad";
+      return stored === "prioridad" ? "prioridad" : "fecha";
     } catch {
-      return "prioridad";
+      return "fecha";
     }
   })();
 
@@ -167,6 +400,7 @@ export default function RecordatoriosCitasPage() {
   const [dias, setDias] = useState(30);
   const [estadoGestion, setEstadoGestion] = useState("");
   const [origenConsulta, setOrigenConsulta] = useState("");
+  const [tipoRecordatorio, setTipoRecordatorio] = useState("citas");
   const [busqueda, setBusqueda] = useState("");
   const [soloSinGestion, setSoloSinGestion] = useState(false);
   const [vistaRapida, setVistaRapida] = useState("todas");
@@ -178,29 +412,90 @@ export default function RecordatoriosCitasPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [statsGlobal, setStatsGlobal] = useState({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
   const [prioridadGlobal, setPrioridadGlobal] = useState({ critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 });
+  const usandoVistaUnificada = tipoRecordatorio === "todos";
+  const usaPaginacionCliente = usandoVistaUnificada || tipoRecordatorio === "citas";
 
   const cargar = async () => {
     setLoading(true);
     setError("");
     try {
+      if (tipoRecordatorio === "todos") {
+        const base = {
+          dias: String(dias),
+          estado_gestion: estadoGestion,
+          origen_consulta: origenConsulta,
+          busqueda: busqueda.trim(),
+          solo_sin_gestion: soloSinGestion ? "1" : "0",
+          _t: String(Date.now()),
+        };
+
+        const citasParams = new URLSearchParams({ ...base, tipo_recordatorio: "citas" });
+        const faltasParams = new URLSearchParams({ ...base, tipo_recordatorio: "falta_cancelar" });
+
+        const [resCitas, resFaltas] = await Promise.all([
+          authFetch(`api_recordatorios_citas.php?${citasParams.toString()}`),
+          authFetch(`api_recordatorios_citas.php?${faltasParams.toString()}`),
+        ]);
+
+        const [dataCitas, dataFaltas] = await Promise.all([resCitas.json(), resFaltas.json()]);
+        if (!dataCitas.success) throw new Error(dataCitas.error || "No se pudo cargar recordatorios de citas");
+        if (!dataFaltas.success) throw new Error(dataFaltas.error || "No se pudo cargar faltas por cancelar");
+
+        const itemsCitas = Array.isArray(dataCitas.items) ? dataCitas.items : [];
+        const itemsFaltas = Array.isArray(dataFaltas.items) ? dataFaltas.items : [];
+        const combinados = [...itemsCitas, ...itemsFaltas];
+
+        setItems(combinados);
+        setTotalItems(combinados.length);
+        setTotalPages(Math.max(1, Math.ceil(combinados.length / rowsPerPage)));
+
+        setStatsGlobal({
+          urgentes: Number(dataCitas?.stats?.urgentes || 0),
+          hoy: Number(dataCitas?.stats?.hoy || 0),
+          sin_telefono: Number(dataCitas?.stats?.sin_telefono || 0),
+          confirmadas: Number(dataCitas?.stats?.confirmadas || 0),
+          atendidas: Number(dataCitas?.stats?.atendidas || 0),
+        });
+
+        setPrioridadGlobal({
+          critico: Number(dataCitas?.prioridad?.critico || 0) + Number(dataFaltas?.prioridad?.critico || 0),
+          alto: Number(dataCitas?.prioridad?.alto || 0) + Number(dataFaltas?.prioridad?.alto || 0),
+          normal: Number(dataCitas?.prioridad?.normal || 0) + Number(dataFaltas?.prioridad?.normal || 0),
+          bajo: Number(dataCitas?.prioridad?.bajo || 0) + Number(dataFaltas?.prioridad?.bajo || 0),
+          atendido: Number(dataCitas?.prioridad?.atendido || 0) + Number(dataFaltas?.prioridad?.atendido || 0),
+          resuelto: Number(dataCitas?.prioridad?.resuelto || 0) + Number(dataFaltas?.prioridad?.resuelto || 0),
+        });
+
+        return;
+      }
+
       const params = new URLSearchParams({
         dias: String(dias),
         estado_gestion: estadoGestion,
         origen_consulta: origenConsulta,
+        tipo_recordatorio: tipoRecordatorio,
         busqueda: busqueda.trim(),
         solo_sin_gestion: soloSinGestion ? "1" : "0",
-        page: String(page),
-        per_page: String(rowsPerPage),
         _t: String(Date.now()),
       });
+      if (!usaPaginacionCliente) {
+        params.set("page", String(page));
+        params.set("per_page", String(rowsPerPage));
+      }
       const res = await authFetch(`api_recordatorios_citas.php?${params.toString()}`);
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || "No se pudo cargar recordatorios");
       }
-      setItems(Array.isArray(data.items) ? data.items : []);
-      setTotalItems(Number(data?.pagination?.total ?? data?.total ?? 0));
-      setTotalPages(Math.max(1, Number(data?.pagination?.total_pages ?? 1)));
+      const loadedItems = Array.isArray(data.items) ? data.items : [];
+      setItems(loadedItems);
+      if (usaPaginacionCliente) {
+        setTotalItems(loadedItems.length);
+        setTotalPages(Math.max(1, Math.ceil(loadedItems.length / rowsPerPage)));
+      } else {
+        setTotalItems(Number(data?.pagination?.total ?? data?.total ?? 0));
+        setTotalPages(Math.max(1, Number(data?.pagination?.total_pages ?? 1)));
+      }
       setStatsGlobal({
         urgentes: Number(data?.stats?.urgentes || 0),
         hoy: Number(data?.stats?.hoy || 0),
@@ -231,16 +526,22 @@ export default function RecordatoriosCitasPage() {
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dias, estadoGestion, origenConsulta, soloSinGestion]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, tipoRecordatorio]);
 
   useEffect(() => {
+    if (usaPaginacionCliente) return;
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, rowsPerPage]);
+  }, [page, rowsPerPage, usaPaginacionCliente]);
 
   useEffect(() => {
     setPage(1);
-  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio]);
+
+  useEffect(() => {
+    if (!usaPaginacionCliente) return;
+    setTotalPages(Math.max(1, Math.ceil(items.length / rowsPerPage)));
+  }, [items.length, rowsPerPage, usaPaginacionCliente]);
 
   useEffect(() => {
     try {
@@ -258,6 +559,11 @@ export default function RecordatoriosCitasPage() {
     [items]
   );
 
+  const faltasPendientes = useMemo(
+    () => items.filter((item) => esRecordatorioFaltaCancelar(item)).length,
+    [items]
+  );
+
   const metricas = useMemo(() => ({
     urgentes: Number(statsGlobal.urgentes || 0),
     hoy: Number(statsGlobal.hoy || 0),
@@ -267,35 +573,39 @@ export default function RecordatoriosCitasPage() {
   }), [statsGlobal]);
 
   const itemsVista = useMemo(() => {
+    const base = agruparRecordatoriosAgendaServicio(items);
     if (vistaRapida === "criticos") {
-      return items.filter((item) => {
+      return base.filter((item) => {
         const d = diasParaCita(item.fecha);
         return d === 0 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
       });
     }
     if (vistaRapida === "urgentes") {
-      return items.filter((item) => {
+      return base.filter((item) => {
         const d = diasParaCita(item.fecha);
         return d !== null && d <= 1 && ["pendiente", "no_contesta"].includes(item.estado_gestion) && !consultaAtendidaEnHC(item);
       });
     }
     if (vistaRapida === "sin_telefono") {
-      return items.filter((item) => !String(item.paciente_telefono || "").trim());
+      return base.filter((item) => !String(item.paciente_telefono || "").trim());
     }
     if (vistaRapida === "confirmadas") {
-      return items.filter((item) => item.estado_gestion === "confirmado");
+      return base.filter((item) => item.estado_gestion === "confirmado");
     }
     if (vistaRapida === "atendidas") {
-      return items.filter((item) => consultaAtendidaEnHC(item));
+      return base.filter((item) => consultaAtendidaEnHC(item));
     }
-    return items;
+    return base;
   }, [items, vistaRapida]);
 
   const itemsPriorizados = useMemo(() => {
     const enriched = itemsVista.map((item) => {
       const prioridad = obtenerPrioridad(item);
       const diasRestantes = diasParaCita(item.fecha);
-      return { ...item, prioridad, diasRestantes };
+      const rowKey = esRecordatorioAgendaServicio(item)
+        ? `agenda-${Number(item.cotizacion_id || 0)}`
+        : `${String(item?.recordatorio_tipo || "cita")}-${Number(item?.id || 0)}`;
+      return { ...item, prioridad, diasRestantes, _rowKey: rowKey };
     });
 
     if (ordenCitas === "fecha") {
@@ -335,18 +645,50 @@ export default function RecordatoriosCitasPage() {
     resuelto: Number(prioridadGlobal.resuelto || 0),
   }), [prioridadGlobal]);
 
+  const resumenPago = useMemo(() => {
+    return items.reduce((acc, item) => {
+      const saldo = Number(item?.saldo_pendiente || 0);
+      const estado = String(item?.cotizacion_estado || "").toLowerCase();
+      const tieneCobro = Number(item?.cotizacion_id || 0) > 0 || saldo > 0 || estado === "pagado" || estado === "pagada";
+      if (!tieneCobro) {
+        acc.sinCobro += 1;
+      } else if (saldo > 0) {
+        acc.conSaldo += 1;
+      } else if (estado === "pagado" || estado === "pagada") {
+        acc.pagados += 1;
+      } else {
+        acc.sinSaldo += 1;
+      }
+      return acc;
+    }, { pagados: 0, conSaldo: 0, sinSaldo: 0, sinCobro: 0 });
+  }, [items]);
+
   const siguienteLlamada = useMemo(
     () => itemsPriorizados.find((item) => !["confirmado", "cancelado"].includes(String(item.estado_gestion || "")) && !consultaAtendidaEnHC(item)) || null,
     [itemsPriorizados]
   );
 
-  const itemsPaginados = itemsPriorizados;
+  const totalItemsVista = usaPaginacionCliente ? itemsPriorizados.length : totalItems;
+  const totalPagesVista = Math.max(1, usaPaginacionCliente ? Math.ceil(totalItemsVista / rowsPerPage) : totalPages);
+  const pageVista = Math.min(page, totalPagesVista);
+
+  const itemsPaginados = useMemo(() => {
+    if (!usaPaginacionCliente) return itemsPriorizados;
+    const start = (pageVista - 1) * rowsPerPage;
+    return itemsPriorizados.slice(start, start + rowsPerPage);
+  }, [itemsPriorizados, pageVista, rowsPerPage, usaPaginacionCliente]);
+
+  useEffect(() => {
+    if (page > totalPagesVista) {
+      setPage(totalPagesVista);
+    }
+  }, [page, totalPagesVista]);
 
   const enfocarSiguienteLlamada = () => {
     if (!siguienteLlamada) return;
-    setFilaActivaId(siguienteLlamada.id);
+    setFilaActivaId(siguienteLlamada._rowKey);
     window.setTimeout(() => {
-      const el = document.getElementById(`rc-row-${siguienteLlamada.id}`);
+      const el = document.getElementById(`rc-row-${siguienteLlamada._rowKey}`);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       }
@@ -448,13 +790,28 @@ export default function RecordatoriosCitasPage() {
               </p>
             </div>
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">
-              Urgentes (hoy/manana sin confirmar): {pendientesUrgentes}
+              {tipoRecordatorio === "citas"
+                ? `Urgentes (hoy/manana sin confirmar): ${pendientesUrgentes}`
+                : `Faltas pendientes por cobrar: ${faltasPendientes}`}
             </div>
           </div>
 
           <QuickAccessNav keys={["pacientes", "recordatorios", "listaConsultas", "cotizaciones", "reporteCaja"]} className="mt-4" />
 
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-6">
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-7">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Tipo recordatorio</label>
+              <select
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                value={tipoRecordatorio}
+                onChange={(e) => setTipoRecordatorio(e.target.value)}
+              >
+                <option value="todos">Todos</option>
+                <option value="citas">Citas</option>
+                <option value="falta_cancelar">Falta cancelar</option>
+              </select>
+            </div>
+
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Horizonte</label>
               <select
@@ -462,6 +819,10 @@ export default function RecordatoriosCitasPage() {
                 value={dias}
                 onChange={(e) => setDias(Number(e.target.value))}
               >
+                <option value={365}>1 año</option>
+                <option value={180}>180 dias</option>
+                <option value={90}>90 dias</option>
+                <option value={60}>60 dias</option>
                 <option value={30}>30 dias</option>
                 <option value={14}>14 dias</option>
                 <option value={7}>7 dias</option>
@@ -488,6 +849,7 @@ export default function RecordatoriosCitasPage() {
                 className="w-full rounded-lg border border-slate-300 px-3 py-2"
                 value={origenConsulta}
                 onChange={(e) => setOrigenConsulta(e.target.value)}
+                  disabled={tipoRecordatorio !== "citas"}
               >
                 <option value="">Todos</option>
                 <option value="agendada">Agendada</option>
@@ -532,6 +894,7 @@ export default function RecordatoriosCitasPage() {
                   type="checkbox"
                   checked={soloSinGestion}
                   onChange={(e) => setSoloSinGestion(e.target.checked)}
+                  disabled={tipoRecordatorio !== "citas"}
                 />
                 Solo pendientes
               </label>
@@ -615,6 +978,13 @@ export default function RecordatoriosCitasPage() {
           </button>
         </div>
 
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-700 flex flex-wrap gap-3">
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Pagados: {resumenPago.pagados}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Con saldo pendiente: {resumenPago.conSaldo}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> Sin saldo: {resumenPago.sinSaldo}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" /> Sin cobro: {resumenPago.sinCobro}</span>
+        </div>
+
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
@@ -622,6 +992,7 @@ export default function RecordatoriosCitasPage() {
                 <th className="p-3 text-left">Cita</th>
                 <th className="p-3 text-left">Prioridad</th>
                 <th className="p-3 text-left">Paciente</th>
+                  <th className="p-3 text-left">Servicio</th>
                 <th className="p-3 text-left">Medico</th>
                 <th className="p-3 text-left">Estado gestion</th>
                 <th className="p-3 text-left">Intentos</th>
@@ -632,16 +1003,17 @@ export default function RecordatoriosCitasPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
+                  <td colSpan={9} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
                 </tr>
               ) : itemsPriorizados.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-5 text-center text-slate-500">No hay citas para la vista seleccionada.</td>
+                  <td colSpan={9} className="p-5 text-center text-slate-500">No hay citas para la vista seleccionada.</td>
                 </tr>
               ) : (
                 itemsPaginados.map((item) => {
                   const diasRestantes = item.diasRestantes;
                   const esHcProxima = esConsultaHcProxima(item);
+                  const esFaltaCancelar = esRecordatorioFaltaCancelar(item);
                   const esControl = Number(item?.es_control || 0) === 1;
                   const esTipoProgramada = String(item?.tipo_consulta || "").toLowerCase() === "programada";
                   const mostrarBadgeTipo = !(esHcProxima && esTipoProgramada);
@@ -652,16 +1024,29 @@ export default function RecordatoriosCitasPage() {
                     && !esControl
                     && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);
                   return (
-                    <tr id={`rc-row-${item.id}`} key={item.id} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item.id ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
+                    <tr id={`rc-row-${item._rowKey}`} key={item._rowKey} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
                       <td className="p-3">
                         <div className="font-semibold text-slate-800">#{item.id}</div>
+                        <div className="mt-1">
+                          {esFaltaCancelar ? (
+                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                              Falta cancelar
+                            </span>
+                          ) : (
+                            <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                              Cita
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-slate-600">{formatFechaHora(item.fecha, item.hora)}</div>
                         <div className="text-xs font-semibold text-rose-700">
-                          {diasRestantes === 0
-                            ? "Hoy"
-                            : diasRestantes === 1
-                              ? "Manana"
-                              : `${diasRestantes} dias`}
+                          {esFaltaCancelar
+                            ? "Pendiente cobro"
+                            : diasRestantes === 0
+                              ? "Hoy"
+                              : diasRestantes === 1
+                                ? "Manana"
+                                : `${diasRestantes} dias`}
                         </div>
                       </td>
                       <td className="p-3">
@@ -691,14 +1076,45 @@ export default function RecordatoriosCitasPage() {
                           )}
                         </div>
                       </td>
-                      <td className="p-3 text-slate-700">{item.medico_nombre} {item.medico_apellido}</td>
                       <td className="p-3">
-                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${estadoBadgeClasses(item.estado_gestion)}`}>
-                          {estadoLabel(item.estado_gestion)}
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tipoServicioBadge(item)}`}>
+                          {tipoServicioLabel(item)}
                         </span>
+                        {String(item?.origen_consulta || "") === "agenda_servicio" && (
+                          <div className="mt-1 text-[11px] text-slate-500">Agenda servicio</div>
+                        )}
+                        {Number(item?.servicios_count || item?.agendas_count || 0) > 1 && (
+                          <div className="mt-1 text-[11px] text-slate-500">
+                            Paquete agrupado · {Number(item.servicios_count || item.agendas_count || 0)} servicios{Number(item?.fechas_count || 0) > 1 ? ` · ${Number(item.fechas_count || 0)} fechas` : ''}
+                          </div>
+                        )}
+                        <div className="mt-1">
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoServicioBadge(item)}`}>
+                            {pagoServicioLabel(item)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-3 text-slate-700">{esFaltaCancelar ? "-" : `${item.medico_nombre} ${item.medico_apellido}`}</td>
+                      <td className="p-3">
+                        {esFaltaCancelar ? (
+                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                            Pendiente pago
+                          </span>
+                        ) : (
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${estadoBadgeClasses(item.estado_gestion)}`}>
+                            {estadoLabel(item.estado_gestion)}
+                          </span>
+                        )}
                         <div className="mt-1 text-xs text-slate-500">
                           Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
                         </div>
+                        {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
+                          <div className="mt-1">
+                            <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                              Saldo: S/ {Number(item?.saldo_pendiente || 0).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
                         {puedeRegistrarCobro && (
                           <div className="mt-1">
                             <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
@@ -718,59 +1134,75 @@ export default function RecordatoriosCitasPage() {
                       <td className="p-3 text-xs text-slate-600">{item.observacion || "-"}</td>
                       <td className="p-3">
                         <div className="flex flex-wrap gap-2">
-                          {puedeRegistrarCobro && (
-                            <button
-                              type="button"
-                              onClick={() => crearCotizacion(item)}
-                              disabled={savingId === item.id}
-                              className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
-                            >
-                              💰 Registrar Cobro
-                            </button>
+                          {esFaltaCancelar ? (
+                            Number(item?.cotizacion_id || 0) > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/cobrar-cotizacion/${Number(item.cotizacion_id)}`)}
+                                className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                              >
+                                💰 Ir a cobrar
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-500">Sin cotización vinculada</span>
+                            )
+                          ) : (
+                            <>
+                              {puedeRegistrarCobro && (
+                                <button
+                                  type="button"
+                                  onClick={() => crearCotizacion(item)}
+                                  disabled={savingId === item.id}
+                                  className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                >
+                                  💰 Registrar Cobro
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => guardarGestion(item, "contactado")}
+                                disabled={savingId === item.id}
+                                className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                              >
+                                Llamado
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => guardarGestion(item, "confirmado")}
+                                disabled={savingId === item.id}
+                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                              >
+                                Confirmo
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => guardarGestion(item, "no_contesta")}
+                                disabled={savingId === item.id}
+                                className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                              >
+                                No contesta
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const ok = await guardarGestion(item, "reprogramar");
+                                  if (!ok) return;
+                                  const params = new URLSearchParams({
+                                    paciente_id: String(Number(item.paciente_id || 0)),
+                                    consulta_id: String(Number(item.id || 0)),
+                                    origen: "recordatorios",
+                                    accion: "reprogramar",
+                                    back_to: "/recordatorios-citas",
+                                  });
+                                  navigate(`/agendar-consulta?${params.toString()}`);
+                                }}
+                                disabled={savingId === item.id}
+                                className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                              >
+                                Reprogramar
+                              </button>
+                            </>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => guardarGestion(item, "contactado")}
-                            disabled={savingId === item.id}
-                            className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
-                          >
-                            Llamado
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => guardarGestion(item, "confirmado")}
-                            disabled={savingId === item.id}
-                            className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                          >
-                            Confirmo
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => guardarGestion(item, "no_contesta")}
-                            disabled={savingId === item.id}
-                            className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                          >
-                            No contesta
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const ok = await guardarGestion(item, "reprogramar");
-                              if (!ok) return;
-                              const params = new URLSearchParams({
-                                paciente_id: String(Number(item.paciente_id || 0)),
-                                consulta_id: String(Number(item.id || 0)),
-                                origen: "recordatorios",
-                                accion: "reprogramar",
-                                back_to: "/recordatorios-citas",
-                              });
-                              navigate(`/agendar-consulta?${params.toString()}`);
-                            }}
-                            disabled={savingId === item.id}
-                            className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
-                          >
-                            Reprogramar
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -785,7 +1217,7 @@ export default function RecordatoriosCitasPage() {
           <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3 text-slate-600">
               <span>
-                Mostrando {itemsPaginados.length} de {totalItems} registro(s)
+                Mostrando {itemsPaginados.length} de {totalItemsVista} registro(s)
               </span>
               <div className="flex items-center gap-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filas</label>
@@ -812,12 +1244,12 @@ export default function RecordatoriosCitasPage() {
                 Anterior
               </button>
               <span className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
-                Pagina {page} de {totalPages}
+                Pagina {pageVista} de {totalPagesVista}
               </span>
               <button
                 type="button"
-                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-                disabled={page === totalPages}
+                onClick={() => setPage((prev) => Math.min(totalPagesVista, prev + 1))}
+                disabled={pageVista === totalPagesVista}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Siguiente

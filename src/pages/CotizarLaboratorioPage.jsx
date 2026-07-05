@@ -53,6 +53,18 @@ export default function CotizarLaboratorioPage() {
     const day = parts.find((p) => p.type === "day")?.value;
     return `${year}-${month}-${day}`;
   };
+  const getDefaultTime = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Lima",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    const minute = parts.find((p) => p.type === "minute")?.value;
+    return `${hour}:${minute}`;
+  };
   const sameDerivacionConfig = (leftRaw, rightRaw) => {
     const left = normalizeDerivacionConfig(leftRaw);
     const right = normalizeDerivacionConfig(rightRaw);
@@ -93,6 +105,7 @@ export default function CotizarLaboratorioPage() {
 
   // Estado para configuración de derivación por examen
   const [derivaciones, setDerivaciones] = useState({}); // { [examenId]: { derivado: bool, tipo: 'monto'|'porcentaje', valor: number, laboratorio: string } }
+  const [programacionPorExamen, setProgramacionPorExamen] = useState({}); // { [examenId]: { fecha: 'YYYY-MM-DD', hora: 'HH:mm' } }
   // const [cotizacionReady, setCotizacionReady] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -415,6 +428,20 @@ export default function CotizarLaboratorioPage() {
     setPreloadedLab(countsMap);
   }, [pendingLabItems, examenes]);
 
+  useEffect(() => {
+    setProgramacionPorExamen((prev) => {
+      const next = {};
+      for (const exId of seleccionados) {
+        const key = Number(exId);
+        next[key] = {
+          fecha: prev[key]?.fecha || getLimaDate(),
+          hora: prev[key]?.hora || getDefaultTime(),
+        };
+      }
+      return next;
+    });
+  }, [seleccionados]);
+
   // Actualizar cobro: aplicar diffs (agregar y reducir/eliminar)
   const actualizarCobro = async () => {
     const params = new URLSearchParams(location.search);
@@ -726,6 +753,17 @@ export default function CotizarLaboratorioPage() {
     setMensaje("");
   };
 
+  const actualizarProgramacion = (examenId, campo, valor) => {
+    const key = Number(examenId);
+    setProgramacionPorExamen((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || { fecha: getLimaDate(), hora: getDefaultTime() }),
+        [campo]: valor,
+      },
+    }));
+  };
+
   const construirDetallesSeleccionados = () => {
     return seleccionados.map(exId => {
       const exIdNum = Number(exId);
@@ -745,7 +783,9 @@ export default function CotizarLaboratorioPage() {
         derivado: derivacion.derivado || false,
         tipo_derivacion: derivacion.tipo || '',
         valor_derivacion: derivacion.valor || 0,
-        laboratorio_referencia: derivacion.laboratorio || ''
+        laboratorio_referencia: derivacion.laboratorio || '',
+        fecha_programada: programacionPorExamen[exIdNum]?.fecha || getLimaDate(),
+        hora_programada: programacionPorExamen[exIdNum]?.hora || getDefaultTime(),
       };
     });
   };
@@ -1141,9 +1181,7 @@ export default function CotizarLaboratorioPage() {
                               <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
                             ) : cubiertaPorContrato ? (
                               <div className="text-xs text-green-700 mt-1 font-semibold">Cubierta hoy por contrato</div>
-                            ) : (
-                              <div className="text-xs text-amber-700 mt-1">Se cobrara si la seleccionas</div>
-                            )}
+                            ) : null}
                           </div>
                           <div className="font-bold text-green-700 text-lg">S/ {precioMostrar}</div>
                         </div>
@@ -1262,9 +1300,13 @@ export default function CotizarLaboratorioPage() {
                   const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                   const cantidad = 1;
                   return (
-                    <li key={exIdNum} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <li key={exIdNum} className="py-2 flex flex-col gap-2">
                       <div className="flex-1">
-                        <span className="font-medium text-gray-900">{ex?.nombre}</span>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <span className="font-medium text-gray-900">{ex?.nombre}</span>
+                          <div className="w-28 text-right text-sm text-gray-700">{cantidad} examen(es)</div>
+                          <div className="w-28 text-right font-bold text-green-700">S/ {precioMostrar}</div>
+                        </div>
                         {!coberturaResuelta && (
                           <span className="block text-xs text-slate-500 mt-1">Verificando cobertura...</span>
                         )}
@@ -1278,8 +1320,27 @@ export default function CotizarLaboratorioPage() {
                           <span className="block text-xs text-gray-400">Tiempo: {ex.tiempo_resultado}</span>
                         )}
                       </div>
-                      <div className="w-28 text-right text-sm text-gray-700">{cantidad} examen(es)</div>
-                      <div className="w-28 text-right font-bold text-green-700">S/ {precioMostrar}</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="text-xs text-slate-700 flex flex-col gap-1">
+                          Fecha programada
+                          <input
+                            type="date"
+                            value={programacionPorExamen[exIdNum]?.fecha || ''}
+                            min={getLimaDate()}
+                            onChange={(e) => actualizarProgramacion(exIdNum, 'fecha', e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                        <label className="text-xs text-slate-700 flex flex-col gap-1">
+                          Hora programada
+                          <input
+                            type="time"
+                            value={programacionPorExamen[exIdNum]?.hora || ''}
+                            onChange={(e) => actualizarProgramacion(exIdNum, 'hora', e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                      </div>
                     </li>
                   );
                 })}

@@ -4,18 +4,69 @@ import { useQuoteCart } from "../../context/QuoteCartContext";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
 
+function getLimaDate() {
+  const now = new Date();
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const year = partes.find((p) => p.type === "year")?.value;
+  const month = partes.find((p) => p.type === "month")?.value;
+  const day = partes.find((p) => p.type === "day")?.value;
+  return `${year}-${month}-${day}`;
+}
+
+function getLimaTime() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hour = parts.find((p) => p.type === "hour")?.value;
+  const minute = parts.find((p) => p.type === "minute")?.value;
+  return `${hour}:${minute}`;
+}
+
+function esServicioProgramableParaAgenda(servicioTipo) {
+  const tipo = String(servicioTipo || "").toLowerCase();
+  return tipo !== "farmacia";
+}
+
+function esConsultaProgramadaDelCarrito(item) {
+  const esConsulta = String(item?.serviceType || "").toLowerCase() === "consulta";
+  if (!esConsulta) return false;
+  const tipoConsulta = String(item?.consultaTipoConsulta || "programada").toLowerCase();
+  return tipoConsulta === "programada";
+}
+
 export default function QuoteCartPanel() {
   const navigate = useNavigate();
   const location = useLocation();
   const { cart, total, count, removeItem, updateQuantity, clearCart } = useQuoteCart();
   const [open, setOpen] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [aplicarProgramacionGlobal, setAplicarProgramacionGlobal] = useState(true);
+  const [fechaProgramacionGlobal, setFechaProgramacionGlobal] = useState(getLimaDate());
+  const [horaProgramacionGlobal, setHoraProgramacionGlobal] = useState(getLimaTime());
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const editingCotizacionId = searchParams.get("cotizacion_id");
   const isEditingCobro = Boolean(searchParams.get("cobro_id"));
   const isEditingCotizacion = Boolean(editingCotizacionId) && !isEditingCobro;
 
   const hasItems = cart.items.length > 0;
+  const hayServiciosProgramables = useMemo(
+    () => cart.items.some((it) => esServicioProgramableParaAgenda(it?.serviceType)),
+    [cart.items]
+  );
+  const hayConsultaProgramadaEnCarrito = useMemo(
+    () => cart.items.some((it) => esConsultaProgramadaDelCarrito(it)),
+    [cart.items]
+  );
 
   const grouped = useMemo(() => {
     return cart.items.slice().sort((a, b) => String(a.source).localeCompare(String(b.source)));
@@ -40,11 +91,13 @@ export default function QuoteCartPanel() {
     );
   };
 
-  const crearConsultaDesdeCarrito = async (item) => {
+  const crearConsultaDesdeCarrito = async (item, overrides = {}) => {
     const tipoConsultaItem = String(item?.consultaTipoConsulta || "programada").toLowerCase();
     const esReservaSinTurno = tipoConsultaItem === "reservada_sin_turno";
     const tipoConsultaPersistible = esReservaSinTurno ? "programada" : (item.consultaTipoConsulta || "programada");
     const origenCreacion = esReservaSinTurno ? "reservada_sin_turno" : "cotizador";
+    const fechaConsulta = String(overrides?.consultaFecha || item?.consultaFecha || "").slice(0, 10);
+    const horaConsulta = String(overrides?.consultaHora || item?.consultaHora || "").slice(0, 5);
 
     const res = await authFetch("api_consultas.php", {
       method: "POST",
@@ -52,8 +105,8 @@ export default function QuoteCartPanel() {
       body: JSON.stringify({
         paciente_id: Number(cart.patientId),
         medico_id: Number(item.consultaMedicoId),
-        fecha: item.consultaFecha,
-        hora: item.consultaHora,
+        fecha: fechaConsulta,
+        hora: horaConsulta,
         tipo_consulta: tipoConsultaPersistible,
         origen_creacion: origenCreacion,
       }),
@@ -66,12 +119,16 @@ export default function QuoteCartPanel() {
   };
 
   const construirDetalles = () => {
+    const fechaGlobal = String(fechaProgramacionGlobal || "").slice(0, 10);
+    const horaGlobal = String(horaProgramacionGlobal || "").slice(0, 5);
+
     return cart.items.map((it) => {
       const cantidad = Math.max(1, Number(it.quantity || 1));
       const precioUnitario = Number(it.unitPrice || 0);
       const esLaboratorio = String(it.serviceType || "").toLowerCase() === "laboratorio";
       const derivado = esLaboratorio && Boolean(it.derivado);
       const esConsulta = String(it.serviceType || "").toLowerCase() === "consulta";
+      const consultaProgramada = esConsultaProgramadaDelCarrito(it);
       const detalle = {
         servicio_tipo: String(it.serviceType || "procedimiento").toLowerCase(),
         servicio_id: Number(it.serviceId || 0),
@@ -88,7 +145,21 @@ export default function QuoteCartPanel() {
         paquete_tipo: String(it.packageType || ""),
         componentes: Array.isArray(it.componentes) ? it.componentes : [],
         cotizacion_id: Number(it.cotizacionId || 0) || null,
+        fecha_programada: String(it.fechaProgramada || it.fecha_programada || ""),
+        hora_programada: String(it.horaProgramada || it.hora_programada || ""),
       };
+
+      if (
+        aplicarProgramacionGlobal
+        && esServicioProgramableParaAgenda(detalle.servicio_tipo)
+        && fechaGlobal
+        && horaGlobal
+        && !consultaProgramada
+      ) {
+        detalle.fecha_programada = fechaGlobal;
+        detalle.hora_programada = horaGlobal;
+      }
+
       if (esConsulta) {
         detalle.medico_id = Number(it.consultaMedicoId || 0);
         detalle.consulta_id = Number(it.consultaId || 0);
@@ -108,7 +179,9 @@ export default function QuoteCartPanel() {
     const labRef = String(d?.laboratorio_referencia || "").trim().toLowerCase();
     const paqueteId = Number(d?.paquete_id || 0);
     const paqueteTipo = String(d?.paquete_tipo || "").toLowerCase();
-    return [servicio, servicioId, descripcion, precio, derivado ? "1" : "0", tipoDeriv, valorDeriv, labRef, paqueteId, paqueteTipo].join("::");
+    const fechaProgramada = String(d?.fecha_programada || "").slice(0, 10);
+    const horaProgramada = String(d?.hora_programada || "").slice(0, 5);
+    return [servicio, servicioId, descripcion, precio, derivado ? "1" : "0", tipoDeriv, valorDeriv, labRef, paqueteId, paqueteTipo, fechaProgramada, horaProgramada].join("::");
   };
 
   const normalizarDetalle = (d) => {
@@ -130,6 +203,8 @@ export default function QuoteCartPanel() {
       paquete_codigo: String(d?.paquete_codigo || ""),
       paquete_tipo: String(d?.paquete_tipo || ""),
       componentes: Array.isArray(d?.componentes) ? d.componentes : [],
+      fecha_programada: String(d?.fecha_programada || ""),
+      hora_programada: String(d?.hora_programada || ""),
     };
   };
 
@@ -201,23 +276,42 @@ export default function QuoteCartPanel() {
         return;
       }
 
+      const fechaGlobal = String(fechaProgramacionGlobal || "").slice(0, 10);
+      const horaGlobal = String(horaProgramacionGlobal || "").slice(0, 5);
+      const usarProgramacionGlobal = aplicarProgramacionGlobal && Boolean(fechaGlobal) && Boolean(horaGlobal);
+
       // Auto-crear consultas pendientes para items de tipo consulta que aún no tienen consulta_id
       for (let i = 0; i < detalles.length; i++) {
         const d = detalles[i];
         const cartItem = cart.items[i];
+        const consultaProgramada = esConsultaProgramadaDelCarrito(cartItem);
+        const consultaFechaFinal = (usarProgramacionGlobal && !consultaProgramada)
+          ? fechaGlobal
+          : String(cartItem?.consultaFecha || "").slice(0, 10);
+        const consultaHoraFinal = (usarProgramacionGlobal && !consultaProgramada)
+          ? horaGlobal
+          : String(cartItem?.consultaHora || "").slice(0, 5);
+
         if (
           String(d.servicio_tipo).toLowerCase() === "consulta" &&
           !d.consulta_id &&
           cartItem?.consultaMedicoId &&
-          cartItem?.consultaFecha &&
-          cartItem?.consultaHora
+          consultaFechaFinal &&
+          consultaHoraFinal
         ) {
-          const consultaId = await crearConsultaDesdeCarrito(cartItem);
+          const consultaId = await crearConsultaDesdeCarrito(cartItem, {
+            consultaFecha: consultaFechaFinal,
+            consultaHora: consultaHoraFinal,
+          });
           detalles[i].consulta_id = consultaId;
           detalles[i].medico_id = Number(cartItem.consultaMedicoId);
         }
 
         if (String(d.servicio_tipo).toLowerCase() === "consulta") {
+          if (consultaFechaFinal && consultaHoraFinal) {
+            detalles[i].fecha_programada = consultaFechaFinal;
+            detalles[i].hora_programada = consultaHoraFinal;
+          }
           detalles[i].consulta_id = Number(detalles[i].consulta_id || cartItem?.consultaId || 0);
           detalles[i].medico_id = Number(detalles[i].medico_id || cartItem?.consultaMedicoId || 0);
 
@@ -362,6 +456,40 @@ export default function QuoteCartPanel() {
               <span className="font-semibold text-gray-700">Total</span>
               <span className="font-bold text-green-700">S/ {total.toFixed(2)}</span>
             </div>
+
+            {hayServiciosProgramables && (
+              <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/60 p-2.5">
+                <label className="flex items-center gap-2 text-xs font-semibold text-indigo-700">
+                  <input
+                    type="checkbox"
+                    checked={aplicarProgramacionGlobal}
+                    onChange={(e) => setAplicarProgramacionGlobal(e.target.checked)}
+                  />
+                  Aplicar fecha/hora global al registrar
+                </label>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={fechaProgramacionGlobal}
+                    onChange={(e) => setFechaProgramacionGlobal(e.target.value)}
+                    disabled={!aplicarProgramacionGlobal}
+                    className="rounded border border-indigo-200 px-2 py-1 text-xs disabled:bg-gray-100"
+                  />
+                  <input
+                    type="time"
+                    value={horaProgramacionGlobal}
+                    onChange={(e) => setHoraProgramacionGlobal(e.target.value)}
+                    disabled={!aplicarProgramacionGlobal}
+                    className="rounded border border-indigo-200 px-2 py-1 text-xs disabled:bg-gray-100"
+                  />
+                </div>
+                {hayConsultaProgramadaEnCarrito && (
+                  <div className="mt-2 text-[11px] text-slate-600">
+                    La consulta programada conserva su horario elegido con el médico. La programación global aplica al resto de servicios.
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="mt-3 grid grid-cols-1 gap-2">
               <button

@@ -457,6 +457,15 @@ export default function DetalleCotizacionPage() {
             const rawDesc = resolverDescripcionDetalle(d);
             const descCorta = rawDesc.length > 34 ? `${rawDesc.slice(0, 31)}...` : rawDesc;
             const desc = escapeHtml(descCorta);
+            const servicioLabel = escapeHtml(labelServicio(d?.servicio_tipo) || 'Servicio');
+            const fechaProgramadaRaw = String(d?.fecha_programada || '').slice(0, 10);
+            const fechaProgramada = /^\d{4}-\d{2}-\d{2}$/.test(fechaProgramadaRaw)
+              ? (() => {
+                  const [anio, mes, dia] = fechaProgramadaRaw.split('-');
+                  return `${dia}/${mes}/${anio}`;
+                })()
+              : fechaProgramadaRaw;
+            const horaProgramada = String(d?.hora_programada || '').slice(0, 5);
             const medicoNombre = String(d?.medico_nombre_completo || "").trim();
             const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
             const tagExterno = esExterno ? ' [Ext]' : '';
@@ -465,7 +474,10 @@ export default function DetalleCotizacionPage() {
               : "";
             const cant = Number(d?.cantidad || 1);
             const neto = Number(d?.subtotal_neto || d?.subtotal || 0);
-            return `<div class="t-row"><div class="t-desc">${desc}${tagExterno}${medicoLabel} x${cant}</div><div class="t-amount">${toMoney(neto)}</div></div>`;
+            const submeta = (servicioLabel || fechaProgramada || horaProgramada)
+              ? `<div class="t-submeta">${servicioLabel ? `Servicio: ${servicioLabel}` : ''}${servicioLabel && (fechaProgramada || horaProgramada) ? ' | ' : ''}${fechaProgramada ? `Fecha: ${fechaProgramada}` : ''}${fechaProgramada && horaProgramada ? ' | ' : ''}${horaProgramada ? `Hora: ${horaProgramada}` : ''}</div>`
+              : '';
+            return `<div class="t-item"><div class="t-row"><div class="t-desc">${desc}${tagExterno}${medicoLabel} x${cant}</div><div class="t-amount">${toMoney(neto)}</div></div>${submeta}</div>`;
           })
           .join("")
       : '<div class="t-meta">Sin items activos</div>';
@@ -510,6 +522,7 @@ export default function DetalleCotizacionPage() {
           gap: 6px;
           margin: 1px 0;
         }
+        .ticket-80 .t-item { margin: 2px 0 4px; }
         .ticket-80 .t-desc {
           flex: 1;
           min-width: 0;
@@ -517,6 +530,7 @@ export default function DetalleCotizacionPage() {
           overflow: hidden;
           text-overflow: ellipsis;
         }
+        .ticket-80 .t-submeta { margin: 0 0 2px; font-size: 9px; line-height: 1.1; color: #374151; }
         .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
         .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
         .ticket-80 .t-pay {

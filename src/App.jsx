@@ -103,6 +103,9 @@ const CotizarProcedimientosPage = lazy(() =>
 const CotizarPaquetesPerfilesPage = lazy(() =>
   import("./pages/CotizarPaquetesPerfilesPage.jsx")
 );
+const CotizarServicioPage = lazy(() =>
+  import("./pages/CotizarServicioPage.jsx")
+);
 const ConsumoPacientePage = lazy(() =>
   import("./pages/ConsumoPacientePage.jsx")
 );
@@ -1267,6 +1270,18 @@ function App() {
                         permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarPaquetesPerfilesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/cotizar-servicio/:pacienteId/:servicioTipo"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador", "recepcionista"]}
+                        permisosRequeridos={["ver_cotizaciones"]}
+                      >
+                        <CotizarServicioPage />
                       </ProtectedRoute>
                     }
                   />

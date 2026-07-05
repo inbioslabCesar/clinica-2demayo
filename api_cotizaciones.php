@@ -510,7 +510,7 @@ function obtener_medico_desde_tarifa($conn, $tarifaId) {
     $tarifaId = (int)$tarifaId;
     if ($tarifaId <= 0) return null;
 
-    $stmt = $conn->prepare("SELECT m.nombre, m.apellido FROM tarifas t LEFT JOIN medicos m ON m.id = t.medico_id WHERE t.id = ? LIMIT 1");
+    $stmt = $conn->prepare("SELECT t.medico_id, m.nombre, m.apellido FROM tarifas t LEFT JOIN medicos m ON m.id = t.medico_id WHERE t.id = ? LIMIT 1");
     if (!$stmt) return null;
     $stmt->bind_param("i", $tarifaId);
     $stmt->execute();
@@ -518,15 +518,29 @@ function obtener_medico_desde_tarifa($conn, $tarifaId) {
     $stmt->close();
     if (!$row) return null;
 
+    $medicoId = (int)($row['medico_id'] ?? 0);
     $nombre = trim((string)($row['nombre'] ?? ''));
     $apellido = trim((string)($row['apellido'] ?? ''));
     if ($nombre === '' && $apellido === '') return null;
 
     return [
+        'medico_id' => $medicoId,
         'nombre' => $nombre,
         'apellido' => $apellido,
         'completo' => trim($nombre . ' ' . $apellido),
     ];
+}
+
+function obtener_medico_id_desde_tarifa($conn, $tarifaId) {
+    $tarifaId = (int)$tarifaId;
+    if ($tarifaId <= 0) return 0;
+    $stmt = $conn->prepare('SELECT medico_id FROM tarifas WHERE id = ? LIMIT 1');
+    if (!$stmt) return 0;
+    $stmt->bind_param('i', $tarifaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return max(0, (int)($row['medico_id'] ?? 0));
 }
 
 function extraer_medico_desde_descripcion_consulta($descripcion) {
@@ -776,6 +790,7 @@ function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
 
     $hasMedicoId = column_exists($conn, 'cotizaciones_detalle', 'medico_id');
     $hasConsultaId = column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+    $hasAgendaServicios = table_exists($conn, 'agenda_servicios_cotizacion') && column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id');
     $select = 'cd.*';
     $join = '';
 
@@ -797,6 +812,11 @@ function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
     } elseif ($hasConsultaId) {
         $select .= ", COALESCE(mc.nombre, '') AS medico_nombre, COALESCE(mc.apellido, '') AS medico_apellido";
         $select .= ", TRIM(CONCAT(COALESCE(mc.nombre, ''), ' ', COALESCE(mc.apellido, ''))) AS medico_nombre_completo";
+    }
+
+    if ($hasAgendaServicios) {
+        $join .= ' LEFT JOIN agenda_servicios_cotizacion ascot ON ascot.cotizacion_detalle_id = cd.id';
+        $select .= ', ascot.fecha_programada AS fecha_programada, ascot.hora_programada AS hora_programada, ascot.estado_evento AS agenda_estado_evento';
     }
 
     $placeholders = implode(',', array_fill(0, count($cotizacionIds), '?'));
@@ -822,6 +842,13 @@ function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
         $tipo = strtolower(trim((string)($row['servicio_tipo'] ?? '')));
         if ($tipo === 'rayos x' || $tipo === 'rayos_x') {
             $tipo = 'rayosx';
+        }
+
+        // Laboratorio no debe mostrar médico asignado en detalle de cotización.
+        if ($tipo === 'laboratorio') {
+            $row['medico_nombre'] = '';
+            $row['medico_apellido'] = '';
+            $row['medico_nombre_completo'] = '';
         }
 
         $medicoCompleto = trim((string)($row['medico_nombre_completo'] ?? ''));
@@ -1019,6 +1046,107 @@ function insertar_evento_cotizacion($conn, $cotizacionId, $eventoTipo, $usuarioI
         $stmt->bind_param("iisiss", $cotizacionId, $version, $eventoTipo, $usuarioId, $motivo, $payloadJson);
         $stmt->execute();
     }
+}
+
+function normalizar_fecha_programada_agenda($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    return date('Y-m-d', $ts);
+}
+
+function normalizar_hora_programada_agenda($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+    if (preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $raw)) {
+        $parts = explode(':', $raw);
+        return sprintf('%02d:%02d:00', (int)$parts[0], (int)$parts[1]);
+    }
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    return date('H:i:s', $ts);
+}
+
+function agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) return;
+    if (!table_exists($conn, 'agenda_servicios_cotizacion')) return;
+    $stmt = $conn->prepare('DELETE FROM agenda_servicios_cotizacion WHERE cotizacion_id = ?');
+    if ($stmt) {
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
+function agenda_servicios_guardar_detalle($conn, $cotizacionId, $detalleId, $pacienteId, $detalle, $usuarioId = 0) {
+    if (!table_exists($conn, 'agenda_servicios_cotizacion')) return;
+
+    $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+    if ($servicioTipo === '' || $servicioTipo === 'consulta') return;
+
+    $fechaProgramada = normalizar_fecha_programada_agenda($detalle['fecha_programada'] ?? $detalle['fecha_programada_servicio'] ?? null);
+    $horaProgramada = normalizar_hora_programada_agenda($detalle['hora_programada'] ?? $detalle['hora_programada_servicio'] ?? null);
+    if ($fechaProgramada === null) return;
+
+    $cotizacionId = (int)$cotizacionId;
+    $detalleId = (int)$detalleId;
+    $pacienteId = (int)$pacienteId;
+    if ($cotizacionId <= 0 || $detalleId <= 0 || $pacienteId <= 0) return;
+
+    $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : null;
+    $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : null;
+    if ($medicoId <= 0 && $servicioId > 0) {
+        $stmtMedTar = $conn->prepare('SELECT medico_id FROM tarifas WHERE id = ? LIMIT 1');
+        if ($stmtMedTar) {
+            $stmtMedTar->bind_param('i', $servicioId);
+            $stmtMedTar->execute();
+            $rowMedTar = $stmtMedTar->get_result()->fetch_assoc();
+            $stmtMedTar->close();
+            $medicoId = (int)($rowMedTar['medico_id'] ?? 0);
+        }
+    }
+    $titulo = trim((string)($detalle['descripcion'] ?? 'Servicio programado'));
+    if ($titulo === '') $titulo = 'Servicio programado';
+
+    $stmt = $conn->prepare(
+        'INSERT INTO agenda_servicios_cotizacion
+         (cotizacion_id, cotizacion_detalle_id, paciente_id, medico_id, servicio_tipo, servicio_id, titulo_evento, fecha_programada, hora_programada, estado_evento, observaciones, created_by, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "pendiente", ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           paciente_id = VALUES(paciente_id),
+           medico_id = VALUES(medico_id),
+           servicio_tipo = VALUES(servicio_tipo),
+           servicio_id = VALUES(servicio_id),
+           titulo_evento = VALUES(titulo_evento),
+           fecha_programada = VALUES(fecha_programada),
+           hora_programada = VALUES(hora_programada),
+           observaciones = VALUES(observaciones),
+           updated_by = VALUES(updated_by),
+           updated_at = NOW()'
+    );
+    if (!$stmt) return;
+
+    $obs = trim((string)($detalle['observacion_programacion'] ?? 'Programado desde cotización'));
+    $uid = (int)$usuarioId;
+    $stmt->bind_param(
+        'iiiisissssii',
+        $cotizacionId,
+        $detalleId,
+        $pacienteId,
+        $medicoId,
+        $servicioTipo,
+        $servicioId,
+        $titulo,
+        $fechaProgramada,
+        $horaProgramada,
+        $obs,
+        $uid,
+        $uid
+    );
+    $stmt->execute();
+    $stmt->close();
 }
 
 function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivoEdicion = null, $fechaRef = null) {
@@ -1303,6 +1431,12 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
 
             // Mantener trazabilidad clínica de consulta cuando el esquema lo soporte.
             $detalleId = (int)$conn->insert_id;
+
+            // Agenda de servicios no-consulta: persiste fecha/hora programada por detalle cuando se envía desde UI.
+            if ($detalleId > 0) {
+                agenda_servicios_guardar_detalle($conn, (int)$cotizacionId, $detalleId, (int)$pacienteIdCotizacion, (array)$detalle, (int)$usuarioId);
+            }
+
             $versionIdDetalle = get_exam_version_id_from_payload($detalle);
             if ($versionIdDetalle <= 0 && is_array($snapshotPayload)) {
                 $versionIdDetalle = (int)($snapshotPayload['version_id'] ?? 0);
@@ -1321,12 +1455,14 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
             if ($detalleId > 0 && ($hasConsultaId || $hasMedicoId || $hasContratoPacienteId || $hasContratoPacienteServicioId || $hasOrigenCobro || $hasMontoListaReferencial)) {
                 $consultaId = isset($detalle['consulta_id']) ? (int)$detalle['consulta_id'] : 0;
                 $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
+                $tipoMedicoAuto = strtolower(trim((string)$servicioTipo));
+                $permiteMedicoAuto = in_array($tipoMedicoAuto, ['consulta', 'ecografia', 'rayosx', 'rayos x', 'rayos_x', 'procedimiento', 'procedimientos', 'operacion', 'cirugia', 'hospitalizacion'], true);
 
                 if ($consultaId <= 0) {
                     $consultaId = (int)($contextoBaseCotizacion['consulta_id'] ?? 0);
                 }
 
-                if ($medicoId <= 0) {
+                if ($permiteMedicoAuto && $medicoId <= 0) {
                     if ($consultaId > 0) {
                         if (!isset($medicoPorConsultaCache[$consultaId])) {
                             $medicoPorConsultaCache[$consultaId] = obtener_medico_id_desde_consulta($conn, $consultaId);
@@ -2078,6 +2214,16 @@ function cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId) {
             $stmtCot->execute();
             $stmtCot->close();
         }
+            if ($detalleId > 0 && $hasMedicoId) {
+                $medicoDetallePayload = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
+                if ($medicoDetallePayload <= 0 && !empty($servicioId)) {
+                    $medicoDetallePayload = obtener_medico_id_desde_tarifa($conn, (int)$servicioId);
+                    if ($medicoDetallePayload > 0) {
+                        $detalle['medico_id'] = $medicoDetallePayload;
+                    }
+                }
+            }
+
     }
 
     // Cancelar también por cobro_id (órdenes creadas en el momento del cobro)
@@ -2101,6 +2247,76 @@ function cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId) {
     }
 }
 
+function resolver_examen_laboratorio_id_desde_detalle(mysqli $conn, array $det): int {
+    $candidatosDirectos = [
+        (int)($det['servicio_id'] ?? 0),
+        (int)($det['examen_id'] ?? 0),
+        (int)($det['source_id'] ?? 0),
+    ];
+    foreach ($candidatosDirectos as $cid) {
+        if ($cid > 0) return $cid;
+    }
+
+    $snapshotRaw = $det['snapshot_json'] ?? null;
+    if (is_string($snapshotRaw) && $snapshotRaw !== '') {
+        $decoded = json_decode($snapshotRaw, true);
+        if (is_array($decoded)) {
+            $snapshotRaw = $decoded;
+        }
+    }
+    if (is_array($snapshotRaw)) {
+        $sid = (int)($snapshotRaw['id'] ?? 0);
+        if ($sid > 0) return $sid;
+    }
+
+    if (!table_exists($conn, 'examenes_laboratorio') || !column_exists($conn, 'examenes_laboratorio', 'nombre')) {
+        return 0;
+    }
+
+    $descripcion = trim((string)($det['descripcion'] ?? ''));
+    if ($descripcion === '') {
+        return 0;
+    }
+
+    $whereActivo = column_exists($conn, 'examenes_laboratorio', 'activo')
+        ? " AND activo = 1"
+        : "";
+
+    $stmtExact = $conn->prepare(
+        "SELECT id
+         FROM examenes_laboratorio
+         WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)){$whereActivo}
+         ORDER BY id DESC
+         LIMIT 1"
+    );
+    if ($stmtExact) {
+        $stmtExact->bind_param('s', $descripcion);
+        $stmtExact->execute();
+        $row = $stmtExact->get_result()->fetch_assoc();
+        $stmtExact->close();
+        $idExacto = (int)($row['id'] ?? 0);
+        if ($idExacto > 0) return $idExacto;
+    }
+
+    $like = '%' . $descripcion . '%';
+    $stmtLike = $conn->prepare(
+        "SELECT id
+         FROM examenes_laboratorio
+         WHERE LOWER(nombre) LIKE LOWER(?){$whereActivo}
+         ORDER BY id DESC
+         LIMIT 1"
+    );
+    if ($stmtLike) {
+        $stmtLike->bind_param('s', $like);
+        $stmtLike->execute();
+        $row = $stmtLike->get_result()->fetch_assoc();
+        $stmtLike->close();
+        return (int)($row['id'] ?? 0);
+    }
+
+    return 0;
+}
+
 function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $pacienteId, array $detalles, int $consultaId = 0) {
     if (!table_exists($conn, 'ordenes_laboratorio')) return;
 
@@ -2109,18 +2325,27 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
     $examIds = [];
     $examPayload = [];
     $fallbackByExamId = [];
+    $fallbackSinId = [];
     foreach ($detalles as $det) {
         if (strtolower(trim((string)($det['servicio_tipo'] ?? ''))) !== 'laboratorio') continue;
-        $sId = intval($det['servicio_id'] ?? 0);
+        $sId = resolver_examen_laboratorio_id_desde_detalle($conn, (array)$det);
         if ($sId > 0) {
             $examIds[] = $sId;
             if (!isset($fallbackByExamId[$sId])) {
                 $fallbackByExamId[$sId] = $det;
             }
+        } else {
+            $descFallback = trim((string)($det['descripcion'] ?? ''));
+            if ($descFallback !== '') {
+                $fallbackSinId[] = [
+                    'id' => 0,
+                    'descripcion' => $descFallback,
+                    'nombre' => $descFallback,
+                ];
+            }
         }
     }
     $examIds = array_values(array_unique($examIds));
-    if (empty($examIds)) return;
 
     if ($cotizacionId > 0 && table_exists($conn, 'cotizaciones_detalle')) {
         $hasSnapshotJson = column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
@@ -2196,6 +2421,14 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
         }
         $examPayload[$sid] = $payload;
     }
+
+    if (empty($examIds) && !empty($fallbackSinId)) {
+        foreach ($fallbackSinId as $idx => $payloadFallback) {
+            $examPayload['sinid_' . $idx] = $payloadFallback;
+        }
+    }
+
+    if (empty($examPayload)) return;
 
     $json = json_encode(!empty($examPayload) ? array_values($examPayload) : $examIds, JSON_UNESCAPED_UNICODE);
     if ($json === false) {
@@ -2555,7 +2788,6 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
 
     crear_ordenes_lab_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
     crear_ordenes_imagen_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
-
     if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
         $stmtConsultas = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
         if ($stmtConsultas) {
@@ -2575,6 +2807,32 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
             $stmtConsultas->close();
         }
     }
+}
+
+function sincronizar_servicios_post_pago_manual($conn, $data) {
+    $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
+    if ($cotizacionId <= 0) {
+        respond(['success' => false, 'error' => 'cotizacion_id requerido'], 400);
+    }
+
+    $cot = obtener_cotizacion($conn, $cotizacionId);
+    if (!$cot) {
+        respond(['success' => false, 'error' => 'Cotización no encontrada'], 404);
+    }
+
+    $estado = strtolower(trim((string)($cot['estado'] ?? '')));
+    if (!in_array($estado, ['pagado', 'control', 'contrato'], true)) {
+        respond(['success' => false, 'error' => 'La cotización aún no está pagada/control'], 400);
+    }
+
+    $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
+    sincronizar_servicios_clinicos_post_pago_cotizacion($conn, $cotizacionId, $usuarioId);
+
+    respond([
+        'success' => true,
+        'cotizacion_id' => $cotizacionId,
+        'message' => 'Sincronización clínica post-pago ejecutada',
+    ]);
 }
 
 function registrar_cotizacion($conn, $data) {
@@ -2802,6 +3060,8 @@ function editar_cotizacion($conn, $data) {
             $stmtDel->bind_param("i", $cotizacionId);
             $stmtDel->execute();
         }
+
+        agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
 
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivo, $fechaRef);
         sincronizar_movimientos_lab_ref_en_edicion_cotizacion($conn, (int)$cot['paciente_id'], $detallesAntes, $detalles, $usuarioId, $cotizacionId);
@@ -3265,6 +3525,8 @@ function anular_cotizacion($conn, $data) {
             $stmtDet->bind_param("isi", $usuarioId, $motivo, $cotizacionId);
             $stmtDet->execute();
         }
+
+        agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
 
         if (cotizacion_tiene_servicio_laboratorio($conn, $cotizacionId)) {
             cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId);
@@ -3975,6 +4237,9 @@ switch ($method) {
         }
         if ($accion === 'agregar_detalle') {
             agregar_detalle_cotizacion($conn, $data);
+        }
+        if ($accion === 'sincronizar_servicios_post_pago') {
+            sincronizar_servicios_post_pago_manual($conn, $data);
         }
 
         registrar_cotizacion($conn, $data);

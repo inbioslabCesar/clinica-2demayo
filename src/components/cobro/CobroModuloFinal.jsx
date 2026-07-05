@@ -439,9 +439,15 @@ if (tipoDescuento === 'porcentaje') {
       : '';
 
     const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
+    const escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
     const contactoLinea = [
-      clinicBrand.telefono ? `Tel: ${clinicBrand.telefono}` : '',
-      clinicBrand.celular ? `Cel: ${clinicBrand.celular}` : '',
+      clinicBrand.telefono ? `Tel: ${escapeHtml(clinicBrand.telefono)}` : '',
+      clinicBrand.celular ? `Cel: ${escapeHtml(clinicBrand.celular)}` : '',
     ].filter(Boolean).join(' | ');
     const categoriaLabelMap = {
       consulta: 'Consultas',
@@ -470,6 +476,15 @@ if (tipoDescuento === 'porcentaje') {
     const resumenDetallesHtml = gruposDetalles.map((grupo) => {
       const itemsHtml = grupo.items.map((d) => {
         const descripcion = String(d?.descripcion || 'Servicio').trim();
+        const servicioLabel = escapeHtml(categoriaLabelMap[String(d?.servicio_tipo || '').toLowerCase()] || String(d?.servicio_tipo || 'Servicio').trim() || 'Servicio');
+        const fechaProgramadaRaw = String(d?.fecha_programada || '').slice(0, 10);
+        const horaProgramada = String(d?.hora_programada || '').slice(0, 5);
+        const fechaProgramada = /^\d{4}-\d{2}-\d{2}$/.test(fechaProgramadaRaw)
+          ? (() => {
+              const [anio, mes, dia] = fechaProgramadaRaw.split('-');
+              return `${dia}/${mes}/${anio}`;
+            })()
+          : fechaProgramadaRaw;
         const prefijoCotizacion = Number(d?.cotizacion_id || 0) > 0 && cotizacionIdsTicket.length > 1
           ? `[#${Number(d?.cotizacion_id || 0)}] `
           : '';
@@ -478,10 +493,16 @@ if (tipoDescuento === 'porcentaje') {
           : `${prefijoCotizacion}${descripcion}`;
         const cantidad = Number(d?.cantidad || 0);
         const subtotal = Number(d?.subtotal || 0);
+        const programacionLinea = (servicioLabel || fechaProgramada || horaProgramada)
+          ? `<div class="t-submeta">${servicioLabel ? `Servicio: ${servicioLabel}` : ''}${servicioLabel && (fechaProgramada || horaProgramada) ? ' | ' : ''}${fechaProgramada ? `Fecha: ${escapeHtml(fechaProgramada)}` : ''}${fechaProgramada && horaProgramada ? ' | ' : ''}${horaProgramada ? `Hora: ${escapeHtml(horaProgramada)}` : ''}</div>`
+          : '';
         return `
-          <div class="t-row">
-            <div class="t-desc">${descripcionCorta} x${cantidad}</div>
-            <div class="t-amount">${toMoney(subtotal)}</div>
+          <div class="t-item">
+            <div class="t-row">
+              <div class="t-desc">${descripcionCorta} x${cantidad}</div>
+              <div class="t-amount">${toMoney(subtotal)}</div>
+            </div>
+            ${programacionLinea}
           </div>`;
       }).join('');
 
@@ -523,12 +544,19 @@ if (tipoDescuento === 'porcentaje') {
           gap: 6px;
           margin: 1px 0;
         }
+        .ticket-80 .t-item { margin: 2px 0 4px; }
         .ticket-80 .t-desc {
           flex: 1;
           min-width: 0;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+        .ticket-80 .t-submeta {
+          margin: 0 0 2px;
+          font-size: 9px;
+          line-height: 1.1;
+          color: #374151;
         }
         .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
         .ticket-80 .t-total { font-size: 12px; font-weight: 700; }

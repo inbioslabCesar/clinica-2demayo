@@ -20,7 +20,46 @@ export default function CotizarProcedimientosPage() {
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [medicos, setMedicos] = useState([]);
+  const [programacionPorProcedimiento, setProgramacionPorProcedimiento] = useState({});
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+
+  const getLimaDate = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Lima",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const year = parts.find((p) => p.type === "year")?.value;
+    const month = parts.find((p) => p.type === "month")?.value;
+    const day = parts.find((p) => p.type === "day")?.value;
+    return `${year}-${month}-${day}`;
+  };
+
+  const getDefaultTime = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Lima",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    const minute = parts.find((p) => p.type === "minute")?.value;
+    return `${hour}:${minute}`;
+  };
+
+  const getProgramacionProcedimiento = (procedimientoId) => {
+    const pid = Number(procedimientoId || 0);
+    const actual = programacionPorProcedimiento[pid];
+    if (actual?.fecha_programada || actual?.hora_programada) return actual;
+    const fuente = [...(Array.isArray(preloadedItems) ? preloadedItems : [])].reverse().find((it) => Number(it?.servicio_id || 0) === pid);
+    return {
+      fecha_programada: String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || "").slice(0, 10) || getLimaDate(),
+      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || "").slice(0, 5) || getDefaultTime(),
+    };
+  };
 
    const [busqueda, setBusqueda] = useState("");
     // Filtrar procedimientos por búsqueda
@@ -73,6 +112,21 @@ export default function CotizarProcedimientosPage() {
       .then(data => setCajaEstado(data?.estado || 'cerrada'))
       .catch(() => setCajaEstado('cerrada'));
   }, []);
+
+  useEffect(() => {
+    setProgramacionPorProcedimiento((prev) => {
+      const next = {};
+      seleccionados.forEach((id) => {
+        const current = prev?.[id];
+        if (current?.fecha_programada || current?.hora_programada) {
+          next[id] = current;
+          return;
+        }
+        next[id] = getProgramacionProcedimiento(id);
+      });
+      return next;
+    });
+  }, [seleccionados, preloadedItems]);
 
   // Precarga desde cobro existente si viene ?cobro_id=...
   useEffect(() => {
@@ -149,7 +203,8 @@ export default function CotizarProcedimientosPage() {
           descripcion,
           cantidad: diff,
           precio_unitario: proc.precio_particular,
-          subtotal: proc.precio_particular * diff
+          subtotal: proc.precio_particular * diff,
+          ...getProgramacionProcedimiento(pid)
         });
       } else if (diff < 0) {
         reductions.push({ servicio_id: Number(pid), cantidad_eliminar: Math.abs(diff) });
@@ -321,6 +376,7 @@ export default function CotizarProcedimientosPage() {
         cantidad,
         precio_unitario: Number(proc.precio_particular || 0),
         subtotal: Number(proc.precio_particular || 0) * cantidad,
+        ...getProgramacionProcedimiento(pid),
         ...(proc.medico_id ? { medico_id: Number(proc.medico_id) } : {})
       } : null;
     }).filter(Boolean);
@@ -375,6 +431,8 @@ export default function CotizarProcedimientosPage() {
         quantity: Number(d.cantidad || 1),
         unitPrice: Number(d.precio_unitario || 0),
         source: 'procedimiento',
+          fechaProgramada: String(d.fecha_programada || ""),
+          horaProgramada: String(d.hora_programada || ""),
       })),
     });
 
@@ -663,13 +721,48 @@ export default function CotizarProcedimientosPage() {
                   const proc = procedimientos.find(p => p.id === pid);
                   const cantidad = cantidades[pid] || 1;
                   const subtotal = Number(proc?.precio_particular || 0) * cantidad;
+                  const programacion = getProgramacionProcedimiento(pid);
                   return proc ? (
-                    <li key={pid} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <span className="font-medium text-gray-900">{proc.descripcion || proc.nombre}</span>
+                    <li key={pid} className="py-2 flex flex-col gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <span className="font-medium text-gray-900">{proc.descripcion || proc.nombre}</span>
+                        </div>
+                        <div className="text-sm text-gray-700 text-right">{cantidad} procedimiento(s)</div>
+                        <div className="text-sm font-bold text-green-700 text-right">S/ {subtotal.toFixed(2)}</div>
                       </div>
-                      <div className="text-sm text-gray-700 text-right">{cantidad} procedimiento(s)</div>
-                      <div className="text-sm font-bold text-green-700 text-right">S/ {subtotal.toFixed(2)}</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-600">Fecha programada</span>
+                          <input
+                            type="date"
+                            value={programacion.fecha_programada}
+                            onChange={(e) => setProgramacionPorProcedimiento((prev) => ({
+                              ...prev,
+                              [pid]: {
+                                ...getProgramacionProcedimiento(pid),
+                                fecha_programada: e.target.value,
+                              },
+                            }))}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-600">Hora programada</span>
+                          <input
+                            type="time"
+                            value={programacion.hora_programada}
+                            onChange={(e) => setProgramacionPorProcedimiento((prev) => ({
+                              ...prev,
+                              [pid]: {
+                                ...getProgramacionProcedimiento(pid),
+                                hora_programada: e.target.value,
+                              },
+                            }))}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                      </div>
                     </li>
                   ) : null;
                 })}

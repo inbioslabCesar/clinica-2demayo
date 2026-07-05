@@ -312,6 +312,18 @@ export default function ConsumoPacientePage() {
     const montoBruto = Number(modalDetalle?.monto_bruto_total || modalDetallesCobro.reduce((sum, d) => sum + Number(d.subtotal || d.monto || 0), 0));
     const montoCobrado = Number(modalDetalle?.monto_cobrado_total || montoBruto);
     const descuentoAplicado = Math.max(0, Number((montoBruto - montoCobrado).toFixed(2)));
+    const servicioLabelMap = {
+      consulta: 'Consulta',
+      laboratorio: 'Laboratorio',
+      farmacia: 'Farmacia',
+      ecografia: 'Ecografía',
+      rayosx: 'Rayos X',
+      rayos_x: 'Rayos X',
+      'rayos x': 'Rayos X',
+      procedimiento: 'Procedimiento',
+      operacion: 'Operación',
+      hospitalizacion: 'Hospitalización',
+    };
     const logoHtml = clinicBrand.logo
       ? `<div style="width:100%;display:flex;justify-content:center;align-items:center;margin:0 0 8px 0;"><img src="${clinicBrand.logo}" alt="Logo clínica" style="display:block;margin:0 auto;height:52px;max-width:170px;object-fit:contain;object-position:center;" /></div>`
       : '';
@@ -336,8 +348,10 @@ export default function ConsumoPacientePage() {
         .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
         .ticket-80 .t-title { font-weight: 800; text-transform: uppercase; margin: 0 0 4px; }
         .ticket-80 .t-meta { margin: 1px 0; font-weight: 700; }
+        .ticket-80 .t-item { margin: 2px 0 4px; }
         .ticket-80 .t-row { display: flex; justify-content: space-between; gap: 6px; margin: 1px 0; }
         .ticket-80 .t-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ticket-80 .t-submeta { margin: 0 0 2px; font-size: 9px; line-height: 1.1; color: #374151; }
         .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
         .ticket-80 .t-total { font-size: 12px; font-weight: 800; }
         .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #111827; font-weight: 700; }
@@ -378,9 +392,15 @@ export default function ConsumoPacientePage() {
         <div class="t-title">DETALLE</div>
         ${modalDetallesCobro.map(d => {
           const servicio = d.servicio_tipo || d.servicio || modalDetalle.servicio;
+          const servicioLabel = servicioLabelMap[String(servicio || '').toLowerCase()] || String(servicio || '').trim() || 'Servicio';
           const medico = requiereMedico(servicio) ? resolverNombreMedicoDetalle(d) : '';
           const medicoTxt = medico ? ` - ${medico}` : '';
-          return `<div class="t-row"><div class="t-desc">${d.descripcion}${medicoTxt} x${d.cantidad || 1}</div><div class="t-amount">S/ ${(d.subtotal || d.monto).toFixed(2)}</div></div>`;
+          const fechaProgramada = String(d.fecha_programada || '').slice(0, 10);
+          const horaProgramada = String(d.hora_programada || '').slice(0, 5);
+          const submeta = (servicioLabel || fechaProgramada || horaProgramada)
+            ? `<div class="t-submeta">${servicioLabel ? `Servicio: ${servicioLabel}` : ''}${servicioLabel && (fechaProgramada || horaProgramada) ? ' | ' : ''}${fechaProgramada ? `Fecha: ${fechaProgramada}` : ''}${fechaProgramada && horaProgramada ? ' | ' : ''}${horaProgramada ? `Hora: ${horaProgramada}` : ''}</div>`
+            : '';
+          return `<div class="t-item"><div class="t-row"><div class="t-desc">${d.descripcion}${medicoTxt} x${d.cantidad || 1}</div><div class="t-amount">S/ ${(d.subtotal || d.monto).toFixed(2)}</div></div>${submeta}</div>`;
         }).join('')}
         <hr class="t-hr" />
         <div class="t-meta">Total original: S/ ${montoBruto.toFixed(2)}</div>

@@ -17,6 +17,7 @@ export default function CotizarRayosXPage() {
   const [medicos, setMedicos] = useState([]);
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
+  const [programacionPorEstudio, setProgramacionPorEstudio] = useState({}); // { [tarifaId]: { fecha, hora } }
   const [mensaje, setMensaje] = useState("");
   const [preloadedCounts, setPreloadedCounts] = useState({}); // {tarifaId: cantidad}
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
@@ -30,6 +31,33 @@ export default function CotizarRayosXPage() {
       .toLowerCase()
       .trim()
       .replace(/\s+/g, " ");
+
+  const getLimaDate = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(now);
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    return `${year}-${month}-${day}`;
+  };
+
+  const getDefaultTime = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Lima',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === 'hour')?.value;
+    const minute = parts.find((p) => p.type === 'minute')?.value;
+    return `${hour}:${minute}`;
+  };
 
   const obtenerNombreMedicoTarifa = (tarifa) => {
     if (!tarifa) return "";
@@ -351,6 +379,31 @@ export default function CotizarRayosXPage() {
     const nid = Number(id);
     setCantidades(cant => ({ ...cant, [nid]: cantidad }));
   };
+
+  useEffect(() => {
+    setProgramacionPorEstudio((prev) => {
+      const next = {};
+      seleccionados.forEach((id) => {
+        const key = Number(id);
+        next[key] = {
+          fecha: prev[key]?.fecha || getLimaDate(),
+          hora: prev[key]?.hora || getDefaultTime(),
+        };
+      });
+      return next;
+    });
+  }, [seleccionados]);
+
+  const actualizarProgramacion = (estudioId, campo, valor) => {
+    const key = Number(estudioId);
+    setProgramacionPorEstudio((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || { fecha: getLimaDate(), hora: getDefaultTime() }),
+        [campo]: valor,
+      },
+    }));
+  };
   const calcularTotal = () => {
     return seleccionados.reduce((total, tid) => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
@@ -361,7 +414,7 @@ export default function CotizarRayosXPage() {
 
   const construirDetallesSeleccionados = () => {
     return seleccionados.map(tid => {
-      const tarifa = tarifas.find(t => t.id === tid);
+      const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
       const cantidad = Number(cantidades[tid] || 1);
       const nombreMedico = obtenerNombreMedicoTarifa(tarifa);
       return tarifa ? {
@@ -372,7 +425,9 @@ export default function CotizarRayosXPage() {
         precio_unitario: tarifa.precio_particular,
         subtotal: tarifa.precio_particular * cantidad,
         medico_id: tarifa.medico_id || "",
-        medico_nombre: nombreMedico
+        medico_nombre: nombreMedico,
+        fecha_programada: programacionPorEstudio[Number(tid)]?.fecha || getLimaDate(),
+        hora_programada: programacionPorEstudio[Number(tid)]?.hora || getDefaultTime(),
       } : null;
     }).filter(Boolean);
   };
@@ -709,11 +764,35 @@ export default function CotizarRayosXPage() {
                   const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
                   const cantidad = cantidades[tid] || 1;
                   const subtotal = Number(tarifa?.precio_particular || 0) * cantidad;
+                  const programacion = programacionPorEstudio[Number(tid)] || { fecha: getLimaDate(), hora: getDefaultTime() };
                   return tarifa ? (
-                    <li key={tid} className="py-2 flex flex-col md:flex-row justify-between items-center gap-2">
-                      <span className="w-full md:w-1/2">{tarifa.descripcion || tarifa.nombre}</span>
-                      <span className="w-full md:w-1/4">{cantidad} estudio(s)</span>
-                      <span className="w-full md:w-1/4 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
+                    <li key={tid} className="py-2 flex flex-col gap-2">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <span className="w-full md:w-1/2">{tarifa.descripcion || tarifa.nombre}</span>
+                        <span className="w-full md:w-1/4">{cantidad} estudio(s)</span>
+                        <span className="w-full md:w-1/4 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="text-xs text-slate-700 flex flex-col gap-1">
+                          Fecha programada
+                          <input
+                            type="date"
+                            value={programacion.fecha || ''}
+                            min={getLimaDate()}
+                            onChange={(e) => actualizarProgramacion(tid, 'fecha', e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                        <label className="text-xs text-slate-700 flex flex-col gap-1">
+                          Hora programada
+                          <input
+                            type="time"
+                            value={programacion.hora || ''}
+                            onChange={(e) => actualizarProgramacion(tid, 'hora', e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                      </div>
                     </li>
                   ) : null;
                 })}

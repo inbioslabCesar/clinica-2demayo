@@ -73,14 +73,64 @@ function rc_parse_positive_int($value, $fallback) {
     return $v > 0 ? $v : $fallback;
 }
 
+function rc_parse_tipo_recordatorio($value) {
+    $tipo = strtolower(trim((string)$value));
+    if ($tipo === 'falta_cancelar') {
+        return 'falta_cancelar';
+    }
+    return 'citas';
+}
+
+function rc_servicio_label($value) {
+    $tipo = strtolower(trim((string)$value));
+    if ($tipo === 'rayos x' || $tipo === 'rayos_x' || $tipo === 'rx') return 'rayosx';
+    if ($tipo === 'operaciones' || $tipo === 'cirugias' || $tipo === 'cirugia') return 'operacion';
+    if ($tipo === 'procedimientos') return 'procedimiento';
+    return $tipo !== '' ? $tipo : 'otros';
+}
+
+function rc_servicios_label($serviciosTipados, $fallback = '') {
+    $raw = trim((string)$serviciosTipados);
+    if ($raw !== '') {
+        $parts = array_values(array_filter(array_map('trim', explode(',', $raw)), static function ($part) {
+            return $part !== '';
+        }));
+        if (!empty($parts)) {
+            $labels = [];
+            foreach ($parts as $part) {
+                $labels[] = rc_servicio_pretty_label($part);
+            }
+            $labels = array_values(array_unique($labels));
+            if (count($labels) === 1) {
+                return $labels[0];
+            }
+            return implode(' + ', $labels);
+        }
+    }
+
+    return rc_servicio_pretty_label($fallback);
+}
+
+function rc_servicio_pretty_label($value) {
+    $tipo = rc_servicio_label($value);
+    if ($tipo === 'rayosx') return 'Rayos X';
+    if ($tipo === 'ecografia') return 'Ecografía';
+    if ($tipo === 'laboratorio') return 'Laboratorio';
+    if ($tipo === 'farmacia') return 'Farmacia';
+    if ($tipo === 'consulta') return 'Consulta';
+    if ($tipo === 'procedimiento') return 'Procedimiento';
+    if ($tipo === 'operacion') return 'Operación';
+    if ($tipo === 'hospitalizacion') return 'Hospitalización';
+    return $tipo !== '' ? ucfirst($tipo) : 'Servicio';
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
     rc_require_session_roles(['administrador', 'recepcionista']);
-    rc_require_schema($conn);
 
     $dias = rc_parse_positive_int($_GET['dias'] ?? 30, 30);
-    if ($dias > 90) $dias = 90;
+    if ($dias > 365) $dias = 365;
     $page = rc_parse_positive_int($_GET['page'] ?? 0, 0);
     $perPage = rc_parse_positive_int($_GET['per_page'] ?? 0, 0);
     $usarPaginacion = ($page > 0 && $perPage > 0);
@@ -90,6 +140,201 @@ if ($method === 'GET') {
     $busqueda = trim((string)($_GET['busqueda'] ?? ''));
     $soloSinGestion = ((string)($_GET['solo_sin_gestion'] ?? '0') === '1');
     $origenConsulta = trim((string)($_GET['origen_consulta'] ?? ''));
+    $tipoRecordatorio = rc_parse_tipo_recordatorio($_GET['tipo_recordatorio'] ?? 'citas');
+
+    if ($tipoRecordatorio === 'falta_cancelar') {
+        if (!rc_table_exists($conn, 'cotizaciones') || !rc_table_exists($conn, 'pacientes') || !rc_table_exists($conn, 'cotizaciones_detalle')) {
+            http_response_code(500);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Esquema incompleto para recordatorios de faltas de pago (cotizaciones/pacientes/detalle).',
+            ]);
+            exit;
+        }
+
+        $hasAtenciones = rc_table_exists($conn, 'atenciones');
+
+        $whereDetalleActivo = rc_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND cd.estado_item <> 'eliminado'"
+            : '';
+
+        $where = [
+            "LOWER(TRIM(COALESCE(c.estado, ''))) IN ('pendiente', 'parcial')",
+            'COALESCE(c.saldo_pendiente, 0) > 0',
+            'DATE(c.fecha) >= DATE_SUB(CURDATE(), INTERVAL ? DAY)'
+        ];
+                if ($hasAtenciones) {
+                    $where[] = 'COALESCE(atn.total_pendientes, 0) > 0';
+                }
+
+        $types = 'i';
+        $params = [$dias];
+
+        if ($busqueda !== '') {
+            $where[] = "(
+                CONCAT_WS(' ', p.nombre, p.apellido) LIKE ?
+                OR p.dni LIKE ?
+                OR p.telefono LIKE ?
+                OR CAST(c.id AS CHAR) LIKE ?
+                OR LOWER(TRIM(COALESCE(srv.servicios_tipos, ''))) LIKE ?
+            )";
+            $like = '%' . $busqueda . '%';
+            $types .= 'sssss';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $whereSql = ' WHERE ' . implode(' AND ', $where);
+
+        $from = " FROM cotizaciones c
+                INNER JOIN pacientes p ON p.id = c.paciente_id
+                LEFT JOIN (
+                    SELECT
+                        cd.cotizacion_id,
+                        GROUP_CONCAT(DISTINCT LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) ORDER BY cd.servicio_tipo SEPARATOR ',') AS servicios_tipos
+                    FROM cotizaciones_detalle cd
+                    WHERE 1=1 {$whereDetalleActivo}
+                    GROUP BY cd.cotizacion_id
+                ) srv ON srv.cotizacion_id = c.id";
+
+        if ($hasAtenciones) {
+            $from .= "
+                LEFT JOIN (
+                    SELECT a.paciente_id, COUNT(*) AS total_pendientes
+                    FROM atenciones a
+                    WHERE LOWER(TRIM(COALESCE(a.estado, ''))) = 'pendiente'
+                    GROUP BY a.paciente_id
+                ) atn ON atn.paciente_id = c.paciente_id";
+        }
+
+        $countSql = 'SELECT COUNT(*) AS total' . $from . $whereSql;
+        $stmtCount = $conn->prepare($countSql);
+        if (!$stmtCount) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar conteo de faltas por cancelar']);
+            exit;
+        }
+        $stmtCount->bind_param($types, ...$params);
+        $stmtCount->execute();
+        $countRow = $stmtCount->get_result()->fetch_assoc() ?: [];
+        $stmtCount->close();
+        $totalItems = (int)($countRow['total'] ?? 0);
+
+        $sql = "SELECT
+                c.id,
+                c.paciente_id,
+                DATE(c.fecha) AS fecha,
+                TIME(c.fecha) AS hora,
+                    p.nombre AS paciente_nombre,
+                    p.apellido AS paciente_apellido,
+                    p.dni AS paciente_dni,
+                    p.telefono AS paciente_telefono,
+                COALESCE(srv.servicios_tipos, '') AS servicios_tipos,
+                c.id AS cotizacion_id,
+                c.estado AS cotizacion_estado,
+                COALESCE(c.saldo_pendiente, 0) AS saldo_pendiente"
+            . $from
+            . $whereSql
+            . ' ORDER BY c.fecha ASC, c.id ASC';
+
+        $paramsList = $params;
+        $typesList = $types;
+        if ($usarPaginacion) {
+            $offset = ($page - 1) * $perPage;
+            $sql .= ' LIMIT ? OFFSET ?';
+            $typesList .= 'ii';
+            $paramsList[] = $perPage;
+            $paramsList[] = $offset;
+        }
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar listado de faltas por cancelar']);
+            exit;
+        }
+        $stmt->bind_param($typesList, ...$paramsList);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $items = [];
+        while ($row = $res->fetch_assoc()) {
+            $items[] = [
+                'id' => (int)($row['id'] ?? 0),
+                'paciente_id' => (int)($row['paciente_id'] ?? 0),
+                'medico_id' => 0,
+                'fecha' => (string)($row['fecha'] ?? ''),
+                'hora' => (string)($row['hora'] ?? ''),
+                'estado_consulta' => 'falta_cancelar',
+                'es_control' => 0,
+                'hc_origen_id' => 0,
+                'tipo_consulta' => 'programada',
+                'origen_consulta' => 'cotizacion_saldo_pendiente',
+                'recordatorio_tipo' => 'falta_cancelar',
+                'servicio_tipo' => rc_servicio_label(explode(',', (string)($row['servicios_tipos'] ?? ''))[0] ?? ''),
+                'hc_tiene_registro' => 0,
+                'hc_ultima_actualizacion' => null,
+                'paciente_nombre' => (string)($row['paciente_nombre'] ?? ''),
+                'paciente_apellido' => (string)($row['paciente_apellido'] ?? ''),
+                'paciente_dni' => (string)($row['paciente_dni'] ?? ''),
+                'paciente_telefono' => (string)($row['paciente_telefono'] ?? ''),
+                'medico_nombre' => '',
+                'medico_apellido' => '',
+                'estado_gestion' => 'pendiente',
+                'observacion' => 'Cotización con saldo pendiente por cobrar',
+                'fecha_proximo_contacto' => null,
+                'fecha_ultimo_contacto' => null,
+                'intentos' => 0,
+                'gestion_updated_at' => null,
+                'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0) > 0 ? (int)$row['cotizacion_id'] : null,
+                'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
+                'saldo_pendiente' => round((float)($row['saldo_pendiente'] ?? 0), 2),
+            ];
+        }
+        $stmt->close();
+
+        $response = [
+            'success' => true,
+            'dias' => $dias,
+            'tipo_recordatorio' => $tipoRecordatorio,
+            'count' => count($items),
+            'total' => $totalItems,
+            'stats' => [
+                'urgentes' => 0,
+                'hoy' => 0,
+                'sin_telefono' => 0,
+                'confirmadas' => 0,
+                'atendidas' => 0,
+            ],
+            'prioridad' => [
+                'critico' => 0,
+                'alto' => 0,
+                'normal' => (int)$totalItems,
+                'bajo' => 0,
+                'atendido' => 0,
+                'resuelto' => 0,
+            ],
+            'items' => $items,
+        ];
+        if ($usarPaginacion) {
+            $response['pagination'] = [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalItems,
+                'total_pages' => max(1, (int)ceil($totalItems / $perPage)),
+            ];
+        }
+
+        echo json_encode($response);
+        exit;
+    }
+
+    rc_require_schema($conn);
+    $aplicarPaginacionEnMemoria = $usarPaginacion;
+    $usarPaginacion = false;
 
     $from = " FROM consultas c
             INNER JOIN pacientes p ON p.id = c.paciente_id
@@ -278,13 +523,20 @@ if ($method === 'GET') {
                 COALESCE(rc.intentos, 0) AS intentos,
                 rc.updated_at AS gestion_updated_at,
                 CASE
+                    WHEN cot_ref.cotizacion_id IS NOT NULL THEN cot_ref.cotizacion_id
                     WHEN c.estado = 'falta_cancelar' OR (c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0) THEN cot_ref.cotizacion_id
                     ELSE NULL
                 END AS cotizacion_id,
                 CASE
+                    WHEN cot_ref.cotizacion_id IS NOT NULL THEN cot.estado
                     WHEN c.estado = 'falta_cancelar' OR (c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0) THEN cot.estado
                     ELSE NULL
-                END AS cotizacion_estado"
+                END AS cotizacion_estado,
+                CASE
+                    WHEN cot_ref.cotizacion_id IS NOT NULL THEN COALESCE(cot.saldo_pendiente, 0)
+                    WHEN c.estado = 'falta_cancelar' OR (c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0) THEN COALESCE(cot.saldo_pendiente, 0)
+                    ELSE NULL
+                END AS saldo_pendiente"
             . $from
             . $whereSql
             . ' ORDER BY c.fecha ASC, c.hora ASC, c.id ASC';
@@ -323,6 +575,8 @@ if ($method === 'GET') {
             'hc_origen_id' => (int)($row['hc_origen_id'] ?? 0),
             'tipo_consulta' => (string)($row['tipo_consulta'] ?? ''),
             'origen_consulta' => (string)($row['origen_consulta'] ?? 'agendada'),
+            'recordatorio_tipo' => 'cita',
+            'servicio_tipo' => 'consulta',
             'hc_tiene_registro' => (int)($row['hc_tiene_registro'] ?? 0),
             'hc_ultima_actualizacion' => $row['hc_ultima_actualizacion'],
             'paciente_nombre' => (string)($row['paciente_nombre'] ?? ''),
@@ -339,13 +593,147 @@ if ($method === 'GET') {
             'gestion_updated_at' => $row['gestion_updated_at'],
             'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
             'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
+            'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
         ];
     }
     $stmt->close();
 
+    $agendaRows = [];
+    $hasAgendaServicios = rc_table_exists($conn, 'agenda_servicios_cotizacion');
+    $permitirAgendaPorFiltro = ($origenConsulta === '' || $origenConsulta === 'agendada');
+    if ($hasAgendaServicios && $permitirAgendaPorFiltro && ($estadoGestion === '' || $estadoGestion === 'pendiente')) {
+        $agendaWhere = [
+            "LOWER(TRIM(COALESCE(a.estado_evento, ''))) IN ('pendiente', 'confirmado')",
+            'a.fecha_programada >= CURDATE()',
+            'a.fecha_programada <= DATE_ADD(CURDATE(), INTERVAL ? DAY)',
+        ];
+        $agendaTypes = 'i';
+        $agendaParams = [$dias];
+
+        if ($busqueda !== '') {
+            $agendaWhere[] = "(
+                CONCAT_WS(' ', p.nombre, p.apellido) LIKE ?
+                OR p.dni LIKE ?
+                OR p.telefono LIKE ?
+                OR CAST(a.id AS CHAR) LIKE ?
+                OR LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) LIKE ?
+                OR LOWER(TRIM(COALESCE(a.titulo_evento, ''))) LIKE ?
+            )";
+            $like = '%' . $busqueda . '%';
+            $agendaTypes .= 'ssssss';
+            $agendaParams[] = $like;
+            $agendaParams[] = $like;
+            $agendaParams[] = $like;
+            $agendaParams[] = $like;
+            $agendaParams[] = $like;
+            $agendaParams[] = $like;
+        }
+
+        $agendaSql = "SELECT
+                a.id,
+                a.paciente_id,
+            COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) AS medico_id,
+                a.fecha_programada,
+                a.hora_programada,
+                a.estado_evento,
+                a.servicio_tipo,
+                a.titulo_evento,
+                a.observaciones,
+                a.cotizacion_id,
+                cot.estado AS cotizacion_estado,
+                cot.saldo_pendiente AS saldo_pendiente,
+                COALESCE(srv.servicios_tipos, '') AS servicios_tipos,
+                p.nombre AS paciente_nombre,
+                p.apellido AS paciente_apellido,
+                p.dni AS paciente_dni,
+                p.telefono AS paciente_telefono,
+                COALESCE(m.nombre, md.nombre, mt.nombre, '') AS medico_nombre,
+                COALESCE(m.apellido, md.apellido, mt.apellido, '') AS medico_apellido
+            FROM agenda_servicios_cotizacion a
+            INNER JOIN pacientes p ON p.id = a.paciente_id
+            LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
+            LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)
+            LEFT JOIN (
+                SELECT
+                    cd2.cotizacion_id,
+                    GROUP_CONCAT(DISTINCT LOWER(TRIM(COALESCE(cd2.servicio_tipo, ''))) ORDER BY cd2.servicio_tipo SEPARATOR ',') AS servicios_tipos
+                FROM cotizaciones_detalle cd2
+                WHERE 1=1
+                GROUP BY cd2.cotizacion_id
+            ) srv ON srv.cotizacion_id = a.cotizacion_id
+            LEFT JOIN medicos m ON m.id = a.medico_id
+            LEFT JOIN medicos md ON md.id = cd.medico_id
+            LEFT JOIN medicos mt ON mt.id = t.medico_id
+            LEFT JOIN cotizaciones cot ON cot.id = a.cotizacion_id
+            WHERE " . implode(' AND ', $agendaWhere) . "
+            ORDER BY a.fecha_programada ASC, a.hora_programada ASC, a.id ASC";
+
+        $stmtAgenda = $conn->prepare($agendaSql);
+        if ($stmtAgenda) {
+            $stmtAgenda->bind_param($agendaTypes, ...$agendaParams);
+            $stmtAgenda->execute();
+            $resAgenda = $stmtAgenda->get_result();
+            while ($row = $resAgenda->fetch_assoc()) {
+                $agendaRows[] = [
+                    'id' => (int)($row['id'] ?? 0),
+                    'paciente_id' => (int)($row['paciente_id'] ?? 0),
+                    'medico_id' => (int)($row['medico_id'] ?? 0),
+                    'fecha' => (string)($row['fecha_programada'] ?? ''),
+                    'hora' => (string)($row['hora_programada'] ?? ''),
+                    'estado_consulta' => (string)($row['estado_evento'] ?? 'pendiente'),
+                    'es_control' => 0,
+                    'hc_origen_id' => 0,
+                    'tipo_consulta' => 'programada',
+                    'origen_consulta' => 'agenda_servicio',
+                    'recordatorio_tipo' => 'cita',
+                    'servicio_tipo' => rc_servicio_label((string)($row['servicio_tipo'] ?? 'otros')),
+                    'servicios_label' => rc_servicios_label((string)($row['servicios_tipos'] ?? ''), (string)($row['servicio_tipo'] ?? 'otros')),
+                    'hc_tiene_registro' => 0,
+                    'hc_ultima_actualizacion' => null,
+                    'paciente_nombre' => (string)($row['paciente_nombre'] ?? ''),
+                    'paciente_apellido' => (string)($row['paciente_apellido'] ?? ''),
+                    'paciente_dni' => (string)($row['paciente_dni'] ?? ''),
+                    'paciente_telefono' => (string)($row['paciente_telefono'] ?? ''),
+                    'medico_nombre' => (string)($row['medico_nombre'] ?? ''),
+                    'medico_apellido' => (string)($row['medico_apellido'] ?? ''),
+                    'estado_gestion' => 'pendiente',
+                    'observacion' => (string)($row['observaciones'] ?? $row['titulo_evento'] ?? ''),
+                    'fecha_proximo_contacto' => null,
+                    'fecha_ultimo_contacto' => null,
+                    'intentos' => 0,
+                    'gestion_updated_at' => null,
+                    'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
+                    'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
+                    'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
+                ];
+            }
+            $stmtAgenda->close();
+        }
+    }
+
+    if (!empty($agendaRows)) {
+        $items = array_merge($items, $agendaRows);
+        usort($items, function ($a, $b) {
+            $fa = (string)($a['fecha'] ?? '');
+            $fb = (string)($b['fecha'] ?? '');
+            if ($fa !== $fb) return strcmp($fa, $fb);
+            $ha = (string)($a['hora'] ?? '');
+            $hb = (string)($b['hora'] ?? '');
+            if ($ha !== $hb) return strcmp($ha, $hb);
+            return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
+        });
+    }
+
+    $totalItems = count($items);
+    if ($aplicarPaginacionEnMemoria) {
+        $offset = max(0, ($page - 1) * $perPage);
+        $items = array_slice($items, $offset, $perPage);
+    }
+
     $response = [
         'success' => true,
         'dias' => $dias,
+        'tipo_recordatorio' => $tipoRecordatorio,
         'count' => count($items),
         'total' => $totalItems,
         'stats' => [
@@ -365,7 +753,7 @@ if ($method === 'GET') {
         ],
         'items' => $items,
     ];
-    if ($usarPaginacion) {
+    if ($aplicarPaginacionEnMemoria) {
         $response['pagination'] = [
             'page' => $page,
             'per_page' => $perPage,

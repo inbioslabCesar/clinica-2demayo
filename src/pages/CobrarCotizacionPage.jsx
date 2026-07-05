@@ -244,6 +244,8 @@ export default function CobrarCotizacionPage() {
           medico_nombre: d.medico_nombre || undefined,
           medico_apellido: d.medico_apellido || undefined,
           medico_especialidad: d.especialidad || d.medico_especialidad || undefined,
+          fecha_programada: d.fecha_programada || undefined,
+          hora_programada: d.hora_programada || undefined,
           es_externo: Number(d.es_externo || 0) === 1,
           incluir_en_cobro: d.incluir_en_cobro === undefined ? 1 : Number(d.incluir_en_cobro || 0),
         }));

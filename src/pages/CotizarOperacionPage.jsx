@@ -20,7 +20,47 @@ export default function CotizarOperacionPage() {
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const [programacionPorOperacion, setProgramacionPorOperacion] = useState({});
+  const [mostrarResumenCotizacion, setMostrarResumenCotizacion] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+
+  const getLimaDate = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(now);
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    return `${year}-${month}-${day}`;
+  };
+
+  const getDefaultTime = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Lima',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === 'hour')?.value;
+    const minute = parts.find((p) => p.type === 'minute')?.value;
+    return `${hour}:${minute}`;
+  };
+
+  const getProgramacionOperacion = (operacionId) => {
+    const oid = Number(operacionId || 0);
+    const actual = programacionPorOperacion[oid];
+    if (actual?.fecha_programada || actual?.hora_programada) return actual;
+    const fuente = [...(Array.isArray(preloadedItems) ? preloadedItems : [])].reverse().find((it) => Number(it?.servicio_id || 0) === oid);
+    return {
+      fecha_programada: String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || '').slice(0, 10) || getLimaDate(),
+      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || '').slice(0, 5) || getDefaultTime(),
+    };
+  };
 
     const [busqueda, setBusqueda] = useState("");
     // Filtrar tarifas por búsqueda (nombre/descripción y médico)
@@ -72,6 +112,21 @@ export default function CotizarOperacionPage() {
       .then(data => setCajaEstado(data?.estado || 'cerrada'))
       .catch(() => setCajaEstado('cerrada'));
   }, []);
+
+  useEffect(() => {
+    setProgramacionPorOperacion((prev) => {
+      const next = {};
+      seleccionados.forEach((id) => {
+        const current = prev?.[id];
+        if (current?.fecha_programada || current?.hora_programada) {
+          next[id] = current;
+          return;
+        }
+        next[id] = getProgramacionOperacion(id);
+      });
+      return next;
+    });
+  }, [seleccionados, preloadedItems]);
 
   // Precarga desde cobro existente si viene ?cobro_id=...
   useEffect(() => {
@@ -149,6 +204,7 @@ export default function CotizarOperacionPage() {
           cantidad: diff,
           precio_unitario: tarifa.precio_particular,
           subtotal: tarifa.precio_particular * diff,
+          ...getProgramacionOperacion(tid),
           medico_id: tarifa.medico_id || "",
           especialidad: tarifa.especialidad || ""
         });
@@ -285,6 +341,7 @@ export default function CotizarOperacionPage() {
     const nid = Number(id);
     setSeleccionados(sel => sel.includes(nid) ? sel : [...sel, nid]);
     setCantidades(cant => ({ ...cant, [nid]: 1 }));
+    setMostrarResumenCotizacion(true);
   };
   const quitarSeleccion = (id) => {
     const nid = Number(id);
@@ -293,6 +350,10 @@ export default function CotizarOperacionPage() {
       const nuevo = { ...cant };
       delete nuevo[nid];
       return nuevo;
+    });
+    setMostrarResumenCotizacion((prev) => {
+      const remaining = seleccionados.filter((mid) => Number(mid) !== nid);
+      return prev && remaining.length > 0;
     });
   };
   const actualizarCantidad = (id, cantidad) => {
@@ -327,6 +388,7 @@ export default function CotizarOperacionPage() {
         cantidad,
         precio_unitario: Number(tarifa.precio_particular || 0),
         subtotal: Number(tarifa.precio_particular || 0) * cantidad,
+        ...getProgramacionOperacion(tid),
         medico_id: tarifa.medico_id || "",
         medico_nombre,
         especialidad: tarifa.especialidad || ""
@@ -383,6 +445,8 @@ export default function CotizarOperacionPage() {
         quantity: Number(d.cantidad || 1),
         unitPrice: Number(d.precio_unitario || 0),
         source: 'operacion',
+          fechaProgramada: String(d.fecha_programada || ''),
+          horaProgramada: String(d.hora_programada || ''),
       })),
     });
 
@@ -548,7 +612,7 @@ export default function CotizarOperacionPage() {
     }
   };
 
-  const mostrarPanelDerecho = seleccionados.length > 0;
+  const mostrarPanelDerecho = mostrarResumenCotizacion && seleccionados.length > 0;
 
   return (
     <div className={`max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100 transition-all ${cartCount > 0 ? 'xl:mr-[22rem]' : ''}`}>
@@ -595,6 +659,20 @@ export default function CotizarOperacionPage() {
       {paciente && (
         <div className="mb-4 p-2 bg-blue-50 rounded text-blue-800 text-sm">
           <span className="font-bold">Paciente:</span> {paciente.nombres || paciente.nombre} {paciente.apellidos || paciente.apellido} (DNI: {paciente.dni})
+        </div>
+      )}
+      {seleccionados.length > 0 && !mostrarPanelDerecho && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <div>
+            Tienes {seleccionados.length} estudio(s) seleccionado(s). El resumen no se abre solo.
+          </div>
+          <button
+            type="button"
+            onClick={() => setMostrarResumenCotizacion(true)}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
+          >
+            Mostrar resumen
+          </button>
         </div>
       )}
       <div className={`grid grid-cols-1 gap-8 ${mostrarPanelDerecho ? 'md:grid-cols-2' : ''}`}>
@@ -661,6 +739,15 @@ export default function CotizarOperacionPage() {
         </div>
         {mostrarPanelDerecho && (
           <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit">
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setMostrarResumenCotizacion(false)}
+              className="text-xs px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 hover:bg-blue-50"
+            >
+              Ocultar resumen
+            </button>
+          </div>
           {seleccionados.length > 0 && (
             <div className="bg-blue-50 rounded-2xl p-6 border border-blue-200 shadow mb-4 max-h-[500px] overflow-y-auto">
               <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
@@ -671,11 +758,46 @@ export default function CotizarOperacionPage() {
                   const tarifa = tarifas.find(t => t.id === tid);
                   const cantidad = cantidades[tid] || 1;
                   const subtotal = Number(tarifa?.precio_particular || 0) * cantidad;
+                  const programacion = getProgramacionOperacion(tid);
                   return tarifa ? (
-                    <li key={tid} className="py-2 flex justify-between items-center">
-                      <span className="flex-1">{tarifa.descripcion || tarifa.nombre}</span>
-                      <span className="w-28 text-right">{cantidad} estudio(s)</span>
-                      <span className="w-28 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
+                    <li key={tid} className="py-2 flex flex-col gap-2">
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="flex-1">{tarifa.descripcion || tarifa.nombre}</span>
+                        <span className="w-28 text-right">{cantidad} estudio(s)</span>
+                        <span className="w-28 text-right font-bold text-green-700">S/ {subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-600">Fecha programada</span>
+                          <input
+                            type="date"
+                            value={programacion.fecha_programada}
+                            onChange={(e) => setProgramacionPorOperacion((prev) => ({
+                              ...prev,
+                              [tid]: {
+                                ...getProgramacionOperacion(tid),
+                                fecha_programada: e.target.value,
+                              },
+                            }))}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-600">Hora programada</span>
+                          <input
+                            type="time"
+                            value={programacion.hora_programada}
+                            onChange={(e) => setProgramacionPorOperacion((prev) => ({
+                              ...prev,
+                              [tid]: {
+                                ...getProgramacionOperacion(tid),
+                                hora_programada: e.target.value,
+                              },
+                            }))}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        </label>
+                      </div>
                     </li>
                   ) : null;
                 })}

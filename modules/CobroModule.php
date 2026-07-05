@@ -66,12 +66,32 @@ class CobroModule
         return $tipo;
     }
 
+    private static function normalizarTextoBusqueda($texto)
+    {
+        $texto = strtolower(trim((string)$texto));
+        if ($texto === '') {
+            return '';
+        }
+
+        $normalizado = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
+        if ($normalizado !== false && $normalizado !== '') {
+            $texto = strtolower($normalizado);
+        }
+
+        $texto = preg_replace('/[^a-z0-9]+/u', ' ', $texto);
+        $texto = preg_replace('/\s+/u', ' ', $texto);
+
+        return trim($texto);
+    }
+
     private static function resolverExamenLaboratorioIdPorDescripcion($conn, $descripcion)
     {
         $descripcion = trim((string)$descripcion);
         if ($descripcion === '') {
             return 0;
         }
+
+        $descripcionNormalizada = self::normalizarTextoBusqueda($descripcion);
 
         $stmtExact = $conn->prepare("SELECT id FROM examenes_laboratorio WHERE activo = 1 AND nombre = ? ORDER BY id DESC LIMIT 1");
         if ($stmtExact) {
@@ -83,6 +103,18 @@ class CobroModule
             }
         }
 
+        $stmtExactNorm = $conn->prepare("SELECT id, nombre FROM examenes_laboratorio WHERE activo = 1 ORDER BY id DESC LIMIT 200");
+        if ($stmtExactNorm) {
+            $stmtExactNorm->execute();
+            $rows = $stmtExactNorm->get_result()->fetch_all(MYSQLI_ASSOC);
+            foreach ($rows as $row) {
+                $nombreNormalizado = self::normalizarTextoBusqueda($row['nombre'] ?? '');
+                if ($nombreNormalizado !== '' && $nombreNormalizado === $descripcionNormalizada) {
+                    return (int)($row['id'] ?? 0);
+                }
+            }
+        }
+
         $like = '%' . $descripcion . '%';
         $stmtLike = $conn->prepare("SELECT id FROM examenes_laboratorio WHERE activo = 1 AND nombre LIKE ? ORDER BY id DESC LIMIT 1");
         if ($stmtLike) {
@@ -91,6 +123,53 @@ class CobroModule
             $row = $stmtLike->get_result()->fetch_assoc();
             if ($row && !empty($row['id'])) {
                 return (int)$row['id'];
+            }
+        }
+
+        $tokens = array_values(array_filter(array_unique(explode(' ', $descripcionNormalizada)), static function ($token) {
+            if ($token === '') {
+                return false;
+            }
+            if (strlen($token) < 3) {
+                return false;
+            }
+            return !in_array($token, ['completo', 'general', 'simple', 'basico', 'basica', 'perfil', 'paquete', 'examen', 'estudio', 'de', 'del', 'la', 'el', 'los', 'las', 'y', 'con'], true);
+        }));
+
+        if (!empty($tokens)) {
+            $mejorId = 0;
+            $mejorPuntaje = 0;
+
+            $stmtBusca = $conn->prepare("SELECT id, nombre FROM examenes_laboratorio WHERE activo = 1 AND nombre LIKE ? ORDER BY id DESC LIMIT 50");
+            if ($stmtBusca) {
+                foreach ($tokens as $token) {
+                    $likeToken = '%' . $token . '%';
+                    $stmtBusca->bind_param('s', $likeToken);
+                    $stmtBusca->execute();
+                    $res = $stmtBusca->get_result();
+                    while ($row = $res->fetch_assoc()) {
+                        $nombreNormalizado = self::normalizarTextoBusqueda($row['nombre'] ?? '');
+                        if ($nombreNormalizado === '') {
+                            continue;
+                        }
+
+                        $puntaje = 1;
+                        foreach ($tokens as $otroToken) {
+                            if (strpos($nombreNormalizado, $otroToken) !== false) {
+                                $puntaje++;
+                            }
+                        }
+
+                        if ($puntaje > $mejorPuntaje) {
+                            $mejorPuntaje = $puntaje;
+                            $mejorId = (int)($row['id'] ?? 0);
+                        }
+                    }
+                }
+            }
+
+            if ($mejorId > 0) {
+                return $mejorId;
             }
         }
 
@@ -1916,6 +1995,9 @@ class CobroModule
                         if ($detalleServicioKey === 'laboratorio') {
                             $examen_id = intval($detalleServicio['servicio_id'] ?? 0);
                             if ($examen_id <= 0) {
+                                $examen_id = intval($detalleServicio['source_id'] ?? $detalleServicio['examen_id'] ?? 0);
+                            }
+                            if ($examen_id <= 0) {
                                 $descBusqueda = (string)($detalleServicio['descripcion'] ?? ($detalleServicio['descripcion_snapshot'] ?? ''));
                                 $examen_id = self::resolverExamenLaboratorioIdPorDescripcion($conn, $descBusqueda);
                                 if ($examen_id > 0) {
@@ -2013,6 +2095,13 @@ class CobroModule
                                     $stmt_tarifa_tipo->bind_param("si", $detalleServicioKey, $medico_id_buscar);
                                     $stmt_tarifa_tipo->execute();
                                     $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+
+                                    if (!$tarifa) {
+                                        $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
+                                        $stmt_tarifa_tipo->bind_param("s", $detalleServicioKey);
+                                        $stmt_tarifa_tipo->execute();
+                                        $tarifa = $stmt_tarifa_tipo->get_result()->fetch_assoc();
+                                    }
                                 } else {
                                     $stmt_tarifa_tipo = $conn->prepare("SELECT * FROM tarifas WHERE servicio_tipo = ? AND activo = 1 LIMIT 1");
                                     $stmt_tarifa_tipo->bind_param("s", $detalleServicioKey);
