@@ -124,14 +124,6 @@ export default function SidebarAdmin({ onClose }) {
           <span>Médicos</span>
         </Link>
         <Link
-          to="/continuidad-clinica"
-          className="py-2.5 px-3 rounded-lg text-sky-700 hover:bg-gradient-to-r hover:from-sky-50 hover:to-cyan-100 font-medium flex items-center gap-3 transition-all duration-300"
-          onClick={onClose}
-        >
-          <Icon iconName="SwitcherStartEnd" className="text-lg text-sky-600" />
-          <span>Continuidad Médica</span>
-        </Link>
-        <Link
           to="/panel-enfermero"
           className="py-2.5 px-3 rounded-lg text-rose-700 hover:bg-gradient-to-r hover:from-rose-50 hover:to-pink-100 font-medium flex items-center gap-3 transition-all duration-300"
           onClick={onClose}

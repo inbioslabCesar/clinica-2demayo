@@ -793,26 +793,19 @@ function HistoriaClinicaPage() {
   }, [consultaId]);
 
   useEffect(() => {
-    const consultaIdActual = Number(consultaId || 0);
-    if (consultaIdActual <= 0) {
+    const hcOrigenId = Number(consultaActual?.hc_origen_id || 0);
+    if (hcOrigenId <= 0) {
       setHistoriasPrevias([]);
       setIndiceHistoriaPrevia(0);
       setHcAnterior(null);
       setHcAnteriorError("");
       setDrawerHistorialAbierto(false);
       setMostrarHcAnterior(false);
-      setHcAnteriorLoading(false);
       return;
     }
 
-    setHistoriasPrevias([]);
-    setIndiceHistoriaPrevia(0);
-    setHcAnterior(null);
-    setHcAnteriorError("");
-    setDrawerHistorialAbierto(false);
-    setMostrarHcAnterior(false);
-
     let cancelled = false;
+    setHcAnteriorError("");
 
     const cacheKey = `hc_previas_chain_v1_${consultaId}`;
     let cacheHit = false;
@@ -821,8 +814,8 @@ function HistoriaClinicaPage() {
       if (raw) {
         const parsed = JSON.parse(raw);
         const ageMs = Date.now() - Number(parsed?.timestamp || 0);
-        const sameConsulta = Number(parsed?.consulta_id || 0) === consultaIdActual;
-        if (sameConsulta && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
+        const sameOrigen = Number(parsed?.hc_origen_id || 0) === hcOrigenId;
+        if (sameOrigen && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
           const chain = parsed.chain;
           setHistoriasPrevias(chain);
           setIndiceHistoriaPrevia(0);
@@ -854,7 +847,7 @@ function HistoriaClinicaPage() {
           try {
             sessionStorage.setItem(cacheKey, JSON.stringify({
               timestamp: Date.now(),
-              consulta_id: consultaIdActual,
+              hc_origen_id: hcOrigenId,
               chain,
             }));
           } catch {
@@ -885,7 +878,7 @@ function HistoriaClinicaPage() {
     return () => {
       cancelled = true;
     };
-  }, [consultaId]);
+  }, [consultaActual?.hc_origen_id, consultaId]);
 
   useEffect(() => {
     if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) {
@@ -968,13 +961,13 @@ function HistoriaClinicaPage() {
   const totalHistoriasPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
   useEffect(() => {
     const handleOpenHistoryDrawer = () => {
-      if (totalHistoriasPrevias <= 0 || hcAnteriorLoading || hcAnteriorError) return;
+      if (Number(consultaActual?.hc_origen_id || 0) <= 0) return;
       setDrawerHistorialAbierto(true);
     };
 
     window.addEventListener('hc-assistant-open-history-drawer', handleOpenHistoryDrawer);
     return () => window.removeEventListener('hc-assistant-open-history-drawer', handleOpenHistoryDrawer);
-  }, [totalHistoriasPrevias, hcAnteriorLoading, hcAnteriorError]);
+  }, [consultaActual?.hc_origen_id]);
 
   useEffect(() => {
     if (restoreHistorialRef.current) return;
@@ -2411,7 +2404,7 @@ function HistoriaClinicaPage() {
       )}
 
       {/* Drawer lateral de historial de HC previas */}
-      {totalHistoriasPrevias > 0 && (
+      {Number(consultaActual?.hc_origen_id || 0) > 0 && (
         <>
           <div
             className={`fixed inset-0 z-40 bg-slate-900/40 transition-opacity duration-300 ${drawerHistorialAbierto ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}

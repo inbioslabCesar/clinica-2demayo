@@ -1615,12 +1615,7 @@ function hc_resolver_parent_canonico($conn, $hcId, $consultaId) {
 
     $pacienteId  = (int)($consulta['paciente_id'] ?? 0);
     $hcOrigenId  = (int)($consulta['hc_origen_id'] ?? 0);
-    $medicoIdActual = (int)($consulta['medico_id'] ?? 0);
     $fechaActual = (string)($consulta['fecha'] ?? '');
-    $horaActual = (string)($consulta['hora'] ?? '00:00:00');
-    if ($horaActual === '') {
-        $horaActual = '00:00:00';
-    }
 
     // 2. Intentar vincular con agenda_contrato (evento ejecutado en esta consulta)
     $contratoPacienteId  = 0;
@@ -1699,55 +1694,6 @@ function hc_resolver_parent_canonico($conn, $hcId, $consultaId) {
         }
     }
 
-    // 3c. Fallback clinico para retornos sin "proxima cita":
-    //     enlazar con la ultima HC previa del mismo paciente (priorizando mismo medico).
-    if ($parentHcId <= 0 && $pacienteId > 0 && $fechaActual !== '') {
-        $stmtFallback = $conn->prepare(
-            'SELECT h.id
-             FROM historia_clinica h
-             INNER JOIN consultas c ON c.id = h.consulta_id
-             WHERE c.paciente_id = ?
-               AND h.id != ?
-               AND h.chain_status != ?
-               AND (
-                    c.fecha < ?
-                    OR (
-                        c.fecha = ?
-                        AND (
-                            TIME(COALESCE(c.hora, "00:00:00")) < TIME(?)
-                            OR (TIME(COALESCE(c.hora, "00:00:00")) = TIME(?) AND h.id < ?)
-                        )
-                    )
-               )
-             ORDER BY CASE WHEN c.medico_id = ? THEN 0 ELSE 1 END,
-                      c.fecha DESC,
-                      TIME(COALESCE(c.hora, "00:00:00")) DESC,
-                      h.id DESC
-             LIMIT 1'
-        );
-        if ($stmtFallback) {
-            $anulada = 'anulada';
-            $stmtFallback->bind_param(
-                'iissssiii',
-                $pacienteId,
-                $hcId,
-                $anulada,
-                $fechaActual,
-                $fechaActual,
-                $horaActual,
-                $horaActual,
-                $hcId,
-                $medicoIdActual
-            );
-            $stmtFallback->execute();
-            $rFallback = $stmtFallback->get_result()->fetch_assoc();
-            $stmtFallback->close();
-            if ($rFallback) {
-                $parentHcId = (int)($rFallback['id'] ?? 0);
-            }
-        }
-    }
-
     // 4. Resolver root y depth a partir del parent
     $rootHcId   = $hcId;    // por defecto es raiz de si mismo
     $chainDepth = 0;
@@ -1814,142 +1760,6 @@ function hc_actualizar_cadena_hc($conn, $hcId, $consultaId) {
     $stmt->bind_param('iiiiii', $parentId, $rootId, $depth, $contratoId, $agendaId, $hcId);
     $stmt->execute();
     $stmt->close();
-
-    // Mantener consistencia canónica: cuando se resolvió parent en la cadena,
-    // persistir hc_origen_id de la consulta actual si aún no está seteado.
-    if ((int)$consultaId > 0 && (int)$parentId > 0) {
-        $stmtOrigen = $conn->prepare(
-            'UPDATE consultas
-             SET hc_origen_id = ?
-             WHERE id = ?
-               AND (hc_origen_id IS NULL OR hc_origen_id = 0)
-             LIMIT 1'
-        );
-        if ($stmtOrigen) {
-            $parentRef = (int)$parentId;
-            $consultaRef = (int)$consultaId;
-            $stmtOrigen->bind_param('ii', $parentRef, $consultaRef);
-            $stmtOrigen->execute();
-            $stmtOrigen->close();
-        }
-    }
-}
-
-/**
- * Reancla la cita futura mas cercana creada como hc_proxima para evitar
- * bifurcaciones cuando aparece una consulta intermedia no programada.
- *
- * Reglas de seguridad:
- * - mismo paciente y mismo medico
- * - solo consultas futuras con origen_creacion=hc_proxima
- * - solo si la consulta futura ya apuntaba a algun ancestro del nodo actual
- *   (compat: acepta ancestros por hc_id o consulta_id legacy)
- */
-function hc_reanclar_proxima_cita_futura($conn, $hcIdActual, $consultaIdActual) {
-    $hcIdActual = (int)$hcIdActual;
-    $consultaIdActual = (int)$consultaIdActual;
-    if ($hcIdActual <= 0 || $consultaIdActual <= 0) return;
-
-    $stmtSelf = $conn->prepare(
-        'SELECT id, paciente_id, medico_id, fecha, hora
-         FROM consultas
-         WHERE id = ?
-         LIMIT 1'
-    );
-    if (!$stmtSelf) return;
-    $stmtSelf->bind_param('i', $consultaIdActual);
-    $stmtSelf->execute();
-    $self = $stmtSelf->get_result()->fetch_assoc();
-    $stmtSelf->close();
-    if (!$self) return;
-
-    $pacienteId = (int)($self['paciente_id'] ?? 0);
-    $medicoId = (int)($self['medico_id'] ?? 0);
-    $fechaSelf = (string)($self['fecha'] ?? '');
-    $horaSelf = trim((string)($self['hora'] ?? '00:00:00'));
-    if ($horaSelf === '') $horaSelf = '00:00:00';
-    if ($pacienteId <= 0 || $medicoId <= 0 || $fechaSelf === '') return;
-
-    // Construir set de ancestros para validar que el reanclaje es coherente.
-    $allowedHcRefs = [$hcIdActual => true];
-    $allowedConsultaRefs = [];
-
-    $cursorHcId = $hcIdActual;
-    $guard = 0;
-    while ($cursorHcId > 0 && $guard < 40) {
-        $guard++;
-        $stmtAnc = $conn->prepare(
-            'SELECT h.id, h.hc_parent_id, h.consulta_id, c.paciente_id
-             FROM historia_clinica h
-             INNER JOIN consultas c ON c.id = h.consulta_id
-             WHERE h.id = ?
-             LIMIT 1'
-        );
-        if (!$stmtAnc) break;
-        $stmtAnc->bind_param('i', $cursorHcId);
-        $stmtAnc->execute();
-        $anc = $stmtAnc->get_result()->fetch_assoc();
-        $stmtAnc->close();
-        if (!$anc) break;
-
-        if ((int)($anc['paciente_id'] ?? 0) !== $pacienteId) break;
-        $ancHcId = (int)($anc['id'] ?? 0);
-        $ancConsultaId = (int)($anc['consulta_id'] ?? 0);
-        if ($ancHcId > 0) $allowedHcRefs[$ancHcId] = true;
-        if ($ancConsultaId > 0) $allowedConsultaRefs[$ancConsultaId] = true;
-
-        $nextParent = (int)($anc['hc_parent_id'] ?? 0);
-        if ($nextParent <= 0 || isset($allowedHcRefs[$nextParent])) break;
-        $cursorHcId = $nextParent;
-    }
-
-    $stmtFuture = $conn->prepare(
-        'SELECT id, hc_origen_id
-         FROM consultas
-         WHERE paciente_id = ?
-           AND medico_id = ?
-           AND id <> ?
-           AND LOWER(TRIM(COALESCE(origen_creacion, ""))) = "hc_proxima"
-           AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "cancelado")
-           AND (
-                fecha > ?
-                OR (fecha = ? AND TIME(COALESCE(hora, "00:00:00")) > TIME(?))
-           )
-         ORDER BY fecha ASC, TIME(COALESCE(hora, "00:00:00")) ASC, id ASC
-         LIMIT 6'
-    );
-    if (!$stmtFuture) return;
-    $stmtFuture->bind_param('iiisss', $pacienteId, $medicoId, $consultaIdActual, $fechaSelf, $fechaSelf, $horaSelf);
-    $stmtFuture->execute();
-    $resFuture = $stmtFuture->get_result();
-
-    $consultaObjetivoId = 0;
-    while ($rowF = $resFuture ? $resFuture->fetch_assoc() : null) {
-        $futureId = (int)($rowF['id'] ?? 0);
-        $futureRef = (int)($rowF['hc_origen_id'] ?? 0);
-        if ($futureId <= 0 || $futureRef <= 0) {
-            continue;
-        }
-        if (isset($allowedHcRefs[$futureRef]) || isset($allowedConsultaRefs[$futureRef])) {
-            $consultaObjetivoId = $futureId;
-            break;
-        }
-    }
-    $stmtFuture->close();
-
-    if ($consultaObjetivoId <= 0) return;
-
-    $stmtUpd = $conn->prepare(
-        'UPDATE consultas
-         SET hc_origen_id = ?
-         WHERE id = ?
-           AND (hc_origen_id IS NULL OR hc_origen_id <> ?)
-         LIMIT 1'
-    );
-    if (!$stmtUpd) return;
-    $stmtUpd->bind_param('iii', $hcIdActual, $consultaObjetivoId, $hcIdActual);
-    $stmtUpd->execute();
-    $stmtUpd->close();
 }
 
 /**
@@ -2682,13 +2492,6 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
     $baseUrl = hc_base_url();
     $consultaActual = hc_get_consulta_meta($conn, $consultaIdActual);
     if (!$consultaActual) return [];
-    $pacienteActualId = (int)($consultaActual['paciente_id'] ?? 0);
-    $medicoActualId = (int)($consultaActual['medico_id'] ?? 0);
-    $fechaActual = (string)($consultaActual['fecha'] ?? '');
-    $horaActual = trim((string)($consultaActual['hora'] ?? '00:00:00'));
-    if ($horaActual === '') {
-        $horaActual = '00:00:00';
-    }
 
     // Obtener la HC del nodo actual para intentar usar hc_parent_id
     $stmtSelf = $conn->prepare(
@@ -2709,39 +2512,6 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
     $historial = [];
     $visited   = [];
     $depth     = 0;
-    $legacyStartRef = (int)($consultaActual['hc_origen_id'] ?? 0);
-
-    // Fallback pre-guardado: si la consulta actual todavia no tiene hc_origen_id,
-    // buscar la ultima HC previa del mismo paciente para habilitar contexto clinico.
-    if (!$useNewChain && $legacyStartRef <= 0 && $pacienteActualId > 0 && $fechaActual !== '') {
-        $stmtPrev = $conn->prepare(
-            'SELECT h.id
-             FROM historia_clinica h
-             INNER JOIN consultas c ON c.id = h.consulta_id
-             WHERE c.paciente_id = ?
-               AND h.chain_status != ?
-               AND (
-                    c.fecha < ?
-                    OR (
-                        c.fecha = ?
-                        AND TIME(COALESCE(c.hora, "00:00:00")) < TIME(?)
-                    )
-               )
-             ORDER BY CASE WHEN c.medico_id = ? THEN 0 ELSE 1 END,
-                      c.fecha DESC,
-                      TIME(COALESCE(c.hora, "00:00:00")) DESC,
-                      h.id DESC
-             LIMIT 1'
-        );
-        if ($stmtPrev) {
-            $anulada = 'anulada';
-            $stmtPrev->bind_param('issssi', $pacienteActualId, $anulada, $fechaActual, $fechaActual, $horaActual, $medicoActualId);
-            $stmtPrev->execute();
-            $rowPrev = $stmtPrev->get_result()->fetch_assoc();
-            $stmtPrev->close();
-            $legacyStartRef = (int)($rowPrev['id'] ?? 0);
-        }
-    }
 
     if ($useNewChain) {
         // Caminar hacia atras por hc_parent_id
@@ -2771,10 +2541,6 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
 
             [$templateMeta, $templateResolution] = hc_resolve_template_for_hc($conn, $consultaId, $datos);
             $consultaMeta = hc_get_consulta_meta($conn, $consultaId);
-            if (!$consultaMeta || (int)($consultaMeta['paciente_id'] ?? 0) !== $pacienteActualId) {
-                // Seguridad: nunca mezclar nodos de otro paciente aunque exista referencia cruzada.
-                break;
-            }
             $adjuntos     = hc_get_adjuntos_por_consulta($conn, $consultaId, $baseUrl);
 
             $historial[] = [
@@ -2800,7 +2566,7 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
         }
     } else {
         // Estrategia 2 (legacy): caminar por hc_origen_id
-        $currentRef = $legacyStartRef;
+        $currentRef = (int)($consultaActual['hc_origen_id'] ?? 0);
 
         while ($currentRef > 0 && $depth < $maxDepth) {
             if (isset($visited[$currentRef])) break;
@@ -2816,10 +2582,6 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
 
             [$templateMeta, $templateResolution] = hc_resolve_template_for_hc($conn, $consultaId, $datos);
             $consultaMeta = hc_get_consulta_meta($conn, $consultaId);
-            if (!$consultaMeta || (int)($consultaMeta['paciente_id'] ?? 0) !== $pacienteActualId) {
-                // Seguridad: cortar si el enlace legado apunta fuera del paciente actual.
-                break;
-            }
             $adjuntos     = hc_get_adjuntos_por_consulta($conn, $consultaId, $baseUrl);
 
             $historial[] = [
@@ -2844,58 +2606,6 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
             if ($nextRef > 0 && $nextRef === $currentRef && $hcId > 0 && $hcId !== $currentRef) {
                 $nextRef = $hcId;
             }
-
-            // Fallback robusto legacy: si el nodo no tiene hc_origen_id, buscar la HC
-            // inmediatamente anterior del MISMO paciente para no cortar la continuidad.
-            if ($nextRef <= 0) {
-                $fechaNodo = (string)($consultaMeta['fecha'] ?? '');
-                $horaNodo = trim((string)($consultaMeta['hora'] ?? '00:00:00'));
-                if ($horaNodo === '') {
-                    $horaNodo = '00:00:00';
-                }
-                $medicoNodo = (int)($consultaMeta['medico_id'] ?? 0);
-
-                if ($fechaNodo !== '') {
-                    $stmtPrevNode = $conn->prepare(
-                        'SELECT h2.id
-                         FROM historia_clinica h2
-                         INNER JOIN consultas c2 ON c2.id = h2.consulta_id
-                         WHERE c2.paciente_id = ?
-                           AND h2.chain_status != ?
-                           AND h2.id <> ?
-                           AND (
-                                c2.fecha < ?
-                                OR (
-                                    c2.fecha = ?
-                                    AND (
-                                        TIME(COALESCE(c2.hora, "00:00:00")) < TIME(?)
-                                        OR (TIME(COALESCE(c2.hora, "00:00:00")) = TIME(?) AND h2.id < ?)
-                                    )
-                                )
-                           )
-                         ORDER BY CASE WHEN c2.medico_id = ? THEN 0 ELSE 1 END,
-                                  c2.fecha DESC,
-                                  TIME(COALESCE(c2.hora, "00:00:00")) DESC,
-                                  h2.id DESC
-                         LIMIT 5'
-                    );
-                    if ($stmtPrevNode) {
-                        $anulada = 'anulada';
-                        $stmtPrevNode->bind_param('isissssii', $pacienteActualId, $anulada, $hcId, $fechaNodo, $fechaNodo, $horaNodo, $horaNodo, $hcId, $medicoNodo);
-                        $stmtPrevNode->execute();
-                        $resPrevNode = $stmtPrevNode->get_result();
-                        while ($rowPrevNode = $resPrevNode ? $resPrevNode->fetch_assoc() : null) {
-                            $candidate = (int)($rowPrevNode['id'] ?? 0);
-                            if ($candidate > 0 && !isset($visited[$candidate])) {
-                                $nextRef = $candidate;
-                                break;
-                            }
-                        }
-                        $stmtPrevNode->close();
-                    }
-                }
-            }
-
             $currentRef = $nextRef;
             $depth++;
         }
@@ -3335,10 +3045,6 @@ switch ($method) {
 
         // Encadenar HC: resolver parent canonico y persistir campos de cadena
         hc_actualizar_cadena_hc($conn, $hcActualId, (int)$consulta_id);
-
-        // Reanclar proxima cita futura si existe una consulta intermedia, para
-        // preservar una linea clinica secuencial (A -> B -> C).
-        hc_reanclar_proxima_cita_futura($conn, $hcActualId, (int)$consulta_id);
 
         // Retro-vincular: si esta consulta pertenece a un contrato, buscar el evento
         // inmediatamente siguiente y actualizar su hc_origen_id al consulta_id actual.

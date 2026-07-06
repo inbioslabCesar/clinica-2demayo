@@ -103,9 +103,6 @@ const CotizarProcedimientosPage = lazy(() =>
 const CotizarPaquetesPerfilesPage = lazy(() =>
   import("./pages/CotizarPaquetesPerfilesPage.jsx")
 );
-const CotizarServicioPage = lazy(() =>
-  import("./pages/CotizarServicioPage.jsx")
-);
 const ConsumoPacientePage = lazy(() =>
   import("./pages/ConsumoPacientePage.jsx")
 );
@@ -130,12 +127,6 @@ const OrdenesImagenPacientePage = lazy(() => import("./pages/OrdenesImagenPacien
 const VisorImagenPage = lazy(() => import("./pages/VisorImagenPage.jsx"));
 const SolicitudImagenPage = lazy(() => import("./pages/SolicitudImagenPage.jsx"));
 const ContratosPage = lazy(() => import("./pages/ContratosPage.jsx"));
-const ContinuidadClinicaPage = lazy(() =>
-  import("./pages/ContinuidadClinicaPage.jsx")
-);
-const SuplenciaPacientesPage = lazy(() =>
-  import("./pages/SuplenciaPacientesPage.jsx")
-);
 
 // Reinicia el ErrorBoundary en cada cambio de ruta para que errores de una
 // página no persistan al navegar a otra (ej. presionar el botón Back).
@@ -872,17 +863,6 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
-                  <Route
-                    path="/suplencia-pacientes"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["medico"]}
-                      >
-                        <SuplenciaPacientesPage />
-                      </ProtectedRoute>
-                    }
-                  />
                 </>
               )}
               {(usuario?.rol === "químico" || usuario?.rol === "quimico" || usuario?.rol === "recepcionista" || usuario?.rol === "administrador") && (
@@ -954,17 +934,6 @@ function App() {
                         rolesPermitidos={["administrador"]}
                       >
                         <DashboardEstadisticasAdmin />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/continuidad-clinica"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["administrador"]}
-                      >
-                        <ContinuidadClinicaPage />
                       </ProtectedRoute>
                     }
                   />
@@ -1270,18 +1239,6 @@ function App() {
                         permisosRequeridos={["ver_cotizaciones"]}
                       >
                         <CotizarPaquetesPerfilesPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/cotizar-servicio/:pacienteId/:servicioTipo"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["administrador", "recepcionista"]}
-                        permisosRequeridos={["ver_cotizaciones"]}
-                      >
-                        <CotizarServicioPage />
                       </ProtectedRoute>
                     }
                   />
