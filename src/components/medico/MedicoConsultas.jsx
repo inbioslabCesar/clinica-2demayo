@@ -17,7 +17,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
 
-  const cargarConsultas = async () => {
+  const cargarConsultas = async (signal) => {
     if (!medicoId) return;
     setLoading(true);
     setMsg("");
@@ -30,7 +30,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       if (fechaDesde) params.set('fecha_desde', fechaDesde);
       if (fechaHasta) params.set('fecha_hasta', fechaHasta);
 
-      const response = await authFetch(`api_consultas.php?${params.toString()}`);
+      const response = await authFetch(`api_consultas.php?${params.toString()}`, { signal });
       const data = await response.json();
 
       if (!data?.success) {
@@ -50,6 +50,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
         setPage(totalPagesServidor);
       }
     } catch (error) {
+      if (error?.name === "AbortError") {
+        return;
+      }
       console.error("Error cargando consultas:", error);
       setConsultas([]);
       setStats({ total: 0, pendientes: 0, emergencias: 0 });
@@ -60,7 +63,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   };
 
   useEffect(() => {
-    cargarConsultas();
+    const controller = new AbortController();
+    cargarConsultas(controller.signal);
+    return () => {
+      controller.abort();
+    };
   }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
   const actualizarEstado = async (id, estado) => {

@@ -230,29 +230,25 @@ function Login({ onLogin }) {
     const esEmail = usuario.includes("@") && usuario.includes(".");
     try {
       if (esEmail) {
-        // Lanzar médico y usuario en paralelo para evitar doble RTT secuencial.
-        const fetchMedico = authFetch("api_login_medico.php", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest"
-          },
-          body: JSON.stringify({ email: usuario, password }),
-        }).then(r => r.json()).catch(() => ({}));
+        // Flujo secuencial para evitar condiciones de carrera de sesión entre endpoints.
+        let resMedico, dataMedico;
+        try {
+          resMedico = await authFetch("api_login_medico.php", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            body: JSON.stringify({ email: usuario, password }),
+          });
+          dataMedico = await resMedico.json();
+        } catch {
+          resMedico = { ok: false };
+          dataMedico = {};
+        }
 
-        const fetchUsuario = authFetch("api_login.php", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest"
-          },
-          body: JSON.stringify({ usuario, password }),
-        }).then(r => r.json()).catch(() => ({}));
-
-        const [dataMedico, dataUsuario] = await Promise.all([fetchMedico, fetchUsuario]);
-
-        // Prioridad médico → usuario (mantiene la lógica previa)
-        if (dataMedico?.success) {
+        // Prioridad médico.
+        if (resMedico.ok && dataMedico?.success) {
           const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
           sessionStorage.removeItem('usuario');
           sessionStorage.removeItem('user_role');
@@ -261,7 +257,25 @@ function Login({ onLogin }) {
           navigate("/");
           return;
         }
-        if (dataUsuario?.success) {
+
+        // Fallback usuario normal si no autentica como médico.
+        let resUsuario, dataUsuario;
+        try {
+          resUsuario = await authFetch("api_login.php", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            body: JSON.stringify({ usuario, password }),
+          });
+          dataUsuario = await resUsuario.json();
+        } catch {
+          resUsuario = { ok: false };
+          dataUsuario = {};
+        }
+
+        if (resUsuario.ok && dataUsuario?.success) {
           const usuarioNormalizado = {
             ...dataUsuario.usuario,
             permisos: normalizePermisos(dataUsuario?.usuario?.permisos || []),

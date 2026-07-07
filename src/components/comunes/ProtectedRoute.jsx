@@ -10,19 +10,32 @@ const homeByRole = {
   laboratorista: "/panel-laboratorio"
 };
 
+function normalizeRole(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export default function ProtectedRoute({ usuario, rolesPermitidos, permisosRequeridos = [], children }) {
   if (!usuario) {
     return <Navigate to="/" replace />;
   }
-  if (rolesPermitidos && !rolesPermitidos.includes(usuario.rol)) {
+  const rolUsuario = normalizeRole(usuario.rol);
+  const rolesNormalizados = Array.isArray(rolesPermitidos)
+    ? rolesPermitidos.map((rol) => normalizeRole(rol))
+    : [];
+
+  if (rolesNormalizados.length > 0 && !rolesNormalizados.includes(rolUsuario)) {
     // Redirigir a la página principal de su rol
-    const home = homeByRole[usuario.rol] || "/";
+    const home = homeByRole[rolUsuario] || "/";
     return <Navigate to={home} replace />;
   }
   if (Array.isArray(permisosRequeridos) && permisosRequeridos.length > 0) {
     const tienePermiso = permisosRequeridos.some((permiso) => hasPermiso(usuario, permiso));
     if (!tienePermiso) {
-      const home = homeByRole[usuario.rol] || "/";
+      const home = homeByRole[rolUsuario] || "/";
       return <Navigate to={home} replace />;
     }
   }

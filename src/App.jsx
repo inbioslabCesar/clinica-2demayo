@@ -460,8 +460,14 @@ function CajaAperturaGuard({ usuario }) {
 
 function hydrateUsuario(rawUsuario) {
   if (!rawUsuario || typeof rawUsuario !== "object") return null;
+  const rolNormalizado = String(rawUsuario.rol || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
   return {
     ...rawUsuario,
+    rol: rolNormalizado,
     permisos: normalizePermisos(rawUsuario.permisos || []),
   };
 }
