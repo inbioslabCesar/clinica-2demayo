@@ -79,7 +79,7 @@ function PagosHonorariosMedicos() {
 
   const cargarMovimientos = async () => {
     try {
-      let url = `${BASE_URL}api_movimientos_honorarios.php?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}`;
+      let url = `api_movimientos_honorarios.php?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}`;
       
       if (filtroMedico !== 'todos') {
         url += `&medico_id=${filtroMedico}`;

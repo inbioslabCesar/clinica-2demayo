@@ -194,7 +194,9 @@ export default function PlantillasImagenologiaPage() {
         await cargarLista();
         if (form?.id === p.id) setForm((f) => ({ ...f, es_activa: p.es_activa ? 0 : 1 }));
       }
-    } catch {}
+    } catch {
+      // No-op: el toggle es best-effort y no debe interrumpir el flujo UI.
+    }
   };
 
   // ─ Builder helpers ──────────────────────────────────────────────────────────

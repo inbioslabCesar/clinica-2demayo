@@ -160,7 +160,7 @@ export default function ResultadosLaboratorioPage() {
       s = s.replace(/^(?:N\s*:\s*|Normal\s*:\s*)/i, '');
       s = s.replace(/Rango(?:\s*de)?\s*referencia\s*:?/i, '');
 
-      const mRango = s.match(/(-?\d[\d\.,]*)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d[\d\.,]*)/i);
+      const mRango = s.match(/(-?\d[\d.,]*)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d[\d.,]*)/i);
       if (mRango) {
         const minN = normalizeNumber(mRango[1]);
         const maxN = normalizeNumber(mRango[2]);
@@ -174,8 +174,8 @@ export default function ResultadosLaboratorioPage() {
         return { min, max };
       }
 
-      const mMin = s.match(/(?:>=|≥|>|desde|mayor\s*a?)\s*(-?\d[\d\.,]*)/i);
-      const mMax = s.match(/(?:<=|≤|<|hasta|menor\s*a?)\s*(-?\d[\d\.,]*)/i);
+      const mMin = s.match(/(?:>=|≥|>|desde|mayor\s*a?)\s*(-?\d[\d.,]*)/i);
+      const mMax = s.match(/(?:<=|≤|<|hasta|menor\s*a?)\s*(-?\d[\d.,]*)/i);
       const min = mMin ? normalizeNumber(mMin[1]) : null;
       const max = mMax ? normalizeNumber(mMax[1]) : null;
       let finalMin = Number.isFinite(min) ? min : null;

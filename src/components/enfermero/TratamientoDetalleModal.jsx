@@ -20,7 +20,7 @@ function EstadoBadge({ estado }) {
 }
 
 export default function TratamientoDetalleModal({ tratamiento, onClose, onCambiarEstado, onRefrescarLista }) {
-  const [notas, setNotas]         = useState(tratamiento.notas_enfermeria ?? "");
+  const [notas, setNotas]         = useState(tratamiento?.notas_enfermeria ?? "");
   const [guardando, setGuardando] = useState(false);
   const [errorMsg, setErrorMsg]   = useState("");
   const [detalle, setDetalle] = useState(null);
@@ -29,8 +29,7 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
   const [detalleRefreshing, setDetalleRefreshing] = useState(false);
   const scrollRef = useRef(null);
   const detalleRef = useRef(null);
-
-  if (!tratamiento) return null;
+  const tratamientoId = Number(tratamiento?.id || 0);
 
   const receta    = Array.isArray(tratamiento.receta_snapshot) ? tratamiento.receta_snapshot : [];
   const texto     = tratamiento.tratamiento_texto ?? "";
@@ -63,6 +62,13 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
   }, [detalle]);
 
   const cargarDetalle = useCallback(async ({ silent = false } = {}) => {
+    if (tratamientoId <= 0) {
+      setDetalle(null);
+      setDetalleLoading(false);
+      setDetalleRefreshing(false);
+      return;
+    }
+
     const hadDetail = !!detalleRef.current;
     const previousScrollTop = scrollRef.current?.scrollTop ?? 0;
 
@@ -74,7 +80,7 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
     }
 
     try {
-      const res = await authFetch(`api_tratamientos_ejecucion.php?tratamiento_id=${tratamiento.id}`);
+      const res = await authFetch(`api_tratamientos_ejecucion.php?tratamiento_id=${tratamientoId}`);
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || "No se pudo cargar detalle multidia");
@@ -99,17 +105,18 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
       setDetalleLoading(false);
       setDetalleRefreshing(false);
     }
-  }, [tratamiento.id]);
+  }, [tratamientoId]);
 
   useEffect(() => {
     cargarDetalle();
   }, [cargarDetalle]);
 
   const handleAccion = async (nuevoEstado) => {
+    if (tratamientoId <= 0) return;
     setGuardando(true);
     setErrorMsg("");
     try {
-      await onCambiarEstado(tratamiento.id, nuevoEstado, notas);
+      await onCambiarEstado(tratamientoId, nuevoEstado, notas);
       if (typeof onRefrescarLista === "function") {
         onRefrescarLista();
       }
@@ -153,6 +160,7 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
   };
 
   const iniciarMedicamento = async (tratamientoItemId) => {
+    if (tratamientoId <= 0) return;
     setGuardando(true);
     setErrorMsg("");
     try {
@@ -161,7 +169,7 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "iniciar_item",
-          tratamiento_id: tratamiento.id,
+          tratamiento_id: tratamientoId,
           tratamiento_item_id: tratamientoItemId,
         }),
       });
@@ -211,6 +219,8 @@ export default function TratamientoDetalleModal({ tratamiento, onClose, onCambia
     }
     return map;
   }, [detalleDosis]);
+
+  if (!tratamiento) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

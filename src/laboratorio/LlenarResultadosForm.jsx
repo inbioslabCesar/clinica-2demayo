@@ -530,7 +530,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     s = s.replace(/^(?:N\s*:\s*|Normal\s*:\s*)/i, '');
     s = s.replace(/Rango(?:\s*de)?\s*referencia\s*:?/i, '');
     // patrón de rango "x - y" con distintos separadores
-    const mRango = s.match(/(-?\d[\d\.,]*)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d[\d\.,]*)/i);
+    const mRango = s.match(/(-?\d[\d.,]*)\s*(?:-|–|—|a|hasta|entre|y)\s*(-?\d[\d.,]*)/i);
     if (mRango) {
       const min = normalizeNumber(mRango[1]);
       const max = normalizeNumber(mRango[2]);
@@ -540,8 +540,8 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       };
     }
     // límites unilaterales
-    const mMin = s.match(/(?:>=|≥|>|desde|mayor\s*a?)\s*(-?\d[\d\.,]*)/i);
-    const mMax = s.match(/(?:<=|≤|<|hasta|menor\s*a?)\s*(-?\d[\d\.,]*)/i);
+    const mMin = s.match(/(?:>=|≥|>|desde|mayor\s*a?)\s*(-?\d[\d.,]*)/i);
+    const mMax = s.match(/(?:<=|≤|<|hasta|menor\s*a?)\s*(-?\d[\d.,]*)/i);
     const min = mMin ? normalizeNumber(mMin[1]) : null;
     const max = mMax ? normalizeNumber(mMax[1]) : null;
     let finalMin = Number.isFinite(min) ? min : null;

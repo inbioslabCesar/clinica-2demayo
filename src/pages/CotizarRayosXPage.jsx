@@ -439,7 +439,7 @@ export default function CotizarRayosXPage() {
     }
 
     const sp = new URLSearchParams(location.search);
-    const isEditingCotizacion = Boolean(sp.get('cotizacion_id')) && !Boolean(sp.get('cobro_id'));
+    const isEditingCotizacion = !!sp.get('cotizacion_id') && !sp.get('cobro_id');
     const detallesBase = construirDetallesSeleccionados();
 
     const yaExisteEnCarrito = (detalle) => {

@@ -12,7 +12,7 @@ function PacienteConsumosPage({ pacienteId }) {
   useEffect(() => {
     if (!pacienteId) return;
     setLoading(true);
-    let url = `${BASE_URL}api_consumos_paciente.php?id=${pacienteId}`;
+    let url = `api_consumos_paciente.php?id=${pacienteId}`;
     if (fechaInicio) url += `&fecha_inicio=${fechaInicio}`;
     if (fechaFin) url += `&fecha_fin=${fechaFin}`;
     if (area) url += `&area=${encodeURIComponent(area)}`;

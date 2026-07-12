@@ -55,7 +55,7 @@ export default function PagoHonorariosMedicosPage() {
   const fetchHonorarios = async () => {
     setLoading(true);
     try {
-      let url = `${BASE_URL}api_movimientos_honorarios.php?estado_pago=${estadoFiltro}`;
+      let url = `api_movimientos_honorarios.php?estado_pago=${estadoFiltro}`;
       if (tipoConsultaFiltro) {
         url += `&tipo_consulta=${tipoConsultaFiltro}`;
       }

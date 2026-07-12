@@ -1,16 +1,19 @@
+/* eslint-env node */
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const apiProxyTarget = process.env.CODESPACES
+const env = globalThis.process?.env ?? {}
+
+const apiProxyTarget = env.CODESPACES
   ? 'http://127.0.0.1:8000'
   : 'http://127.0.0.1/clinica-2demayo'
 
-const sistemaBuildBase = (process.env.VITE_SISTEMA_BASE || '/sistema/').replace(/\/+$/, '') + '/'
+const sistemaBuildBase = (env.VITE_SISTEMA_BASE || '/sistema/').replace(/\/+$/, '') + '/'
 
 export default defineConfig({
   plugins: [react()],
   // En produccion sistema se sirve bajo /sistema/, usar base absoluta evita pantallas en blanco al refrescar rutas profundas.
-  base: process.env.NODE_ENV === 'production' ? sistemaBuildBase : '/',
+  base: env.NODE_ENV === 'production' ? sistemaBuildBase : '/',
   cacheDir: 'node_modules/.vite-sistema',
   server: {
     host: '127.0.0.1',

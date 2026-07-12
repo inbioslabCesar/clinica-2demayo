@@ -127,7 +127,7 @@ export default function CotizarPaquetesPerfilesPage() {
 
   const sp = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const cotizacionId = Number(sp.get("cotizacion_id") || 0);
-  const isEditingCotizacion = cotizacionId > 0 && !Boolean(sp.get("cobro_id"));
+  const isEditingCotizacion = cotizacionId > 0 && !sp.get("cobro_id");
 
   const getLimaDate = () => {
     const now = new Date();

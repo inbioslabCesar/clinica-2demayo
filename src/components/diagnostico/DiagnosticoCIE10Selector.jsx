@@ -68,8 +68,9 @@ export default function DiagnosticoCIE10Selector({ diagnosticos, setDiagnosticos
         // Eliminado log de error al buscar códigos CIE10
         setSugerencias([]);
       } finally {
-        if (requestId !== requestIdRef.current) return;
-        setCargando(false);
+        if (requestId === requestIdRef.current) {
+          setCargando(false);
+        }
       }
     };
 
