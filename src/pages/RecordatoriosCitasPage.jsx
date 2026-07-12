@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
@@ -356,6 +356,51 @@ function pagoServicioBadge(item) {
   return "bg-slate-50 text-slate-500 border-slate-200";
 }
 
+function normalizarDetallesCotizacion(detalles) {
+  if (!Array.isArray(detalles)) return [];
+
+  return detalles
+    .map((det, index) => {
+      const tipoRaw = String(det?.servicio_tipo || "otros").trim().toLowerCase();
+      const descripcion = String(det?.descripcion || det?.descripcion_snapshot || "").trim();
+      const cantidad = Number(det?.cantidad || 1);
+      const subtotal = Number(det?.subtotal || 0);
+      const detalleId = Number(det?.id || 0);
+      const servicioId = Number(det?.servicio_id || 0);
+      const tipoLabel = tipoServicioLabel({ servicio_tipo: tipoRaw });
+
+      return {
+        key: detalleId > 0 ? `det-${detalleId}` : `det-${tipoRaw}-${servicioId}-${index}`,
+        tipo: tipoRaw,
+        tipo_label: tipoLabel,
+        descripcion: descripcion || `${tipoLabel} ${servicioId > 0 ? `#${servicioId}` : ""}`.trim(),
+        cantidad: Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1,
+        subtotal: Number.isFinite(subtotal) ? subtotal : 0,
+      };
+    })
+    .filter((det) => Boolean(det.descripcion));
+}
+
+const DETALLE_TIPO_ORDEN = {
+  Consulta: 1,
+  Laboratorio: 2,
+  "Rayos X": 3,
+  Ecografía: 4,
+  Procedimiento: 5,
+  Operación: 6,
+  Hospitalización: 7,
+  Farmacia: 8,
+};
+
+function ordenarTiposDetalle(tipos) {
+  return [...tipos].sort((a, b) => {
+    const ordenA = Number(DETALLE_TIPO_ORDEN[a] || 999);
+    const ordenB = Number(DETALLE_TIPO_ORDEN[b] || 999);
+    if (ordenA !== ordenB) return ordenA - ordenB;
+    return String(a).localeCompare(String(b), "es", { sensitivity: "base" });
+  });
+}
+
 function obtenerPrioridad(item) {
   const dias = diasParaCita(item?.fecha);
   const estado = String(item?.estado_gestion || "pendiente");
@@ -406,6 +451,10 @@ export default function RecordatoriosCitasPage() {
   const [vistaRapida, setVistaRapida] = useState("todas");
   const [ordenCitas, setOrdenCitas] = useState(initialOrdenCitas);
   const [filaActivaId, setFilaActivaId] = useState(null);
+  const [detalleExpandedRows, setDetalleExpandedRows] = useState({});
+  const [detalleTipoFiltroRows, setDetalleTipoFiltroRows] = useState({});
+  const [detalleCotizacionCache, setDetalleCotizacionCache] = useState({});
+  const [detalleCotizacionLoading, setDetalleCotizacionLoading] = useState({});
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
@@ -536,6 +585,8 @@ export default function RecordatoriosCitasPage() {
 
   useEffect(() => {
     setPage(1);
+    setDetalleExpandedRows({});
+    setDetalleTipoFiltroRows({});
   }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio]);
 
   useEffect(() => {
@@ -693,6 +744,73 @@ export default function RecordatoriosCitasPage() {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }, 50);
+  };
+
+  const cargarDetalleCotizacion = async (cotizacionId) => {
+    const cotId = Number(cotizacionId || 0);
+    if (cotId <= 0 || detalleCotizacionCache[cotId]) return;
+
+    setDetalleCotizacionLoading((prev) => ({ ...prev, [cotId]: true }));
+    try {
+      const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotId}&_t=${Date.now()}`);
+      const data = await res.json();
+      if (!data?.success || !data?.cotizacion) {
+        throw new Error(data?.error || "No se pudo cargar detalle de cotización");
+      }
+
+      const detalles = normalizarDetallesCotizacion(data?.cotizacion?.detalles || []);
+      setDetalleCotizacionCache((prev) => ({
+        ...prev,
+        [cotId]: {
+          ok: true,
+          items: detalles,
+        },
+      }));
+    } catch (err) {
+      setDetalleCotizacionCache((prev) => ({
+        ...prev,
+        [cotId]: {
+          ok: false,
+          items: [],
+          error: err?.message || "No se pudo cargar detalle de cotización",
+        },
+      }));
+    } finally {
+      setDetalleCotizacionLoading((prev) => ({ ...prev, [cotId]: false }));
+    }
+  };
+
+  const toggleDetalleRow = async (item) => {
+    const rowKey = String(item?._rowKey || "");
+    if (!rowKey) return;
+
+    const isExpanded = Boolean(detalleExpandedRows[rowKey]);
+    if (isExpanded) {
+      setDetalleExpandedRows((prev) => {
+        const next = { ...prev };
+        delete next[rowKey];
+        return next;
+      });
+      setDetalleTipoFiltroRows((prev) => {
+        const next = { ...prev };
+        delete next[rowKey];
+        return next;
+      });
+      return;
+    }
+
+    setDetalleExpandedRows((prev) => ({ ...prev, [rowKey]: true }));
+    const cotId = Number(item?.cotizacion_id || 0);
+    if (cotId > 0 && !detalleCotizacionCache[cotId]) {
+      await cargarDetalleCotizacion(cotId);
+    }
+  };
+
+  const cambiarFiltroDetalleRow = (rowKey, filtroTipo) => {
+    const key = String(rowKey || "");
+    if (!key) return;
+    const filtro = String(filtroTipo || "todos");
+    setDetalleTipoFiltroRows((prev) => ({ ...prev, [key]: filtro }));
   };
 
   const guardarGestion = async (item, estado) => {
@@ -1120,7 +1238,8 @@ export default function RecordatoriosCitasPage() {
                 <th className="p-3 text-left">Cita</th>
                 <th className="p-3 text-left">Prioridad</th>
                 <th className="p-3 text-left">Paciente</th>
-                  <th className="p-3 text-left">Servicio</th>
+                <th className="p-3 text-left">Servicio</th>
+                <th className="p-3 text-left">Detalle</th>
                 <th className="p-3 text-left">Medico</th>
                 <th className="p-3 text-left">Estado gestion</th>
                 <th className="p-3 text-left">Intentos</th>
@@ -1131,11 +1250,11 @@ export default function RecordatoriosCitasPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
+                  <td colSpan={10} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
                 </tr>
               ) : itemsPriorizados.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-5 text-center text-slate-500">No hay citas para la vista seleccionada.</td>
+                  <td colSpan={10} className="p-5 text-center text-slate-500">No hay citas para la vista seleccionada.</td>
                 </tr>
               ) : (
                 itemsPaginados.map((item) => {
@@ -1151,232 +1270,331 @@ export default function RecordatoriosCitasPage() {
                   const puedeRegistrarCobro = !item.cotizacion_id
                     && !esControl
                     && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);
+                  const cotizacionId = Number(item?.cotizacion_id || 0);
+                  const detalleExpanded = Boolean(detalleExpandedRows[item._rowKey]);
+                  const detalleCache = cotizacionId > 0 ? detalleCotizacionCache[cotizacionId] : null;
+                  const detalleLoading = cotizacionId > 0 && Boolean(detalleCotizacionLoading[cotizacionId]);
+                  const detalleItems = Array.isArray(detalleCache?.items) ? detalleCache.items : [];
+                  const detallesPorTipo = detalleItems.reduce((acc, det) => {
+                    const key = String(det?.tipo_label || "Servicio");
+                    acc[key] = (acc[key] || 0) + 1;
+                    return acc;
+                  }, {});
+                  const tiposDetalle = ordenarTiposDetalle(Object.keys(detallesPorTipo));
+                  const filtroDetalleRaw = String(detalleTipoFiltroRows[item._rowKey] || "todos");
+                  const filtroDetalleActivo = filtroDetalleRaw === "todos" || tiposDetalle.includes(filtroDetalleRaw)
+                    ? filtroDetalleRaw
+                    : "todos";
+                  const detalleItemsFiltrados = filtroDetalleActivo === "todos"
+                    ? detalleItems
+                    : detalleItems.filter((det) => String(det?.tipo_label || "") === filtroDetalleActivo);
                   return (
-                    <tr id={`rc-row-${item._rowKey}`} key={item._rowKey} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
-                      <td className="p-3">
-                        <div className="font-semibold text-slate-800">#{item.id}</div>
-                        <div className="mt-1">
-                          {esFaltaCancelar ? (
-                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                              Falta cancelar
-                            </span>
-                          ) : (
-                            <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
-                              Cita
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-600">{formatFechaHora(item.fecha, item.hora)}</div>
-                        <div className="text-xs font-semibold text-rose-700">
-                          {esFaltaCancelar
-                            ? "Pendiente cobro"
-                            : diasRestantes === 0
-                              ? "Hoy"
-                              : diasRestantes === 1
-                                ? "Manana"
-                                : `${diasRestantes} dias`}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${item.prioridad.badge}`}>
-                          {item.prioridad.etiqueta}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-semibold text-slate-800">{item.paciente_nombre} {item.paciente_apellido}</div>
-                        <div className="text-xs text-slate-600">DNI: {item.paciente_dni || "-"}</div>
-                        <div className="text-xs text-slate-600">Tel: {item.paciente_telefono || "Sin telefono"}</div>
-                        <div className="mt-1">
-                          {mostrarBadgeTipo && (
-                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tipoConsultaBadge(item)}`}>
-                              {tipoConsultaLabel(item)}
-                            </span>
-                          )}
-                          {esHcProxima && (
-                            <span className="ml-1 inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                              HC proxima
-                            </span>
-                          )}
-                          {esControl && (
-                            <span className="ml-1 inline-flex rounded-full border border-sky-200 bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
-                              Sin costo
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tipoServicioBadge(item)}`}>
-                          {tipoServicioLabel(item)}
-                        </span>
-                        {String(item?.origen_consulta || "") === "agenda_servicio" && (
-                          <div className="mt-1 text-[11px] text-slate-500">Agenda servicio</div>
-                        )}
-                        {Number(item?.servicios_count || item?.agendas_count || 0) > 1 && (
-                          <div className="mt-1 text-[11px] text-slate-500">
-                            Paquete agrupado · {Number(item.servicios_count || item.agendas_count || 0)} servicios{Number(item?.fechas_count || 0) > 1 ? ` · ${Number(item.fechas_count || 0)} fechas` : ''}
-                          </div>
-                        )}
-                        <div className="mt-1">
-                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoServicioBadge(item)}`}>
-                            {pagoServicioLabel(item)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-3 text-slate-700">{esFaltaCancelar ? "-" : `${item.medico_nombre} ${item.medico_apellido}`}</td>
-                      <td className="p-3">
-                        {esFaltaCancelar ? (
-                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                            Pendiente pago
-                          </span>
-                        ) : (
-                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${estadoBadgeClasses(item.estado_gestion)}`}>
-                            {estadoLabel(item.estado_gestion)}
-                          </span>
-                        )}
-                        <div className="mt-1 text-xs text-slate-500">
-                          Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
-                        </div>
-                        {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
+                    <Fragment key={item._rowKey}>
+                      <tr id={`rc-row-${item._rowKey}`} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
+                        <td className="p-3">
+                          <div className="font-semibold text-slate-800">#{item.id}</div>
                           <div className="mt-1">
-                            <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
-                              Saldo: S/ {Number(item?.saldo_pendiente || 0).toFixed(2)}
-                            </span>
-                          </div>
-                        )}
-                        {puedeRegistrarCobro && (
-                          <div className="mt-1">
-                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                              ⏳ Por cobrar
-                            </span>
-                          </div>
-                        )}
-                        {cotizacionPagada && (
-                          <div className="mt-1">
-                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                              ✅ Cotizacion pagada
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="p-3 text-slate-700">{item.intentos || 0}</td>
-                      <td className="p-3 text-xs text-slate-600">{item.observacion || "-"}</td>
-                      <td className="p-3">
-                        <div className="flex flex-wrap gap-2">
-                          {esFaltaCancelar ? (
-                            Number(item?.cotizacion_id || 0) > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/cobrar-cotizacion/${Number(item.cotizacion_id)}`)}
-                                className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
-                              >
-                                💰 Ir a cobrar
-                              </button>
+                            {esFaltaCancelar ? (
+                              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                Falta cancelar
+                              </span>
                             ) : (
-                              <span className="text-xs text-slate-500">Sin cotización vinculada</span>
-                            )
+                              <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                                Cita
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-600">{formatFechaHora(item.fecha, item.hora)}</div>
+                          <div className="text-xs font-semibold text-rose-700">
+                            {esFaltaCancelar
+                              ? "Pendiente cobro"
+                              : diasRestantes === 0
+                                ? "Hoy"
+                                : diasRestantes === 1
+                                  ? "Manana"
+                                  : `${diasRestantes} dias`}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${item.prioridad.badge}`}>
+                            {item.prioridad.etiqueta}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-semibold text-slate-800">{item.paciente_nombre} {item.paciente_apellido}</div>
+                          <div className="text-xs text-slate-600">DNI: {item.paciente_dni || "-"}</div>
+                          <div className="text-xs text-slate-600">Tel: {item.paciente_telefono || "Sin telefono"}</div>
+                          <div className="mt-1">
+                            {mostrarBadgeTipo && (
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tipoConsultaBadge(item)}`}>
+                                {tipoConsultaLabel(item)}
+                              </span>
+                            )}
+                            {esHcProxima && (
+                              <span className="ml-1 inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                                HC proxima
+                              </span>
+                            )}
+                            {esControl && (
+                              <span className="ml-1 inline-flex rounded-full border border-sky-200 bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                                Sin costo
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tipoServicioBadge(item)}`}>
+                            {tipoServicioLabel(item)}
+                          </span>
+                          {String(item?.origen_consulta || "") === "agenda_servicio" && (
+                            <div className="mt-1 text-[11px] text-slate-500">Agenda servicio</div>
+                          )}
+                          {Number(item?.servicios_count || item?.agendas_count || 0) > 1 && (
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              Paquete agrupado · {Number(item.servicios_count || item.agendas_count || 0)} servicios{Number(item?.fechas_count || 0) > 1 ? ` · ${Number(item.fechas_count || 0)} fechas` : ''}
+                            </div>
+                          )}
+                          <div className="mt-1">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoServicioBadge(item)}`}>
+                              {pagoServicioLabel(item)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {cotizacionId > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleDetalleRow(item)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                              title={detalleExpanded ? "Ocultar detalle" : "Ver detalle de servicios"}
+                            >
+                              {detalleExpanded ? "▾" : "▸"} Detalle
+                            </button>
                           ) : (
-                            <>
-                              {puedeRegistrarCobro && (
+                            <span className="text-xs text-slate-400">Sin detalle</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-slate-700">{esFaltaCancelar ? "-" : `${item.medico_nombre} ${item.medico_apellido}`}</td>
+                        <td className="p-3">
+                          {esFaltaCancelar ? (
+                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                              Pendiente pago
+                            </span>
+                          ) : (
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${estadoBadgeClasses(item.estado_gestion)}`}>
+                              {estadoLabel(item.estado_gestion)}
+                            </span>
+                          )}
+                          <div className="mt-1 text-xs text-slate-500">
+                            Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
+                          </div>
+                          {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
+                            <div className="mt-1">
+                              <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                                Saldo: S/ {Number(item?.saldo_pendiente || 0).toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+                          {puedeRegistrarCobro && (
+                            <div className="mt-1">
+                              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                                ⏳ Por cobrar
+                              </span>
+                            </div>
+                          )}
+                          {cotizacionPagada && (
+                            <div className="mt-1">
+                              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                                ✅ Cotizacion pagada
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-slate-700">{item.intentos || 0}</td>
+                        <td className="p-3 text-xs text-slate-600">{item.observacion || "-"}</td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap gap-2">
+                            {esFaltaCancelar ? (
+                              Number(item?.cotizacion_id || 0) > 0 ? (
                                 <button
                                   type="button"
-                                  onClick={() => crearCotizacion(item)}
-                                  disabled={savingId === item.id}
+                                  onClick={() => navigate(`/cobrar-cotizacion/${Number(item.cotizacion_id)}`)}
                                   className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
                                 >
-                                  💰 Registrar Cobro
+                                  💰 Ir a cobrar
                                 </button>
-                              )}
-                              {esRecordatorioAgendaServicio(item) ? (
-                                // ═══ Flujo AGENDA SERVICIOS ═══
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => guardarGestionAgenda(item, "contactado")}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
-                                  >
-                                    Llamado
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => guardarGestionAgenda(item, "confirmado")}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                                  >
-                                    Confirmo
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => guardarGestionAgenda(item, "no_contesta")}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                                  >
-                                    No contesta
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      await reprogramarAgendaServicio(item);
-                                    }}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
-                                  >
-                                    Reprogramar
-                                  </button>
-                                </>
                               ) : (
-                                // ═══ Flujo CONSULTAS (EXISTENTE, SIN CAMBIO) ═══
-                                <>
+                                <span className="text-xs text-slate-500">Sin cotización vinculada</span>
+                              )
+                            ) : (
+                              <>
+                                {puedeRegistrarCobro && (
                                   <button
                                     type="button"
-                                    onClick={() => guardarGestion(item, "contactado")}
+                                    onClick={() => crearCotizacion(item)}
                                     disabled={savingId === item.id}
-                                    className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                                    className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
                                   >
-                                    Llamado
+                                    💰 Registrar Cobro
                                   </button>
+                                )}
+                                {esRecordatorioAgendaServicio(item) ? (
+                                  // ═══ Flujo AGENDA SERVICIOS ═══
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => guardarGestionAgenda(item, "contactado")}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                                    >
+                                      Llamado
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => guardarGestionAgenda(item, "confirmado")}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    >
+                                      Confirmo
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => guardarGestionAgenda(item, "no_contesta")}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                    >
+                                      No contesta
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await reprogramarAgendaServicio(item);
+                                      }}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                    >
+                                      Reprogramar
+                                    </button>
+                                  </>
+                                ) : (
+                                  // ═══ Flujo CONSULTAS (EXISTENTE, SIN CAMBIO) ═══
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => guardarGestion(item, "contactado")}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                                    >
+                                      Llamado
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => guardarGestion(item, "confirmado")}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    >
+                                      Confirmo
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => guardarGestion(item, "no_contesta")}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                    >
+                                      No contesta
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const ok = await guardarGestion(item, "reprogramar");
+                                        if (!ok) return;
+                                        const params = new URLSearchParams({
+                                          paciente_id: String(Number(item.paciente_id || 0)),
+                                          consulta_id: String(Number(item.id || 0)),
+                                          origen: "recordatorios",
+                                          accion: "reprogramar",
+                                          back_to: "/recordatorios-citas",
+                                        });
+                                        navigate(`/agendar-consulta?${params.toString()}`);
+                                      }}
+                                      disabled={savingId === item.id}
+                                      className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                    >
+                                      Reprogramar
+                                    </button>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {detalleExpanded && (
+                        <tr className="border-t border-indigo-100 bg-indigo-50/30">
+                          <td colSpan={10} className="p-3">
+                            {cotizacionId <= 0 ? (
+                              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                                Esta fila no tiene cotización vinculada para mostrar detalle.
+                              </div>
+                            ) : detalleLoading ? (
+                              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                                Cargando detalle de cotización...
+                              </div>
+                            ) : !detalleCache?.ok ? (
+                              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                                {String(detalleCache?.error || "No se pudo cargar detalle de cotización")}
+                              </div>
+                            ) : detalleItems.length === 0 ? (
+                              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                                La cotización no tiene ítems activos para mostrar.
+                              </div>
+                            ) : (
+                              <div className="rounded-lg border border-indigo-200 bg-white p-3">
+                                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                                  <span className="font-semibold text-indigo-700">Cotización #{cotizacionId}</span>
                                   <button
                                     type="button"
-                                    onClick={() => guardarGestion(item, "confirmado")}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    onClick={() => cambiarFiltroDetalleRow(item._rowKey, "todos")}
+                                    className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filtroDetalleActivo === "todos" ? "border-indigo-300 bg-indigo-100 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
                                   >
-                                    Confirmo
+                                    Todos: {detalleItems.length}
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => guardarGestion(item, "no_contesta")}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                                  >
-                                    No contesta
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      const ok = await guardarGestion(item, "reprogramar");
-                                      if (!ok) return;
-                                      const params = new URLSearchParams({
-                                        paciente_id: String(Number(item.paciente_id || 0)),
-                                        consulta_id: String(Number(item.id || 0)),
-                                        origen: "recordatorios",
-                                        accion: "reprogramar",
-                                        back_to: "/recordatorios-citas",
-                                      });
-                                      navigate(`/agendar-consulta?${params.toString()}`);
-                                    }}
-                                    disabled={savingId === item.id}
-                                    className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
-                                  >
-                                    Reprogramar
-                                  </button>
-                                </>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                                  {tiposDetalle.map((tipo) => (
+                                    <button
+                                      key={tipo}
+                                      type="button"
+                                      onClick={() => cambiarFiltroDetalleRow(item._rowKey, tipo)}
+                                      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filtroDetalleActivo === tipo ? "border-indigo-300 bg-indigo-100 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
+                                    >
+                                      {tipo}: {Number(detallesPorTipo[tipo] || 0)}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                                  {detalleItemsFiltrados.map((det) => (
+                                    <div key={det.key} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-700">
+                                      <div className="font-semibold text-slate-800">{det.descripcion}</div>
+                                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                                        <span className="inline-flex rounded-full border border-slate-300 bg-white px-2 py-0.5 font-semibold">
+                                          {det.tipo_label}
+                                        </span>
+                                        <span>Cant: {Number(det.cantidad || 1)}</span>
+                                        <span>Sub: S/ {Number(det.subtotal || 0).toFixed(2)}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {detalleItemsFiltrados.length === 0 && (
+                                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-500">
+                                      No hay ítems para este tipo de servicio.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })
               )}
