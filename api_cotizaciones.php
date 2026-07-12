@@ -1021,6 +1021,144 @@ function insertar_evento_cotizacion($conn, $cotizacionId, $eventoTipo, $usuarioI
     }
 }
 
+function normalizar_fecha_programada_agenda($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    return date('Y-m-d', $ts);
+}
+
+function normalizar_hora_programada_agenda($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+    if (preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $raw)) {
+        $parts = explode(':', $raw);
+        return sprintf('%02d:%02d:00', (int)$parts[0], (int)$parts[1]);
+    }
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    return date('H:i:s', $ts);
+}
+
+function agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) return;
+    if (!table_exists($conn, 'agenda_servicios_cotizacion')) return;
+    $stmt = $conn->prepare('DELETE FROM agenda_servicios_cotizacion WHERE cotizacion_id = ?');
+    if ($stmt) {
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
+function agenda_servicios_guardar_detalle($conn, $cotizacionId, $detalleId, $pacienteId, $detalle, $usuarioId = 0) {
+    if (!table_exists($conn, 'agenda_servicios_cotizacion')) return;
+
+    $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+    if ($servicioTipo === '' || $servicioTipo === 'consulta') return;
+
+    $fechaProgramada = normalizar_fecha_programada_agenda($detalle['fecha_programada'] ?? $detalle['fecha_programada_servicio'] ?? null);
+    $horaProgramada = normalizar_hora_programada_agenda($detalle['hora_programada'] ?? $detalle['hora_programada_servicio'] ?? null);
+    if ($fechaProgramada === null) return;
+
+    $cotizacionId = (int)$cotizacionId;
+    $detalleId = (int)$detalleId;
+    $pacienteId = (int)$pacienteId;
+    if ($cotizacionId <= 0 || $detalleId <= 0 || $pacienteId <= 0) return;
+
+    if (!column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+        || !column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+        || !column_exists($conn, 'agenda_servicios_cotizacion', 'paciente_id')
+        || !column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+        || !column_exists($conn, 'agenda_servicios_cotizacion', 'titulo_evento')
+        || !column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+        return;
+    }
+
+    $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : null;
+    $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : null;
+    if ($medicoId <= 0 && $servicioId > 0) {
+        $stmtMedTar = $conn->prepare('SELECT medico_id FROM tarifas WHERE id = ? LIMIT 1');
+        if ($stmtMedTar) {
+            $stmtMedTar->bind_param('i', $servicioId);
+            $stmtMedTar->execute();
+            $rowMedTar = $stmtMedTar->get_result()->fetch_assoc();
+            $stmtMedTar->close();
+            $medicoId = (int)($rowMedTar['medico_id'] ?? 0);
+        }
+    }
+    $titulo = trim((string)($detalle['descripcion'] ?? 'Servicio programado'));
+    if ($titulo === '') $titulo = 'Servicio programado';
+
+    $usaHora = column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada');
+    $usaEstado = column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+    $usaObs = column_exists($conn, 'agenda_servicios_cotizacion', 'observaciones');
+    $usaCreatedBy = column_exists($conn, 'agenda_servicios_cotizacion', 'created_by');
+    $usaUpdatedBy = column_exists($conn, 'agenda_servicios_cotizacion', 'updated_by');
+
+    $cols = [
+        'cotizacion_id',
+        'cotizacion_detalle_id',
+        'paciente_id',
+        'medico_id',
+        'servicio_tipo',
+        'servicio_id',
+        'titulo_evento',
+        'fecha_programada',
+    ];
+    $vals = ['?', '?', '?', '?', '?', '?', '?', '?'];
+    $types = 'iiiisiss';
+    $params = [
+        $cotizacionId,
+        $detalleId,
+        $pacienteId,
+        $medicoId,
+        $servicioTipo,
+        $servicioId,
+        $titulo,
+        $fechaProgramada,
+    ];
+
+    if ($usaHora) {
+        $cols[] = 'hora_programada';
+        $vals[] = '?';
+        $types .= 's';
+        $params[] = $horaProgramada;
+    }
+    if ($usaEstado) {
+        $cols[] = 'estado_evento';
+        $vals[] = '"pendiente"';
+    }
+    if ($usaObs) {
+        $cols[] = 'observaciones';
+        $vals[] = '?';
+        $types .= 's';
+        $params[] = trim((string)($detalle['observacion_programacion'] ?? 'Programado desde cotizacion'));
+    }
+    if ($usaCreatedBy) {
+        $cols[] = 'created_by';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = (int)$usuarioId;
+    }
+    if ($usaUpdatedBy) {
+        $cols[] = 'updated_by';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = (int)$usuarioId;
+    }
+
+    $sql = 'INSERT INTO agenda_servicios_cotizacion (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return;
+
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $stmt->close();
+}
+
 function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivoEdicion = null, $fechaRef = null) {
     $hasEstadoItem = column_exists($conn, 'cotizaciones_detalle', 'estado_item');
     $hasVersionItem = column_exists($conn, 'cotizaciones_detalle', 'version_item');
@@ -1303,6 +1441,12 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
 
             // Mantener trazabilidad clínica de consulta cuando el esquema lo soporte.
             $detalleId = (int)$conn->insert_id;
+
+            // Persistir agenda para servicios no-consulta cuando UI envía fecha/hora programada.
+            if ($detalleId > 0) {
+                agenda_servicios_guardar_detalle($conn, (int)$cotizacionId, $detalleId, (int)$pacienteIdCotizacion, (array)$detalle, (int)$usuarioId);
+            }
+
             $versionIdDetalle = get_exam_version_id_from_payload($detalle);
             if ($versionIdDetalle <= 0 && is_array($snapshotPayload)) {
                 $versionIdDetalle = (int)($snapshotPayload['version_id'] ?? 0);
@@ -2803,6 +2947,9 @@ function editar_cotizacion($conn, $data) {
             $stmtDel->execute();
         }
 
+        // Reemplazo completo de detalle en edición: limpiar agenda anterior de esta cotización.
+        agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
+
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivo, $fechaRef);
         sincronizar_movimientos_lab_ref_en_edicion_cotizacion($conn, (int)$cot['paciente_id'], $detallesAntes, $detalles, $usuarioId, $cotizacionId);
 
@@ -3265,6 +3412,9 @@ function anular_cotizacion($conn, $data) {
             $stmtDet->bind_param("isi", $usuarioId, $motivo, $cotizacionId);
             $stmtDet->execute();
         }
+
+        // Al anular, quitar también los eventos agendados derivados de la cotización.
+        agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
 
         if (cotizacion_tiene_servicio_laboratorio($conn, $cotizacionId)) {
             cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId);
