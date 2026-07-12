@@ -648,7 +648,11 @@ if ($method === 'GET') {
                 p.dni AS paciente_dni,
                 p.telefono AS paciente_telefono,
                 COALESCE(m.nombre, md.nombre, mt.nombre, '') AS medico_nombre,
-                COALESCE(m.apellido, md.apellido, mt.apellido, '') AS medico_apellido
+                COALESCE(m.apellido, md.apellido, mt.apellido, '') AS medico_apellido,
+                ras.estado AS ras_estado,
+                ras.observacion AS ras_observacion,
+                ras.intentos AS ras_intentos,
+                ras.fecha_ultimo_contacto AS ras_fecha_ultimo_contacto
             FROM agenda_servicios_cotizacion a
             INNER JOIN pacientes p ON p.id = a.paciente_id
             LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
@@ -665,6 +669,7 @@ if ($method === 'GET') {
             LEFT JOIN medicos md ON md.id = cd.medico_id
             LEFT JOIN medicos mt ON mt.id = t.medico_id
             LEFT JOIN cotizaciones cot ON cot.id = a.cotizacion_id
+            LEFT JOIN recordatorios_agenda_servicios ras ON ras.cotizacion_id = a.cotizacion_id
             WHERE " . implode(' AND ', $agendaWhere) . "
             ORDER BY a.fecha_programada ASC, a.hora_programada ASC, a.id ASC";
 
@@ -696,11 +701,11 @@ if ($method === 'GET') {
                     'paciente_telefono' => (string)($row['paciente_telefono'] ?? ''),
                     'medico_nombre' => (string)($row['medico_nombre'] ?? ''),
                     'medico_apellido' => (string)($row['medico_apellido'] ?? ''),
-                    'estado_gestion' => 'pendiente',
-                    'observacion' => (string)($row['observaciones'] ?? $row['titulo_evento'] ?? ''),
+                    'estado_gestion' => (string)($row['ras_estado'] ?? 'pendiente'),
+                    'observacion' => (string)($row['ras_observacion'] ?? $row['observaciones'] ?? $row['titulo_evento'] ?? ''),
                     'fecha_proximo_contacto' => null,
-                    'fecha_ultimo_contacto' => null,
-                    'intentos' => 0,
+                    'fecha_ultimo_contacto' => $row['ras_fecha_ultimo_contacto'] ?? null,
+                    'intentos' => (int)($row['ras_intentos'] ?? 0),
                     'gestion_updated_at' => null,
                     'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
                     'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
@@ -892,7 +897,226 @@ if ($method === 'POST' || $method === 'PUT') {
         exit;
     }
 
-    // ── Flujo normal: guardar gestión de recordatorio ──
+    // ── Acción nueva: guardar gestión para servicios agendados (agenda_servicios_cotizacion) ──
+    if ($accion === 'guardar_gestion_agenda') {
+        $cotizacionId = (int)($payload['cotizacion_id'] ?? 0);
+        $estado = trim((string)($payload['estado'] ?? ''));
+        $observacion = trim((string)($payload['observacion'] ?? ''));
+        $fechaProximoContacto = trim((string)($payload['fecha_proximo_contacto'] ?? ''));
+
+        if ($cotizacionId <= 0 || $estado === '') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'cotizacion_id y estado son requeridos']);
+            exit;
+        }
+
+        $estadosPermitidos = ['pendiente', 'contactado', 'confirmado', 'no_contesta', 'reprogramar', 'cancelado'];
+        if (!in_array($estado, $estadosPermitidos, true)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Estado de gestion no permitido']);
+            exit;
+        }
+
+        // Verificar que la cotización existe
+        $stmtCot = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? LIMIT 1');
+        $stmtCot->bind_param('i', $cotizacionId);
+        $stmtCot->execute();
+        $cotizacionExiste = $stmtCot->get_result()->fetch_assoc();
+        $stmtCot->close();
+
+        if (!$cotizacionExiste) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'Cotización no encontrada']);
+            exit;
+        }
+
+        // Verificar que existen items pendiente/confirmado de agenda para esa cotización
+        $stmtAgenda = $conn->prepare('SELECT id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND estado_evento IN ("pendiente", "confirmado") LIMIT 1');
+        $stmtAgenda->bind_param('i', $cotizacionId);
+        $stmtAgenda->execute();
+        $agendaExiste = $stmtAgenda->get_result()->fetch_assoc();
+        $stmtAgenda->close();
+
+        if (!$agendaExiste) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'No hay servicios agendados pendientes para esta cotización']);
+            exit;
+        }
+
+        $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
+        $fechaProximoValue = null;
+        if ($fechaProximoContacto !== '') {
+            $ts = strtotime($fechaProximoContacto);
+            if ($ts !== false) {
+                $fechaProximoValue = date('Y-m-d H:i:s', $ts);
+            }
+        }
+
+        $sumarIntento = in_array($estado, ['contactado', 'confirmado', 'no_contesta', 'reprogramar'], true) ? 1 : 0;
+
+        $sql = 'INSERT INTO recordatorios_agenda_servicios (cotizacion_id, estado, observacion, fecha_proximo_contacto, fecha_ultimo_contacto, intentos, actualizado_por)
+                VALUES (?, ?, ?, ?, NOW(), ?, ?)
+                ON DUPLICATE KEY UPDATE
+                  estado = VALUES(estado),
+                  observacion = VALUES(observacion),
+                  fecha_proximo_contacto = VALUES(fecha_proximo_contacto),
+                  fecha_ultimo_contacto = NOW(),
+                  intentos = intentos + VALUES(intentos),
+                  actualizado_por = VALUES(actualizado_por),
+                  updated_at = CURRENT_TIMESTAMP';
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar actualizacion']);
+            exit;
+        }
+
+        $stmt->bind_param('isssii', $cotizacionId, $estado, $observacion, $fechaProximoValue, $sumarIntento, $usuarioId);
+        $ok = $stmt->execute();
+        $stmt->close();
+
+        if (!$ok) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo guardar gestion']);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => true,
+            'saved' => [
+                'cotizacion_id' => $cotizacionId,
+                'estado' => $estado,
+                'observacion' => $observacion,
+                'fecha_proximo_contacto' => $fechaProximoValue,
+                'sumar_intento' => $sumarIntento,
+            ],
+        ]);
+        exit;
+    }
+
+    // ── Acción nueva: reprogramar servicios agendados a nueva fecha/hora ──
+    if ($accion === 'reprogramar_agenda_servicio') {
+        $cotizacionId = (int)($payload['cotizacion_id'] ?? 0);
+        $nuevaFecha = trim((string)($payload['nueva_fecha'] ?? ''));
+        $nuevaHora = trim((string)($payload['nueva_hora'] ?? ''));
+
+        if ($cotizacionId <= 0 || $nuevaFecha === '' || $nuevaHora === '') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'cotizacion_id, nueva_fecha y nueva_hora son requeridos']);
+            exit;
+        }
+
+        // Validar formato de fecha
+        $dateCheck = \DateTime::createFromFormat('Y-m-d', $nuevaFecha);
+        if (!$dateCheck || $dateCheck->format('Y-m-d') !== $nuevaFecha) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Formato de fecha inválido (esperado: YYYY-MM-DD)']);
+            exit;
+        }
+
+        // Normalizar hora: si es "HH:MM", agregar ":00"
+        if (strlen($nuevaHora) === 5 && substr_count($nuevaHora, ':') === 1) {
+            $nuevaHora = $nuevaHora . ':00';
+        }
+
+        // Validar formato de hora
+        $timeCheck = \DateTime::createFromFormat('H:i:s', $nuevaHora);
+        if (!$timeCheck || $timeCheck->format('H:i:s') !== $nuevaHora) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Formato de hora inválido (esperado: HH:MM:SS)']);
+            exit;
+        }
+
+        // Verificar que existen items pendiente/confirmado para esa cotización
+        $stmtAgenda = $conn->prepare('SELECT DISTINCT medico_id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND estado_evento IN ("pendiente", "confirmado") LIMIT 1');
+        $stmtAgenda->bind_param('i', $cotizacionId);
+        $stmtAgenda->execute();
+        $agendaRow = $stmtAgenda->get_result()->fetch_assoc();
+        $stmtAgenda->close();
+
+        if (!$agendaRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'No hay servicios agendados pendientes para esta cotización']);
+            exit;
+        }
+
+        $medicoId = (int)($agendaRow['medico_id'] ?? 0);
+
+        // Detectar conflicto: si hay médico asignado, verificar que no hay otra cita a esa hora
+        if ($medicoId > 0) {
+            $stmtConflicto = $conn->prepare(
+                'SELECT id FROM agenda_servicios_cotizacion 
+                 WHERE medico_id = ? 
+                 AND fecha_programada = ? 
+                 AND hora_programada = ? 
+                 AND cotizacion_id <> ? 
+                 AND estado_evento NOT IN ("cancelado", "no_asistio") 
+                 LIMIT 1'
+            );
+            $stmtConflicto->bind_param('issi', $medicoId, $nuevaFecha, $nuevaHora, $cotizacionId);
+            $stmtConflicto->execute();
+            $conflicto = $stmtConflicto->get_result()->fetch_assoc();
+            $stmtConflicto->close();
+
+            if ($conflicto) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'El médico ya tiene una cita en ese horario',
+                ]);
+                exit;
+            }
+        }
+
+        // Actualizar los items de agenda
+        $stmtUpdate = $conn->prepare(
+            'UPDATE agenda_servicios_cotizacion 
+             SET fecha_programada = ?, hora_programada = ?, estado_evento = "pendiente", updated_by = ? 
+             WHERE cotizacion_id = ? AND estado_evento IN ("pendiente", "confirmado")'
+        );
+        $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
+        $stmtUpdate->bind_param('ssii', $nuevaFecha, $nuevaHora, $usuarioId, $cotizacionId);
+        $ok = $stmtUpdate->execute();
+        $stmtUpdate->close();
+
+        if (!$ok) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo actualizar la programación']);
+            exit;
+        }
+
+        // UPSERT en recordatorios_agenda_servicios
+        $observacionReprog = sprintf('Cita reprogramada para %s a las %s', $nuevaFecha, substr($nuevaHora, 0, 5));
+        $stmtRecordatorio = $conn->prepare(
+            'INSERT INTO recordatorios_agenda_servicios (cotizacion_id, estado, observacion, fecha_ultimo_contacto, intentos, actualizado_por)
+             VALUES (?, "pendiente", ?, NOW(), 1, ?)
+             ON DUPLICATE KEY UPDATE
+               estado = "pendiente",
+               observacion = ?,
+               fecha_ultimo_contacto = NOW(),
+               actualizado_por = ?,
+               updated_at = CURRENT_TIMESTAMP'
+        );
+        $stmtRecordatorio->bind_param('issi', $cotizacionId, $observacionReprog, $usuarioId, $observacionReprog, $usuarioId);
+        $okRec = $stmtRecordatorio->execute();
+        $stmtRecordatorio->close();
+
+        if (!$okRec) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Se actualizó la programación pero no se pudo guardar el recordatorio']);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => true,
+            'reprogramada_fecha' => $nuevaFecha,
+            'reprogramada_hora' => substr($nuevaHora, 0, 5),
+            'observacion' => $observacionReprog,
+        ]);
+        exit;
+    }
+
+    // ── Flujo normal: guardar gestión de recordatorio para CONSULTAS ──
     $consultaId = (int)($payload['consulta_id'] ?? 0);
     $estado = trim((string)($payload['estado'] ?? ''));
     $observacion = trim((string)($payload['observacion'] ?? ''));

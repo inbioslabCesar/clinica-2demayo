@@ -755,6 +755,134 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const guardarGestionAgenda = async (item, estado) => {
+    const requiereProximo = estado === "no_contesta" || estado === "reprogramar";
+    const modal = await Swal.fire({
+      title: `Registrar gestion: ${estadoLabel(estado)}`,
+      html: `
+        <div style="display:flex;flex-direction:column;gap:10px;text-align:left;">
+          <label style="font-size:12px;font-weight:600;color:#334155;">Observacion</label>
+          <textarea id="rc_obs_agenda" class="swal2-textarea" style="margin:0;width:100%;" placeholder="Detalle breve de la gestion">${item.observacion || ""}</textarea>
+          ${requiereProximo ? `
+            <label style="font-size:12px;font-weight:600;color:#334155;">Proximo contacto (opcional)</label>
+            <input id="rc_next_agenda" type="datetime-local" class="swal2-input" style="margin:0;width:100%;" />
+          ` : ""}
+        </div>
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Guardar",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const obsEl = document.getElementById("rc_obs_agenda");
+        const nextEl = document.getElementById("rc_next_agenda");
+        const observacion = obsEl ? String(obsEl.value || "").trim() : "";
+        const proximo = nextEl ? String(nextEl.value || "").trim() : "";
+        return { observacion, proximo };
+      },
+    });
+
+    if (!modal.isConfirmed) return false;
+
+    const observacion = String(modal.value?.observacion || "");
+    const proximo = String(modal.value?.proximo || "");
+
+    setSavingId(item.id);
+    setMensaje("");
+    try {
+      const res = await authFetch(`api_recordatorios_citas.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "guardar_gestion_agenda",
+          cotizacion_id: Number(item.cotizacion_id),
+          estado,
+          observacion,
+          fecha_proximo_contacto: proximo,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || "No se pudo guardar gestion");
+      }
+      setMensaje("Gestion guardada correctamente.");
+      await cargar();
+      return true;
+    } catch (err) {
+      setError(err.message || "No se pudo guardar gestion");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const reprogramarAgendaServicio = async (item) => {
+    const fechaActual = item.fecha || "";
+    const horaActual = item.hora ? String(item.hora).slice(0, 5) : "";
+    
+    const modal = await Swal.fire({
+      title: "Reprogramar servicios",
+      html: `
+        <div style="display:flex;flex-direction:column;gap:12px;text-align:left;">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#334155;">Nueva fecha</label>
+            <input id="rc_fecha_reprog" type="date" class="swal2-input" style="margin:0;width:100%;" value="${fechaActual}" />
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#334155;">Nueva hora</label>
+            <input id="rc_hora_reprog" type="time" class="swal2-input" style="margin:0;width:100%;" value="${horaActual}" />
+          </div>
+        </div>
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Reprogramar",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const fechaEl = document.getElementById("rc_fecha_reprog");
+        const horaEl = document.getElementById("rc_hora_reprog");
+        const fecha = fechaEl ? String(fechaEl.value || "").trim() : "";
+        const hora = horaEl ? String(horaEl.value || "").trim() : "";
+        if (!fecha || !hora) {
+          Swal.showValidationMessage("Debes ingresar fecha y hora");
+          return null;
+        }
+        return { fecha, hora };
+      },
+    });
+
+    if (!modal.isConfirmed) return false;
+
+    const { fecha, hora } = modal.value || {};
+    
+    setSavingId(item.id);
+    setMensaje("");
+    try {
+      const res = await authFetch(`api_recordatorios_citas.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reprogramar_agenda_servicio",
+          cotizacion_id: Number(item.cotizacion_id),
+          nueva_fecha: fecha,
+          nueva_hora: hora,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || "No se pudo reprogramar");
+      }
+      setMensaje(`Servicios reprogramados para ${fecha} a las ${String(hora).slice(0, 5)}.`);
+      await cargar();
+      return true;
+    } catch (err) {
+      setError(err.message || "No se pudo reprogramar los servicios");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const crearCotizacion = async (item) => {
     if (item.cotizacion_id) {
       navigate(`/cobrar-cotizacion/${item.cotizacion_id}`);
@@ -1158,49 +1286,92 @@ export default function RecordatoriosCitasPage() {
                                   💰 Registrar Cobro
                                 </button>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => guardarGestion(item, "contactado")}
-                                disabled={savingId === item.id}
-                                className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
-                              >
-                                Llamado
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => guardarGestion(item, "confirmado")}
-                                disabled={savingId === item.id}
-                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                              >
-                                Confirmo
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => guardarGestion(item, "no_contesta")}
-                                disabled={savingId === item.id}
-                                className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                              >
-                                No contesta
-                              </button>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const ok = await guardarGestion(item, "reprogramar");
-                                  if (!ok) return;
-                                  const params = new URLSearchParams({
-                                    paciente_id: String(Number(item.paciente_id || 0)),
-                                    consulta_id: String(Number(item.id || 0)),
-                                    origen: "recordatorios",
-                                    accion: "reprogramar",
-                                    back_to: "/recordatorios-citas",
-                                  });
-                                  navigate(`/agendar-consulta?${params.toString()}`);
-                                }}
-                                disabled={savingId === item.id}
-                                className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
-                              >
-                                Reprogramar
-                              </button>
+                              {esRecordatorioAgendaServicio(item) ? (
+                                // ═══ Flujo AGENDA SERVICIOS ═══
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => guardarGestionAgenda(item, "contactado")}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                                  >
+                                    Llamado
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => guardarGestionAgenda(item, "confirmado")}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                  >
+                                    Confirmo
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => guardarGestionAgenda(item, "no_contesta")}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                  >
+                                    No contesta
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      await reprogramarAgendaServicio(item);
+                                    }}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                  >
+                                    Reprogramar
+                                  </button>
+                                </>
+                              ) : (
+                                // ═══ Flujo CONSULTAS (EXISTENTE, SIN CAMBIO) ═══
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => guardarGestion(item, "contactado")}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                                  >
+                                    Llamado
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => guardarGestion(item, "confirmado")}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                  >
+                                    Confirmo
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => guardarGestion(item, "no_contesta")}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                  >
+                                    No contesta
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const ok = await guardarGestion(item, "reprogramar");
+                                      if (!ok) return;
+                                      const params = new URLSearchParams({
+                                        paciente_id: String(Number(item.paciente_id || 0)),
+                                        consulta_id: String(Number(item.id || 0)),
+                                        origen: "recordatorios",
+                                        accion: "reprogramar",
+                                        back_to: "/recordatorios-citas",
+                                      });
+                                      navigate(`/agendar-consulta?${params.toString()}`);
+                                    }}
+                                    disabled={savingId === item.id}
+                                    className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                  >
+                                    Reprogramar
+                                  </button>
+                                </>
+                              )}
                             </>
                           )}
                         </div>
