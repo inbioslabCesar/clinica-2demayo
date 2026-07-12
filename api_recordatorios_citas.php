@@ -1097,7 +1097,7 @@ if ($method === 'POST' || $method === 'PUT') {
                actualizado_por = ?,
                updated_at = CURRENT_TIMESTAMP'
         );
-        $stmtRecordatorio->bind_param('issi', $cotizacionId, $observacionReprog, $usuarioId, $observacionReprog, $usuarioId);
+        $stmtRecordatorio->bind_param('isisi', $cotizacionId, $observacionReprog, $usuarioId, $observacionReprog, $usuarioId);
         $okRec = $stmtRecordatorio->execute();
         $stmtRecordatorio->close();
 
