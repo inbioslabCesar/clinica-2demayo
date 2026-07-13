@@ -10,6 +10,7 @@ const emptyDetalle = {
   duracionValor: "5",
   duracionUnidad: "dias",
   observaciones: "",
+  recomendaciones: "",
 };
 
 function parsePositiveInteger(value) {
@@ -212,6 +213,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
       duracion_unidad: detalle.duracionUnidad,
       cantidad_total: cantidad_total,
       observaciones: detalle.observaciones,
+      recomendaciones: detalle.recomendaciones,
       cantidad_dispensacion: cantidadDispensacionFinal,
       unidad_dispensacion: unidadDispensacionFinal,
       manual: modoManual,
@@ -235,6 +237,12 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
   const actualizarIndicaciones = (idxEditar, indicaciones) => {
     setReceta((prev) => prev.map((item, idx) => (
       idx === idxEditar ? { ...item, observaciones: indicaciones } : item
+    )));
+  };
+
+  const actualizarRecomendaciones = (idxEditar, recomendaciones) => {
+    setReceta((prev) => prev.map((item, idx) => (
+      idx === idxEditar ? { ...item, recomendaciones } : item
     )));
   };
 
@@ -365,6 +373,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
         duracion_unidad: duracionUnidad,
         cantidad_total,
         observaciones: String(item?.observaciones || ""),
+        recomendaciones: String(item?.recomendaciones || ""),
         cantidad_dispensacion: parsePositiveInteger(item?.cantidad_dispensacion || item?.cantidad_dispensar || 0) || 1,
         unidad_dispensacion: String(item?.unidad_dispensacion || inferUnidadDispensacion(item?.presentacion || "")) || "unidad",
         manual: !enCatalogo,
@@ -442,6 +451,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
         duracion_unidad: duracionUnidad,
         cantidad_total,
         observaciones: String(item?.observaciones || ""),
+        recomendaciones: String(item?.recomendaciones || ""),
         cantidad_dispensacion: parsePositiveInteger(item?.cantidad_dispensacion || item?.cantidad_dispensar || 0) || 1,
         unidad_dispensacion: String(item?.unidad_dispensacion || "unidad") || "unidad",
         manual: Boolean(item?.manual),
@@ -478,6 +488,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
       duracion_valor: m?.duracion_valor || 5,
       duracion_unidad: m?.duracion_unidad || "dias",
       observaciones: m?.observaciones || "",
+      recomendaciones: m?.recomendaciones || "",
       cantidad_dispensacion: parsePositiveInteger(m?.cantidad_dispensacion || 0) || 1,
       unidad_dispensacion: m?.unidad_dispensacion || "unidad",
       manual: Boolean(m?.manual),
@@ -786,6 +797,17 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
             />
           </div>
 
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">Recomendaciones</label>
+            <textarea
+              className="border rounded p-2 w-full text-sm"
+              placeholder="Ej: tomar con alimentos, evitar alcohol, volver en 7 días"
+              value={detalle.recomendaciones}
+              onChange={(e) => setDetalle((prev) => ({ ...prev, recomendaciones: e.target.value }))}
+              rows={2}
+            />
+          </div>
+
           <div className="grid grid-cols-1 gap-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1 font-medium">Cantidad</label>
@@ -827,6 +849,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
               <tr className="bg-blue-100">
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Medicamento</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Indicaciones</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Recomendaciones</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Cantidad</th>
                 <th className="px-2 py-1 whitespace-nowrap w-16 text-xs text-gray-700 font-semibold">Quitar</th>
               </tr>
@@ -847,6 +870,15 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
                         placeholder="Escribe indicaciones"
                         value={m.observaciones || ""}
                         onChange={(e) => actualizarIndicaciones(idx, e.target.value)}
+                      />
+                    </td>
+                    <td className="border px-2 py-1 min-w-[220px]">
+                      <textarea
+                        className="w-full border rounded p-1 text-xs"
+                        rows={2}
+                        placeholder="Escribe recomendaciones"
+                        value={m.recomendaciones || ""}
+                        onChange={(e) => actualizarRecomendaciones(idx, e.target.value)}
                       />
                     </td>
                     <td className="border px-2 py-1 whitespace-nowrap text-center">
@@ -872,7 +904,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
                 ))
               ) : (
                 <tr>
-                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={4}>
+                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={5}>
                     No hay medicamentos seleccionados
                   </td>
                 </tr>
