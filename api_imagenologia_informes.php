@@ -211,6 +211,33 @@ function resolver_medico_responsable_informe(mysqli $conn, array $orden): int {
     return max(0, $medicoId);
 }
 
+function puede_editar_informe_por_orden(mysqli $conn, array $orden, string $rol, int $usuarioId): bool {
+    if ($usuarioId <= 0) {
+        return false;
+    }
+
+    if ($rol === 'administrador') {
+        return true;
+    }
+
+    if ($rol !== 'medico') {
+        return false;
+    }
+
+    $medicoResponsableId = resolver_medico_responsable_informe($conn, $orden);
+    $solicitadoPorId = (int)($orden['solicitado_por'] ?? 0);
+
+    if ($medicoResponsableId > 0 && $medicoResponsableId === $usuarioId) {
+        return true;
+    }
+
+    if ($solicitadoPorId > 0 && $solicitadoPorId === $usuarioId) {
+        return true;
+    }
+
+    return false;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GET: Obtener informe por orden_imagen_id o id
 // ═══════════════════════════════════════════════════════════════════════════
@@ -295,7 +322,7 @@ if ($method === 'POST') {
     }
     
     // Validar que la orden existe
-    $stmtOrd = $mysqli->prepare('SELECT id, paciente_id, consulta_id, cotizacion_id, medico_id, tipo, indicaciones FROM ordenes_imagen WHERE id = ?');
+    $stmtOrd = $mysqli->prepare('SELECT id, paciente_id, consulta_id, cotizacion_id, medico_id, solicitado_por, tipo, indicaciones FROM ordenes_imagen WHERE id = ?');
     if (!$stmtOrd) {
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => 'Error de preparación de query']);
@@ -310,6 +337,15 @@ if ($method === 'POST') {
     if (!$orden) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'Orden de imagen no encontrada']);
+        exit;
+    }
+
+    if (!puede_editar_informe_por_orden($mysqli, $orden, $rol, $usuarioId)) {
+        http_response_code(403);
+        echo json_encode([
+            'success' => false,
+            'error' => 'No autorizado. Solo el medico responsable/solicitante o un administrador puede editar el informe.'
+        ]);
         exit;
     }
     
@@ -496,6 +532,30 @@ if ($method === 'PUT') {
     if ($informeId <= 0) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'id es requerido']);
+        exit;
+    }
+
+    $stmtOrd = $mysqli->prepare('SELECT oi.id, oi.paciente_id, oi.consulta_id, oi.cotizacion_id, oi.medico_id, oi.solicitado_por, oi.tipo, oi.indicaciones FROM imagenologia_informes ii INNER JOIN ordenes_imagen oi ON oi.id = ii.orden_imagen_id WHERE ii.id = ? LIMIT 1');
+    $orden = null;
+    if ($stmtOrd) {
+        $stmtOrd->bind_param('i', $informeId);
+        $stmtOrd->execute();
+        $orden = $stmtOrd->get_result()->fetch_assoc();
+        $stmtOrd->close();
+    }
+
+    if (!$orden) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'error' => 'Informe no encontrado']);
+        exit;
+    }
+
+    if (!puede_editar_informe_por_orden($mysqli, $orden, $rol, $usuarioId)) {
+        http_response_code(403);
+        echo json_encode([
+            'success' => false,
+            'error' => 'No autorizado. Solo el medico responsable/solicitante o un administrador puede editar el informe.'
+        ]);
         exit;
     }
     

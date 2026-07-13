@@ -163,6 +163,7 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
     parseInt(orden.carga_anticipada) === 1 ||
     !orden.cotizacion_id ||
     cotizEstadoPagado(orden.cotizacion);
+  const canUpload = Boolean(orden?.can_upload_archivos);
 
   const handleEliminarArchivo = async (archivoId) => {
     const { isConfirmed } = await Swal.fire({ title: "¿Eliminar archivo?", icon: "warning", showCancelButton: true, confirmButtonText: "Sí, eliminar", cancelButtonText: "Cancelar" });
@@ -298,21 +299,21 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
 
         {/* Acciones */}
         <div className="flex gap-2 mt-3 flex-wrap">
-          {cotizPagada ? (
+          {canUpload && cotizPagada ? (
             <button
               onClick={() => onSubir(orden)}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition"
             >
               <FaCloudUploadAlt /> Subir archivos
             </button>
-          ) : (
+          ) : canUpload ? (
             <div
               className="flex items-center gap-1.5 bg-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-lg font-semibold cursor-not-allowed"
               title="Requiere pago de cotización o carga anticipada habilitada"
             >
               <FaCloudUploadAlt /> Subir archivos (requiere pago)
             </div>
-          )}
+          ) : null}
           {orden.archivos.length > 0 && (
             <button
               onClick={() => navigate(`/visor-imagen/${orden.id}`)}
@@ -322,7 +323,7 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
             </button>
           )}
           {/* Toggle carga anticipada */}
-          {!cotizPagada && (
+          {canUpload && !cotizPagada && (
             <button
               onClick={handleToggleAnticipada}
               disabled={toggling}
@@ -332,7 +333,7 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
               ⚡ Carga anticipada
             </button>
           )}
-          {parseInt(orden.carga_anticipada) === 1 && (
+          {canUpload && parseInt(orden.carga_anticipada) === 1 && (
             <button
               onClick={handleToggleAnticipada}
               disabled={toggling}
@@ -350,6 +351,7 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
             tipoExamen={String(orden.tipo || "")}
             pacienteNombre={pacienteNombre}
             medicoNombre={medicoNombre}
+            canEdit={Boolean(orden?.can_edit_informe)}
             onInformeActualizado={onRecargar}
           />
         </div>

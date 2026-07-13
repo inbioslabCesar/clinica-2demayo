@@ -180,8 +180,42 @@ if (!function_exists('resolverMedicoResponsableOrdenImagen')) {
     }
 }
 
+if (!function_exists('usuarioPuedeOperarOrdenImagen')) {
+    function usuarioPuedeOperarOrdenImagen(array $orden, string $rol, int $usuarioId): bool {
+        if ($usuarioId <= 0) return false;
+
+        if ($rol === 'administrador') {
+            return true;
+        }
+
+        // Mantener permisos operativos existentes para personal no medico.
+        if (in_array($rol, ['recepcionista', 'laboratorista'], true)) {
+            return true;
+        }
+
+        if ($rol !== 'medico') {
+            return false;
+        }
+
+        $medicoResponsableId = (int)($orden['medico_id'] ?? 0);
+        $solicitadoPorId = (int)($orden['solicitado_por'] ?? 0);
+
+        if ($medicoResponsableId > 0 && $medicoResponsableId === $usuarioId) {
+            return true;
+        }
+
+        if ($solicitadoPorId > 0 && $solicitadoPorId === $usuarioId) {
+            return true;
+        }
+
+        return false;
+    }
+}
+
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
+    global $rol, $usuarioId;
+
     $oid     = (int)$orden['id'];
     $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
     $orden['archivos'] = [];
@@ -205,6 +239,10 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
     $orden['medico_responsable_nombre'] = $medInfo['medico_responsable_nombre'];
     $orden['medico_responsable_apellido'] = $medInfo['medico_responsable_apellido'];
     $orden['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
+
+    $puedeOperarOrden = usuarioPuedeOperarOrdenImagen($orden, (string)$rol, (int)$usuarioId);
+    $orden['can_upload_archivos'] = $puedeOperarOrden;
+    $orden['can_edit_informe'] = $puedeOperarOrden && in_array((string)$rol, ['medico', 'administrador'], true);
 
     $cotizId = (int)($orden['cotizacion_id'] ?? 0);
     if ($cotizId > 0) {
@@ -345,6 +383,20 @@ if ($method === 'POST') {
 
         $orden = $conn->query("SELECT * FROM ordenes_imagen WHERE id = $orden_id")->fetch_assoc();
         if (!$orden) { echo json_encode(['success' => false, 'error' => 'Orden no encontrada']); exit; }
+
+        $medInfoOrden = resolverMedicoResponsableOrdenImagen($conn, $orden);
+        if ((int)($orden['medico_id'] ?? 0) <= 0 && (int)($medInfoOrden['medico_id'] ?? 0) > 0) {
+            $orden['medico_id'] = (int)$medInfoOrden['medico_id'];
+        }
+
+        if (!usuarioPuedeOperarOrdenImagen($orden, $rol, $usuarioId)) {
+            http_response_code(403);
+            echo json_encode([
+                'success' => false,
+                'error' => 'No autorizado. Solo el medico responsable/solicitante o un administrador puede subir archivos.',
+            ]);
+            exit;
+        }
 
         // ── Verificar permiso de subida: cotización pagada o carga anticipada ───
         $puedeSubir = (intval($orden['carga_anticipada']) === 1);

@@ -14,6 +14,7 @@ export default function CardInformeImagenologia({
   tipoExamen,
   pacienteNombre,
   medicoNombre,
+  canEdit = true,
   onInformeActualizado
 }) {
   const [informe, setInforme] = useState(null);
@@ -130,13 +131,19 @@ export default function CardInformeImagenologia({
 
             {/* Botones de acción */}
             <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => setModalOpen(true)}
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1 transition"
-              >
-                <FiEdit3 size={16} />
-                Editar
-              </button>
+              {canEdit ? (
+                <button
+                  onClick={() => setModalOpen(true)}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1 transition"
+                >
+                  <FiEdit3 size={16} />
+                  Editar
+                </button>
+              ) : (
+                <span className="px-3 py-1 text-xs bg-gray-100 text-gray-500 rounded border border-gray-200">
+                  Solo lectura
+                </span>
+              )}
               <button
                 onClick={handleDescargarPdf}
                 disabled={descargando}
@@ -149,30 +156,40 @@ export default function CardInformeImagenologia({
           </>
         ) : (
           <>
-            <p className="text-sm text-gray-700 mb-3">
-              No hay informe redactado aún. Inicia la redacción del informe clínico.
-            </p>
-            <button
-              onClick={() => setModalOpen(true)}
-              className="px-3 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2 transition w-full justify-center"
-            >
-              <FiEdit3 size={16} />
-              Iniciar Informe
-            </button>
+            {canEdit ? (
+              <>
+                <p className="text-sm text-gray-700 mb-3">
+                  No hay informe redactado aún. Inicia la redacción del informe clínico.
+                </p>
+                <button
+                  onClick={() => setModalOpen(true)}
+                  className="px-3 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2 transition w-full justify-center"
+                >
+                  <FiEdit3 size={16} />
+                  Iniciar Informe
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500">
+                Informe pendiente. Solo el medico responsable o administrador puede redactarlo.
+              </p>
+            )}
           </>
         )}
       </div>
 
       {/* Modal para redactar/editar */}
-      <ModalInformeImagenologia
-        open={modalOpen}
-        ordenImagenId={ordenImagenId}
-        tipoExamen={tipoExamen}
-        pacienteNombre={pacienteNombre}
-        medicoNombre={medicoNombre}
-        onClose={handleCerrarModal}
-        onSaved={cargarInforme}
-      />
+      {canEdit && (
+        <ModalInformeImagenologia
+          open={modalOpen}
+          ordenImagenId={ordenImagenId}
+          tipoExamen={tipoExamen}
+          pacienteNombre={pacienteNombre}
+          medicoNombre={medicoNombre}
+          onClose={handleCerrarModal}
+          onSaved={cargarInforme}
+        />
+      )}
     </>
   );
 }

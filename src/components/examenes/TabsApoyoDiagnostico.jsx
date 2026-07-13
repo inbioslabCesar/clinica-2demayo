@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import ResultadosLaboratorio from "./ResultadosLaboratorio";
 import SolicitudProcedimientos from "./SolicitudProcedimientos";
 import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologiaHC";
+import CardInformeImagenologia from "../imagenologia/CardInformeImagenologia";
 import { authFetch } from "../../utils/apiClient";
 
 // ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
@@ -18,10 +19,93 @@ const ESTADO_BADGE = {
   cancelado:  "bg-red-100 text-red-600",
 };
 
+function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
+  const [archivos, setArchivos] = useState([]);
+  const [subiendo, setSubiendo] = useState(false);
+
+  const agregarArchivos = (fileList) => {
+    const lista = Array.from(fileList || []);
+    setArchivos((prev) => [...prev, ...lista]);
+  };
+
+  const quitar = (idx) => setArchivos((prev) => prev.filter((_, i) => i !== idx));
+
+  const handleSubir = async () => {
+    if (!orden?.id || archivos.length === 0) return;
+    setSubiendo(true);
+    try {
+      const fd = new FormData();
+      fd.append("orden_id", String(orden.id));
+      archivos.forEach((f) => fd.append("archivos[]", f));
+
+      const res = await authFetch("api_ordenes_imagen.php", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.success) {
+        onUploaded?.();
+        onClose?.();
+      } else {
+        alert(data.error || "No se pudieron subir los archivos");
+      }
+    } catch {
+      alert("Error de conexión al subir archivos");
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl border border-gray-200">
+        <div className="px-4 py-3 border-b bg-blue-50 rounded-t-xl">
+          <p className="font-semibold text-blue-900 text-sm">Subir imágenes diagnósticas</p>
+          <p className="text-xs text-blue-700">Orden #{orden?.id}</p>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <input
+            type="file"
+            multiple
+            accept="application/pdf,image/*,.dcm"
+            onChange={(e) => agregarArchivos(e.target.files)}
+            className="block w-full text-xs"
+          />
+
+          {archivos.length > 0 && (
+            <div className="max-h-40 overflow-auto border rounded p-2 bg-gray-50 space-y-1">
+              {archivos.map((f, idx) => (
+                <div key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="truncate">{f.name}</span>
+                  <button type="button" onClick={() => quitar(idx)} className="text-red-500 hover:text-red-700">Quitar</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs border rounded hover:bg-gray-50" disabled={subiendo}>Cancelar</button>
+            <button
+              type="button"
+              onClick={handleSubir}
+              disabled={subiendo || archivos.length === 0}
+              className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {subiendo ? "Subiendo..." : "Subir"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Sub-panel para un tipo de imagen ─────────────────────────────────────────
-function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft }) {
+function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft, pacienteId, medicoNombre }) {
   const [ordenes, setOrdenes]             = useState([]);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
+  const [ordenSubir, setOrdenSubir] = useState(null);
 
   const cargarOrdenes = useCallback(() => {
     if (!consultaId) return;
@@ -118,6 +202,15 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
                   🖼️ Ver Imágenes
                 </button>
               )}
+              {Boolean(ord?.can_upload_archivos) && (
+                <button
+                  type="button"
+                  onClick={() => setOrdenSubir(ord)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded-lg font-semibold transition flex items-center gap-1"
+                >
+                  ⬆️ Subir archivos
+                </button>
+              )}
               {ord.estado === "pendiente" && (
                 <button
                   type="button"
@@ -138,6 +231,17 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
           </p>
 
           <div className="mt-2">
+            <CardInformeImagenologia
+              ordenImagenId={Number(ord.id || 0)}
+              tipoExamen={String(ord.tipo || "")}
+              pacienteNombre={String(pacienteId || "")}
+              medicoNombre={medicoNombre}
+              canEdit={Boolean(ord?.can_edit_informe)}
+              onInformeActualizado={cargarOrdenes}
+            />
+          </div>
+
+          <div className="mt-2">
             <VisorInformeImagenologiaHC
               ordenImagenId={Number(ord.id || 0)}
               servicioNombre={ord.servicios_nombres?.[0] || label}
@@ -146,6 +250,14 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft 
           </div>
         </div>
       ))}
+
+      {ordenSubir && (
+        <ModalSubidaRapidaImagenHC
+          orden={ordenSubir}
+          onClose={() => setOrdenSubir(null)}
+          onUploaded={cargarOrdenes}
+        />
+      )}
     </div>
   );
 }
@@ -172,6 +284,16 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   };
   const [examenes, setExamenes] = useState([]);
   const navigate = useNavigate();
+  const medicoNombre = React.useMemo(() => {
+    try {
+      const rawUsuario = sessionStorage.getItem("usuario");
+      const rawMedico = sessionStorage.getItem("medico");
+      const payload = rawUsuario ? JSON.parse(rawUsuario) : (rawMedico ? JSON.parse(rawMedico) : null);
+      return [payload?.nombre, payload?.apellido].filter(Boolean).join(" ") || "";
+    } catch {
+      return "";
+    }
+  }, []);
 
   const navigateWithDraft = useCallback((path) => {
     try {
@@ -395,13 +517,13 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           </>
         )}
         {tab === "rx" && (
-          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
+          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} />
         )}
         {tab === "ecografia" && (
-          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
+          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} />
         )}
         {tab === "tomografia" && (
-          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} />
+          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} />
         )}
         {tab === "procedimientos" && (
           <SolicitudProcedimientos consultaId={consultaId} />
