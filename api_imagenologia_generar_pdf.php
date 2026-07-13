@@ -244,7 +244,7 @@ $html = '
         }
         .images-container {
             margin-top: 20px;
-            page-break-inside: avoid;
+            page-break-inside: auto;
         }
         .images-title {
             font-size: 13px;
@@ -254,25 +254,49 @@ $html = '
             padding-bottom: 5px;
             margin-bottom: 10px;
         }
-        .image-item {
-            display: inline-block;
-            margin: 5px;
-            text-align: center;
+        .images-grid {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 5px 6px;
+            table-layout: fixed;
+        }
+        .images-grid tr {
+            page-break-inside: avoid;
+        }
+        .image-cell {
+            width: 50%;
             vertical-align: top;
             page-break-inside: avoid;
         }
-        .image-item img {
-            max-width: 220px;
-            max-height: 220px;
-            border: 1px solid #ddd;
-            padding: 2px;
+        .image-box {
+            border: 1px solid #d9d9d9;
+            background: #fafafa;
+            padding: 4px;
+            height: 170px;
+            text-align: center;
+            vertical-align: middle;
+        }
+        .image-box-inner {
+            width: 100%;
+            height: 150px;
+            position: relative;
+            text-align: center;
+        }
+        .image-box-inner img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            display: inline-block;
         }
         .image-name {
-            font-size: 9px;
-            margin-top: 3px;
+            font-size: 7px;
+            margin-top: 1px;
             color: #666;
             word-break: break-word;
-            max-width: 220px;
+            line-height: 1.1;
+            max-height: 10px;
+            overflow: hidden;
         }
         .signature-section {
             margin-top: 30px;
@@ -396,11 +420,13 @@ if (!empty($plantillaSections)) {
     foreach ($plantillaSections as $section) {
         $sectionId = (string)($section['id'] ?? '');
         $sectionNombre = (string)($section['nombre'] ?? $sectionId);
-        
-        if ($sectionId && isset($contenido[$sectionId])) {
+        if ($sectionId) {
+            $sectionContenido = (isset($contenido[$sectionId]) && is_array($contenido[$sectionId]))
+                ? (array)$contenido[$sectionId]
+                : [];
             $html .= '<div class="section-title">' . htmlspecialchars($sectionNombre) . '</div>';
 
-            if (is_array($contenido[$sectionId])) {
+            if (is_array($sectionContenido)) {
                 $labelMap = [];
                 foreach ((array)($section['campos'] ?? []) as $campo) {
                     $campoId = (string)($campo['id'] ?? '');
@@ -418,7 +444,7 @@ if (!empty($plantillaSections)) {
                 $templateKeys = array_keys($labelMap);
                 $emptyLockedKeys = [];
 
-                foreach ($contenido[$sectionId] as $fieldId => $fieldValue) {
+                foreach ($sectionContenido as $fieldId => $fieldValue) {
                     $fieldIdRaw = (string)$fieldId;
                     if (strpos($fieldIdRaw, '?') !== false) {
                         continue;
@@ -446,7 +472,7 @@ if (!empty($plantillaSections)) {
                     }
                 }
 
-                foreach ($contenido[$sectionId] as $fieldId => $fieldValue) {
+                foreach ($sectionContenido as $fieldId => $fieldValue) {
                     if ($fieldValue === null || $fieldValue === '') {
                         continue;
                     }
@@ -504,6 +530,40 @@ if (!empty($plantillaSections)) {
                     }
                 }
 
+                // Completar campos vacios con valor_base definido en la plantilla
+                foreach ((array)($section['campos'] ?? []) as $campoTpl) {
+                    $campoTplId = (string)($campoTpl['id'] ?? '');
+                    if ($campoTplId === '') {
+                        continue;
+                    }
+                    $campoTplLabel = (string)($campoTpl['label'] ?? $campoTplId);
+                    $campoTplKey = normalizar_clave_pdf($campoTplId);
+                    if ($campoTplKey === '') {
+                        $campoTplKey = normalizar_clave_pdf($campoTplLabel);
+                    }
+                    if ($campoTplKey === '') {
+                        continue;
+                    }
+
+                    if (isset($camposRender[$campoTplKey])) {
+                        continue;
+                    }
+
+                    $usarFallback = array_key_exists('usar_valor_base_si_vacio', (array)$campoTpl)
+                        ? (bool)$campoTpl['usar_valor_base_si_vacio']
+                        : true;
+                    $valorBase = trim((string)($campoTpl['valor_base'] ?? ''));
+                    if (!$usarFallback || $valorBase === '') {
+                        continue;
+                    }
+
+                    $camposRender[$campoTplKey] = [
+                        'label' => $campoTplLabel,
+                        'values' => [$valorBase]
+                    ];
+                    $ordenCampos[] = $campoTplKey;
+                }
+
                 foreach ($ordenCampos as $campoKey) {
                     $fieldLabel = (string)$camposRender[$campoKey]['label'];
                     $fieldValueText = implode("\n", (array)$camposRender[$campoKey]['values']);
@@ -542,7 +602,8 @@ $html .= '</div>';
 if (!empty($archivos)) {
     $html .= '<div class="images-container">
         <div class="images-title">Imágenes Diagnósticas</div>';
-    
+
+    $imagenesValidas = [];
     foreach ($archivos as $archivo) {
         $archivoPath = (string)$archivo['archivo_path'];
         $nombreOriginal = (string)$archivo['nombre_original'];
@@ -553,12 +614,42 @@ if (!empty($archivos)) {
             // Convertir a base64 para incrustar en PDF
             $imageData = base64_encode(file_get_contents($archivoPath));
             $imageSrc = 'data:' . $mimeType . ';base64,' . $imageData;
-            
-            $html .= '<div class="image-item">
-                <img src="' . $imageSrc . '" alt="' . htmlspecialchars($nombreOriginal) . '">
-                <div class="image-name">' . htmlspecialchars($nombreOriginal) . '</div>
-            </div>';
+
+            $imagenesValidas[] = [
+                'src' => $imageSrc,
+                'nombre' => $nombreOriginal,
+            ];
         }
+    }
+
+    if (!empty($imagenesValidas)) {
+        $html .= '<table class="images-grid">';
+
+        foreach ($imagenesValidas as $i => $img) {
+            if ($i % 2 === 0) {
+                $html .= '<tr>';
+            }
+
+            $indice = $i + 1;
+            $html .= '<td class="image-cell">
+                <div class="image-box">
+                    <div class="image-box-inner">
+                        <img src="' . $img['src'] . '" alt="' . htmlspecialchars($img['nombre']) . '">
+                    </div>
+                    <div class="image-name">Imagen ' . $indice . '</div>
+                </div>
+            </td>';
+
+            if ($i % 2 === 1) {
+                $html .= '</tr>';
+            }
+        }
+
+        if (count($imagenesValidas) % 2 === 1) {
+            $html .= '<td class="image-cell"></td></tr>';
+        }
+
+        $html .= '</table>';
     }
     
     $html .= '</div>';

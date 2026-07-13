@@ -22,7 +22,16 @@ function slugify(text) {
 }
 
 function createCampo(label = "Nuevo campo") {
-  return { _id: nextId("c"), id: slugify(label), label, type: "textarea", placeholder: "", required: false };
+  return {
+    _id: nextId("c"),
+    id: slugify(label),
+    label,
+    type: "textarea",
+    placeholder: "",
+    valor_base: "",
+    usar_valor_base_si_vacio: true,
+    required: false,
+  };
 }
 
 function createSeccion(nombre = "Nueva sección") {
@@ -41,6 +50,8 @@ function estructuraToBuilder(estructura) {
       label: String(c.label || ""),
       type: String(c.type || "textarea"),
       placeholder: String(c.placeholder || ""),
+      valor_base: String(c.valor_base || ""),
+      usar_valor_base_si_vacio: c.usar_valor_base_si_vacio !== false,
       required: Boolean(c.required),
     })),
   }));
@@ -56,6 +67,8 @@ function builderToEstructura(secciones) {
         label: c.label,
         type: c.type,
         placeholder: c.placeholder,
+        valor_base: c.valor_base,
+        usar_valor_base_si_vacio: c.usar_valor_base_si_vacio !== false,
         required: c.required,
       })),
     })),
@@ -574,6 +587,32 @@ export default function PlantillasImagenologiaPage() {
                                       onChange={(e) => updateCampo(sec._id, campo._id, { required: e.target.checked })}
                                       className="w-4 h-4 rounded text-indigo-600"
                                     />
+                                  </label>
+                                </div>
+
+                                {/* Texto base automatico */}
+                                <div className="col-span-12 sm:col-span-11">
+                                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                                    Texto base automatico
+                                  </label>
+                                  <textarea
+                                    value={campo.valor_base || ""}
+                                    onChange={(e) => updateCampo(sec._id, campo._id, { valor_base: e.target.value })}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                                    placeholder="Texto que aparecera por defecto al redactar y se podra ajustar segun hallazgos."
+                                    rows={2}
+                                  />
+                                </div>
+
+                                <div className="col-span-12 sm:col-span-1 flex items-end pb-1">
+                                  <label className="flex items-center gap-2 cursor-pointer" title="Usar texto base en PDF cuando este campo se deje vacio">
+                                    <input
+                                      type="checkbox"
+                                      checked={campo.usar_valor_base_si_vacio !== false}
+                                      onChange={(e) => updateCampo(sec._id, campo._id, { usar_valor_base_si_vacio: e.target.checked })}
+                                      className="w-4 h-4 rounded text-indigo-600"
+                                    />
+                                    <span className="text-[11px] text-slate-600">Fallback PDF</span>
                                   </label>
                                 </div>
                               </div>

@@ -47,6 +47,72 @@ function img_normalize_tipo(string $tipo): string {
     return $t;
 }
 
+function img_contains(string $haystack, string $needle): bool {
+    if ($needle === '') return false;
+    return strpos($haystack, $needle) !== false;
+}
+
+function img_default_valor_base(array $campo, string $tipoExamen = '', string $sectionId = ''): string {
+    $fieldType = strtolower(trim((string)($campo['type'] ?? 'textarea')));
+    $fieldId = strtolower(trim((string)($campo['id'] ?? '')));
+    $label = strtolower(trim((string)($campo['label'] ?? '')));
+    $section = strtolower(trim($sectionId));
+    $tipo = img_normalize_tipo($tipoExamen);
+
+    if ($fieldType === 'number') {
+        return '';
+    }
+
+    if ($section === 'conclusion' || img_contains($fieldId, 'resumen') || img_contains($fieldId, 'conclusion')) {
+        return 'No se identifican hallazgos patologicos significativos en el estudio realizado.';
+    }
+
+    if ($tipo === 'ecografia') {
+        if (img_contains($fieldId, 'higado') || img_contains($label, 'higado')) {
+            return 'Higado de tamano conservado, ecoestructura homogenea, sin lesiones focales.';
+        }
+        if (img_contains($fieldId, 'vesicula') || img_contains($label, 'vesicula')) {
+            return 'Vesicula biliar de pared fina, sin imagenes litiasicas ni signos inflamatorios.';
+        }
+        if (img_contains($fieldId, 'pancreas') || img_contains($label, 'pancreas')) {
+            return 'Pancreas de contornos regulares y ecoestructura conservada.';
+        }
+        if (img_contains($fieldId, 'rinon') || img_contains($fieldId, 'ri') || img_contains($label, 'rinon') || img_contains($label, 'ri')) {
+            return 'Rinones de tamano y morfologia conservados, sin dilatacion pielocalicial ni litiasis visible.';
+        }
+        if (img_contains($fieldId, 'bazo') || img_contains($label, 'bazo')) {
+            return 'Bazo de dimensiones conservadas y ecoestructura homogenea.';
+        }
+    }
+
+    if ($tipo === 'rayosx') {
+        if (img_contains($fieldId, 'tecnica') || img_contains($fieldId, 'posicion')) {
+            return 'Estudio realizado en proyeccion estandar con calidad diagnostica adecuada.';
+        }
+        if (img_contains($fieldId, 'mediastino') || img_contains($label, 'mediastino')) {
+            return 'Mediastino sin ensanchamiento; silueta cardiomediastinica dentro de limites esperados.';
+        }
+        if (img_contains($fieldId, 'campos') || img_contains($fieldId, 'pulmonares') || img_contains($label, 'pulmonares')) {
+            return 'Campos pulmonares sin focos de consolidacion ni signos de proceso infiltrativo agudo.';
+        }
+    }
+
+    if ($tipo === 'tomografia') {
+        if (img_contains($fieldId, 'protocolo') || img_contains($fieldId, 'tecnica')) {
+            return 'Exploracion tomografica multicorte segun protocolo institucional, con reconstrucciones multiplanares.';
+        }
+        if (img_contains($fieldId, 'medicion') || img_contains($label, 'medicion')) {
+            return 'No se evidencian lesiones que requieran mediciones adicionales.';
+        }
+    }
+
+    if ($fieldType === 'text') {
+        return 'Sin alteraciones relevantes.';
+    }
+
+    return 'Sin alteraciones significativas en este apartado.';
+}
+
 function img_normalize_secciones(array $sections): array {
     $clean = [];
     foreach ($sections as $s) {
@@ -64,6 +130,10 @@ function img_normalize_secciones(array $sections): array {
                 'label'       => trim((string)($c['label'] ?? '')),
                 'type'        => $tipo,
                 'placeholder' => trim((string)($c['placeholder'] ?? '')),
+                'valor_base'  => trim((string)($c['valor_base'] ?? '')),
+                'usar_valor_base_si_vacio' => array_key_exists('usar_valor_base_si_vacio', (array)$c)
+                    ? (bool)$c['usar_valor_base_si_vacio']
+                    : true,
                 'required'    => (bool)($c['required'] ?? false),
             ];
         }
@@ -78,6 +148,28 @@ function img_decode_row(array $row): array {
     $row['estructura_json'] = $row['estructura_json']
         ? json_decode((string)$row['estructura_json'], true)
         : null;
+
+    if (isset($row['estructura_json']['sections']) && is_array($row['estructura_json']['sections'])) {
+        $tipoExamen = (string)($row['tipo_examen'] ?? '');
+        foreach ($row['estructura_json']['sections'] as $sIdx => $section) {
+            $sectionId = (string)($section['id'] ?? '');
+            if (!isset($section['campos']) || !is_array($section['campos'])) {
+                continue;
+            }
+            foreach ($section['campos'] as $cIdx => $campo) {
+                $valorBase = trim((string)($campo['valor_base'] ?? ''));
+                if ($valorBase === '') {
+                    $valorBase = img_default_valor_base((array)$campo, $tipoExamen, $sectionId);
+                }
+                $row['estructura_json']['sections'][$sIdx]['campos'][$cIdx]['valor_base'] = $valorBase;
+                $row['estructura_json']['sections'][$sIdx]['campos'][$cIdx]['usar_valor_base_si_vacio'] =
+                    array_key_exists('usar_valor_base_si_vacio', (array)$campo)
+                        ? (bool)$campo['usar_valor_base_si_vacio']
+                        : true;
+            }
+        }
+    }
+
     $row['es_activa'] = (int)($row['es_activa'] ?? 1);
     return $row;
 }

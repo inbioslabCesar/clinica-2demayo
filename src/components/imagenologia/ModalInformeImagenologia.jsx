@@ -3,6 +3,50 @@ import { FiX, FiDownload, FiSave, FiLoader } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { authFetch } from '../../utils/apiClient';
 
+function isEmptyValue(value) {
+  return value == null || String(value).trim() === '';
+}
+
+function hasAnyContenidoValue(contenido = {}) {
+  return Object.values(contenido || {}).some((section) => {
+    if (!section || typeof section !== 'object') return false;
+    return Object.values(section).some((v) => !isEmptyValue(v));
+  });
+}
+
+function buildContenidoFromPlantilla(plantilla) {
+  const next = {};
+  const sections = plantilla?.estructura_json?.sections || [];
+  sections.forEach((section) => {
+    const sectionId = section?.id;
+    if (!sectionId) return;
+    next[sectionId] = {};
+    (section.campos || []).forEach((campo) => {
+      if (!campo?.id) return;
+      next[sectionId][campo.id] = campo.valor_base || '';
+    });
+  });
+  return next;
+}
+
+function mergeContenidoWithPlantilla(contenidoActual, plantillaNueva) {
+  const merged = { ...(contenidoActual || {}) };
+  const sections = plantillaNueva?.estructura_json?.sections || [];
+  sections.forEach((section) => {
+    const sectionId = section?.id;
+    if (!sectionId) return;
+    const currentSection = { ...(merged[sectionId] || {}) };
+    (section.campos || []).forEach((campo) => {
+      if (!campo?.id) return;
+      if (isEmptyValue(currentSection[campo.id])) {
+        currentSection[campo.id] = campo.valor_base || '';
+      }
+    });
+    merged[sectionId] = currentSection;
+  });
+  return merged;
+}
+
 /**
  * ModalInformeImagenologia
  * Modal para redactar/editar informe clínico de imagenología con plantillas dinámicas
@@ -40,6 +84,7 @@ export default function ModalInformeImagenologia({
     ])
       .then(([resPlant, resInf]) => Promise.all([resPlant.json(), resInf.json()]))
       .then(([dataPlant, dataInf]) => {
+        let plantillaFinal = null;
         if (dataPlant.success && Array.isArray(dataPlant.plantillas) && dataPlant.plantillas.length > 0) {
           setTodasLasPlantillas(dataPlant.plantillas);
           // Si hay un informe existente con plantilla guardada, usarla; sino la primera activa
@@ -47,7 +92,8 @@ export default function ModalInformeImagenologia({
           const matchPorNombre = plantillaInforme
             ? dataPlant.plantillas.find((p) => p.nombre === plantillaInforme?.nombre)
             : null;
-          setPlantillaSeleccionada(matchPorNombre || dataPlant.plantillas[0]);
+          plantillaFinal = matchPorNombre || dataPlant.plantillas[0];
+          setPlantillaSeleccionada(plantillaFinal);
         } else {
           setTodasLasPlantillas([]);
         }
@@ -57,10 +103,14 @@ export default function ModalInformeImagenologia({
           setInforme(inf);
           setTitulo(inf.titulo || '');
           setEstado(inf.estado || 'borrador');
-          setContenido(inf.contenido_json || {});
+          const contenidoExistente = inf.contenido_json || {};
+          const contenidoHibrido = hasAnyContenidoValue(contenidoExistente)
+            ? contenidoExistente
+            : mergeContenidoWithPlantilla(contenidoExistente, plantillaFinal);
+          setContenido(contenidoHibrido);
         } else {
-          setContenido({});
-          setTitulo('');
+          setContenido(buildContenidoFromPlantilla(plantillaFinal));
+          setTitulo(plantillaFinal?.nombre || '');
           setEstado('borrador');
         }
       })
@@ -233,9 +283,26 @@ export default function ModalInformeImagenologia({
                   </label>
                   <select
                     value={plantillaSeleccionada?.id ?? ''}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const p = todasLasPlantillas.find((pl) => String(pl.id) === String(e.target.value));
-                      if (p) setPlantillaSeleccionada(p);
+                      if (!p) return;
+                      if (String(p.id) === String(plantillaSeleccionada?.id)) return;
+
+                      const hayCambios = hasAnyContenidoValue(contenido);
+                      if (hayCambios) {
+                        const confirm = await Swal.fire({
+                          title: 'Cambiar plantilla',
+                          text: 'Se mantendra lo ya escrito y se autocompletaran los campos vacios con el nuevo texto base.',
+                          icon: 'question',
+                          showCancelButton: true,
+                          confirmButtonText: 'Aplicar',
+                          cancelButtonText: 'Cancelar'
+                        });
+                        if (!confirm.isConfirmed) return;
+                      }
+
+                      setPlantillaSeleccionada(p);
+                      setContenido((prev) => mergeContenidoWithPlantilla(prev, p));
                     }}
                     className="w-full px-3 py-2 border border-blue-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-400 outline-none"
                   >
@@ -256,6 +323,10 @@ export default function ModalInformeImagenologia({
               ) : null}
 
               {/* Secciones dinámicas */}
+              <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                El informe se autocompleta con texto base profesional. Ajusta solo medidas, hallazgos relevantes y conclusion final.
+              </div>
+
               <div className="space-y-6">
                 {plantillaSeleccionada?.estructura_json?.sections?.map((section) => (
                   <div key={section.id} className="border-l-4 border-purple-400 pl-4">
