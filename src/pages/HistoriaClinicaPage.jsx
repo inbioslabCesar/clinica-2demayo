@@ -46,12 +46,161 @@ function buildPreviasUiStorageKey(consultaId, pacienteId) {
   return `${HC_PREVIAS_UI_STORAGE_PREFIX}_${consulta}_${paciente}`;
 }
 
+function parsePositiveInt(value, fallback = 0) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function firstNonEmptyValue(obj, keys) {
+  if (!obj || typeof obj !== "object") return "";
+  for (const key of keys) {
+    const value = obj[key];
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function parseArrayFromUnknown(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+
+  const raw = value.trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractLegacyRecetaArray(source) {
+  if (!source || typeof source !== "object") return [];
+
+  const directKeys = [
+    "receta",
+    "receta_medica",
+    "medicamentos",
+    "medicamentos_seleccionados",
+    "medicacion",
+    "farmacos",
+    "prescripcion",
+    "prescripciones",
+    "tratamiento_medicamentos",
+  ];
+
+  for (const key of directKeys) {
+    const candidate = source[key];
+    const parsedCandidate = parseArrayFromUnknown(candidate);
+    if (Array.isArray(parsedCandidate)) return parsedCandidate;
+    if (candidate && typeof candidate === "object") {
+      const nested = [
+        parseArrayFromUnknown(candidate.items),
+        parseArrayFromUnknown(candidate.lista),
+        parseArrayFromUnknown(candidate.medicamentos),
+        parseArrayFromUnknown(candidate.receta),
+      ].find((entry) => Array.isArray(entry));
+      if (Array.isArray(nested)) return nested;
+    }
+  }
+
+  return [];
+}
+
+function normalizeRecetaItem(item, idx) {
+  if (typeof item === "string") {
+    const nombre = String(item || "").trim();
+    if (!nombre) return null;
+    return {
+      codigo: `LEGACY-${idx}`,
+      nombre,
+      presentacion: "",
+      concentracion: "",
+      laboratorio: "",
+      dosis: "",
+      frecuencia: "",
+      frecuencia_tipo: "intervalo_horas",
+      frecuencia_valor: 8,
+      frecuencia_horas: [],
+      duracion: "",
+      duracion_valor: 5,
+      duracion_unidad: "dias",
+      cantidad_total: 0,
+      observaciones: "",
+      cantidad_dispensacion: 1,
+      unidad_dispensacion: "unidad",
+      manual: true,
+      origen: "legacy",
+    };
+  }
+
+  if (!item || typeof item !== "object") return null;
+
+  const codigoRaw = firstNonEmptyValue(item, ["codigo", "cod", "medicamento_codigo", "id_medicamento"]);
+  const nombreRaw = firstNonEmptyValue(item, ["nombre", "medicamento", "descripcion", "farmaco", "producto"]);
+  const nombre = nombreRaw || codigoRaw;
+  if (!nombre) return null;
+
+  const frecuenciaHorasRaw = item?.frecuencia_horas;
+  const frecuenciaHoras = Array.isArray(frecuenciaHorasRaw)
+    ? frecuenciaHorasRaw.map((h) => String(h || "").trim()).filter(Boolean)
+    : String(frecuenciaHorasRaw || "")
+        .split(",")
+        .map((h) => h.trim())
+        .filter(Boolean);
+
+  const frecuenciaTipo = String(item?.frecuencia_tipo || item?.tipo_frecuencia || "intervalo_horas").trim() || "intervalo_horas";
+  const frecuenciaValor = parsePositiveInt(item?.frecuencia_valor ?? item?.cada_horas ?? item?.veces_dia, frecuenciaTipo === "horarios_fijos" ? 0 : 8);
+  const duracionValor = parsePositiveInt(item?.duracion_valor ?? item?.dias ?? item?.duracion_dias, 5);
+  const duracionUnidad = String(item?.duracion_unidad || item?.unidad_duracion || "dias").trim() === "semanas" ? "semanas" : "dias";
+  const cantidadDispensacion = parsePositiveInt(
+    item?.cantidad_dispensacion ?? item?.cantidad_dispensar ?? item?.cantidad ?? item?.cant ?? item?.cantidad_total,
+    1
+  );
+
+  return {
+    codigo: codigoRaw || `LEGACY-${idx}`,
+    nombre,
+    presentacion: firstNonEmptyValue(item, ["presentacion", "forma", "forma_farmaceutica"]),
+    concentracion: firstNonEmptyValue(item, ["concentracion"]),
+    laboratorio: firstNonEmptyValue(item, ["laboratorio"]),
+    dosis: firstNonEmptyValue(item, ["dosis"]),
+    frecuencia: firstNonEmptyValue(item, ["frecuencia"]),
+    frecuencia_tipo: frecuenciaTipo,
+    frecuencia_valor: frecuenciaTipo === "horarios_fijos" ? null : frecuenciaValor,
+    frecuencia_horas: frecuenciaTipo === "horarios_fijos" ? frecuenciaHoras : [],
+    duracion: firstNonEmptyValue(item, ["duracion"]),
+    duracion_valor: duracionValor,
+    duracion_unidad: duracionUnidad,
+    cantidad_total: parsePositiveInt(item?.cantidad_total, 0),
+    observaciones: firstNonEmptyValue(item, ["observaciones", "indicaciones", "indicacion", "instrucciones"]),
+    cantidad_dispensacion: cantidadDispensacion,
+    unidad_dispensacion: firstNonEmptyValue(item, ["unidad_dispensacion", "unidad", "unidad_cantidad"]) || "unidad",
+    manual: Boolean(item?.manual) || !codigoRaw,
+    origen: String(item?.origen || "legacy").trim() || "legacy",
+  };
+}
+
+function normalizeRecetaArray(source) {
+  const rawReceta = extractLegacyRecetaArray(source);
+  if (!Array.isArray(rawReceta)) return [];
+
+  return rawReceta
+    .map((item, idx) => normalizeRecetaItem(item, idx))
+    .filter(Boolean);
+}
+
 function normalizeHistoriaData(rawDatos) {
   const source = rawDatos && typeof rawDatos === "object" ? rawDatos : {};
   const rawProxima = source.proxima_cita || {};
+  const recetaNormalizada = normalizeRecetaArray(source);
   return {
     ...source,
-    receta: Array.isArray(source.receta) ? source.receta : [],
+    receta: recetaNormalizada,
     proxima_cita: {
       ...DEFAULT_PROXIMA_CITA,
       ...(rawProxima && typeof rawProxima === "object" ? rawProxima : {}),
