@@ -45,6 +45,7 @@ if (isset($_SESSION['usuario'])) {
     $isOrdenesProcedimientos = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_procedimientos.php') !== false;
     $isOrdenesImagen = strpos($_SERVER['SCRIPT_NAME'], 'api_ordenes_imagen.php') !== false;
     $isInformesImagenologia = strpos($_SERVER['SCRIPT_NAME'], 'api_imagenologia_informes.php') !== false;
+    $isPlantillasImagenologia = strpos($_SERVER['SCRIPT_NAME'], 'api_imagenologia_plantillas.php') !== false;
     $isGenerarPdfImagenologia = strpos($_SERVER['SCRIPT_NAME'], 'api_imagenologia_generar_pdf.php') !== false;
     $isResultadosLaboratorio = strpos($_SERVER['SCRIPT_NAME'], 'api_resultados_laboratorio.php') !== false;
     $isContinuidadClinica = strpos($_SERVER['SCRIPT_NAME'], 'api_continuidad_clinica.php') !== false;
@@ -105,6 +106,9 @@ if (isset($_SESSION['usuario'])) {
         || $isRecetaSugerencias
         || $isRecetaProtocolos
     ) {
+        $rolesPermitidos[] = 'medico';
+    }
+    if ($isPlantillasImagenologia && $method === 'GET') {
         $rolesPermitidos[] = 'medico';
     }
     if ($isContinuidadClinica) {

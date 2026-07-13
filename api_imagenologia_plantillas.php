@@ -15,13 +15,18 @@ require_once __DIR__ . '/auth_check.php';
 header('Content-Type: application/json; charset=utf-8');
 
 $usuario = $_SESSION['usuario'] ?? $_SESSION['medico'] ?? null;
+if (!$usuario && isset($_SESSION['medico_id'])) {
+    $usuario = ['id' => (int)$_SESSION['medico_id'], 'rol' => 'medico'];
+}
 $rol     = strtolower(trim((string)($usuario['rol'] ?? '')));
 
-if (!$usuario || !in_array($rol, ['medico', 'administrador'])) {
+if (!$usuario) {
     http_response_code(403);
     echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
     exit;
 }
+
+$isAdmin = ($rol === 'administrador');
 
 // ─ Migración idempotente: añadir clinic_key si no existe ─────────────────────
 $chkClinic = $mysqli->query("SHOW COLUMNS FROM imagenologia_plantillas LIKE 'clinic_key'");
@@ -32,7 +37,7 @@ if ($chkClinic && $chkClinic->num_rows === 0) {
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 // Solo administradores pueden escribir
-if ($method !== 'GET' && $rol !== 'administrador') {
+if ($method !== 'GET' && !$isAdmin) {
     http_response_code(403);
     echo json_encode(['success' => false, 'error' => 'Solo administradores pueden modificar plantillas de imagenología']);
     exit;
@@ -182,6 +187,11 @@ if ($method === 'GET') {
 
     // mode=list: todas las plantillas para el panel admin (activas e inactivas)
     if ($mode === 'list') {
+        if (!$isAdmin) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Solo administradores pueden listar todas las plantillas']);
+            exit;
+        }
         $hasClinicKey = (bool)$mysqli->query("SHOW COLUMNS FROM imagenologia_plantillas LIKE 'clinic_key'")->num_rows;
         $clinicKeySel = $hasClinicKey ? ', clinic_key' : ', NULL AS clinic_key';
         $res = $mysqli->query("SELECT id, nombre, tipo_examen, descripcion, es_activa{$clinicKeySel} FROM imagenologia_plantillas ORDER BY tipo_examen, nombre");
@@ -210,7 +220,7 @@ if ($method === 'GET') {
 
     // Por tipo (comportamiento original — usado por ModalInformeImagenologia)
     if ($tipo !== '') {
-        $stmt = $mysqli->prepare('SELECT id, nombre, tipo_examen, descripcion, estructura_json, es_activa FROM imagenologia_plantillas WHERE tipo_examen = ? AND es_activa = 1 ORDER BY nombre');
+        $stmt = $mysqli->prepare('SELECT id, nombre, tipo_examen, descripcion, estructura_json, es_activa FROM imagenologia_plantillas WHERE tipo_examen = ? AND es_activa = 1 ORDER BY updated_at DESC, id DESC');
         $stmt->bind_param('s', $tipo);
         $stmt->execute();
         $res = $stmt->get_result();

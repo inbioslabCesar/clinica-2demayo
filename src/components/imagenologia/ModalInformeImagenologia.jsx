@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { FiX, FiDownload, FiSave, FiLoader } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { authFetch } from '../../utils/apiClient';
@@ -47,6 +48,105 @@ function mergeContenidoWithPlantilla(contenidoActual, plantillaNueva) {
   return merged;
 }
 
+function templateSections(plantilla) {
+  if (Array.isArray(plantilla?.estructura_json?.sections)) return plantilla.estructura_json.sections;
+  if (Array.isArray(plantilla?.sections)) return plantilla.sections;
+  return [];
+}
+
+function buildFallbackSectionsFromContenido(contenido = {}) {
+  return Object.entries(contenido || {}).map(([sectionId, sectionData]) => {
+    const campos = Object.keys(sectionData || {}).map((fieldId) => ({
+      id: fieldId,
+      label: fieldId.replace(/_/g, ' '),
+      type: 'textarea',
+      placeholder: '',
+      required: false,
+    }));
+
+    return {
+      id: sectionId,
+      nombre: sectionId.replace(/_/g, ' '),
+      campos,
+    };
+  });
+}
+
+function normalizeTipoPlantilla(tipo) {
+  const t = String(tipo || '').trim().toLowerCase();
+  if (t === 'rx' || t === 'rayos_x' || t === 'rayos x') return 'rayosx';
+  return t;
+}
+
+function createSyntheticTemplate(tipoExamen = 'ecografia') {
+  return {
+    id: 'synthetic-default',
+    nombre: 'Plantilla base automática',
+    tipo_examen: normalizeTipoPlantilla(tipoExamen),
+    estructura_json: {
+      sections: [
+        {
+          id: 'hallazgos',
+          nombre: 'Hallazgos',
+          campos: [
+            {
+              id: 'descripcion_hallazgos',
+              label: 'Descripción de hallazgos',
+              type: 'textarea',
+              placeholder: 'Describe hallazgos relevantes del estudio...',
+              required: false,
+              valor_base: 'Sin hallazgos patologicos significativos.',
+            },
+          ],
+        },
+        {
+          id: 'conclusion',
+          nombre: 'Conclusión',
+          campos: [
+            {
+              id: 'resumen_final',
+              label: 'Resumen y conclusión',
+              type: 'textarea',
+              placeholder: 'Redacta la conclusión final del estudio...',
+              required: true,
+              valor_base: 'No se identifican hallazgos patologicos significativos en el estudio realizado.',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function resolveTemplateFromReport(templates = [], plantillaInforme = null) {
+  if (!Array.isArray(templates) || templates.length === 0 || !plantillaInforme) return null;
+
+  const reportId = String(plantillaInforme?.id || '').trim();
+  const reportNombre = String(plantillaInforme?.nombre || '').trim().toLowerCase();
+
+  if (reportId !== '') {
+    const byId = templates.find((p) => String(p?.id || '') === reportId);
+    if (byId) return byId;
+  }
+
+  if (reportNombre !== '') {
+    const byName = templates.find((p) => String(p?.nombre || '').trim().toLowerCase() === reportNombre);
+    if (byName) return byName;
+  }
+
+  return null;
+}
+
+function pickTipoPlantilla({ tipoExamenProp, orden, informe }) {
+  const fromOrden = normalizeTipoPlantilla(orden?.tipo);
+  if (fromOrden) return fromOrden;
+
+  const fromInforme = normalizeTipoPlantilla(informe?.plantilla_json?.tipo_examen);
+  if (fromInforme) return fromInforme;
+
+  return normalizeTipoPlantilla(tipoExamenProp);
+}
+
 /**
  * ModalInformeImagenologia
  * Modal para redactar/editar informe clínico de imagenología con plantillas dinámicas
@@ -75,31 +175,67 @@ export default function ModalInformeImagenologia({
   useEffect(() => {
     if (!open || !ordenImagenId) return;
 
-    const tipoPlantilla = tipoExamen === 'rx' ? 'rayosx' : tipoExamen;
+    const tipoPlantillaProp = normalizeTipoPlantilla(tipoExamen);
 
     setLoading(true);
     Promise.all([
-      authFetch(`api_imagenologia_plantillas.php?tipo=${tipoPlantilla}`),
-      authFetch(`api_imagenologia_informes.php?orden_imagen_id=${ordenImagenId}`)
+      authFetch('api_imagenologia_plantillas.php'),
+      authFetch(`api_imagenologia_informes.php?orden_imagen_id=${ordenImagenId}`),
+      authFetch(`api_ordenes_imagen.php?orden_id=${ordenImagenId}`)
     ])
-      .then(([resPlant, resInf]) => Promise.all([resPlant.json(), resInf.json()]))
-      .then(([dataPlant, dataInf]) => {
+      .then(([resPlant, resInf, resOrden]) => Promise.all([resPlant.json(), resInf.json(), resOrden.json()]))
+      .then(async ([dataPlant, dataInf, dataOrden]) => {
         let plantillaFinal = null;
+        let plantillasDisponibles = [];
+        const ordenActual = dataOrden?.orden || null;
+        const tipoPlantilla = pickTipoPlantilla({
+          tipoExamenProp: tipoPlantillaProp,
+          orden: ordenActual,
+          informe: dataInf?.informe || null,
+        });
+
         if (dataPlant.success && Array.isArray(dataPlant.plantillas) && dataPlant.plantillas.length > 0) {
-          setTodasLasPlantillas(dataPlant.plantillas);
+          const filtradasPorTipo = dataPlant.plantillas.filter(
+            (p) => normalizeTipoPlantilla(p?.tipo_examen) === tipoPlantilla
+          );
+          plantillasDisponibles = filtradasPorTipo.length > 0 ? filtradasPorTipo : dataPlant.plantillas;
+
           // Si hay un informe existente con plantilla guardada, usarla; sino la primera activa
           const plantillaInforme = dataInf?.informe?.plantilla_json;
-          const matchPorNombre = plantillaInforme
-            ? dataPlant.plantillas.find((p) => p.nombre === plantillaInforme?.nombre)
-            : null;
-          plantillaFinal = matchPorNombre || dataPlant.plantillas[0];
-          setPlantillaSeleccionada(plantillaFinal);
-        } else {
-          setTodasLasPlantillas([]);
+          const matchPlantilla = resolveTemplateFromReport(plantillasDisponibles, plantillaInforme);
+          plantillaFinal = matchPlantilla || plantillasDisponibles[0];
         }
+
+        if (!plantillaFinal) {
+          try {
+            const resAll = await authFetch(`api_imagenologia_plantillas.php?tipo=${tipoPlantilla}`);
+            const dataAll = await resAll.json();
+            if (dataAll?.success && Array.isArray(dataAll.plantillas)) {
+              if (dataAll.plantillas.length > 0) {
+                plantillasDisponibles = dataAll.plantillas;
+                const plantillaInforme = dataInf?.informe?.plantilla_json;
+                plantillaFinal = resolveTemplateFromReport(plantillasDisponibles, plantillaInforme) || plantillasDisponibles[0];
+              }
+            }
+          } catch {
+            // Fallback controlado abajo.
+          }
+        }
+
+        if (!plantillaFinal) {
+          plantillaFinal = createSyntheticTemplate(tipoPlantilla || 'ecografia');
+          plantillasDisponibles = [plantillaFinal];
+        }
+
+        setTodasLasPlantillas(plantillasDisponibles);
+        setPlantillaSeleccionada(plantillaFinal);
 
         if (dataInf.success && dataInf.informe) {
           const inf = dataInf.informe;
+          if (!plantillaFinal && inf?.plantilla_json) {
+            plantillaFinal = inf.plantilla_json;
+            setPlantillaSeleccionada(plantillaFinal);
+          }
           setInforme(inf);
           setTitulo(inf.titulo || '');
           setEstado(inf.estado || 'borrador');
@@ -227,11 +363,11 @@ export default function ModalInformeImagenologia({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+  const modalNode = (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-[99999] flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden">
         {/* Encabezado */}
-        <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 flex justify-between items-center">
+        <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 flex justify-between items-center">
           <div>
             <h2 className="text-xl font-bold">Redactar Informe de Imagenología</h2>
             <p className="text-sm opacity-90">{pacienteNombre}</p>
@@ -245,7 +381,7 @@ export default function ModalInformeImagenologia({
         </div>
 
         {/* Contenido */}
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto flex-1 min-h-0">
           {loading ? (
             <div className="flex justify-center py-8">
               <FiLoader className="animate-spin text-2xl text-purple-600" />
@@ -306,9 +442,20 @@ export default function ModalInformeImagenologia({
                     }}
                     className="w-full px-3 py-2 border border-blue-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-400 outline-none"
                   >
-                    {todasLasPlantillas.map((p) => (
-                      <option key={p.id} value={p.id}>{p.nombre}</option>
-                    ))}
+                    {(() => {
+                      const countByName = todasLasPlantillas.reduce((acc, p) => {
+                        const n = String(p?.nombre || 'Plantilla');
+                        acc[n] = (acc[n] || 0) + 1;
+                        return acc;
+                      }, {});
+
+                      return todasLasPlantillas.map((p) => {
+                        const n = String(p?.nombre || 'Plantilla');
+                        const duplicated = (countByName[n] || 0) > 1;
+                        const label = duplicated ? `${n} (#${p.id})` : n;
+                        return <option key={p.id} value={p.id}>{label}</option>;
+                      });
+                    })()}
                   </select>
                   <p className="text-xs text-blue-600 mt-1">
                     Cambia la plantilla para modificar las secciones del informe.
@@ -328,7 +475,10 @@ export default function ModalInformeImagenologia({
               </div>
 
               <div className="space-y-6">
-                {plantillaSeleccionada?.estructura_json?.sections?.map((section) => (
+                {(templateSections(plantillaSeleccionada).length > 0
+                  ? templateSections(plantillaSeleccionada)
+                  : buildFallbackSectionsFromContenido(contenido)
+                ).map((section) => (
                   <div key={section.id} className="border-l-4 border-purple-400 pl-4">
                     <h3 className="text-lg font-semibold text-purple-700 mb-4">
                       {section.nombre}
@@ -418,7 +568,7 @@ export default function ModalInformeImagenologia({
         </div>
 
         {/* Pie: Botones de acción */}
-        <div className="bg-gray-50 border-t p-6 flex justify-end gap-3">
+        <div className="bg-gray-50 border-t p-4 sm:p-6 flex justify-end gap-3 sticky bottom-0 z-10">
           <button
             onClick={onClose}
             className="px-4 py-2 text-gray-700 border rounded hover:bg-gray-100 transition"
@@ -445,4 +595,10 @@ export default function ModalInformeImagenologia({
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined' || !document.body) {
+    return modalNode;
+  }
+
+  return createPortal(modalNode, document.body);
 }

@@ -233,7 +233,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
           <div className="mt-2">
             <CardInformeImagenologia
               ordenImagenId={Number(ord.id || 0)}
-              tipoExamen={String(ord.tipo || "")}
+              tipoExamen={String(tipo || ord.tipo || "")}
               pacienteNombre={String(pacienteId || "")}
               medicoNombre={medicoNombre}
               canEdit={Boolean(ord?.can_edit_informe)}
