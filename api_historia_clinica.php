@@ -2181,7 +2181,16 @@ function hc_get_consulta_meta($conn, $consultaId) {
     $consultaId = (int)$consultaId;
     if ($consultaId <= 0) return null;
 
-    $stmt = $conn->prepare('SELECT id, paciente_id, fecha, hora, medico_id, hc_origen_id FROM consultas WHERE id = ? LIMIT 1');
+    $stmt = $conn->prepare(
+        'SELECT c.id, c.paciente_id, c.fecha, c.hora, c.medico_id, c.hc_origen_id,
+                m.nombre AS medico_nombre,
+                m.apellido AS medico_apellido,
+                m.especialidad AS medico_especialidad
+         FROM consultas c
+         LEFT JOIN medicos m ON m.id = c.medico_id
+         WHERE c.id = ?
+         LIMIT 1'
+    );
     if (!$stmt) return null;
     $stmt->bind_param('i', $consultaId);
     $stmt->execute();
@@ -2783,6 +2792,10 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
                 'fecha_registro'      => (string)($hcRow['fecha_registro'] ?? ''),
                 'fecha_consulta'      => (string)($consultaMeta['fecha'] ?? ''),
                 'hora_consulta'       => (string)($consultaMeta['hora'] ?? ''),
+                'medico_id'           => (int)($consultaMeta['medico_id'] ?? 0),
+                'medico_nombre'       => trim((string)($consultaMeta['medico_nombre'] ?? '')),
+                'medico_apellido'     => trim((string)($consultaMeta['medico_apellido'] ?? '')),
+                'medico_especialidad' => trim((string)($consultaMeta['medico_especialidad'] ?? '')),
                 'datos'               => $datos,
                 'template'            => $templateMeta,
                 'template_resolution' => $templateResolution,
@@ -2828,6 +2841,10 @@ function hc_get_historial_cadena_previas($conn, $consultaIdActual, $maxDepth = 3
                 'fecha_registro'      => (string)($hcRow['fecha_registro'] ?? ''),
                 'fecha_consulta'      => (string)($consultaMeta['fecha'] ?? ''),
                 'hora_consulta'       => (string)($consultaMeta['hora'] ?? ''),
+                'medico_id'           => (int)($consultaMeta['medico_id'] ?? 0),
+                'medico_nombre'       => trim((string)($consultaMeta['medico_nombre'] ?? '')),
+                'medico_apellido'     => trim((string)($consultaMeta['medico_apellido'] ?? '')),
+                'medico_especialidad' => trim((string)($consultaMeta['medico_especialidad'] ?? '')),
                 'datos'               => $datos,
                 'template'            => $templateMeta,
                 'template_resolution' => $templateResolution,

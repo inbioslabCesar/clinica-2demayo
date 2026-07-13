@@ -197,7 +197,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     resumenItems: [],
     hcAnteriorLoading: false,
     hcAnteriorError: '',
-    canOpenHistoryDrawer: false,
   });
 
   const mensajesRef  = useRef(null);
@@ -281,7 +280,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
         resumenItems,
         hcAnteriorLoading: Boolean(detail.hcAnteriorLoading),
         hcAnteriorError: String(detail.hcAnteriorError || ''),
-        canOpenHistoryDrawer: Boolean(detail.canOpenHistoryDrawer),
       });
     };
 
@@ -310,8 +308,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
       agregarMensaje({
         tipo: 'asistente',
         texto: `Perfecto, ya estoy contigo en esta HC. ${resumenTexto}`,
-        accionAbrirHistorial: hcContexto.canOpenHistoryDrawer,
-        accionConsultaId: consultaId,
       });
 
       hcResumenMostradoRef.current = { consultaId, enviado: true };
@@ -325,7 +321,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     hcContexto.hcAnteriorLoading,
     hcContexto.hcAnteriorError,
     hcContexto.resumenItems,
-    hcContexto.canOpenHistoryDrawer,
   ]);
 
   const cargarSugerencias = async (cat) => {
@@ -345,26 +340,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
 
   const agregarMensaje = (msg) => {
     setMensajes(prev => [...prev, { ...msg, id: Date.now() + Math.random() }]);
-  };
-
-  const abrirDrawerHistorialHc = (registrarMensaje = false) => {
-    if (!hcContexto.canOpenHistoryDrawer) {
-      if (registrarMensaje) {
-        agregarMensaje({
-          tipo: 'asistente',
-          texto: 'Esta atención no tiene HC previa encadenada para abrir historial.'
-        });
-      }
-      return;
-    }
-
-    window.dispatchEvent(new CustomEvent('hc-assistant-open-history-drawer'));
-    if (registrarMensaje) {
-      agregarMensaje({
-        tipo: 'asistente',
-        texto: 'Listo, abrí el historial clínico previo en el panel lateral derecho.'
-      });
-    }
   };
 
   const escalarASoporte = async (motivo = 'sin_respuesta', preguntaParam = '') => {
@@ -486,14 +461,10 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
         ? resumenItems.map((item) => `• ${item}`).join('\n')
         : 'En esta atención no encuentro HC previa encadenada para resumir.';
 
-      if (consultaHistorial && hcContexto.canOpenHistoryDrawer) {
-        abrirDrawerHistorialHc(false);
-      }
-
       setIntentosAclaracion(0);
       agregarMensaje({
         tipo: 'asistente',
-        texto: `🏥 **Contexto HC previa**\n\n${resumenTexto}${consultaHistorial && hcContexto.canOpenHistoryDrawer ? '\n\nAbrí el panel lateral derecho con el historial completo.' : ''}`,
+        texto: `🏥 **Contexto HC previa**\n\n${resumenTexto}\n\nPara revisar toda la continuidad clínica, usa la pestaña **Continuidad clínica** dentro de la HC actual.`,
       });
       setCargando(false);
       return;
@@ -787,21 +758,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
                       className="w-full rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-[11px] text-emerald-700 hover:bg-emerald-100 transition-colors"
                     >
                       Contactar al area de soporte (WhatsApp)
-                    </button>
-                  </div>
-                )}
-                {msg.accionAbrirHistorial
-                  && hcContexto.canOpenHistoryDrawer
-                  && Number(msg.accionConsultaId || 0) > 0
-                  && Number(msg.accionConsultaId || 0) === Number(hcContexto.consultaId || 0)
-                  && (
-                  <div className="mt-2 border-t border-slate-100 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => abrirDrawerHistorialHc(true)}
-                      className="w-full rounded-lg bg-sky-50 border border-sky-200 px-2.5 py-1.5 text-[11px] text-sky-700 hover:bg-sky-100 transition-colors"
-                    >
-                      Abrir historial clínico previo
                     </button>
                   </div>
                 )}

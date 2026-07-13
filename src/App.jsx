@@ -127,12 +127,12 @@ const OrdenesImagenPacientePage = lazy(() => import("./pages/OrdenesImagenPacien
 const VisorImagenPage = lazy(() => import("./pages/VisorImagenPage.jsx"));
 const SolicitudImagenPage = lazy(() => import("./pages/SolicitudImagenPage.jsx"));
 const ContratosPage = lazy(() => import("./pages/ContratosPage.jsx"));
-const ContinuidadClinicaPage = lazy(() =>
-  import("./pages/ContinuidadClinicaPage.jsx")
-);
 const SuplenciaPacientesPage = lazy(() =>
   import("./pages/SuplenciaPacientesPage.jsx")
 );
+
+// Respaldo interno: mantener ruta legado sin exponerla en navegación principal.
+const ENABLE_SUPLENCIA_BACKUP_ROUTE = true;
 
 // Reinicia el ErrorBoundary en cada cambio de ruta para que errores de una
 // página no persistan al navegar a otra (ej. presionar el botón Back).
@@ -875,17 +875,19 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
-                  <Route
-                    path="/suplencia-pacientes"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["medico"]}
-                      >
-                        <SuplenciaPacientesPage />
-                      </ProtectedRoute>
-                    }
-                  />
+                  {ENABLE_SUPLENCIA_BACKUP_ROUTE && (
+                    <Route
+                      path="/suplencia-pacientes"
+                      element={
+                        <ProtectedRoute
+                          usuario={usuario}
+                          rolesPermitidos={["medico"]}
+                        >
+                          <SuplenciaPacientesPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                  )}
                 </>
               )}
               {(usuario?.rol === "químico" || usuario?.rol === "quimico" || usuario?.rol === "recepcionista" || usuario?.rol === "administrador") && (
@@ -957,17 +959,6 @@ function App() {
                         rolesPermitidos={["administrador"]}
                       >
                         <DashboardEstadisticasAdmin />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/continuidad-clinica"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["administrador"]}
-                      >
-                        <ContinuidadClinicaPage />
                       </ProtectedRoute>
                     }
                   />

@@ -408,11 +408,111 @@ if (!function_exists('ol_consulta_requiere_filtro_estricto')) {
     }
 }
 
+if (!function_exists('ol_medico_tiene_acceso_consulta')) {
+    function ol_medico_tiene_acceso_consulta(mysqli $conn, int $consultaId, int $medicoSesionId, string $mode = 'read'): bool
+    {
+        $consultaId = (int)$consultaId;
+        $medicoSesionId = (int)$medicoSesionId;
+        $mode = strtolower(trim($mode));
+        if ($consultaId <= 0 || $medicoSesionId <= 0) {
+            return false;
+        }
+
+        $stmtOwner = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+        if (!$stmtOwner) {
+            return false;
+        }
+        $stmtOwner->bind_param('i', $consultaId);
+        $stmtOwner->execute();
+        $ownerConsulta = $stmtOwner->get_result()->fetch_assoc();
+        $stmtOwner->close();
+
+        $ownerMedicoId = (int)($ownerConsulta['medico_id'] ?? 0);
+        if ($ownerMedicoId <= 0) {
+            return false;
+        }
+        if ($ownerMedicoId === $medicoSesionId) {
+            return true;
+        }
+
+        if (!ol_column_exists($conn, 'doctor_access_delegations', 'source_doctor_id')
+            || !ol_column_exists($conn, 'doctor_access_delegations', 'target_doctor_id')
+            || !ol_column_exists($conn, 'doctor_access_delegations', 'status')
+            || !ol_column_exists($conn, 'doctor_access_delegations', 'access_type')
+            || !ol_column_exists($conn, 'doctor_access_delegations', 'starts_at')
+            || !ol_column_exists($conn, 'doctor_access_delegations', 'expires_at')) {
+            return false;
+        }
+
+        $allowedAccess = ($mode === 'write') ? ['write', 'full'] : ['read', 'write', 'full'];
+        $placeholders = implode(', ', array_fill(0, count($allowedAccess), '?'));
+        $sql = 'SELECT 1 FROM doctor_access_delegations
+                WHERE source_doctor_id = ?
+                  AND target_doctor_id = ?
+                  AND status = "active"
+                  AND starts_at <= NOW()
+                  AND expires_at >= NOW()
+                  AND access_type IN (' . $placeholders . ')
+                LIMIT 1';
+        $stmtDel = $conn->prepare($sql);
+        if (!$stmtDel) {
+            return false;
+        }
+
+        $types = 'ii' . str_repeat('s', count($allowedAccess));
+        $params = [$ownerMedicoId, $medicoSesionId];
+        foreach ($allowedAccess as $acc) {
+            $params[] = $acc;
+        }
+
+        $stmtDel->bind_param($types, ...$params);
+        $stmtDel->execute();
+        $rowDel = $stmtDel->get_result()->fetch_assoc();
+        $stmtDel->close();
+
+        if ($rowDel) {
+            return true;
+        }
+
+        // Fallback de continuidad clínica: permitir lectura si el médico de sesión
+        // ya atiende al mismo paciente en al menos una consulta.
+        // Evita bloqueo al abrir órdenes/resultados desde continuidad.
+        if ($mode === 'write') {
+            return false;
+        }
+
+        $stmtPaciente = $conn->prepare('SELECT paciente_id FROM consultas WHERE id = ? LIMIT 1');
+        if (!$stmtPaciente) {
+            return false;
+        }
+        $stmtPaciente->bind_param('i', $consultaId);
+        $stmtPaciente->execute();
+        $rowPaciente = $stmtPaciente->get_result()->fetch_assoc();
+        $stmtPaciente->close();
+
+        $pacienteId = (int)($rowPaciente['paciente_id'] ?? 0);
+        if ($pacienteId <= 0) {
+            return false;
+        }
+
+        $stmtMismoPaciente = $conn->prepare('SELECT 1 FROM consultas WHERE paciente_id = ? AND medico_id = ? LIMIT 1');
+        if (!$stmtMismoPaciente) {
+            return false;
+        }
+        $stmtMismoPaciente->bind_param('ii', $pacienteId, $medicoSesionId);
+        $stmtMismoPaciente->execute();
+        $rowMismoPaciente = $stmtMismoPaciente->get_result()->fetch_assoc();
+        $stmtMismoPaciente->close();
+
+        return (bool)$rowMismoPaciente;
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $requestStartedAt = microtime(true);
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
-$medicoSesionId = intval($sessionUsuario['id'] ?? ($_SESSION['medico_id'] ?? 0));
+$medicoSesionId = intval($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
 $esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
 
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
@@ -889,17 +989,10 @@ switch ($method) {
         // Esto evita exposición cruzada y permite relajar filtros por fila cuando la orden
         // heredada no tiene medico resoluble por joins.
         if ($esSesionMedico && $consulta_id && $consulta_id > 0) {
-            $stmtOwnerConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
-            if ($stmtOwnerConsulta) {
-                $stmtOwnerConsulta->bind_param('i', $consulta_id);
-                $stmtOwnerConsulta->execute();
-                $ownerConsulta = $stmtOwnerConsulta->get_result()->fetch_assoc();
-                $stmtOwnerConsulta->close();
-                if (!$ownerConsulta || intval($ownerConsulta['medico_id'] ?? 0) !== $medicoSesionId) {
-                    http_response_code(403);
-                    echo json_encode(['success' => false, 'error' => 'No autorizado para ver órdenes de esta consulta']);
-                    break;
-                }
+            if (!ol_medico_tiene_acceso_consulta($conn, $consulta_id, $medicoSesionId, 'read')) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado para ver órdenes de esta consulta']);
+                break;
             }
         }
 

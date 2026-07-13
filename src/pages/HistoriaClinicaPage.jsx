@@ -28,6 +28,7 @@ const DEFAULT_PROXIMA_CITA = {
 const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita"]);
 const HC_PREV_EXCLUDED_SECTIONS = new Set(["plan", "tratamiento", "receta"]);
 const HC_PREVIAS_CACHE_TTL_MS = 5 * 60 * 1000;
+const HC_PREVIAS_UI_STORAGE_PREFIX = "hc_previas_ui_v1";
 const HC_DRAFT_STORAGE_PREFIX = "hc_draft_v1";
 const HC_DRAFT_TTL_MS = 72 * 60 * 60 * 1000;
 
@@ -36,6 +37,13 @@ function buildDraftStorageKey(consultaId, pacienteId) {
   const paciente = String(pacienteId || "").trim();
   if (!consulta || !paciente) return "";
   return `${HC_DRAFT_STORAGE_PREFIX}_${consulta}_${paciente}`;
+}
+
+function buildPreviasUiStorageKey(consultaId, pacienteId) {
+  const consulta = String(consultaId || "").trim();
+  const paciente = String(pacienteId || "").trim();
+  if (!consulta || !paciente) return "";
+  return `${HC_PREVIAS_UI_STORAGE_PREFIX}_${consulta}_${paciente}`;
 }
 
 function normalizeHistoriaData(rawDatos) {
@@ -66,6 +74,12 @@ function HistoriaClinicaPage() {
   const navigationState = location.state && typeof location.state === 'object' ? location.state : null;
   const readOnly = location.pathname.startsWith('/historia-clinica-lectura') || searchParams.get('read_only') === '1';
   const backTo = searchParams.get('back_to') || '';
+  const restoreConsultaIdFromQuery = Number(searchParams.get('hc_prev_consulta_id') || 0);
+  const restoreIndexRawFromQuery = searchParams.get('hc_prev_index');
+  const hasRestoreIndexInQuery = restoreIndexRawFromQuery !== null && String(restoreIndexRawFromQuery).trim() !== '';
+  const restoreIndexFromQuery = hasRestoreIndexInQuery ? Number(restoreIndexRawFromQuery) : Number.NaN;
+  const restoreShowDetailFromQuery = searchParams.get('hc_prev_show_detail') === '1';
+  const restoreTabFromQuery = String(searchParams.get('hc_prev_tab') || '').trim().toLowerCase();
   const { componentRef: printRef, handlePrint: handlePrintHC } = usePrintHistoriaClinica();
   const { componentRef: printLabRef, handlePrint: handlePrintLab } = usePrintLaboratorio();
   const { componentRef: printRecetaRef, handlePrint: handlePrintReceta } = usePrintReceta();
@@ -100,7 +114,13 @@ function HistoriaClinicaPage() {
   });
   const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
   const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
+  const [vistaClinicaActiva, setVistaClinicaActiva] = useState('registro');
   const restoreHistorialRef = useRef(false);
+  const restorePreviasUiRef = useRef(false);
+  const previasUiStorageKey = useMemo(
+    () => buildPreviasUiStorageKey(consultaId, pacienteId),
+    [consultaId, pacienteId]
+  );
   const clearHistoryRestoreState = useCallback(() => {
     if (!navigationState) return;
 
@@ -111,6 +131,8 @@ function HistoriaClinicaPage() {
       'restoreHistoryDetail',
       'historyConsultaId',
       'historyIndex',
+      'restoreContinuidadTab',
+      'historyShowDetail',
     ];
 
     const hasRestoreState = restoreKeys.some((key) => Object.prototype.hasOwnProperty.call(navigationState, key));
@@ -124,6 +146,25 @@ function HistoriaClinicaPage() {
     navigate(`${location.pathname}${location.search || ''}`, {
       replace: true,
       state: Object.keys(nextState).length > 0 ? nextState : undefined,
+    });
+  }, [location.pathname, location.search, navigate, navigationState]);
+
+  const clearHistoryRestoreQuery = useCallback(() => {
+    const restoreKeys = ['hc_prev_consulta_id', 'hc_prev_index', 'hc_prev_show_detail', 'hc_prev_tab'];
+    const params = new URLSearchParams(location.search || '');
+    let changed = false;
+    restoreKeys.forEach((k) => {
+      if (params.has(k)) {
+        params.delete(k);
+        changed = true;
+      }
+    });
+    if (!changed) return;
+
+    const nextSearch = params.toString();
+    navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ''}`, {
+      replace: true,
+      state: navigationState || undefined,
     });
   }, [location.pathname, location.search, navigate, navigationState]);
 
@@ -814,6 +855,58 @@ function HistoriaClinicaPage() {
 
     let cancelled = false;
 
+    const resolvePreferredPreviaIndex = (chain) => {
+      if (!Array.isArray(chain) || chain.length === 0) {
+        return 0;
+      }
+
+      let nextIndex = -1;
+
+      const targetConsultaIdNav = Number(navigationState?.historyConsultaId || 0);
+      const targetIndexNavRaw = Number(navigationState?.historyIndex);
+      if (targetConsultaIdNav > 0) {
+        nextIndex = chain.findIndex((item) => Number(item?.consulta_id || 0) === targetConsultaIdNav);
+      }
+      if (nextIndex < 0 && Number.isFinite(targetIndexNavRaw)) {
+        nextIndex = Math.max(0, Math.min(targetIndexNavRaw, chain.length - 1));
+      }
+
+      if (nextIndex < 0 && restoreConsultaIdFromQuery > 0) {
+        nextIndex = chain.findIndex((item) => Number(item?.consulta_id || 0) === restoreConsultaIdFromQuery);
+      }
+      if (nextIndex < 0 && hasRestoreIndexInQuery && Number.isFinite(restoreIndexFromQuery)) {
+        nextIndex = Math.max(0, Math.min(restoreIndexFromQuery, chain.length - 1));
+      }
+
+      if (nextIndex < 0) {
+        const uiKey = buildPreviasUiStorageKey(consultaId, pacienteId);
+        if (uiKey) {
+          try {
+            const rawUi = sessionStorage.getItem(uiKey);
+            if (rawUi) {
+              const parsedUi = JSON.parse(rawUi);
+              const selectedConsultaId = Number(parsedUi?.selected_consulta_id || 0);
+              const selectedIndexRaw = Number(parsedUi?.selected_index);
+              if (selectedConsultaId > 0) {
+                nextIndex = chain.findIndex((item) => Number(item?.consulta_id || 0) === selectedConsultaId);
+              }
+              if (nextIndex < 0 && Number.isFinite(selectedIndexRaw)) {
+                nextIndex = Math.max(0, Math.min(selectedIndexRaw, chain.length - 1));
+              }
+            }
+          } catch {
+            // Ignorar estado inválido de sesión.
+          }
+        }
+      }
+
+      if (nextIndex < 0) {
+        nextIndex = 0;
+      }
+
+      return nextIndex;
+    };
+
     const cacheKey = `hc_previas_chain_v1_${consultaId}`;
     let cacheHit = false;
     try {
@@ -824,9 +917,10 @@ function HistoriaClinicaPage() {
         const sameConsulta = Number(parsed?.consulta_id || 0) === consultaIdActual;
         if (sameConsulta && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
           const chain = parsed.chain;
+          const preferredIndex = resolvePreferredPreviaIndex(chain);
           setHistoriasPrevias(chain);
-          setIndiceHistoriaPrevia(0);
-          setHcAnterior(chain[0] || null);
+          setIndiceHistoriaPrevia(preferredIndex);
+          setHcAnterior(chain[preferredIndex] || chain[0] || null);
           setHcAnteriorError(chain.length === 0 ? 'No hay historias clínicas previas encadenadas.' : '');
           setHcAnteriorLoading(false);
           cacheHit = true;
@@ -847,9 +941,10 @@ function HistoriaClinicaPage() {
         if (cancelled) return;
         const chain = Array.isArray(data.historias_previas) ? data.historias_previas : [];
         if (data.success || chain.length > 0) {
+          const preferredIndex = resolvePreferredPreviaIndex(chain);
           setHistoriasPrevias(chain);
-          setIndiceHistoriaPrevia(0);
-          setHcAnterior(chain[0] || null);
+          setIndiceHistoriaPrevia(preferredIndex);
+          setHcAnterior(chain[preferredIndex] || chain[0] || null);
           setHcAnteriorError("");
           try {
             sessionStorage.setItem(cacheKey, JSON.stringify({
@@ -885,7 +980,14 @@ function HistoriaClinicaPage() {
     return () => {
       cancelled = true;
     };
-  }, [consultaId]);
+  }, [
+    consultaId,
+    pacienteId,
+    navigationState,
+    hasRestoreIndexInQuery,
+    restoreConsultaIdFromQuery,
+    restoreIndexFromQuery,
+  ]);
 
   useEffect(() => {
     if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) {
@@ -909,6 +1011,87 @@ function HistoriaClinicaPage() {
     const safeIndex = Math.max(0, Math.min(indiceHistoriaPrevia, historiasPrevias.length - 1));
     setHcAnterior(historiasPrevias[safeIndex] || null);
   }, [indiceHistoriaPrevia, historiasPrevias]);
+
+  useEffect(() => {
+    restorePreviasUiRef.current = false;
+  }, [consultaId, pacienteId]);
+
+  useEffect(() => {
+    if (restorePreviasUiRef.current) return;
+    if (!previasUiStorageKey) return;
+    if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) return;
+
+    const hasNavigationRestore = Boolean(
+      navigationState && (
+        navigationState.restoreContinuidadTab
+        || navigationState.openHistoryDrawer
+        || navigationState.restoreHistoryDrawer
+        || navigationState.historyShowDetail
+        || navigationState.showHistoryDetail
+        || navigationState.restoreHistoryDetail
+        || Number(navigationState.historyConsultaId || 0) > 0
+        || Number.isFinite(Number(navigationState.historyIndex))
+      )
+    );
+
+    if (hasNavigationRestore) {
+      restorePreviasUiRef.current = true;
+      return;
+    }
+
+    try {
+      const raw = sessionStorage.getItem(previasUiStorageKey);
+      if (!raw) {
+        restorePreviasUiRef.current = true;
+        return;
+      }
+
+      const parsed = JSON.parse(raw);
+      const targetConsultaId = Number(parsed?.selected_consulta_id || 0);
+      const targetIndexRaw = Number(parsed?.selected_index || 0);
+      let nextIndex = -1;
+
+      if (targetConsultaId > 0) {
+        nextIndex = historiasPrevias.findIndex((item) => Number(item?.consulta_id || 0) === targetConsultaId);
+      }
+
+      if (nextIndex < 0) {
+        nextIndex = Math.max(0, Math.min(Number.isFinite(targetIndexRaw) ? targetIndexRaw : 0, historiasPrevias.length - 1));
+      }
+
+      setIndiceHistoriaPrevia(nextIndex);
+      if (parsed?.active_view === 'continuidad') {
+        setVistaClinicaActiva('continuidad');
+      }
+      if (parsed?.show_detail) {
+        setMostrarHcAnterior(true);
+      }
+    } catch {
+      // Ignorar estado inválido guardado en sesión.
+    }
+
+    restorePreviasUiRef.current = true;
+  }, [historiasPrevias, navigationState, previasUiStorageKey]);
+
+  useEffect(() => {
+    if (!previasUiStorageKey) return;
+    if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) return;
+
+    const safeIndex = Math.max(0, Math.min(indiceHistoriaPrevia, historiasPrevias.length - 1));
+    const selected = historiasPrevias[safeIndex] || null;
+
+    try {
+      sessionStorage.setItem(previasUiStorageKey, JSON.stringify({
+        timestamp: Date.now(),
+        selected_index: safeIndex,
+        selected_consulta_id: Number(selected?.consulta_id || 0),
+        show_detail: Boolean(mostrarHcAnterior),
+        active_view: vistaClinicaActiva,
+      }));
+    } catch {
+      // Ignorar errores de storage.
+    }
+  }, [historiasPrevias, indiceHistoriaPrevia, mostrarHcAnterior, previasUiStorageKey, vistaClinicaActiva]);
 
   useEffect(() => {
     const consultaPreviaId = Number(hcAnterior?.consulta_id || 0);
@@ -980,17 +1163,25 @@ function HistoriaClinicaPage() {
     if (restoreHistorialRef.current) return;
     if (!navigationState) return;
 
-    const shouldOpenDrawer = Boolean(navigationState.openHistoryDrawer || navigationState.restoreHistoryDrawer);
-    const shouldShowDetail = Boolean(navigationState.showHistoryDetail || navigationState.restoreHistoryDetail);
+    const shouldRestoreContinuidad = Boolean(
+      navigationState.restoreContinuidadTab
+      || navigationState.openHistoryDrawer
+      || navigationState.restoreHistoryDrawer
+    );
+    const shouldShowDetail = Boolean(
+      navigationState.historyShowDetail
+      || navigationState.showHistoryDetail
+      || navigationState.restoreHistoryDetail
+    );
 
-    if (shouldOpenDrawer) {
-      setDrawerHistorialAbierto(true);
+    if (shouldRestoreContinuidad) {
+      setVistaClinicaActiva('continuidad');
     }
     if (shouldShowDetail) {
       setMostrarHcAnterior(true);
     }
 
-    if (shouldOpenDrawer || shouldShowDetail) {
+    if (shouldRestoreContinuidad || shouldShowDetail) {
       restoreHistorialRef.current = true;
     }
   }, [navigationState]);
@@ -998,37 +1189,177 @@ function HistoriaClinicaPage() {
   useEffect(() => {
     if (!navigationState || !Array.isArray(historiasPrevias) || historiasPrevias.length === 0) return;
 
-    const targetConsultaId = Number(navigationState.historyConsultaId || 0);
-    const targetIndexRaw = Number(navigationState.historyIndex || 0);
+    const hasHistoryConsultaId = Object.prototype.hasOwnProperty.call(navigationState, 'historyConsultaId');
+    const hasHistoryIndex = Object.prototype.hasOwnProperty.call(navigationState, 'historyIndex');
+    const targetConsultaId = hasHistoryConsultaId ? Number(navigationState.historyConsultaId || 0) : 0;
+    const targetIndexRaw = hasHistoryIndex ? Number(navigationState.historyIndex) : Number.NaN;
+    const shouldRestoreContinuidad = Boolean(
+      navigationState.restoreContinuidadTab
+      || navigationState.openHistoryDrawer
+      || navigationState.restoreHistoryDrawer
+      || (hasHistoryConsultaId && targetConsultaId > 0)
+      || (hasHistoryIndex && Number.isFinite(targetIndexRaw))
+    );
     let nextIndex = -1;
 
     if (targetConsultaId > 0) {
       nextIndex = historiasPrevias.findIndex((item) => Number(item?.consulta_id || 0) === targetConsultaId);
     }
 
-    if (nextIndex < 0) {
+    if (nextIndex < 0 && hasHistoryIndex && Number.isFinite(targetIndexRaw)) {
       nextIndex = Math.max(0, Math.min(Number.isFinite(targetIndexRaw) ? targetIndexRaw : 0, historiasPrevias.length - 1));
     }
 
-    setIndiceHistoriaPrevia(nextIndex);
-    if (navigationState.openHistoryDrawer || navigationState.restoreHistoryDrawer) {
-      setDrawerHistorialAbierto(true);
+    if (nextIndex < 0) {
+      nextIndex = 0;
     }
-    if (navigationState.showHistoryDetail || navigationState.restoreHistoryDetail) {
+
+    setIndiceHistoriaPrevia(nextIndex);
+    if (shouldRestoreContinuidad) {
+      setVistaClinicaActiva('continuidad');
+    }
+    if (navigationState.historyShowDetail || navigationState.showHistoryDetail || navigationState.restoreHistoryDetail) {
       setMostrarHcAnterior(true);
     }
 
     clearHistoryRestoreState();
   }, [clearHistoryRestoreState, navigationState, historiasPrevias]);
 
+  useEffect(() => {
+    if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) return;
+
+    const hasNavRestore = Boolean(
+      navigationState && (
+        navigationState.restoreContinuidadTab
+        || navigationState.openHistoryDrawer
+        || navigationState.restoreHistoryDrawer
+        || navigationState.historyShowDetail
+        || navigationState.showHistoryDetail
+        || navigationState.restoreHistoryDetail
+        || Number(navigationState.historyConsultaId || 0) > 0
+        || Number.isFinite(Number(navigationState.historyIndex))
+      )
+    );
+    if (hasNavRestore) return;
+
+    const hasQueryRestore = restoreConsultaIdFromQuery > 0
+      || (hasRestoreIndexInQuery && Number.isFinite(restoreIndexFromQuery))
+      || restoreShowDetailFromQuery
+      || restoreTabFromQuery === 'continuidad';
+    if (!hasQueryRestore) return;
+
+    let nextIndex = -1;
+    if (restoreConsultaIdFromQuery > 0) {
+      nextIndex = historiasPrevias.findIndex((item) => Number(item?.consulta_id || 0) === restoreConsultaIdFromQuery);
+    }
+    if (nextIndex < 0 && hasRestoreIndexInQuery && Number.isFinite(restoreIndexFromQuery)) {
+      nextIndex = Math.max(0, Math.min(Number.isFinite(restoreIndexFromQuery) ? restoreIndexFromQuery : 0, historiasPrevias.length - 1));
+    }
+    if (nextIndex < 0) {
+      nextIndex = 0;
+    }
+
+    setIndiceHistoriaPrevia(nextIndex);
+    if (restoreTabFromQuery === 'continuidad') {
+      setVistaClinicaActiva('continuidad');
+    }
+    if (restoreShowDetailFromQuery) {
+      setMostrarHcAnterior(true);
+    }
+
+    clearHistoryRestoreQuery();
+  }, [
+    clearHistoryRestoreQuery,
+    historiasPrevias,
+    navigationState,
+    restoreConsultaIdFromQuery,
+    hasRestoreIndexInQuery,
+    restoreIndexFromQuery,
+    restoreShowDetailFromQuery,
+    restoreTabFromQuery,
+  ]);
+
+  const persistPreviaSelection = useCallback((targetIndex, showDetail = true) => {
+    if (!previasUiStorageKey) return;
+    if (!Array.isArray(historiasPrevias) || historiasPrevias.length === 0) return;
+
+    const safeIndex = Math.max(0, Math.min(Number(targetIndex || 0), historiasPrevias.length - 1));
+    const selected = historiasPrevias[safeIndex] || null;
+
+    try {
+      sessionStorage.setItem(previasUiStorageKey, JSON.stringify({
+        timestamp: Date.now(),
+        selected_index: safeIndex,
+        selected_consulta_id: Number(selected?.consulta_id || 0),
+        show_detail: Boolean(showDetail),
+        active_view: 'continuidad',
+      }));
+    } catch {
+      // Ignorar errores de storage.
+    }
+  }, [historiasPrevias, previasUiStorageKey]);
+
   const irHistoriaAnterior = () => {
     if (totalHistoriasPrevias <= 0) return;
-    setIndiceHistoriaPrevia((prev) => Math.min(prev + 1, totalHistoriasPrevias - 1));
+    setIndiceHistoriaPrevia((prev) => {
+      const next = Math.min(prev + 1, totalHistoriasPrevias - 1);
+      persistPreviaSelection(next, true);
+      return next;
+    });
   };
   const irHistoriaSiguiente = () => {
     if (totalHistoriasPrevias <= 0) return;
-    setIndiceHistoriaPrevia((prev) => Math.max(prev - 1, 0));
+    setIndiceHistoriaPrevia((prev) => {
+      const next = Math.max(prev - 1, 0);
+      persistPreviaSelection(next, true);
+      return next;
+    });
   };
+  const seleccionarHistoriaPrevia = (targetIndex) => {
+    if (totalHistoriasPrevias <= 0) return;
+    const safeIndex = Math.max(0, Math.min(Number(targetIndex || 0), totalHistoriasPrevias - 1));
+    persistPreviaSelection(safeIndex, true);
+    setIndiceHistoriaPrevia(safeIndex);
+    setMostrarHcAnterior(true);
+  };
+
+  const importarDiagnosticoPrincipalRapido = () => {
+    if (readOnly) return;
+    const nuevos = Array.isArray(hcAnterior?.datos?.diagnosticos) ? hcAnterior.datos.diagnosticos : [];
+    if (nuevos.length === 0) return;
+
+    const principal = nuevos.find((dx) => {
+      if (!dx || typeof dx !== 'object') return false;
+      return String(dx.tipo || '').trim().toLowerCase() === 'principal';
+    }) || nuevos[0];
+
+    const key = (dx) => {
+      if (typeof dx === 'string') return dx.trim().toLowerCase();
+      if (!dx || typeof dx !== 'object') return '';
+      return `${String(dx.codigo || dx.cie10 || '').trim().toLowerCase()}|${String(dx.nombre || dx.descripcion || dx.diagnostico || '').trim().toLowerCase()}`;
+    };
+
+    let inserted = false;
+    setDiagnosticos((actuales) => {
+      const base = Array.isArray(actuales) ? actuales : [];
+      const exists = new Set(base.map(key).filter(Boolean));
+      const k = key(principal);
+      if (!k || exists.has(k)) return base;
+      inserted = true;
+      return [...base, principal];
+    });
+
+    setMsg(inserted
+      ? 'Diagnóstico principal importado desde HC previa.'
+      : 'El diagnóstico principal ya estaba en la HC actual.');
+  };
+
+  useEffect(() => {
+    if (vistaClinicaActiva !== 'continuidad') return;
+    if (totalHistoriasPrevias <= 0) return;
+    setMostrarHcAnterior(true);
+  }, [vistaClinicaActiva, totalHistoriasPrevias]);
+
   const adjuntosDocumentos = Array.isArray(hcAnterior?.adjuntos) ? hcAnterior.adjuntos : [];
   const adjuntosArchivos = adjuntosDocumentos.flatMap((doc, docIndex) => {
     const archivos = Array.isArray(doc?.archivos) ? doc.archivos : [];
@@ -1101,16 +1432,60 @@ function HistoriaClinicaPage() {
         routePath = '/';
       }
 
-      const backToPath = `${location.pathname}${location.search || ''}`;
+      const consultaActualId = Number(consultaId || 0);
+      const pacienteActualId = Number(pacienteId || 0);
+      if (routePath.startsWith('/resultados-laboratorio/') && consultaActualId > 0) {
+        const [pathOnly, queryString = ''] = routePath.split('?');
+        const params = new URLSearchParams(queryString);
+        params.set('from_continuidad', '1');
+        params.set('consulta_actual_id', String(consultaActualId));
+        if (pacienteActualId > 0) {
+          params.set('paciente_id', String(pacienteActualId));
+        }
+        routePath = `${pathOnly}?${params.toString()}`;
+      }
+
+      const totalPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
+      const visibleConsultaId = Number(hcAnterior?.consulta_id || 0);
+      let selectedIndex = Math.max(0, Math.min(Number(indiceHistoriaPrevia || 0), Math.max(totalPrevias - 1, 0)));
+
+      if (visibleConsultaId > 0 && totalPrevias > 0) {
+        const byVisible = historiasPrevias.findIndex((item) => Number(item?.consulta_id || 0) === visibleConsultaId);
+        if (byVisible >= 0) {
+          selectedIndex = byVisible;
+        }
+      }
+
+      const selectedHistoria = totalPrevias > 0 ? (historiasPrevias[selectedIndex] || null) : null;
+      const selectedConsultaId = Number(visibleConsultaId || selectedHistoria?.consulta_id || 0);
+
+      const backParams = new URLSearchParams(location.search || '');
+      backParams.set('hc_prev_index', String(selectedIndex));
+      backParams.set('hc_prev_show_detail', mostrarHcAnterior ? '1' : '0');
+      backParams.set('hc_prev_tab', 'continuidad');
+      if (selectedConsultaId > 0) {
+        backParams.set('hc_prev_consulta_id', String(selectedConsultaId));
+      }
+
+      const backQuery = backParams.toString();
+      const backToPath = `${location.pathname}${backQuery ? `?${backQuery}` : ''}`;
       const section = routePath.includes('/visor-imagen/') ? 'ecografia' : 'laboratorio';
+
+      // Guardar el contexto en la URL actual para que incluso el botón atrás
+      // del navegador regrese con la misma HC previa seleccionada.
+      navigate(backToPath, {
+        replace: true,
+        state: navigationState || undefined,
+      });
+
       navigate(routePath, {
         state: {
           backTo: backToPath,
           backState: {
-            openHistoryDrawer: true,
-            showHistoryDetail: Boolean(mostrarHcAnterior),
-            historyConsultaId: Number(hcAnterior?.consulta_id || 0),
-            historyIndex: Number(indiceHistoriaPrevia || 0),
+            restoreContinuidadTab: true,
+            historyShowDetail: Boolean(mostrarHcAnterior),
+            historyConsultaId: selectedConsultaId,
+            historyIndex: selectedIndex,
             section,
           },
         },
@@ -1358,6 +1733,15 @@ function HistoriaClinicaPage() {
   const fechaHcPreviaResumen = hcAnterior?.fecha_registro
     ? formatearFechaCorta(hcAnterior.fecha_registro)
     : '-';
+  const medicoNombrePrevio = String(hcAnterior?.medico_nombre || '').trim();
+  const medicoApellidoPrevio = String(hcAnterior?.medico_apellido || '').trim();
+  const medicoEspecialidadPrevia = String(hcAnterior?.medico_especialidad || '').trim();
+  const medicoLabelPrevio = (() => {
+    const full = `${medicoNombrePrevio} ${medicoApellidoPrevio}`.trim();
+    if (!full && !medicoEspecialidadPrevia) return '-';
+    if (!medicoEspecialidadPrevia) return full;
+    return full ? `${full} - ${medicoEspecialidadPrevia}` : medicoEspecialidadPrevia;
+  })();
   const diagnosticoHcPreviaResumen = diagnosticosPrevios.length > 0
     ? truncarTexto(diagnosticosPrevios[0], 72)
     : 'Sin diagnóstico previo';
@@ -1695,7 +2079,38 @@ function HistoriaClinicaPage() {
           <TriajePaciente triaje={triaje} />
         </div>
 
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-3 mb-6 border border-white/50">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setVistaClinicaActiva('registro')}
+              className={`px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                vistaClinicaActiva === 'registro'
+                  ? 'bg-cyan-600 text-white border-cyan-600'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Registro actual
+            </button>
+            <button
+              type="button"
+              onClick={() => setVistaClinicaActiva('continuidad')}
+              className={`px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                vistaClinicaActiva === 'continuidad'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Continuidad clínica
+            </button>
+            <span className="text-xs text-slate-500 ml-auto">
+              HC previas encadenadas: {totalHistoriasPrevias}
+            </span>
+          </div>
+        </div>
+
         {/* Formulario principal de Historia Clínica */}
+        {vistaClinicaActiva === 'registro' && (
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -2381,6 +2796,7 @@ function HistoriaClinicaPage() {
             )}
           </div>
         </form>
+        )}
       </div>
 
       {mostrarModalGuardado && (
@@ -2410,30 +2826,23 @@ function HistoriaClinicaPage() {
         </div>
       )}
 
-      {/* Drawer lateral de historial de HC previas */}
-      {totalHistoriasPrevias > 0 && (
-        <>
-          <div
-            className={`fixed inset-0 z-40 bg-slate-900/40 transition-opacity duration-300 ${drawerHistorialAbierto ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-            onClick={cerrarDrawerHistorial}
-          />
-          <aside
-            className={`fixed top-0 right-0 z-50 h-screen w-full sm:w-[92vw] lg:w-[40vw] bg-slate-50 border-l border-slate-200 shadow-2xl transition-transform duration-300 ${drawerHistorialAbierto ? 'translate-x-0' : 'translate-x-full'}`}
-            aria-hidden={!drawerHistorialAbierto}
-          >
+      {/* Vista dedicada de continuidad clínica */}
+      {vistaClinicaActiva === 'continuidad' && (
+        <section className="max-w-7xl mx-auto px-4 md:px-6 pb-8">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
             <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/95 backdrop-blur px-4 py-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-slate-800">Historial Clínico Previo</p>
                 <button
                   type="button"
-                  onClick={cerrarDrawerHistorial}
+                  onClick={() => setVistaClinicaActiva('registro')}
                   className="w-8 h-8 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  title="Cerrar historial"
+                  title="Volver a registro actual"
                 >
-                  ✕
+                  ←
                 </button>
               </div>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={irHistoriaSiguiente}
@@ -2465,6 +2874,15 @@ function HistoriaClinicaPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={importarDiagnosticoPrincipalRapido}
+                  className="px-2 py-1 rounded-lg bg-cyan-600 text-white text-xs hover:bg-cyan-700 disabled:opacity-50"
+                  disabled={readOnly || hcAnteriorLoading || diagnosticosPreviosDetalle.length === 0}
+                  title={readOnly ? 'No disponible en solo lectura' : 'Importar solo diagnóstico principal'}
+                >
+                  Importar DX principal
+                </button>
+                <button
+                  type="button"
                   onClick={importarDiagnosticoDesdeAnterior}
                   className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-50"
                   disabled={readOnly || hcAnteriorLoading || diagnosticosPreviosDetalle.length === 0}
@@ -2473,9 +2891,37 @@ function HistoriaClinicaPage() {
                   Importar diagnóstico
                 </button>
               </div>
+
+              {totalHistoriasPrevias > 0 && (
+                <div className="mt-3">
+                  <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide mb-2">Línea de tiempo (acceso directo)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {historiasPrevias.map((item, index) => {
+                      const activo = index === indiceHistoriaPrevia;
+                      const fechaNodo = formatearFechaCorta(item?.fecha_consulta || item?.fecha_registro);
+                      const consultaNodo = Number(item?.consulta_id || 0);
+                      return (
+                        <button
+                          key={`timeline-hc-${consultaNodo || index}`}
+                          type="button"
+                          onClick={() => seleccionarHistoriaPrevia(index)}
+                          className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                            activo
+                              ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                              : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <p className="text-[11px] font-semibold">#{consultaNodo > 0 ? consultaNodo : '-'}</p>
+                          <p className="text-[11px]">{fechaNodo}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="h-[calc(100vh-122px)] overflow-y-auto px-4 py-4">
+            <div className="px-4 py-4">
               {hcAnteriorLoading && (
                 <p className="text-xs text-slate-700">Cargando resumen de la HC anterior...</p>
               )}
@@ -2500,6 +2946,10 @@ function HistoriaClinicaPage() {
                     <div>
                       <span className="font-semibold">Consulta origen:</span>{' '}
                       #{Number(hcAnterior?.consulta_id || 0)}
+                    </div>
+                    <div className="md:col-span-2">
+                      <span className="font-semibold">Médico que atendió:</span>{' '}
+                      {medicoLabelPrevio}
                     </div>
                   </div>
 
@@ -2924,8 +3374,8 @@ function HistoriaClinicaPage() {
                 </div>
               )}
             </div>
-          </aside>
-        </>
+          </div>
+        </section>
       )}
 
       {/* Modal visor de imagen de adjunto */}
