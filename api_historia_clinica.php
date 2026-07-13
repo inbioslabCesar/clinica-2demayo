@@ -423,6 +423,14 @@ function hc_guardar_estado_item_receta($conn, $consultaId, $hcId, $cotizacionId,
  * Si no se puede parsear algún campo, devuelve 1 (valor seguro).
  */
 function hc_calcular_cantidad_desde_receta($item) {
+    $cantidadDisp = isset($item['cantidad_dispensacion']) ? (float)$item['cantidad_dispensacion'] : 0;
+    if ($cantidadDisp <= 0 && isset($item['cantidad_dispensar'])) {
+        $cantidadDisp = (float)$item['cantidad_dispensar'];
+    }
+    if ($cantidadDisp > 0) {
+        return max(1, (int)ceil($cantidadDisp));
+    }
+
     $frecuencia = strtolower(trim((string)($item['frecuencia'] ?? '')));
     $duracion   = strtolower(trim((string)($item['duracion']   ?? '')));
 

@@ -1,5 +1,4 @@
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
-import { calcularCantidadTotalReceta } from "../../utils/calcularCantidadReceta";
 import { BASE_URL } from "../../config/config.js";
 
 const ImpresionRecetaMedicamentos = ({ 
@@ -41,25 +40,52 @@ const ImpresionRecetaMedicamentos = ({
   const diagnosticosArray = Array.isArray(diagnosticos) ? diagnosticos : [];
   const medicamentosArray = Array.isArray(medicamentos) ? medicamentos : [];
 
+  const getCantidadImpresion = (medicamento) => {
+    const cantidad = Number.parseInt(
+      medicamento?.cantidad_dispensacion ?? medicamento?.cantidad_dispensar ?? medicamento?.cantidad_total ?? 0,
+      10
+    );
+    return Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1;
+  };
+
+  const getUnidadImpresion = (medicamento) => {
+    const unidad = String(medicamento?.unidad_dispensacion || "").trim();
+    return unidad || "unidad";
+  };
+
+  const getIndicacionImpresion = (medicamento) => {
+    const indicaciones = String(medicamento?.observaciones || "").trim();
+    if (indicaciones) return indicaciones;
+
+    // Compatibilidad con recetas historicas que aun no usan observaciones como indicacion principal
+    const fallback = [medicamento?.dosis, medicamento?.frecuencia, medicamento?.duracion]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .join(" | ");
+
+    return fallback || "Sin indicaciones";
+  };
+
   return (
     <div
       className="receta-a4-landscape bg-white text-slate-900 print:text-black"
       style={{
         width: "277mm",
-        height: "190mm",
+        minHeight: "190mm",
+        height: "auto",
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
         gap: 0,
-        overflow: "hidden",
+        overflow: "visible",
         boxSizing: "border-box",
         fontFamily: "Arial, sans-serif",
-        fontSize: "11px",
-        lineHeight: 1.18,
+        fontSize: "10px",
+        lineHeight: 1.12,
       }}
     >
       <section
-        className="relative h-full overflow-hidden border-r border-dashed border-slate-400"
-        style={{ padding: "3mm 3mm 2.5mm 3mm" }}
+        className="relative h-full border-r border-dashed border-slate-400"
+        style={{ padding: "2.5mm" }}
       >
         <img
           src={logoSrc}
@@ -68,7 +94,7 @@ const ImpresionRecetaMedicamentos = ({
           style={{ filter: "grayscale(100%)" }}
         />
 
-        <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
           <header className="flex items-start justify-between gap-2 border-b border-slate-900 pb-1">
             <div className="flex min-w-0 items-start gap-2">
               <img
@@ -106,7 +132,7 @@ const ImpresionRecetaMedicamentos = ({
             </div>
           </div>
 
-          <section className="mt-1 border border-slate-900 p-1.5">
+          <section className="mt-1 border border-slate-900 p-1">
             <p className="mb-0.5 border-b border-slate-300 text-[11px] font-semibold uppercase">Datos del paciente</p>
             <div className="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[11px] leading-tight">
               <p className="col-span-3"><span className="font-semibold">Paciente:</span> {nombrePaciente} {apellidoPaciente}</p>
@@ -131,13 +157,13 @@ const ImpresionRecetaMedicamentos = ({
             </section>
           )}
 
-          <section className="mt-1 flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-900 p-1.5">
+          <section className="mt-1 flex min-h-0 flex-1 flex-col border border-slate-900 p-1">
             <div className="mb-1 flex items-center justify-between border-b border-slate-300 pb-0.5">
               <p className="text-sm font-bold">Rp/ Medicamentos</p>
               <p className="text-[11px] text-slate-600">Lista prescrita</p>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1">
               {medicamentosArray.length > 0 ? (
                 <div className="divide-y divide-slate-200">
                   {medicamentosArray.map((medicamento, index) => (
@@ -157,6 +183,9 @@ const ImpresionRecetaMedicamentos = ({
                             ]
                               .filter(Boolean)
                               .join(" - ") || "Sin presentación / concentración / laboratorio"}
+                          </p>
+                          <p className="text-[10px] leading-[1] text-slate-800">
+                            <span className="font-semibold">Cantidad:</span> {getCantidadImpresion(medicamento)} {getUnidadImpresion(medicamento)}
                           </p>
                         </div>
                       </div>
@@ -185,8 +214,8 @@ const ImpresionRecetaMedicamentos = ({
       </section>
 
       <section
-        className="relative h-full overflow-hidden"
-        style={{ padding: "3mm 3mm 2.5mm 3mm" }}
+        className="relative h-full"
+        style={{ padding: "2.5mm" }}
       >
         <img
           src={logoSrc}
@@ -195,7 +224,7 @@ const ImpresionRecetaMedicamentos = ({
           style={{ filter: "grayscale(100%)" }}
         />
 
-        <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
           <header className="border-b border-slate-900 pb-1 text-right">
             <p className="text-xs font-bold leading-tight">{formatProfesionalName(medicoInfo || {})}</p>
             <p className="text-[11px] leading-tight">{medicoInfo?.especialidad}</p>
@@ -207,40 +236,22 @@ const ImpresionRecetaMedicamentos = ({
             <p className="text-sm font-bold tracking-wide">INDICACIONES</p>
           </div>
 
-          <section className="mt-1 flex min-h-0 flex-1 flex-col overflow-hidden border border-slate-900 p-1.5">
-            <div className="min-h-0 flex-1 overflow-hidden">
+          <section className="mt-1 flex min-h-0 flex-1 flex-col border border-slate-900 p-1">
+            <div className="min-h-0 flex-1">
               {medicamentosArray.length > 0 ? (
                 <div className="divide-y divide-slate-200">
                   {medicamentosArray.map((medicamento, index) => (
-                    <article key={index} className="py-0.5">
+                    <article key={index} className="py-0.5 break-inside-avoid">
                       <div className="flex gap-1.5">
                         <div className="w-6 shrink-0 text-[10px] font-semibold">{index + 1}.</div>
                         <div className="min-w-0 flex-1 space-y-0.5 leading-[1]">
                           <p className="text-[10px] font-semibold uppercase leading-[1]">{medicamento.nombre || "Medicamento"}</p>
-                          <p className="text-[10px] leading-[1] text-slate-800">
-                            <span className="font-semibold">Dosis:</span> {medicamento.dosis || "-"}
-                            <span className="mx-1 text-slate-400">|</span>
-                            <span className="font-semibold">Frecuencia:</span> {medicamento.frecuencia || "-"}
-                            <span className="mx-1 text-slate-400">|</span>
-                            <span className="font-semibold">Duración:</span> {medicamento.duracion || "-"}
-                            {(() => {
-                              const cantidadTotal = calcularCantidadTotalReceta(medicamento);
-                              if (cantidadTotal) {
-                                return (
-                                  <>
-                                    <span className="mx-1 text-slate-400">|</span>
-                                    <span className="font-semibold">Cantidad Total:</span> {cantidadTotal} unidades
-                                  </>
-                                );
-                              }
-                              return null;
-                            })()}
+                          <p className="text-[10px] leading-[1.15] text-slate-800 break-words">
+                            <span className="font-semibold">Indicaciones:</span> {getIndicacionImpresion(medicamento)}
                           </p>
-                          {medicamento.observaciones && (
-                            <p className="text-[10px] leading-[1] text-slate-800">
-                              Obs: {medicamento.observaciones}
-                            </p>
-                          )}
+                          <p className="text-[10px] leading-[1] text-slate-800">
+                            <span className="font-semibold">Cantidad:</span> {getCantidadImpresion(medicamento)} {getUnidadImpresion(medicamento)}
+                          </p>
                         </div>
                       </div>
                     </article>

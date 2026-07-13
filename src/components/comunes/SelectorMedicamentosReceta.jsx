@@ -26,6 +26,28 @@ function parseFixedTimes(value) {
     .sort();
 }
 
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function inferUnidadDispensacion(presentacion) {
+  const p = normalizeText(presentacion);
+  if (!p) return "unidad";
+
+  if (p.includes("tableta") || p.includes("comprimido")) return "tableta";
+  if (p.includes("capsula")) return "capsula";
+  if (p.includes("ampolla") || p.includes("vial") || p.includes("inyectable")) return "ampolla";
+  if (p.includes("tubo") || p.includes("crema") || p.includes("gel") || p.includes("unguento")) return "tubo";
+  if (p.includes("jarabe") || p.includes("gota") || p.includes("suspension") || p.includes("solucion") || p.includes("frasco")) return "frasco";
+  if (p.includes("caja") || p.includes("blister")) return "caja";
+
+  return "unidad";
+}
+
 function buildFrequencyText({ frecuenciaTipo, frecuenciaValor, frecuenciaHoras }) {
   if (frecuenciaTipo === "intervalo_horas") {
     return `Cada ${frecuenciaValor} horas`;
@@ -46,8 +68,9 @@ function buildDurationText({ duracionValor, duracionUnidad }) {
   return `${duracionValor} día${duracionValor === 1 ? "" : "s"}`;
 }
 
-export default function SelectorMedicamentosReceta({ receta, setReceta }) {
+export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenciasReceta, consultaId }) {
   const recetaArray = Array.isArray(receta) ? receta : [];
+  const sugerencias = sugerenciasReceta && typeof sugerenciasReceta === "object" ? sugerenciasReceta : {};
   const [busqueda, setBusqueda] = useState("");
   const [resultados, setResultados] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -55,6 +78,53 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
   const [modoManual, setModoManual] = useState(false);
   const [manualNombre, setManualNombre] = useState("");
   const [detalle, setDetalle] = useState(emptyDetalle);
+  const [seleccionSugeridos, setSeleccionSugeridos] = useState({});
+  const [cantidadDispensacion, setCantidadDispensacion] = useState("");
+  const [unidadDispensacion, setUnidadDispensacion] = useState("unidad");
+  const [protocolos, setProtocolos] = useState([]);
+  const [loadingProtocolos, setLoadingProtocolos] = useState(false);
+  const [deletingProtocoloId, setDeletingProtocoloId] = useState(0);
+
+  useEffect(() => {
+    if (modoManual) {
+      setUnidadDispensacion("unidad");
+      return;
+    }
+
+    const presentacion = medicamentoSel?.presentacion || "";
+    setUnidadDispensacion(inferUnidadDispensacion(presentacion));
+  }, [medicamentoSel, modoManual]);
+
+  useEffect(() => {
+    const consulta = Number(consultaId || 0);
+    if (consulta <= 0) {
+      setProtocolos([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingProtocolos(true);
+
+    authFetch(`api_receta_protocolos.php?consulta_id=${consulta}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data?.data) ? data.data : [];
+        setProtocolos(rows);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProtocolos([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingProtocolos(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [consultaId]);
 
   useEffect(() => {
     if (busqueda.length < 2) {
@@ -74,6 +144,8 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
     setModoManual(false);
     setManualNombre("");
     setDetalle(emptyDetalle);
+    setCantidadDispensacion("");
+    setUnidadDispensacion("unidad");
     setBusqueda("");
     setResultados([]);
   };
@@ -83,25 +155,30 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
     if (!medicamentoSel && !modoManual) return;
     if (modoManual && !nombreManual) return;
 
-    const duracionValor = parsePositiveInteger(detalle.duracionValor);
-    if (!duracionValor) return;
+    const duracionValor = parsePositiveInteger(detalle.duracionValor) || 5;
 
     let frecuenciaValor = null;
     let frecuenciaHoras = [];
 
-    if (detalle.frecuenciaTipo === "intervalo_horas" || detalle.frecuenciaTipo === "veces_dia") {
-      const value = parsePositiveInteger(detalle.frecuenciaValor);
-      if (!value) return;
+    const frecuenciaTipo = detalle.frecuenciaTipo || "intervalo_horas";
+
+    if (frecuenciaTipo === "intervalo_horas" || frecuenciaTipo === "veces_dia") {
+      const value = parsePositiveInteger(detalle.frecuenciaValor) || 8;
       frecuenciaValor = value;
     }
 
-    if (detalle.frecuenciaTipo === "horarios_fijos") {
+    if (frecuenciaTipo === "horarios_fijos") {
       frecuenciaHoras = parseFixedTimes(detalle.frecuenciaHoras);
-      if (frecuenciaHoras.length === 0) return;
+      if (frecuenciaHoras.length === 0) {
+        frecuenciaHoras = ["08:00", "16:00", "00:00"];
+      }
     }
 
+    const cantidadDispensacionFinal = parsePositiveInteger(cantidadDispensacion) || 1;
+    const unidadDispensacionFinal = unidadDispensacion || inferUnidadDispensacion(medicamentoSel?.presentacion || "");
+
     const frecuencia = buildFrequencyText({
-      frecuenciaTipo: detalle.frecuenciaTipo,
+      frecuenciaTipo,
       frecuenciaValor,
       frecuenciaHoras,
     });
@@ -112,7 +189,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
     });
 
     const cantidad_total = calcularCantidadTotalReceta({
-      frecuencia_tipo: detalle.frecuenciaTipo,
+      frecuencia_tipo: frecuenciaTipo,
       frecuencia_valor: frecuenciaValor,
       frecuencia_horas: frecuenciaHoras,
       duracion_valor: duracionValor,
@@ -127,7 +204,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       laboratorio: !modoManual ? (medicamentoSel.laboratorio || "") : "",
       dosis: detalle.dosis,
       frecuencia,
-      frecuencia_tipo: detalle.frecuenciaTipo,
+      frecuencia_tipo: frecuenciaTipo,
       frecuencia_valor: frecuenciaValor,
       frecuencia_horas: frecuenciaHoras,
       duracion,
@@ -135,6 +212,8 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
       duracion_unidad: detalle.duracionUnidad,
       cantidad_total: cantidad_total,
       observaciones: detalle.observaciones,
+      cantidad_dispensacion: cantidadDispensacionFinal,
+      unidad_dispensacion: unidadDispensacionFinal,
       manual: modoManual,
       origen: modoManual ? "manual" : "catalogo",
     };
@@ -147,9 +226,432 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
     setReceta((prev) => prev.filter((_, idx) => idx !== idxEliminar));
   };
 
+  const ordenarPorFrecuencia = (items) => {
+    const arr = Array.isArray(items) ? [...items] : [];
+    arr.sort((a, b) => Number(b?.uso_count || 0) - Number(a?.uso_count || 0));
+    return arr;
+  };
+
+  const actualizarIndicaciones = (idxEditar, indicaciones) => {
+    setReceta((prev) => prev.map((item, idx) => (
+      idx === idxEditar ? { ...item, observaciones: indicaciones } : item
+    )));
+  };
+
+  const actualizarCantidadDispensacion = (idxEditar, value) => {
+    const parsed = parsePositiveInteger(value);
+    setReceta((prev) => prev.map((item, idx) => (
+      idx === idxEditar
+        ? { ...item, cantidad_dispensacion: parsed > 0 ? parsed : 1 }
+        : item
+    )));
+  };
+
+  const gruposSugerencias = [
+    {
+      key: "medico",
+      titulo: "Frecuentes del medico",
+      items: ordenarPorFrecuencia(sugerencias.medico),
+    },
+    {
+      key: "especialidad",
+      titulo: "Frecuentes de la especialidad",
+      items: ordenarPorFrecuencia(sugerencias.especialidad),
+    },
+    {
+      key: "general",
+      titulo: "Frecuentes de la clinica",
+      items: ordenarPorFrecuencia(sugerencias.general),
+    },
+  ];
+
+  const totalSugeridos = gruposSugerencias.reduce((acc, grupo) => acc + grupo.items.length, 0);
+
+  const buildSugeridoKey = (grupoKey, item, idx) => {
+    const code = String(item?.codigo || "").trim();
+    const name = String(item?.nombre || "").trim();
+    const ref = code || name || String(idx);
+    return `${grupoKey}::${ref}::${idx}`;
+  };
+
+  const toggleSugerido = (key, checked) => {
+    setSeleccionSugeridos((prev) => {
+      const next = { ...prev };
+      if (checked) {
+        next[key] = true;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const agregarSugeridosSeleccionados = () => {
+    const seleccionados = [];
+
+    gruposSugerencias.forEach((grupo) => {
+      grupo.items.forEach((item, idx) => {
+        const k = buildSugeridoKey(grupo.key, item, idx);
+        if (!seleccionSugeridos[k]) return;
+        seleccionados.push(item);
+      });
+    });
+
+    if (seleccionados.length === 0) return;
+
+    const existentes = new Set(
+      recetaArray.map((r) => `${String(r.codigo || "").trim().toLowerCase()}|${String(r.nombre || "").trim().toLowerCase()}`)
+    );
+
+    const nuevos = [];
+    seleccionados.forEach((item, idx) => {
+      const codigo = String(item?.codigo || "").trim();
+      const nombre = String(item?.nombre || "").trim();
+      if (!nombre) return;
+
+      const enCatalogo = Boolean(item?.en_catalogo);
+      const activo = item?.activo !== false;
+      if (enCatalogo && !activo) return;
+
+      const uniqueKey = `${codigo.toLowerCase()}|${nombre.toLowerCase()}`;
+      if (existentes.has(uniqueKey)) return;
+
+      existentes.add(uniqueKey);
+
+      const frecuenciaTipo = String(item?.frecuencia_tipo || "intervalo_horas").trim() || "intervalo_horas";
+      const frecuenciaValor =
+        frecuenciaTipo === "intervalo_horas" || frecuenciaTipo === "veces_dia"
+          ? Math.max(1, parsePositiveInteger(item?.frecuencia_valor || 0) || 8)
+          : null;
+      const frecuenciaHoras = frecuenciaTipo === "horarios_fijos"
+        ? parseFixedTimes(Array.isArray(item?.frecuencia_horas) ? item.frecuencia_horas.join(",") : item?.frecuencia_horas || "")
+        : [];
+
+      const duracionValor = Math.max(1, parsePositiveInteger(item?.duracion_valor || 0) || 5);
+      const duracionUnidad = item?.duracion_unidad === "semanas" ? "semanas" : "dias";
+
+      const frecuencia = String(item?.frecuencia || "").trim() || buildFrequencyText({
+        frecuenciaTipo,
+        frecuenciaValor,
+        frecuenciaHoras,
+      });
+
+      const duracion = String(item?.duracion || "").trim() || buildDurationText({
+        duracionValor,
+        duracionUnidad,
+      });
+
+      const cantidad_total = calcularCantidadTotalReceta({
+        frecuencia_tipo: frecuenciaTipo,
+        frecuencia_valor: frecuenciaValor,
+        frecuencia_horas: frecuenciaHoras,
+        duracion_valor: duracionValor,
+        duracion_unidad: duracionUnidad,
+      });
+
+      nuevos.push({
+        codigo: codigo || `SUG-${Date.now()}-${idx}`,
+        nombre,
+        presentacion: String(item?.presentacion || ""),
+        concentracion: String(item?.concentracion || ""),
+        laboratorio: String(item?.laboratorio || ""),
+        dosis: String(item?.dosis || ""),
+        frecuencia,
+        frecuencia_tipo: frecuenciaTipo,
+        frecuencia_valor: frecuenciaValor,
+        frecuencia_horas: frecuenciaHoras,
+        duracion,
+        duracion_valor: duracionValor,
+        duracion_unidad: duracionUnidad,
+        cantidad_total,
+        observaciones: String(item?.observaciones || ""),
+        cantidad_dispensacion: parsePositiveInteger(item?.cantidad_dispensacion || item?.cantidad_dispensar || 0) || 1,
+        unidad_dispensacion: String(item?.unidad_dispensacion || inferUnidadDispensacion(item?.presentacion || "")) || "unidad",
+        manual: !enCatalogo,
+        origen: enCatalogo ? "catalogo" : "manual",
+      });
+    });
+
+    if (nuevos.length === 0) return;
+
+    setReceta((prev) => [...nuevos, ...prev]);
+    setSeleccionSugeridos({});
+  };
+
+  const aplicarProtocolo = (protocolo) => {
+    const items = Array.isArray(protocolo?.items) ? protocolo.items : [];
+    if (items.length === 0) return;
+
+    const existentes = new Set(
+      recetaArray.map((r) => `${String(r.codigo || "").trim().toLowerCase()}|${String(r.nombre || "").trim().toLowerCase()}`)
+    );
+
+    const nuevos = [];
+    items.forEach((item, idx) => {
+      const codigo = String(item?.codigo || "").trim();
+      const nombre = String(item?.nombre || "").trim();
+      if (!nombre) return;
+
+      const key = `${codigo.toLowerCase()}|${nombre.toLowerCase()}`;
+      if (existentes.has(key)) return;
+      existentes.add(key);
+
+      const frecuenciaTipo = String(item?.frecuencia_tipo || "intervalo_horas").trim() || "intervalo_horas";
+      const frecuenciaValor =
+        frecuenciaTipo === "intervalo_horas" || frecuenciaTipo === "veces_dia"
+          ? Math.max(1, parsePositiveInteger(item?.frecuencia_valor || 0) || 8)
+          : null;
+      const frecuenciaHoras = frecuenciaTipo === "horarios_fijos"
+        ? parseFixedTimes(Array.isArray(item?.frecuencia_horas) ? item.frecuencia_horas.join(",") : item?.frecuencia_horas || "")
+        : [];
+
+      const duracionValor = Math.max(1, parsePositiveInteger(item?.duracion_valor || 0) || 5);
+      const duracionUnidad = item?.duracion_unidad === "semanas" ? "semanas" : "dias";
+
+      const frecuencia = String(item?.frecuencia || "").trim() || buildFrequencyText({
+        frecuenciaTipo,
+        frecuenciaValor,
+        frecuenciaHoras,
+      });
+      const duracion = String(item?.duracion || "").trim() || buildDurationText({
+        duracionValor,
+        duracionUnidad,
+      });
+
+      const cantidad_total = calcularCantidadTotalReceta({
+        frecuencia_tipo: frecuenciaTipo,
+        frecuencia_valor: frecuenciaValor,
+        frecuencia_horas: frecuenciaHoras,
+        duracion_valor: duracionValor,
+        duracion_unidad: duracionUnidad,
+      });
+
+      nuevos.push({
+        codigo: codigo || `PROTO-${Date.now()}-${idx}`,
+        nombre,
+        presentacion: String(item?.presentacion || ""),
+        concentracion: String(item?.concentracion || ""),
+        laboratorio: String(item?.laboratorio || ""),
+        dosis: String(item?.dosis || ""),
+        frecuencia,
+        frecuencia_tipo: frecuenciaTipo,
+        frecuencia_valor: frecuenciaValor,
+        frecuencia_horas: frecuenciaHoras,
+        duracion,
+        duracion_valor: duracionValor,
+        duracion_unidad: duracionUnidad,
+        cantidad_total,
+        observaciones: String(item?.observaciones || ""),
+        cantidad_dispensacion: parsePositiveInteger(item?.cantidad_dispensacion || item?.cantidad_dispensar || 0) || 1,
+        unidad_dispensacion: String(item?.unidad_dispensacion || "unidad") || "unidad",
+        manual: Boolean(item?.manual),
+        origen: String(item?.origen || "catalogo"),
+      });
+    });
+
+    if (nuevos.length === 0) return;
+    setReceta((prev) => [...nuevos, ...prev]);
+  };
+
+  const guardarComoProtocolo = async () => {
+    if (recetaArray.length === 0) return;
+    const nombre = window.prompt("Nombre del protocolo de receta");
+    if (!nombre || !String(nombre).trim()) return;
+
+    const scopeRaw = window.prompt("Alcance del protocolo: medico, especialidad o general", "medico");
+    const scope = ["medico", "especialidad", "general"].includes(String(scopeRaw || "").trim().toLowerCase())
+      ? String(scopeRaw).trim().toLowerCase()
+      : "medico";
+
+    const items = recetaArray.map((m) => ({
+      codigo: m?.codigo || "",
+      nombre: m?.nombre || "",
+      presentacion: m?.presentacion || "",
+      concentracion: m?.concentracion || "",
+      laboratorio: m?.laboratorio || "",
+      dosis: m?.dosis || "",
+      frecuencia: m?.frecuencia || "",
+      frecuencia_tipo: m?.frecuencia_tipo || "intervalo_horas",
+      frecuencia_valor: m?.frecuencia_valor ?? null,
+      frecuencia_horas: Array.isArray(m?.frecuencia_horas) ? m.frecuencia_horas : [],
+      duracion: m?.duracion || "",
+      duracion_valor: m?.duracion_valor || 5,
+      duracion_unidad: m?.duracion_unidad || "dias",
+      observaciones: m?.observaciones || "",
+      cantidad_dispensacion: parsePositiveInteger(m?.cantidad_dispensacion || 0) || 1,
+      unidad_dispensacion: m?.unidad_dispensacion || "unidad",
+      manual: Boolean(m?.manual),
+      origen: m?.origen || "catalogo",
+    }));
+
+    const res = await authFetch("api_receta_protocolos.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save",
+        consulta_id: Number(consultaId || 0),
+        nombre: String(nombre).trim(),
+        scope,
+        items,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data?.success) {
+      window.alert(data?.error || "No se pudo guardar el protocolo");
+      return;
+    }
+
+    const consulta = Number(consultaId || 0);
+    if (consulta > 0) {
+      const refresh = await authFetch(`api_receta_protocolos.php?consulta_id=${consulta}`, { cache: "no-store" });
+      const payload = await refresh.json();
+      setProtocolos(Array.isArray(payload?.data) ? payload.data : []);
+    }
+  };
+
+  const eliminarProtocolo = async (protocolo) => {
+    const id = Number(protocolo?.id || 0);
+    if (id <= 0) return;
+
+    const nombre = String(protocolo?.nombre || "este protocolo");
+    const ok = window.confirm(`¿Eliminar protocolo "${nombre}"?`);
+    if (!ok) return;
+
+    setDeletingProtocoloId(id);
+    try {
+      const res = await authFetch("api_receta_protocolos.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id }),
+      });
+
+      const data = await res.json();
+      if (!data?.success) {
+        window.alert(data?.error || "No se pudo eliminar el protocolo");
+        return;
+      }
+
+      setProtocolos((prev) => prev.filter((p) => Number(p?.id || 0) !== id));
+    } catch {
+      window.alert("No se pudo eliminar el protocolo");
+    } finally {
+      setDeletingProtocoloId(0);
+    }
+  };
+
   return (
     <div className="mb-4">
       <h3 className="text-lg font-semibold mb-2 mt-4">Receta médica</h3>
+
+      <div className="mb-3 border rounded p-3 bg-sky-50">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h4 className="text-sm font-semibold text-sky-900">Protocolos de receta</h4>
+          <button
+            type="button"
+            className="text-xs sm:text-sm bg-sky-600 hover:bg-sky-700 text-white px-3 py-1 rounded"
+            onClick={guardarComoProtocolo}
+            disabled={recetaArray.length === 0}
+          >
+            Guardar receta actual como protocolo
+          </button>
+        </div>
+        {loadingProtocolos && <p className="text-xs text-sky-700">Cargando protocolos...</p>}
+        {!loadingProtocolos && protocolos.length === 0 && (
+          <p className="text-xs text-sky-700">Sin protocolos aun para este contexto.</p>
+        )}
+        {!loadingProtocolos && protocolos.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {protocolos.map((p) => (
+              <div key={p.id} className="inline-flex items-center rounded border border-sky-300 bg-white overflow-hidden">
+                <button
+                  type="button"
+                  className="text-xs hover:bg-sky-100 text-sky-800 px-2 py-1"
+                  onClick={() => aplicarProtocolo(p)}
+                  title={`Aplicar ${p.nombre}`}
+                >
+                  {p.nombre}
+                </button>
+                <button
+                  type="button"
+                  className="text-xs px-2 py-1 border-l border-sky-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  onClick={() => eliminarProtocolo(p)}
+                  title={`Eliminar ${p.nombre}`}
+                  disabled={deletingProtocoloId === Number(p.id)}
+                >
+                  {deletingProtocoloId === Number(p.id) ? "..." : "X"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {totalSugeridos > 0 && (
+        <div className="mb-3 border rounded p-3 bg-emerald-50">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h4 className="text-sm font-semibold text-emerald-900">Sugerencias frecuentes</h4>
+            <button
+              type="button"
+              className="text-xs sm:text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded"
+              onClick={agregarSugeridosSeleccionados}
+            >
+              Agregar seleccionados
+            </button>
+          </div>
+
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {gruposSugerencias.map((grupo) => {
+              if (!grupo.items.length) return null;
+              return (
+                <div key={grupo.key} className="border border-emerald-200 rounded bg-white p-2">
+                  <p className="text-xs font-semibold text-emerald-800 mb-2">{grupo.titulo}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5">
+                    {grupo.items.map((item, idx) => {
+                      const k = buildSugeridoKey(grupo.key, item, idx);
+                      const stock = Number(item?.stock || 0);
+                      const enCatalogo = Boolean(item?.en_catalogo);
+                      const activo = item?.activo !== false;
+                      const bloqueado = enCatalogo && !activo;
+                      return (
+                        <label
+                          key={k}
+                          className={`rounded border px-2 py-1 text-[11px] leading-tight flex items-start gap-1.5 ${bloqueado ? "bg-gray-100 border-gray-200 text-gray-500" : "bg-white border-emerald-200 text-gray-700 cursor-pointer"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 scale-90"
+                            checked={Boolean(seleccionSugeridos[k])}
+                            onChange={(e) => toggleSugerido(k, e.target.checked)}
+                            disabled={bloqueado}
+                          />
+                          <span className="flex-1 min-w-0">
+                            <span className="font-semibold block truncate" title={item?.nombre || "Medicamento"}>{item?.nombre || "Medicamento"}</span>
+                            <span className="text-gray-500 block truncate">{item?.codigo ? `(${item.codigo})` : ""}</span>
+                            <span className="block text-[10px] text-gray-500 truncate" title={`${item?.frecuencia || "Frecuencia sugerida"} · ${item?.duracion || "Duración sugerida"}`}>
+                              {item?.frecuencia || "Frecuencia sugerida"} · {item?.duracion || "Duración sugerida"}
+                            </span>
+                            <span className="block text-[10px] text-gray-500 truncate" title={`Indicaciones: ${item?.observaciones ? String(item.observaciones) : "Sin indicaciones sugeridas"}`}>
+                              Indicaciones: {item?.observaciones ? String(item.observaciones) : "Sin indicaciones sugeridas"}
+                            </span>
+                            <span className="block text-[10px] text-gray-500">
+                              Cantidad sugerida: {parsePositiveInteger(item?.cantidad_dispensacion || item?.cantidad_dispensar || 0) || 1}
+                            </span>
+                            <span className="block text-[10px] text-gray-400">
+                              Uso frecuente: {Number(item?.uso_count || 0)}
+                              {enCatalogo ? ` · Stock: ${stock}` : " · Manual"}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="mb-2 flex flex-col sm:flex-row gap-2 items-stretch">
         <input
@@ -189,28 +691,33 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
             (() => {
               const stock = Number(m?.stock || 0);
               const sinStock = stock <= 0;
+              const inactivo = String(m?.estado || "").trim().toLowerCase() === "inactivo";
               return (
                 <div
                   key={m.id || m.codigo}
-                  className={`px-3 py-2 text-sm flex flex-col gap-1 ${sinStock ? "bg-red-50 text-gray-500 cursor-not-allowed" : "hover:bg-blue-100 cursor-pointer"}`}
+                  className={`px-3 py-2 text-sm flex flex-col gap-1 ${inactivo ? "bg-gray-100 text-gray-500 cursor-not-allowed" : (sinStock ? "bg-amber-50 text-gray-700 hover:bg-amber-100 cursor-pointer" : "hover:bg-blue-100 cursor-pointer")}`}
                   onClick={() => {
-                    if (sinStock) return;
+                    if (inactivo) return;
                     setMedicamentoSel(m);
                     setModoManual(false);
                     setManualNombre("");
                   }}
-                  title={sinStock ? "Sin stock en farmacia" : "Seleccionar medicamento"}
-                  aria-disabled={sinStock}
+                  title={inactivo ? "Medicamento inactivo" : (sinStock ? "Sin stock en farmacia (se puede recetar)" : "Seleccionar medicamento")}
+                  aria-disabled={inactivo}
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-semibold">
                       {m.nombre} <span className="text-gray-500 text-xs">({m.codigo})</span>
                     </span>
-                    {sinStock && (
-                      <span className="text-[11px] font-semibold text-red-700 bg-red-100 border border-red-200 rounded px-2 py-0.5">
+                    {inactivo ? (
+                      <span className="text-[11px] font-semibold text-gray-700 bg-gray-200 border border-gray-300 rounded px-2 py-0.5">
+                        Inactivo
+                      </span>
+                    ) : sinStock ? (
+                      <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
                         Sin Stock
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="text-xs text-gray-700 ml-2 space-y-0.5">
                     {m.presentacion && (
@@ -223,7 +730,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                       <div><strong>Laboratorio:</strong> {m.laboratorio}</div>
                     )}
                     {m.stock !== undefined && (
-                      <div className={sinStock ? "text-red-600" : "text-green-600"}><strong>Stock:</strong> {stock}</div>
+                      <div className={sinStock ? "text-amber-600" : "text-green-600"}><strong>Stock:</strong> {stock}</div>
                     )}
                   </div>
                 </div>
@@ -263,105 +770,35 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs text-gray-600">
+            <span className="font-medium">Modo práctico:</span> solo completa indicaciones y cantidad.
+            <span className="ml-1 text-gray-500">La pauta clínica y la unidad se autocompletan.</span>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">Indicaciones</label>
+            <textarea
+              className="border rounded p-2 w-full text-sm"
+              placeholder="Ej: aplicar capa fina en zona afectada por 30 días, interdiarios"
+              value={detalle.observaciones}
+              onChange={(e) => setDetalle((prev) => ({ ...prev, observaciones: e.target.value }))}
+              rows={2}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="block text-xs text-gray-500 mb-1 font-medium">Dosis</label>
+              <label className="block text-xs text-gray-500 mb-1 font-medium">Cantidad</label>
               <input
-                type="text"
+                type="number"
+                min="1"
                 className="border rounded p-2 w-full text-sm"
-                placeholder="Ej: 500 mg o 1 ampolla"
-                value={detalle.dosis}
-                onChange={(e) => setDetalle((prev) => ({ ...prev, dosis: e.target.value }))}
+                placeholder="Ej: 1"
+                value={cantidadDispensacion}
+                onChange={(e) => setCantidadDispensacion(e.target.value)}
               />
             </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1 font-medium">Tipo de frecuencia</label>
-              <select
-                className="border rounded p-2 w-full text-sm"
-                value={detalle.frecuenciaTipo}
-                onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaTipo: e.target.value }))}
-              >
-                <option value="intervalo_horas">Cada X horas</option>
-                <option value="veces_dia">X veces al día</option>
-                <option value="horarios_fijos">Horarios fijos</option>
-                <option value="prn">PRN / según indicación</option>
-              </select>
-            </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {(detalle.frecuenciaTipo === "intervalo_horas" || detalle.frecuenciaTipo === "veces_dia") && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1 font-medium">
-                  {detalle.frecuenciaTipo === "intervalo_horas" ? "Intervalo en horas" : "Veces por día"}
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  className="border rounded p-2 w-full text-sm"
-                  value={detalle.frecuenciaValor}
-                  onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaValor: e.target.value }))}
-                />
-              </div>
-            )}
-
-            {detalle.frecuenciaTipo === "horarios_fijos" && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1 font-medium">Horas fijas</label>
-                <input
-                  type="text"
-                  className="border rounded p-2 w-full text-sm"
-                  placeholder="Ej: 08:00, 20:00"
-                  value={detalle.frecuenciaHoras}
-                  onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaHoras: e.target.value }))}
-                />
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1 font-medium">Duración</label>
-              <div className="flex gap-2 items-end">
-                <input
-                  type="number"
-                  min="1"
-                  className="border rounded p-2 flex-1 text-sm"
-                  value={detalle.duracionValor}
-                  onChange={(e) => setDetalle((prev) => ({ ...prev, duracionValor: e.target.value }))}
-                />
-                <select
-                  className="border rounded p-2 text-sm"
-                  value={detalle.duracionUnidad}
-                  onChange={(e) => setDetalle((prev) => ({ ...prev, duracionUnidad: e.target.value }))}
-                >
-                  <option value="dias">Días</option>
-                  <option value="semanas">Semanas</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs text-gray-500">
-            <span className="font-medium text-gray-600">Vista previa:</span>{" "}
-            {buildFrequencyText({
-              frecuenciaTipo: detalle.frecuenciaTipo,
-              frecuenciaValor: parsePositiveInteger(detalle.frecuenciaValor),
-              frecuenciaHoras: parseFixedTimes(detalle.frecuenciaHoras),
-            })}
-            {" · "}
-            {buildDurationText({
-              duracionValor: Math.max(1, parsePositiveInteger(detalle.duracionValor) || 1),
-              duracionUnidad: detalle.duracionUnidad,
-            })}
-          </div>
-
-          <textarea
-            className="border rounded p-2 w-full text-sm"
-            placeholder="Observaciones clínicas (opcional)"
-            value={detalle.observaciones}
-            onChange={(e) => setDetalle((prev) => ({ ...prev, observaciones: e.target.value }))}
-            rows={2}
-          />
 
           <div className="flex gap-2">
             <button
@@ -389,14 +826,8 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
             <thead>
               <tr className="bg-blue-100">
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Medicamento</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Presentación</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Concentración</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Laboratorio</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Dosis</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Frecuencia</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Duración</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Cantidad Total</th>
-                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Observaciones</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Indicaciones</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Cantidad</th>
                 <th className="px-2 py-1 whitespace-nowrap w-16 text-xs text-gray-700 font-semibold">Quitar</th>
               </tr>
             </thead>
@@ -409,25 +840,24 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                         {m.nombre} {m.codigo && <span className="text-gray-500">({m.codigo})</span>}
                       </div>
                     </td>
-                    <td className="border px-2 py-1 whitespace-nowrap text-xs">{m.presentacion || "-"}</td>
-                    <td className="border px-2 py-1 whitespace-nowrap text-xs">{m.concentracion || "-"}</td>
-                    <td className="border px-2 py-1 whitespace-nowrap text-xs">{m.laboratorio || "-"}</td>
-                    <td className="border px-2 py-1 whitespace-nowrap">{m.dosis}</td>
-                    <td className="border px-2 py-1 whitespace-nowrap">{m.frecuencia}</td>
-                    <td className="border px-2 py-1 whitespace-nowrap">{m.duracion}</td>
-                    <td className="border px-2 py-1 whitespace-nowrap text-center font-semibold text-green-700">
-                      {(() => {
-                        const cant = m.cantidad_total || calcularCantidadTotalReceta({
-                          frecuencia_tipo: m.frecuencia_tipo,
-                          frecuencia_valor: m.frecuencia_valor,
-                          frecuencia_horas: m.frecuencia_horas || [],
-                          duracion_valor: m.duracion_valor,
-                          duracion_unidad: m.duracion_unidad
-                        });
-                        return cant ? `${cant} unid.` : "-";
-                      })()}
+                    <td className="border px-2 py-1 min-w-[220px]">
+                      <textarea
+                        className="w-full border rounded p-1 text-xs"
+                        rows={2}
+                        placeholder="Escribe indicaciones"
+                        value={m.observaciones || ""}
+                        onChange={(e) => actualizarIndicaciones(idx, e.target.value)}
+                      />
                     </td>
-                    <td className="border px-2 py-1 max-w-xs truncate" title={m.observaciones}>{m.observaciones}</td>
+                    <td className="border px-2 py-1 whitespace-nowrap text-center">
+                      <input
+                        type="number"
+                        min="1"
+                        className="w-20 border rounded p-1 text-xs text-center font-semibold text-green-700"
+                        value={m.cantidad_dispensacion || 1}
+                        onChange={(e) => actualizarCantidadDispensacion(idx, e.target.value)}
+                      />
+                    </td>
                     <td className="border px-2 py-1 text-center">
                       <button
                         type="button"
@@ -442,7 +872,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta }) {
                 ))
               ) : (
                 <tr>
-                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={10}>
+                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={4}>
                     No hay medicamentos seleccionados
                   </td>
                 </tr>

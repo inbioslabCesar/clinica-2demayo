@@ -93,6 +93,11 @@ function HistoriaClinicaPage() {
   const [ordenesLab, setOrdenesLab] = useState([]);
   const [ordenesImagenPrint, setOrdenesImagenPrint] = useState([]);
   const [ordenesProcedimientosPrint, setOrdenesProcedimientosPrint] = useState([]);
+  const [recetaSugerencias, setRecetaSugerencias] = useState({
+    medico: [],
+    especialidad: [],
+    general: [],
+  });
   const [tratamientoEstado, setTratamientoEstado] = useState({
     loading: false,
     data: null,
@@ -219,6 +224,36 @@ function HistoriaClinicaPage() {
         setOrdenesProcedimientosPrint(activas);
       })
       .catch(() => setOrdenesProcedimientosPrint([]));
+  }, [consultaId]);
+
+  useEffect(() => {
+    const consultaIdNum = Number(consultaId || 0);
+    if (consultaIdNum <= 0) {
+      setRecetaSugerencias({ medico: [], especialidad: [], general: [] });
+      return;
+    }
+
+    let cancelled = false;
+
+    authFetch(`api_receta_sugerencias.php?consulta_id=${consultaIdNum}&limit=10&sample=300`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const sugerencias = data?.sugerencias && typeof data.sugerencias === "object" ? data.sugerencias : {};
+        setRecetaSugerencias({
+          medico: Array.isArray(sugerencias.medico) ? sugerencias.medico : [],
+          especialidad: Array.isArray(sugerencias.especialidad) ? sugerencias.especialidad : [],
+          general: Array.isArray(sugerencias.general) ? sugerencias.general : [],
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRecetaSugerencias({ medico: [], especialidad: [], general: [] });
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [consultaId]);
 
   useEffect(() => {
@@ -2301,6 +2336,8 @@ function HistoriaClinicaPage() {
               }
               tratamiento={hc.tratamiento || ""}
               setTratamiento={valor => setHc(h => ({ ...h, tratamiento: valor }))}
+              sugerenciasReceta={recetaSugerencias}
+              consultaId={consultaId}
             />
           </div>
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">

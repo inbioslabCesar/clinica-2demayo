@@ -1,7 +1,7 @@
 import React from "react";
 import SelectorMedicamentosReceta from "../comunes/SelectorMedicamentosReceta";
 
-export default function TratamientoPaciente({ receta, setReceta, tratamiento, setTratamiento }) {
+export default function TratamientoPaciente({ receta, setReceta, tratamiento, setTratamiento, sugerenciasReceta, consultaId }) {
   return (
     <>
       <h3 className="text-lg font-semibold mb-2 mt-4">Tratamiento</h3>
@@ -14,7 +14,12 @@ export default function TratamientoPaciente({ receta, setReceta, tratamiento, se
           onChange={e => setTratamiento(e.target.value)}
         />
       </div>
-      <SelectorMedicamentosReceta receta={receta} setReceta={setReceta} />
+      <SelectorMedicamentosReceta
+        receta={receta}
+        setReceta={setReceta}
+        sugerenciasReceta={sugerenciasReceta}
+        consultaId={consultaId}
+      />
     </>
   );
 }

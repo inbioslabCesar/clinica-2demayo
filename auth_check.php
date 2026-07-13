@@ -51,6 +51,8 @@ if (isset($_SESSION['usuario'])) {
     $isTriaje = strpos($_SERVER['SCRIPT_NAME'], 'api_triaje.php') !== false;
     $isTratamientosEnfermeria = strpos($_SERVER['SCRIPT_NAME'], 'api_tratamientos_enfermeria.php') !== false
         || strpos($_SERVER['SCRIPT_NAME'], 'api_tratamientos_ejecucion.php') !== false;
+    $isRecetaSugerencias = strpos($_SERVER['SCRIPT_NAME'], 'api_receta_sugerencias.php') !== false;
+    $isRecetaProtocolos = strpos($_SERVER['SCRIPT_NAME'], 'api_receta_protocolos.php') !== false;
     
     $rolesPermitidos = ['administrador', 'quimico', 'laboratorio', 'laboratorista', 'recepcionista'];
     
@@ -100,6 +102,8 @@ if (isset($_SESSION['usuario'])) {
         $isInformesImagenologia ||
         $isGenerarPdfImagenologia ||
         $isResultadosLaboratorio
+        || $isRecetaSugerencias
+        || $isRecetaProtocolos
     ) {
         $rolesPermitidos[] = 'medico';
     }

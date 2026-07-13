@@ -190,19 +190,10 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
   const [pulsing, setPulsing] = useState(true);
   const [ultimaPregunta, setUltimaPregunta] = useState('');
   const [intentosAclaracion, setIntentosAclaracion] = useState(0);
-  const [hcContexto, setHcContexto] = useState({
-    available: false,
-    consultaId: 0,
-    totalHistoriasPrevias: 0,
-    resumenItems: [],
-    hcAnteriorLoading: false,
-    hcAnteriorError: '',
-  });
 
   const mensajesRef  = useRef(null);
   const inputRef     = useRef(null);
   const inicializado = useRef(false);
-  const hcResumenMostradoRef = useRef({ consultaId: 0, enviado: false });
   const rolActual = normalizarRol(usuario?.rol);
 
   // Scroll al final
@@ -252,7 +243,7 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
       const nombre   = usuario?.nombre ? ` ${rolLabel} ${usuario.nombre}` : '';
       setMensajes([{
         tipo:  'asistente',
-        texto: `Hola${nombre}! 👋 Me alegra acompañarte en esta atención. Estoy aquí para apoyarte paso a paso, tanto en funcionalidades del sistema como en contexto clínico de HC previa cuando esté disponible.\n\nCuéntame qué necesitas y lo resolvemos juntos.`,
+        texto: `Hola${nombre}! 👋 Me alegra acompañarte en esta atención. Estoy aquí para apoyarte paso a paso en funcionalidades del sistema.\n\nCuéntame qué necesitas y lo resolvemos juntos.`,
         id:    'bienvenida',
       }]);
       setTimeout(() => cargarSugerencias(''), 200);
@@ -265,63 +256,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
   useEffect(() => {
     scrollAlFinal();
   }, [mensajes]);
-
-  useEffect(() => {
-    const onHcContextUpdated = (event) => {
-      const detail = event?.detail && typeof event.detail === 'object' ? event.detail : {};
-      const resumenItems = Array.isArray(detail.resumenItems)
-        ? detail.resumenItems.map((item) => String(item || '').trim()).filter(Boolean)
-        : [];
-
-      setHcContexto({
-        available: Boolean(detail.available),
-        consultaId: Number(detail.consultaId || 0),
-        totalHistoriasPrevias: Number(detail.totalHistoriasPrevias || 0),
-        resumenItems,
-        hcAnteriorLoading: Boolean(detail.hcAnteriorLoading),
-        hcAnteriorError: String(detail.hcAnteriorError || ''),
-      });
-    };
-
-    window.addEventListener('hc-assistant-context-updated', onHcContextUpdated);
-    return () => window.removeEventListener('hc-assistant-context-updated', onHcContextUpdated);
-  }, []);
-
-  useEffect(() => {
-    if (!abierto || !hcContexto.available) return;
-
-    const consultaId = Number(hcContexto.consultaId || 0);
-    if (hcResumenMostradoRef.current.consultaId !== consultaId) {
-      hcResumenMostradoRef.current = { consultaId, enviado: false };
-    }
-    if (hcResumenMostradoRef.current.enviado) return;
-
-    const timer = window.setTimeout(() => {
-      const resumenTexto = hcContexto.hcAnteriorLoading
-        ? 'Estoy preparando el contexto de HC previa para que tengas una vista rápida y segura.'
-        : hcContexto.hcAnteriorError
-          ? `No pude cargar el resumen de HC previa: ${hcContexto.hcAnteriorError}`
-          : (hcContexto.resumenItems || []).length > 0
-            ? `Te comparto un resumen inicial:\n${hcContexto.resumenItems.slice(0, 4).map((item) => `• ${item}`).join('\n')}`
-            : 'Esta atención no tiene HC previa encadenada en este momento.';
-
-      agregarMensaje({
-        tipo: 'asistente',
-        texto: `Perfecto, ya estoy contigo en esta HC. ${resumenTexto}`,
-      });
-
-      hcResumenMostradoRef.current = { consultaId, enviado: true };
-    }, 550);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    abierto,
-    hcContexto.available,
-    hcContexto.consultaId,
-    hcContexto.hcAnteriorLoading,
-    hcContexto.hcAnteriorError,
-    hcContexto.resumenItems,
-  ]);
 
   const cargarSugerencias = async (cat) => {
     try {
@@ -456,15 +390,10 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
     const esRolClinico = ['medico', 'enfermero'].includes(rolActual);
 
     if (esRolClinico && (consultaHistorial || consultaResumenHc)) {
-      const resumenItems = Array.isArray(hcContexto.resumenItems) ? hcContexto.resumenItems : [];
-      const resumenTexto = resumenItems.length > 0
-        ? resumenItems.map((item) => `• ${item}`).join('\n')
-        : 'En esta atención no encuentro HC previa encadenada para resumir.';
-
       setIntentosAclaracion(0);
       agregarMensaje({
         tipo: 'asistente',
-        texto: `🏥 **Contexto HC previa**\n\n${resumenTexto}\n\nPara revisar toda la continuidad clínica, usa la pestaña **Continuidad clínica** dentro de la HC actual.`,
+        texto: '🏥 **Ayuda del sistema (HC)**\n\nEste asistente no muestra resúmenes clínicos automáticos de HC previas.\n\nPara revisar información histórica, usa la pestaña **Continuidad clínica** o **Ver historial completo** dentro de la HC actual.',
       });
       setCargando(false);
       return;
@@ -595,7 +524,6 @@ export default function AsistenteChatGlobal({ usuario, placementMode = 'default'
 
   const limpiarChat = () => {
     inicializado.current = false;
-    hcResumenMostradoRef.current = { consultaId: Number(hcContexto.consultaId || 0), enviado: false };
     setIntentosAclaracion(0);
     setMensajes([]);
     setSugerencias([]);

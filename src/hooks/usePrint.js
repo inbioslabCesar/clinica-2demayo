@@ -135,7 +135,8 @@ export const usePrintReceta = () => {
 
         .receta-a4-landscape {
           width: 277mm !important;
-          height: 190mm !important;
+          min-height: 190mm !important;
+          height: auto !important;
         }
       }
     `
