@@ -586,7 +586,7 @@ export default function CotizarPaquetesPerfilesPage() {
 
       <div className="flex flex-col gap-8 md:flex-row">
         <div className="w-full flex-1">
-          <div className="bg-white rounded-lg shadow border border-gray-200">
+          <div className="bg-white rounded-lg shadow border border-gray-200 max-h-[68vh] overflow-y-auto">
             {loading ? (
               <div className="p-6 text-center text-gray-500">Cargando...</div>
             ) : filteredRows.length === 0 ? (
