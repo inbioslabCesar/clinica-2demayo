@@ -15,6 +15,7 @@ const MedicoFormModal = ({
 }) => {
   const [previewFirma, setPreviewFirma] = useState(formData.firma || null);
   const [firmaError, setFirmaError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [configuracion, setConfiguracion] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -22,6 +23,7 @@ const MedicoFormModal = ({
     if (isOpen) {
       setPreviewFirma(formData.firma || null);
       setFirmaError('');
+      setShowPassword(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -44,11 +46,11 @@ const MedicoFormModal = ({
   const generarEmailYPassword = (nroColegiatura) => {
     if (!nroColegiatura || !configuracion) return;
     
-    const nroLimpio = String(nroColegiatura).trim();
+    const nroLimpio = String(nroColegiatura).trim().replace(/\s+/g, '');
     if (!nroLimpio) return;
 
     const nombreEmpresa = (configuracion.nombre_clinica || 'empresa').toLowerCase().replace(/\s+/g, '');
-    const nuevoEmail = `${nroLimpio}@${nombreEmpresa}.com`;
+    const nuevoEmail = `${nroLimpio.toLowerCase()}@${nombreEmpresa}.com`;
     const nuevoPassword = nroLimpio;
 
     onChange({ target: { name: 'email', value: nuevoEmail } });
@@ -413,19 +415,48 @@ const MedicoFormModal = ({
                       {isEditMode ? 'Nueva Contraseña' : mode === 'create' ? 'Contraseña (Auto-generada)' : 'Contraseña de Acceso *'}
                     </span>
                   </label>
-                  <input
-                    type={mode === 'create' ? "text" : "password"}
-                    name="password"
-                    value={formData.password || ''}
-                    onChange={onChange}
-                    className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
-                    placeholder={mode === 'create' ? "Se generará automáticamente" : "••••••••"}
-                    required={!isEditMode}
-                    autoComplete={isEditMode ? "new-password" : "new-password"}
-                    readOnly={mode === 'create'}
-                  />
+                  <div className="relative">
+                    <input
+                      type={mode === 'create' ? "text" : (showPassword ? "text" : "password")}
+                      name="password"
+                      value={formData.password || ''}
+                      onChange={onChange}
+                      className="w-full border border-gray-300 rounded-xl px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-transparent transition-all duration-200 bg-gray-50 focus:bg-white"
+                      placeholder={mode === 'create' ? "Se generará automáticamente" : "Ingrese nueva contraseña"}
+                      required={!isEditMode}
+                      autoComplete={isEditMode ? "new-password" : "new-password"}
+                      readOnly={mode === 'create'}
+                    />
+                    {mode !== 'create' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!String(formData.password || '').trim()) return;
+                          setShowPassword((prev) => !prev);
+                        }}
+                        disabled={!String(formData.password || '').trim()}
+                        className="absolute inset-y-0 right-0 px-3 text-gray-500 hover:text-gray-700 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+                        title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                      >
+                        {showPassword ? (
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.956 9.956 0 012.214-3.592M6.223 6.223A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.542 7a9.964 9.964 0 01-4.293 5.774M15 12a3 3 0 11-6 0 3 3 0 016 0zm6 9L3 3" />
+                          </svg>
+                        ) : (
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    )}
+                  </div>
                   {isEditMode && (
                     <p className="text-xs text-gray-500 mt-1">Dejar vacío para mantener la contraseña actual</p>
+                  )}
+                  {isEditMode && (
+                    <p className="text-xs text-gray-500 mt-1">Por seguridad, la contraseña actual no se puede mostrar; el ojito solo muestra la nueva contraseña que escriba.</p>
                   )}
                   {mode === 'create' && formData.password && (
                     <p className="text-xs text-green-600 mt-1">✓ Contraseña: {formData.password} (puede cambiarla después)</p>
