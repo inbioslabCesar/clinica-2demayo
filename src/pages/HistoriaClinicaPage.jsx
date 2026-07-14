@@ -201,6 +201,7 @@ function normalizeHistoriaData(rawDatos) {
   return {
     ...source,
     receta: recetaNormalizada,
+    recomendaciones: String(source.recomendaciones || "").trim(),
     proxima_cita: {
       ...DEFAULT_PROXIMA_CITA,
       ...(rawProxima && typeof rawProxima === "object" ? rawProxima : {}),
@@ -585,6 +586,7 @@ function HistoriaClinicaPage() {
     antecedentes: "",
     examen_fisico: "",
     tratamiento: "",
+    recomendaciones: "",
     receta: [],
     proxima_cita: { ...DEFAULT_PROXIMA_CITA },
   });
@@ -2475,16 +2477,22 @@ function HistoriaClinicaPage() {
             <TratamientoPaciente
               receta={hc.receta || []}
               setReceta={(recetaNueva) =>
-                setHc((h) => ({
-                  ...h,
-                  receta:
-                    typeof recetaNueva === 'function'
-                      ? recetaNueva(h.receta)
-                      : recetaNueva,
-                }))
+                setHc((h) => {
+                  const nextReceta = typeof recetaNueva === 'function'
+                    ? recetaNueva(h.receta)
+                    : recetaNueva;
+                  return {
+                    ...h,
+                    receta: Array.isArray(nextReceta)
+                      ? nextReceta.map(({ recomendaciones: _omit, ...item }) => item)
+                      : [],
+                  };
+                })
               }
               tratamiento={hc.tratamiento || ""}
               setTratamiento={valor => setHc(h => ({ ...h, tratamiento: valor }))}
+              recomendaciones={hc.recomendaciones || ""}
+              setRecomendaciones={valor => setHc(h => ({ ...h, recomendaciones: valor }))}
               sugerenciasReceta={recetaSugerencias}
               consultaId={consultaId}
             />
@@ -2900,11 +2908,11 @@ function HistoriaClinicaPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (printRecetaRef.current && hc.receta && hc.receta.length > 0) {
-                      handlePrintReceta();
-                    } else {
+                    if (!hc.receta || hc.receta.length === 0) {
                       console.warn('Referencia de receta no disponible o sin medicamentos');
+                      return;
                     }
+                    handlePrintReceta();
                   }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
                   disabled={!hc.receta || hc.receta.length === 0}
@@ -3669,6 +3677,7 @@ function HistoriaClinicaPage() {
           <ImpresionRecetaMedicamentos
             paciente={paciente}
             medicamentos={hc.receta}
+            recomendaciones={hc.recomendaciones || ''}
             medicoInfo={medicoInfo}
             configuracionClinica={configuracionClinica}
             diagnosticos={diagnosticos}

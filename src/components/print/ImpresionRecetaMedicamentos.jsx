@@ -4,6 +4,7 @@ import { BASE_URL } from "../../config/config.js";
 const ImpresionRecetaMedicamentos = ({ 
   paciente, 
   medicamentos,
+  recomendaciones,
   medicoInfo,
   configuracionClinica,
   diagnosticos,
@@ -39,6 +40,7 @@ const ImpresionRecetaMedicamentos = ({
 
   const diagnosticosArray = Array.isArray(diagnosticos) ? diagnosticos : [];
   const medicamentosArray = Array.isArray(medicamentos) ? medicamentos : [];
+  const recomendacionesGenerales = String(recomendaciones || '').trim();
 
   const getCantidadImpresion = (medicamento) => {
     const cantidad = Number.parseInt(
@@ -262,6 +264,15 @@ const ImpresionRecetaMedicamentos = ({
               )}
             </div>
           </section>
+
+          {recomendacionesGenerales && (
+            <section className="mt-1 shrink-0 border border-amber-300 bg-amber-50 p-1.5 text-[11px] text-amber-900">
+              <p className="font-semibold uppercase">Recomendaciones</p>
+              <p className="mt-0.5 whitespace-pre-wrap leading-tight bg-white border border-amber-200 rounded p-1">
+                {recomendacionesGenerales}
+              </p>
+            </section>
+          )}
 
           <section className="mt-1 shrink-0 border border-rose-300 bg-rose-50 p-1.5 text-[11px] text-rose-800">
             <p className="font-semibold uppercase">Advertencias</p>

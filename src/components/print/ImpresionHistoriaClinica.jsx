@@ -570,6 +570,15 @@ const ImpresionHistoriaClinica = ({
         </div>
       )}
 
+      {hc.recomendaciones && (
+        <div className="mb-2 p-2 bg-amber-50 rounded-lg border border-amber-200">
+          <h3 className="font-semibold text-amber-800 mb-1 border-b border-amber-300 text-xs">
+            ✅ RECOMENDACIONES
+          </h3>
+          <p className="text-xs leading-relaxed p-1 bg-white rounded border whitespace-pre-wrap break-all">{hc.recomendaciones}</p>
+        </div>
+      )}
+
       {/* Receta Médica */}
       {medicamentos && medicamentos.length > 0 ? (
         <div className="mb-2 p-2 bg-green-50 rounded-lg border border-green-200 seccion-medicamentos">
