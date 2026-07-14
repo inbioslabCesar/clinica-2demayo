@@ -4,6 +4,16 @@ import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
 import { authFetch } from '../../utils/apiClient';
 
+function formatUserRole(roleRaw) {
+  const role = String(roleRaw || '').trim().toLowerCase();
+  if (!role) return '';
+  if (role === 'admin' || role === 'administrador') return 'Admin';
+  if (role.includes('recep')) return 'Recepcion';
+  if (role.includes('caja') || role.includes('cajero')) return 'Caja';
+  if (role.includes('medico')) return 'Medico';
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 function CobroModulo({
   paciente,
   servicio,
@@ -312,7 +322,7 @@ if (tipoDescuento === 'porcentaje') {
   };
 
   const mostrarComprobante = async (cobroId, datosComprobante) => {
-
+    const usuarioSesion = JSON.parse(sessionStorage.getItem('usuario') || '{}');
     const fechaHora = new Date().toLocaleString('es-PE');
     const nombreCompleto = nombrePacienteCompleto;
     const consulta = datosComprobante.servicio_info || {};
@@ -373,6 +383,18 @@ if (tipoDescuento === 'porcentaje') {
       || paciente?.referencia_origen
       || ''
     ).trim();
+    const usuarioNombre = String(
+      datosComprobante?.usuario_nombre
+      || usuarioSesion?.nombre
+      || usuarioSesion?.usuario
+      || 'Sistema'
+    ).trim() || 'Sistema';
+    const usuarioRolFmt = formatUserRole(
+      datosComprobante?.usuario_rol
+      || usuarioSesion?.rol
+      || ''
+    );
+    const usuarioLabel = usuarioRolFmt ? `${usuarioNombre} (${usuarioRolFmt})` : usuarioNombre;
     const tieneSaldoPendiente = Number.isFinite(Number(saldoPendiente)) && Number(saldoPendiente) > 0;
     const esCobroCotizacion = cotizacionIdsTicket.length > 0 && tieneSaldoPendiente;
     const saldoAnteriorCobro = Math.max(0, Number(saldoPendiente || 0));
@@ -595,6 +617,7 @@ if (tipoDescuento === 'porcentaje') {
         <div class="t-meta">Paciente: ${nombreCompleto}</div>
         <div class="t-meta">DNI: ${dniPaciente || '-'}</div>
         <div class="t-meta">H.C.: ${historiaClinicaPaciente || '-'}</div>
+        <div class="t-meta">Usuario: ${escapeHtml(usuarioLabel)}</div>
         ${cotizacionIdsTicket.length > 0 ? `<div class="t-meta">Atenciones: ${cotizacionIdsTicket.map((id) => `#${id}`).join(', ')}</div>` : ''}
         ${referenciaOrigenCobro ? `<div class="t-meta">Referencia origen: ${referenciaOrigenCobro}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Consulta: ${tipoConsulta}</div>` : ''}

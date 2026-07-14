@@ -275,6 +275,14 @@ npm run build
 3. Configurar base de datos en hosting
 4. Actualizar `config.php` con credenciales de producción
 
+### Paquete listo para Hostinger (manual)
+
+1. Generar release completo con:
+  - `npm run prepare:hostinger`
+2. Tomar el zip generado en `deploy/hostinger-release-YYYYMMDD-HHMMSS.zip`.
+3. Seguir la guía de publicación:
+  - `deploy/HOSTINGER_DEPLOY_CHECKLIST.md`
+
 ### Despliegue automático a Hostinger con GitHub Actions
 
 El repositorio incluye el workflow [`.github/workflows/deploy-hostinger.yml`](.github/workflows/deploy-hostinger.yml), que despliega automáticamente al hacer push a `main`.

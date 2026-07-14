@@ -25,6 +25,10 @@ export default function CotizarEcografiaPage() {
     const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
     const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
     const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+    const pacienteTemporal = location.state?.pacienteTemporal || null;
+    const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
+    const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
+    const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
 
     const getLimaDate = () => {
       const now = new Date();
@@ -562,7 +566,9 @@ export default function CotizarEcografiaPage() {
 
     addItems({
       patientId: Number(pacienteId),
-      patientName: paciente ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim() : `Paciente #${pacienteId}`,
+      patientName: paciente
+        ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim()
+        : (nombrePacienteTemporal || `Paciente #${pacienteId}`),
       items: detalles.map((d) => ({
         serviceType: 'ecografia',
         serviceId: Number(d.servicio_id || 0),
@@ -648,9 +654,15 @@ export default function CotizarEcografiaPage() {
         }
       : {
           paciente_id: Number(pacienteId),
+          paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
+          paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
+          modo_cotizacion: esCotizacionInformativa ? 'informativa' : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
           total,
           detalles: detallesFinales,
-          observaciones: 'Cotización registrada desde cotizador de Ecografía'
+          observaciones: esCotizacionInformativa
+            ? 'Cotización informativa registrada desde cotizador de Ecografía'
+            : 'Cotización registrada desde cotizador de Ecografía'
         };
 
     try {
@@ -747,7 +759,12 @@ export default function CotizarEcografiaPage() {
         if (!isEditing) {
           return (
             <button
-              onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
+              onClick={() => navigate('/seleccionar-servicio', {
+                state: {
+                  pacienteId: Number(pacienteId || 0),
+                  ...(pacienteTemporal ? { pacienteTemporal } : {}),
+                },
+              })}
               className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
             >← Volver</button>
           );

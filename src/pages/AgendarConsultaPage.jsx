@@ -5,14 +5,16 @@ function AgendarConsultaPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
-  const pacienteId = location.state?.pacienteId || searchParams.get('paciente_id');
-  const consultaId = location.state?.consultaId || searchParams.get('consulta_id');
+  const pacienteId = location.state?.pacienteId ?? searchParams.get('paciente_id');
+  const pacienteTemporal = location.state?.pacienteTemporal || null;
+  const hasPacienteContext = pacienteId !== undefined && pacienteId !== null && String(pacienteId).trim() !== "";
+  const consultaId = location.state?.consultaId ?? searchParams.get('consulta_id');
   const cotizacionId = searchParams.get('cotizacion_id');
   const modo = searchParams.get('modo');
   const isEditIntent = Boolean(consultaId) || (modo === 'editar' && Boolean(cotizacionId));
 
   // Si no hay pacienteId ni consultaId, redirigir o mostrar mensaje
-  if (!pacienteId && !consultaId && !cotizacionId) {
+  if (!hasPacienteContext && !consultaId && !cotizacionId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="bg-white p-6 rounded shadow text-center">
@@ -40,6 +42,7 @@ function AgendarConsultaPage() {
         </div>
         <AgendarConsulta
           pacienteId={pacienteId}
+          pacienteTemporal={pacienteTemporal}
           consultaId={consultaId}
           cotizacionId={cotizacionId}
           isEditIntent={isEditIntent}

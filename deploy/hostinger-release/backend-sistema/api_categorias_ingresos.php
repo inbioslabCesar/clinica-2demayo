@@ -1,0 +1,42 @@
+<?php
+require_once __DIR__ . '/init_api.php';
+
+require_once 'config.php';
+
+try {
+    // Verificar autenticación
+    if (!isset($_SESSION['usuario'])) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'No autenticado']);
+        exit;
+    }
+
+    // Obtener categorías de ingresos activas
+    $sql = "SELECT id, tipo_ingreso, nombre, descripcion 
+            FROM categorias_ingresos 
+            WHERE activo = 1 
+            ORDER BY tipo_ingreso, nombre";
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute();
+    $categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    echo json_encode([
+        'success' => true,
+        'categorias' => $categorias
+    ]);
+
+} catch (PDOException $e) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Error de base de datos: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Error del servidor: ' . $e->getMessage()
+    ]);
+}
+?>

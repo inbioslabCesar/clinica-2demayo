@@ -1,6 +1,5 @@
 ﻿import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Swal from "sweetalert2";
 import CobroModuloFinal from "../cobro/CobroModuloFinal";
 import { authFetch } from "../../utils/apiClient";
 
@@ -43,22 +42,44 @@ function ServiciosSelector({ paciente }) {
       });
   }, []);
 
+  const esPacienteTemporal = Number(paciente?.id || 0) <= 0;
+  const pacienteIdRuta = esPacienteTemporal ? 0 : Number(paciente?.id || 0);
+  const pacienteTemporalState = esPacienteTemporal
+    ? {
+        nombre: String(paciente?.nombre || "Particular").trim() || "Particular",
+        apellido: String(paciente?.apellido || "").trim(),
+        dni: String(paciente?.dni || "").trim(),
+        tipo_documento: String(paciente?.tipo_documento || "dni").trim() || "dni",
+      }
+    : null;
+
+  const navegarCotizador = (path) => {
+    navigate(path, {
+      state: pacienteTemporalState ? { pacienteTemporal: pacienteTemporalState } : undefined,
+    });
+  };
+
   const manejarSeleccionServicio = (servicio) => {
     if (servicio.key === "consulta") {
-      navigate("/agendar-consulta", { state: { pacienteId: paciente.id } });
+      navigate("/agendar-consulta", {
+        state: {
+          pacienteId: pacienteIdRuta,
+          ...(pacienteTemporalState ? { pacienteTemporal: pacienteTemporalState } : {}),
+        },
+      });
     } else if (servicio.key === "laboratorio") {
-      navigate(`/cotizar-laboratorio/${paciente.id}`);
+      navegarCotizador(`/cotizar-laboratorio/${pacienteIdRuta}`);
     } else if (servicio.key === "farmacia") {
-      navigate(`/cotizar-farmacia/${paciente.id}`);
+      navegarCotizador(`/cotizar-farmacia/${pacienteIdRuta}`);
     } else if (servicio.key === "rayosx") {
-      navigate(`/cotizar-rayosx/${paciente.id}`);
+      navegarCotizador(`/cotizar-rayosx/${pacienteIdRuta}`);
     } else if (servicio.key === "ecografia") {
-      navigate(`/cotizar-ecografia/${paciente.id}`);
+      navegarCotizador(`/cotizar-ecografia/${pacienteIdRuta}`);
     } else if (servicio.key === "operacion") {
-      navigate(`/cotizar-operacion/${paciente.id}`);
+      navegarCotizador(`/cotizar-operacion/${pacienteIdRuta}`);
     } else if (servicio.key === "procedimiento") {
       // Navegar a la página de cotización de procedimientos (flujo igual que laboratorio)
-      navigate(`/cotizar-procedimientos/${paciente.id}`);
+      navegarCotizador(`/cotizar-procedimientos/${pacienteIdRuta}`);
     } else if (servicio.requiresPayment) {
       setServicioSeleccionado(servicio);
       setMostrarCobro(true);

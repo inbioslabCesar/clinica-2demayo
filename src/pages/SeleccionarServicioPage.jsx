@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import Swal from "sweetalert2";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
+import { useQuoteCart } from "../context/QuoteCartContext";
 
 export default function SeleccionarServicioPage() {
   const themeGradient = {
@@ -39,12 +40,47 @@ export default function SeleccionarServicioPage() {
 
   const location = useLocation();
   const navigate = useNavigate();
+  const { cart } = useQuoteCart();
   const [paciente, setPaciente] = useState(null);
+  const [pacienteTemporalInferido, setPacienteTemporalInferido] = useState(null);
   const [resumenServicios, setResumenServicios] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
   const [loadingResumen, setLoadingResumen] = useState(false);
   const qs = new URLSearchParams(location.search);
   const pacienteId = location.state?.pacienteId || qs.get('paciente_id');
+  const pacienteIdNum = Number(pacienteId || 0);
+  const nombreCarrito = String(cart?.patientName || '').trim();
+  const carritoEsPacienteTemporal = pacienteIdNum <= 0 && Number(cart?.patientId ?? -1) === 0;
+  const nombreCarritoEsGenerico = !nombreCarrito || /^paciente\s*#?0$/i.test(nombreCarrito);
+  const pacienteTemporal = location.state?.pacienteTemporal || pacienteTemporalInferido || (carritoEsPacienteTemporal
+    ? {
+        nombre: nombreCarritoEsGenerico ? 'Particular' : nombreCarrito,
+        apellido: '',
+        dni: '',
+      }
+    : null);
+  const esPacienteTemporal = pacienteIdNum <= 0 && Boolean(
+    String(pacienteTemporal?.nombre || '').trim()
+    || String(pacienteTemporal?.apellido || '').trim()
+    || String(pacienteTemporal?.dni || '').trim()
+  );
+  const pacienteMostrado = paciente || (esPacienteTemporal
+    ? {
+        id: 0,
+        nombre: String(pacienteTemporal?.nombre || 'Particular').trim() || 'Particular',
+        apellido: String(pacienteTemporal?.apellido || '').trim(),
+        dni: String(pacienteTemporal?.dni || '-').trim() || '-',
+        fecha_nacimiento: '-',
+        sexo: '-',
+        direccion: '-',
+        telefono: '-',
+        email: '-',
+        tipo_seguro: 'Particular',
+        historia_clinica: '-',
+        edad: null,
+        procedencia: '-',
+      }
+    : null);
   const cobroId = qs.get('cobro_id');
   const cotizacionId = location.state?.cotizacionId || qs.get('cotizacion_id');
   const isEditCotizacion = Boolean(cotizacionId);
@@ -91,7 +127,7 @@ export default function SeleccionarServicioPage() {
     }, []);
 
   useEffect(() => {
-    if (pacienteId) {
+    if (Number(pacienteId || 0) > 0) {
       authFetch(`api_pacientes.php?id=${pacienteId}`, {
         cache: "no-store",
       })
@@ -106,11 +142,14 @@ export default function SeleccionarServicioPage() {
         .catch(() => {
           setPaciente(null);
         });
+    } else {
+      setPaciente(null);
     }
   }, [pacienteId]);
 
   useEffect(() => {
     if (!isEditCotizacion || !cotizacionId) {
+      setPacienteTemporalInferido(null);
       setResumenServicios([]);
       setTotalCotizacion(0);
       return;
@@ -122,9 +161,23 @@ export default function SeleccionarServicioPage() {
       .then((data) => {
         const cot = data?.cotizacion;
         if (!data?.success || !cot) {
+          setPacienteTemporalInferido(null);
           setResumenServicios([]);
           setTotalCotizacion(0);
           return;
+        }
+
+        if (Number(cot?.paciente_id || 0) <= 0) {
+          const nombre = String(cot?.nombre || '').trim();
+          const apellido = String(cot?.apellido || '').trim();
+          const dni = String(cot?.dni || '').trim();
+          setPacienteTemporalInferido({
+            nombre: [nombre, apellido].filter(Boolean).join(' ').trim() || 'Particular',
+            apellido: '',
+            dni,
+          });
+        } else {
+          setPacienteTemporalInferido(null);
         }
 
         const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
@@ -143,6 +196,7 @@ export default function SeleccionarServicioPage() {
         setTotalCotizacion(Number(cot?.total || 0));
       })
       .catch(() => {
+        setPacienteTemporalInferido(null);
         setResumenServicios([]);
         setTotalCotizacion(0);
       })
@@ -168,45 +222,45 @@ export default function SeleccionarServicioPage() {
               onClick={() => navigate(isEditCotizacion ? '/cotizaciones' : (rutaVolver === '/pacientes' ? -1 : rutaVolver))}
             >{isEditCotizacion ? 'Volver a Atenciones' : textoVolver}</button>
           </div>
-          {paciente ? (
+          {pacienteMostrado ? (
             <div className="rounded-lg p-4 md:p-5 mb-4" style={themePrimarySoft}>
               <div className="font-bold mb-2" style={{ color: "var(--color-primary-dark)" }}>Paciente encontrado:</div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-8 text-sm md:text-base">
                 <div>
-                  <div><b>Nombre:</b> {paciente.nombre}</div>
-                  <div><b>Apellido:</b> {paciente.apellido}</div>
-                  <div><b>DNI:</b> {paciente.dni}</div>
-                  <div><b>Fecha de nacimiento:</b> {paciente.fecha_nacimiento}</div>
-                  <div><b>Sexo:</b> {paciente.sexo}</div>
-                  <div><b>Dirección:</b> {paciente.direccion}</div>
-                  <div><b>Teléfono:</b> {paciente.telefono}</div>
-                  <div><b>Email:</b> {paciente.email}</div>
-                  <div><b>Tipo de seguro:</b> {paciente.tipo_seguro}</div>
+                  <div><b>Nombre:</b> {pacienteMostrado.nombre}</div>
+                  <div><b>Apellido:</b> {pacienteMostrado.apellido}</div>
+                  <div><b>DNI:</b> {pacienteMostrado.dni}</div>
+                  <div><b>Fecha de nacimiento:</b> {pacienteMostrado.fecha_nacimiento}</div>
+                  <div><b>Sexo:</b> {pacienteMostrado.sexo}</div>
+                  <div><b>Dirección:</b> {pacienteMostrado.direccion}</div>
+                  <div><b>Teléfono:</b> {pacienteMostrado.telefono}</div>
+                  <div><b>Email:</b> {pacienteMostrado.email}</div>
+                  <div><b>Tipo de seguro:</b> {pacienteMostrado.tipo_seguro}</div>
                 </div>
                 <div>
-                  <div><b>Historia Clínica:</b> {paciente.historia_clinica}</div>
+                  <div><b>Historia Clínica:</b> {pacienteMostrado.historia_clinica}</div>
                   <div><b>Edad:</b> {/* Muestra edad si existe, si no la calcula */}
-                    {paciente.edad
-                      ? paciente.edad + ' años'
-                      : paciente.fecha_nacimiento
+                    {pacienteMostrado.edad
+                      ? pacienteMostrado.edad + ' años'
+                      : pacienteMostrado.fecha_nacimiento
                         ? (() => {
-                            const fecha = new Date(paciente.fecha_nacimiento);
+                            const fecha = new Date(pacienteMostrado.fecha_nacimiento);
                             return !isNaN(fecha)
                               ? Math.floor((new Date() - fecha) / (365.25 * 24 * 60 * 60 * 1000)) + ' años'
                               : 'Edad no disponible';
                           })()
                         : 'Edad no disponible'}
                   </div>
-                  <div><b>Procedencia:</b> {paciente.procedencia}</div>
+                  <div><b>Procedencia:</b> {pacienteMostrado.procedencia}</div>
                 </div>
               </div>
             </div>
           ) : (
             <div className="text-center text-gray-500 mb-4">Busca un paciente por DNI para mostrar los servicios.</div>
           )}
-          {paciente && (
+          {pacienteMostrado && (
             <div className="rounded-lg p-4 md:p-5 mb-2" style={themePrimarySoft}>
-              <div className="font-semibold mb-2 flex items-center gap-2" style={{ color: "var(--color-primary-dark)" }}><span>🔽</span> Seleccionar Servicio para: <span className="text-black">{paciente.nombre} {paciente.apellido}</span></div>
+              <div className="font-semibold mb-2 flex items-center gap-2" style={{ color: "var(--color-primary-dark)" }}><span>🔽</span> Seleccionar Servicio para: <span className="text-black">{pacienteMostrado.nombre} {pacienteMostrado.apellido}</span></div>
               {isEditCotizacion && (
                 <div className="mb-3 text-xs bg-yellow-100 text-yellow-800 px-3 py-2 rounded border border-yellow-300">
                   Editando cotización #{cotizacionId}. Puedes navegar entre servicios para agregar o quitar ítems en la misma cotización.
@@ -239,7 +293,8 @@ export default function SeleccionarServicioPage() {
                   style={themePrimaryBorder}
                   onClick={() => navigate(`/agendar-consulta${consultaSuffix}`, {
                     state: {
-                      pacienteId: paciente.id,
+                      pacienteId: Number(pacienteMostrado.id || 0),
+                      ...(esPacienteTemporal ? { pacienteTemporal } : {}),
                       cotizacionId: isEditCotizacion ? Number(cotizacionId) : null,
                       backTo: isEditCotizacion ? "/cotizaciones" : undefined,
                       modo: isEditCotizacion ? "editar" : undefined,
@@ -248,34 +303,34 @@ export default function SeleccionarServicioPage() {
                 ><span>👨‍⚕️</span><span className="whitespace-normal">Consulta Médica</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-green-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
-                  onClick={() => navigate(`/cotizar-laboratorio/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-laboratorio/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>🧪</span><span className="whitespace-normal">Laboratorio</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-purple-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
-                  onClick={() => navigate(`/cotizar-farmacia/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-farmacia/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>💊</span><span className="whitespace-normal">Farmacia</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white font-semibold text-sm md:text-[15px] leading-tight text-center"
                   style={themePrimaryBorder}
-                  onClick={() => navigate(`/cotizar-rayosx/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-rayosx/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>🩻</span><span className="whitespace-normal">Rayos X</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white font-semibold text-sm md:text-[15px] leading-tight text-center"
                   style={themePrimaryBorder}
-                  onClick={() => navigate(`/cotizar-ecografia/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-ecografia/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>🩺</span><span className="whitespace-normal">Ecografías</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-orange-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
-                  onClick={() => navigate(`/cotizar-procedimientos/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-procedimientos/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>🛠️</span><span className="whitespace-normal">Procedimientos</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white hover:bg-indigo-100 font-semibold text-sm md:text-[15px] leading-tight text-center"
-                  onClick={() => navigate(`/cotizar-paquetes-perfiles/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-paquetes-perfiles/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>📦</span><span className="whitespace-normal">Paquetes/Perfiles</span> <span className="text-yellow-500">💰</span></button>
                 <button
                   className="h-full flex items-center gap-2 justify-center border rounded-lg min-h-[64px] py-3 px-3 bg-white font-semibold text-sm md:text-[15px] leading-tight text-center"
                   style={themePrimaryBorder}
-                  onClick={() => navigate(`/cotizar-operacion/${paciente.id}${editSuffix}`)}
+                  onClick={() => navigate(`/cotizar-operacion/${Number(pacienteMostrado.id || 0)}${editSuffix}`, { state: esPacienteTemporal ? { pacienteTemporal } : undefined })}
                 ><span>🩼</span><span className="whitespace-normal">Operaciones/Cirugías Mayores</span> <span className="text-yellow-500">💰</span></button>
 
               </div>

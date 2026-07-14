@@ -133,7 +133,12 @@ export default function CotizarLaboratorioPage() {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const cotizacionId = searchParams.get('cotizacion_id');
   const cobroId = searchParams.get('cobro_id');
+  const pacienteIdNum = Number(pacienteId || 0);
   const isEditingCotizacion = Boolean(cotizacionId) && !cobroId;
+  const pacienteTemporal = location.state?.pacienteTemporal || null;
+  const esCotizacionInformativa = pacienteIdNum <= 0;
+  const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
+  const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
   const getCoberturaExamen = (examenId) => coverageByExamen[Number(examenId)] || null;
   const getDisplayPrice = (examenId, basePrice) => String(getCoberturaExamen(examenId)?.origen_cobro || "") === "contrato"
     ? 0
@@ -145,7 +150,9 @@ export default function CotizarLaboratorioPage() {
       authFetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
       authFetch(`${BASE_URL}api_tarifas.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
       authFetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
-      pacienteId ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, { credentials: "include", cache: "no-store" }).then(res => res.json()) : Promise.resolve({ success: false })
+      pacienteIdNum > 0
+        ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteIdNum}`, { credentials: "include", cache: "no-store" }).then(res => res.json())
+        : Promise.resolve({ success: false })
     ]).then(([examenesData, tarifasData, rankingData, pacienteData]) => {
       setExamenes(Array.isArray(examenesData?.examenes) ? examenesData.examenes : []);
       setTarifas(Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : []);
@@ -168,7 +175,7 @@ export default function CotizarLaboratorioPage() {
     let cancelled = false;
 
     const cargarCoberturas = async () => {
-      if (!pacienteId || examenes.length === 0) {
+      if (pacienteIdNum <= 0 || examenes.length === 0) {
         if (!cancelled) {
           setCoverageByExamen({});
           setCoverageStatusByExamen({});
@@ -231,7 +238,7 @@ export default function CotizarLaboratorioPage() {
 
     cargarCoberturas();
     return () => { cancelled = true; };
-  }, [pacienteId, examenes]);
+  }, [pacienteIdNum, examenes]);
 
   // Consultar estado de caja al entrar
   useEffect(() => {
@@ -846,7 +853,9 @@ export default function CotizarLaboratorioPage() {
 
     addItems({
       patientId: Number(pacienteId),
-      patientName: paciente ? `${paciente.nombre || ''} ${paciente.apellido || ''}`.trim() : `Paciente #${pacienteId}`,
+      patientName: paciente
+        ? `${paciente.nombre || ''} ${paciente.apellido || ''}`.trim()
+        : (nombrePacienteTemporal || `Paciente #${pacienteId}`),
       items: detalles.map((d) => ({
         serviceType: 'laboratorio',
         serviceId: d.servicio_id,
@@ -942,10 +951,16 @@ export default function CotizarLaboratorioPage() {
         }
       : {
           paciente_id: Number(pacienteId),
+          paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
+          paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
+          modo_cotizacion: esCotizacionInformativa ? 'informativa' : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
           total,
           detalles: detallesFinales,
           fecha_ref: fechaRef,
-          observaciones: 'Cotización registrada desde cotizador de Laboratorio'
+          observaciones: esCotizacionInformativa
+            ? 'Cotización informativa registrada desde cotizador de Laboratorio'
+            : 'Cotización registrada desde cotizador de Laboratorio'
         };
 
     try {
@@ -1057,7 +1072,15 @@ export default function CotizarLaboratorioPage() {
             const isEditing = Boolean(cobroId || cotizacionId);
             if (!isEditing) {
               return (
-                <button onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver</button>
+                <button
+                  onClick={() => navigate('/seleccionar-servicio', {
+                    state: {
+                      pacienteId: Number(pacienteId || 0),
+                      ...(pacienteTemporal ? { pacienteTemporal } : {}),
+                    },
+                  })}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                >Volver</button>
               );
             }
             if (cotizacionId && !cobroId) {
@@ -1079,6 +1102,11 @@ export default function CotizarLaboratorioPage() {
             <>
               {(paciente.nombres || paciente.nombre || '').trim()} {(paciente.apellidos || paciente.apellido || '').trim()}
               {paciente.dni ? ` (DNI: ${paciente.dni})` : ''}
+            </>
+          ) : nombrePacienteTemporal ? (
+            <>
+              {nombrePacienteTemporal}
+              {dniPacienteTemporal ? ` (DNI: ${dniPacienteTemporal})` : ''}
             </>
           ) : (
             <>ID {pacienteId}</>

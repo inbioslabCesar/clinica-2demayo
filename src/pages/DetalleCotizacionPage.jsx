@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import Spinner from "../components/comunes/Spinner";
 import { BASE_URL } from "../config/config";
@@ -28,6 +28,16 @@ function buildBrandFromConfig(cfg = {}) {
     nombre_color: String(cfg.nombre_color || "").trim(),
     email: String(cfg.email || "").trim(),
   };
+}
+
+function formatUserRole(roleRaw) {
+  const role = String(roleRaw || '').trim().toLowerCase();
+  if (!role) return '';
+  if (role === 'admin' || role === 'administrador') return 'Admin';
+  if (role.includes('recep')) return 'Recepcion';
+  if (role.includes('caja') || role.includes('cajero')) return 'Caja';
+  if (role.includes('medico')) return 'Medico';
+  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 const serviceLabels = {
@@ -146,7 +156,9 @@ function construirPagosFallbackDesdeCobros(cotizacion, cobros) {
 
 export default function DetalleCotizacionPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { cotizacionId } = useParams();
+  const autoTicketShownRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -400,6 +412,11 @@ export default function DetalleCotizacionPage() {
     const nombrePaciente = paciente
       ? `${paciente.nombre || ""} ${paciente.apellido || ""}`.trim()
       : `Paciente ID ${cotizacion?.paciente_id || "-"}`;
+    const usuarioCotizoNombre = String(cotizacion?.usuario_nombre || 'Sistema').trim() || 'Sistema';
+    const usuarioCotizoRol = formatUserRole(cotizacion?.usuario_rol || '');
+    const usuarioCotizoLabel = usuarioCotizoRol
+      ? `${usuarioCotizoNombre} (${usuarioCotizoRol})`
+      : usuarioCotizoNombre;
     const numeroComprobante = cotizacion?.numero_comprobante || `Q${String(cotizacion?.id || 0).padStart(6, "0")}`;
     const logoHtml = clinicBrand.logo
       ? `<div style="width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:8px;"><img src="${escapeHtml(clinicBrand.logo)}" alt="Logo clinica" style="display:block;margin:0 auto;max-height:64px;max-width:180px;object-fit:contain;" /></div>`
@@ -579,6 +596,7 @@ export default function DetalleCotizacionPage() {
         <div class="t-meta"><strong>Paciente:</strong> ${escapeHtml(nombrePaciente)}</div>
         <div class="t-meta"><strong>DNI:</strong> ${escapeHtml(paciente?.dni || "-")}</div>
         <div class="t-meta"><strong>H.C.:</strong> ${escapeHtml(paciente?.historia_clinica || "-")}</div>
+        <div class="t-meta"><strong>Cotizado por:</strong> ${escapeHtml(usuarioCotizoLabel)}</div>
 
         <hr class="t-hr" />
         <div class="t-section">Detalle</div>
@@ -679,6 +697,14 @@ export default function DetalleCotizacionPage() {
       setTimeout(esperarImagenesEImprimir, 250);
     }
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const autoEmitir = params.get("emitir_ticket") === "1";
+    if (!autoEmitir || loading || !cotizacion?.id || autoTicketShownRef.current) return;
+    autoTicketShownRef.current = true;
+    emitirTicket();
+  }, [location.search, loading, cotizacion?.id]);
 
   const abrirAnulacion = async () => {
     const confirm = await Swal.fire({

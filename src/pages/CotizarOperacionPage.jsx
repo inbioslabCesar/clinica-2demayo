@@ -23,6 +23,10 @@ export default function CotizarOperacionPage() {
   const [programacionPorOperacion, setProgramacionPorOperacion] = useState({});
   const [mostrarResumenCotizacion, setMostrarResumenCotizacion] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+  const pacienteTemporal = location.state?.pacienteTemporal || null;
+  const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
+  const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
+  const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
 
   const getLimaDate = () => {
     const now = new Date();
@@ -528,9 +532,15 @@ export default function CotizarOperacionPage() {
         }
       : {
           paciente_id: Number(pacienteId),
+          paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
+          paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
+          modo_cotizacion: esCotizacionInformativa ? 'informativa' : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
           total,
           detalles: detallesFinales,
-          observaciones: 'Cotización registrada desde cotizador de Operaciones'
+              observaciones: esCotizacionInformativa
+                ? 'Cotización informativa registrada desde cotizador de Operación'
+                : 'Cotización registrada desde cotizador de Operación'
         };
 
     try {

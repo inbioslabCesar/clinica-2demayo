@@ -394,7 +394,16 @@ export default function CobrarCotizacionPage() {
   }, [detallesCobro]);
 
   const estado = String(cotizacion?.estado || "").toLowerCase();
-  const esEstadoBloqueado = estado === "anulada" || estado === "pagado" || estado === "informativo";
+  const esCotizacionInformativa = useMemo(() => {
+    const tieneMarcador = (value) => String(value || "").toUpperCase().includes("[COTIZACION_INFORMATIVA]");
+    if (estado === "informativo") return true;
+    if (tieneMarcador(cotizacion?.observaciones)) return true;
+    return cotizacionesSeleccionadas.some((c) => {
+      const est = String(c?.estado || "").toLowerCase();
+      return est === "informativo" || tieneMarcador(c?.observaciones);
+    });
+  }, [estado, cotizacion?.observaciones, cotizacionesSeleccionadas]);
+  const esEstadoBloqueado = estado === "anulada" || estado === "pagado" || esCotizacionInformativa;
 
   const servicioPago = useMemo(() => {
     const tipos = Array.from(new Set(detallesCobro.map((detalle) => normalizarServicioKey(detalle?.servicio_tipo || "")).filter(Boolean)));
@@ -480,14 +489,14 @@ export default function CobrarCotizacionPage() {
         return;
       }
 
-      if (estado === "informativo") {
+      if (esCotizacionInformativa) {
         await Swal.fire({
           icon: "info",
           title: "Atención informativa",
-          text: "Esta cotización solo tiene medicamentos externos/no cobrables y no admite cobro en caja.",
-          confirmButtonText: "Ir a Atenciones",
+          text: "Esta cotización es solo informativa y no admite cobro. Te llevaremos al detalle para emitir el ticket.",
+          confirmButtonText: "Ir al detalle",
         });
-        navigate("/cotizaciones", { replace: true });
+        navigate(`/cotizaciones/${Number(cotizacion?.id || cotizacionIds[0] || 0)}/detalle`, { replace: true });
         return;
       }
 
@@ -501,7 +510,7 @@ export default function CobrarCotizacionPage() {
     };
 
     redirigirConAviso();
-  }, [loading, cotizacion?.id, esEstadoBloqueado, estado, navigate]);
+  }, [loading, cotizacion?.id, esEstadoBloqueado, estado, esCotizacionInformativa, navigate, cotizacionIds]);
 
   if (loading) return <Spinner />;
 
@@ -522,11 +531,11 @@ export default function CobrarCotizacionPage() {
   if (esEstadoBloqueado) {
     return (
       <div className="max-w-4xl mx-auto p-6">
-        <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : (estado === "informativo" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-amber-50 border-amber-200 text-amber-800")}`}>
+        <div className={`rounded-xl border p-5 ${estado === "pagado" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : (esCotizacionInformativa ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-amber-50 border-amber-200 text-amber-800")}`}>
           <h2 className="text-lg font-semibold mb-2">
             {estado === "pagado"
               ? (esCobroUnificado ? "Atenciones ya pagadas" : "Atención ya pagada")
-              : (estado === "informativo"
+              : (esCotizacionInformativa
                 ? (esCobroUnificado ? "Atención informativa dentro del grupo" : "Atención informativa")
                 : (esCobroUnificado ? "Atención no cobrable dentro del grupo" : "Atención anulada"))}
           </h2>
@@ -535,21 +544,21 @@ export default function CobrarCotizacionPage() {
               ? (esCobroUnificado
                 ? "El grupo seleccionado ya no tiene saldo por cobrar. Puedes revisar el detalle individual de las atenciones para ver los importes y movimientos registrados."
                 : "Esta atención ya no tiene saldo por cobrar. Puedes revisar su detalle para ver los importes y movimientos registrados.")
-              : (estado === "informativo"
+              : (esCotizacionInformativa
                 ? (esCobroUnificado
-                  ? "Una de las atenciones del grupo contiene únicamente ítems informativos/no cobrables. Refresca el listado antes de volver a intentar un cobro unificado."
-                  : "Esta atención contiene únicamente ítems informativos/no cobrables y no admite cobros desde esta pantalla.")
+                  ? "Una de las atenciones del grupo contiene únicamente ítems informativos/no cobrables. Puedes abrir su detalle para emitir ticket."
+                  : "Esta atención contiene únicamente ítems informativos/no cobrables y no admite cobro. Emite el ticket desde su detalle.")
                 : (esCobroUnificado
                   ? "Una de las atenciones del grupo quedó fuera de estado cobrable. Refresca el listado antes de volver a intentar un cobro unificado."
                   : "Esta atención fue anulada y por seguridad no admite cobros desde esta pantalla."))}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            {estado === "pagado" && (
+            {(estado === "pagado" || esCotizacionInformativa) && (
               <button
                 onClick={() => navigate(`/cotizaciones/${Number(cotizacion?.id || 0)}/detalle`)}
                 className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700"
               >
-                Ver detalle de atención
+                {esCotizacionInformativa ? "Ver detalle y emitir ticket" : "Ver detalle de atención"}
               </button>
             )}
             <button

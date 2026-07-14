@@ -3,8 +3,44 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
-import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen } from "react-icons/fi";
+import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter } from "react-icons/fi";
 import { authFetch } from "../utils/apiClient";
+import { BASE_URL } from "../config/config";
+
+const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
+const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildBrandFromConfig(cfg = {}) {
+  const rawLogo = String(cfg.logo_url || "").trim();
+  const logo = rawLogo
+    ? (/^(https?:\/\/|data:|blob:)/i.test(rawLogo)
+      ? rawLogo
+      : `${String(BASE_URL || "").replace(/\/+$/, "")}/${rawLogo.replace(/^\/+/, "")}`)
+    : "";
+
+  return {
+    nombre: String(cfg.nombre_clinica || "MI CLINICA").trim().toUpperCase(),
+    logo,
+    direccion: String(cfg.direccion || "").trim(),
+    telefono: String(cfg.telefono || "").trim(),
+    celular: String(cfg.celular || cfg.telefono_secundario || cfg.contacto_emergencias || "").trim(),
+    ruc: String(cfg.ruc || "").trim(),
+    slogan: String(cfg.slogan || "").trim(),
+    slogan_color: String(cfg.slogan_color || "").trim(),
+    nombre_color: String(cfg.nombre_color || "").trim(),
+    email: String(cfg.email || "").trim(),
+  };
+}
+
+function formatUserRole(roleRaw) {
+  const role = String(roleRaw || "").trim().toLowerCase();
+  if (!role) return "";
+  if (role === "admin" || role === "administrador") return "Admin";
+  if (role.includes("recep")) return "Recepcion";
+  if (role.includes("caja") || role.includes("cajero")) return "Caja";
+  if (role.includes("medico")) return "Medico";
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
 
 const SERVICIOS_IMAGEN = new Set(["rayosx", "ecografia", "tomografia"]);
 function tieneServicioImagen(serviciosTipos) {
@@ -33,6 +69,15 @@ function formatDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleString();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function getVencimientoMeta(row) {
@@ -96,7 +141,7 @@ function badgeOrigenVisual(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, badgeEstado, labelEstado }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, badgeEstado, labelEstado }) {
   const estadoRow = String(row.estado || "").toLowerCase();
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
@@ -239,6 +284,16 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
           >
             <FiEye className="text-sm" />
           </button>
+          {estadoRow === "informativo" && (
+            <button
+              onClick={() => onPrintTicket(row)}
+              className={`${ACTION_BTN_BASE} bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200`}
+              title="Emitir ticket"
+              aria-label="Emitir ticket"
+            >
+              <FiPrinter className="text-sm" />
+            </button>
+          )}
           {puedeAbrirLaboratorio && (
             <button
               onClick={() => onNavigate(laboratorioUrl)}
@@ -286,7 +341,30 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               disabled={cotizacionPagada}
               onClick={() => {
                 if (cotizacionPagada) return;
-                onNavigate(`/seleccionar-servicio?paciente_id=${row.paciente_id}&cotizacion_id=${row.id}&back_to=/cotizaciones&modo=editar`);
+                const pacienteId = Number(row?.paciente_id || 0);
+                const nombre = String(row?.nombre || "").trim();
+                const apellido = String(row?.apellido || "").trim();
+                const dni = String(row?.dni || "").trim();
+                const pacienteTemporal = pacienteId <= 0
+                  ? {
+                      nombre: [nombre, apellido].filter(Boolean).join(" ").trim() || "Particular",
+                      apellido: "",
+                      dni,
+                    }
+                  : null;
+
+                onNavigate(
+                  `/seleccionar-servicio?paciente_id=${pacienteId}&cotizacion_id=${row.id}&back_to=/cotizaciones&modo=editar`,
+                  {
+                    state: {
+                      pacienteId,
+                      cotizacionId: Number(row?.id || 0),
+                      backTo: "/cotizaciones",
+                      modo: "editar",
+                      ...(pacienteTemporal ? { pacienteTemporal } : {}),
+                    },
+                  }
+                );
               }}
               className={`${ACTION_BTN_BASE} ${cotizacionPagada ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50' : ''}`}
               style={cotizacionPagada ? {} : THEME_OUTLINE}
@@ -323,6 +401,18 @@ export default function CotizacionesPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
+  const [clinicBrand, setClinicBrand] = useState({
+    nombre: "MI CLINICA",
+    logo: "",
+    direccion: "",
+    telefono: "",
+    celular: "",
+    ruc: "",
+    slogan: "",
+    slogan_color: "",
+    nombre_color: "",
+    email: "",
+  });
 
   const [qInput, setQInput] = useState("");
   const [estadoInput, setEstadoInput] = useState("");
@@ -408,6 +498,54 @@ export default function CotizacionesPage() {
       abortRef.current = null;
     };
   }, [cargar]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const applyCachedBrand = () => {
+      try {
+        const raw = sessionStorage.getItem(BRAND_CACHE_KEY);
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        const ts = Number(parsed?.ts || 0);
+        const payload = parsed?.data;
+        if (!payload || !ts || (Date.now() - ts) > BRAND_CACHE_TTL_MS) {
+          sessionStorage.removeItem(BRAND_CACHE_KEY);
+          return false;
+        }
+        if (mounted) setClinicBrand(payload);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (applyCachedBrand()) {
+      return () => {
+        mounted = false;
+      };
+    }
+
+    authFetch("api_get_configuracion.php", { method: "GET", cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!mounted || !data?.success) return;
+        const brand = buildBrandFromConfig(data.data || {});
+        setClinicBrand(brand);
+        try {
+          sessionStorage.setItem(BRAND_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: brand }));
+        } catch {
+          // Ignore cache write issues
+        }
+      })
+      .catch(() => {
+        // keep defaults
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
@@ -518,6 +656,207 @@ export default function CotizacionesPage() {
       Swal.fire("Error", error?.message || "No se pudo anular", "error");
     }
   }, [cargar]);
+
+  const imprimirTicketDirecto = useCallback(async (row) => {
+    try {
+      const cotizacionId = Number(row?.id || 0);
+      if (cotizacionId <= 0) return;
+
+      const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!data?.success || !data?.cotizacion) {
+        throw new Error(data?.error || "No se pudo obtener la cotización para imprimir.");
+      }
+
+      const cot = data.cotizacion;
+      const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+      const fecha = cot?.fecha ? new Date(cot.fecha).toLocaleString("es-PE") : formatDateTime(row.fecha || "-");
+      const numeroComprobante = String(cot.numero_comprobante || row.numero_comprobante || `Q${String(cotizacionId).padStart(6, "0")}`);
+      const nombrePaciente = `${String(row?.nombre || "").trim()} ${String(row?.apellido || "").trim()}`.trim() || "Particular";
+      const dni = String(row?.dni || "-").trim() || "-";
+      const hc = String(row?.historia_clinica || "-").trim() || "-";
+      const usuarioCotizoNombre = String(cot?.usuario_nombre || row?.usuario_nombre || "Sistema").trim() || "Sistema";
+      const usuarioCotizoRol = formatUserRole(cot?.usuario_rol || row?.usuario_rol || "");
+      const usuarioCotizoLabel = usuarioCotizoRol
+        ? `${usuarioCotizoNombre} (${usuarioCotizoRol})`
+        : usuarioCotizoNombre;
+
+      const detallesHtml = detalles.length > 0
+        ? detalles.map((d) => {
+            const desc = escapeHtml(String(d?.descripcion || "Servicio"));
+            const cantidad = Number(d?.cantidad || 1);
+            const subtotal = Number(d?.subtotal || 0).toFixed(2);
+            return `<div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0;"><span>${desc} x${cantidad}</span><strong>S/ ${subtotal}</strong></div>`;
+          }).join("")
+        : `<div style="margin:2px 0;">Sin ítems</div>`;
+
+      const total = Number(cot.total || row.total || 0).toFixed(2);
+      const pagado = Number(cot.total_pagado || 0).toFixed(2);
+      const saldo = Number(cot.saldo_pendiente || row.saldo_pendiente || 0).toFixed(2);
+
+      const sloganHtml = clinicBrand.slogan
+        ? `<p style="margin:2px 0;text-align:center;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? `color:${escapeHtml(clinicBrand.slogan_color)};` : ""}">${escapeHtml(clinicBrand.slogan)}</p>`
+        : "";
+      const emailHtml = clinicBrand.email
+        ? `<p style="margin:2px 0;text-align:center;">${escapeHtml(clinicBrand.email)}</p>`
+        : "";
+      const contactoLinea = [
+        clinicBrand.telefono ? `Tel: ${escapeHtml(clinicBrand.telefono)}` : "",
+        clinicBrand.celular ? `Cel: ${escapeHtml(clinicBrand.celular)}` : "",
+      ].filter(Boolean).join(" | ");
+
+      const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
+
+      const ticketCss = `
+        <style>
+          * { box-sizing: border-box; }
+          .ticket-80 {
+            width: 100%;
+            max-width: 320px;
+            margin: 0 auto;
+            padding: 8px 10px;
+            font-family: "Courier New", "Lucida Console", monospace;
+            font-size: 11px;
+            line-height: 1.2;
+            color: #111827;
+            font-weight: 700;
+          }
+          .ticket-80 .t-center { text-align: center; }
+          .ticket-80 .t-logo { max-height: 50px; max-width: 170px; object-fit: contain; margin: 0 auto 4px; display: block; image-rendering: -webkit-optimize-contrast; filter: contrast(1.15) saturate(1.05); }
+          .ticket-80 .t-clinic { margin: 2px 0; font-size: 13px; font-weight: 800; letter-spacing: 0.2px; }
+          .ticket-80 .t-line { margin: 1px 0; font-weight: 700; }
+          .ticket-80 .t-title { margin: 6px 0 2px; font-weight: 800; text-transform: uppercase; text-align: center; }
+          .ticket-80 .t-hr { border: 0; border-top: 1px dashed #6b7280; margin: 6px 0; }
+          .ticket-80 .t-meta { margin: 1px 0; font-weight: 700; }
+          .ticket-80 .t-section { margin: 6px 0 3px; font-weight: 800; text-transform: uppercase; }
+          .ticket-80 .t-row { display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin:1px 0; }
+          .ticket-80 .t-item { margin: 2px 0 4px; }
+          .ticket-80 .t-desc { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+          .ticket-80 .t-amount { white-space: nowrap; font-weight: 700; }
+          .ticket-80 .t-total { font-size: 12px; font-weight: 700; }
+          .ticket-80 .t-note { margin-top: 6px; text-align: center; font-size: 10px; color: #111827; font-weight: 700; }
+          @media print {
+            @page { size: 80mm auto; margin: 2mm; }
+            html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .ticket-80 {
+              width: 76mm;
+              max-width: 76mm;
+              margin: 0;
+              padding: 2.5mm;
+              font-size: 10.5px;
+              line-height: 1.15;
+            }
+            .ticket-80 .t-clinic { font-size: 12px; }
+            .ticket-80 .t-logo { max-height: 42px; margin-bottom: 3px; }
+            .ticket-80 .t-total { font-size: 11.5px; }
+          }
+        </style>`;
+
+      const ticketBody = `
+        <div class="ticket-80">
+          <div class="t-center">
+            ${clinicBrand.logo ? `<img src="${escapeHtml(clinicBrand.logo)}" alt="Logo clinica" class="t-logo" />` : ""}
+            <div class="t-clinic"${clinicBrand.nombre_color ? ` style="color:${escapeHtml(clinicBrand.nombre_color)};"` : ""}>${escapeHtml(clinicBrand.nombre || "MI CLINICA")}</div>
+            ${sloganHtml ? `<div class="t-line">${sloganHtml.replace(/<\/?p[^>]*>/g, "")}</div>` : ""}
+            ${clinicBrand.direccion ? `<div class="t-line">${escapeHtml(clinicBrand.direccion)}</div>` : ""}
+            ${contactoLinea ? `<div class="t-line">${contactoLinea}</div>` : ""}
+            ${emailHtml ? `<div class="t-line">${emailHtml.replace(/<\/?p[^>]*>/g, "")}</div>` : ""}
+            ${clinicBrand.ruc ? `<div class="t-line">RUC: ${escapeHtml(clinicBrand.ruc)}</div>` : ""}
+          </div>
+          <div class="t-title">Comprobante de cotizacion</div>
+          <hr class="t-hr" />
+          <div class="t-meta"><strong>Nro:</strong> ${escapeHtml(numeroComprobante)}</div>
+          <div class="t-meta"><strong>Cotizacion:</strong> #${cotizacionId}</div>
+          <div class="t-meta"><strong>Fecha:</strong> ${escapeHtml(fecha)}</div>
+          <div class="t-meta"><strong>Paciente:</strong> ${escapeHtml(nombrePaciente)}</div>
+          <div class="t-meta"><strong>DNI:</strong> ${escapeHtml(dni)}</div>
+          <div class="t-meta"><strong>H.C.:</strong> ${escapeHtml(hc)}</div>
+          <div class="t-meta"><strong>Cotizado por:</strong> ${escapeHtml(usuarioCotizoLabel)}</div>
+          <hr class="t-hr" />
+          <div class="t-section">Detalle</div>
+          ${detallesHtml}
+          <hr class="t-hr" />
+          <div class="t-row t-total"><div class="t-desc">Total neto</div><div class="t-amount">${toMoney(total)}</div></div>
+          <div class="t-row"><div class="t-desc">Pagado</div><div class="t-amount">${toMoney(pagado)}</div></div>
+          <div class="t-row"><div class="t-desc">Saldo</div><div class="t-amount">${toMoney(saldo)}</div></div>
+          <hr class="t-hr" />
+          <div class="t-note">Gracias por su preferencia</div>
+          <div class="t-note" style="margin-top:2px;">Conserve este ticket</div>
+        </div>`;
+
+      const modal = await Swal.fire({
+        title: "",
+        html: `${ticketCss}${ticketBody}`,
+        showCancelButton: true,
+        confirmButtonText: "Imprimir",
+        cancelButtonText: "Cerrar",
+        width: 420,
+      });
+
+      if (!modal.isConfirmed) return;
+
+      const win = window.open("", "_blank", "width=420,height=700");
+      if (!win) {
+        Swal.fire("Atención", "No se pudo abrir la ventana de impresión. Revisa el bloqueador de ventanas.", "warning");
+        return;
+      }
+
+      win.document.write(`<!doctype html><html><head><meta charset=\"utf-8\"><title>Ticket Cotizacion</title>${ticketCss}</head><body>${ticketBody}</body></html>`);
+      win.document.close();
+
+      const doPrint = () => {
+        try {
+          win.focus();
+          win.print();
+        } catch {
+          // noop
+        }
+      };
+
+      const waitImagesAndPrint = () => {
+        try {
+          const images = Array.from(win.document.images || []);
+          if (images.length === 0) {
+            setTimeout(doPrint, 80);
+            return;
+          }
+          let pending = images.filter((img) => !img.complete);
+          if (pending.length === 0) {
+            setTimeout(doPrint, 80);
+            return;
+          }
+          let printed = false;
+          const finish = () => {
+            if (printed) return;
+            printed = true;
+            setTimeout(doPrint, 100);
+          };
+          const onImgDone = () => {
+            pending = pending.filter((img) => !img.complete);
+            if (pending.length === 0) finish();
+          };
+          pending.forEach((img) => {
+            img.addEventListener("load", onImgDone, { once: true });
+            img.addEventListener("error", onImgDone, { once: true });
+          });
+          setTimeout(finish, 1200);
+        } catch {
+          setTimeout(doPrint, 100);
+        }
+      };
+
+      if (win.document.readyState === "complete") {
+        waitImagesAndPrint();
+      } else {
+        win.addEventListener("load", waitImagesAndPrint, { once: true });
+        setTimeout(waitImagesAndPrint, 250);
+      }
+    } catch (error) {
+      Swal.fire("Error", error?.message || "No se pudo imprimir el ticket.", "error");
+    }
+  }, [clinicBrand]);
 
   useEffect(() => {
     const sp = new URLSearchParams(location.search);
@@ -674,6 +1013,7 @@ export default function CotizacionesPage() {
                   onCobrar={abrirCobro}
                   onAnular={anularCotizacion}
                   onNavigate={navigate}
+                  onPrintTicket={imprimirTicketDirecto}
                   badgeEstado={badgeEstado}
                   labelEstado={labelEstado}
                 />

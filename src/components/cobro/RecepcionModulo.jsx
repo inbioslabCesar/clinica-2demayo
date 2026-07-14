@@ -9,6 +9,20 @@ function RecepcionModulo({ onPacienteRegistrado }) {
   const [paciente, setPaciente] = useState(null);
   const [showRegistro, setShowRegistro] = useState(false);
   const [registroInicial, setRegistroInicial] = useState({});
+  const [pacienteNoEncontrado, setPacienteNoEncontrado] = useState(null);
+
+  const parseNombreApellido = (texto) => {
+    const limpio = String(texto || "").trim().replace(/\s+/g, " ");
+    if (!limpio) return { nombre: "", apellido: "" };
+    const partes = limpio.split(" ");
+    if (partes.length === 1) {
+      return { nombre: partes[0], apellido: "" };
+    }
+    return {
+      nombre: partes.slice(0, -1).join(" "),
+      apellido: partes.slice(-1).join(" "),
+    };
+  };
 
   const hayPacienteSeleccionado = Boolean(paciente && paciente.id);
 
@@ -17,6 +31,7 @@ function RecepcionModulo({ onPacienteRegistrado }) {
     setPaciente(null);
     setShowRegistro(false);
     setRegistroInicial({});
+    setPacienteNoEncontrado(null);
   };
 
   const handleNoEncontrado = (payload = {}) => {
@@ -25,9 +40,45 @@ function RecepcionModulo({ onPacienteRegistrado }) {
     const esDocumento = tipoBusqueda === "dni" || tipoBusqueda === "carnet_extranjeria";
     const dniSugerido = esDocumento ? valorBusqueda : "";
     const tipoDocumentoSugerido = tipoBusqueda === "carnet_extranjeria" ? "carnet_extranjeria" : "dni";
+    const nombreApellidoSugerido = tipoBusqueda === "nombre" ? parseNombreApellido(valorBusqueda) : { nombre: "", apellido: "" };
 
-    setRegistroInicial(dniSugerido ? { dni: dniSugerido, tipo_documento: tipoDocumentoSugerido } : {});
+    if (dniSugerido) {
+      setRegistroInicial({ dni: dniSugerido, tipo_documento: tipoDocumentoSugerido });
+    } else if (tipoBusqueda === "nombre" && (nombreApellidoSugerido.nombre || nombreApellidoSugerido.apellido)) {
+      setRegistroInicial({
+        nombre: nombreApellidoSugerido.nombre,
+        apellido: nombreApellidoSugerido.apellido,
+      });
+    } else {
+      setRegistroInicial({});
+    }
+    setPacienteNoEncontrado({
+      tipo: tipoBusqueda,
+      valor: valorBusqueda,
+    });
     setShowRegistro(true);
+  };
+
+  const handleContinuarComoParticular = () => {
+    const valor = String(pacienteNoEncontrado?.valor || "").trim();
+    const tipo = String(pacienteNoEncontrado?.tipo || "").toLowerCase();
+    const esDoc = tipo === "dni" || tipo === "carnet_extranjeria";
+    const nombreApellido = tipo === "nombre" ? parseNombreApellido(valor) : { nombre: "", apellido: "" };
+
+    const nombreTemporal = nombreApellido.nombre || "Particular";
+    const apellidoTemporal = nombreApellido.apellido || "";
+
+    setPaciente({
+      id: 0,
+      nombre: nombreTemporal,
+      apellido: apellidoTemporal,
+      dni: esDoc ? valor : "",
+      historia_clinica: "",
+      es_temporal: true,
+      tipo_documento: tipo || "dni",
+      busqueda_origen: valor,
+    });
+    setShowRegistro(false);
   };
 
   // Callback para cuando se registra un paciente
@@ -81,6 +132,15 @@ function RecepcionModulo({ onPacienteRegistrado }) {
       {showRegistro && !paciente && (
         <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="mb-3 text-sm font-semibold text-amber-900">Paciente no encontrado. Registrelo para continuar con la cotizacion.</p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleContinuarComoParticular}
+              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+            >
+              Continuar como particular (solo cotizacion)
+            </button>
+          </div>
           <PacienteForm initialData={registroInicial} onRegistroExitoso={handleRegistroExitoso} />
         </div>
       )}

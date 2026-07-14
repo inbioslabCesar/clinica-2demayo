@@ -63,7 +63,7 @@ export function QuoteCartProvider({ children }) {
         key: buildItemKey(item || {}),
       }));
       return {
-        patientId: parsed.patientId || null,
+        patientId: parsed.patientId === 0 ? 0 : (parsed.patientId || null),
         patientName: parsed.patientName || "",
         items,
       };
@@ -80,10 +80,14 @@ export function QuoteCartProvider({ children }) {
   }, []);
 
   const setPatient = useCallback((patientId, patientName) => {
+    const numericPatientId = Number(patientId);
+    const normalizedPatientId = Number.isFinite(numericPatientId) && numericPatientId >= 0
+      ? numericPatientId
+      : null;
     setCart((prev) => ({
       ...prev,
-      patientId: patientId || null,
-      patientName: patientName || "",
+      patientId: normalizedPatientId,
+      patientName: String(patientName || "").trim(),
     }));
   }, []);
 
@@ -94,10 +98,16 @@ export function QuoteCartProvider({ children }) {
       items,
     } = payload || {};
 
-    if (!patientId || !Array.isArray(items) || items.length === 0) return;
+    const numericPatientId = Number(patientId);
+    const normalizedPatientId = Number.isFinite(numericPatientId) && numericPatientId >= 0
+      ? numericPatientId
+      : null;
+    const normalizedPatientName = String(patientName || "").trim();
+
+    if (normalizedPatientId === null || !Array.isArray(items) || items.length === 0) return;
 
     setCart((prev) => {
-      if (prev.patientId && Number(prev.patientId) !== Number(patientId)) {
+      if (prev.patientId !== null && Number(prev.patientId) !== normalizedPatientId) {
         return prev;
       }
 
@@ -154,8 +164,8 @@ export function QuoteCartProvider({ children }) {
       }
 
       return {
-        patientId,
-        patientName: patientName || prev.patientName || "",
+        patientId: normalizedPatientId,
+        patientName: normalizedPatientName || prev.patientName || "",
         items: Array.from(map.values()),
       };
     });

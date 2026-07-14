@@ -333,6 +333,7 @@ export default function QuoteCartPanel() {
       const fechaGlobal = String(fechaProgramacionGlobal || "").slice(0, 10);
       const horaGlobal = String(horaProgramacionGlobal || "").slice(0, 5);
       const usarProgramacionGlobal = aplicarProgramacionGlobal && Boolean(fechaGlobal) && Boolean(horaGlobal);
+      const esPacienteTemporal = pacienteRegistradoId <= 0;
 
       // Auto-crear consultas pendientes para items de tipo consulta que aún no tienen consulta_id
       for (let i = 0; i < detalles.length; i++) {
@@ -348,6 +349,7 @@ export default function QuoteCartPanel() {
 
         if (
           String(d.servicio_tipo).toLowerCase() === "consulta" &&
+          !esPacienteTemporal &&
           !d.consulta_id &&
           cartItem?.consultaMedicoId &&
           consultaFechaFinal &&
@@ -369,7 +371,7 @@ export default function QuoteCartPanel() {
           detalles[i].consulta_id = Number(detalles[i].consulta_id || cartItem?.consultaId || 0);
           detalles[i].medico_id = Number(detalles[i].medico_id || cartItem?.consultaMedicoId || 0);
 
-          if (Number(detalles[i].consulta_id || 0) <= 0) {
+          if (!esPacienteTemporal && Number(detalles[i].consulta_id || 0) <= 0) {
             throw new Error("La consulta del carrito no tiene una atencion vinculada. Vuelve a agregar la consulta antes de registrar la cotizacion.");
           }
         }
@@ -397,12 +399,18 @@ export default function QuoteCartPanel() {
         };
         cotizacionIdDestino = Number(editingCotizacionId);
       } else {
+        const esCotizacionInformativa = pacienteRegistradoId <= 0;
         payload = {
-          paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : null,
+          paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : 0,
           paciente_nombre: pacienteNombre,
+          paciente_dni: esCotizacionInformativa ? "-" : undefined,
+          modo_cotizacion: esCotizacionInformativa ? "informativa" : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
           total: Number(total || 0),
           detalles,
-          observaciones: "Cotizacion unificada creada desde carrito global",
+          observaciones: esCotizacionInformativa
+            ? "Cotizacion informativa unificada creada desde carrito global"
+            : "Cotizacion unificada creada desde carrito global",
         };
       }
 

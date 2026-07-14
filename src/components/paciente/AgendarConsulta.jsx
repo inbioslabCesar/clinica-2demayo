@@ -16,7 +16,7 @@ import {
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 
-function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, isEditIntent = false }) {
+function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = null, cotizacionId = null, isEditIntent = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const qs = new URLSearchParams(location.search);
@@ -25,6 +25,17 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const accionFlujo = String(qs.get("accion") || "");
   const backTo = String(qs.get("back_to") || "");
   const hasEditIntent = Boolean(isEditIntent || consultaId || (qs.get("modo") === "editar" && cotizacionIdNum > 0));
+  const pacienteIdNum = Number(pacienteId || 0);
+  const esPacienteTemporal = pacienteIdNum <= 0;
+  const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
+  const pacienteTemporalInfo = esPacienteTemporal
+    ? {
+        id: 0,
+        nombre: String(pacienteTemporal?.nombre || "Particular").trim() || "Particular",
+        apellido: String(pacienteTemporal?.apellido || "").trim(),
+        dni: String(pacienteTemporal?.dni || "").trim(),
+      }
+    : null;
   const [resolvedConsultaId, setResolvedConsultaId] = useState(Number(consultaId || 0));
   const consultaIdNum = Number(resolvedConsultaId || 0);
   const isEditingConsulta = hasEditIntent;
@@ -903,6 +914,15 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   };
 
   const handleCotizar = async () => {
+    if (esPacienteTemporal && !isEditingConsulta) {
+      await MySwal.fire({
+        icon: "info",
+        title: "Paciente temporal",
+        text: "Para paciente temporal usa 'Agregar al carrito' y registra la cotización desde el carrito global.",
+        confirmButtonText: "Entendido",
+      });
+      return;
+    }
     if (modoAgregarConsulta) {
       await agregarNuevaConsultaACotizacion();
       return;
@@ -916,6 +936,15 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (esPacienteTemporal && !isEditingConsulta) {
+      await MySwal.fire({
+        icon: "info",
+        title: "Paciente temporal",
+        text: "Para paciente temporal usa 'Agregar al carrito' y registra la cotización desde el carrito global.",
+        confirmButtonText: "Entendido",
+      });
+      return;
+    }
     if (modoAgregarConsulta) {
       await agregarNuevaConsultaACotizacion();
       return;
@@ -930,7 +959,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
   const agregarConsultaAlCarrito = async () => {
     setMsg("");
 
-    if (!pacienteId || !medicoId || !fecha || !hora) {
+    if (!medicoId || !fecha || !hora) {
       setMsg("Completa todos los campos para agregar al carrito");
       return;
     }
@@ -981,7 +1010,7 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
         patientId: pacienteActualId,
         patientName: pacienteInfo
           ? `${pacienteInfo.nombres || pacienteInfo.nombre || ""} ${pacienteInfo.apellidos || pacienteInfo.apellido || ""}`.trim()
-          : `Paciente #${pacienteActualId}`,
+          : (nombrePacienteTemporal || `Paciente #${pacienteActualId}`),
         items: [
           {
             serviceType: "consulta",
@@ -1153,7 +1182,12 @@ function AgendarConsulta({ pacienteId, consultaId = null, cotizacionId = null, i
     <div className={`w-full flex flex-col py-4 px-2 md:px-0 bg-gradient-to-br from-gray-50 to-blue-50 min-h-[80vh] transition-all ${cartCount > 0 ? "xl:pr-[24rem]" : ""}`}>
       {!(new URLSearchParams(window.location.search).get('cobro_id') || new URLSearchParams(window.location.search).get('cotizacion_id')) && (
         <button
-          onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })}
+          onClick={() => navigate('/seleccionar-servicio', {
+            state: {
+              pacienteId: pacienteIdNum,
+              ...(pacienteTemporalInfo ? { pacienteTemporal: pacienteTemporalInfo } : {}),
+            },
+          })}
           className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 self-end mb-3"
         >
           Volver

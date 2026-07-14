@@ -130,8 +130,15 @@ function servicioTokensDesdeItem(item) {
   return fallback ? [fallback] : [];
 }
 
-function consolidarPagoGrupo(agendas) {
-  const lista = Array.isArray(agendas) ? agendas : [];
+function consolidarPagoGrupo(agendas, cotizacionReferencia = 0) {
+  const listaRaw = Array.isArray(agendas) ? agendas : [];
+  const cotRef = Number(cotizacionReferencia || 0);
+  const lista = cotRef > 0
+    ? listaRaw.filter((item) => {
+        const cotId = Number(item?.cotizacion_id || 0);
+        return cotId === cotRef || cotId <= 0;
+      })
+    : listaRaw;
   const conCobro = lista.filter((item) => Number(item?.cotizacion_id || 0) > 0 || Number(item?.saldo_pendiente || 0) > 0 || ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()));
   const saldoPositivo = conCobro.find((item) => Number(item?.saldo_pendiente || 0) > 0) || null;
   const pagado = conCobro.find((item) => ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()) && Number(item?.saldo_pendiente || 0) <= 0) || null;
@@ -202,6 +209,12 @@ function agruparRecordatoriosAgendaServicio(items) {
 
     if (!esConsultaCotizador) continue;
 
+    // Evita mezclar consultas ya cerradas con paquetes agenda pendientes.
+    const estadoConsultaItem = String(item?.estado_consulta || "").toLowerCase().trim();
+    if (["completada", "atendida", "cancelada", "anulada"].includes(estadoConsultaItem)) {
+      continue;
+    }
+
     let mejorGrupo = null;
     let mejorDistancia = Number.POSITIVE_INFINITY;
     let mejorCoincideCotizacion = false;
@@ -215,6 +228,12 @@ function agruparRecordatoriosAgendaServicio(items) {
 
       const cotizacionCandidato = Number(candidato?.cotizacion_id || 0);
       const coincideCotizacion = cotizacionItem > 0 && cotizacionCandidato > 0 && cotizacionItem === cotizacionCandidato;
+
+      // Si la consulta tiene cotización y es distinta, nunca se fusiona al paquete.
+      if (cotizacionItem > 0 && cotizacionCandidato > 0 && !coincideCotizacion) {
+        continue;
+      }
+
       const distancia = coincideCotizacion ? 0 : minutosDistancia(candidato, item);
 
       if (coincideCotizacion) {
@@ -230,8 +249,8 @@ function agruparRecordatoriosAgendaServicio(items) {
       }
     }
 
-    // Ventana amplia para cubrir caso típico: consulta hoy y servicios programados después.
-    if (mejorGrupo && (mejorCoincideCotizacion || mejorDistancia <= (30 * 24 * 60))) {
+    // Sin misma cotización, permitir fusión solo en ventana corta para evitar cruces de atenciones.
+    if (mejorGrupo && (mejorCoincideCotizacion || mejorDistancia <= (12 * 60))) {
       const agendaItems = Array.isArray(mejorGrupo._agenda_items) ? mejorGrupo._agenda_items : [{ ...mejorGrupo }];
       agendaItems.push({ ...item, _fusionado_desde_consulta: true });
       mejorGrupo._agenda_items = agendaItems;
@@ -258,7 +277,7 @@ function agruparRecordatoriosAgendaServicio(items) {
     const medicosUnicos = Array.from(new Set(agendas.map((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim()).filter(Boolean)));
     const primerAgendaConMedico = agendas.find((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim() !== "") || null;
     const fechasUnicas = Array.from(new Set(agendasBase.map((ag) => String(ag.fecha || "").trim()).filter(Boolean)));
-    const pagoConsolidado = consolidarPagoGrupo(agendas);
+    const pagoConsolidado = consolidarPagoGrupo(agendas, Number(item?.cotizacion_id || 0));
 
     item.servicio_tipo = "paquete";
     item.servicios_label = serviciosUnicos.join(" + ") || "Paquete";

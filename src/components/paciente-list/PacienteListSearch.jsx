@@ -17,6 +17,14 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
   const [resultados, setResultados] = useState([]);
   const [buscando, setBuscando] = useState(false);
   const [noEncontrado, setNoEncontrado] = useState(false);
+
+  const normalizeText = (value) => String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!busqueda.trim()) return;
@@ -31,9 +39,26 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
       const data = await res.json();
       if (data.success && Array.isArray(data.pacientes) && data.pacientes.length > 0) {
         setResultados(data.pacientes);
-        setNoEncontrado(false);
-        // Selección automática si solo hay un resultado
-        if (data.pacientes.length === 1 && onPacienteEncontrado) {
+        const esBusquedaNombre = String(tipo || "").toLowerCase() === "nombre";
+        const buscadoNormalizado = normalizeText(busqueda);
+        const existeCoincidenciaExactaNombre = esBusquedaNombre
+          ? data.pacientes.some((p) => normalizeText(`${p?.nombre || ""} ${p?.apellido || ""}`) === buscadoNormalizado)
+          : false;
+
+        // Si por nombre solo hay sugerencias parciales (sin match exacto),
+        // habilitamos el flujo de "continuar como particular" sin perder las sugerencias.
+        const mostrarNoEncontradoConSugerencias = esBusquedaNombre && !existeCoincidenciaExactaNombre;
+        setNoEncontrado(mostrarNoEncontradoConSugerencias);
+
+        if (mostrarNoEncontradoConSugerencias && onNoEncontrado) {
+          onNoEncontrado({
+            tipo,
+            valor: String(busqueda || "").trim(),
+          });
+        }
+
+        // Selección automática solo cuando no estamos en escenario de sugerencias parciales.
+        if (!mostrarNoEncontradoConSugerencias && data.pacientes.length === 1 && onPacienteEncontrado) {
           setNoEncontrado(false);
           onPacienteEncontrado(data.pacientes[0]);
         }

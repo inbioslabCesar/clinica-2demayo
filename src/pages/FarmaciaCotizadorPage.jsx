@@ -96,9 +96,11 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     const cotizacionIdUrl = sp.get('cotizacion_id');
     const cotizacionId = cotizacionIdUrl || (cotizacionPendienteMedico ? String(cotizacionPendienteMedico.id) : null);
     const pacienteRegistradoId = Number(pacienteId || pacienteDatos?.id || 0);
+    const nombreTemporal = `${String(pacienteTemporal?.nombre || '').trim()} ${String(pacienteTemporal?.apellido || '').trim()}`.trim();
+    const esCotizacionInformativa = pacienteRegistradoId <= 0;
     const nombreManualCompleto = `${manualNombres} ${manualApellidos}`.trim();
-    const pacienteNombrePayload = (pacienteDatos?.nombre || nombreManualCompleto || 'Particular').trim();
-    const pacienteDniPayload = String(pacienteDatos?.dni || manualDni || '').trim();
+    const pacienteNombrePayload = (pacienteDatos?.nombre || nombreManualCompleto || nombreTemporal || 'Particular').trim();
+    const pacienteDniPayload = String(pacienteDatos?.dni || manualDni || pacienteTemporal?.dni || '').trim();
     const referenciaOrigenPayload = String(referenciaOrigen || '').trim();
 
     if (!cotizacionId && seleccionados.length === 0) {
@@ -188,10 +190,14 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : null,
           paciente_nombre: pacienteNombrePayload,
           paciente_dni: pacienteDniPayload,
+          modo_cotizacion: esCotizacionInformativa ? 'informativa' : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
           referencia_origen: referenciaOrigenPayload,
           total,
           detalles: detallesFinales,
-          observaciones: 'Cotización registrada desde cotizador de Farmacia',
+          observaciones: esCotizacionInformativa
+            ? 'Cotización informativa registrada desde cotizador de Farmacia'
+            : 'Cotización registrada desde cotizador de Farmacia',
           vencimiento_horas: 24,
           origen: 'farmacia'
         };
@@ -364,6 +370,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   // Si viene pacienteId en la URL, usarlo y no pedir datos manuales
   // Siempre usar el pacienteId de la URL si existe
   const pacienteId = params.pacienteId || null;
+  const pacienteTemporal = location.state?.pacienteTemporal || null;
   const [pacienteDatos, setPacienteDatos] = useState(null); // {dni, nombre}
   const isEditing = Boolean(new URLSearchParams(location.search).get('cobro_id'));
   const isCotizacionEditMode = Boolean(new URLSearchParams(location.search).get('cotizacion_id'));

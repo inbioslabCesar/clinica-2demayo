@@ -1,0 +1,109 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build outputs
+dist
+dist-ssr
+dist-public
+build
+*.local
+public/assets/
+
+# Environment and config files
+.env
+.env.local
+.env.production
+.env.development
+config/instance.local.php
+config/instances/*.php
+!config/instances/clinic.example.php
+!config/instances/sistema_clinica2demayo_com.php
+!config/instances/www_clinica2demayo_com.php
+!config/instances/clinica2demayo_com.php
+!config/instances/sistema_cardiovidaiquitos_com.php
+!config/instances/www_cardiovidaiquitos_com.php
+!config/instances/cardiovidaiquitos_com.php
+!config/instances/sistema_femcarepucallpa_com.php
+!config/instances/www_femcarepucallpa_com.php
+!config/instances/femcarepucallpa_com.php
+clinica-config/
+
+# Database and sensitive files
+debug_session*.txt
+session_debug.php
+*.sql.backup
+/sql/
+backup/
+uploads/
+# Permitir versionar carpetas vacías necesarias para hosting
+!uploads/
+uploads/*
+!uploads/web/
+uploads/web/*
+!uploads/web/ofertas/
+!uploads/web/ofertas/.gitkeep
+!uploads/web/servicios/
+!uploads/web/servicios/.gitkeep
+temp/
+
+# Scripts administrativos (NO subir a hosting)
+/admin/
+test_*.php
+debug_*.php
+reabrir_caja_*.php
+*_interactivo.php
+diagnostico_*.php
+consultar_*.php
+crear_tabla_*.php
+crear_admin.php
+*_admin.php
+error_caratula.log
+
+# Logs
+logs
+*.log
+error.log
+access.log
+
+# Uploaded assets (generated at runtime)
+public/uploads/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.vscode/settings.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.directory
+
+# PHP specific
+composer.phar
+/vendor/
+/.phpunit.result.cache
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+_tmp_resultado_*.pdf
+tmp/mpdf/mpdf/ttfontdata/*.json
+
+# Deployment archives
+*.zip
+!uploads/web/ofertas/*.zip

@@ -4,6 +4,16 @@ import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
 import { authFetch } from '../../utils/apiClient';
 
+function formatUserRole(roleRaw) {
+  const role = String(roleRaw || '').trim().toLowerCase();
+  if (!role) return '';
+  if (role === 'admin' || role === 'administrador') return 'Admin';
+  if (role.includes('recep')) return 'Recepcion';
+  if (role.includes('caja') || role.includes('cajero')) return 'Caja';
+  if (role.includes('medico')) return 'Medico';
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     // Estados para descuento
     const [tipoDescuento, setTipoDescuento] = useState('porcentaje');
@@ -167,6 +177,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
   };
 
   const mostrarComprobante = async (cobroId, datosComprobante) => {
+    const usuarioSesion = JSON.parse(sessionStorage.getItem('usuario') || '{}');
     const fechaHora = new Date().toLocaleString('es-PE');
     const referenciaOrigenCobro = String(
       datosComprobante?.referencia_origen
@@ -174,6 +185,18 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       || paciente?.referencia_origen
       || ''
     ).trim();
+    const usuarioNombre = String(
+      datosComprobante?.usuario_nombre
+      || usuarioSesion?.nombre
+      || usuarioSesion?.usuario
+      || 'Sistema'
+    ).trim() || 'Sistema';
+    const usuarioRolFmt = formatUserRole(
+      datosComprobante?.usuario_rol
+      || usuarioSesion?.rol
+      || ''
+    );
+    const usuarioLabel = usuarioRolFmt ? `${usuarioNombre} (${usuarioRolFmt})` : usuarioNombre;
     
     const toMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
     const contactoLinea = [
@@ -265,6 +288,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
         <div class="t-meta">Paciente: ${paciente.nombre} ${paciente.apellido}</div>
         <div class="t-meta">DNI: ${paciente.dni}</div>
         <div class="t-meta">H.C.: ${paciente.historia_clinica}</div>
+        <div class="t-meta">Usuario: ${usuarioLabel}</div>
         ${referenciaOrigenCobro ? `<div class="t-meta">Referencia origen: ${referenciaOrigenCobro}</div>` : ''}
 
         <hr class="t-hr" />

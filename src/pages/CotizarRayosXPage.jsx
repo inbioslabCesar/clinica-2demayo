@@ -25,6 +25,10 @@ export default function CotizarRayosXPage() {
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+  const pacienteTemporal = location.state?.pacienteTemporal || null;
+  const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
+  const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
+  const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
 
   const normalizeText = (value) =>
     String(value || "")
@@ -562,9 +566,15 @@ export default function CotizarRayosXPage() {
         }
       : {
           paciente_id: Number(pacienteId),
+          paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
+          paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
+          modo_cotizacion: esCotizacionInformativa ? 'informativa' : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
           total,
           detalles: detallesFinales,
-          observaciones: 'Cotización registrada desde cotizador de Rayos X'
+          observaciones: esCotizacionInformativa
+            ? 'Cotización informativa registrada desde cotizador de Rayos X'
+            : 'Cotización registrada desde cotizador de Rayos X'
         };
 
     try {
