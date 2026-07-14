@@ -87,6 +87,16 @@ export default function CotizarServicioPage() {
     setProgramacion({});
   }, [tipoNormalizado]);
 
+  useEffect(() => {
+    const handleQuoteCartCleared = () => {
+      setSeleccionados([]);
+      setProgramacion({});
+    };
+
+    window.addEventListener("quote-cart-cleared", handleQuoteCartCleared);
+    return () => window.removeEventListener("quote-cart-cleared", handleQuoteCartCleared);
+  }, []);
+
   const toggleSeleccion = (id) => {
     const nid = Number(id);
     setSeleccionados((sel) => {

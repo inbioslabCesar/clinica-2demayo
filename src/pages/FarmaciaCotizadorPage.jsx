@@ -1144,7 +1144,14 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         {pacienteId && !(new URLSearchParams(location.search).get('cobro_id') || new URLSearchParams(location.search).get('cotizacion_id')) ? (
           <button
             className="bg-blue-100 text-blue-800 px-4 py-2 rounded font-semibold border border-blue-300 hover:bg-blue-200 transition"
-            onClick={() => navigate("/seleccionar-servicio", { state: { pacienteId } })}
+            onClick={() => navigate("/seleccionar-servicio", {
+              state: Number(pacienteId || 0) <= 0
+                ? {
+                    pacienteId: 0,
+                    pacienteTemporal: { nombre: 'Particular', apellido: '', dni: '' },
+                  }
+                : { pacienteId },
+            })}
           >
             ← Volver a Servicios
           </button>
@@ -1356,7 +1363,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                   : "No hay medicamentos registrados en el sistema."}
               </div>
             ) : (
-              <div className="max-h-96 overflow-y-auto">
+              <div className="max-h-[68vh] overflow-y-auto">
               <ul className="divide-y divide-gray-100">
                 {filtrarMedicamentos.map((med) => {
                   const unidadesCaja = unidadesPorCaja[med.id] || 30;
@@ -1485,7 +1492,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
             {seleccionados.length > 0 && (
               <div className="mb-6">
                 <h4 className="font-semibold text-gray-700 mb-2">Lista de Cotización</h4>
-                <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
+                <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-[68vh] overflow-y-auto">
                   {(() => {
                     // Si estamos editando un cobro, usar la fuente de verdad `preloadedFarmaciaRaw`
                     if (isEditing && Array.isArray(_preloadedFarmaciaRaw) && _preloadedFarmaciaRaw.length > 0) {

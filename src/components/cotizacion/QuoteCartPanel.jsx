@@ -539,6 +539,7 @@ export default function QuoteCartPanel() {
 
       <div className="mt-3 grid grid-cols-1 gap-2">
         <button
+          type="button"
           onClick={() => registrarCotizacionCarrito(true)}
           disabled={saving}
           className={`w-full py-2 rounded font-semibold ${saving ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
@@ -546,6 +547,7 @@ export default function QuoteCartPanel() {
           {saving ? "Procesando..." : "Registrar y cobrar"}
         </button>
         <button
+          type="button"
           onClick={() => registrarCotizacionCarrito(false)}
           disabled={saving}
           className={`w-full py-2 rounded font-semibold ${saving ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700"}`}
@@ -553,12 +555,14 @@ export default function QuoteCartPanel() {
           Registrar cotizacion
         </button>
         <button
+          type="button"
           onClick={() => navigate("/cotizaciones")}
           className="w-full py-2 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700"
         >
           Ir a Atenciones
         </button>
         <button
+          type="button"
           onClick={clearCart}
           disabled={saving}
           className={`w-full py-2 rounded font-semibold ${saving ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}

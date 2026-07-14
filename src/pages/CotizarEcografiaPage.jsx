@@ -240,6 +240,16 @@ export default function CotizarEcografiaPage() {
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
   }, [location.search]);
 
+  useEffect(() => {
+    const handleQuoteCartCleared = () => {
+      setSeleccionados([]);
+      setMensaje("");
+    };
+
+    window.addEventListener("quote-cart-cleared", handleQuoteCartCleared);
+    return () => window.removeEventListener("quote-cart-cleared", handleQuoteCartCleared);
+  }, []);
+
   // Cuando tengamos tarifas y items pendientes, mapear por id o por nombre
   useEffect(() => {
     if (!pendingEcoItems.length || !tarifas.length) return;
@@ -748,61 +758,75 @@ export default function CotizarEcografiaPage() {
   };
 
   const mostrarPanelDerecho = seleccionados.length > 0;
-
-  return (
-    <div className={`max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100 transition-all ${cartCount > 0 ? 'xl:mr-[22rem]' : ''}`}>
-      {(() => {
-        const sp = new URLSearchParams(location.search);
-        const cobroId = sp.get('cobro_id');
-        const cotizacionId = sp.get('cotizacion_id');
-        const isEditing = Boolean(cobroId || cotizacionId);
-        if (!isEditing) {
-          return (
-            <button
-              onClick={() => navigate('/seleccionar-servicio', {
-                state: {
+  const volverButton = (() => {
+    const sp = new URLSearchParams(location.search);
+    const cobroId = sp.get('cobro_id');
+    const cotizacionId = sp.get('cotizacion_id');
+    const isEditing = Boolean(cobroId || cotizacionId);
+    if (!isEditing) {
+      return (
+        <button
+          onClick={() => navigate('/seleccionar-servicio', {
+            state: Number(pacienteId || 0) <= 0
+              ? {
+                  pacienteId: 0,
+                  pacienteTemporal: pacienteTemporal || { nombre: 'Particular', apellido: '', dni: '' },
+                }
+              : {
                   pacienteId: Number(pacienteId || 0),
                   ...(pacienteTemporal ? { pacienteTemporal } : {}),
                 },
-              })}
-              className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
-            >← Volver</button>
-          );
-        }
-        if (cotizacionId && !cobroId) {
-          return (
-            <button
-              onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
-                state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
-              })}
-              className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
-            >← Volver a Servicios</button>
-          );
-        }
-        return (
-          <button
-            onClick={() => navigate(pacienteId ? `/consumo-paciente/${pacienteId}${cobroId ? `?cobro_id=${cobroId}` : ''}` : '/pacientes')}
-            className="mb-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
-          >← Volver a Consumo del Paciente</button>
-        );
-      })()}
-      <h2 className="text-2xl font-bold text-blue-900 mb-4 flex items-center gap-2">
-        <span role="img" aria-label="eco">📡</span> Cotizador de Ecografías
-        {(new URLSearchParams(location.search).get('cobro_id') || new URLSearchParams(location.search).get('cotizacion_id')) && (
+          })}
+          className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+        >
+          ← Volver
+        </button>
+      );
+    }
+    if (cotizacionId && !cobroId) {
+      return (
+        <button
+          onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+          })}
+          className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+        >
+          ← Volver a Servicios
+        </button>
+      );
+    }
+    return (
+      <button
+        onClick={() => navigate(pacienteId ? `/consumo-paciente/${pacienteId}${cobroId ? `?cobro_id=${cobroId}` : ''}` : '/pacientes')}
+        className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+      >
+        ← Volver a Consumo del Paciente
+      </button>
+    );
+  })();
+
+  return (
+    <div className={`max-w-7xl mx-auto p-10 bg-white rounded-2xl shadow-2xl mt-8 border border-blue-100 transition-all ${cartCount > 0 ? 'xl:mr-[22rem]' : ''}`}>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <h2 className="text-2xl font-bold text-blue-900 flex items-center gap-2">
+          <span role="img" aria-label="eco">📡</span> Cotizador de Ecografías
+          {(new URLSearchParams(location.search).get('cobro_id') || new URLSearchParams(location.search).get('cotizacion_id')) && (
           <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded border border-yellow-300">
             {new URLSearchParams(location.search).get('cobro_id')
               ? `Editando cobro #${new URLSearchParams(location.search).get('cobro_id')}`
               : `Editando cotización #${new URLSearchParams(location.search).get('cotizacion_id')}`}
           </span>
-        )}
-      </h2>
+          )}
+        </h2>
+        <div className="shrink-0">{volverButton}</div>
+      </div>
       {paciente && (
         <div className="mb-4 p-2 bg-blue-50 rounded text-blue-800 text-sm">
           <span className="font-bold">Paciente:</span> {paciente.nombres || paciente.nombre} {paciente.apellidos || paciente.apellido} (DNI: {paciente.dni})
         </div>
       )}
       <div className={`grid grid-cols-1 gap-8 ${mostrarPanelDerecho ? 'md:grid-cols-2' : ''}`}>
-        <div className="mb-4 max-h-[500px] overflow-y-auto">
+        <div className="mb-4 max-h-[68vh] overflow-y-auto">
           <div className="font-bold mb-2 flex flex-col gap-2">
             <span>Ecografías disponibles:</span>
             <input
@@ -868,7 +892,7 @@ export default function CotizarEcografiaPage() {
         {mostrarPanelDerecho && (
           <div className="w-full md:max-w-xl md:sticky md:top-8 h-fit">
           {seleccionados.length > 0 && (
-            <div className="bg-blue-50 rounded-2xl p-6 border border-blue-200 shadow mb-4 max-h-[500px] overflow-y-auto">
+            <div className="bg-blue-50 rounded-2xl p-6 border border-blue-200 shadow mb-4 max-h-[68vh] overflow-y-auto">
               <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
                 <span>📝</span>Resumen de Cotización
               </h4>

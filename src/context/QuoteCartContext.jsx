@@ -77,6 +77,9 @@ export function QuoteCartProvider({ children }) {
 
   const clearCart = useCallback(() => {
     setCart({ patientId: null, patientName: "", items: [] });
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("quote-cart-cleared"));
+    }
   }, []);
 
   const setPatient = useCallback((patientId, patientName) => {

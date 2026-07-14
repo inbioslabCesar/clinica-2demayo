@@ -502,7 +502,14 @@ export default function CotizarPaquetesPerfilesPage() {
                 state: { pacienteId: Number(pacienteId), cotizacionId, backTo: "/cotizaciones", modo: "editar" },
               });
             } else {
-              navigate("/seleccionar-servicio", { state: { pacienteId: Number(pacienteId) } });
+              navigate("/seleccionar-servicio", {
+                state: Number(pacienteId || 0) <= 0
+                  ? {
+                      pacienteId: 0,
+                      pacienteTemporal: { nombre: 'Particular', apellido: '', dni: '' },
+                    }
+                  : { pacienteId: Number(pacienteId) },
+              });
             }
           }}
           className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
@@ -661,7 +668,7 @@ export default function CotizarPaquetesPerfilesPage() {
         {selectedRows.length > 0 && (
           <div className="w-full md:sticky md:top-8 h-fit md:max-w-xl">
             <h4 className="font-semibold text-gray-700 mb-2">Lista seleccionada</h4>
-            <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
+            <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-[68vh] overflow-y-auto">
               {selectedRows.map((row) => {
                 const qty = Math.max(1, Number(quantities[row.id] || 1));
                 const subtotal = Number(row.precio_global_venta || 0) * qty;

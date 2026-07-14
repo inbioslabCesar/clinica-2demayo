@@ -172,6 +172,16 @@ export default function CotizarProcedimientosPage() {
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
   }, [location.search]);
 
+  useEffect(() => {
+    const handleQuoteCartCleared = () => {
+      setSeleccionados([]);
+      setMensaje("");
+    };
+
+    window.addEventListener("quote-cart-cleared", handleQuoteCartCleared);
+    return () => window.removeEventListener("quote-cart-cleared", handleQuoteCartCleared);
+  }, []);
+
   const actualizarCobro = async () => {
     const cobroId = new URLSearchParams(location.search).get('cobro_id');
     if (!cobroId) return;
@@ -630,7 +640,19 @@ export default function CotizarProcedimientosPage() {
           const isEditing = Boolean(cobroId || cotizacionId);
           if (!isEditing) {
             return (
-              <button onClick={() => navigate('/seleccionar-servicio', { state: { pacienteId } })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver</button>
+              <button
+                onClick={() => navigate('/seleccionar-servicio', {
+                  state: Number(pacienteId || 0) <= 0
+                    ? {
+                        pacienteId: 0,
+                        pacienteTemporal: { nombre: 'Particular', apellido: '', dni: '' },
+                      }
+                    : { pacienteId },
+                })}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+              >
+                Volver
+              </button>
             );
           }
           if (cotizacionId && !cobroId) {
@@ -671,7 +693,7 @@ export default function CotizarProcedimientosPage() {
             {procedimientosFiltrados.length === 0 ? (
               <div className="text-center text-gray-500">No hay procedimientos para mostrar.</div>
             ) : (
-              <div className="bg-white rounded-lg shadow border border-gray-200">
+              <div className="bg-white rounded-lg shadow border border-gray-200 max-h-[68vh] overflow-y-auto">
                 <ul className="divide-y divide-gray-100">
                   {procedimientosFiltrados.map(proc => (
                     <li key={proc.id} className="flex items-center gap-4 px-4 py-3 hover:bg-blue-50 transition-colors">

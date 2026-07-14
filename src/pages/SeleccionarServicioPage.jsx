@@ -47,18 +47,16 @@ export default function SeleccionarServicioPage() {
   const [totalCotizacion, setTotalCotizacion] = useState(0);
   const [loadingResumen, setLoadingResumen] = useState(false);
   const qs = new URLSearchParams(location.search);
-  const pacienteId = location.state?.pacienteId || qs.get('paciente_id');
+  const pacienteId = location.state?.pacienteId ?? qs.get('paciente_id');
   const pacienteIdNum = Number(pacienteId || 0);
   const nombreCarrito = String(cart?.patientName || '').trim();
   const carritoEsPacienteTemporal = pacienteIdNum <= 0 && Number(cart?.patientId ?? -1) === 0;
   const nombreCarritoEsGenerico = !nombreCarrito || /^paciente\s*#?0$/i.test(nombreCarrito);
-  const pacienteTemporal = location.state?.pacienteTemporal || pacienteTemporalInferido || (carritoEsPacienteTemporal
-    ? {
-        nombre: nombreCarritoEsGenerico ? 'Particular' : nombreCarrito,
-        apellido: '',
-        dni: '',
-      }
-    : null);
+  const pacienteTemporal = location.state?.pacienteTemporal || pacienteTemporalInferido || (pacienteIdNum <= 0 ? {
+    nombre: carritoEsPacienteTemporal && !nombreCarritoEsGenerico ? nombreCarrito : 'Particular',
+    apellido: '',
+    dni: '',
+  } : null);
   const esPacienteTemporal = pacienteIdNum <= 0 && Boolean(
     String(pacienteTemporal?.nombre || '').trim()
     || String(pacienteTemporal?.apellido || '').trim()

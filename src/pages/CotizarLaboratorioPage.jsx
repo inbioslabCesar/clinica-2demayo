@@ -372,6 +372,16 @@ export default function CotizarLaboratorioPage() {
     Promise.all(loaders).catch(() => {});
   }, [cobroId, cotizacionId]);
 
+  useEffect(() => {
+    const handleQuoteCartCleared = () => {
+      setSeleccionados([]);
+      setMensaje("");
+    };
+
+    window.addEventListener("quote-cart-cleared", handleQuoteCartCleared);
+    return () => window.removeEventListener("quote-cart-cleared", handleQuoteCartCleared);
+  }, []);
+
   // Cuando tengamos examenes y items pendientes, mapear por id o por nombre
   useEffect(() => {
     if (!pendingLabItems.length || !examenes.length) return;
@@ -1072,15 +1082,20 @@ export default function CotizarLaboratorioPage() {
             const isEditing = Boolean(cobroId || cotizacionId);
             if (!isEditing) {
               return (
-                <button
-                  onClick={() => navigate('/seleccionar-servicio', {
-                    state: {
-                      pacienteId: Number(pacienteId || 0),
-                      ...(pacienteTemporal ? { pacienteTemporal } : {}),
-                    },
-                  })}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-                >Volver</button>
+                  <button
+                    onClick={() => navigate('/seleccionar-servicio', {
+                      state: Number(pacienteId || 0) <= 0
+                        ? {
+                            pacienteId: 0,
+                            pacienteTemporal: pacienteTemporal || { nombre: 'Particular', apellido: '', dni: '' },
+                          }
+                        : {
+                            pacienteId: Number(pacienteId || 0),
+                            ...(pacienteTemporal ? { pacienteTemporal } : {}),
+                          },
+                    })}
+                    className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                  >Volver</button>
               );
             }
             if (cotizacionId && !cobroId) {
@@ -1316,7 +1331,7 @@ export default function CotizarLaboratorioPage() {
           {seleccionados.length > 0 && (
             <div className="mb-6 w-full">
               <h4 className="font-semibold text-gray-700 mb-2">Resumen de Cotización</h4>
-              <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-80 overflow-y-auto">
+              <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-[68vh] overflow-y-auto">
                 {seleccionados.map(exId => {
                   const exIdNum = Number(exId);
                   const ex = examenes.find(e => Number(e.id) === exIdNum);
