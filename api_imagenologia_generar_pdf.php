@@ -142,6 +142,23 @@ function normalizar_clave_pdf(string $texto): string {
     return (string)$texto;
 }
 
+function ruta_imagen_para_mpdf(string $archivoPath): string {
+    $normalizada = str_replace('\\', '/', trim($archivoPath));
+    if ($normalizada === '') {
+        return '';
+    }
+
+    // mPDF procesa mejor imágenes locales usando file:// que un blob base64 enorme en HTML.
+    if (preg_match('/^[a-zA-Z]:\//', $normalizada)) {
+        return 'file:///' . str_replace(' ', '%20', $normalizada);
+    }
+    if (strpos($normalizada, '/') === 0) {
+        return 'file://' . str_replace(' ', '%20', $normalizada);
+    }
+
+    return str_replace(' ', '%20', $normalizada);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. Construir HTML para PDF
 // ═══════════════════════════════════════════════════════════════════════════
@@ -611,9 +628,10 @@ if (!empty($archivos)) {
         
         // Verificar que sea imagen y exista
         if (strpos($mimeType, 'image/') === 0 && is_file($archivoPath)) {
-            // Convertir a base64 para incrustar en PDF
-            $imageData = base64_encode(file_get_contents($archivoPath));
-            $imageSrc = 'data:' . $mimeType . ';base64,' . $imageData;
+            $imageSrc = ruta_imagen_para_mpdf($archivoPath);
+            if ($imageSrc === '') {
+                continue;
+            }
 
             $imagenesValidas[] = [
                 'src' => $imageSrc,
@@ -634,7 +652,7 @@ if (!empty($archivos)) {
             $html .= '<td class="image-cell">
                 <div class="image-box">
                     <div class="image-box-inner">
-                        <img src="' . $img['src'] . '" alt="' . htmlspecialchars($img['nombre']) . '">
+                        <img src="' . htmlspecialchars($img['src']) . '" alt="' . htmlspecialchars($img['nombre']) . '">
                     </div>
                     <div class="image-name">Imagen ' . $indice . '</div>
                 </div>

@@ -21,6 +21,7 @@ export default function CotizarProcedimientosPage() {
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [medicos, setMedicos] = useState([]);
   const [programacionPorProcedimiento, setProgramacionPorProcedimiento] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
@@ -480,6 +481,7 @@ export default function CotizarProcedimientosPage() {
   };
 
   const cotizar = async ({ irACobro = false } = {}) => {
+    if (isSaving) return;
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos un procedimiento.");
       return;
@@ -539,6 +541,7 @@ export default function CotizarProcedimientosPage() {
         };
 
     try {
+      setIsSaving(true);
       let data;
       const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
@@ -614,6 +617,8 @@ export default function CotizarProcedimientosPage() {
       });
     } catch (error) {
       Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -806,14 +811,14 @@ export default function CotizarProcedimientosPage() {
                 Total: S/ {calcularTotal().toFixed(2)}
               </div>
               <div className="flex gap-3 mt-4 justify-end">
-                <button onClick={() => { setSeleccionados([]); setMensaje(""); }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200">Limpiar selección</button>
-                <button onClick={agregarAlCarrito} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700">Agregar al carrito</button>
+                <button onClick={() => { setSeleccionados([]); setMensaje(""); }} disabled={isSaving} className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200 disabled:opacity-60">Limpiar selección</button>
+                <button onClick={agregarAlCarrito} disabled={isSaving} className="bg-violet-600 text-white px-4 py-2 rounded hover:bg-violet-700 disabled:opacity-60">Agregar al carrito</button>
                 {new URLSearchParams(location.search).get('cobro_id') ? (
-                  <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
+                  <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
                   <>
-                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}</button>
-                    <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}</button>
+                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización')}</button>
+                    <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>{isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar')}</button>
                   </>
                 )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FiFileText, FiEdit3, FiDownload } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { authFetch } from '../../utils/apiClient';
+import { authFetch, resolveAppUrl } from '../../utils/apiClient';
 import ModalInformeImagenologia from './ModalInformeImagenologia';
 
 /**
@@ -63,7 +63,7 @@ export default function CardInformeImagenologia({
       const data = await response.json();
       if (data.success) {
         // Descargar el PDF
-        window.open(`/descargar_informe_imagenologia.php?informe_id=${informe.id}`, '_blank');
+        window.open(resolveAppUrl(`descargar_informe_imagenologia.php?informe_id=${informe.id}`), '_blank');
       } else {
         Swal.fire('Error', data.error || 'No se pudo generar el PDF', 'error');
       }

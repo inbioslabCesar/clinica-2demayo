@@ -52,73 +52,6 @@ function parsePositiveInt(value, fallback = 0) {
   return parsed;
 }
 
-function parseStoredJson(raw) {
-  if (typeof raw !== "string") return null;
-  const text = raw.trim();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function pickFirstInt(source, keys) {
-  if (!source || typeof source !== "object") return 0;
-  for (const key of keys) {
-    const value = Number(source?.[key] ?? 0);
-    if (Number.isFinite(value) && value > 0) return Math.trunc(value);
-  }
-  return 0;
-}
-
-function buildMedicoInfoFromSource(source) {
-  if (!source || typeof source !== "object") return null;
-
-  const medicoId = pickFirstInt(source, ["medico_id", "id_medico", "id"]);
-  const nombre = firstNonEmptyValue(source, ["medico_nombre", "nombre_medico", "nombre"]);
-  const apellido = firstNonEmptyValue(source, ["medico_apellido", "apellido_medico", "apellido"]);
-  const firma = firstNonEmptyValue(source, ["medico_firma", "firma_medico", "firma"]);
-
-  if (medicoId <= 0 && !nombre && !apellido && !firma) {
-    return null;
-  }
-
-  return {
-    id: medicoId > 0 ? medicoId : null,
-    nombre,
-    apellido,
-    especialidad: firstNonEmptyValue(source, ["medico_especialidad", "especialidad"]),
-    tipo_profesional: firstNonEmptyValue(source, ["medico_tipo_profesional", "tipo_profesional"]) || "medico",
-    abreviatura_profesional: firstNonEmptyValue(source, ["medico_abreviatura_profesional", "abreviatura_profesional"]) || "Dr(a).",
-    colegio_sigla: firstNonEmptyValue(source, ["medico_colegio_sigla", "colegio_sigla"]) || "CMP",
-    nro_colegiatura: firstNonEmptyValue(source, ["medico_nro_colegiatura", "nro_colegiatura", "medico_cmp", "cmp"]),
-    cmp: firstNonEmptyValue(source, ["medico_cmp", "cmp"]),
-    rne: firstNonEmptyValue(source, ["medico_rne", "rne"]),
-    firma: firma || null,
-  };
-}
-
-function mergeMedicoInfo(base, fallback) {
-  if (!base && !fallback) return null;
-  if (!base) return fallback;
-  if (!fallback) return base;
-
-  return {
-    id: base.id || fallback.id || null,
-    nombre: base.nombre || fallback.nombre || "",
-    apellido: base.apellido || fallback.apellido || "",
-    especialidad: base.especialidad || fallback.especialidad || "",
-    tipo_profesional: base.tipo_profesional || fallback.tipo_profesional || "medico",
-    abreviatura_profesional: base.abreviatura_profesional || fallback.abreviatura_profesional || "Dr(a).",
-    colegio_sigla: base.colegio_sigla || fallback.colegio_sigla || "CMP",
-    nro_colegiatura: base.nro_colegiatura || fallback.nro_colegiatura || base.cmp || fallback.cmp || "",
-    cmp: base.cmp || fallback.cmp || "",
-    rne: base.rne || fallback.rne || "",
-    firma: base.firma || fallback.firma || null,
-  };
-}
-
 function firstNonEmptyValue(obj, keys) {
   if (!obj || typeof obj !== "object") return "";
   for (const key of keys) {
@@ -1014,42 +947,6 @@ function HistoriaClinicaPage() {
     let cancelled = false;
 
     const cargarMedicoDesdeConsulta = async () => {
-      const extractConsulta = (payload) => {
-        if (!payload || typeof payload !== "object") return null;
-        if (Array.isArray(payload.consultas) && payload.consultas.length > 0) {
-          return payload.consultas[0];
-        }
-        if (payload.consulta && typeof payload.consulta === "object") {
-          return payload.consulta;
-        }
-        if (Number(payload.id || 0) > 0 && (Object.prototype.hasOwnProperty.call(payload, "medico_id") || Object.prototype.hasOwnProperty.call(payload, "paciente_id"))) {
-          return payload;
-        }
-        return null;
-      };
-
-      const fetchMedicoCatalogoPorId = async (medicoId) => {
-        const id = Number(medicoId || 0);
-        if (id <= 0) return null;
-        try {
-          const noCache = `t=${Date.now()}`;
-          const res = await authFetch(`api_medicos.php?${noCache}`, { cache: "no-store" });
-          const data = await res.json();
-          const medicos = Array.isArray(data?.medicos) ? data.medicos : [];
-          const found = medicos.find((m) => Number(m?.id || 0) === id) || null;
-          return buildMedicoInfoFromSource(found);
-        } catch {
-          return null;
-        }
-      };
-
-      const fetchSessionMedico = () => {
-        const medicoSession = buildMedicoInfoFromSource(parseStoredJson(sessionStorage.getItem("medico")));
-        if (medicoSession) return medicoSession;
-        const usuarioSession = parseStoredJson(sessionStorage.getItem("usuario"));
-        return buildMedicoInfoFromSource(usuarioSession);
-      };
-
       if (!consultaId) {
         if (!cancelled) {
           setMedicoInfo(null);
@@ -1064,7 +961,7 @@ function HistoriaClinicaPage() {
           cache: 'no-store',
         });
         const data = await res.json();
-        const consulta = extractConsulta(data);
+        const consulta = Array.isArray(data?.consultas) ? data.consultas[0] : null;
 
         if (consulta) {
           const fechaRaw = String(
@@ -1075,14 +972,24 @@ function HistoriaClinicaPage() {
             || ""
           ).trim();
 
-          const medicoConsulta = buildMedicoInfoFromSource(consulta);
-          const medicoCatalogo = await fetchMedicoCatalogoPorId(Number(consulta?.medico_id || medicoConsulta?.id || 0));
-          const medicoResuelto = mergeMedicoInfo(medicoConsulta, medicoCatalogo) || fetchSessionMedico();
+          const medicoConsulta = {
+            id: consulta.medico_id || null,
+            nombre: consulta.medico_nombre || '',
+            apellido: consulta.medico_apellido || '',
+            especialidad: consulta.medico_especialidad || '',
+            tipo_profesional: consulta.medico_tipo_profesional || 'medico',
+            abreviatura_profesional: consulta.medico_abreviatura_profesional || 'Dr(a).',
+            colegio_sigla: consulta.medico_colegio_sigla || 'CMP',
+            nro_colegiatura: consulta.medico_nro_colegiatura || consulta.medico_cmp || '',
+            cmp: consulta.medico_cmp || '',
+            rne: consulta.medico_rne || '',
+            firma: consulta.medico_firma || null,
+          };
 
           if (!cancelled) {
             setConsultaActual(consulta);
-            setMedicoInfo(medicoResuelto || null);
-            setFirmaMedico(medicoResuelto?.firma || null);
+            setMedicoInfo(medicoConsulta);
+            setFirmaMedico(medicoConsulta.firma || null);
             setFechaConsulta(fechaRaw);
           }
           return;
@@ -1091,7 +998,7 @@ function HistoriaClinicaPage() {
         // Fallback below to session data when query fails.
       }
 
-      const medicoSession = fetchSessionMedico();
+      const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
       if (!cancelled) {
         setConsultaActual(null);
         if (medicoSession) {

@@ -25,7 +25,64 @@ function auth_status_normalizar_permisos($raw) {
     return array_keys($clean);
 }
 
+function auth_status_hidratar_medico($mysqli, int $medicoId): ?array {
+    if ($medicoId <= 0 || !($mysqli instanceof mysqli)) {
+        return null;
+    }
+
+    $stmt = $mysqli->prepare('SELECT id, nombre, apellido, especialidad, email, cmp, rne, firma FROM medicos WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return null;
+    }
+
+    $stmt->bind_param('i', $medicoId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row) {
+        return null;
+    }
+
+    $row['rol'] = 'medico';
+    $row['permisos'] = [];
+    return $row;
+}
+
 try {
+    // Priorizar la sesion de medico para evitar cruces por colision de ID con tabla usuarios.
+    if (isset($_SESSION['medico_id'])) {
+        $medicoId = (int)($_SESSION['medico_id'] ?? 0);
+        $medicoSesion = isset($_SESSION['medico']) && is_array($_SESSION['medico'])
+            ? $_SESSION['medico']
+            : null;
+
+        $medicoHidratado = auth_status_hidratar_medico(isset($mysqli) ? $mysqli : null, $medicoId);
+        if ($medicoHidratado) {
+            $_SESSION['medico'] = $medicoHidratado;
+            unset($_SESSION['usuario']);
+            $medicoSesion = $medicoHidratado;
+        }
+
+        if ($medicoSesion) {
+            echo json_encode([
+                'success' => true,
+                'authenticated' => true,
+                'usuario_id' => (int)($medicoSesion['id'] ?? $medicoId),
+                'nombre' => $medicoSesion['nombre'] ?? '',
+                'rol' => 'medico',
+                'usuario' => $medicoSesion['email'] ?? '',
+                'permisos' => [],
+                'tipo' => 'medico',
+                'medico' => $medicoSesion,
+            ]);
+            exit;
+        }
+
+        // Sesion de medico inconsistente: limpiar para no autenticar contra un estado corrupto.
+        unset($_SESSION['medico_id'], $_SESSION['medico']);
+    }
+
     // Verificar si hay usuario autenticado
     if (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) {
         $usuarioSesion = $_SESSION['usuario'];
@@ -48,6 +105,8 @@ try {
             }
         }
 
+        unset($_SESSION['medico_id'], $_SESSION['medico']);
+
         // Usuario normal autenticado (estructura existente)
         echo json_encode([
             'success' => true,
@@ -58,17 +117,6 @@ try {
             'usuario' => $usuarioSesion['usuario'] ?? '',
             'permisos' => $usuarioSesion['permisos'] ?? [],
             'tipo' => 'usuario'
-        ]);
-    } elseif (isset($_SESSION['medico_id']) && isset($_SESSION['medico'])) {
-        // Médico autenticado
-        echo json_encode([
-            'success' => true,
-            'authenticated' => true,
-            'usuario_id' => $_SESSION['medico_id'],
-            'nombre' => $_SESSION['medico']['nombre'] ?? '',
-            'rol' => 'medico',
-            'permisos' => [],
-            'tipo' => 'medico'
         ]);
     } else {
         // No autenticado

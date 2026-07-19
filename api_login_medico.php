@@ -172,12 +172,13 @@ if ($row = $result->fetch_assoc()) {
     if (password_verify($password, $row['password'])) {
     limpiarRateLimitLoginMedico($email);
     session_regenerate_id(true);
-    // Guardar el id y datos del médico en la sesión para compatibilidad
+    // Mantener sesion de medico separada para evitar cruces con usuarios internos.
+    unset($_SESSION['usuario']);
     $_SESSION['medico_id'] = $row['id'];
     $row['rol'] = 'medico';
     $row['permisos'] = [];
     unset($row['password']); // No enviar la contraseña al frontend
-    $_SESSION['usuario'] = $row;
+    $_SESSION['medico'] = $row;
     echo json_encode(['success' => true, 'medico' => $row]);
     } else {
         $limitState = registrarFalloLoginMedico($email);

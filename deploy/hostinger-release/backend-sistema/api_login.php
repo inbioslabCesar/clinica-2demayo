@@ -97,6 +97,8 @@ if ($row = $result->fetch_assoc()) {
     $row['permisos'] = normalizarPermisosLogin($row['permisos'] ?? '[]');
     limpiarRateLimitLogin($usuario);
     session_regenerate_id(true);
+    // Evitar sesion mixta si antes hubo login de medico en el mismo navegador.
+    unset($_SESSION['medico_id'], $_SESSION['medico']);
     // Guardar usuario en sesión
     $_SESSION['usuario'] = $row;
     echo json_encode(['success' => true, 'usuario' => $row]);

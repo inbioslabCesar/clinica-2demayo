@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FiDownload, FiEye, FiChevronDown } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { authFetch } from '../../utils/apiClient';
+import { authFetch, resolveAppUrl } from '../../utils/apiClient';
 
 /**
  * VisorInformeImagenologiaHC
@@ -46,7 +46,7 @@ export default function VisorInformeImagenologiaHC({
     setDescargando(true);
     try {
       window.open(
-        `/descargar_informe_imagenologia.php?informe_id=${informe.id}`,
+        resolveAppUrl(`descargar_informe_imagenologia.php?informe_id=${informe.id}`),
         '_blank'
       );
     } catch (err) {

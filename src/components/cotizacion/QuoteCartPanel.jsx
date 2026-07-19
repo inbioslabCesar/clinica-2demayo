@@ -314,7 +314,6 @@ export default function QuoteCartPanel() {
       return;
     }
 
-    setSaving(true);
     try {
       const resumenServicios = Array.from(new Set(detalles.map((d) => String(d.servicio_tipo || "otros"))));
       const confirm = await Swal.fire({
@@ -326,9 +325,10 @@ export default function QuoteCartPanel() {
         cancelButtonText: "Cancelar",
       });
       if (!confirm.isConfirmed) {
-        setSaving(false);
         return;
       }
+
+      setSaving(true);
 
       const fechaGlobal = String(fechaProgramacionGlobal || "").slice(0, 10);
       const horaGlobal = String(horaProgramacionGlobal || "").slice(0, 5);

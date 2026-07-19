@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { FiX, FiDownload, FiSave, FiLoader } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { authFetch } from '../../utils/apiClient';
+import { authFetch, resolveAppUrl } from '../../utils/apiClient';
 
 function isEmptyValue(value) {
   return value == null || String(value).trim() === '';
@@ -345,7 +345,7 @@ export default function ModalInformeImagenologia({
         // Descargar archivo generado
         if (pdfData.pdf_url) {
           const link = document.createElement('a');
-          link.href = pdfData.pdf_url;
+          link.href = resolveAppUrl(pdfData.pdf_url);
           link.download = `informe_imagenologia_${informeId}.pdf`;
           link.click();
         }

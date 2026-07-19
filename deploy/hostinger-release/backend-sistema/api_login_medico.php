@@ -56,6 +56,29 @@ function resolver_select_medico_login($conn): string {
     return implode(', ', $parts);
 }
 
+function resolver_where_medico_login($conn): array {
+    $columns = obtener_columnas_medicos_login($conn);
+    $whereParts = [
+        'LOWER(TRIM(email)) = LOWER(TRIM(?))',
+        'LOWER(TRIM(SUBSTRING_INDEX(email, "@", 1))) = LOWER(TRIM(?))',
+        'TRIM(cmp) = TRIM(?)',
+    ];
+    $types = 'sss';
+    $bindValues = ['identifier', 'identifier', 'identifier'];
+
+    if (!empty($columns['nro_colegiatura'])) {
+        $whereParts[] = 'TRIM(nro_colegiatura) = TRIM(?)';
+        $types .= 's';
+        $bindValues[] = 'identifier';
+    }
+
+    return [
+        'sql' => implode(' OR ', $whereParts),
+        'types' => $types,
+        'bind_values' => $bindValues,
+    ];
+}
+
 function obtenerRateLimitLoginMedico(string $email): array {
     $emailKey = mb_strtolower(trim($email), 'UTF-8');
     if (!isset($_SESSION['login_medico_rate_limit']) || !is_array($_SESSION['login_medico_rate_limit'])) {
@@ -111,12 +134,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     exit;
 }
 
-$email = $data['email'] ?? '';
+$email = trim((string)($data['email'] ?? ($data['usuario'] ?? '')));
 $password = $data['password'] ?? '';
 
 if (!$email || !$password) {
     http_response_code(400);
-    echo json_encode(['error' => 'Email y contraseña requeridos']);
+    echo json_encode(['error' => 'Usuario o email y contraseña requeridos']);
     exit;
 }
 
@@ -133,8 +156,15 @@ if ($loginLimit['blocked_until'] > time()) {
 }
 
 $selectMedico = resolver_select_medico_login($conn);
-$stmt = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE email = ? LIMIT 1");
-$stmt->bind_param('s', $email);
+$whereLogin = resolver_where_medico_login($conn);
+$stmt = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE {$whereLogin['sql']} LIMIT 1");
+
+$bindParams = [];
+foreach ($whereLogin['bind_values'] as $token) {
+    $bindParams[] = $token === 'identifier' ? $email : '';
+}
+
+$stmt->bind_param($whereLogin['types'], ...$bindParams);
 $stmt->execute();
 $result = $stmt->get_result();
 
@@ -142,12 +172,13 @@ if ($row = $result->fetch_assoc()) {
     if (password_verify($password, $row['password'])) {
     limpiarRateLimitLoginMedico($email);
     session_regenerate_id(true);
-    // Guardar el id y datos del médico en la sesión para compatibilidad
+    // Mantener sesion de medico separada para evitar cruces con usuarios internos.
+    unset($_SESSION['usuario']);
     $_SESSION['medico_id'] = $row['id'];
     $row['rol'] = 'medico';
     $row['permisos'] = [];
     unset($row['password']); // No enviar la contraseña al frontend
-    $_SESSION['usuario'] = $row;
+    $_SESSION['medico'] = $row;
     echo json_encode(['success' => true, 'medico' => $row]);
     } else {
         $limitState = registrarFalloLoginMedico($email);

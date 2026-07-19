@@ -24,6 +24,7 @@ export default function CotizarEcografiaPage() {
     const [pendingEcoItems, setPendingEcoItems] = useState([]); // items pendientes para mapear contra tarifas
     const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
     const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+    const [isSaving, setIsSaving] = useState(false);
     const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
     const pacienteTemporal = location.state?.pacienteTemporal || null;
     const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
@@ -616,6 +617,7 @@ export default function CotizarEcografiaPage() {
   };
 
   const cotizar = async ({ irACobro = false } = {}) => {
+    if (isSaving) return;
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos una ecografía.");
       return;
@@ -676,6 +678,7 @@ export default function CotizarEcografiaPage() {
         };
 
     try {
+      setIsSaving(true);
       let data;
       const fechaRef = getLimaDate();
       const payloadConFecha = { ...payload, fecha_ref: fechaRef };
@@ -754,6 +757,8 @@ export default function CotizarEcografiaPage() {
       });
     } catch (error) {
       Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -942,15 +947,16 @@ export default function CotizarEcografiaPage() {
               </div>
               <button
                 onClick={agregarAlCarrito}
-                className="mt-3 px-6 py-2 rounded-lg font-bold bg-violet-600 text-white hover:bg-violet-700"
+                disabled={isSaving}
+                className="mt-3 px-6 py-2 rounded-lg font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
               >
                 Agregar al carrito
               </button>
               {new URLSearchParams(location.search).get('cobro_id') ? (
                 <button
                   onClick={actualizarCobro}
-                  disabled={cajaEstado === 'cerrada'}
-                  className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                  disabled={cajaEstado === 'cerrada' || isSaving}
+                  className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
                 >
                   <span>🔄</span>Actualizar cobro
                 </button>
@@ -958,17 +964,17 @@ export default function CotizarEcografiaPage() {
                 <>
                   <button
                     onClick={() => cotizar()}
-                    disabled={cajaEstado === 'cerrada'}
-                    className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                    disabled={cajaEstado === 'cerrada' || isSaving}
+                    className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                   >
-                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}
+                    {isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización')}
                   </button>
                   <button
                     onClick={() => cotizar({ irACobro: true })}
-                    disabled={cajaEstado === 'cerrada'}
-                    className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                    disabled={cajaEstado === 'cerrada' || isSaving}
+                    className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
                   >
-                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}
+                    {isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar')}
                   </button>
                 </>
               )}

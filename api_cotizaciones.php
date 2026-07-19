@@ -2697,6 +2697,96 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
     return $out;
 }
 
+function firma_detalle_cotizacion($detalle) {
+    $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+    $servicioId = (int)($detalle['servicio_id'] ?? 0);
+    $descripcion = trim((string)($detalle['descripcion'] ?? ''));
+    $cantidad = (float)($detalle['cantidad'] ?? 0);
+    $precioUnitario = round((float)($detalle['precio_unitario'] ?? 0), 2);
+    $subtotal = round((float)($detalle['subtotal'] ?? 0), 2);
+    $medicoId = (int)($detalle['medico_id'] ?? 0);
+    $consultaId = (int)($detalle['consulta_id'] ?? 0);
+    $fechaProgramada = trim((string)($detalle['fecha_programada'] ?? $detalle['fecha'] ?? ''));
+    $horaProgramada = trim((string)($detalle['hora_programada'] ?? $detalle['hora'] ?? ''));
+    $derivado = !empty($detalle['derivado']) ? 1 : 0;
+    $tipoDerivacion = strtolower(trim((string)($detalle['tipo_derivacion'] ?? '')));
+    $valorDerivacion = round((float)($detalle['valor_derivacion'] ?? 0), 2);
+    $laboratorioReferencia = round((float)($detalle['laboratorio_referencia'] ?? 0), 2);
+
+    return [
+        $servicioTipo,
+        $servicioId,
+        $descripcion,
+        $cantidad,
+        $precioUnitario,
+        $subtotal,
+        $medicoId,
+        $consultaId,
+        $fechaProgramada,
+        $horaProgramada,
+        $derivado,
+        $tipoDerivacion,
+        $valorDerivacion,
+        $laboratorioReferencia,
+    ];
+}
+
+function firma_cotizacion_detalles($detalles) {
+    $items = [];
+    foreach ((array)$detalles as $detalle) {
+        $items[] = firma_detalle_cotizacion($detalle);
+    }
+
+    usort($items, function ($a, $b) {
+        return strcmp(json_encode($a, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), json_encode($b, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    });
+
+    return sha1(json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function buscar_cotizacion_reciente_duplicada($conn, $pacienteId, $usuarioId, $total, $firmaDetalles, $ventanaMinutos = 2) {
+    $pacienteId = (int)$pacienteId;
+    $usuarioId = (int)$usuarioId;
+    $total = round((float)$total, 2);
+    $ventanaMinutos = max(1, (int)$ventanaMinutos);
+
+    if ($pacienteId <= 0 || $usuarioId <= 0 || $firmaDetalles === '') {
+        return null;
+    }
+
+    $sql = "SELECT id, fecha, updated_at, total, estado
+            FROM cotizaciones
+            WHERE paciente_id = ?
+              AND usuario_id = ?
+              AND ABS(total - ?) < 0.01
+              AND LOWER(TRIM(estado)) IN ('pendiente', 'parcial', 'pagado', 'informativo')
+              AND COALESCE(fecha, updated_at) >= (NOW() - INTERVAL ? MINUTE)
+            ORDER BY id DESC
+            LIMIT 12";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param('iidi', $pacienteId, $usuarioId, $total, $ventanaMinutos);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $cotizacionId = (int)($row['id'] ?? 0);
+        if ($cotizacionId <= 0) {
+            continue;
+        }
+        $detallesExistentes = cargar_detalles_cotizacion($conn, $cotizacionId);
+        if (empty($detallesExistentes)) {
+            continue;
+        }
+        if (firma_cotizacion_detalles($detallesExistentes) === $firmaDetalles) {
+            return $row;
+        }
+    }
+
+    return null;
+}
+
 function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $cotizacionId, int $usuarioId = 0) {
     if ($cotizacionId <= 0) {
         return;
@@ -2807,6 +2897,23 @@ function registrar_cotizacion($conn, $data) {
     }
     $responsableFarmaciaId = $tieneFarmacia ? $usuarioId : null;
     $hasResponsableFarmacia = column_exists($conn, 'cotizaciones', 'responsable_farmacia_id');
+    $firmaDetalles = firma_cotizacion_detalles($detalles);
+
+    $cotizacionDuplicada = buscar_cotizacion_reciente_duplicada($conn, $pacienteId, $usuarioId, $total, $firmaDetalles, 2);
+    if ($cotizacionDuplicada) {
+        $cotizacionIdExistente = (int)($cotizacionDuplicada['id'] ?? 0);
+        if ($cotizacionIdExistente > 0) {
+            $cotizacionExistente = obtener_cotizacion($conn, $cotizacionIdExistente);
+            respond([
+                'success' => true,
+                'cotizacion_id' => $cotizacionIdExistente,
+                'numero_comprobante' => $cotizacionExistente['numero_comprobante'] ?? sprintf("Q%06d", $cotizacionIdExistente),
+                'total' => (float)($cotizacionExistente['total'] ?? $total),
+                'duplicate' => true,
+                'message' => 'Se reutilizó una cotización reciente idéntica para evitar duplicados',
+            ]);
+        }
+    }
 
     $conn->begin_transaction();
     try {

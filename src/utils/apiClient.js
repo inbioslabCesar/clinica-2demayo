@@ -14,6 +14,10 @@ function resolveUrl(path) {
   return `${base}/${rel}`;
 }
 
+export function resolveAppUrl(path) {
+  return resolveUrl(path);
+}
+
 export function authFetch(path, init = {}) {
   const method = String(init.method || "GET").toUpperCase();
   const isRead = method === "GET" || method === "HEAD";
