@@ -151,7 +151,9 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
 
   const puedeVer = (ord) => {
     const estado = String(ord?.estado || '').toLowerCase();
+    const tieneArchivos = Array.isArray(ord?.archivos) && ord.archivos.length > 0;
     if (estado === 'cancelado') return false;
+    if (!tieneArchivos) return false;
     return (
       ord.estado === "completado" ||
       parseInt(ord.carga_anticipada) === 1 ||
@@ -175,7 +177,13 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
       {!loadingOrdenes && ordenes.length === 0 && (
         <p className="text-sm text-gray-500">No hay solicitudes de {label} para esta consulta.</p>
       )}
-      {ordenes.map((ord) => (
+      {ordenes.map((ord) => {
+        const medicoResponsable = [ord?.medico_responsable_nombre, ord?.medico_responsable_apellido]
+          .map((v) => String(v || '').trim())
+          .filter(Boolean)
+          .join(' ');
+
+        return (
         <div key={ord.id} className="mb-3 border border-gray-200 rounded-xl p-3 bg-white shadow-sm">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -225,6 +233,9 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
           {ord.indicaciones && (
             <p className="text-xs text-gray-600 mt-1.5 pl-7">{ord.indicaciones}</p>
           )}
+          <p className="text-[11px] text-indigo-700 mt-1 pl-7 font-medium">
+            Médico responsable: {medicoResponsable || 'No asignado'}
+          </p>
           <p className="text-[10px] text-gray-400 mt-1 pl-7">
             Solicitado: {new Date(ord.fecha).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" })}
             {ord.archivos?.length > 0 && ` · ${ord.archivos.length} archivo(s) adjunto(s)`}
@@ -249,7 +260,8 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
             />
           </div>
         </div>
-      ))}
+      );
+      })}
 
       {ordenSubir && (
         <ModalSubidaRapidaImagenHC
