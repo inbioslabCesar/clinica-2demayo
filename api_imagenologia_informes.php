@@ -11,6 +11,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
+require_once __DIR__ . '/imagenologia_encoding.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -166,6 +167,16 @@ function sanitizar_contenido_informe(array $contenidoJson, $plantillaJson): arra
     return $contenidoJson;
 }
 
+function normalizar_informe_imagenologia_row(array $row): array {
+    $row['titulo'] = img_fix_mojibake_string((string)($row['titulo'] ?? ''));
+    $row['contenido_json'] = img_fix_mojibake_recursive($row['contenido_json'] ?? []);
+    $row['plantilla_json'] = img_fix_mojibake_recursive($row['plantilla_json'] ?? null);
+    $row['medico_nombre'] = img_fix_mojibake_string((string)($row['medico_nombre'] ?? ''));
+    $row['medico_apellido'] = img_fix_mojibake_string((string)($row['medico_apellido'] ?? ''));
+    $row['medico_especialidad'] = img_fix_mojibake_string((string)($row['medico_especialidad'] ?? ''));
+    return $row;
+}
+
 function resolver_medico_responsable_informe(mysqli $conn, array $orden): int {
     $medicoId = (int)($orden['medico_id'] ?? 0);
     $consultaId = (int)($orden['consulta_id'] ?? 0);
@@ -289,6 +300,7 @@ if ($method === 'GET') {
         $informe['contenido_json'] = $informe['contenido_json'] ? json_decode($informe['contenido_json'], true) : [];
         $informe['plantilla_json'] = $informe['plantilla_json'] ? json_decode($informe['plantilla_json'], true) : null;
         $informe['contenido_json'] = sanitizar_contenido_informe((array)$informe['contenido_json'], $informe['plantilla_json']);
+        $informe = normalizar_informe_imagenologia_row($informe);
         
         echo json_encode(['success' => true, 'informe' => $informe]);
     } else {
@@ -308,6 +320,9 @@ if ($method === 'POST') {
     $contenidoJson = isset($input['contenido_json']) ? (is_array($input['contenido_json']) ? $input['contenido_json'] : json_decode($input['contenido_json'], true)) : [];
     $titulo = trim((string)($input['titulo'] ?? ''));
     $plantillaJson = isset($input['plantilla_json']) ? (is_array($input['plantilla_json']) ? $input['plantilla_json'] : json_decode($input['plantilla_json'], true)) : null;
+    $titulo = img_fix_mojibake_string($titulo);
+    $contenidoJson = img_fix_mojibake_recursive($contenidoJson);
+    $plantillaJson = img_fix_mojibake_recursive($plantillaJson);
     $contenidoJson = sanitizar_contenido_informe((array)$contenidoJson, $plantillaJson);
     
     if ($ordenImagenId <= 0) {

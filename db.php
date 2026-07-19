@@ -3,7 +3,7 @@
 require_once __DIR__ . '/config.php';
 try {
     $dbPort = defined('DB_PORT') ? (int) DB_PORT : (int) (getenv('DB_PORT') ?: 3306);
-    $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME;
+    $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4";
     if ($dbPort > 0) {
         $dsn .= ";port=" . $dbPort;
     }
@@ -14,7 +14,7 @@ try {
         DB_PASS,
         [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8"
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4"
         ]
     );
     $pdo->exec("SET time_zone = '-05:00'");

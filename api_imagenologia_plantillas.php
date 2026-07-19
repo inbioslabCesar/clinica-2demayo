@@ -11,6 +11,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
+require_once __DIR__ . '/imagenologia_encoding.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -150,9 +151,16 @@ function img_normalize_secciones(array $sections): array {
 }
 
 function img_decode_row(array $row): array {
+    $row['nombre'] = img_fix_mojibake_string((string)($row['nombre'] ?? ''));
+    $row['descripcion'] = img_fix_mojibake_string((string)($row['descripcion'] ?? ''));
+    $row['tipo_examen'] = img_fix_mojibake_string((string)($row['tipo_examen'] ?? ''));
+    $row['clinic_key'] = img_fix_mojibake_string((string)($row['clinic_key'] ?? ''));
+
     $row['estructura_json'] = $row['estructura_json']
         ? json_decode((string)$row['estructura_json'], true)
         : null;
+
+    $row['estructura_json'] = img_fix_mojibake_recursive($row['estructura_json']);
 
     if (isset($row['estructura_json']['sections']) && is_array($row['estructura_json']['sections'])) {
         $tipoExamen = (string)($row['tipo_examen'] ?? '');
@@ -166,7 +174,10 @@ function img_decode_row(array $row): array {
                 if ($valorBase === '') {
                     $valorBase = img_default_valor_base((array)$campo, $tipoExamen, $sectionId);
                 }
+                $valorBase = img_fix_mojibake_string($valorBase);
                 $row['estructura_json']['sections'][$sIdx]['campos'][$cIdx]['valor_base'] = $valorBase;
+                $row['estructura_json']['sections'][$sIdx]['campos'][$cIdx]['label'] = img_fix_mojibake_string((string)($campo['label'] ?? ''));
+                $row['estructura_json']['sections'][$sIdx]['campos'][$cIdx]['placeholder'] = img_fix_mojibake_string((string)($campo['placeholder'] ?? ''));
                 $row['estructura_json']['sections'][$sIdx]['campos'][$cIdx]['usar_valor_base_si_vacio'] =
                     array_key_exists('usar_valor_base_si_vacio', (array)$campo)
                         ? (bool)$campo['usar_valor_base_si_vacio']
@@ -262,6 +273,10 @@ if ($method === 'POST') {
     $clinicKey   = trim((string)($input['clinic_key'] ?? ''));
     $esActiva    = isset($input['es_activa']) ? (int)(bool)$input['es_activa'] : 1;
 
+    $nombre = img_fix_mojibake_string($nombre);
+    $descripcion = img_fix_mojibake_string($descripcion);
+    $clinicKey = img_fix_mojibake_string($clinicKey);
+
     if ($nombre === '') {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'El nombre es requerido']);
@@ -281,6 +296,7 @@ if ($method === 'POST') {
         $sectionsRaw = (array)$input['sections'];
     }
 
+    $sectionsRaw = img_fix_mojibake_recursive($sectionsRaw);
     $sections = img_normalize_secciones($sectionsRaw);
     if (empty($sections)) {
         http_response_code(400);
