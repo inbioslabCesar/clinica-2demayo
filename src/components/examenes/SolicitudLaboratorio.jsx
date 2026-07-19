@@ -43,12 +43,55 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   const [msg, setMsg] = useState("");
   const [cargaAnticipada, setCargaAnticipada] = useState(false);
   const [cotizResult, setCotizResult] = useState(null); // {numero_comprobante, total}
+  const [cargandoPreseleccion, setCargandoPreseleccion] = useState(false);
   // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
   useEffect(() => {
     authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
       .then(data => setExamenesDisponibles(data.examenes || []));
   }, []);
+
+  useEffect(() => {
+    let activo = true;
+
+    async function hidratarDesdeOrdenPendiente() {
+      const cid = Number.parseInt(consultaId, 10);
+      if (!Number.isFinite(cid) || cid <= 0) return;
+
+      setCargandoPreseleccion(true);
+      try {
+        const res = await authFetch(`api_ordenes_laboratorio.php?consulta_id=${cid}`);
+        const data = await res.json();
+        const ordenes = Array.isArray(data?.ordenes) ? data.ordenes : [];
+
+        // Unir exámenes de órdenes pendientes para reflejar el estado precargado real.
+        const examIds = Array.from(new Set(
+          ordenes
+            .filter((ord) => String(ord?.estado || 'pendiente').toLowerCase() === 'pendiente')
+            .flatMap((ord) => Array.isArray(ord?.examenes) ? ord.examenes : [])
+            .map((it) => {
+              if (typeof it === 'object' && it !== null) return it.id;
+              return it;
+            })
+            .map((id) => Number.parseInt(id, 10))
+            .filter((id) => Number.isFinite(id) && id > 0)
+        ));
+
+        if (activo && examIds.length > 0) {
+          setExamenes((prev) => (Array.isArray(prev) && prev.length > 0 ? prev : examIds));
+        }
+      } catch {
+        // Silencioso: si falla hidratación, el flujo manual sigue funcionando igual.
+      } finally {
+        if (activo) setCargandoPreseleccion(false);
+      }
+    }
+
+    hidratarDesdeOrdenPendiente();
+    return () => {
+      activo = false;
+    };
+  }, [consultaId]);
 
   // Declarar seleccionados después de los estados
   const selectedIds = new Set((examenes || []).map((id) => String(id)));
@@ -120,6 +163,9 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
             </svg>
             <label className="font-semibold text-emerald-800">Exámenes Disponibles:</label>
           </div>
+          {cargandoPreseleccion && (
+            <p className="text-xs text-emerald-700 mb-2">Cargando exámenes ya solicitados...</p>
+          )}
           <ExamenesSelector selected={examenes} setSelected={setExamenes} />
         </div>
 
