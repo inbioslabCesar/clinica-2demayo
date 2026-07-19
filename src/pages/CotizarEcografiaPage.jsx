@@ -586,6 +586,8 @@ export default function CotizarEcografiaPage() {
         description: d.descripcion || 'Ecografía',
         quantity: Number(d.cantidad || 1),
         unitPrice: Number(d.precio_unitario || 0),
+        medicoId: Number(d.medico_id || 0) || null,
+        medicoNombre: String(d.medico_nombre || '').trim(),
         source: 'ecografia',
       })),
     });

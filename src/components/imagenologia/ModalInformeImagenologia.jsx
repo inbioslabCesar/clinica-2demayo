@@ -147,6 +147,27 @@ function pickTipoPlantilla({ tipoExamenProp, orden, informe }) {
   return normalizeTipoPlantilla(tipoExamenProp);
 }
 
+function swalFrontConfig(baseConfig) {
+  return {
+    ...baseConfig,
+    target: document.body,
+    backdrop: true,
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      if (popup) {
+        popup.style.zIndex = '100000';
+      }
+      const container = Swal.getContainer();
+      if (container) {
+        container.style.zIndex = '100000';
+      }
+      if (typeof baseConfig?.didOpen === 'function') {
+        baseConfig.didOpen();
+      }
+    }
+  };
+}
+
 /**
  * ModalInformeImagenologia
  * Modal para redactar/editar informe clínico de imagenología con plantillas dinámicas
@@ -288,15 +309,27 @@ export default function ModalInformeImagenologia({
 
       const data = await response.json();
       if (data.success) {
-        Swal.fire('Éxito', 'Informe guardado exitosamente', 'success');
+        Swal.fire(swalFrontConfig({
+          title: 'Éxito',
+          text: 'Informe guardado exitosamente',
+          icon: 'success'
+        }));
         setInforme((prev) => ({ ...(prev || {}), id: data.informe_id, estado }));
         if (onSaved) onSaved();
       } else {
-        Swal.fire('Error', data.error || 'No se pudo guardar el informe', 'error');
+        Swal.fire(swalFrontConfig({
+          title: 'Error',
+          text: data.error || 'No se pudo guardar el informe',
+          icon: 'error'
+        }));
       }
     } catch (err) {
       console.error('Error al guardar:', err);
-      Swal.fire('Error', 'Error de conexión', 'error');
+      Swal.fire(swalFrontConfig({
+        title: 'Error',
+        text: 'Error de conexión',
+        icon: 'error'
+      }));
     } finally {
       setSaving(false);
     }
@@ -315,7 +348,7 @@ export default function ModalInformeImagenologia({
           titulo: titulo || '',
           contenido_json: contenido,
           plantilla_json: plantillaSeleccionada,
-          estado: 'completado'
+          estado
         })
       });
 
@@ -338,24 +371,46 @@ export default function ModalInformeImagenologia({
 
       const pdfData = await pdfResponse.json();
       if (pdfData.success) {
-        setEstado('completado');
         setInforme((prev) => ({ ...(prev || {}), id: informeId, estado: 'completado', pdf_path: pdfData.pdf_path || prev?.pdf_path || null }));
-        Swal.fire('Éxito', 'PDF generado correctamente', 'success');
+
+        const completarResponse = await authFetch(`api_imagenologia_informes.php?id=${informeId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accion: 'completar' })
+        });
+        const completarData = await completarResponse.json();
+        if (completarData?.success) {
+          setEstado('completado');
+        }
+
+        Swal.fire(swalFrontConfig({
+          title: 'Éxito',
+          text: 'PDF generado correctamente',
+          icon: 'success'
+        }));
         
         // Descargar archivo generado
         if (pdfData.pdf_url) {
           const link = document.createElement('a');
           link.href = resolveAppUrl(pdfData.pdf_url);
-          link.download = `informe_imagenologia_${informeId}.pdf`;
+          link.download = pdfData.pdf_filename || `informe_imagenologia_${informeId}.pdf`;
           link.click();
         }
         if (onSaved) onSaved();
       } else {
-        Swal.fire('Error', pdfData.error || 'No se pudo generar el PDF', 'error');
+        Swal.fire(swalFrontConfig({
+          title: 'Error',
+          text: pdfData.error || 'No se pudo generar el PDF',
+          icon: 'error'
+        }));
       }
     } catch (err) {
       console.error('Error al generar PDF:', err);
-      Swal.fire('Error', err.message || 'Error de conexión', 'error');
+      Swal.fire(swalFrontConfig({
+        title: 'Error',
+        text: err.message || 'Error de conexión',
+        icon: 'error'
+      }));
     } finally {
       setGenerandoPdf(false);
     }
@@ -365,7 +420,7 @@ export default function ModalInformeImagenologia({
 
   const modalNode = (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-[99999] flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full h-[90vh] sm:h-[92vh] flex flex-col overflow-hidden">
         {/* Encabezado */}
         <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 flex justify-between items-center">
           <div>
@@ -426,14 +481,14 @@ export default function ModalInformeImagenologia({
 
                       const hayCambios = hasAnyContenidoValue(contenido);
                       if (hayCambios) {
-                        const confirm = await Swal.fire({
+                        const confirm = await Swal.fire(swalFrontConfig({
                           title: 'Cambiar plantilla',
                           text: 'Se mantendra lo ya escrito y se autocompletaran los campos vacios con el nuevo texto base.',
                           icon: 'question',
                           showCancelButton: true,
                           confirmButtonText: 'Aplicar',
-                          cancelButtonText: 'Cancelar'
-                        });
+                          cancelButtonText: 'Cancelar',
+                        }));
                         if (!confirm.isConfirmed) return;
                       }
 

@@ -253,7 +253,7 @@ if (!function_exists('op_crear_cotizacion_procedimientos')) {
 }
 
 if (!function_exists('op_listar_ordenes_por_consulta')) {
-    function op_listar_ordenes_por_consulta(mysqli $conn, int $consultaId)
+    function op_listar_ordenes_por_consulta(mysqli $conn, int $consultaId, bool $filtrarPorMedico = false, int $medicoSesionId = 0)
     {
         $stmt = $conn->prepare('SELECT * FROM ordenes_procedimientos WHERE consulta_id = ? ORDER BY fecha ASC, id ASC');
         if (!$stmt) {
@@ -272,7 +272,15 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
         }
         $catalog = op_fetch_tarifas_procedimientos($conn, $allIds);
 
+        $filtradas = [];
+
         foreach ($rows as &$r) {
+            if ($filtrarPorMedico) {
+                $usuarioOrdenId = (int)($r['usuario_id'] ?? 0);
+                if ($usuarioOrdenId > 0 && $usuarioOrdenId !== $medicoSesionId) {
+                    continue;
+                }
+            }
             $ids = op_normalize_procedimientos_ids(json_decode((string)($r['procedimientos_json'] ?? '[]'), true) ?: []);
             $items = [];
             foreach ($ids as $id) {
@@ -281,18 +289,24 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
                 }
             }
             $r['procedimientos'] = $items;
+            $filtradas[] = $r;
         }
         unset($r);
 
-        echo json_encode(['success' => true, 'ordenes' => $rows]);
+        echo json_encode(['success' => true, 'ordenes' => $filtrarPorMedico ? $filtradas : $rows]);
     }
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $sessionUsuario = $_SESSION['usuario'] ?? null;
+$sessionMedico = $_SESSION['medico'] ?? null;
 $rolSesion = strtolower(trim((string)($sessionUsuario['rol'] ?? '')));
 $medicoSesionId = (int)($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
-$esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
+$esSesionMedico = ($medicoSesionId > 0) && (
+    $rolSesion === 'medico'
+    || isset($_SESSION['medico_id'])
+    || (is_array($sessionMedico) && (int)($sessionMedico['id'] ?? 0) === $medicoSesionId)
+);
 $usuarioIdSesion = (int)($sessionUsuario['id'] ?? 0);
 
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
@@ -318,7 +332,7 @@ if ($method === 'GET') {
         }
     }
 
-    op_listar_ordenes_por_consulta($conn, $consultaId);
+    op_listar_ordenes_por_consulta($conn, $consultaId, $esSesionMedico, $medicoSesionId);
     exit;
 }
 

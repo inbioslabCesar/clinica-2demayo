@@ -59,9 +59,14 @@ function consultas_actor_label($usuarioSesion) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
+$sessionMedico = $_SESSION['medico'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
 $medicoSesionId = intval($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
-$esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
+$esSesionMedico = ($medicoSesionId > 0) && (
+    $rolSesion === 'medico'
+    || isset($_SESSION['medico_id'])
+    || (is_array($sessionMedico) && intval($sessionMedico['id'] ?? 0) === $medicoSesionId)
+);
 
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
     http_response_code(401);

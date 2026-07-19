@@ -511,9 +511,14 @@ if (!function_exists('ol_medico_tiene_acceso_consulta')) {
 $method = $_SERVER['REQUEST_METHOD'];
 $requestStartedAt = microtime(true);
 $sessionUsuario = $_SESSION['usuario'] ?? null;
+$sessionMedico = $_SESSION['medico'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
 $medicoSesionId = intval($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
-$esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
+$esSesionMedico = ($medicoSesionId > 0) && (
+    strtolower(trim((string)$rolSesion)) === 'medico'
+    || isset($_SESSION['medico_id'])
+    || (is_array($sessionMedico) && intval($sessionMedico['id'] ?? 0) === $medicoSesionId)
+);
 
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
     http_response_code(401);
@@ -1066,6 +1071,19 @@ switch ($method) {
             $params[] = $consulta_id;
             $types .= 'i';
         }
+        if ($esSesionMedico && $consulta_id) {
+            $sql .= ' AND COALESCE('
+                . ' (SELECT MAX(cd_hc.medico_id) FROM cotizaciones_detalle cd_hc'
+                . '   WHERE cd_hc.cotizacion_id = o.cotizacion_id'
+                . '     AND cd_hc.consulta_id = o.consulta_id'
+                . '     AND LOWER(TRIM(cd_hc.servicio_tipo)) = "laboratorio"'
+                . '     AND cd_hc.medico_id IS NOT NULL'
+                . '     AND cd_hc.medico_id > 0),'
+                . ' c.medico_id, c_ref.medico_id'
+                . ' ) = ?';
+            $params[] = $medicoSesionId;
+            $types .= 'i';
+        }
         if ($filtro_fecha_desde !== '') {
             $sql .= ' AND DATE(o.fecha) >= ?';
             $params[] = $filtro_fecha_desde;
@@ -1135,6 +1153,17 @@ switch ($method) {
         }
         if ($consulta_id) {
             $sqlCount .= ' AND o.consulta_id = ?';
+        }
+        if ($esSesionMedico && $consulta_id) {
+            $sqlCount .= ' AND COALESCE('
+                . ' (SELECT MAX(cd_hc.medico_id) FROM cotizaciones_detalle cd_hc'
+                . '   WHERE cd_hc.cotizacion_id = o.cotizacion_id'
+                . '     AND cd_hc.consulta_id = o.consulta_id'
+                . '     AND LOWER(TRIM(cd_hc.servicio_tipo)) = "laboratorio"'
+                . '     AND cd_hc.medico_id IS NOT NULL'
+                . '     AND cd_hc.medico_id > 0),'
+                . ' c.medico_id, c_ref.medico_id'
+                . ' ) = ?';
         }
         if ($filtro_fecha_desde !== '') {
             $sqlCount .= ' AND DATE(o.fecha) >= ?';

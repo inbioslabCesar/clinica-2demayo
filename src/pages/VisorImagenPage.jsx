@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { authFetch } from "../utils/apiClient";
+import { authFetch, resolveAppUrl } from "../utils/apiClient";
 import { normalizeOrdenArchivos } from "../utils/ordenesImagenUrl";
 import Spinner from "../components/comunes/Spinner";
 import DicomViewer from "../components/visor/DicomViewer";
@@ -161,6 +161,7 @@ export default function VisorImagenPage() {
   const [error, setError]       = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [fullscreen, setFullscreen]   = useState(false);
+  const [informe, setInforme] = useState(null);
 
   // Computed before hooks — safe when orden is null
   // DICOM y imágenes normales son ambas "visualizables" en el área principal
@@ -171,10 +172,19 @@ export default function VisorImagenPage() {
     setLoading(true);
     authFetch(`api_ordenes_imagen.php?orden_id=${ordenId}`)
       .then((r) => r.json())
-      .then((d) => {
+      .then(async (d) => {
         if (d.success) {
-          setOrden(normalizeOrdenArchivos(d.orden));
+          const ordenNormalizada = normalizeOrdenArchivos(d.orden);
+          setOrden(ordenNormalizada);
           setSelectedIdx(0);
+
+          try {
+            const informeResponse = await authFetch(`api_imagenologia_informes.php?orden_imagen_id=${ordenId}`);
+            const informeData = await informeResponse.json();
+            setInforme(informeData.success ? (informeData.informe || null) : null);
+          } catch {
+            setInforme(null);
+          }
         } else {
           setError(d.error || "No se pudo cargar la orden");
         }
@@ -269,6 +279,16 @@ export default function VisorImagenPage() {
           <div className="bg-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-300 max-w-xs truncate" title={orden.indicaciones}>
             📋 {orden.indicaciones}
           </div>
+        )}
+
+        {informe && (
+          <button
+            onClick={() => window.open(resolveAppUrl(`descargar_informe_imagenologia.php?informe_id=${informe.id}`), '_blank')}
+            title="Descargar informe"
+            className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-1.5 text-xs font-semibold transition flex items-center gap-1.5"
+          >
+            <FaFilePdf /> Informe PDF
+          </button>
         )}
 
         <button

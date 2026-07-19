@@ -691,9 +691,14 @@ if (!function_exists('rl_medico_tiene_acceso_consulta')) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
+$sessionMedico = $_SESSION['medico'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
 $medicoSesionId = intval($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
-$esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
+$esSesionMedico = ($medicoSesionId > 0) && (
+    strtolower(trim((string)$rolSesion)) === 'medico'
+    || isset($_SESSION['medico_id'])
+    || (is_array($sessionMedico) && intval($sessionMedico['id'] ?? 0) === $medicoSesionId)
+);
 
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
     http_response_code(401);
@@ -771,13 +776,27 @@ switch ($method) {
         $resultados = [];
 
         // Regla estricta HC: solo resultados vinculados explícitamente a la consulta actual.
-        $stmt = $conn->prepare(
-            'SELECT r.* FROM resultados_laboratorio r'
+        $sqlResultados = 'SELECT r.* FROM resultados_laboratorio r'
             . ' INNER JOIN ordenes_laboratorio o ON o.id = r.orden_id'
-            . ' WHERE o.consulta_id = ?'
-            . ' ORDER BY r.fecha ASC, r.id ASC'
-        );
-        $stmt->bind_param('i', $consulta_id);
+            . ' WHERE o.consulta_id = ?';
+        if ($esSesionMedico) {
+            $sqlResultados .= ' AND COALESCE('
+                . ' (SELECT MAX(cd_hc.medico_id) FROM cotizaciones_detalle cd_hc'
+                . '   WHERE cd_hc.cotizacion_id = o.cotizacion_id'
+                . '     AND cd_hc.consulta_id = o.consulta_id'
+                . '     AND LOWER(TRIM(cd_hc.servicio_tipo)) = "laboratorio"'
+                . '     AND cd_hc.medico_id IS NOT NULL'
+                . '     AND cd_hc.medico_id > 0),'
+                . ' (SELECT c.medico_id FROM consultas c WHERE c.id = o.consulta_id LIMIT 1)'
+                . ' ) = ?';
+        }
+        $sqlResultados .= ' ORDER BY r.fecha ASC, r.id ASC';
+        $stmt = $conn->prepare($sqlResultados);
+        if ($esSesionMedico) {
+            $stmt->bind_param('ii', $consulta_id, $medicoSesionId);
+        } else {
+            $stmt->bind_param('i', $consulta_id);
+        }
         $stmt->execute();
         $res = $stmt->get_result();
         while ($row = $res->fetch_assoc()) {

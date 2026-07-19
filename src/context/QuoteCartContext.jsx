@@ -18,6 +18,10 @@ function safeParse(raw) {
 
 function buildItemKey(item) {
   const serviceType = String(item.serviceType || "otros").toLowerCase();
+  const medicoKey = [
+    Number(item.medicoId || item.medico_id || 0),
+    String(item.medicoNombre || item.medico_nombre || ""),
+  ].join("::");
   const packageKey = ["paquete", "perfil"].includes(serviceType)
     ? [
         Number(item.packageId || item.serviceId || 0),
@@ -48,6 +52,7 @@ function buildItemKey(item) {
     item.derivado ? (item.tipoDerivacion || "") : "",
     item.derivado ? Number(item.valorDerivacion || 0).toFixed(2) : "0.00",
     item.derivado ? (item.laboratorioReferencia || "") : "",
+    medicoKey,
     packageKey,
     scheduleKey,
     consultaKey,
@@ -141,6 +146,8 @@ export function QuoteCartProvider({ children }) {
           consultaHora: raw.consultaHora || "",
           consultaTipoConsulta: raw.consultaTipoConsulta || "",
           consultaId: raw.consultaId || null,
+          medicoId: raw.medicoId || raw.medico_id || null,
+          medicoNombre: raw.medicoNombre || raw.medico_nombre || "",
           packageId: raw.packageId || null,
           packageCode: raw.packageCode || "",
           packageType: raw.packageType || "",
@@ -153,6 +160,8 @@ export function QuoteCartProvider({ children }) {
           const old = map.get(normalized.key);
           old.quantity = Number(old.quantity || 0) + normalized.quantity;
           old.description = old.description || normalized.description;
+          old.medicoId = old.medicoId || normalized.medicoId || null;
+          old.medicoNombre = old.medicoNombre || normalized.medicoNombre || "";
           old.consultaMedicoId = old.consultaMedicoId || normalized.consultaMedicoId || null;
           old.consultaFecha = old.consultaFecha || normalized.consultaFecha || "";
           old.consultaHora = old.consultaHora || normalized.consultaHora || "";

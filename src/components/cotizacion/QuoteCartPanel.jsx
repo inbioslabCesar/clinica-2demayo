@@ -203,6 +203,11 @@ export default function QuoteCartPanel() {
         hora_programada: String(it.horaProgramada || it.hora_programada || ""),
       };
 
+      const medicoIdItem = Number(it.medicoId || it.medico_id || 0);
+      if (medicoIdItem > 0) {
+        detalle.medico_id = medicoIdItem;
+      }
+
       if (
         aplicarProgramacionGlobal
         && esServicioProgramableParaAgenda(detalle.servicio_tipo)

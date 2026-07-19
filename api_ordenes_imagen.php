@@ -212,6 +212,49 @@ if (!function_exists('usuarioPuedeOperarOrdenImagen')) {
     }
 }
 
+if (!function_exists('ordenImagenConsultaPerteneceAMedicoSesion')) {
+    function ordenImagenConsultaPerteneceAMedicoSesion(mysqli $conn, array $orden, string $rol, int $usuarioId): bool {
+        if ($rol !== 'medico' || $usuarioId <= 0) {
+            return true;
+        }
+
+        $consultaId = (int)($orden['consulta_id'] ?? 0);
+        if ($consultaId <= 0) {
+            return false;
+        }
+
+        $stmt = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param('i', $consultaId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int)($row['medico_id'] ?? 0) === $usuarioId;
+    }
+}
+
+if (!function_exists('usuarioPuedeVerOrdenImagen')) {
+    function usuarioPuedeVerOrdenImagen(string $rol, int $usuarioId): bool {
+        if ($usuarioId <= 0) {
+            return false;
+        }
+
+        if ($rol === 'administrador') {
+            return true;
+        }
+
+        if (in_array($rol, ['recepcionista', 'laboratorista'], true)) {
+            return true;
+        }
+
+        return $rol === 'medico';
+    }
+}
+
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
     global $rol, $usuarioId;
@@ -322,6 +365,12 @@ if ($method === 'GET') {
         if (!$row) { echo json_encode(['success' => false, 'error' => 'Orden no encontrada']); exit; }
         adjuntarArchivos($conn, $row);
 
+        if (!usuarioPuedeVerOrdenImagen((string)$rol, (int)$usuarioId)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'No autorizado para ver esta orden']);
+            exit;
+        }
+
         // Info paciente
         $pac = $conn->query("SELECT id, nombre, dni, historia_clinica FROM pacientes WHERE id = " . (int)$row['paciente_id'])->fetch_assoc();
         $row['paciente'] = $pac;
@@ -344,6 +393,9 @@ if ($method === 'GET') {
         $rows = [];
         while ($r = $res->fetch_assoc()) {
             adjuntarArchivos($conn, $r);
+            if (!usuarioPuedeVerOrdenImagen((string)$rol, (int)$usuarioId)) {
+                continue;
+            }
             $rows[] = $r;
         }
         echo json_encode(['success' => true, 'ordenes' => $rows]);
