@@ -551,6 +551,20 @@ function obtener_medico_desde_tarifa($conn, $tarifaId) {
     ];
 }
 
+function obtener_medico_id_desde_tarifa($conn, $tarifaId) {
+    $tarifaId = (int)$tarifaId;
+    if ($tarifaId <= 0) return 0;
+
+    $stmt = $conn->prepare("SELECT medico_id FROM tarifas WHERE id = ? LIMIT 1");
+    if (!$stmt) return 0;
+    $stmt->bind_param("i", $tarifaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return (int)($row['medico_id'] ?? 0);
+}
+
 function extraer_medico_desde_descripcion_consulta($descripcion) {
     $texto = trim((string)$descripcion);
     if ($texto === '') return '';
@@ -1491,21 +1505,35 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
             if ($detalleId > 0 && ($hasConsultaId || $hasMedicoId || $hasContratoPacienteId || $hasContratoPacienteServicioId || $hasOrigenCobro || $hasMontoListaReferencial)) {
                 $consultaId = isset($detalle['consulta_id']) ? (int)$detalle['consulta_id'] : 0;
                 $medicoId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
+                $servicioTipoNorm = strtolower(trim((string)$servicioTipo));
+                $descNorm = strtolower(trim((string)$descripcion));
+                $esImagenologia = (
+                    in_array($servicioTipoNorm, ['ecografia', 'rayosx', 'rayos_x', 'rayos x', 'rx', 'tomografia'], true)
+                    || ($servicioTipoNorm === 'procedimiento' && preg_match('/ecograf|rayos\s*x|\brx\b|tomograf|\btac\b/u', $descNorm))
+                );
 
                 if ($consultaId <= 0) {
                     $consultaId = (int)($contextoBaseCotizacion['consulta_id'] ?? 0);
                 }
 
                 if ($medicoId <= 0) {
+                    if ($esImagenologia && !empty($servicioId)) {
+                        $medicoId = obtener_medico_id_desde_tarifa($conn, (int)$servicioId);
+                    }
+
                     if ($consultaId > 0) {
-                        if (!isset($medicoPorConsultaCache[$consultaId])) {
-                            $medicoPorConsultaCache[$consultaId] = obtener_medico_id_desde_consulta($conn, $consultaId);
+                        if (!$esImagenologia) {
+                            if (!isset($medicoPorConsultaCache[$consultaId])) {
+                                $medicoPorConsultaCache[$consultaId] = obtener_medico_id_desde_consulta($conn, $consultaId);
+                            }
+                            $medicoId = (int)$medicoPorConsultaCache[$consultaId];
                         }
-                        $medicoId = (int)$medicoPorConsultaCache[$consultaId];
                     }
 
                     if ($medicoId <= 0) {
-                        $medicoId = (int)($contextoBaseCotizacion['medico_id'] ?? 0);
+                        if (!$esImagenologia) {
+                            $medicoId = (int)($contextoBaseCotizacion['medico_id'] ?? 0);
+                        }
                     }
                 }
                 $contratoPacienteId = (int)($metaContrato['contrato_paciente_id'] ?? 0);

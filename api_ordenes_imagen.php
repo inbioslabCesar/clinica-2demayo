@@ -198,17 +198,31 @@ if (!function_exists('usuarioPuedeOperarOrdenImagen')) {
         }
 
         $medicoResponsableId = (int)($orden['medico_id'] ?? 0);
-        $solicitadoPorId = (int)($orden['solicitado_por'] ?? 0);
 
         if ($medicoResponsableId > 0 && $medicoResponsableId === $usuarioId) {
             return true;
         }
 
-        if ($solicitadoPorId > 0 && $solicitadoPorId === $usuarioId) {
+        return false;
+    }
+}
+
+if (!function_exists('usuarioPuedeEditarInformeOrdenImagen')) {
+    function usuarioPuedeEditarInformeOrdenImagen(array $orden, string $rol, int $usuarioId): bool {
+        if ($usuarioId <= 0) {
+            return false;
+        }
+
+        if ($rol === 'administrador') {
             return true;
         }
 
-        return false;
+        if ($rol !== 'medico') {
+            return false;
+        }
+
+        $medicoResponsableId = (int)($orden['medico_id'] ?? 0);
+        return $medicoResponsableId > 0 && $medicoResponsableId === $usuarioId;
     }
 }
 
@@ -237,8 +251,28 @@ if (!function_exists('ordenImagenConsultaPerteneceAMedicoSesion')) {
     }
 }
 
+if (!function_exists('consultaPerteneceAMedicoYPacienteSesion')) {
+    function consultaPerteneceAMedicoYPacienteSesion(mysqli $conn, int $consultaId, int $pacienteId, int $usuarioId): bool {
+        if ($consultaId <= 0 || $pacienteId <= 0 || $usuarioId <= 0) {
+            return false;
+        }
+
+        $stmt = $conn->prepare('SELECT id FROM consultas WHERE id = ? AND paciente_id = ? AND medico_id = ? LIMIT 1');
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param('iii', $consultaId, $pacienteId, $usuarioId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (bool)$row;
+    }
+}
+
 if (!function_exists('usuarioPuedeVerOrdenImagen')) {
-    function usuarioPuedeVerOrdenImagen(string $rol, int $usuarioId): bool {
+    function usuarioPuedeVerOrdenImagen(mysqli $conn, array $orden, string $rol, int $usuarioId, int $contextConsultaId = 0, int $contextPacienteId = 0): bool {
         if ($usuarioId <= 0) {
             return false;
         }
@@ -251,7 +285,30 @@ if (!function_exists('usuarioPuedeVerOrdenImagen')) {
             return true;
         }
 
-        return $rol === 'medico';
+        if ($rol !== 'medico') {
+            return false;
+        }
+
+        if (usuarioPuedeOperarOrdenImagen($orden, $rol, $usuarioId)) {
+            return true;
+        }
+
+        if (ordenImagenConsultaPerteneceAMedicoSesion($conn, $orden, $rol, $usuarioId)) {
+            return true;
+        }
+
+        $ordenPacienteId = (int)($orden['paciente_id'] ?? 0);
+        if (
+            $contextConsultaId > 0
+            && $contextPacienteId > 0
+            && $ordenPacienteId > 0
+            && $ordenPacienteId === $contextPacienteId
+            && consultaPerteneceAMedicoYPacienteSesion($conn, $contextConsultaId, $contextPacienteId, $usuarioId)
+        ) {
+            return true;
+        }
+
+        return false;
     }
 }
 
@@ -261,6 +318,19 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
 
     $oid     = (int)$orden['id'];
     $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
+    $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
+    $contextPacienteId = (int)($_GET['context_paciente_id'] ?? 0);
+    $contextQuery = '';
+    if ($contextConsultaId > 0 || $contextPacienteId > 0) {
+        $ctxParts = [];
+        if ($contextConsultaId > 0) {
+            $ctxParts[] = 'context_consulta_id=' . $contextConsultaId;
+        }
+        if ($contextPacienteId > 0) {
+            $ctxParts[] = 'context_paciente_id=' . $contextPacienteId;
+        }
+        $contextQuery = '&' . implode('&', $ctxParts);
+    }
     $orden['archivos'] = [];
     $res = $conn->query("SELECT * FROM ordenes_imagen_archivos WHERE orden_id = $oid ORDER BY fecha ASC");
     while ($a = $res->fetch_assoc()) {
@@ -272,7 +342,7 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
             'mime_type'       => $mt,
             'es_imagen'       => str_starts_with($mt, 'image/'),
             'es_dicom'        => $mt === 'application/dicom',
-            'url'             => $downloadBaseUrl . '?action=download&archivo_id=' . $a['id'],
+            'url'             => $downloadBaseUrl . '?action=download&archivo_id=' . $a['id'] . $contextQuery,
             'fecha'           => $a['fecha'],
         ];
     }
@@ -284,8 +354,9 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
     $orden['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
 
     $puedeOperarOrden = usuarioPuedeOperarOrdenImagen($orden, (string)$rol, (int)$usuarioId);
+    $puedeEditarInforme = usuarioPuedeEditarInformeOrdenImagen($orden, (string)$rol, (int)$usuarioId);
     $orden['can_upload_archivos'] = $puedeOperarOrden;
-    $orden['can_edit_informe'] = $puedeOperarOrden && in_array((string)$rol, ['medico', 'administrador'], true);
+    $orden['can_edit_informe'] = $puedeEditarInforme;
 
     $cotizId = (int)($orden['cotizacion_id'] ?? 0);
     if ($cotizId > 0) {
@@ -335,10 +406,26 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
 // ─── Download ────────────────────────────────────────────────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'download') {
     $archivo_id = (int)($_GET['archivo_id'] ?? 0);
+    $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
+    $contextPacienteId = (int)($_GET['context_paciente_id'] ?? 0);
     if ($archivo_id <= 0) { http_response_code(400); exit; }
 
-    $row = $conn->query("SELECT * FROM ordenes_imagen_archivos WHERE id = $archivo_id")->fetch_assoc();
+    $row = $conn->query("SELECT a.*, o.consulta_id, o.paciente_id, o.medico_id, o.solicitado_por, o.cotizacion_id, o.indicaciones FROM ordenes_imagen_archivos a INNER JOIN ordenes_imagen o ON o.id = a.orden_id WHERE a.id = $archivo_id LIMIT 1")->fetch_assoc();
     if (!$row || !file_exists($row['archivo_path'])) { http_response_code(404); exit; }
+
+    $ordenDescarga = [
+        'consulta_id' => (int)($row['consulta_id'] ?? 0),
+        'paciente_id' => (int)($row['paciente_id'] ?? 0),
+        'medico_id' => (int)($row['medico_id'] ?? 0),
+        'solicitado_por' => (int)($row['solicitado_por'] ?? 0),
+        'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+        'indicaciones' => (string)($row['indicaciones'] ?? ''),
+    ];
+
+    if (!usuarioPuedeVerOrdenImagen($conn, $ordenDescarga, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
+        http_response_code(403);
+        exit;
+    }
 
     $safeName = preg_replace('/[^a-zA-Z0-9._\- ]/', '_', basename($row['nombre_original']));
     $mimeType = !empty($row['mime_type']) ? $row['mime_type'] : 'application/octet-stream';
@@ -358,6 +445,8 @@ if ($method === 'GET') {
     $paciente_id = (int)($_GET['paciente_id'] ?? 0);
     $orden_id    = (int)($_GET['orden_id'] ?? 0);
     $tipo        = trim($_GET['tipo'] ?? '');
+    $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
+    $contextPacienteId = (int)($_GET['context_paciente_id'] ?? 0);
 
     if ($orden_id > 0) {
         // Un solo orden con detalles completos
@@ -365,7 +454,7 @@ if ($method === 'GET') {
         if (!$row) { echo json_encode(['success' => false, 'error' => 'Orden no encontrada']); exit; }
         adjuntarArchivos($conn, $row);
 
-        if (!usuarioPuedeVerOrdenImagen((string)$rol, (int)$usuarioId)) {
+        if (!usuarioPuedeVerOrdenImagen($conn, $row, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
             http_response_code(403);
             echo json_encode(['success' => false, 'error' => 'No autorizado para ver esta orden']);
             exit;
@@ -393,7 +482,7 @@ if ($method === 'GET') {
         $rows = [];
         while ($r = $res->fetch_assoc()) {
             adjuntarArchivos($conn, $r);
-            if (!usuarioPuedeVerOrdenImagen((string)$rol, (int)$usuarioId)) {
+            if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
                 continue;
             }
             $rows[] = $r;
@@ -533,7 +622,7 @@ if ($method === 'POST') {
             $tipo                = trim($input['tipo'] ?? 'rx');
             $indicacionesUsuario = trim($input['indicaciones'] ?? '');
             $cargaAnticipada     = !empty($input['carga_anticipada']) ? 1 : 0;
-            // servicios: array of {tarifa_id, descripcion, precio} sent from SolicitudImagenPage
+            // servicios: array of {tarifa_id, descripcion, precio, medico_id} sent from SolicitudImagenPage
             $servicios = is_array($input['servicios'] ?? null) ? $input['servicios'] : [];
 
             if ($consulta_id <= 0 || $paciente_id <= 0) {
@@ -551,13 +640,15 @@ if ($method === 'POST') {
             // Esto permite asignar un token "Detalle #X" por orden, que hace que:
             //   - adjuntarArchivos() muestre solo la descripción del servicio propio
             //   - la idempotencia con sincronizar_servicios_clinicos_post_pago_cotizacion funcione
-            $cotizData    = ['cotizacion_id' => null, 'numero_comprobante' => null, 'total' => 0];
-            $detalleIdMap = []; // strtolower(descripcion) → cotizaciones_detalle.id
+            $cotizData             = ['cotizacion_id' => null, 'numero_comprobante' => null, 'total' => 0];
+            $detalleIdMapByService = []; // servicio_id (tarifa) → [id, medico_id]
+            $detalleIdMapByDesc    = []; // strtolower(descripcion) → [id, medico_id]
 
             $detallesCotiz = [];
             foreach ($servicios as $srv) {
                 $precio = floatval($srv['precio'] ?? 0);
                 if ($precio <= 0) continue;
+                $medicoServicioId = (int)($srv['medico_id'] ?? 0);
                 $detallesCotiz[] = [
                     'servicio_tipo'   => $detalleServTipo,
                     'servicio_id'     => intval($srv['tarifa_id'] ?? 0),
@@ -565,6 +656,7 @@ if ($method === 'POST') {
                     'cantidad'        => 1,
                     'precio_unitario' => $precio,
                     'subtotal'        => $precio,
+                    'medico_id'       => $medicoServicioId,
                 ];
             }
 
@@ -574,17 +666,25 @@ if ($method === 'POST') {
                 $obsText        = implode(' | ', $obsPartes);
                 // Usar usuario_id = 0 si es médico (su ID viene de tabla medicos, no usuarios)
                 $usuarioIdCotiz = ($rol === 'medico') ? 0 : $usuarioId;
-                $medicoIdCotiz  = ($rol === 'medico') ? $usuarioId : 0;
+                $medicoIdCotiz  = 0;
                 $cotizData      = crearCotizacionImagen($conn, $paciente_id, $consulta_id, $detallesCotiz, $usuarioIdCotiz, $obsText, $medicoIdCotiz);
                 $cotizIdNew     = intval($cotizData['cotizacion_id']);
                 if ($cotizIdNew > 0) {
-                    // Mapear descripcion → detalle.id para los tokens de cada orden
-                    $dRes = $conn->query("SELECT id, descripcion, medico_id FROM cotizaciones_detalle WHERE cotizacion_id = $cotizIdNew ORDER BY id ASC");
+                    // Mapear detalle por servicio_id y descripcion para resolver tokens y medico responsable.
+                    $dRes = $conn->query("SELECT id, servicio_id, descripcion, medico_id FROM cotizaciones_detalle WHERE cotizacion_id = $cotizIdNew ORDER BY id ASC");
                     while ($dRes && ($dRow = $dRes->fetch_assoc())) {
-                        $detalleIdMap[strtolower(trim((string)$dRow['descripcion']))] = [
-                            'id' => (int)$dRow['id'],
+                        $detalleMeta = [
+                            'id' => (int)($dRow['id'] ?? 0),
                             'medico_id' => (int)($dRow['medico_id'] ?? 0),
                         ];
+                        $servicioId = (int)($dRow['servicio_id'] ?? 0);
+                        if ($servicioId > 0 && !isset($detalleIdMapByService[$servicioId])) {
+                            $detalleIdMapByService[$servicioId] = $detalleMeta;
+                        }
+                        $descKey = strtolower(trim((string)($dRow['descripcion'] ?? '')));
+                        if ($descKey !== '' && !isset($detalleIdMapByDesc[$descKey])) {
+                            $detalleIdMapByDesc[$descKey] = $detalleMeta;
+                        }
                     }
                 }
             }
@@ -607,10 +707,20 @@ if ($method === 'POST') {
                 }
             } else {
                 foreach ($servicios as $srv) {
-                    $desc      = trim((string)($srv['descripcion'] ?? 'Servicio'));
-                    $detalleMeta = $detalleIdMap[strtolower($desc)] ?? ['id' => 0, 'medico_id' => 0];
+                    $desc = trim((string)($srv['descripcion'] ?? 'Servicio'));
+                    $tarifaIdSrv = (int)($srv['tarifa_id'] ?? 0);
+                    $descKeySrv = strtolower($desc);
+                    $detalleMeta = ['id' => 0, 'medico_id' => 0];
+                    if ($tarifaIdSrv > 0 && isset($detalleIdMapByService[$tarifaIdSrv])) {
+                        $detalleMeta = $detalleIdMapByService[$tarifaIdSrv];
+                    } elseif ($descKeySrv !== '' && isset($detalleIdMapByDesc[$descKeySrv])) {
+                        $detalleMeta = $detalleIdMapByDesc[$descKeySrv];
+                    }
                     $detalleId = (int)($detalleMeta['id'] ?? 0);
                     $medicoResponsableId = (int)($detalleMeta['medico_id'] ?? 0);
+                    if ($medicoResponsableId <= 0) {
+                        $medicoResponsableId = (int)($srv['medico_id'] ?? 0);
+                    }
 
                     // Formato estricto: compatible con idempotencia de crear_ordenes_imagen_cotizacion
                     // (payment-sync usa este mismo formato para deduplicar)

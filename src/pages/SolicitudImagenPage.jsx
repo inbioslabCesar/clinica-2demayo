@@ -26,7 +26,7 @@ export default function SolicitudImagenPage() {
   const [tarifas, setTarifas] = useState([]);
   const [loadingTarifas, setLoadingTarifas] = useState(true);
   const [busqueda, setBusqueda] = useState("");
-  const [seleccionados, setSeleccionados] = useState([]); // [{tarifa_id, descripcion, precio}]
+  const [seleccionados, setSeleccionados] = useState([]); // [{tarifa_id, descripcion, precio, medico_id}]
   const [indicaciones, setIndicaciones] = useState("");
   const [cargaAnticipada, setCargaAnticipada] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -86,6 +86,7 @@ export default function SolicitudImagenPage() {
           tarifa_id: tarifa.id,
           descripcion: tarifa.descripcion,
           precio: parseFloat(tarifa.precio_particular) || 0,
+          medico_id: Number(tarifa.medico_id || 0) || 0,
         },
       ];
     });

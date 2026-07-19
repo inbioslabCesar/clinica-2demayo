@@ -225,13 +225,8 @@ function puede_editar_informe_por_orden(mysqli $conn, array $orden, string $rol,
     }
 
     $medicoResponsableId = resolver_medico_responsable_informe($conn, $orden);
-    $solicitadoPorId = (int)($orden['solicitado_por'] ?? 0);
 
     if ($medicoResponsableId > 0 && $medicoResponsableId === $usuarioId) {
-        return true;
-    }
-
-    if ($solicitadoPorId > 0 && $solicitadoPorId === $usuarioId) {
         return true;
     }
 

@@ -150,6 +150,9 @@ export default function VisorImagenPage() {
   const { ordenId } = useParams();
   const location = useLocation();
   const navigate    = useNavigate();
+  const searchParams = new URLSearchParams(location.search || '');
+  const contextConsultaId = Number(searchParams.get('context_consulta_id') || 0);
+  const contextPacienteId = Number(searchParams.get('context_paciente_id') || 0);
   const returnState = location.state && typeof location.state === 'object' ? location.state : null;
   const backTo = typeof returnState?.backTo === 'string' && returnState.backTo.trim() !== '' ? returnState.backTo : '';
   const backState = returnState?.backState && typeof returnState.backState === 'object'
@@ -170,7 +173,12 @@ export default function VisorImagenPage() {
 
   useEffect(() => {
     setLoading(true);
-    authFetch(`api_ordenes_imagen.php?orden_id=${ordenId}`)
+    const params = new URLSearchParams();
+    params.set('orden_id', String(ordenId));
+    if (contextConsultaId > 0) params.set('context_consulta_id', String(contextConsultaId));
+    if (contextPacienteId > 0) params.set('context_paciente_id', String(contextPacienteId));
+
+    authFetch(`api_ordenes_imagen.php?${params.toString()}`)
       .then((r) => r.json())
       .then(async (d) => {
         if (d.success) {
@@ -191,7 +199,7 @@ export default function VisorImagenPage() {
       })
       .catch(() => setError("Error de conexión"))
       .finally(() => setLoading(false));
-  }, [ordenId]);
+  }, [ordenId, contextConsultaId, contextPacienteId]);
 
   const irAnterior  = () => setSelectedIdx((i) => Math.max(i - 1, 0));
   const irSiguiente = () => setSelectedIdx((i) => Math.min(i + 1, todasLasImagenes.length - 1));

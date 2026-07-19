@@ -1631,6 +1631,18 @@ function HistoriaClinicaPage() {
         routePath = `${pathOnly}?${params.toString()}`;
       }
 
+      if (routePath.startsWith('/visor-imagen/')) {
+        const [pathOnly, queryString = ''] = routePath.split('?');
+        const params = new URLSearchParams(queryString);
+        if (consultaActualId > 0) {
+          params.set('context_consulta_id', String(consultaActualId));
+        }
+        if (pacienteActualId > 0) {
+          params.set('context_paciente_id', String(pacienteActualId));
+        }
+        routePath = `${pathOnly}?${params.toString()}`;
+      }
+
       const totalPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
       const visibleConsultaId = Number(hcAnterior?.consulta_id || 0);
       let selectedIndex = Math.max(0, Math.min(Number(indiceHistoriaPrevia || 0), Math.max(totalPrevias - 1, 0)));
