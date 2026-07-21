@@ -127,7 +127,13 @@ const ImpresionHistoriaClinica = ({
 
   const isMetaResultKey = (key) => {
     const k = String(key || '');
-    return k.endsWith('__imprimir_examen') || k.endsWith('__alarma_activa') || k.endsWith('__alarma_dias');
+    return k.endsWith('__imprimir_examen')
+      || k.endsWith('__alarma_activa')
+      || k.endsWith('__alarma_dias')
+      || k.endsWith('__seccion_categoria')
+      || k.endsWith('__seccion_titulo')
+      || k.endsWith('__seccion_alineacion')
+      || k.endsWith('__seccion_color_texto');
   };
 
   const idToNombreExamen = {};

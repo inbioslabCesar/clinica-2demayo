@@ -65,7 +65,11 @@ function LaboratorioPanelPage() {
       const data = await res.json();
 
       if (data.success && data.resultado && data.resultado.resultados && typeof data.resultado.resultados === 'object') {
-        setOrdenSeleccionada({ ...orden, resultados: data.resultado.resultados });
+        setOrdenSeleccionada({
+          ...orden,
+          resultado_id: Number(data.resultado.id || 0) || null,
+          resultados: data.resultado.resultados,
+        });
       } else {
         setOrdenSeleccionada(orden);
       }
@@ -158,6 +162,7 @@ function LaboratorioPanelPage() {
       setOrdenSeleccionada((prev) => ({
         ...(prev || ordenSeleccionada),
         estado: saveResponse?.estado || 'completado',
+        resultado_id: Number(data?.resultado?.id || saveResponse?.resultado_id || prev?.resultado_id || 0) || null,
         resultados: data?.success && data?.resultado ? data.resultado.resultados : (prev?.resultados || {}),
       }));
       setReloadKey(k => k + 1);

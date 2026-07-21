@@ -5,6 +5,9 @@ import { authFetch } from "../utils/apiClient";
 function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
   const [resultados, setResultados] = useState({});
+  const [examenesOrdenados, setExamenesOrdenados] = useState([]);
+  const [dragExamIndex, setDragExamIndex] = useState(null);
+  const [dragOverExamIndex, setDragOverExamIndex] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("success");
@@ -12,8 +15,87 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [subiendoArchivo, setSubiendoArchivo] = useState({});
   const [subidosArchivo, setSubidosArchivo] = useState({});
   const [docExternos, setDocExternos] = useState([]);
+  const [descargandoResultado, setDescargandoResultado] = useState(false);
 
   const pacienteId = orden?.paciente_id_ref || orden?.paciente_id;
+  const resultadoId = Number(orden?.resultado_id || 0);
+
+  const resolverUrlDescarga = (rawUrl) => {
+    const raw = String(rawUrl || '').trim();
+    if (!raw) return raw;
+
+    const parsed = new URL(raw, window.location.origin);
+    const isDevVite = /^517\d$/.test(String(window.location.port || ''));
+    if (!isDevVite) return parsed.toString();
+
+    const isPhpEndpoint = parsed.pathname.includes('.php');
+    if (!isPhpEndpoint) return parsed.toString();
+
+    const backendOrigin = `${window.location.protocol}//${window.location.hostname}`;
+    let backendPath = parsed.pathname;
+    if (!backendPath.startsWith('/clinica-2demayo/')) {
+      backendPath = `/clinica-2demayo${backendPath.startsWith('/') ? '' : '/'}${backendPath}`;
+    }
+    return `${backendOrigin}${backendPath}${parsed.search}${parsed.hash}`;
+  };
+
+  const descargarResultadoPdf = async () => {
+    if (resultadoId <= 0) {
+      setMsgType('error');
+      setMsg('❌ Aún no hay resultados guardados para descargar');
+      return;
+    }
+
+    setDescargandoResultado(true);
+    try {
+      const rawUrl = `descargar_resultados_laboratorio.php?id=${resultadoId}`;
+      const finalUrl = resolverUrlDescarga(rawUrl);
+      const res = await authFetch(finalUrl, { method: 'GET' });
+      if (!res.ok) {
+        let detalle = `Error ${res.status}`;
+        try {
+          const t = await res.text();
+          if (t) detalle = t.slice(0, 220);
+        } catch {
+          // ignore
+        }
+        throw new Error(detalle);
+      }
+
+      const contentType = (res.headers.get('Content-Type') || '').toLowerCase();
+      if (contentType.includes('text/html') || contentType.includes('application/json')) {
+        let detalle = 'El servidor no devolvio un PDF descargable.';
+        try {
+          const t = await res.text();
+          if (t) detalle = t.slice(0, 260);
+        } catch {
+          // ignore
+        }
+        throw new Error(detalle);
+      }
+
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+      const serverName = decodeURIComponent((match?.[1] || match?.[2] || '').trim());
+      const fallbackName = `resultados_laboratorio_orden_${orden?.id || 'paciente'}.pdf`;
+      const filename = serverName || fallbackName;
+
+      const objUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      setMsgType('error');
+      setMsg(`❌ Error de descarga: ${e?.message || 'No se pudo descargar el archivo'}`);
+    } finally {
+      setDescargandoResultado(false);
+    }
+  };
 
   const cargarDocExternos = () => {
     if (!pacienteId || !orden?.id) return;
@@ -78,6 +160,58 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   };
 
   const getExamenId = (examenItem) => (typeof examenItem === 'object' ? examenItem.id : examenItem);
+
+  const getExamItemsSource = () => {
+    if (Array.isArray(examenesOrdenados) && examenesOrdenados.length > 0) {
+      return examenesOrdenados;
+    }
+    return parseExamenesArray(orden?.examenes);
+  };
+
+  const moveExam = (fromIndex, toIndex) => {
+    setExamenesOrdenados((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+      if (fromIndex < 0 || toIndex < 0 || fromIndex >= prev.length || toIndex >= prev.length) return prev;
+      if (fromIndex === toIndex) return prev;
+
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleExamDragStart = (index) => {
+    setDragExamIndex(index);
+    setDragOverExamIndex(index);
+  };
+
+  const handleExamDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleExamDragEnter = (index) => {
+    setDragOverExamIndex(index);
+  };
+
+  const handleExamDrop = (targetIndex) => {
+    if (dragExamIndex === null || targetIndex === null) {
+      setDragExamIndex(null);
+      setDragOverExamIndex(null);
+      return;
+    }
+    moveExam(dragExamIndex, targetIndex);
+    setDragExamIndex(null);
+    setDragOverExamIndex(null);
+  };
+
+  const handleExamDragEnd = () => {
+    setDragExamIndex(null);
+    setDragOverExamIndex(null);
+  };
+
+  const handleMoveExamUp = (index) => moveExam(index, index - 1);
+  const handleMoveExamDown = (index) => moveExam(index, index + 1);
 
   const normalizeParamToken = (value) =>
     String(value || '')
@@ -164,6 +298,10 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       if (keyText.endsWith('__imprimir_examen')) return false;
       if (keyText.endsWith('__alarma_activa')) return false;
       if (keyText.endsWith('__alarma_dias')) return false;
+      if (keyText.endsWith('__seccion_categoria')) return false;
+      if (keyText.endsWith('__seccion_titulo')) return false;
+      if (keyText.endsWith('__seccion_alineacion')) return false;
+      if (keyText.endsWith('__seccion_color_texto')) return false;
       const raw = source[key];
       return raw !== null && raw !== undefined && String(raw).trim() !== '';
     });
@@ -227,6 +365,51 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const printFlagKey = (examId) => `${examId}__imprimir_examen`;
   const alarmActiveKey = (examId) => `${examId}__alarma_activa`;
   const alarmDaysKey = (examId) => `${examId}__alarma_dias`;
+  const sectionCategoryKey = (examId) => `${examId}__seccion_categoria`;
+  const sectionTitleKey = (examId) => `${examId}__seccion_titulo`;
+  const sectionAlignKey = (examId) => `${examId}__seccion_alineacion`;
+  const sectionColorKey = (examId) => `${examId}__seccion_color_texto`;
+
+  const getExamSectionCategory = (examId, source = resultados) => String(source[sectionCategoryKey(examId)] ?? '').trim();
+  const getExamSectionTitle = (examId, source = resultados) => String(source[sectionTitleKey(examId)] ?? '').trim();
+  const getExamSectionAlign = (examId, source = resultados) => {
+    const raw = String(source[sectionAlignKey(examId)] ?? '').trim().toLowerCase();
+    return ['left', 'center', 'right'].includes(raw) ? raw : 'left';
+  };
+  const getExamSectionColor = (examId, source = resultados) => {
+    const raw = String(source[sectionColorKey(examId)] ?? '').trim();
+    return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : '#1f2937';
+  };
+
+  const handleSectionCategoryChange = (examId, value) => {
+    setResultados(prev => ({
+      ...prev,
+      [sectionCategoryKey(examId)]: value,
+    }));
+  };
+
+  const handleSectionTitleChange = (examId, value) => {
+    setResultados(prev => ({
+      ...prev,
+      [sectionTitleKey(examId)]: value,
+    }));
+  };
+
+  const handleSectionAlignChange = (examId, value) => {
+    const align = ['left', 'center', 'right'].includes(String(value || '').toLowerCase()) ? value : 'left';
+    setResultados(prev => ({
+      ...prev,
+      [sectionAlignKey(examId)]: align,
+    }));
+  };
+
+  const handleSectionColorChange = (examId, value) => {
+    const color = /^#[0-9a-fA-F]{6}$/.test(String(value || '').trim()) ? value : '#1f2937';
+    setResultados(prev => ({
+      ...prev,
+      [sectionColorKey(examId)]: color,
+    }));
+  };
 
   const parseSuggestedDaysFromTiempo = (tiempoRaw) => {
     const raw = String(tiempoRaw || '').trim();
@@ -292,8 +475,15 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   }, []);
 
   useEffect(() => {
+    const parsed = parseExamenesArray(orden?.examenes);
+    setExamenesOrdenados(parsed);
+    setDragExamIndex(null);
+    setDragOverExamIndex(null);
+  }, [orden?.id, orden?.examenes]);
+
+  useEffect(() => {
     if (!examenesDisponibles || examenesDisponibles.length === 0) return;
-    const examenesArray = parseExamenesArray(orden.examenes);
+    const examenesArray = getExamItemsSource();
 
     if (orden.resultados && typeof orden.resultados === 'object') {
       const preloaded = { ...orden.resultados };
@@ -315,6 +505,18 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         }
         if (!Object.prototype.hasOwnProperty.call(preloaded, alarmDaysKey(id))) {
           preloaded[alarmDaysKey(id)] = suggestedDays || '';
+        }
+        if (!Object.prototype.hasOwnProperty.call(preloaded, sectionCategoryKey(id))) {
+          preloaded[sectionCategoryKey(id)] = '';
+        }
+        if (!Object.prototype.hasOwnProperty.call(preloaded, sectionTitleKey(id))) {
+          preloaded[sectionTitleKey(id)] = '';
+        }
+        if (!Object.prototype.hasOwnProperty.call(preloaded, sectionAlignKey(id))) {
+          preloaded[sectionAlignKey(id)] = 'left';
+        }
+        if (!Object.prototype.hasOwnProperty.call(preloaded, sectionColorKey(id))) {
+          preloaded[sectionColorKey(id)] = '#1f2937';
         }
 
         const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
@@ -359,6 +561,10 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         res[alarmDaysKey(id)] = parseSuggestedDaysFromTiempo(
           (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
         ) || '';
+        res[sectionCategoryKey(id)] = '';
+        res[sectionTitleKey(id)] = '';
+        res[sectionAlignKey(id)] = 'left';
+        res[sectionColorKey(id)] = '#1f2937';
         const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
           ? exObj.valores_referenciales
           : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
@@ -652,7 +858,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
     try {
       // Antes de enviar, evaluar todas las fórmulas y asegurarnos de inyectar sus valores en el objeto `resultados`
-      const examenesArray = parseExamenesArray(orden.examenes);
+      const examenesArray = getExamItemsSource();
       const examIdsSet = new Set(
         examenesArray
           .map(getExamenId)
@@ -739,6 +945,10 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
           orden_id: orden.id,
           consulta_id: orden.consulta_id || null,
           tipo_examen: "varios",
+          examenes_ordenados: examenesArray
+            .map(getExamenId)
+            .map(id => parseInt(id, 10))
+            .filter(id => Number.isFinite(id) && id > 0),
           resultados: resultadosToSend,
         }),
       });
@@ -944,6 +1154,102 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     );
   };
 
+  const categoriasDisponibles = Array.from(
+    new Set(
+      (examenesDisponibles || [])
+        .map((ex) => String(ex?.categoria || '').trim())
+        .filter((cat) => cat !== '')
+    )
+  ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  const renderSectionConfig = (examId) => {
+    const categoria = getExamSectionCategory(examId);
+    const titulo = getExamSectionTitle(examId);
+    const alineacion = getExamSectionAlign(examId);
+    const colorTexto = getExamSectionColor(examId);
+
+    return (
+      <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3 space-y-3">
+        <div className="text-xs font-semibold text-indigo-700">Encabezado adicional para impresión</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-gray-700">Categoría</label>
+            <select
+              value={categoria}
+              onChange={(e) => handleSectionCategoryChange(examId, e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            >
+              <option value="">-- Sin categoría --</option>
+              {categoriasDisponibles.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-gray-700">Título manual</label>
+            <input
+              type="text"
+              value={titulo}
+              onChange={(e) => handleSectionTitleChange(examId, e.target.value)}
+              placeholder="Ej: HEMATOLOGIA"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-gray-700">Alineación</label>
+            <select
+              value={alineacion}
+              onChange={(e) => handleSectionAlignChange(examId, e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            >
+              <option value="left">Izquierda</option>
+              <option value="center">Centro</option>
+              <option value="right">Derecha</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-gray-700">Color de texto</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={colorTexto}
+                onChange={(e) => handleSectionColorChange(examId, e.target.value)}
+                className="w-10 h-9 border border-gray-300 rounded bg-white"
+              />
+              <input
+                type="text"
+                value={colorTexto}
+                onChange={(e) => handleSectionColorChange(examId, e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSectionHeadingPreview = (examId) => {
+    const tituloManual = getExamSectionTitle(examId);
+    const categoria = getExamSectionCategory(examId);
+    const texto = String(tituloManual || categoria || '').trim();
+    if (!texto) return null;
+
+    return (
+      <div
+        className="mb-4 rounded-lg px-3 py-2 bg-slate-100 border border-slate-200 font-bold"
+        style={{
+          color: getExamSectionColor(examId),
+          textAlign: getExamSectionAlign(examId),
+        }}
+      >
+        {texto}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-3">
       {/* Header del formulario */}
@@ -964,9 +1270,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-3 sm:p-4">
           <div className="space-y-3 sm:space-y-4">
             {(() => {
-              const examenesArray = parseExamenesArray(orden.examenes);
+              const examenesArray = getExamItemsSource();
               
-              return examenesArray.map(exId => {
+              return examenesArray.map((exId, examIndex) => {
                 // Si exId es un objeto con id, extraer el id
                 const id = getExamenId(exId);
                 const exObj = examenesDisponibles.find(e => e.id == id);
@@ -1019,7 +1325,13 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   const genericValue = getResultValueForParam(resultados, id, { nombre: orderName, codigo_interno: '' }, '');
 
                   return (
-                    <div key={id} className="bg-gray-50 rounded-xl p-3 sm:p-5 border border-gray-200">
+                    <div
+                      key={id}
+                      className={`bg-gray-50 rounded-xl p-3 sm:p-5 border ${dragOverExamIndex === examIndex ? 'border-indigo-400' : 'border-gray-200'}`}
+                      onDragOver={handleExamDragOver}
+                      onDragEnter={() => handleExamDragEnter(examIndex)}
+                      onDrop={() => handleExamDrop(examIndex)}
+                    >
                       <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4 pb-2 sm:pb-3 border-b border-gray-200">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
@@ -1031,6 +1343,37 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           </div>
                         </div>
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveExamUp(examIndex)}
+                              disabled={examIndex === 0}
+                              className="inline-flex md:hidden items-center justify-center w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 disabled:opacity-40"
+                              title="Mover arriba"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveExamDown(examIndex)}
+                              disabled={examIndex === (examenesArray.length - 1)}
+                              className="inline-flex md:hidden items-center justify-center w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 disabled:opacity-40"
+                              title="Mover abajo"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              draggable
+                              onDragStart={() => handleExamDragStart(examIndex)}
+                              onDragEnd={handleExamDragEnd}
+                              className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 cursor-grab active:cursor-grabbing"
+                              title="Arrastre para reordenar"
+                            >
+                              <span>⋮⋮</span>
+                              <span className="text-xs">Orden</span>
+                            </button>
+                          </div>
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"
@@ -1064,6 +1407,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           </div>
                         </div>
                       </div>
+
+                      {renderSectionConfig(id)}
+                      {renderSectionHeadingPreview(id)}
 
                       <div className="space-y-2">
                         <label className="block text-sm font-semibold text-gray-700">{orderName}</label>
@@ -1096,7 +1442,13 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   const examName = (exOrdenDetalle && (exOrdenDetalle.snapshot_nombre || exOrdenDetalle.descripcion_snapshot || exOrdenDetalle.nombre || exOrdenDetalle.descripcion)) || (exObjResolved && exObjResolved.nombre) || `Examen ${id}`;
 
                   return (
-                    <div key={id} className="bg-gray-50 rounded-xl p-3 sm:p-5 border border-gray-200">
+                    <div
+                      key={id}
+                      className={`bg-gray-50 rounded-xl p-3 sm:p-5 border ${dragOverExamIndex === examIndex ? 'border-indigo-400' : 'border-gray-200'}`}
+                      onDragOver={handleExamDragOver}
+                      onDragEnter={() => handleExamDragEnter(examIndex)}
+                      onDrop={() => handleExamDrop(examIndex)}
+                    >
                       {/* Header del examen */}
                       <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4 pb-2 sm:pb-3 border-b border-gray-200">
                         <div className="flex items-center gap-3">
@@ -1109,6 +1461,37 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           </div>
                         </div>
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveExamUp(examIndex)}
+                              disabled={examIndex === 0}
+                              className="inline-flex md:hidden items-center justify-center w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 disabled:opacity-40"
+                              title="Mover arriba"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveExamDown(examIndex)}
+                              disabled={examIndex === (examenesArray.length - 1)}
+                              className="inline-flex md:hidden items-center justify-center w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 disabled:opacity-40"
+                              title="Mover abajo"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              draggable
+                              onDragStart={() => handleExamDragStart(examIndex)}
+                              onDragEnd={handleExamDragEnd}
+                              className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 cursor-grab active:cursor-grabbing"
+                              title="Arrastre para reordenar"
+                            >
+                              <span>⋮⋮</span>
+                              <span className="text-xs">Orden</span>
+                            </button>
+                          </div>
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"
@@ -1142,6 +1525,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           </div>
                         </div>
                       </div>
+
+                      {renderSectionConfig(id)}
+                      {renderSectionHeadingPreview(id)}
 
                       {!isExamPrintable(id) && (
                         <div className="mb-4 px-3 py-2 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
@@ -1353,7 +1739,13 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                 } else if (exObjResolved) {
                   // Examen sin parámetros definidos
                   return (
-                    <div key={id} className="bg-gray-50 rounded-xl p-3 sm:p-5 border border-gray-200">
+                    <div
+                      key={id}
+                      className={`bg-gray-50 rounded-xl p-3 sm:p-5 border ${dragOverExamIndex === examIndex ? 'border-indigo-400' : 'border-gray-200'}`}
+                      onDragOver={handleExamDragOver}
+                      onDragEnter={() => handleExamDragEnter(examIndex)}
+                      onDrop={() => handleExamDrop(examIndex)}
+                    >
                       <div className="flex items-center justify-between gap-3 mb-4">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
@@ -1362,6 +1754,37 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           <h4 className="text-base sm:text-lg font-bold text-gray-900">{exObjResolved.nombre}</h4>
                         </div>
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveExamUp(examIndex)}
+                              disabled={examIndex === 0}
+                              className="inline-flex md:hidden items-center justify-center w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 disabled:opacity-40"
+                              title="Mover arriba"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveExamDown(examIndex)}
+                              disabled={examIndex === (examenesArray.length - 1)}
+                              className="inline-flex md:hidden items-center justify-center w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 disabled:opacity-40"
+                              title="Mover abajo"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              draggable
+                              onDragStart={() => handleExamDragStart(examIndex)}
+                              onDragEnd={handleExamDragEnd}
+                              className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 cursor-grab active:cursor-grabbing"
+                              title="Arrastre para reordenar"
+                            >
+                              <span>⋮⋮</span>
+                              <span className="text-xs">Orden</span>
+                            </button>
+                          </div>
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"
@@ -1396,6 +1819,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                         </div>
                       </div>
 
+                      {renderSectionConfig(id)}
+                      {renderSectionHeadingPreview(id)}
+
                       {!isExamPrintable(id) && (
                         <div className="mb-4 px-3 py-2 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
                           Este examen no se incluirá en el PDF.
@@ -1425,8 +1851,19 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
               });
             })()}
           </div>
-        </div>        {/* Botones de acción */}
+        </div>
+
+        {/* Botones de acción */}
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-end">
+          <button
+            type="button"
+            onClick={descargarResultadoPdf}
+            disabled={descargandoResultado || resultadoId <= 0}
+            className="px-5 sm:px-6 py-2.5 sm:py-3 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors font-medium border border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={resultadoId > 0 ? 'Descargar resultado PDF' : 'Guarde resultados primero para habilitar la descarga'}
+          >
+            {descargandoResultado ? '⏳ Descargando...' : '⬇ Descargar resultado PDF'}
+          </button>
           <button 
             type="button" 
             onClick={onVolver} 
