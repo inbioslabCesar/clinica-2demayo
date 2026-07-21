@@ -316,27 +316,27 @@ function LaboratorioPanelPage() {
 
             {/* Información de la orden */}
             <div
-              className="rounded-xl p-4 text-white"
+              className="rounded-xl p-3 sm:p-4 text-white"
               style={{ background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%)" }}
             >
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
                   <div className="text-white/80 text-xs">Orden</div>
-                  <div className="text-lg font-bold leading-tight">#{ordenSeleccionada.id}</div>
+                  <div className="text-base sm:text-lg font-bold leading-tight">#{ordenSeleccionada.id}</div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 col-span-2 lg:col-span-1">
                   <div className="text-white/80 text-xs">Paciente</div>
-                  <div className="text-lg font-bold leading-tight line-clamp-2">
+                  <div className="text-base sm:text-lg font-bold leading-tight line-clamp-2">
                     {ordenSeleccionada.paciente_nombre} {ordenSeleccionada.paciente_apellido}
                   </div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
                   <div className="text-white/80 text-xs">Consulta ID</div>
-                  <div className="text-lg font-bold leading-tight">{ordenSeleccionada.consulta_id || '-'}</div>
+                  <div className="text-base sm:text-lg font-bold leading-tight">{ordenSeleccionada.consulta_id || '-'}</div>
                 </div>
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
                   <div className="text-white/80 text-xs">Estado</div>
-                  <div className={`text-lg font-bold leading-tight ${
+                  <div className={`text-base sm:text-lg font-bold leading-tight ${
                     ordenSeleccionada.estado === 'completado'
                       ? 'text-green-300'
                       : ordenSeleccionada.estado === 'cancelada'
@@ -354,12 +354,12 @@ function LaboratorioPanelPage() {
               
               <div className="mt-3 bg-white/10 backdrop-blur-sm rounded-lg p-3">
                 <div className="text-white/80 text-xs mb-1">Exámenes solicitados</div>
-                <div className="text-sm leading-6 max-h-24 overflow-y-auto pr-1">{getExamenesNombres(ordenSeleccionada.examenes)}</div>
+                <div className="text-sm leading-6 break-words">{getExamenesNombres(ordenSeleccionada.examenes)}</div>
               </div>
             </div>
 
             {/* Formulario de resultados */}
-            <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20 p-4">
+            <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20 p-3 sm:p-4">
               <LlenarResultadosForm key={ordenSeleccionada.id} orden={ordenSeleccionada} onVolver={handleVolver} onGuardado={handleGuardadoResultados} />
             </div>
           </div>

@@ -945,24 +945,24 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Header del formulario */}
-      <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-4 text-white">
+      <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-3 sm:p-4 text-white">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-lg">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center text-base sm:text-lg">
             📊
           </div>
           <div>
-            <h3 className="text-lg font-bold">Procesar Resultados de Laboratorio</h3>
+            <h3 className="text-base sm:text-lg font-bold">Procesar Resultados de Laboratorio</h3>
             <p className="text-purple-100 text-sm">Complete los valores de cada examen solicitado</p>
           </div>
         </div>
       </div>
 
       {/* Formulario principal */}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-4">
-          <div className="max-h-[600px] overflow-y-auto space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-3 sm:p-4">
+          <div className="space-y-3 sm:space-y-4">
             {(() => {
               const examenesArray = parseExamenesArray(orden.examenes);
               
@@ -1019,14 +1019,14 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   const genericValue = getResultValueForParam(resultados, id, { nombre: orderName, codigo_interno: '' }, '');
 
                   return (
-                    <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
-                      <div className="flex items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
+                    <div key={id} className="bg-gray-50 rounded-xl p-3 sm:p-5 border border-gray-200">
+                      <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4 pb-2 sm:pb-3 border-b border-gray-200">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
                             🧪
                           </div>
                           <div>
-                            <h4 className="text-lg font-bold text-gray-900">{orderName}</h4>
+                            <h4 className="text-base sm:text-lg font-bold text-gray-900">{orderName}</h4>
                             <p className="text-sm text-gray-600">Complete el resultado solicitado</p>
                           </div>
                         </div>
@@ -1096,15 +1096,15 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   const examName = (exOrdenDetalle && (exOrdenDetalle.snapshot_nombre || exOrdenDetalle.descripcion_snapshot || exOrdenDetalle.nombre || exOrdenDetalle.descripcion)) || (exObjResolved && exObjResolved.nombre) || `Examen ${id}`;
 
                   return (
-                    <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                    <div key={id} className="bg-gray-50 rounded-xl p-3 sm:p-5 border border-gray-200">
                       {/* Header del examen */}
-                      <div className="flex items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
+                      <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4 pb-2 sm:pb-3 border-b border-gray-200">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
                             🧪
                           </div>
                           <div>
-                            <h4 className="text-lg font-bold text-gray-900">{examName}</h4>
+                            <h4 className="text-base sm:text-lg font-bold text-gray-900">{examName}</h4>
                             <p className="text-sm text-gray-600">Complete todos los parámetros requeridos</p>
                           </div>
                         </div>
@@ -1151,7 +1151,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
                       {/* Parámetros del examen */}
                       {isExamPrintable(id) && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-5">
                           {(() => {
                             return (paramsList || []).filter(p => p && typeof p === 'object').map((param, idx) => {
                           if (isTipoTitulo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
@@ -1353,13 +1353,13 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                 } else if (exObjResolved) {
                   // Examen sin parámetros definidos
                   return (
-                    <div key={id} className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                    <div key={id} className="bg-gray-50 rounded-xl p-3 sm:p-5 border border-gray-200">
                       <div className="flex items-center justify-between gap-3 mb-4">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
                             🧪
                           </div>
-                          <h4 className="text-lg font-bold text-gray-900">{exObjResolved.nombre}</h4>
+                          <h4 className="text-base sm:text-lg font-bold text-gray-900">{exObjResolved.nombre}</h4>
                         </div>
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
@@ -1426,18 +1426,18 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             })()}
           </div>
         </div>        {/* Botones de acción */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-end">
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-end">
           <button 
             type="button" 
             onClick={onVolver} 
-            className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium border border-gray-300"
+            className="px-5 sm:px-6 py-2.5 sm:py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium border border-gray-300"
           >
             ← Cancelar
           </button>
           <button 
             type="submit" 
             disabled={guardando}
-            className="px-8 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
           >
             {guardando ? (
               <span className="flex items-center gap-2">
