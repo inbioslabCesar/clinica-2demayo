@@ -7,6 +7,7 @@ const defaultItem = {
   metodologia: "",
   unidad: "",
   opciones: [],
+  texto_por_defecto: "",
   referencias: [],
   formula: "",
   negrita: false,
@@ -20,6 +21,22 @@ const defaultItem = {
 };
 
 import { useEffect } from "react";
+
+const normalizeOptionItem = (option, index) => {
+  if (option && typeof option === 'object') {
+    return {
+      valor: String(option.valor ?? option.label ?? option.texto ?? option.nombre ?? '').trim(),
+      por_defecto: !!(option.por_defecto ?? option.default ?? option.defecto ?? false),
+      orden: Number.isFinite(Number(option.orden)) ? Number(option.orden) : index + 1,
+    };
+  }
+
+  return {
+    valor: String(option ?? '').trim(),
+    por_defecto: false,
+    orden: index + 1,
+  };
+};
 
 export default function ExamenEditorForm({ initialData = [], onChange }) {
   // Normalizar initialData: aceptar string JSON o array
@@ -49,7 +66,8 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
       nombre: typeof it.nombre === 'string' ? it.nombre : (it.titulo || ''),
       metodologia: it.metodologia || '',
       unidad: it.unidad || '',
-      opciones: Array.isArray(it.opciones) ? it.opciones : [],
+      opciones: Array.isArray(it.opciones) ? it.opciones.map((op, opIdx) => normalizeOptionItem(op, opIdx)) : [],
+      texto_por_defecto: typeof it.texto_por_defecto === 'string' ? it.texto_por_defecto : '',
       referencias: Array.isArray(it.referencias)
         ? it.referencias.map((ref) => ({
           valor: ref?.valor || '',
@@ -227,7 +245,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
   // Agregar opción predefinida
   const addOpcion = idx => {
     const updated = items.map((item, i) =>
-      i === idx ? { ...item, opciones: [...(item.opciones || []), ""] } : item
+      i === idx ? { ...item, opciones: [...(item.opciones || []), { valor: "", por_defecto: false, orden: (item.opciones || []).length + 1 }] } : item
     );
     commitItems(updated);
   };
@@ -236,7 +254,26 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
   const handleOpcionChange = (itemIdx, opIdx, value) => {
     const updated = items.map((item, i) => {
       if (i !== itemIdx) return item;
-      const opciones = (item.opciones || []).map((o, j) => (j === opIdx ? value : o));
+      const opciones = (item.opciones || []).map((o, j) => (
+        j === opIdx
+          ? { ...(o && typeof o === 'object' ? o : { por_defecto: false }), valor: value }
+          : o
+      ));
+      return { ...item, opciones };
+    });
+    commitItems(updated);
+  };
+
+  const handleOpcionDefaultChange = (itemIdx, opIdx, checked) => {
+    const updated = items.map((item, i) => {
+      if (i !== itemIdx) return item;
+      const opciones = (item.opciones || []).map((op, j) => {
+        const base = op && typeof op === 'object' ? op : { valor: String(op ?? '').trim(), por_defecto: false, orden: j + 1 };
+        return {
+          ...base,
+          por_defecto: j === opIdx ? !!checked : false,
+        };
+      });
       return { ...item, opciones };
     });
     commitItems(updated);
@@ -367,14 +404,23 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
                 {(item.opciones || []).length > 0 && (
                   <span className="ml-2 text-xs text-indigo-500 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5">Lista ({item.opciones.length})</span>
                 )}
+                <div className="text-[11px] text-gray-500 mt-1">Marque una sola opción como predeterminada para que aparezca seleccionada al abrir el formulario de resultados.</div>
                 {(item.opciones || []).map((op, opIdx) => (
                   <div key={opIdx} className="flex gap-2 mt-1 items-center">
                     <input
-                      value={op}
+                      value={typeof op === 'object' ? op.valor : op}
                       onChange={e => handleOpcionChange(idx, opIdx, e.target.value)}
                       placeholder={`Opción ${opIdx + 1}`}
                       className="border rounded px-2 py-1 flex-1"
                     />
+                    <label className="inline-flex items-center gap-1 text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={!!(op && typeof op === 'object' ? op.por_defecto : false)}
+                        onChange={(e) => handleOpcionDefaultChange(idx, opIdx, e.target.checked)}
+                      />
+                      Defecto
+                    </label>
                     <button
                       type="button"
                       className="text-red-500 text-xs border border-red-200 bg-red-50 rounded px-2 py-1 hover:bg-red-100"
@@ -429,14 +475,23 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
                 {(item.opciones || []).length > 0 && (
                   <span className="ml-2 text-xs text-indigo-500 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5">Lista ({item.opciones.length})</span>
                 )}
+                <div className="text-[11px] text-gray-500 mt-1">El valor marcado como defecto se mostrará primero al cargar la solicitud.</div>
                 {(item.opciones || []).map((op, opIdx) => (
                   <div key={opIdx} className="flex gap-2 mt-1 items-center">
                     <input
-                      value={op}
+                      value={typeof op === 'object' ? op.valor : op}
                       onChange={e => handleOpcionChange(idx, opIdx, e.target.value)}
                       placeholder={`Opción ${opIdx + 1}`}
                       className="border rounded px-2 py-1 flex-1"
                     />
+                    <label className="inline-flex items-center gap-1 text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={!!(op && typeof op === 'object' ? op.por_defecto : false)}
+                        onChange={(e) => handleOpcionDefaultChange(idx, opIdx, e.target.checked)}
+                      />
+                      Defecto
+                    </label>
                     <button
                       type="button"
                       className="text-red-500 text-xs border border-red-200 bg-red-50 rounded px-2 py-1 hover:bg-red-100"
@@ -445,20 +500,42 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
                   </div>
                 ))}
               </div>
+              <div className="mt-3">
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Texto por defecto</label>
+                <textarea
+                  value={item.texto_por_defecto || ''}
+                  onChange={e => handleItemChange(idx, "texto_por_defecto", e.target.value)}
+                  placeholder="Texto que aparecerá precargado cuando este campo se abra"
+                  className="border rounded px-2 py-2 w-full min-h-[72px]"
+                  rows={3}
+                />
+              </div>
             </div>
           )}
 
           {item.tipo === "Texto Largo" && (
-            <div className="flex gap-2 mb-2 mt-2 items-center">
-              <label className="text-sm text-gray-600">Filas:</label>
-              <input
-                type="number"
-                value={item.rows ?? 4}
-                onChange={e => handleItemChange(idx, "rows", e.target.value === '' ? null : Number(e.target.value))}
-                className="border rounded px-2 py-1 w-24"
-                min="2"
-                max="12"
-              />
+            <div className="space-y-3 mb-2 mt-2">
+              <div className="flex gap-2 items-center">
+                <label className="text-sm text-gray-600">Filas:</label>
+                <input
+                  type="number"
+                  value={item.rows ?? 4}
+                  onChange={e => handleItemChange(idx, "rows", e.target.value === '' ? null : Number(e.target.value))}
+                  className="border rounded px-2 py-1 w-24"
+                  min="2"
+                  max="12"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Texto por defecto</label>
+                <textarea
+                  value={item.texto_por_defecto || ''}
+                  onChange={e => handleItemChange(idx, "texto_por_defecto", e.target.value)}
+                  placeholder="Texto que aparecerá precargado en el formulario de resultados"
+                  className="border rounded px-2 py-2 w-full min-h-[72px]"
+                  rows={3}
+                />
+              </div>
             </div>
           )}
         </div>

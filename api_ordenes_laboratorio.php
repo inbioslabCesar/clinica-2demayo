@@ -688,6 +688,93 @@ if (!function_exists('ol_build_detalles_laboratorio_cotizacion')) {
     }
 }
 
+if (!function_exists('ol_refrescar_examen_orden')) {
+    function ol_refrescar_examen_orden(mysqli $conn, int $ordenId, int $examenId, int $medicoSesionId = 0): array
+    {
+        if ($ordenId <= 0 || $examenId <= 0) {
+            return ['success' => false, 'error' => 'Faltan datos para actualizar el examen'];
+        }
+
+        $stmtOrden = $conn->prepare('SELECT id, consulta_id, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1 FOR UPDATE');
+        if (!$stmtOrden) {
+            return ['success' => false, 'error' => 'No se pudo abrir la orden'];
+        }
+
+        $stmtOrden->bind_param('i', $ordenId);
+        $stmtOrden->execute();
+        $rowOrden = $stmtOrden->get_result()->fetch_assoc();
+        $stmtOrden->close();
+
+        if (!$rowOrden) {
+            return ['success' => false, 'error' => 'La orden no existe'];
+        }
+
+        $consultaIdOrden = intval($rowOrden['consulta_id'] ?? 0);
+        if ($consultaIdOrden > 0 && $medicoSesionId > 0 && !ol_medico_tiene_acceso_consulta($conn, $consultaIdOrden, $medicoSesionId, 'write')) {
+            return ['success' => false, 'error' => 'No autorizado para actualizar este examen'];
+        }
+
+        $examenesRaw = json_decode((string)($rowOrden['examenes'] ?? '[]'), true);
+        if (!is_array($examenesRaw)) {
+            $examenesRaw = [];
+        }
+
+        $indiceObjetivo = null;
+        $examenActual = null;
+        foreach ($examenesRaw as $idx => $item) {
+            $itemId = is_array($item) ? intval($item['id'] ?? 0) : intval($item);
+            if ($itemId === $examenId) {
+                $indiceObjetivo = $idx;
+                $examenActual = $item;
+                break;
+            }
+        }
+
+        if ($indiceObjetivo === null) {
+            return ['success' => false, 'error' => 'El examen no pertenece a esta orden'];
+        }
+
+        $freshSnapshot = ol_build_detalles_laboratorio_cotizacion($conn, [$examenId]);
+        $freshItem = $freshSnapshot[0] ?? null;
+        if (!is_array($freshItem) || empty($freshItem)) {
+            return ['success' => false, 'error' => 'No se pudo obtener la versión actual del examen'];
+        }
+
+        $snapshotData = $freshItem;
+        $freshItem['snapshot_json'] = $snapshotData;
+        if (is_array($examenActual)) {
+            $freshItem = array_merge($examenActual, $freshItem);
+        }
+        $examenesRaw[$indiceObjetivo] = $freshItem;
+
+        $jsonOrden = json_encode($examenesRaw, JSON_UNESCAPED_UNICODE);
+        if ($jsonOrden === false) {
+            return ['success' => false, 'error' => 'No se pudo serializar la orden actualizada'];
+        }
+
+        $stmtUpOrden = $conn->prepare('UPDATE ordenes_laboratorio SET examenes = ? WHERE id = ?');
+        if (!$stmtUpOrden) {
+            return ['success' => false, 'error' => 'No se pudo actualizar la orden'];
+        }
+
+        $stmtUpOrden->bind_param('si', $jsonOrden, $ordenId);
+        if (!$stmtUpOrden->execute()) {
+            $error = $stmtUpOrden->error;
+            $stmtUpOrden->close();
+            return ['success' => false, 'error' => $error ?: 'No se pudo guardar la orden'];
+        }
+        $stmtUpOrden->close();
+
+        return [
+            'success' => true,
+            'message' => 'Examen actualizado con la versión actual del catálogo',
+            'orden_id' => $ordenId,
+            'examen_id' => $examenId,
+            'examen' => $freshItem,
+        ];
+    }
+}
+
 if (!function_exists('ol_recalcular_total_cotizacion')) {
     function ol_recalcular_total_cotizacion(mysqli $conn, int $cotizacionId)
     {
@@ -741,6 +828,27 @@ switch ($method) {
         ol_ensure_write_schema($conn);
         // Crear nueva orden de laboratorio
         $data = json_decode(file_get_contents('php://input'), true);
+        $accion = strtolower(trim((string)($data['action'] ?? '')));
+        if (in_array($accion, ['actualizar_examen', 'refresh_examen', 'refrescar_examen'], true)) {
+            $ordenId = isset($data['orden_id']) && is_numeric($data['orden_id']) ? intval($data['orden_id']) : 0;
+            $examenId = isset($data['examen_id']) && is_numeric($data['examen_id']) ? intval($data['examen_id']) : 0;
+
+            try {
+                $conn->begin_transaction();
+                $resultado = ol_refrescar_examen_orden($conn, $ordenId, $examenId, $esSesionMedico ? $medicoSesionId : 0);
+                if (empty($resultado['success'])) {
+                    throw new Exception($resultado['error'] ?? 'No se pudo actualizar el examen');
+                }
+                $conn->commit();
+                echo json_encode($resultado, JSON_UNESCAPED_UNICODE);
+                exit;
+            } catch (Throwable $e) {
+                $conn->rollback();
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        }
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
         $examenes = $data['examenes'] ?? null;
         if (!$examenes || !is_array($examenes) || count($examenes) === 0) {

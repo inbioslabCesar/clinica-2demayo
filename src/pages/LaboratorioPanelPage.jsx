@@ -147,21 +147,32 @@ function LaboratorioPanelPage() {
   const handleGuardadoResultados = async (saveResponse) => {
     if (!ordenSeleccionada) return;
 
-    if (backTo && saveResponse?.success) {
+    if (backTo && saveResponse?.success && !saveResponse?.refreshOrden) {
       navigate(backTo);
       return;
     }
 
     try {
       const idBusqueda = ordenSeleccionada.id;
-      const res = await authFetch(`api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
-        cache: 'no-store'
-      });
-      const data = await res.json();
+      const [resOrdenes, resResultados] = await Promise.all([
+        authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1", {
+          cache: 'no-store'
+        }),
+        authFetch(`api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
+          cache: 'no-store'
+        }),
+      ]);
+      const dataOrdenes = await resOrdenes.json();
+      const data = await resResultados.json();
+      const ordenes = dataOrdenes?.success && Array.isArray(dataOrdenes.ordenes) ? dataOrdenes.ordenes : [];
+      const ordenActualizada = ordenes.find((orden) => Number(orden.id) === Number(idBusqueda)) || null;
 
       setOrdenSeleccionada((prev) => ({
         ...(prev || ordenSeleccionada),
-        estado: saveResponse?.estado || 'completado',
+        ...(ordenActualizada || {}),
+        estado: saveResponse?.refreshOrden
+          ? (ordenActualizada?.estado || prev?.estado || ordenSeleccionada.estado || 'pendiente')
+          : (saveResponse?.estado || 'completado'),
         resultado_id: Number(data?.resultado?.id || saveResponse?.resultado_id || prev?.resultado_id || 0) || null,
         resultados: data?.success && data?.resultado ? data.resultado.resultados : (prev?.resultados || {}),
       }));

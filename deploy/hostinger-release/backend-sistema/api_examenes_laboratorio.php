@@ -62,7 +62,8 @@ function normalize_valores_referenciales($raw) {
             : generar_codigo_interno($item['nombre'], $idx);
         $item['metodologia'] = $it['metodologia'] ?? '';
         $item['unidad'] = $it['unidad'] ?? '';
-    $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+            $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];        
+            $item['texto_por_defecto'] = isset($it['texto_por_defecto']) ? trim((string)$it['texto_por_defecto']) : '';
         $item['referencias'] = [];
         if (isset($it['referencias']) && is_array($it['referencias'])) {
             foreach ($it['referencias'] as $r) {
@@ -347,6 +348,7 @@ switch ($method) {
                 $item['metodologia'] = isset($it['metodologia']) ? $it['metodologia'] : '';
                 $item['unidad'] = isset($it['unidad']) ? $it['unidad'] : '';
                 $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+                $item['texto_por_defecto'] = isset($it['texto_por_defecto']) ? trim((string)$it['texto_por_defecto']) : '';
                 $item['referencias'] = [];
                 if (isset($it['referencias']) && is_array($it['referencias'])) {
                     foreach ($it['referencias'] as $r) {

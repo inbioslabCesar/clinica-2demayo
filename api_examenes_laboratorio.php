@@ -33,6 +33,22 @@ function decode_valores_referenciales_any($raw) {
     return $value;
 }
 
+function normalize_option_item($option, $idx) {
+    if (is_array($option)) {
+        return [
+            'valor' => trim((string)($option['valor'] ?? $option['label'] ?? $option['texto'] ?? $option['nombre'] ?? '')),
+            'por_defecto' => !empty($option['por_defecto']) || !empty($option['default']) || !empty($option['defecto']),
+            'orden' => isset($option['orden']) && is_numeric($option['orden']) ? intval($option['orden']) : ($idx + 1),
+        ];
+    }
+
+    return [
+        'valor' => trim((string)$option),
+        'por_defecto' => false,
+        'orden' => $idx + 1,
+    ];
+}
+
 // Genera un slug estable (codigo_interno) a partir del nombre de un parámetro.
 // Solo se usa si el parámetro no trae ya uno; una vez asignado, es inmutable.
 function generar_codigo_interno($nombre, $idx) {
@@ -62,7 +78,25 @@ function normalize_valores_referenciales($raw) {
             : generar_codigo_interno($item['nombre'], $idx);
         $item['metodologia'] = $it['metodologia'] ?? '';
         $item['unidad'] = $it['unidad'] ?? '';
-    $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+        $item['opciones'] = [];
+        $item['texto_por_defecto'] = isset($it['texto_por_defecto']) ? trim((string)$it['texto_por_defecto']) : '';
+        if (isset($it['opciones']) && is_array($it['opciones'])) {
+            foreach ($it['opciones'] as $opIdx => $op) {
+                $norm = normalize_option_item($op, $opIdx);
+                if ($norm['valor'] === '') continue;
+                $item['opciones'][] = $norm;
+            }
+            $foundDefault = false;
+            foreach ($item['opciones'] as $opIdx => $op) {
+                if (!empty($op['por_defecto'])) {
+                    if ($foundDefault) {
+                        $item['opciones'][$opIdx]['por_defecto'] = false;
+                    } else {
+                        $foundDefault = true;
+                    }
+                }
+            }
+        }
         $item['referencias'] = [];
         if (isset($it['referencias']) && is_array($it['referencias'])) {
             foreach ($it['referencias'] as $r) {
@@ -347,6 +381,7 @@ switch ($method) {
                 $item['metodologia'] = isset($it['metodologia']) ? $it['metodologia'] : '';
                 $item['unidad'] = isset($it['unidad']) ? $it['unidad'] : '';
                 $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+                $item['texto_por_defecto'] = isset($it['texto_por_defecto']) ? trim((string)$it['texto_por_defecto']) : '';
                 $item['referencias'] = [];
                 if (isset($it['referencias']) && is_array($it['referencias'])) {
                     foreach ($it['referencias'] as $r) {

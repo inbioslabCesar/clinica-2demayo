@@ -161,6 +161,22 @@ export default function ExamenesLaboratorioCrudPage() {
     setForm((f) => ({ ...f, valores_referenciales: val }));
   };
 
+  const normalizeOption = (option, idx) => {
+    if (option && typeof option === 'object') {
+      return {
+        valor: String(option.valor ?? option.label ?? option.texto ?? option.nombre ?? '').trim(),
+        por_defecto: !!(option.por_defecto ?? option.default ?? option.defecto ?? false),
+        orden: Number.isFinite(Number(option.orden)) ? Number(option.orden) : idx + 1,
+      };
+    }
+
+    return {
+      valor: String(option ?? '').trim(),
+      por_defecto: false,
+      orden: idx + 1,
+    };
+  };
+
   // Normalizar valores_referenciales antes de guardar/enviar
   const normalizeValoresReferenciales = (raw) => {
     if (!raw) return [];
@@ -190,13 +206,24 @@ export default function ExamenesLaboratorioCrudPage() {
       let opciones = [];
       if (Array.isArray(it.opciones)) {
         opciones = it.opciones
-          .map((op) => String(op ?? '').trim())
-          .filter((op) => op !== '');
+          .map((op, opIdx) => normalizeOption(op, opIdx))
+          .filter((op) => op.valor !== '');
       } else if (typeof it.opciones === 'string' && it.opciones.trim() !== '') {
         opciones = it.opciones
           .split(/\r?\n|,/)
-          .map((op) => op.trim())
-          .filter((op) => op !== '');
+          .map((op, opIdx) => normalizeOption(op, opIdx))
+          .filter((op) => op.valor !== '');
+      }
+
+      const defaultCount = opciones.filter((op) => op.por_defecto).length;
+      if (defaultCount > 1) {
+        let seen = false;
+        opciones = opciones.map((op) => {
+          if (!op.por_defecto) return op;
+          if (seen) return { ...op, por_defecto: false };
+          seen = true;
+          return op;
+        });
       }
 
       return {
@@ -205,6 +232,7 @@ export default function ExamenesLaboratorioCrudPage() {
         metodologia: it.metodologia || '',
         unidad: it.unidad || '',
         opciones,
+        texto_por_defecto: typeof it.texto_por_defecto === 'string' ? it.texto_por_defecto : '',
         referencias: Array.isArray(it.referencias) ? it.referencias : [],
         formula: it.formula || '',
         negrita: !!it.negrita,

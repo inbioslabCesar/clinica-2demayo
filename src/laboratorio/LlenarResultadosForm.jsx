@@ -16,6 +16,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [subidosArchivo, setSubidosArchivo] = useState({});
   const [docExternos, setDocExternos] = useState([]);
   const [descargandoResultado, setDescargandoResultado] = useState(false);
+  const [actualizandoExamenId, setActualizandoExamenId] = useState(null);
 
   const pacienteId = orden?.paciente_id_ref || orden?.paciente_id;
   const resultadoId = Number(orden?.resultado_id || 0);
@@ -96,6 +97,57 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       setDescargandoResultado(false);
     }
   };
+
+  const handleActualizarExamen = async (examId, examLabel) => {
+    if (!orden?.id || !examId) return;
+
+    const nombre = String(examLabel || `examen ${examId}`).trim();
+    const confirmado = window.confirm(
+      `Actualizar ${nombre} con la versión actual del catálogo?\n\nSe conservarán los resultados ya ingresados para este examen.`
+    );
+    if (!confirmado) return;
+
+    setActualizandoExamenId(examId);
+    try {
+      const res = await authFetch("api_ordenes_laboratorio.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "actualizar_examen",
+          orden_id: orden.id,
+          examen_id: examId,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || "No se pudo actualizar el examen");
+      }
+
+      setMsgType("success");
+      setMsg(`✅ ${data.message || `Examen ${nombre} actualizado`}`);
+      if (typeof onGuardado === 'function') {
+        onGuardado({ success: true, refreshOrden: true, orden_id: orden.id, examen_id: examId });
+      }
+    } catch (e) {
+      setMsgType("error");
+      setMsg(`❌ ${e?.message || 'No se pudo actualizar el examen'}`);
+    } finally {
+      setActualizandoExamenId(null);
+    }
+  };
+
+  const renderActualizarExamenButton = (examId, examLabel) => (
+    <button
+      type="button"
+      onClick={() => handleActualizarExamen(examId, examLabel)}
+      disabled={actualizandoExamenId === examId || guardando || descargandoResultado}
+      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+      title="Actualizar solo este examen con la definición actual del catálogo"
+    >
+      {actualizandoExamenId === examId ? '⏳ Actualizando...' : '↻ Actualizar examen'}
+    </button>
+  );
 
   const cargarDocExternos = () => {
     if (!pacienteId || !orden?.id) return;
@@ -313,6 +365,28 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     return defaultValue;
   };
 
+  const getOptionLabel = (option) => {
+    if (option && typeof option === 'object') {
+      return String(option.valor ?? option.label ?? option.texto ?? option.nombre ?? '').trim();
+    }
+    return String(option ?? '').trim();
+  };
+
+  const getDefaultOptionValue = (options) => {
+    if (!Array.isArray(options)) return '';
+    const defaultOption = options.find((option) => option && typeof option === 'object' && !!option.por_defecto);
+    return getOptionLabel(defaultOption);
+  };
+
+  const getDefaultTextValue = (param) => String(param?.texto_por_defecto ?? '').trim();
+
+  const normalizeOptionsForSelect = (options) => {
+    if (!Array.isArray(options)) return [];
+    return options
+      .map((option) => getOptionLabel(option))
+      .filter((value) => value !== '');
+  };
+
   const normalizeExamName = (value) =>
     String(value || '')
       .normalize('NFD')
@@ -371,7 +445,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const sectionColorKey = (examId) => `${examId}__seccion_color_texto`;
 
   const getExamSectionCategory = (examId, source = resultados) => String(source[sectionCategoryKey(examId)] ?? '').trim();
-  const getExamSectionTitle = (examId, source = resultados) => String(source[sectionTitleKey(examId)] ?? '').trim();
+  const getExamSectionTitle = (examId, source = resultados) => String(source[sectionTitleKey(examId)] ?? '');
   const getExamSectionAlign = (examId, source = resultados) => {
     const raw = String(source[sectionAlignKey(examId)] ?? '').trim().toLowerCase();
     return ['left', 'center', 'right'].includes(raw) ? raw : 'left';
@@ -883,6 +957,12 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         const suggestedDays = parseSuggestedDaysFromTiempo(
           (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
         );
+        const defaultOptionValue = (options) => {
+          if (!Array.isArray(options)) return '';
+          const selected = options.find((option) => option && typeof option === 'object' && !!option.por_defecto);
+          return getOptionLabel(selected);
+        };
+        const defaultTextValue = (param) => getDefaultTextValue(param);
 
         if (!Object.prototype.hasOwnProperty.call(resultadosToSend, printFlagKey(id))) {
           resultadosToSend[printFlagKey(id)] = 1;
@@ -911,12 +991,43 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         // construir mapa de valores por nombre para esta iteración (usar los valores ya calculados o ingresados)
         const valoresPorNombre = {};
         paramsList.filter(p => p && typeof p === 'object').forEach(param => {
+          const opcionesParam = Array.isArray(param.opciones) ? param.opciones : [];
+          if ((isTipoCampo(param.tipo) || isTipoParametro(param.tipo)) && param.nombre && param.nombre.trim() !== "" && opcionesParam.length > 0) {
+            const currentValue = getResultValueForParam(resultadosToSend, id, param, '');
+            const defaultValue = defaultOptionValue(opcionesParam);
+            if ((currentValue === null || currentValue === undefined || String(currentValue).trim() === '') && defaultValue !== '') {
+              resultadosToSend[`${id}__${param.nombre}`] = defaultValue;
+              valoresPorNombre[param.nombre] = defaultValue;
+              if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+                valoresPorNombre[param.codigo_interno] = defaultValue;
+              }
+            }
+          }
+
+          if ((isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo)) && param.nombre && param.nombre.trim() !== "") {
+            const currentValue = getResultValueForParam(resultadosToSend, id, param, '');
+            const defaultText = defaultTextValue(param);
+            if ((currentValue === null || currentValue === undefined || String(currentValue).trim() === '') && defaultText !== '') {
+              resultadosToSend[`${id}__${param.nombre}`] = defaultText;
+              valoresPorNombre[param.nombre] = defaultText;
+              if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+                valoresPorNombre[param.codigo_interno] = defaultText;
+              }
+            }
+          }
+
           if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
             const v = getResultValueForParam(resultadosToSend, id, param, '');
-            valoresPorNombre[param.nombre] = v;
+            const vFinal = (v === null || v === undefined || String(v).trim() === '')
+              ? defaultOptionValue(opcionesParam)
+              : v;
+            if (vFinal !== '' && (v === null || v === undefined || String(v).trim() === '')) {
+              resultadosToSend[`${id}__${param.nombre}`] = vFinal;
+            }
+            valoresPorNombre[param.nombre] = vFinal;
             // Registrar también por codigo_interno (clave inmutable) para que fórmulas sobrevivan renombrados
             if (param.codigo_interno && param.codigo_interno.trim() !== "") {
-              valoresPorNombre[param.codigo_interno] = v;
+              valoresPorNombre[param.codigo_interno] = vFinal;
             }
           }
         });
@@ -1322,7 +1433,10 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
                 if ((!Array.isArray(paramsList) || paramsList.length === 0 || !hasRenderableParams) && orderName) {
                   const genericKey = `${id}__${orderName}`;
-                  const genericValue = getResultValueForParam(resultados, id, { nombre: orderName, codigo_interno: '' }, '');
+                  const genericCurrent = getResultValueForParam(resultados, id, { nombre: orderName, codigo_interno: '' }, '');
+                  const genericValue = (genericCurrent === null || genericCurrent === undefined || String(genericCurrent).trim() === '')
+                    ? getDefaultTextValue(exObjResolved || exOrdenDetalle || {})
+                    : genericCurrent;
 
                   return (
                     <div
@@ -1374,6 +1488,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                               <span className="text-xs">Orden</span>
                             </button>
                           </div>
+                          {renderActualizarExamenButton(id, orderName)}
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"
@@ -1492,6 +1607,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                               <span className="text-xs">Orden</span>
                             </button>
                           </div>
+                          {renderActualizarExamenButton(id, examName)}
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"
@@ -1560,7 +1676,10 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           }
 
                           if (isTipoTextoLargo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-                            const textoValue = getResultValueForParam(resultados, id, param, '');
+                            const textoCurrent = getResultValueForParam(resultados, id, param, '');
+                            const textoValue = (textoCurrent === null || textoCurrent === undefined || String(textoCurrent).trim() === '')
+                              ? getDefaultTextValue(param)
+                              : textoCurrent;
                             return (
                               <div key={`text-${idx}-${param.nombre}`} className="md:col-span-2 space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
@@ -1579,8 +1698,12 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           }
 
                           if (isTipoCampo(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-                            const fieldValue = getResultValueForParam(resultados, id, param, '');
-                            const opcionesCampo = Array.isArray(param.opciones) ? param.opciones.filter(o => String(o).trim() !== "") : [];
+                            const fieldCurrent = getResultValueForParam(resultados, id, param, '');
+                            const fieldValue = (fieldCurrent === null || fieldCurrent === undefined || String(fieldCurrent).trim() === '')
+                              ? getDefaultTextValue(param)
+                              : fieldCurrent;
+                            const opcionesCampo = normalizeOptionsForSelect(param.opciones);
+                            const selectedValue = fieldValue || getDefaultOptionValue(param.opciones) || '';
                             return (
                               <div key={`campo-${idx}-${param.nombre}`} className="space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
@@ -1594,7 +1717,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                 {opcionesCampo.length > 0 ? (
                                   <select
                                     name={`${id}__${param.nombre}`}
-                                    value={fieldValue}
+                                    value={selectedValue}
                                     onChange={handleChange}
                                     className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                                   >
@@ -1671,17 +1794,19 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                 
                                 <div className="relative">
                                   {(() => {
-                                    const opcionesParam = Array.isArray(param.opciones) ? param.opciones.filter(o => String(o).trim() !== '') : [];
+                                    const opcionesParam = normalizeOptionsForSelect(param.opciones);
+                                    const opcionesParamNorm = normalizeOptionsForSelect(param.opciones);
+                                    const valorSeleccionado = valor || getDefaultOptionValue(param.opciones) || '';
                                     if (!tieneFormula && opcionesParam.length > 0) {
                                       return (
                                         <select
                                           name={`${id}__${param.nombre}`}
-                                          value={valor}
+                                          value={valorSeleccionado}
                                           onChange={handleChange}
                                           className="w-full px-4 py-3 border-2 rounded-lg transition-all duration-200 border-gray-300 bg-white hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                                         >
                                           <option value="">-- Seleccione --</option>
-                                          {opcionesParam.map((op, oi) => (
+                                          {opcionesParamNorm.map((op, oi) => (
                                             <option key={oi} value={op}>{op}</option>
                                           ))}
                                         </select>
@@ -1785,6 +1910,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                               <span className="text-xs">Orden</span>
                             </button>
                           </div>
+                          {renderActualizarExamenButton(id, exObjResolved.nombre)}
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"

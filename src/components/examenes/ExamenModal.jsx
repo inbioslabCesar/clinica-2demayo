@@ -11,6 +11,16 @@ const normalizeTipo = (tipo) =>
 
 const toSafeArray = (value) => (Array.isArray(value) ? value : []);
 
+const getOptionLabel = (option) => {
+  if (option && typeof option === "object") {
+    return String(option.valor ?? option.label ?? option.texto ?? option.nombre ?? "").trim();
+  }
+  return String(option ?? "").trim();
+};
+
+const isCampoLike = (tipoNorm) => tipoNorm === "campo";
+const isTextoLargoLike = (tipoNorm) => tipoNorm === "textolargo" || tipoNorm === "texto largo" || tipoNorm === "texto_largo";
+
 export default function ExamenModal({ open, onClose, form, handleChange, handleValoresReferencialesChange, handleSubmit, editId }) {
   const previewItems = [...toSafeArray(form?.valores_referenciales)]
     .filter((item) => item && typeof item === "object")
@@ -30,8 +40,10 @@ export default function ExamenModal({ open, onClose, form, handleChange, handleV
         ...item,
         tipoNorm,
         nombre,
+        textoPorDefecto: String(item.texto_por_defecto ?? "").trim(),
         orden: Number.isFinite(Number(item.orden)) ? Number(item.orden) : index + 1,
         referencias: Array.isArray(item.referencias) ? item.referencias : [],
+        opciones: Array.isArray(item.opciones) ? item.opciones : [],
       };
     })
     .sort((a, b) => a.orden - b.orden);
@@ -156,10 +168,44 @@ export default function ExamenModal({ open, onClose, form, handleChange, handleV
                               {item.nombre}
                             </td>
                             <td className="py-2 px-2 text-center">{item.metodologia || ""}</td>
-                            <td className="py-2 px-2 text-center text-gray-400">[Resultado]</td>
+                            <td className="py-2 px-2 text-center">
+                              {(() => {
+                                if ((isCampoLike(item.tipoNorm) || isTextoLargoLike(item.tipoNorm)) && item.textoPorDefecto) {
+                                  return <span className="text-gray-700">{item.textoPorDefecto}</span>;
+                                }
+
+                                if (isCampoLike(item.tipoNorm) && item.opciones.length > 0) {
+                                  const defaultOption = item.opciones.find((op) => op && typeof op === "object" && op.por_defecto);
+                                  const defaultLabel = getOptionLabel(defaultOption);
+                                  if (defaultLabel) {
+                                    return <span className="text-gray-700">{defaultLabel}</span>;
+                                  }
+                                }
+
+                                return <span className="text-gray-400">[Resultado]</span>;
+                              })()}
+                            </td>
                             <td className="py-2 px-2 text-center">{item.unidad || ""}</td>
                             <td className="py-2 px-2 text-center">
-                              {item.referencias.length > 0 ? (
+                              {isCampoLike(item.tipoNorm) && item.opciones.length > 0 ? (
+                                <div className="text-[11px] text-gray-600 space-y-1">
+                                  {item.opciones.map((op, opIdx) => {
+                                    const label = getOptionLabel(op);
+                                    if (!label) return null;
+                                    const isDefault = !!(op && typeof op === "object" && op.por_defecto);
+                                    return (
+                                      <div key={opIdx} className="flex items-center justify-center gap-1">
+                                        <span>{label}</span>
+                                        {isDefault && (
+                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                                            Defecto
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : item.referencias.length > 0 ? (
                                 <ul className="list-none p-0 m-0">
                                   {item.referencias.map((ref, rIdx) => (
                                     <li key={rIdx}>
@@ -192,6 +238,9 @@ export default function ExamenModal({ open, onClose, form, handleChange, handleV
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="mt-4 text-xs text-gray-500">
+              Las opciones marcadas como predeterminadas aparecerán con un chip y se usarán al abrir el formulario de resultados cuando no exista un valor previo.
             </div>
           </div>
           <div className="flex flex-col sm:flex-row gap-4 justify-end pt-6 border-t border-gray-200">
