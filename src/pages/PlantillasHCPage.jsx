@@ -636,6 +636,13 @@ export default function PlantillasHCPage() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+
+    // El modo automático no edita una plantilla: solo actualiza la política de la clínica.
+    if (!selectedTemplateId && !isDraftTemplate && !hcTemplateSingleIdDraft) {
+      await handleApplyUsageConfig();
+      return;
+    }
+
     setSaving(true);
     setStatusMessage("");
 
@@ -1275,10 +1282,14 @@ export default function PlantillasHCPage() {
                 <div className="flex flex-wrap gap-3">
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || savingConfig}
                     className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {saving ? "Guardando..." : "Guardar plantilla"}
+                    {saving || savingConfig
+                      ? "Guardando..."
+                      : !selectedTemplateId && !isDraftTemplate && !hcTemplateSingleIdDraft
+                        ? "Aplicar modo automático"
+                        : "Guardar plantilla"}
                   </button>
                   {isAdmin && (
                     <button

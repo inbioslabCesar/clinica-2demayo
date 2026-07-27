@@ -26,6 +26,15 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
     direccion: initialData.direccion || "",
     telefono: initialData.telefono || "",
     email: initialData.email || "",
+    grupo_sanguineo: initialData.grupo_sanguineo || "NO_ESPECIFICADO",
+    factor_rh: initialData.factor_rh || "NO_ESPECIFICADO",
+    acompanantes: Array.isArray(initialData.acompanantes)
+      ? initialData.acompanantes.slice(0, 2).map((a) => ({
+          nombre_completo: a?.nombre_completo || "",
+          parentesco: a?.parentesco || "",
+          telefono: a?.telefono || "",
+        }))
+      : [],
   });
 
   useEffect(() => {
@@ -45,6 +54,15 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
       direccion: initialData.direccion || "",
       telefono: initialData.telefono || "",
       email: initialData.email || "",
+      grupo_sanguineo: initialData.grupo_sanguineo || "NO_ESPECIFICADO",
+      factor_rh: initialData.factor_rh || "NO_ESPECIFICADO",
+      acompanantes: Array.isArray(initialData.acompanantes)
+        ? initialData.acompanantes.slice(0, 2).map((a) => ({
+            nombre_completo: a?.nombre_completo || "",
+            parentesco: a?.parentesco || "",
+            telefono: a?.telefono || "",
+          }))
+        : [],
     });
   }, [initialData]);
   const [error, setError] = useState("");
@@ -126,6 +144,41 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
     }
   };
 
+  const handleAcompananteChange = (index, field, value) => {
+    setForm((prev) => {
+      const next = Array.isArray(prev.acompanantes) ? [...prev.acompanantes] : [];
+      while (next.length <= index) {
+        next.push({ nombre_completo: "", parentesco: "", telefono: "" });
+      }
+      next[index] = {
+        ...next[index],
+        [field]: value,
+      };
+      return { ...prev, acompanantes: next.slice(0, 2) };
+    });
+  };
+
+  const handleAgregarAcompanante = () => {
+    setForm((prev) => {
+      const current = Array.isArray(prev.acompanantes) ? prev.acompanantes : [];
+      if (current.length >= 2) return prev;
+      return {
+        ...prev,
+        acompanantes: [...current, { nombre_completo: "", parentesco: "", telefono: "" }],
+      };
+    });
+  };
+
+  const handleQuitarAcompanante = (index) => {
+    setForm((prev) => {
+      const current = Array.isArray(prev.acompanantes) ? prev.acompanantes : [];
+      return {
+        ...prev,
+        acompanantes: current.filter((_, i) => i !== index),
+      };
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -138,7 +191,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
         "historia_clinica",
         "procedencia",
         "direccion",
-        "tipo_seguro"
+        "tipo_seguro",
       ];
       camposMayuscula.forEach((campo) => {
         if (formToSend[campo]) {
@@ -148,6 +201,14 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
       if (formToSend.email) {
         formToSend.email = formToSend.email.trim();
       }
+      formToSend.acompanantes = (Array.isArray(formToSend.acompanantes) ? formToSend.acompanantes : [])
+        .slice(0, 2)
+        .map((a) => ({
+          nombre_completo: (a?.nombre_completo || "").toUpperCase().trim(),
+          parentesco: (a?.parentesco || "").toUpperCase().trim(),
+          telefono: (a?.telefono || "").trim(),
+        }))
+        .filter((a) => a.nombre_completo || a.parentesco || a.telefono);
       if (formToSend.tipo_documento === "dni") {
         if (!/^\d{8}$/.test(formToSend.dni)) {
           setError("El DNI debe tener exactamente 8 dígitos.");
@@ -269,7 +330,13 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
       >
         <DatosBasicos form={form} handleChange={handleChange} />
         <DatosEdad form={form} handleChange={handleChange} />
-        <DatosAdicionales form={form} handleChange={handleChange} />
+        <DatosAdicionales
+          form={form}
+          handleChange={handleChange}
+          handleAcompananteChange={handleAcompananteChange}
+          handleAgregarAcompanante={handleAgregarAcompanante}
+          handleQuitarAcompanante={handleQuitarAcompanante}
+        />
         <DatosContacto form={form} handleChange={handleChange} />
         <div className="fixed left-0 right-0 bottom-0 z-10 bg-blue-50 p-4 border-t border-blue-200 w-full sm:static sm:w-auto sm:p-0 sm:border-0">
           <button

@@ -92,6 +92,9 @@ function PacienteList() {
         direccion: "",
         telefono: "",
         email: "",
+        grupo_sanguineo: "NO_ESPECIFICADO",
+        factor_rh: "NO_ESPECIFICADO",
+        acompanantes: [],
       });
       setModalOpen(true);
       // Limpiar el state para evitar re-apertura en navegación futura
@@ -127,6 +130,9 @@ function PacienteList() {
       direccion: "",
       telefono: "",
       email: "",
+      grupo_sanguineo: "NO_ESPECIFICADO",
+      factor_rh: "NO_ESPECIFICADO",
+      acompanantes: [],
     });
     setModalOpen(true);
   };
