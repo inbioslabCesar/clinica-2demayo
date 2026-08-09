@@ -42,6 +42,159 @@ function pacientes_table_exists($conn, string $table): bool {
     return $ok;
 }
 
+function pacientes_column_exists($conn, string $table, string $column): bool {
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
+    if (!$stmt) return false;
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $ok = $res && $res->num_rows > 0;
+    $stmt->close();
+    return $ok;
+}
+
+function pacientes_select_columns($conn, string $alias = ''): string {
+    $p = $alias !== '' ? $alias . '.' : '';
+    $hasGrupo = pacientes_column_exists($conn, 'pacientes', 'grupo_sanguineo');
+    $hasRh = pacientes_column_exists($conn, 'pacientes', 'factor_rh');
+
+    $cols = [
+        $p . 'id',
+        $p . 'historia_clinica',
+        $p . 'nombre',
+        $p . 'apellido',
+        $p . 'fecha_nacimiento',
+        $p . 'edad',
+        $p . 'edad_unidad',
+        $p . 'procedencia',
+        $p . 'tipo_seguro',
+        $p . 'direccion',
+        $p . 'telefono',
+        $p . 'email',
+        $p . 'dni',
+        $p . 'sexo',
+        $hasGrupo ? ($p . 'grupo_sanguineo') : 'NULL AS grupo_sanguineo',
+        $hasRh ? ($p . 'factor_rh') : 'NULL AS factor_rh',
+        $p . 'creado_en'
+    ];
+
+    return implode(', ', $cols);
+}
+
+function pacientes_acompanantes_table_exists($conn): bool {
+    return pacientes_table_exists($conn, 'pacientes_acompanantes');
+}
+
+function normalizar_acompanantes_payload($raw): array {
+    if (!is_array($raw)) return [];
+
+    $permitidosParentesco = ['PADRE', 'MADRE', 'TUTOR', 'ABUELO_A', 'HERMANO_A', 'OTRO'];
+    $out = [];
+
+    foreach ($raw as $row) {
+        if (!is_array($row)) continue;
+        $nombre = strtoupper(trim((string)($row['nombre_completo'] ?? '')));
+        $parentesco = strtoupper(trim((string)($row['parentesco'] ?? '')));
+        $telefono = trim((string)($row['telefono'] ?? ''));
+
+        if ($nombre === '' && $parentesco === '' && $telefono === '') {
+            continue;
+        }
+
+        if ($nombre === '' || $parentesco === '') {
+            continue;
+        }
+
+        if (!in_array($parentesco, $permitidosParentesco, true)) {
+            $parentesco = 'OTRO';
+        }
+
+        $out[] = [
+            'nombre_completo' => $nombre,
+            'parentesco' => $parentesco,
+            'telefono' => $telefono !== '' ? $telefono : null,
+        ];
+
+        if (count($out) >= 2) break;
+    }
+
+    return $out;
+}
+
+function obtener_acompanantes_paciente($conn, int $pacienteId): array {
+    if ($pacienteId <= 0 || !pacientes_acompanantes_table_exists($conn)) {
+        return [];
+    }
+
+    $stmt = $conn->prepare('SELECT id, nombre_completo, parentesco, telefono, es_principal, creado_en FROM pacientes_acompanantes WHERE paciente_id = ? ORDER BY es_principal DESC, id ASC LIMIT 2');
+    if (!$stmt) return [];
+
+    $stmt->bind_param('i', $pacienteId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $rows = [];
+    while ($row = $res->fetch_assoc()) {
+        $rows[] = $row;
+    }
+    $stmt->close();
+    return $rows;
+}
+
+function guardar_acompanantes_paciente($conn, int $pacienteId, array $acompanantes): bool {
+    if ($pacienteId <= 0 || !pacientes_acompanantes_table_exists($conn)) {
+        return true;
+    }
+
+    $stmtDel = $conn->prepare('DELETE FROM pacientes_acompanantes WHERE paciente_id = ?');
+    if (!$stmtDel) return false;
+    $stmtDel->bind_param('i', $pacienteId);
+    if (!$stmtDel->execute()) {
+        $stmtDel->close();
+        return false;
+    }
+    $stmtDel->close();
+
+    if (count($acompanantes) === 0) {
+        return true;
+    }
+
+    $stmtIns = $conn->prepare('INSERT INTO pacientes_acompanantes (paciente_id, nombre_completo, parentesco, telefono, es_principal) VALUES (?, ?, ?, ?, ?)');
+    if (!$stmtIns) return false;
+
+    foreach ($acompanantes as $idx => $a) {
+        $nombre = (string)$a['nombre_completo'];
+        $parentesco = (string)$a['parentesco'];
+        $telefono = $a['telefono'] ?? null;
+        $esPrincipal = $idx === 0 ? 1 : 0;
+        $stmtIns->bind_param('isssi', $pacienteId, $nombre, $parentesco, $telefono, $esPrincipal);
+        if (!$stmtIns->execute()) {
+            $stmtIns->close();
+            return false;
+        }
+    }
+
+    $stmtIns->close();
+    return true;
+}
+
+function obtener_paciente_por_id($conn, int $id): ?array {
+    if ($id <= 0) return null;
+    $select = pacientes_select_columns($conn);
+    $stmt = $conn->prepare("SELECT $select FROM pacientes WHERE id = ?");
+    if (!$stmt) return null;
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = $res->fetch_assoc() ?: null;
+    $stmt->close();
+
+    if ($row) {
+        $row['acompanantes'] = obtener_acompanantes_paciente($conn, $id);
+    }
+    return $row;
+}
+
 // Función para generar el próximo número de historia clínica
 function generarProximaHistoriaClinica($conn) {
     // Obtener el último número de HC de la base de datos
@@ -140,6 +293,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $direccion = $data['direccion'] ?? null;
     $telefono = $data['telefono'] ?? null;
     $email = $data['email'] ?? null;
+    $grupo_sanguineo = isset($data['grupo_sanguineo']) ? strtoupper(trim((string)$data['grupo_sanguineo'])) : null;
+    $factor_rh = isset($data['factor_rh']) ? strtoupper(trim((string)$data['factor_rh'])) : null;
+    $acompanantes = normalizar_acompanantes_payload($data['acompanantes'] ?? []);
+
+        $gruposValidos = ['A', 'B', 'AB', 'O', 'NO_ESPECIFICADO'];
+        $rhValidos = ['POSITIVO', 'NEGATIVO', 'NO_ESPECIFICADO'];
+        if ($grupo_sanguineo !== null && $grupo_sanguineo !== '' && !in_array($grupo_sanguineo, $gruposValidos, true)) {
+            $grupo_sanguineo = 'NO_ESPECIFICADO';
+        }
+        if ($factor_rh !== null && $factor_rh !== '' && !in_array($factor_rh, $rhValidos, true)) {
+            $factor_rh = 'NO_ESPECIFICADO';
+        }
+        if ($grupo_sanguineo === '') $grupo_sanguineo = null;
+        if ($factor_rh === '') $factor_rh = null;
 
         // Validar campos obligatorios
         if (!$dni) {
@@ -157,36 +324,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // La historia clínica ya no es obligatoria desde el frontend
         // Se genera automáticamente si está vacía
 
-        if ($id > 0) {
-            // Actualizar paciente existente
-        $stmt = $conn->prepare("UPDATE pacientes SET dni=?, nombre=?, apellido=?, historia_clinica=?, fecha_nacimiento=?, edad=?, edad_unidad=?, procedencia=?, tipo_seguro=?, sexo=?, direccion=?, telefono=?, email=? WHERE id=?");
-        $stmt->bind_param('sssssssssssssi', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $id);
-            if ($stmt->execute()) {
-                $res = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = $id");
-                $paciente = $res->fetch_assoc();
-                echo json_encode(['success' => true, 'paciente' => $paciente]);
+        $hasGrupo = pacientes_column_exists($conn, 'pacientes', 'grupo_sanguineo');
+        $hasRh = pacientes_column_exists($conn, 'pacientes', 'factor_rh');
+
+        $conn->begin_transaction();
+        try {
+            if ($id > 0) {
+                // Actualizar paciente existente
+                if ($hasGrupo && $hasRh) {
+                    $stmt = $conn->prepare("UPDATE pacientes SET dni=?, nombre=?, apellido=?, historia_clinica=?, fecha_nacimiento=?, edad=?, edad_unidad=?, procedencia=?, tipo_seguro=?, sexo=?, direccion=?, telefono=?, email=?, grupo_sanguineo=?, factor_rh=? WHERE id=?");
+                    $stmt->bind_param('sssssssssssssssi', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $grupo_sanguineo, $factor_rh, $id);
+                } elseif ($hasGrupo) {
+                    $stmt = $conn->prepare("UPDATE pacientes SET dni=?, nombre=?, apellido=?, historia_clinica=?, fecha_nacimiento=?, edad=?, edad_unidad=?, procedencia=?, tipo_seguro=?, sexo=?, direccion=?, telefono=?, email=?, grupo_sanguineo=? WHERE id=?");
+                    $stmt->bind_param('ssssssssssssssi', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $grupo_sanguineo, $id);
+                } elseif ($hasRh) {
+                    $stmt = $conn->prepare("UPDATE pacientes SET dni=?, nombre=?, apellido=?, historia_clinica=?, fecha_nacimiento=?, edad=?, edad_unidad=?, procedencia=?, tipo_seguro=?, sexo=?, direccion=?, telefono=?, email=?, factor_rh=? WHERE id=?");
+                    $stmt->bind_param('ssssssssssssssi', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $factor_rh, $id);
+                } else {
+                    $stmt = $conn->prepare("UPDATE pacientes SET dni=?, nombre=?, apellido=?, historia_clinica=?, fecha_nacimiento=?, edad=?, edad_unidad=?, procedencia=?, tipo_seguro=?, sexo=?, direccion=?, telefono=?, email=? WHERE id=?");
+                    $stmt->bind_param('sssssssssssssi', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $id);
+                }
+
+                if (!$stmt || !$stmt->execute()) {
+                    $err = $stmt ? $stmt->error : $conn->error;
+                    if ($stmt) $stmt->close();
+                    throw new Exception('Error al actualizar paciente: ' . $err);
+                }
+                $stmt->close();
             } else {
-                echo json_encode(['success' => false, 'error' => 'Error al actualizar paciente: ' . $stmt->error]);
+                // Registrar nuevo paciente
+                if ($hasGrupo && $hasRh) {
+                    $stmt = $conn->prepare("INSERT INTO pacientes (dni, nombre, apellido, historia_clinica, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, sexo, direccion, telefono, email, grupo_sanguineo, factor_rh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param('sssssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $grupo_sanguineo, $factor_rh);
+                } elseif ($hasGrupo) {
+                    $stmt = $conn->prepare("INSERT INTO pacientes (dni, nombre, apellido, historia_clinica, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, sexo, direccion, telefono, email, grupo_sanguineo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param('ssssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $grupo_sanguineo);
+                } elseif ($hasRh) {
+                    $stmt = $conn->prepare("INSERT INTO pacientes (dni, nombre, apellido, historia_clinica, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, sexo, direccion, telefono, email, factor_rh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param('ssssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email, $factor_rh);
+                } else {
+                    $stmt = $conn->prepare("INSERT INTO pacientes (dni, nombre, apellido, historia_clinica, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, sexo, direccion, telefono, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param('sssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email);
+                }
+
+                if (!$stmt || !$stmt->execute()) {
+                    $err = $stmt ? $stmt->error : $conn->error;
+                    if ($stmt) $stmt->close();
+                    if (strpos($err, 'Duplicate entry') !== false && strpos($err, 'dni') !== false) {
+                        throw new Exception('El DNI ingresado ya está registrado en el sistema.');
+                    }
+                    throw new Exception('Error al registrar paciente: ' . $err);
+                }
+                $id = $conn->insert_id;
+                $stmt->close();
             }
-            $stmt->close();
-        } else {
-            // Registrar nuevo paciente
-        $stmt = $conn->prepare("INSERT INTO pacientes (dni, nombre, apellido, historia_clinica, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, sexo, direccion, telefono, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param('sssssssssssss', $dni, $nombre, $apellido, $historia, $fecha_nacimiento, $edad, $edad_unidad, $procedencia, $tipo_seguro, $sexo, $direccion, $telefono, $email);
-        if ($stmt->execute()) {
-            $id = $conn->insert_id;
-            $res = $conn->query("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = $id");
-            $paciente = $res->fetch_assoc();
+
+            if (!guardar_acompanantes_paciente($conn, (int)$id, $acompanantes)) {
+                throw new Exception('No se pudo guardar la información de acompañantes.');
+            }
+
+            $conn->commit();
+
+            $paciente = obtener_paciente_por_id($conn, (int)$id);
             echo json_encode(['success' => true, 'paciente' => $paciente]);
-        } else {
-            // Detectar error de DNI duplicado y devolver mensaje en español
-            if (strpos($stmt->error, 'Duplicate entry') !== false && strpos($stmt->error, 'dni') !== false) {
-                echo json_encode(['success' => false, 'error' => 'El DNI ingresado ya está registrado en el sistema.']);
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Error al registrar paciente: ' . $stmt->error]);
-            }
-        }
-        $stmt->close();
+        } catch (Exception $e) {
+            $conn->rollback();
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
 }
@@ -196,11 +399,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Listar un paciente por id (GET ?id=...)
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
-    $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en FROM pacientes WHERE id = ?");
-    $stmt->bind_param('i', $id);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $row = $res->fetch_assoc();
+    $row = obtener_paciente_por_id($conn, $id);
     if ($row) {
         // Calcular edad si no está
         if (empty($row['edad']) && !empty($row['fecha_nacimiento'])) {
@@ -213,7 +412,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
     } else {
         echo json_encode(['success' => false, 'error' => 'Paciente no encontrado']);
     }
-    $stmt->close();
     exit;
 }
 
@@ -263,7 +461,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Obtener solo los pacientes de la página actual filtrados
     if ($where) {
-        $sql = "SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en, $selectContratoActivo FROM pacientes $where ORDER BY id DESC LIMIT ? OFFSET ?";
+        $selectCols = pacientes_select_columns($conn);
+        $sql = "SELECT $selectCols, $selectContratoActivo FROM pacientes $where ORDER BY id DESC LIMIT ? OFFSET ?";
         $stmt = $conn->prepare($sql);
         $params[] = $limit;
         $params[] = $offset;
@@ -272,7 +471,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $stmt->execute();
         $result = $stmt->get_result();
     } else {
-        $stmt = $conn->prepare("SELECT id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, creado_en, $selectContratoActivo FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
+        $selectCols = pacientes_select_columns($conn);
+        $stmt = $conn->prepare("SELECT $selectCols, $selectContratoActivo FROM pacientes ORDER BY id DESC LIMIT ? OFFSET ?");
         $stmt->bind_param('ii', $limit, $offset);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -290,6 +490,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         } else {
             $row['edad'] = null;
         }
+        $row['acompanantes'] = obtener_acompanantes_paciente($conn, (int)$row['id']);
         $pacientes[] = $row;
     }
     $stmt->close();

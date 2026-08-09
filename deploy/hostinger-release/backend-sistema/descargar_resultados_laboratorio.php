@@ -80,6 +80,7 @@ if (!empty($orden['paciente_id'])) {
 
 $resultados_map = json_decode($row['resultados'], true) ?: [];
 $examenes_ids = [];
+$ordered_exam_ids = [];
 $orderSnapshotsPorId = [];
 $cotizacionSnapshotsPorId = [];
 $hasSnapshotJsonDetalle = pdf_column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
@@ -181,6 +182,7 @@ if (!empty($examenes_ids)) {
         return is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it);
     }, $examenes_ids);
     $unique = array_values(array_unique(array_filter($ids)));
+    $ordered_exam_ids = $unique;
     if (!empty($unique)) {
         $placeholders = implode(',', array_fill(0, count($unique), '?'));
         $types = str_repeat('i', count($unique));
@@ -265,6 +267,22 @@ if (!empty($examenes_ids)) {
     }
 }
 
+if (!empty($ordered_exam_ids) && !empty($examenes_detalle)) {
+    $orderedDetalle = [];
+    foreach ($ordered_exam_ids as $sid) {
+        $sid = intval($sid);
+        if ($sid > 0 && isset($examenes_detalle[$sid])) {
+            $orderedDetalle[$sid] = $examenes_detalle[$sid];
+        }
+    }
+    foreach ($examenes_detalle as $sid => $detalle) {
+        if (!isset($orderedDetalle[$sid])) {
+            $orderedDetalle[$sid] = $detalle;
+        }
+    }
+    $examenes_detalle = $orderedDetalle;
+}
+
 function h($s) { return htmlspecialchars($s ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 function normalize_resultado_key_token($value)
@@ -347,6 +365,10 @@ $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInte
         if (substr($key, -18) === '__imprimir_examen') continue;
         if (substr($key, -15) === '__alarma_activa') continue;
         if (substr($key, -13) === '__alarma_dias') continue;
+        if (substr($key, -19) === '__seccion_categoria') continue;
+        if (substr($key, -16) === '__seccion_titulo') continue;
+        if (substr($key, -19) === '__seccion_alineacion') continue;
+        if (substr($key, -20) === '__seccion_color_texto') continue;
         if ($firstNonMetaValue === null) {
             $firstNonMetaValue = $v;
         }
@@ -667,6 +689,22 @@ if (empty($examenes_detalle)) {
         }
 
         $examenesImpresos++;
+        $seccionCategoria = trim((string)($resultados_map[$exId . '__seccion_categoria'] ?? ''));
+        $seccionTituloManual = trim((string)($resultados_map[$exId . '__seccion_titulo'] ?? ''));
+        $seccionAlineacion = strtolower(trim((string)($resultados_map[$exId . '__seccion_alineacion'] ?? 'left')));
+        if (!in_array($seccionAlineacion, ['left', 'center', 'right'], true)) {
+            $seccionAlineacion = 'left';
+        }
+        $seccionColorTexto = trim((string)($resultados_map[$exId . '__seccion_color_texto'] ?? '#1f2937'));
+        if (!preg_match('/^#[0-9a-fA-F]{6}$/', $seccionColorTexto)) {
+            $seccionColorTexto = '#1f2937';
+        }
+        $textoSeccion = $seccionTituloManual !== '' ? $seccionTituloManual : $seccionCategoria;
+        $textoSeccion = trim((string)$textoSeccion);
+        if ($textoSeccion !== '') {
+            $rowsHtml .= '<tr><td colspan="5" style="background:#eef2ff;color:' . h($seccionColorTexto) . ';font-weight:bold;text-align:' . h($seccionAlineacion) . ';padding:5px 7px;border-top:1px solid #d6deea;">' . h($textoSeccion) . '</td></tr>';
+        }
+
         $snapshotNombreExamen = trim((string)($ex['snapshot_nombre'] ?? ''));
         $catalogNombreExamen = trim((string)($ex['nombre'] ?? ''));
         $usarFormatoGenerico = $snapshotNombreExamen !== ''
@@ -703,7 +741,22 @@ if (empty($examenes_detalle)) {
                 $nombre_param = $param['nombre'] ?? '';
 
                 if ($tipoNorm === 'titulo' || $tipoNorm === 'subtitulo') {
-                    $rowsHtml .= '<tr><td colspan="5" style="background:#edf2f7;color:#1f2937;font-weight:bold;text-align:left;padding:4px 7px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
+                    $titleAlign = strtolower(trim((string)($param['alineacion'] ?? 'left')));
+                    if (!in_array($titleAlign, ['left', 'center', 'right'], true)) {
+                        $titleAlign = 'left';
+                    }
+                    $titleColor = trim((string)($param['color_texto'] ?? '#1f2937'));
+                    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $titleColor)) {
+                        $titleColor = '#1f2937';
+                    }
+                    $titleBackground = trim((string)($param['color_fondo'] ?? '#edf2f7'));
+                    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $titleBackground)) {
+                        $titleBackground = '#edf2f7';
+                    }
+                    $titleWeight = !empty($param['negrita']) ? 'bold' : 'normal';
+                    $titleStyle = !empty($param['cursiva']) ? 'italic' : 'normal';
+
+                    $rowsHtml .= '<tr><td colspan="5" style="background:' . h($titleBackground) . ';color:' . h($titleColor) . ';font-weight:' . h($titleWeight) . ';font-style:' . h($titleStyle) . ';text-align:' . h($titleAlign) . ';padding:4px 7px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
                     continue;
                 }
 

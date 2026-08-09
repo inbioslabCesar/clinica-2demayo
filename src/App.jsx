@@ -42,6 +42,9 @@ const AgendarConsultaPage = lazy(() =>
 const MedicoConsultasPage = lazy(() =>
   import("./pages/MedicoConsultasPage.jsx")
 );
+const MisInformesImagenologiaPage = lazy(() =>
+  import("./pages/MisInformesImagenologiaPage.jsx")
+);
 const MedicosPage = lazy(() => import("./pages/MedicosPage.jsx"));
 const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
@@ -794,6 +797,17 @@ function App() {
                         rolesPermitidos={["medico"]}
                       >
                         <MedicoConsultasPage usuario={usuario} />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/mis-informes-imagenologia"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <MisInformesImagenologiaPage usuario={usuario} />
                       </ProtectedRoute>
                     }
                   />

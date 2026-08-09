@@ -124,8 +124,9 @@ const useMedicos = () => {
       } else {
         setEditError(res.data.error || 'Error al actualizar medico');
       }
-    } catch {
-      setEditError('Error de conexion al actualizar medico');
+    } catch (error) {
+      const serverError = error?.response?.data?.error || error?.response?.data?.message;
+      setEditError(serverError || `No se pudo actualizar el médico${error?.response?.status ? ` (HTTP ${error.response.status})` : ''}`);
     } finally {
       setEditSaving(false);
     }

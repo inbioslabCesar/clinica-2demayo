@@ -55,6 +55,70 @@ function hc_resolver_actor_usuario_id() {
     return 0;
 }
 
+function hc_resolver_medico_sesion_id() {
+    if (isset($_SESSION['medico_id'])) {
+        $medicoId = (int)$_SESSION['medico_id'];
+        if ($medicoId > 0) {
+            return $medicoId;
+        }
+    }
+
+    if (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) {
+        $rol = strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
+        if ($rol === 'medico') {
+            $medicoId = (int)($_SESSION['usuario']['medico_id'] ?? ($_SESSION['usuario']['id'] ?? 0));
+            if ($medicoId > 0) {
+                return $medicoId;
+            }
+        }
+    }
+
+    if (isset($_SESSION['medico']) && is_array($_SESSION['medico'])) {
+        $medicoId = (int)($_SESSION['medico']['id'] ?? 0);
+        if ($medicoId > 0) {
+            return $medicoId;
+        }
+    }
+
+    return 0;
+}
+
+function hc_consulta_pertenece_a_medico($conn, $consultaId, $medicoSesionId) {
+    $consultaId = (int)$consultaId;
+    $medicoSesionId = (int)$medicoSesionId;
+    if ($consultaId <= 0 || $medicoSesionId <= 0) {
+        return false;
+    }
+
+    $stmt = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('i', $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return (int)($row['medico_id'] ?? 0) === $medicoSesionId;
+}
+
+function hc_denegar_si_consulta_ajena_para_medico($conn, $consultaId) {
+    $medicoSesionId = hc_resolver_medico_sesion_id();
+    if ($medicoSesionId <= 0) {
+        return;
+    }
+
+    if (!hc_consulta_pertenece_a_medico($conn, $consultaId, $medicoSesionId)) {
+        http_response_code(403);
+        echo json_encode([
+            'success' => false,
+            'error' => 'No autorizado para acceder a esta consulta',
+        ]);
+        exit;
+    }
+}
+
 function hc_append_proxima_historial($proximaCita, $evento) {
     if (!is_array($proximaCita)) {
         $proximaCita = [];
@@ -3228,6 +3292,10 @@ switch ($method) {
             exit;
         }
 
+        if ($consulta_id > 0) {
+            hc_denegar_si_consulta_ajena_para_medico($conn, $consulta_id);
+        }
+
         $targetConsultaId = $consulta_id > 0 ? $consulta_id : null;
         $templateMeta = null;
         $templateResolution = null;
@@ -3258,6 +3326,9 @@ switch ($method) {
 
         if ($row) {
             $targetConsultaId = (int)($row['consulta_id'] ?? 0);
+            if ($targetConsultaId > 0) {
+                hc_denegar_si_consulta_ajena_para_medico($conn, $targetConsultaId);
+            }
             $datos = json_decode($row['datos'], true);
             if (!is_array($datos)) {
                 $datos = [];
@@ -3313,6 +3384,8 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
         }
+
+        hc_denegar_si_consulta_ajena_para_medico($conn, (int)$consulta_id);
 
         if (is_array($datos)) {
             $datos = hc_sanitizar_diagnosticos($datos);

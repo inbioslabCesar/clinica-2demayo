@@ -134,6 +134,23 @@ function column_exists($conn, $table, $column) {
     return isset($cache[$table][$column]);
 }
 
+function cotizacion_medico_existe($conn, $medicoId) {
+    $medicoId = (int)$medicoId;
+    if ($medicoId <= 0) {
+        return false;
+    }
+
+    $stmt = $conn->prepare('SELECT 1 FROM medicos WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $medicoId);
+    $stmt->execute();
+    $exists = (bool)$stmt->get_result()->fetch_row();
+    $stmt->close();
+    return $exists;
+}
+
 if (!function_exists('decode_valores_referenciales_any')) {
     function decode_valores_referenciales_any($raw) {
         if ($raw === null || $raw === '') return [];
@@ -1224,6 +1241,10 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
     foreach ($detalles as $detalle) {
         $servicioTipo = $detalle['servicio_tipo'] ?? '';
         $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : null;
+        $medicoDetalleId = isset($detalle['medico_id']) ? (int)$detalle['medico_id'] : 0;
+        if ($medicoDetalleId > 0 && !cotizacion_medico_existe($conn, $medicoDetalleId)) {
+            throw new Exception("El médico {$medicoDetalleId} del detalle de cotización no existe o ya no está disponible");
+        }
         $descripcion = $detalle['descripcion'] ?? '';
         $cantidad = isset($detalle['cantidad']) ? (int)$detalle['cantidad'] : 1;
         $precio = isset($detalle['precio_unitario']) ? (float)$detalle['precio_unitario'] : 0;
@@ -2495,6 +2516,9 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
     $hasSolicitadoPor = column_exists($conn, 'ordenes_imagen', 'solicitado_por');
     $hasCargaAnticipada = column_exists($conn, 'ordenes_imagen', 'carga_anticipada');
     $hasMedicoId = column_exists($conn, 'ordenes_imagen', 'medico_id');
+    $consultaColumn = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
+    $consultaAdmiteNull = $consultaColumn && ($consultaMeta = $consultaColumn->fetch_assoc())
+        && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) === 'YES';
     $usuarioId = get_user_id_from_session();
 
     foreach ($detallesImagen as $detImg) {
@@ -2537,7 +2561,7 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
         $cols = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
         $vals = ['?', '?', '?', '?', "'pendiente'"];
         $types = 'iiss';
-        $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipoOrden, $indicaciones];
+        $params = [$consultaId > 0 ? $consultaId : ($consultaAdmiteNull ? null : 0), $pacienteId, $tipoOrden, $indicaciones];
 
         if ($hasSolicitadoPor) {
             $cols[] = 'solicitado_por';
@@ -2649,6 +2673,12 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
     if ($medicoId <= 0) {
         $out['success'] = false;
         $out['error'] = 'No hay médico asignado al detalle de consulta';
+        return $out;
+    }
+
+    if (!cotizacion_medico_existe($conn, $medicoId)) {
+        $out['success'] = false;
+        $out['error'] = 'El médico asignado al detalle de consulta no existe o ya no está disponible';
         return $out;
     }
 
@@ -3416,10 +3446,18 @@ function anular_cotizacion($conn, $data) {
             $stmtUpdConsulta = $conn->prepare("UPDATE consultas
                                                SET estado = 'cancelada'
                                                WHERE id = ?
-                                                 AND LOWER(TRIM(COALESCE(estado, ''))) NOT IN ('cancelada', 'completada')");
+                                                                                                 AND LOWER(TRIM(COALESCE(estado, ''))) NOT IN ('cancelada', 'completada')
+                                                                                                 AND NOT EXISTS (
+                                                                                                        SELECT 1
+                                                                                                        FROM cotizaciones_detalle cd_respaldo
+                                                                                                        INNER JOIN cotizaciones cot_respaldo ON cot_respaldo.id = cd_respaldo.cotizacion_id
+                                                                                                        WHERE cd_respaldo.consulta_id = consultas.id
+                                                                                                            AND cot_respaldo.id <> ?
+                                                                                                            AND LOWER(TRIM(COALESCE(cot_respaldo.estado, ''))) IN ('pagada', 'pagado', 'parcial')
+                                                                                                 )");
             if ($stmtUpdConsulta) {
                 foreach ($consultaIds as $consultaId) {
-                    $stmtUpdConsulta->bind_param("i", $consultaId);
+                                        $stmtUpdConsulta->bind_param("ii", $consultaId, $cotizacionId);
                     $stmtUpdConsulta->execute();
                     if ($stmtUpdConsulta->affected_rows > 0) {
                         $consultasCanceladas++;

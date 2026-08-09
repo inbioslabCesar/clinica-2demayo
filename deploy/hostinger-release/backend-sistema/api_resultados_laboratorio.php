@@ -31,6 +31,89 @@ if (!function_exists('normalize_exam_ids_from_raw')) {
     }
 }
 
+if (!function_exists('normalize_order_exam_items_from_raw')) {
+    function normalize_order_exam_items_from_raw($raw)
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($raw)) {
+            return [];
+        }
+        return $raw;
+    }
+}
+
+if (!function_exists('order_exam_item_id')) {
+    function order_exam_item_id($item)
+    {
+        if (is_array($item) && isset($item['id'])) {
+            return intval($item['id']);
+        }
+        return intval($item);
+    }
+}
+
+if (!function_exists('reorder_order_exam_items')) {
+    function reorder_order_exam_items($rawOrderExamenes, $requestedIds)
+    {
+        if (!is_array($requestedIds)) {
+            return null;
+        }
+
+        $currentItems = normalize_order_exam_items_from_raw($rawOrderExamenes);
+        if (empty($currentItems)) {
+            return null;
+        }
+
+        $normalizedRequested = [];
+        foreach ($requestedIds as $rid) {
+            $id = intval($rid);
+            if ($id > 0) {
+                $normalizedRequested[] = $id;
+            }
+        }
+        $normalizedRequested = array_values(array_unique($normalizedRequested));
+
+        $currentIds = [];
+        $itemsById = [];
+        foreach ($currentItems as $item) {
+            $id = order_exam_item_id($item);
+            if ($id <= 0) {
+                continue;
+            }
+            if (!isset($itemsById[$id])) {
+                $itemsById[$id] = $item;
+            }
+            $currentIds[] = $id;
+        }
+        $currentIds = array_values(array_unique($currentIds));
+
+        if (empty($currentIds) || count($normalizedRequested) !== count($currentIds)) {
+            return null;
+        }
+
+        sort($normalizedRequested);
+        $currentIdsSorted = $currentIds;
+        sort($currentIdsSorted);
+        if ($normalizedRequested !== $currentIdsSorted) {
+            return null;
+        }
+
+        $reordered = [];
+        foreach ($requestedIds as $rid) {
+            $id = intval($rid);
+            if ($id <= 0 || !isset($itemsById[$id])) {
+                continue;
+            }
+            $reordered[] = $itemsById[$id];
+        }
+
+        return count($reordered) === count($currentIds) ? $reordered : null;
+    }
+}
+
 if (!function_exists('is_result_value_meaningful')) {
     function is_result_value_meaningful($value)
     {
@@ -66,7 +149,16 @@ if (!function_exists('resultados_has_meaningful_values')) {
 
         foreach ($resultados as $k => $v) {
             $key = (string)$k;
-            if ($key === '' || rl_str_ends_with($key, '__alarma_activa') || rl_str_ends_with($key, '__alarma_dias') || rl_str_ends_with($key, '__imprimir_examen')) {
+            if (
+                $key === ''
+                || rl_str_ends_with($key, '__alarma_activa')
+                || rl_str_ends_with($key, '__alarma_dias')
+                || rl_str_ends_with($key, '__imprimir_examen')
+                || rl_str_ends_with($key, '__seccion_categoria')
+                || rl_str_ends_with($key, '__seccion_titulo')
+                || rl_str_ends_with($key, '__seccion_alineacion')
+                || rl_str_ends_with($key, '__seccion_color_texto')
+            ) {
                 continue;
             }
             if (is_result_value_meaningful($v)) {
@@ -108,7 +200,15 @@ if (!function_exists('compact_resultados_aliases')) {
                 continue;
             }
 
-            if (rl_str_ends_with($keyText, '__alarma_activa') || rl_str_ends_with($keyText, '__alarma_dias') || rl_str_ends_with($keyText, '__imprimir_examen')) {
+            if (
+                rl_str_ends_with($keyText, '__alarma_activa')
+                || rl_str_ends_with($keyText, '__alarma_dias')
+                || rl_str_ends_with($keyText, '__imprimir_examen')
+                || rl_str_ends_with($keyText, '__seccion_categoria')
+                || rl_str_ends_with($keyText, '__seccion_titulo')
+                || rl_str_ends_with($keyText, '__seccion_alineacion')
+                || rl_str_ends_with($keyText, '__seccion_color_texto')
+            ) {
                 continue;
             }
 
@@ -691,9 +791,14 @@ if (!function_exists('rl_medico_tiene_acceso_consulta')) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
+$sessionMedico = $_SESSION['medico'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
 $medicoSesionId = intval($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
-$esSesionMedico = ($rolSesion === 'medico' && $medicoSesionId > 0);
+$esSesionMedico = ($medicoSesionId > 0) && (
+    strtolower(trim((string)$rolSesion)) === 'medico'
+    || isset($_SESSION['medico_id'])
+    || (is_array($sessionMedico) && intval($sessionMedico['id'] ?? 0) === $medicoSesionId)
+);
 
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
     http_response_code(401);
@@ -771,13 +876,27 @@ switch ($method) {
         $resultados = [];
 
         // Regla estricta HC: solo resultados vinculados explícitamente a la consulta actual.
-        $stmt = $conn->prepare(
-            'SELECT r.* FROM resultados_laboratorio r'
+        $sqlResultados = 'SELECT r.* FROM resultados_laboratorio r'
             . ' INNER JOIN ordenes_laboratorio o ON o.id = r.orden_id'
-            . ' WHERE o.consulta_id = ?'
-            . ' ORDER BY r.fecha ASC, r.id ASC'
-        );
-        $stmt->bind_param('i', $consulta_id);
+            . ' WHERE o.consulta_id = ?';
+        if ($esSesionMedico) {
+            $sqlResultados .= ' AND COALESCE('
+                . ' (SELECT MAX(cd_hc.medico_id) FROM cotizaciones_detalle cd_hc'
+                . '   WHERE cd_hc.cotizacion_id = o.cotizacion_id'
+                . '     AND cd_hc.consulta_id = o.consulta_id'
+                . '     AND LOWER(TRIM(cd_hc.servicio_tipo)) = "laboratorio"'
+                . '     AND cd_hc.medico_id IS NOT NULL'
+                . '     AND cd_hc.medico_id > 0),'
+                . ' (SELECT c.medico_id FROM consultas c WHERE c.id = o.consulta_id LIMIT 1)'
+                . ' ) = ?';
+        }
+        $sqlResultados .= ' ORDER BY r.fecha ASC, r.id ASC';
+        $stmt = $conn->prepare($sqlResultados);
+        if ($esSesionMedico) {
+            $stmt->bind_param('ii', $consulta_id, $medicoSesionId);
+        } else {
+            $stmt->bind_param('i', $consulta_id);
+        }
         $stmt->execute();
         $res = $stmt->get_result();
         while ($row = $res->fetch_assoc()) {
@@ -905,6 +1024,9 @@ switch ($method) {
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
         $tipo_examen = $data['tipo_examen'] ?? null;
         $resultados = $data['resultados'] ?? null;
+        $examenes_ordenados = isset($data['examenes_ordenados']) && is_array($data['examenes_ordenados'])
+            ? $data['examenes_ordenados']
+            : [];
         if ((!$orden_id && !$consulta_id) || !$resultados) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
@@ -988,11 +1110,36 @@ switch ($method) {
             }
         }
 
+        if (!empty($examenes_ordenados)) {
+            $ordenReordenada = reorder_order_exam_items($orden['examenes'] ?? [], $examenes_ordenados);
+            if (!is_array($ordenReordenada) || empty($ordenReordenada)) {
+                echo json_encode(['success' => false, 'error' => 'No se pudo validar el nuevo orden de exámenes']);
+                exit;
+            }
+
+            $jsonOrdenReordenada = json_encode($ordenReordenada, JSON_UNESCAPED_UNICODE);
+            if ($jsonOrdenReordenada === false) {
+                echo json_encode(['success' => false, 'error' => 'No se pudo serializar el nuevo orden de exámenes']);
+                exit;
+            }
+
+            $stmtOrden = $conn->prepare('UPDATE ordenes_laboratorio SET examenes = ? WHERE id = ?');
+            if (!$stmtOrden) {
+                echo json_encode(['success' => false, 'error' => 'No se pudo preparar la actualización del orden']);
+                exit;
+            }
+            $stmtOrden->bind_param('si', $jsonOrdenReordenada, $orden['id']);
+            $stmtOrden->execute();
+            $stmtOrden->close();
+            $orden['examenes'] = $jsonOrdenReordenada;
+        }
+
         if (isset($orden['estado']) && strtolower((string)$orden['estado']) === 'cancelada') {
             echo json_encode(['success' => false, 'error' => 'La orden de laboratorio está cancelada']);
             exit;
         }
         $ok = false;
+        $resultadoId = 0;
         $existingSignerId = 0;
         $stmt_check = $conn->prepare('SELECT id, firmado_por_usuario_id, resultados FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
         $stmt_check->bind_param('i', $orden['id']);
@@ -1002,6 +1149,7 @@ switch ($method) {
         $existingSignerId = intval($existingResult['firmado_por_usuario_id'] ?? 0);
 
         if ($hasExistingResult) {
+            $resultadoId = intval($existingResult['id'] ?? 0);
             $existingResultados = json_decode($existingResult['resultados'] ?? '[]', true);
             $resultadosPersistir = merge_resultados_preservando_historico($existingResultados, $resultados);
         }
@@ -1028,6 +1176,9 @@ switch ($method) {
                 $stmt->bind_param('issi', $orden['id'], $tipo_examen, $json, $firmado_por_usuario_id);
             }
             $ok = $stmt->execute();
+            if ($ok) {
+                $resultadoId = intval($conn->insert_id ?? 0);
+            }
             $stmt->close();
         }
         $stmt_check->close();
@@ -1062,6 +1213,7 @@ switch ($method) {
 
         echo json_encode([
             'success' => $ok,
+            'resultado_id' => $resultadoId,
             'inventario' => $inventarioResumen,
             'progreso' => $progress,
             'estado' => $nuevoEstadoOrden,

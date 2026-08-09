@@ -87,6 +87,23 @@ function columna_existe_local($conn, $tabla, $columna) {
     return $res && $res->num_rows > 0;
 }
 
+function consultas_medico_existe($conn, $medicoId) {
+    $medicoId = (int)$medicoId;
+    if ($medicoId <= 0) {
+        return false;
+    }
+
+    $stmt = $conn->prepare('SELECT 1 FROM medicos WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $medicoId);
+    $stmt->execute();
+    $exists = (bool)$stmt->get_result()->fetch_row();
+    $stmt->close();
+    return $exists;
+}
+
 function resolver_consulta_id_por_cotizacion($conn, $cotizacionId) {
     $cotizacionId = intval($cotizacionId);
     if ($cotizacionId <= 0) {
@@ -771,6 +788,11 @@ switch ($method) {
             echo json_encode(['success' => false, 'error' => 'Faltan datos requeridos']);
             exit;
         }
+
+        if (!consultas_medico_existe($conn, $medico_id)) {
+            echo json_encode(['success' => false, 'error' => 'El médico seleccionado no existe o ya no está disponible']);
+            exit;
+        }
         
         // Normalizar formato de hora (agregar segundos si no los tiene)
         if (strlen($hora) == 5 && substr_count($hora, ':') == 1) {
@@ -975,6 +997,11 @@ switch ($method) {
 
         if ($actualizarAgenda && $medico_id <= 0) {
             echo json_encode(['success' => false, 'error' => 'Médico inválido']);
+            exit;
+        }
+
+        if ($actualizarAgenda && !consultas_medico_existe($conn, $medico_id)) {
+            echo json_encode(['success' => false, 'error' => 'El médico seleccionado no existe o ya no está disponible']);
             exit;
         }
 

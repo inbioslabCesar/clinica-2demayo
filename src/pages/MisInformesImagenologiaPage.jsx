@@ -1,0 +1,306 @@
+import { useCallback, useEffect, useState } from "react";
+import { FiChevronDown, FiChevronUp, FiFileText, FiRefreshCw, FiTrash2, FiUser } from "react-icons/fi";
+import { useNavigate } from "react-router-dom";
+import Swal from "sweetalert2";
+import CardInformeImagenologia from "../components/imagenologia/CardInformeImagenologia";
+import Spinner from "../components/comunes/Spinner";
+import { ModalSubir } from "./OrdenesImagenPacientePage";
+import { authFetch } from "../utils/apiClient";
+
+const TIPO_LABEL = {
+  todos: "Todos",
+  ecografia: "Ecografías",
+  rx: "Rayos X",
+  tomografia: "Tomografías",
+};
+
+const ESTADO_LABEL = {
+  pendiente: "Pendiente",
+  completado: "Completado",
+  cancelado: "Cancelado",
+};
+
+function nombrePaciente(paciente) {
+  return [paciente?.nombre, paciente?.apellido].filter(Boolean).join(" ") || "Paciente sin nombre";
+}
+
+export default function MisInformesImagenologiaPage({ usuario }) {
+  const navigate = useNavigate();
+  const [ordenes, setOrdenes] = useState([]);
+  const [tipo, setTipo] = useState("todos");
+  const [busqueda, setBusqueda] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [ordenParaSubir, setOrdenParaSubir] = useState(null);
+  const [ordenExpandidaId, setOrdenExpandidaId] = useState(null);
+  const medicoId = Number(usuario?.id || 0);
+
+  const cargarOrdenes = useCallback(async () => {
+    if (!medicoId) {
+      setOrdenes([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await authFetch(`api_ordenes_imagen.php?medico_id=${medicoId}&tipo=${tipo}`);
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "No se pudieron cargar las órdenes");
+      setOrdenes(Array.isArray(data.ordenes) ? data.ordenes : []);
+    } catch (error) {
+      setOrdenes([]);
+      Swal.fire("Error", error.message || "No se pudieron cargar las órdenes de imagenología.", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [medicoId, tipo]);
+
+  useEffect(() => {
+    cargarOrdenes();
+  }, [cargarOrdenes]);
+
+  const eliminarArchivo = async (archivo) => {
+    const confirmacion = await Swal.fire({
+      title: "¿Eliminar archivo?",
+      text: archivo.nombre_original,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Sí, eliminar",
+      cancelButtonText: "Cancelar",
+    });
+    if (!confirmacion.isConfirmed) return;
+
+    try {
+      const response = await authFetch("api_ordenes_imagen.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "eliminar_archivo", archivo_id: archivo.id }),
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "No se pudo eliminar el archivo");
+      await cargarOrdenes();
+    } catch (error) {
+      Swal.fire("Error", error.message || "No se pudo eliminar el archivo.", "error");
+    }
+  };
+
+  const filtro = busqueda.trim().toLowerCase();
+  const ordenesVisibles = ordenes.filter((orden) => {
+    if (!filtro) return true;
+    const paciente = orden.paciente || {};
+    return [paciente.nombre, paciente.dni, orden.indicaciones, ...(orden.servicios_nombres || [])]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(filtro);
+  });
+
+  return (
+    <main className="min-h-full bg-slate-50 px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl">
+        <header className="mb-5 flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Área médica</p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">Mis Informes de Imagenología</h1>
+            <p className="mt-1 text-sm text-slate-600">Estudios asignados para cargar archivos, redactar y entregar informes.</p>
+          </div>
+          <button
+            type="button"
+            onClick={cargarOrdenes}
+            disabled={loading}
+            title="Actualizar órdenes"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+          >
+            <FiRefreshCw aria-hidden="true" /> Actualizar
+          </button>
+        </header>
+
+        <section className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Tipo de estudio">
+            {Object.entries(TIPO_LABEL).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={tipo === key}
+                onClick={() => setTipo(key)}
+                className={`rounded-md px-3 py-2 text-sm font-medium ${tipo === key ? "bg-cyan-700 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <input
+            value={busqueda}
+            onChange={(event) => setBusqueda(event.target.value)}
+            placeholder="Buscar por paciente, DNI o estudio"
+            className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600 sm:max-w-sm"
+          />
+        </section>
+
+        {loading ? (
+          <div className="py-16"><Spinner /></div>
+        ) : ordenesVisibles.length === 0 ? (
+          <section className="border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+            <FiFileText className="mx-auto mb-3 text-3xl text-slate-400" />
+            <h2 className="text-base font-semibold text-slate-800">No hay estudios asignados</h2>
+            <p className="mt-1 text-sm text-slate-500">Los estudios aparecerán aquí cuando recepción o administración los asigne a tu cuenta.</p>
+          </section>
+        ) : (
+          <>
+            <section className="hidden overflow-hidden border border-slate-200 bg-white shadow-sm md:block">
+              <div className="grid grid-cols-[minmax(190px,1.3fr)_minmax(180px,1.2fr)_120px_90px_110px_150px] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <span>Paciente</span>
+                <span>Estudio</span>
+                <span>Origen</span>
+                <span>Archivos</span>
+                <span>Informe</span>
+                <span className="text-right">Acciones</span>
+              </div>
+              {ordenesVisibles.map((orden) => {
+                const paciente = orden.paciente || {};
+                const tieneConsulta = Number(orden.consulta_id || 0) > 0;
+                const expandida = ordenExpandidaId === orden.id;
+                const puedeGestionar = Boolean(orden.can_upload_archivos) && orden.estado !== "cancelado";
+                const puedeInformar = Boolean(orden.can_edit_informe) && orden.estado !== "cancelado";
+                return (
+                  <div key={orden.id} className="border-b border-slate-200 last:border-b-0">
+                    <div className="grid grid-cols-[minmax(190px,1.3fr)_minmax(180px,1.2fr)_120px_90px_110px_150px] items-center gap-4 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-900">{nombrePaciente(paciente)}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
+                        <p className="mt-0.5 truncate text-xs text-slate-500">{(orden.servicios_nombres || []).join(" · ") || "Sin descripción"}</p>
+                      </div>
+                      <span className="text-xs text-slate-600">{tieneConsulta ? "Consulta" : "Atención directa"}</span>
+                      <span className="text-xs font-medium text-slate-700">{orden.archivos?.length || 0}</span>
+                      <span className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                        {ESTADO_LABEL[orden.estado] || orden.estado}
+                      </span>
+                      <div className="flex items-center justify-end gap-2">
+                        {puedeGestionar && <button type="button" onClick={() => setOrdenParaSubir(orden)} className="text-xs font-semibold text-cyan-700 hover:text-cyan-900">Subir</button>}
+                        <button type="button" onClick={() => navigate(`/visor-imagen/${orden.id}`)} className="text-xs font-semibold text-cyan-700 hover:text-cyan-900">Visor</button>
+                        <button type="button" onClick={() => setOrdenExpandidaId(expandida ? null : orden.id)} title={expandida ? "Ocultar detalle" : "Ver detalle"} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100">
+                          {expandida ? <FiChevronUp aria-hidden="true" /> : <FiChevronDown aria-hidden="true" />}
+                        </button>
+                      </div>
+                    </div>
+                    {expandida && (
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(300px,420px)] gap-5 border-t border-slate-200 bg-slate-50 px-5 py-4">
+                        <div>
+                          <h2 className="text-sm font-semibold text-slate-800">Archivos del estudio</h2>
+                          {(orden.archivos || []).length === 0 ? <p className="mt-2 text-sm text-slate-500">Sin archivos cargados.</p> : (
+                            <div className="mt-2 space-y-2">
+                              {orden.archivos.map((archivo) => (
+                                <div key={archivo.id} className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                                  <a href={archivo.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-medium text-cyan-700 hover:text-cyan-900">{archivo.nombre_original}</a>
+                                  <span className="shrink-0 text-slate-400">{archivo.es_dicom ? "DICOM" : archivo.es_imagen ? "Imagen" : "PDF"}</span>
+                                  {puedeGestionar && <button type="button" onClick={() => eliminarArchivo(archivo)} title={`Eliminar ${archivo.nombre_original}`} className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-600 hover:bg-red-100"><FiTrash2 aria-hidden="true" /></button>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <CardInformeImagenologia ordenImagenId={orden.id} tipoExamen={orden.tipo} pacienteNombre={nombrePaciente(paciente)} medicoNombre={[orden.medico_responsable_nombre, orden.medico_responsable_apellido].filter(Boolean).join(" ")} canEdit={puedeInformar} onInformeActualizado={cargarOrdenes} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </section>
+            <section className="grid gap-4 md:hidden">
+            {ordenesVisibles.map((orden) => {
+              const paciente = orden.paciente || {};
+              const tieneConsulta = Number(orden.consulta_id || 0) > 0;
+              return (
+                <article key={orden.id} className="border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                        <FiUser className="shrink-0 text-cyan-700" />
+                        <span className="truncate">{nombrePaciente(paciente)}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
+                      <p className="mt-2 text-sm font-medium capitalize text-slate-700">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
+                      {(orden.servicios_nombres || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{orden.servicios_nombres.join(" · ")}</p>}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                        {ESTADO_LABEL[orden.estado] || orden.estado}
+                      </span>
+                      <p className="mt-2 text-xs text-slate-500">{tieneConsulta ? "Origen: consulta" : "Origen: atención directa"}</p>
+                    </div>
+                  </div>
+
+                  <div className="mb-4 flex items-center justify-between gap-3 border-y border-slate-100 py-3 text-xs text-slate-600">
+                    <span>{orden.archivos?.length || 0} archivo(s) adjunto(s)</span>
+                    <div className="flex items-center gap-3">
+                      {Boolean(orden.can_upload_archivos) && orden.estado !== "cancelado" && (
+                        <button
+                          type="button"
+                          onClick={() => setOrdenParaSubir(orden)}
+                          className="font-semibold text-cyan-700 hover:text-cyan-900"
+                        >
+                          Subir imágenes
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/visor-imagen/${orden.id}`)}
+                        className="font-semibold text-cyan-700 hover:text-cyan-900"
+                      >
+                        Abrir estudio
+                      </button>
+                    </div>
+                  </div>
+
+                  {(orden.archivos || []).length > 0 && (
+                    <div className="mb-4 space-y-2">
+                      {orden.archivos.map((archivo) => (
+                        <div key={archivo.id} className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                          <a href={archivo.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-medium text-cyan-700 hover:text-cyan-900">
+                            {archivo.nombre_original}
+                          </a>
+                          <span className="shrink-0 text-slate-400">{archivo.es_dicom ? "DICOM" : archivo.es_imagen ? "Imagen" : "PDF"}</span>
+                          {Boolean(orden.can_upload_archivos) && orden.estado !== "cancelado" && (
+                            <button
+                              type="button"
+                              onClick={() => eliminarArchivo(archivo)}
+                              title={`Eliminar ${archivo.nombre_original}`}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-600 hover:bg-red-100"
+                            >
+                              <FiTrash2 aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <CardInformeImagenologia
+                    ordenImagenId={orden.id}
+                    tipoExamen={orden.tipo}
+                    pacienteNombre={nombrePaciente(paciente)}
+                    medicoNombre={[orden.medico_responsable_nombre, orden.medico_responsable_apellido].filter(Boolean).join(" ")}
+                    canEdit={Boolean(orden.can_edit_informe) && orden.estado !== "cancelado"}
+                    onInformeActualizado={cargarOrdenes}
+                  />
+                </article>
+              );
+            })}
+            </section>
+          </>
+        )}
+      </div>
+      {ordenParaSubir && (
+        <ModalSubir
+          orden={ordenParaSubir}
+          onClose={() => setOrdenParaSubir(null)}
+          onSubido={cargarOrdenes}
+        />
+      )}
+    </main>
+  );
+}

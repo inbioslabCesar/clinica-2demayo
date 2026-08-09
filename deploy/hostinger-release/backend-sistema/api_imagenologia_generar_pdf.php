@@ -11,6 +11,7 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/imagenologia_encoding.php';
 
 use Mpdf\Mpdf;
 use Mpdf\Config\ConfigVariables;
@@ -20,6 +21,8 @@ header('Content-Type: application/json; charset=utf-8');
 
 // Validar autenticación
 $usuario = $_SESSION['usuario'] ?? $_SESSION['medico'] ?? null;
+$usuarioId = (int)($usuario['id'] ?? 0);
+$usuarioNombre = trim((string)($usuario['nombre'] ?? 'Sistema'));
 $rol = strtolower(trim((string)($usuario['rol'] ?? '')));
 
 if (!$usuario || !in_array($rol, ['medico', 'administrador'])) {
@@ -107,6 +110,18 @@ if (!$informe) {
     exit;
 }
 
+$informe['titulo'] = img_fix_mojibake_string((string)($informe['titulo'] ?? ''));
+$informe['nombre'] = img_fix_mojibake_string((string)($informe['nombre'] ?? ''));
+$informe['apellido'] = img_fix_mojibake_string((string)($informe['apellido'] ?? ''));
+$informe['medico_nombre'] = img_fix_mojibake_string((string)($informe['medico_nombre'] ?? ''));
+$informe['medico_apellido'] = img_fix_mojibake_string((string)($informe['medico_apellido'] ?? ''));
+$informe['especialidad'] = img_fix_mojibake_string((string)($informe['especialidad'] ?? ''));
+$informe['abreviatura_profesional'] = img_fix_mojibake_string((string)($informe['abreviatura_profesional'] ?? ''));
+$informe['colegio_sigla'] = img_fix_mojibake_string((string)($informe['colegio_sigla'] ?? ''));
+$informe['firma'] = img_fix_mojibake_string((string)($informe['firma'] ?? ''));
+$informe['contenido_json'] = img_fix_mojibake_recursive($informe['contenido_json'] ? json_decode($informe['contenido_json'], true) : []);
+$informe['plantilla_json'] = img_fix_mojibake_recursive($informe['plantilla_json'] ? json_decode($informe['plantilla_json'], true) : null);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. Obtener imágenes de la orden
 // ═══════════════════════════════════════════════════════════════════════════
@@ -126,7 +141,7 @@ $stmt->close();
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. Decodificar contenido del informe
 // ═══════════════════════════════════════════════════════════════════════════
-$contenido = $informe['contenido_json'] ? json_decode($informe['contenido_json'], true) : [];
+$contenido = $informe['contenido_json'];
 
 function normalizar_clave_pdf(string $texto): string {
     $texto = trim(mb_strtolower($texto, 'UTF-8'));
@@ -157,6 +172,52 @@ function ruta_imagen_para_mpdf(string $archivoPath): string {
     }
 
     return str_replace(' ', '%20', $normalizada);
+}
+
+function normalizar_texto_archivo_pdf(string $texto): string {
+    $texto = trim(mb_strtolower($texto, 'UTF-8'));
+    $map = [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+        'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u',
+        'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u',
+        'ñ' => 'n'
+    ];
+    $texto = strtr($texto, $map);
+    $texto = preg_replace('/[^a-z0-9]+/u', '_', $texto);
+    $texto = preg_replace('/_+/', '_', $texto);
+    return trim((string)$texto, '_');
+}
+
+function construir_nombre_pdf_imagenologia(array $informe): string {
+    $nombrePaciente = trim((string)($informe['nombre'] ?? ''));
+    $apellidoPaciente = trim((string)($informe['apellido'] ?? ''));
+    $paciente = trim($nombrePaciente . ' ' . $apellidoPaciente);
+
+    $servicioBase = trim((string)($informe['titulo'] ?? ''));
+    if ($servicioBase === '') {
+        $servicioBase = trim((string)($informe['tipo_examen'] ?? 'Imagenologia'));
+    }
+
+    $fechaBase = trim((string)($informe['created_at'] ?? $informe['updated_at'] ?? ''));
+    $fechaArchivo = date('Ymd');
+    if ($fechaBase !== '') {
+        $fechaTimestamp = strtotime($fechaBase);
+        if ($fechaTimestamp !== false) {
+            $fechaArchivo = date('Ymd', $fechaTimestamp);
+        }
+    }
+
+    $partes = [];
+    if ($paciente !== '') {
+        $partes[] = normalizar_texto_archivo_pdf($paciente);
+    }
+    if ($servicioBase !== '') {
+        $partes[] = normalizar_texto_archivo_pdf($servicioBase);
+    }
+    $partes[] = $fechaArchivo;
+
+    $nombre = implode('_', array_filter($partes, static fn($valor) => $valor !== ''));
+    return ($nombre !== '' ? $nombre : 'informe_imagenologia') . '.pdf';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -425,7 +486,7 @@ $html = '
 <div class="section">';
 
 // Iterar sobre el contenido del informe (hallazgos, conclusión, etc.)
-$plantilla = $informe['plantilla_json'] ? json_decode($informe['plantilla_json'], true) : [];
+$plantilla = is_array($informe['plantilla_json'] ?? null) ? $informe['plantilla_json'] : [];
 $plantillaSections = [];
 if (isset($plantilla['sections']) && is_array($plantilla['sections'])) {
     $plantillaSections = $plantilla['sections'];
@@ -747,6 +808,7 @@ try {
     
     // Generar nombre de archivo
     $nombreArchivo = 'informe_imagenologia_' . $informeId . '_' . date('YmdHis') . '.pdf';
+    $nombreDescarga = construir_nombre_pdf_imagenologia($informe);
     $rutaCompleta = $uploadDir . '/' . $nombreArchivo;
     $rutaRelativa = 'uploads/informes_imagenologia/' . $nombreArchivo;
     
@@ -775,8 +837,6 @@ try {
     ');
     
     if ($stmtHist) {
-        $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
-        $usuarioNombre = (string)($_SESSION['usuario']['nombre'] ?? 'Sistema');
         $tipoHist = 'generacion_pdf';
         $stmtHist->bind_param('iiisss', $informeId, $informeId, $usuarioId, $usuarioNombre, $tipoHist, $ahora);
         $stmtHist->execute();
@@ -787,6 +847,7 @@ try {
         'success' => true,
         'pdf_url' => '/' . $rutaRelativa,
         'pdf_path' => $rutaRelativa,
+        'pdf_filename' => $nombreDescarga,
         'mensaje' => 'PDF generado exitosamente'
     ]);
     

@@ -49,8 +49,12 @@ const MedicoFormModal = ({
     const nroLimpio = String(nroColegiatura).trim().replace(/\s+/g, '');
     if (!nroLimpio) return;
 
-    const nombreEmpresa = (configuracion.nombre_clinica || 'empresa').toLowerCase().replace(/\s+/g, '');
-    const nuevoEmail = `${nroLimpio.toLowerCase()}@${nombreEmpresa}.com`;
+    const dominioClinica = String(configuracion.nombre_clinica || 'empresa')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '') || 'empresa';
+    const nuevoEmail = `${nroLimpio.toLowerCase()}@${dominioClinica}.com`;
     const nuevoPassword = nroLimpio;
 
     onChange({ target: { name: 'email', value: nuevoEmail } });

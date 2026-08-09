@@ -34,7 +34,7 @@ function esArchivoPermitido(f) {
 const cotizEstadoPagado = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
 
 // ── Modal de subida de archivos ───────────────────────────────────────────────
-function ModalSubir({ orden, onClose, onSubido }) {
+export function ModalSubir({ orden, onClose, onSubido }) {
   const [archivos, setArchivos]   = useState([]);
   const [subiendo, setSubiendo]   = useState(false);
   const [drag, setDrag]           = useState(false);

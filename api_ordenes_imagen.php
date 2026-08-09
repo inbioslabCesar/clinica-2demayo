@@ -21,7 +21,7 @@ header('Content-Type: application/json; charset=utf-8');
 $conn->query("
     CREATE TABLE IF NOT EXISTS ordenes_imagen (
         id             INT AUTO_INCREMENT PRIMARY KEY,
-        consulta_id    INT NOT NULL,
+        consulta_id    INT NULL,
         paciente_id    INT NOT NULL,
         medico_id      INT DEFAULT NULL,
         tipo           VARCHAR(30) NOT NULL DEFAULT 'rx',
@@ -46,6 +46,12 @@ $migrImagen = [
 foreach ($migrImagen as $col => $sql) {
     $chk = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE '$col'");
     if ($chk && $chk->num_rows === 0) $conn->query($sql);
+}
+
+// Una orden de imagen puede originarse en una consulta o venderse directamente.
+$consultaColumn = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
+if ($consultaColumn && ($consultaMeta = $consultaColumn->fetch_assoc()) && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) !== 'YES') {
+    $conn->query('ALTER TABLE ordenes_imagen MODIFY consulta_id INT NULL');
 }
 
 $conn->query("
@@ -443,6 +449,7 @@ $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'GET') {
     $consulta_id = (int)($_GET['consulta_id'] ?? 0);
     $paciente_id = (int)($_GET['paciente_id'] ?? 0);
+    $medico_id   = (int)($_GET['medico_id'] ?? 0);
     $orden_id    = (int)($_GET['orden_id'] ?? 0);
     $tipo        = trim($_GET['tipo'] ?? '');
     $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
@@ -461,7 +468,7 @@ if ($method === 'GET') {
         }
 
         // Info paciente
-        $pac = $conn->query("SELECT id, nombre, dni, historia_clinica FROM pacientes WHERE id = " . (int)$row['paciente_id'])->fetch_assoc();
+        $pac = $conn->query("SELECT id, nombre, apellido, dni, historia_clinica FROM pacientes WHERE id = " . (int)$row['paciente_id'])->fetch_assoc();
         $row['paciente'] = $pac;
 
         // Info consulta + médico
@@ -489,6 +496,36 @@ if ($method === 'GET') {
         }
         echo json_encode(['success' => true, 'ordenes' => $rows]);
 
+    } elseif ($medico_id > 0) {
+        if ($rol === 'medico' && $medico_id !== $usuarioId) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'No autorizado para consultar órdenes de otro médico']);
+            exit;
+        }
+        if (!in_array($rol, ['administrador', 'recepcionista', 'laboratorista', 'medico'], true)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'No autorizado']);
+            exit;
+        }
+
+        $wheresTipo = '';
+        if ($tipo && in_array($tipo, ['rx', 'ecografia', 'tomografia', 'todos'], true) && $tipo !== 'todos') {
+            $tipoSeguro = $conn->real_escape_string($tipo);
+            $wheresTipo = " AND oi.tipo = '$tipoSeguro'";
+        }
+        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE oi.medico_id = $medico_id $wheresTipo ORDER BY oi.fecha DESC");
+        $rows = [];
+        while ($r = $res->fetch_assoc()) {
+            adjuntarArchivos($conn, $r);
+            if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
+                continue;
+            }
+            $paciente = $conn->query('SELECT id, nombre, apellido, dni, historia_clinica FROM pacientes WHERE id = ' . (int)$r['paciente_id'] . ' LIMIT 1')->fetch_assoc();
+            $r['paciente'] = $paciente ?: null;
+            $rows[] = $r;
+        }
+        echo json_encode(['success' => true, 'ordenes' => $rows]);
+
     } elseif ($paciente_id > 0) {
         // Todas las órdenes de un paciente (para ConsumoPaciente)
         $wheresTipo = '';
@@ -507,7 +544,7 @@ if ($method === 'GET') {
         echo json_encode(['success' => true, 'ordenes' => $rows]);
 
     } else {
-        echo json_encode(['success' => false, 'error' => 'Parámetro requerido: orden_id, consulta_id o paciente_id']);
+        echo json_encode(['success' => false, 'error' => 'Parámetro requerido: orden_id, consulta_id, medico_id o paciente_id']);
     }
     exit;
 }
@@ -852,9 +889,10 @@ if ($method === 'POST') {
                     }
                 }
 
+                $consultaRelacionada = $consultaRelacionadaId > 0 ? $consultaRelacionadaId : null;
                 $stmtIns = $conn->prepare("INSERT INTO ordenes_imagen (consulta_id, paciente_id, medico_id, tipo, indicaciones, estado, solicitado_por, cotizacion_id, carga_anticipada) VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, 0)");
                 if ($stmtIns) {
-                    $stmtIns->bind_param('iiissii', $consultaRelacionadaId, $paciente_id, $medicoResponsableId, $tipoOrden, $indicaciones, $usuarioId, $cotizacion_id);
+                    $stmtIns->bind_param('iiissii', $consultaRelacionada, $paciente_id, $medicoResponsableId, $tipoOrden, $indicaciones, $usuarioId, $cotizacion_id);
                     $stmtIns->execute();
                     $stmtIns->close();
                     $creadas++;
@@ -879,14 +917,23 @@ if ($method === 'POST') {
 
         } elseif ($action === 'eliminar_archivo') {
             $archivo_id = (int)($input['archivo_id'] ?? 0);
-            $row = $conn->query("SELECT * FROM ordenes_imagen_archivos WHERE id = $archivo_id")->fetch_assoc();
-            if ($row) {
-                if (file_exists($row['archivo_path'])) @unlink($row['archivo_path']);
-                $conn->query("DELETE FROM ordenes_imagen_archivos WHERE id = $archivo_id");
-                $oid = (int)$row['orden_id'];
-                $cnt = (int)$conn->query("SELECT COUNT(*) c FROM ordenes_imagen_archivos WHERE orden_id = $oid")->fetch_assoc()['c'];
-                if ($cnt === 0) $conn->query("UPDATE ordenes_imagen SET estado = 'pendiente' WHERE id = $oid");
+            $row = $conn->query("SELECT a.*, o.consulta_id, o.paciente_id, o.medico_id, o.solicitado_por, o.cotizacion_id, o.indicaciones FROM ordenes_imagen_archivos a INNER JOIN ordenes_imagen o ON o.id = a.orden_id WHERE a.id = $archivo_id LIMIT 1")->fetch_assoc();
+            if (!$row) {
+                http_response_code(404);
+                echo json_encode(['success' => false, 'error' => 'Archivo no encontrado']);
+                exit;
             }
+            if (!usuarioPuedeOperarOrdenImagen($row, $rol, $usuarioId)) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado para eliminar archivos de esta orden']);
+                exit;
+            }
+
+            if (file_exists($row['archivo_path'])) @unlink($row['archivo_path']);
+            $conn->query("DELETE FROM ordenes_imagen_archivos WHERE id = $archivo_id");
+            $oid = (int)$row['orden_id'];
+            $cnt = (int)$conn->query("SELECT COUNT(*) c FROM ordenes_imagen_archivos WHERE orden_id = $oid")->fetch_assoc()['c'];
+            if ($cnt === 0) $conn->query("UPDATE ordenes_imagen SET estado = 'pendiente' WHERE id = $oid");
             echo json_encode(['success' => true]);
 
         } else {
