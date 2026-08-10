@@ -1849,6 +1849,22 @@ class CobroModule
             $data['monto_descuento'] = $montoDescuento;
             $data['total'] = $totalCobro;
             $data['cotizacion_ids'] = $cotizacionIdsFlujo;
+
+            $esAtencionSolidaria = !empty($data['atencion_solidaria']);
+            if ($esAtencionSolidaria) {
+                if ($montoOriginal <= 0 || $montoDescuento < ($montoOriginal - 0.00001) || $totalCobro > 0.00001) {
+                    throw new \Exception('La atención solidaria requiere un descuento total y un cobro final de S/ 0.00.');
+                }
+                if (trim((string)($data['motivo'] ?? '')) === '') {
+                    throw new \Exception('La atención solidaria requiere registrar el motivo de la atención.');
+                }
+                foreach ($data['detalles'] as &$detalleSolidario) {
+                    if (is_array($detalleSolidario)) {
+                        $detalleSolidario['renuncia_honorario_medico'] = true;
+                    }
+                }
+                unset($detalleSolidario);
+            }
             if (empty(trim((string)($data['referencia_origen'] ?? ''))) && !empty($cotizacionesBloqueadas)) {
                 foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
                     $refOrigenCot = trim((string)($cotizacionBloqueada['referencia_origen'] ?? ''));
@@ -2154,12 +2170,14 @@ class CobroModule
                                         if (is_array($movimientoHonorario) && isset($movimientoHonorario['success']) && !$movimientoHonorario['success']) {
                                             throw new \Exception($movimientoHonorario['error'] ?? 'No se pudo registrar el movimiento de honorario médico.');
                                         }
-                                        $mov_id = intval($movimientoHonorario);
-                                        if ($mov_id <= 0) {
-                                            throw new \Exception('No se pudo registrar el movimiento de honorario médico.');
+                                        if ($movimientoHonorario !== null) {
+                                            $mov_id = intval($movimientoHonorario);
+                                            if ($mov_id <= 0) {
+                                                throw new \Exception('No se pudo registrar el movimiento de honorario médico.');
+                                            }
+                                            $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id;
+                                            $honorario_movimiento_id = $mov_id;
                                         }
-                                        $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
-                                        $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
                                     }
                                 }
                             }
@@ -2279,6 +2297,10 @@ class CobroModule
     public static function registrarCobro($conn, $data)
     {
         $observaciones = $data['observaciones'] ?? '';
+        $esAtencionSolidaria = !empty($data['atencion_solidaria']) ? 1 : 0;
+        if ($esAtencionSolidaria === 1) {
+            $observaciones = trim($observaciones . ' [ATENCION_SOLIDARIA: renuncia de honorario medico]');
+        }
         $referenciaOrigen = trim((string)($data['referencia_origen'] ?? ''));
         if (!$data['paciente_id'] || $data['paciente_id'] === 'null') {
             $nombre_paciente = trim((string)($data['paciente_nombre'] ?? '')) ?: 'Cliente particular';
@@ -2290,7 +2312,14 @@ class CobroModule
         $total_param = $data['total'];
         $tipo_pago_param = $data['tipo_pago'];
         $hasReferenciaOrigen = self::columnExists($conn, 'cobros', 'referencia_origen');
-        if ($hasReferenciaOrigen) {
+        $hasAtencionSolidaria = self::columnExists($conn, 'cobros', 'atencion_solidaria');
+        if ($hasReferenciaOrigen && $hasAtencionSolidaria) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen, atencion_solidaria) VALUES (?, ?, ?, ?, 'pagado', ?, ?, ?)");
+            $stmt->bind_param("iidsssi", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen, $esAtencionSolidaria);
+        } elseif ($hasAtencionSolidaria) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, atencion_solidaria) VALUES (?, ?, ?, ?, 'pagado', ?, ?)");
+            $stmt->bind_param("iidssi", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $esAtencionSolidaria);
+        } elseif ($hasReferenciaOrigen) {
             $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen) VALUES (?, ?, ?, ?, 'pagado', ?, ?)");
             $stmt->bind_param("iidsss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen);
         } else {

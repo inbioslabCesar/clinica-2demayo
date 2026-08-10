@@ -126,11 +126,10 @@ function LiquidacionHonorariosPage() {
     }
   };
 
-  // Filtrar duplicados por id
-  // Filtrar duplicados y solo mostrar consultas médicas y ecografías
+  // Mostrar cualquier servicio que tenga participación médica liquidable.
   const honorariosUnicos = honorarios
     .filter((h, idx, arr) => arr.findIndex(x => x.id === h.id) === idx)
-    .filter(h => h.tipo_servicio === 'consulta' || h.tipo_servicio === 'ecografia');
+    .filter(h => Number(h.monto_medico || 0) > 0);
   return (
       <div className="container mx-auto p-6">
         <h1 className="text-2xl font-bold mb-4 text-blue-800">Liquidación de Honorarios Médicos</h1>

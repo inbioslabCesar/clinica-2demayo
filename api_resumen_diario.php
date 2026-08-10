@@ -31,69 +31,63 @@ $finDia = date('Y-m-d', strtotime($fecha . ' +1 day')) . ' 00:00:00';
 $egreso_honorarios = 0.0;
 
 try {
-    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE created_at >= ? AND created_at < ? AND usuario_id = ? AND tipo_egreso = "honorario_medico"');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $tmp_honorarios = $stmt->fetchColumn();
-    if ($tmp_honorarios !== false && $tmp_honorarios !== null) {
-        $egreso_honorarios = floatval($tmp_honorarios);
-    }
-    error_log('Egreso honorarios: ' . $egreso_honorarios);
-
-    // Egreso operativo (otros egresos, excluyendo honorarios médicos y liquidaciones de laboratorio)
-    $egreso_operativo = 0.0;
-    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_operativo FROM egresos WHERE created_at >= ? AND created_at < ? AND usuario_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $tmp_operativo = $stmt->fetchColumn();
-    if ($tmp_operativo !== false && $tmp_operativo !== null) {
-        $egreso_operativo = floatval($tmp_operativo);
-    }
-    error_log('Egreso operativo: ' . $egreso_operativo);
-
-    // Egreso laboratorio de referencia (pagados)
-    // Buscar la caja abierta del usuario en el día
-    $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE fecha >= ? AND fecha < ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+    // El encabezado resume exclusivamente la caja abierta actual. Las cajas cerradas
+    // siguen disponibles en cajas_resumen, pero no se mezclan con una caja nueva.
+    $stmtCaja = $pdo->prepare('SELECT id, monto_apertura, estado, hora_apertura FROM cajas WHERE fecha >= ? AND fecha < ? AND usuario_id = ? AND estado = "abierta" ORDER BY created_at DESC LIMIT 1');
     $stmtCaja->execute([$inicioDia, $finDia, $usuario['id']]);
-    $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
-    $caja_id_actual = $cajaRow ? $cajaRow['id'] : 0;
+    $caja_row = $stmtCaja->fetch(PDO::FETCH_ASSOC) ?: null;
+    $caja_id_actual = $caja_row ? (int)$caja_row['id'] : 0;
     error_log('Caja actual: ' . $caja_id_actual);
 
-    $stmt = $pdo->prepare('SELECT SUM(monto) as egreso_lab_ref FROM laboratorio_referencia_movimientos WHERE fecha >= ? AND fecha < ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
-    $stmt->execute([$inicioDia, $finDia, $caja_id_actual]);
-    $egreso_lab_ref = $stmt->fetchColumn();
-    $egreso_lab_ref = $egreso_lab_ref ? floatval($egreso_lab_ref) : 0.0;
-    error_log('Egreso lab ref: ' . $egreso_lab_ref);
+    $egreso_operativo = 0.0;
+    $egreso_lab_ref = 0.0;
+    $total = 0.0;
+    $ingresos_por_servicio = [];
+    $ingresos_por_area = [];
+    $ingresos_por_pago = [];
+    $total_contratos_abono = 0.0;
+    $debug_lab_ref_movs = [];
 
-    // DEBUG: Obtener los movimientos de laboratorio de referencia sumados
-    $stmt = $pdo->prepare('SELECT * FROM laboratorio_referencia_movimientos WHERE fecha >= ? AND fecha < ? AND caja_id IS NOT NULL AND caja_id = ? AND estado = "pagado"');
-    $stmt->execute([$inicioDia, $finDia, $caja_id_actual]);
-    $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if ($caja_id_actual > 0) {
+        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
+        $stmt->execute([$caja_id_actual]);
+        $egreso_honorarios = floatval($stmt->fetchColumn());
 
-    $stmt = $pdo->prepare('SELECT SUM(monto) as total FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ?');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $total = $stmt->fetchColumn();
+        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
+        $stmt->execute([$caja_id_actual]);
+        $egreso_operativo = floatval($stmt->fetchColumn());
 
-    $stmt = $pdo->prepare('SELECT tipo_ingreso, SUM(monto) as total_servicio FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ? GROUP BY tipo_ingreso');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $ingresos_por_servicio = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
+        $stmt->execute([$caja_id_actual]);
+        $egreso_lab_ref = floatval($stmt->fetchColumn());
 
-    $stmt = $pdo->prepare('SELECT area, SUM(monto) as total_area FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ? GROUP BY area');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $ingresos_por_area = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare('SELECT * FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
+        $stmt->execute([$caja_id_actual]);
+        $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $stmt = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ? GROUP BY metodo_pago');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $ingresos_por_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ?');
+        $stmt->execute([$caja_id_actual]);
+        $total = floatval($stmt->fetchColumn());
 
-    $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE fecha_hora >= ? AND fecha_hora < ? AND usuario_id = ? AND (tipo_ingreso = ? OR referencia_tabla = ?)');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id'], 'contrato_abono', 'paciente_seguimiento_pagos']);
-    $total_contratos_abono = floatval($stmt->fetchColumn());
+        $stmt = $pdo->prepare('SELECT tipo_ingreso, SUM(monto) as total_servicio FROM ingresos_diarios WHERE caja_id = ? GROUP BY tipo_ingreso');
+        $stmt->execute([$caja_id_actual]);
+        $ingresos_por_servicio = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Consultar el monto de apertura, estado y hora de apertura de la caja del usuario actual
-    $stmt = $pdo->prepare('SELECT monto_apertura, estado, hora_apertura FROM cajas WHERE fecha >= ? AND fecha < ? AND usuario_id = ? ORDER BY hora_apertura ASC LIMIT 1');
-    $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
-    $caja_row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare('SELECT area, SUM(monto) as total_area FROM ingresos_diarios WHERE caja_id = ? GROUP BY area');
+        $stmt->execute([$caja_id_actual]);
+        $ingresos_por_area = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmt = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
+        $stmt->execute([$caja_id_actual]);
+        $ingresos_por_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ? AND (tipo_ingreso = ? OR referencia_tabla = ?)');
+        $stmt->execute([$caja_id_actual, 'contrato_abono', 'paciente_seguimiento_pagos']);
+        $total_contratos_abono = floatval($stmt->fetchColumn());
+    }
+
     $monto_apertura = ($caja_row && isset($caja_row['monto_apertura'])) ? $caja_row['monto_apertura'] : 0;
-    $caja_abierta = ($caja_row && isset($caja_row['estado']) && $caja_row['estado'] === 'abierta') ? true : false;
+    $caja_abierta = $caja_row !== null;
     // Asegurar que la hora de apertura esté en la zona horaria de Lima
     $hora_apertura = null;
     if ($caja_row && isset($caja_row['hora_apertura'])) {

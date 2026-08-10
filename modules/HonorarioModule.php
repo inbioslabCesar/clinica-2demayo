@@ -156,9 +156,19 @@ class HonorarioModule {
     }
 
     public static function registrarMovimiento($conn, $detalleConsulta, $tarifa, $servicio_key, $metodo_pago, $cobro_id) {
+        if (!empty($detalleConsulta['renuncia_honorario_medico'])) {
+            return null;
+        }
+
         $datos = self::calcularDatosMovimiento($detalleConsulta, $tarifa, $servicio_key, $metodo_pago);
         if (!($datos['success'] ?? false)) {
             return $datos;
+        }
+
+        // Una tarifa sin participación médica es ingreso exclusivo de la clínica.
+        // No debe crear una deuda ni una fila de liquidación por S/ 0.00.
+        if ((float)($datos['monto_medico'] ?? 0) <= 0.00001) {
+            return null;
         }
 
         $movId = self::insertarMovimientoDesdeDatos($conn, $datos, (int)$cobro_id, null);
@@ -173,6 +183,10 @@ class HonorarioModule {
     }
 
     public static function registrarPorCobrar($conn, $detalleConsulta, $tarifa, $servicio_key, $metodo_pago, $cobro_id, $cotizacion_id, $usuario_cobro_id, $caja_id = null, $turno = null) {
+        if (!empty($detalleConsulta['renuncia_honorario_medico'])) {
+            return ['success' => true, 'sin_honorario_medico' => true];
+        }
+
         if ((int)$cotizacion_id <= 0) {
             return [
                 'success' => false,
@@ -209,6 +223,12 @@ class HonorarioModule {
         $usuarioCobroId = (int)$usuario_cobro_id;
         $cajaId = $caja_id !== null ? (int)$caja_id : null;
         $turnoVal = $turno !== null ? (string)$turno : null;
+
+        // Mantener el mismo criterio del cobro directo: sin monto médico no hay
+        // honorario por cobrar que luego pueda llegar a liquidación.
+        if ($montoMedico <= 0.00001) {
+            return ['success' => true, 'sin_honorario_medico' => true];
+        }
 
         // firma_origen identifica el SERVICIO dentro de la cotización, no el cobro individual.
         // Así, múltiples cobros parciales del mismo servicio usan la misma firma y no generan filas duplicadas.
@@ -303,6 +323,16 @@ class HonorarioModule {
         foreach ($rows as $row) {
             $hpcId = (int)($row['id'] ?? 0);
             if ($hpcId <= 0) {
+                continue;
+            }
+
+            // Registros heredados con S/ 0.00 no deben generar liquidaciones.
+            if ((float)($row['monto_medico'] ?? 0) <= 0.00001) {
+                $stmtOmitir = $conn->prepare("UPDATE honorarios_por_cobrar SET estado_consolidacion = 'anulado', updated_at = NOW() WHERE id = ?");
+                if ($stmtOmitir) {
+                    $stmtOmitir->bind_param("i", $hpcId);
+                    $stmtOmitir->execute();
+                }
                 continue;
             }
 

@@ -24,11 +24,29 @@ function nombrePaciente(paciente) {
   return [paciente?.nombre, paciente?.apellido].filter(Boolean).join(" ") || "Paciente sin nombre";
 }
 
+function formatearFechaSolicitud(fecha) {
+  if (!fecha) return "Sin fecha";
+  const fechaNormalizada = String(fecha).includes("T") ? String(fecha) : String(fecha).replace(" ", "T");
+  const valor = new Date(fechaNormalizada);
+  if (Number.isNaN(valor.getTime())) return String(fecha);
+  return valor.toLocaleString("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 export default function MisInformesImagenologiaPage({ usuario }) {
   const navigate = useNavigate();
   const [ordenes, setOrdenes] = useState([]);
   const [tipo, setTipo] = useState("todos");
   const [busqueda, setBusqueda] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [filasPorPagina, setFilasPorPagina] = useState(10);
+  const [paginacion, setPaginacion] = useState({ page: 1, limit: 10, total: 0, total_pages: 1 });
   const [loading, setLoading] = useState(true);
   const [ordenParaSubir, setOrdenParaSubir] = useState(null);
   const [ordenExpandidaId, setOrdenExpandidaId] = useState(null);
@@ -43,20 +61,36 @@ export default function MisInformesImagenologiaPage({ usuario }) {
 
     setLoading(true);
     try {
-      const response = await authFetch(`api_ordenes_imagen.php?medico_id=${medicoId}&tipo=${tipo}`);
+      const response = await authFetch(`api_ordenes_imagen.php?medico_id=${medicoId}&tipo=${tipo}&page=${pagina}&limit=${filasPorPagina}`);
       const data = await response.json();
       if (!data.success) throw new Error(data.error || "No se pudieron cargar las órdenes");
       setOrdenes(Array.isArray(data.ordenes) ? data.ordenes : []);
+      setPaginacion(data.pagination || { page: 1, limit: 10, total: 0, total_pages: 1 });
     } catch (error) {
       setOrdenes([]);
       Swal.fire("Error", error.message || "No se pudieron cargar las órdenes de imagenología.", "error");
     } finally {
       setLoading(false);
     }
-  }, [medicoId, tipo]);
+  }, [filasPorPagina, medicoId, pagina, tipo]);
 
   useEffect(() => {
     cargarOrdenes();
+  }, [cargarOrdenes]);
+
+  useEffect(() => {
+    const recargarSiEstaVisible = () => {
+      if (document.visibilityState === "visible") cargarOrdenes();
+    };
+    const intervalo = window.setInterval(recargarSiEstaVisible, 30000);
+    window.addEventListener("focus", recargarSiEstaVisible);
+    document.addEventListener("visibilitychange", recargarSiEstaVisible);
+
+    return () => {
+      window.clearInterval(intervalo);
+      window.removeEventListener("focus", recargarSiEstaVisible);
+      document.removeEventListener("visibilitychange", recargarSiEstaVisible);
+    };
   }, [cargarOrdenes]);
 
   const eliminarArchivo = async (archivo) => {
@@ -123,7 +157,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                 type="button"
                 role="tab"
                 aria-selected={tipo === key}
-                onClick={() => setTipo(key)}
+                onClick={() => { setTipo(key); setPagina(1); }}
                 className={`rounded-md px-3 py-2 text-sm font-medium ${tipo === key ? "bg-cyan-700 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
               >
                 {label}
@@ -149,9 +183,10 @@ export default function MisInformesImagenologiaPage({ usuario }) {
         ) : (
           <>
             <section className="hidden overflow-hidden border border-slate-200 bg-white shadow-sm md:block">
-              <div className="grid grid-cols-[minmax(190px,1.3fr)_minmax(180px,1.2fr)_120px_90px_110px_150px] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <div className="grid grid-cols-[minmax(175px,1.2fr)_minmax(175px,1.1fr)_150px_110px_80px_105px_150px] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <span>Paciente</span>
                 <span>Estudio</span>
+                <span>Solicitado</span>
                 <span>Origen</span>
                 <span>Archivos</span>
                 <span>Informe</span>
@@ -165,7 +200,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                 const puedeInformar = Boolean(orden.can_edit_informe) && orden.estado !== "cancelado";
                 return (
                   <div key={orden.id} className="border-b border-slate-200 last:border-b-0">
-                    <div className="grid grid-cols-[minmax(190px,1.3fr)_minmax(180px,1.2fr)_120px_90px_110px_150px] items-center gap-4 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50">
+                    <div className="grid grid-cols-[minmax(175px,1.2fr)_minmax(175px,1.1fr)_150px_110px_80px_105px_150px] items-center gap-4 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50">
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-slate-900">{nombrePaciente(paciente)}</p>
                         <p className="mt-0.5 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
@@ -174,6 +209,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                         <p className="font-medium">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                         <p className="mt-0.5 truncate text-xs text-slate-500">{(orden.servicios_nombres || []).join(" · ") || "Sin descripción"}</p>
                       </div>
+                      <span className="text-xs text-slate-600">{formatearFechaSolicitud(orden.fecha)}</span>
                       <span className="text-xs text-slate-600">{tieneConsulta ? "Consulta" : "Atención directa"}</span>
                       <span className="text-xs font-medium text-slate-700">{orden.archivos?.length || 0}</span>
                       <span className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
@@ -210,6 +246,27 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                 );
               })}
             </section>
+            <nav className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Paginación de informes">
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <label htmlFor="filas-informes-imagen" className="font-medium">Filas por página</label>
+                  <select
+                    id="filas-informes-imagen"
+                    value={filasPorPagina}
+                    onChange={(event) => { setFilasPorPagina(Number(event.target.value)); setPagina(1); }}
+                    className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-700"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                  <span>Página {paginacion.page} de {paginacion.total_pages} · {paginacion.total} estudios</span>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setPagina((actual) => Math.max(1, actual - 1))} disabled={paginacion.page <= 1} className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50">Anterior</button>
+                  <button type="button" onClick={() => setPagina((actual) => Math.min(paginacion.total_pages, actual + 1))} disabled={paginacion.page >= paginacion.total_pages} className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50">Siguiente</button>
+                </div>
+            </nav>
             <section className="grid gap-4 md:hidden">
             {ordenesVisibles.map((orden) => {
               const paciente = orden.paciente || {};
@@ -225,6 +282,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       <p className="mt-1 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
                       <p className="mt-2 text-sm font-medium capitalize text-slate-700">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                       {(orden.servicios_nombres || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{orden.servicios_nombres.join(" · ")}</p>}
+                      <p className="mt-1 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
                     </div>
                     <div className="shrink-0 text-right">
                       <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>

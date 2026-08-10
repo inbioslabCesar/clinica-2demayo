@@ -33,6 +33,7 @@ function CobroModulo({
 }) {
         // ...existing code...
         const [motivo, setMotivo] = useState('');
+      const [atencionSolidaria, setAtencionSolidaria] = useState(false);
     // Estados para descuento
     const [tipoDescuento, setTipoDescuento] = useState('porcentaje');
     const [valorDescuento, setValorDescuento] = useState(0);
@@ -189,6 +190,13 @@ if (tipoDescuento === 'porcentaje') {
 } else {
   descuento = valorDescuento;
 }
+  const esDescuentoTotal = montoOriginal > 0 && descuento >= (montoOriginal - 0.005);
+
+  useEffect(() => {
+    if (!esDescuentoTotal) {
+      setAtencionSolidaria(false);
+    }
+  }, [esDescuentoTotal]);
 
   const calcularTotal = () => {
     const montoOriginal = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
@@ -264,6 +272,7 @@ if (tipoDescuento === 'porcentaje') {
         monto_descuento: descuento,
         tipo_descuento: tipoDescuento,
         valor_descuento: valorDescuento,
+        atencion_solidaria: esDescuentoTotal && atencionSolidaria,
         tipo_pago: tipoPago,
         observaciones: observaciones,
         detalles: detallesCobro,
@@ -721,6 +730,20 @@ if (tipoDescuento === 'porcentaje') {
                 placeholder="Motivo o justificación del descuento (obligatorio)"
                 required={descuento > 0}
               />
+              {esDescuentoTotal && (
+                <label className="mt-3 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                  <input
+                    type="checkbox"
+                    checked={atencionSolidaria}
+                    onChange={(event) => setAtencionSolidaria(event.target.checked)}
+                    className="mt-0.5 h-4 w-4"
+                  />
+                  <span>
+                    <strong>Atención solidaria: el médico renuncia a su honorario.</strong>
+                    <span className="mt-1 block">No se generará liquidación médica para este cobro. Si no se marca, la clínica asume el costo del honorario.</span>
+                  </span>
+                </label>
+              )}
             </div>
           )}
         </div>

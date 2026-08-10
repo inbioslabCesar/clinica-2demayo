@@ -452,6 +452,8 @@ if ($method === 'GET') {
     $medico_id   = (int)($_GET['medico_id'] ?? 0);
     $orden_id    = (int)($_GET['orden_id'] ?? 0);
     $tipo        = trim($_GET['tipo'] ?? '');
+    $pagina      = max(1, (int)($_GET['page'] ?? 1));
+    $limite      = min(50, max(5, (int)($_GET['limit'] ?? 10)));
     $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
     $contextPacienteId = (int)($_GET['context_paciente_id'] ?? 0);
 
@@ -513,7 +515,13 @@ if ($method === 'GET') {
             $tipoSeguro = $conn->real_escape_string($tipo);
             $wheresTipo = " AND oi.tipo = '$tipoSeguro'";
         }
-        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE oi.medico_id = $medico_id $wheresTipo ORDER BY oi.fecha DESC");
+        $whereMedico = "oi.medico_id = $medico_id $wheresTipo";
+        $totalRes = $conn->query("SELECT COUNT(*) AS total FROM ordenes_imagen oi WHERE $whereMedico");
+        $total = (int)(($totalRes ? $totalRes->fetch_assoc() : [])['total'] ?? 0);
+        $totalPaginas = max(1, (int)ceil($total / $limite));
+        $pagina = min($pagina, $totalPaginas);
+        $offset = ($pagina - 1) * $limite;
+        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY oi.fecha DESC LIMIT $limite OFFSET $offset");
         $rows = [];
         while ($r = $res->fetch_assoc()) {
             adjuntarArchivos($conn, $r);
@@ -524,7 +532,16 @@ if ($method === 'GET') {
             $r['paciente'] = $paciente ?: null;
             $rows[] = $r;
         }
-        echo json_encode(['success' => true, 'ordenes' => $rows]);
+        echo json_encode([
+            'success' => true,
+            'ordenes' => $rows,
+            'pagination' => [
+                'page' => $pagina,
+                'limit' => $limite,
+                'total' => $total,
+                'total_pages' => $totalPaginas,
+            ],
+        ]);
 
     } elseif ($paciente_id > 0) {
         // Todas las órdenes de un paciente (para ConsumoPaciente)
