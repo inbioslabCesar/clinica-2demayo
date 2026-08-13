@@ -35,6 +35,26 @@ try {
     $monto_apertura = floatval($input['monto_apertura'] ?? 0);
     $observaciones = trim($input['observaciones'] ?? '');
     $turno = normalizar_turno($input['turno'] ?? '');
+    $traspasoId = (int)($input['traspaso_id'] ?? 0);
+
+    if ($traspasoId > 0) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS caja_traspasos (
+            id INT AUTO_INCREMENT PRIMARY KEY, caja_origen_id INT NOT NULL, caja_destino_id INT NULL,
+            usuario_entrega_id INT NOT NULL, usuario_recibe_id INT NOT NULL, monto DECIMAL(12,2) NOT NULL,
+            estado VARCHAR(20) NOT NULL DEFAULT 'pendiente', observaciones TEXT NULL,
+            fecha_entrega DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, fecha_recepcion DATETIME NULL,
+            INDEX idx_ct_destino (usuario_recibe_id, estado)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $stmtTraspaso = $pdo->prepare("SELECT id, monto FROM caja_traspasos WHERE id = ? AND usuario_recibe_id = ? AND estado = 'pendiente' LIMIT 1");
+        $stmtTraspaso->execute([$traspasoId, $usuario_id]);
+        $traspaso = $stmtTraspaso->fetch(PDO::FETCH_ASSOC);
+        if (!$traspaso) {
+            echo json_encode(['success' => false, 'error' => 'El traspaso seleccionado no esta disponible']);
+            exit;
+        }
+        $monto_apertura = (float)$traspaso['monto'];
+        $observaciones = trim(($observaciones ? $observaciones . ' | ' : '') . 'Fondo recibido por traspaso #' . $traspasoId);
+    }
 
     // Validaciones
     if ($monto_apertura < 0) {
@@ -73,6 +93,11 @@ try {
     ]);
 
     $caja_id = $pdo->lastInsertId();
+
+    if ($traspasoId > 0) {
+        $stmtRecibir = $pdo->prepare("UPDATE caja_traspasos SET caja_destino_id = ?, estado = 'recibido', fecha_recepcion = NOW() WHERE id = ? AND usuario_recibe_id = ? AND estado = 'pendiente'");
+        $stmtRecibir->execute([$caja_id, $traspasoId, $usuario_id]);
+    }
 
     // Obtener información del usuario para el log
     $stmt = $pdo->prepare("SELECT nombre FROM usuarios WHERE id = ?");

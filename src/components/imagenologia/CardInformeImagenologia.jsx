@@ -15,12 +15,17 @@ export default function CardInformeImagenologia({
   pacienteNombre,
   medicoNombre,
   canEdit = true,
-  onInformeActualizado
+  onInformeActualizado,
+  onEditingChange
 }) {
   const [informe, setInforme] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [descargando, setDescargando] = useState(false);
+
+  useEffect(() => () => {
+    if (onEditingChange) onEditingChange(false);
+  }, [onEditingChange]);
 
   // ─ Cargar informe al montar o cuando se actualiza ─────────────────────────
   useEffect(() => {
@@ -77,6 +82,7 @@ export default function CardInformeImagenologia({
 
   const handleCerrarModal = () => {
     setModalOpen(false);
+    if (onEditingChange) onEditingChange(false);
     cargarInforme(); // Recargar después de editar
     if (onInformeActualizado) {
       onInformeActualizado();
@@ -134,7 +140,7 @@ export default function CardInformeImagenologia({
               {canEdit ? (
                 <button
                   type="button"
-                  onClick={() => setModalOpen(true)}
+                  onClick={() => { setModalOpen(true); if (onEditingChange) onEditingChange(true); }}
                   className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1 transition"
                 >
                   <FiEdit3 size={16} />
@@ -165,7 +171,7 @@ export default function CardInformeImagenologia({
                 </p>
                 <button
                   type="button"
-                  onClick={() => setModalOpen(true)}
+                  onClick={() => { setModalOpen(true); if (onEditingChange) onEditingChange(true); }}
                   className="px-3 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2 transition w-full justify-center"
                 >
                   <FiEdit3 size={16} />

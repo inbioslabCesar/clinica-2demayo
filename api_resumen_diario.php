@@ -45,6 +45,8 @@ try {
     $ingresos_por_servicio = [];
     $ingresos_por_area = [];
     $ingresos_por_pago = [];
+    $egresos_por_metodo = ['efectivo' => 0.0, 'yape' => 0.0, 'plin' => 0.0, 'tarjeta' => 0.0, 'transferencia' => 0.0];
+    $egresos_externos = 0.0;
     $total_contratos_abono = 0.0;
     $debug_lab_ref_movs = [];
 
@@ -84,10 +86,37 @@ try {
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ? AND (tipo_ingreso = ? OR referencia_tabla = ?)');
         $stmt->execute([$caja_id_actual, 'contrato_abono', 'paciente_seguimiento_pagos']);
         $total_contratos_abono = floatval($stmt->fetchColumn());
+
+        $stmtFuente = $pdo->query("SHOW COLUMNS FROM egresos LIKE 'fuente_fondos'");
+        $usaFuenteFondos = $stmtFuente && $stmtFuente->fetch(PDO::FETCH_ASSOC);
+        $sqlEgresoMetodo = $usaFuenteFondos
+            ? "SELECT metodo_pago, COALESCE(fuente_fondos, 'clinica') AS fuente_fondos, COALESCE(SUM(monto), 0) AS total FROM egresos WHERE caja_id = ? GROUP BY metodo_pago, COALESCE(fuente_fondos, 'clinica')"
+            : "SELECT metodo_pago, 'clinica' AS fuente_fondos, COALESCE(SUM(monto), 0) AS total FROM egresos WHERE caja_id = ? GROUP BY metodo_pago";
+        $stmt = $pdo->prepare($sqlEgresoMetodo);
+        $stmt->execute([$caja_id_actual]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $egreso) {
+            $metodo = strtolower(trim((string)($egreso['metodo_pago'] ?? 'efectivo')));
+            $monto = (float)($egreso['total'] ?? 0);
+            if (strtolower(trim((string)($egreso['fuente_fondos'] ?? 'clinica'))) !== 'clinica') {
+                $egresos_externos += $monto;
+            } elseif (array_key_exists($metodo, $egresos_por_metodo)) {
+                $egresos_por_metodo[$metodo] += $monto;
+            }
+        }
     }
 
     $monto_apertura = ($caja_row && isset($caja_row['monto_apertura'])) ? $caja_row['monto_apertura'] : 0;
     $caja_abierta = $caja_row !== null;
+    $totales_pago_metodo = ['efectivo' => 0.0, 'yape' => 0.0, 'plin' => 0.0, 'tarjeta' => 0.0, 'transferencia' => 0.0];
+    foreach ($ingresos_por_pago as $pago) {
+        $metodoPago = strtolower(trim((string)($pago['metodo_pago'] ?? '')));
+        if (array_key_exists($metodoPago, $totales_pago_metodo)) {
+            $totales_pago_metodo[$metodoPago] += (float)($pago['total_pago'] ?? 0);
+        }
+    }
+    $virtual_cobrado = $totales_pago_metodo['yape'] + $totales_pago_metodo['plin'] + $totales_pago_metodo['tarjeta'] + $totales_pago_metodo['transferencia'];
+    $egresos_virtuales_clinica = (float)$egresos_por_metodo['yape'] + (float)$egresos_por_metodo['plin'] + (float)$egresos_por_metodo['tarjeta'] + (float)$egresos_por_metodo['transferencia'];
+    $virtual_esperado = $virtual_cobrado - $egresos_virtuales_clinica;
     // Asegurar que la hora de apertura esté en la zona horaria de Lima
     $hora_apertura = null;
     if ($caja_row && isset($caja_row['hora_apertura'])) {
@@ -168,6 +197,11 @@ try {
         'por_servicio' => $ingresos_por_servicio,
         'por_area' => $ingresos_por_area,
         'por_pago' => $ingresos_por_pago,
+        'egresos_por_metodo' => $egresos_por_metodo,
+        'egresos_externos' => $egresos_externos,
+        'virtual_cobrado' => $virtual_cobrado,
+        'egresos_virtuales_clinica' => $egresos_virtuales_clinica,
+        'virtual_esperado' => $virtual_esperado,
         'total_contratos_abono' => $total_contratos_abono,
         'egreso_honorarios' => $egreso_honorarios,
         'egreso_lab_ref' => $egreso_lab_ref,

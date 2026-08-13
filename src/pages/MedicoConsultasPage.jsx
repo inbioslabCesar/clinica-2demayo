@@ -37,7 +37,7 @@ function MedicoConsultasPage({ usuario }) {
           background: "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)",
         }}
       >
-        <div className="container mx-auto px-6 py-8">
+        <div className="w-full max-w-[1700px] mx-auto px-3 sm:px-6 xl:px-10 py-8">
           <div className="text-center">
             <div className="inline-flex items-center gap-3 bg-white/10 rounded-full px-6 py-3 backdrop-blur-sm border border-white/20 mb-4">
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
@@ -59,7 +59,7 @@ function MedicoConsultasPage({ usuario }) {
       </div>
 
       {/* Contenido principal */}
-      <div className="container mx-auto px-6 py-8">
+      <div className="w-full max-w-[1700px] mx-auto px-3 sm:px-6 xl:px-10 py-8">
         <MedicoConsultas medicoId={medicoId} />
       </div>
     </div>

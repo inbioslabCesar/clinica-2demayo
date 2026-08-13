@@ -22,6 +22,7 @@ export default function SolicitudProcedimientos({ consultaId }) {
   const [panelAbierto, setPanelAbierto] = useState(false);
   const [loadingCatalogo, setLoadingCatalogo] = useState(false);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
+  const [pendienteActual, setPendienteActual] = useState(null);
 
   const cargarCatalogo = async () => {
     setLoadingCatalogo(true);
@@ -57,9 +58,13 @@ export default function SolicitudProcedimientos({ consultaId }) {
         cache: "no-store",
       });
       const data = await res.json();
-      setOrdenes(Array.isArray(data?.ordenes) ? data.ordenes : []);
+      const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+      setOrdenes(rows);
+      const pendientes = rows.filter((o) => String(o?.estado || '').toLowerCase() === 'pendiente');
+      setPendienteActual(pendientes.length > 0 ? pendientes[pendientes.length - 1] : null);
     } catch {
       setOrdenes([]);
+      setPendienteActual(null);
     } finally {
       setLoadingOrdenes(false);
     }
@@ -71,7 +76,10 @@ export default function SolicitudProcedimientos({ consultaId }) {
 
   const abrirPanel = () => {
     if (catalogo.length === 0) cargarCatalogo().catch(() => {});
-    setSeleccionados([]);
+    const pre = Array.isArray(pendienteActual?.procedimientos)
+      ? pendienteActual.procedimientos.map((p) => Number(p?.id || 0)).filter((id) => id > 0)
+      : [];
+    setSeleccionados(pre);
     setBuscar("");
     setMensaje(null);
     setPanelAbierto(true);
@@ -101,7 +109,8 @@ export default function SolicitudProcedimientos({ consultaId }) {
   };
 
   const guardar = async () => {
-    if (!consultaId || seleccionados.length === 0) {
+    const tienePendienteEditable = String(pendienteActual?.estado || '').toLowerCase() === 'pendiente';
+    if (!consultaId || (seleccionados.length === 0 && !tienePendienteEditable)) {
       setMensaje({ tipo: "error", texto: "Selecciona al menos un procedimiento." });
       return;
     }
@@ -116,17 +125,20 @@ export default function SolicitudProcedimientos({ consultaId }) {
       const data = await res.json();
       if (!data?.success) throw new Error(data?.error || "No se pudo guardar la solicitud");
 
-      const consolidada = String(data?.modo || "").toLowerCase() === "consolidada";
+      const modo = String(data?.modo || "").toLowerCase();
+      const consolidada = modo === "consolidada" || modo === "actualizada";
       const comprobante = data?.numero_comprobante
         ? ` · Cotización ${data.numero_comprobante}`
         : "";
       setMensaje({
         tipo: "ok",
-        texto: consolidada
-          ? `Solicitud actualizada${comprobante}.`
-          : `Solicitud guardada${comprobante}.`,
+        texto: modo === 'cancelada_por_vacio'
+          ? 'Solicitud vaciada y cancelada correctamente.'
+          : (consolidada
+            ? `Solicitud actualizada${comprobante}.`
+            : `Solicitud guardada${comprobante}.`),
       });
-      setSeleccionados([]);
+      setSeleccionados(Array.isArray(data?.procedimientos_finales) ? data.procedimientos_finales : []);
       await cargarOrdenes();
       // Cerrar panel automáticamente tras guardar con éxito
       setTimeout(() => setPanelAbierto(false), 1200);
@@ -231,10 +243,10 @@ export default function SolicitudProcedimientos({ consultaId }) {
             <button
               type="button"
               onClick={guardar}
-              disabled={guardando || seleccionados.length === 0}
-              className={`px-4 py-1.5 rounded font-semibold text-white text-sm transition ${guardando || seleccionados.length === 0 ? "bg-gray-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"}`}
+              disabled={guardando || (seleccionados.length === 0 && String(pendienteActual?.estado || '').toLowerCase() !== 'pendiente')}
+              className={`px-4 py-1.5 rounded font-semibold text-white text-sm transition ${guardando || (seleccionados.length === 0 && String(pendienteActual?.estado || '').toLowerCase() !== 'pendiente') ? "bg-gray-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"}`}
             >
-              {guardando ? "Guardando..." : "Guardar solicitud"}
+              {guardando ? "Guardando..." : (seleccionados.length === 0 ? "Vaciar solicitud" : "Guardar solicitud")}
             </button>
           </div>
         </div>

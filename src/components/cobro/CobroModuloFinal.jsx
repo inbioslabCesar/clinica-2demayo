@@ -68,6 +68,8 @@ function CobroModulo({
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones] = useState('');
   const [loading, setLoading] = useState(false);
+  const [usarRepartoManual, setUsarRepartoManual] = useState(false);
+  const [repartoPorDetalle, setRepartoPorDetalle] = useState({});
   const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '', direccion: '', telefono: '', celular: '', ruc: '', email: '' });
 
   const nombrePaciente = String(paciente?.nombre || paciente?.nombres || '').trim();
@@ -160,6 +162,248 @@ function CobroModulo({
     return map;
   }, [detallesCobro]);
 
+  const subtotalesNetosPorDetalle = useMemo(() => {
+    const map = new Map();
+    const subtotales = detallesCobro.map((item) => Math.max(0, Number(item?.subtotal || 0)));
+    const baseTotal = subtotales.reduce((acc, value) => acc + value, 0);
+    let descuentoCalculado = 0;
+    if (tipoDescuento === 'porcentaje') {
+      descuentoCalculado = baseTotal * (Number(valorDescuento || 0) / 100);
+    } else {
+      descuentoCalculado = Number(valorDescuento || 0);
+    }
+    const descuentoTotal = Math.max(0, Math.min(Number.isFinite(descuentoCalculado) ? descuentoCalculado : 0, baseTotal));
+
+    if (descuentoTotal <= 0 || baseTotal <= 0) {
+      detallesCobro.forEach((item, index) => {
+        const key = buildDetalleKey(item, index);
+        map.set(key, subtotales[index] || 0);
+      });
+      return map;
+    }
+
+    const indicesValidos = [];
+    subtotales.forEach((subtotal, index) => {
+      if (subtotal > 0) {
+        indicesValidos.push(index);
+      }
+    });
+
+    const ultimoIdx = indicesValidos.length > 0 ? indicesValidos[indicesValidos.length - 1] : -1;
+    let descuentoAsignado = 0;
+
+    detallesCobro.forEach((item, index) => {
+      const key = buildDetalleKey(item, index);
+      const subtotal = subtotales[index] || 0;
+      if (subtotal <= 0) {
+        map.set(key, 0);
+        return;
+      }
+
+      let descuentoItem = 0;
+      if (index === ultimoIdx) {
+        descuentoItem = Math.max(0, Number((descuentoTotal - descuentoAsignado).toFixed(2)));
+      } else {
+        const proporcion = subtotal / baseTotal;
+        descuentoItem = Number((descuentoTotal * proporcion).toFixed(2));
+        descuentoAsignado = Number((descuentoAsignado + descuentoItem).toFixed(2));
+      }
+
+      descuentoItem = Math.min(descuentoItem, subtotal);
+      const subtotalNeto = Math.max(0, Number((subtotal - descuentoItem).toFixed(2)));
+      map.set(key, subtotalNeto);
+    });
+
+    return map;
+  }, [detallesCobro, tipoDescuento, valorDescuento]);
+
+  const totalNetoReparto = useMemo(() => {
+    let total = 0;
+    detallesCobro.forEach((item, index) => {
+      const key = buildDetalleKey(item, index);
+      total += Number(subtotalesNetosPorDetalle.get(key) || 0);
+    });
+    return Number(total.toFixed(2));
+  }, [detallesCobro, subtotalesNetosPorDetalle]);
+
+  const normalizarDecimalInput = (value) => String(value ?? '').replace(',', '.');
+  const esDecimalParcialValido = (value) => /^\d*(\.\d{0,2})?$/.test(value);
+
+  useEffect(() => {
+    setRepartoPorDetalle((prev) => {
+      const next = { ...prev };
+      detallesCobro.forEach((item, index) => {
+        const key = buildDetalleKey(item, index);
+        const subtotal = Math.max(0, Number(subtotalesNetosPorDetalle.get(key) || 0));
+        const sugerido = Number(item?.monto_medico || 0);
+        const montoInicial = Number.isFinite(sugerido) && sugerido > 0 ? Math.min(sugerido, subtotal) : 0;
+        const porcentajeInicial = subtotal > 0 ? Number(((montoInicial * 100) / subtotal).toFixed(2)) : 0;
+        if (!next[key]) {
+          next[key] = {
+            monto_medico: String(montoInicial),
+            porcentaje_medico: porcentajeInicial.toFixed(2),
+          };
+          return;
+        }
+
+        const montoPrevio = Number(next[key]?.monto_medico);
+        if (Number.isFinite(montoPrevio) && montoPrevio > subtotal) {
+          next[key] = {
+            ...next[key],
+            monto_medico: subtotal.toFixed(2),
+            porcentaje_medico: subtotal > 0 ? ((subtotal * 100) / subtotal).toFixed(2) : '0.00',
+          };
+        }
+      });
+      return next;
+    });
+  }, [detallesCobro, subtotalesNetosPorDetalle]);
+
+  const updateRepartoMonto = (key, subtotal, value) => {
+    const clean = normalizarDecimalInput(value);
+    if (clean !== '' && !esDecimalParcialValido(clean)) {
+      return;
+    }
+
+    const raw = clean === '' ? '' : Number(clean);
+    let montoValue = clean;
+    if (clean !== '' && Number.isFinite(raw) && raw > subtotal) {
+      montoValue = String(subtotal);
+    }
+
+    const montoNum = montoValue === '' ? null : Number(montoValue);
+    const montoSeguro = Number.isFinite(montoNum) ? Math.max(0, Math.min(Number(montoNum), subtotal)) : 0;
+    const porcentaje = montoValue === '' ? '' : (subtotal > 0 ? ((montoSeguro * 100) / subtotal).toFixed(2) : '0.00');
+
+    setRepartoPorDetalle((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {}),
+        monto_medico: montoValue,
+        porcentaje_medico: porcentaje,
+      },
+    }));
+  };
+
+  const updateRepartoPorcentaje = (key, subtotal, value) => {
+    const clean = normalizarDecimalInput(value);
+    if (clean !== '' && !esDecimalParcialValido(clean)) {
+      return;
+    }
+
+    const raw = clean === '' ? '' : Number(clean);
+    const porcentajeSeguro = clean === ''
+      ? ''
+      : (Number.isFinite(raw) ? Math.max(0, Math.min(raw, 100)) : 0);
+    const monto = clean === ''
+      ? ''
+      : (subtotal > 0 ? ((Number(porcentajeSeguro) * subtotal) / 100).toFixed(2) : '0.00');
+
+    setRepartoPorDetalle((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {}),
+        porcentaje_medico: clean,
+        monto_medico: monto,
+      },
+    }));
+  };
+
+  const normalizarRepartoMontoOnBlur = (key, subtotal) => {
+    setRepartoPorDetalle((prev) => {
+      const entry = prev[key] || {};
+      const raw = normalizarDecimalInput(entry?.monto_medico ?? '');
+      if (raw === '') {
+        return prev;
+      }
+
+      const monto = Number(raw);
+      if (!Number.isFinite(monto)) {
+        return {
+          ...prev,
+          [key]: {
+            ...entry,
+            monto_medico: '',
+            porcentaje_medico: '',
+          },
+        };
+      }
+
+      const montoSeguro = Math.max(0, Math.min(monto, subtotal));
+      const porcentaje = subtotal > 0 ? ((montoSeguro * 100) / subtotal) : 0;
+      return {
+        ...prev,
+        [key]: {
+          ...entry,
+          monto_medico: montoSeguro.toFixed(2),
+          porcentaje_medico: porcentaje.toFixed(2),
+        },
+      };
+    });
+  };
+
+  const normalizarRepartoPorcentajeOnBlur = (key, subtotal) => {
+    setRepartoPorDetalle((prev) => {
+      const entry = prev[key] || {};
+      const raw = normalizarDecimalInput(entry?.porcentaje_medico ?? '');
+      if (raw === '') {
+        return prev;
+      }
+
+      const porcentaje = Number(raw);
+      if (!Number.isFinite(porcentaje)) {
+        return {
+          ...prev,
+          [key]: {
+            ...entry,
+            porcentaje_medico: '',
+          },
+        };
+      }
+
+      const porcentajeSeguro = Math.max(0, Math.min(porcentaje, 100));
+      const monto = subtotal > 0 ? ((porcentajeSeguro * subtotal) / 100) : 0;
+      return {
+        ...prev,
+        [key]: {
+          ...entry,
+          porcentaje_medico: porcentajeSeguro.toFixed(2),
+          monto_medico: monto.toFixed(2),
+        },
+      };
+    });
+  };
+
+  const resumenRepartoManual = useMemo(() => {
+    let totalMedicos = 0;
+    let totalClinica = 0;
+    let incompletos = 0;
+    detallesCobro.forEach((item, index) => {
+      const key = buildDetalleKey(item, index);
+      const subtotal = Math.max(0, Number(subtotalesNetosPorDetalle.get(key) || 0));
+      const entry = repartoPorDetalle[key] || {};
+      const montoRaw = entry?.monto_medico;
+      if (montoRaw === '' || montoRaw === undefined || montoRaw === null) {
+        incompletos++;
+        return;
+      }
+      const monto = Number(montoRaw);
+      if (!Number.isFinite(monto)) {
+        incompletos++;
+        return;
+      }
+      const montoMed = Math.max(0, Math.min(monto, subtotal));
+      totalMedicos += montoMed;
+      totalClinica += (subtotal - montoMed);
+    });
+    return {
+      totalMedicos: Number(totalMedicos.toFixed(2)),
+      totalClinica: Number(totalClinica.toFixed(2)),
+      totalNeto: Number((totalMedicos + totalClinica).toFixed(2)),
+      incompletos,
+    };
+  }, [detallesCobro, repartoPorDetalle, subtotalesNetosPorDetalle]);
+
   const detallesRender = useMemo(() => {
     const base = Array.isArray(detallesSeleccionados) && detallesSeleccionados.length > 0
       ? detallesSeleccionados
@@ -241,6 +485,55 @@ if (tipoDescuento === 'porcentaje') {
       return;
     }
 
+    let detallesPayload = detallesCobro;
+    if (usarRepartoManual) {
+      const validados = [];
+      let totalMedicosManual = 0;
+      let totalClinicaManual = 0;
+      for (let i = 0; i < detallesCobro.length; i += 1) {
+        const item = detallesCobro[i];
+        const key = buildDetalleKey(item, i);
+        const subtotal = Math.max(0, Number(subtotalesNetosPorDetalle.get(key) || 0));
+        const entry = repartoPorDetalle[key] || {};
+        const rawMonto = entry?.monto_medico;
+        const montoMedico = Number(normalizarDecimalInput(rawMonto));
+        if (rawMonto === '' || rawMonto === undefined || rawMonto === null || !Number.isFinite(montoMedico)) {
+          Swal.fire('Reparto incompleto', `Debes definir el monto del médico para: ${item?.descripcion || 'Servicio'}.`, 'warning');
+          return;
+        }
+        if (montoMedico < 0 || montoMedico > subtotal) {
+          Swal.fire('Reparto inválido', `El monto del médico en ${item?.descripcion || 'Servicio'} debe estar entre 0 y S/ ${subtotal.toFixed(2)}.`, 'warning');
+          return;
+        }
+        const montoMed = Number(montoMedico.toFixed(2));
+        const montoCli = Number((subtotal - montoMed).toFixed(2));
+        const porcentajeMed = subtotal > 0 ? Number(((montoMed * 100) / subtotal).toFixed(2)) : 0;
+        totalMedicosManual += montoMed;
+        totalClinicaManual += montoCli;
+
+        validados.push({
+          ...item,
+          reparto_manual_aplicado: 1,
+          monto_medico_override: montoMed,
+          monto_clinica_override: montoCli,
+          porcentaje_medico_override: porcentajeMed,
+        });
+      }
+
+      const totalManual = Number((totalMedicosManual + totalClinicaManual).toFixed(2));
+      const totalEsperado = Number(totalNetoReparto.toFixed(2));
+      if (Math.abs(totalManual - totalEsperado) > 0.02) {
+        Swal.fire(
+          'Reparto inconsistente',
+          `La suma del reparto manual (S/ ${totalManual.toFixed(2)}) no coincide con el monto neto a repartir (S/ ${totalEsperado.toFixed(2)}).`,
+          'warning'
+        );
+        return;
+      }
+
+      detallesPayload = validados;
+    }
+
     setLoading(true);
 
     try {
@@ -275,11 +568,12 @@ if (tipoDescuento === 'porcentaje') {
         atencion_solidaria: esDescuentoTotal && atencionSolidaria,
         tipo_pago: tipoPago,
         observaciones: observaciones,
-        detalles: detallesCobro,
+        detalles: detallesPayload,
         servicio: String(servicio.key),
         servicio_info: { key: String(servicio.key), label: servicio.label, cotizacion_ids: servicio?.cotizacion_ids || [] },
         cotizacion_id: Number(servicio?.cotizacion_id || 0) || null,
         cotizacion_ids: Array.isArray(servicio?.cotizacion_ids) ? servicio.cotizacion_ids : [],
+        reparto_manual_aplicado: usarRepartoManual ? 1 : 0,
         motivo: descuento > 0 ? motivo : ''
       };
       const response = await authFetch("api_cobros.php", {
@@ -851,6 +1145,79 @@ if (tipoDescuento === 'porcentaje') {
             <div className="flex justify-between items-center font-bold text-lg lg:text-xl">
               <span>Total:</span>
               <span className="text-green-600">S/ {totalCobro.toFixed(2)}</span>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-indigo-200 bg-white p-3">
+              <label className="flex items-center gap-2 text-sm font-semibold text-indigo-800">
+                <input
+                  type="checkbox"
+                  checked={usarRepartoManual}
+                  onChange={(e) => setUsarRepartoManual(e.target.checked)}
+                />
+                Definir reparto manual de este cobro (médico/clínica)
+              </label>
+              <p className="text-xs text-gray-600 mt-1">
+                Úsalo cuando el paciente paga un monto distinto y quieres decidir explícitamente cuánto se liquida al médico por cada servicio.
+              </p>
+
+              {usarRepartoManual && (
+                <div className="mt-3 space-y-3">
+                  {detallesCobro.map((detalle, index) => {
+                    const key = buildDetalleKey(detalle, index);
+                    const subtotal = Math.max(0, Number(subtotalesNetosPorDetalle.get(key) || 0));
+                    const subtotalOriginal = Math.max(0, Number(detalle?.subtotal || 0));
+                    const entry = repartoPorDetalle[key] || {};
+                    const montoMedico = entry?.monto_medico ?? '';
+                    const porcentaje = entry?.porcentaje_medico ?? '';
+                    const montoMedNum = Number(montoMedico || 0);
+                    const montoClinica = Number((subtotal - Math.max(0, Math.min(montoMedNum, subtotal))).toFixed(2));
+                    const medicoNombre = String(detalle?.medico_nombre_completo || `${detalle?.medico_nombre || ''} ${detalle?.medico_apellido || ''}`).trim();
+
+                    return (
+                      <div key={`rep-${key}`} className="rounded-lg border border-gray-200 p-3">
+                        <div className="text-sm font-semibold text-gray-800">{detalle?.descripcion || 'Servicio'}</div>
+                        <div className="text-xs text-gray-500 mb-2">
+                          {medicoNombre || 'Sin médico'} | Monto neto a repartir: S/ {subtotal.toFixed(2)}
+                          {Math.abs(subtotalOriginal - subtotal) > 0.009 ? ` (original: S/ ${subtotalOriginal.toFixed(2)})` : ''}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                          <div>
+                            <label className="text-xs text-gray-600">% médico</label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={porcentaje}
+                              onChange={(e) => updateRepartoPorcentaje(key, subtotal, e.target.value)}
+                              onBlur={() => normalizarRepartoPorcentajeOnBlur(key, subtotal)}
+                              className="w-full border rounded px-2 py-1"
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-600">Monto médico (S/)</label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={montoMedico}
+                              onChange={(e) => updateRepartoMonto(key, subtotal, e.target.value)}
+                              onBlur={() => normalizarRepartoMontoOnBlur(key, subtotal)}
+                              className="w-full border rounded px-2 py-1"
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div className="md:col-span-2 flex items-end">
+                            <div className="text-xs text-gray-700">Clínica (residual): <span className="font-semibold">S/ {montoClinica.toFixed(2)}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    Total médicos: <strong>S/ {resumenRepartoManual.totalMedicos.toFixed(2)}</strong> | Total clínica: <strong>S/ {resumenRepartoManual.totalClinica.toFixed(2)}</strong> | Base neta: <strong>S/ {resumenRepartoManual.totalNeto.toFixed(2)}</strong>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 shadow-sm">

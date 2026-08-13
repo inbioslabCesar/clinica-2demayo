@@ -44,6 +44,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   const [cargaAnticipada, setCargaAnticipada] = useState(false);
   const [cotizResult, setCotizResult] = useState(null); // {numero_comprobante, total}
   const [cargandoPreseleccion, setCargandoPreseleccion] = useState(false);
+  const [tieneOrdenPendiente, setTieneOrdenPendiente] = useState(false);
   // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
   useEffect(() => {
     authFetch("api_examenes_laboratorio.php")
@@ -63,11 +64,12 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         const res = await authFetch(`api_ordenes_laboratorio.php?consulta_id=${cid}`);
         const data = await res.json();
         const ordenes = Array.isArray(data?.ordenes) ? data.ordenes : [];
+        const pendientes = ordenes.filter((ord) => String(ord?.estado || 'pendiente').toLowerCase() === 'pendiente');
+        if (activo) setTieneOrdenPendiente(pendientes.length > 0);
 
         // Unir exámenes de órdenes pendientes para reflejar el estado precargado real.
         const examIds = Array.from(new Set(
-          ordenes
-            .filter((ord) => String(ord?.estado || 'pendiente').toLowerCase() === 'pendiente')
+          pendientes
             .flatMap((ord) => Array.isArray(ord?.examenes) ? ord.examenes : [])
             .map((it) => {
               if (typeof it === 'object' && it !== null) return it.id;
@@ -82,6 +84,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         }
       } catch {
         // Silencioso: si falla hidratación, el flujo manual sigue funcionando igual.
+        if (activo) setTieneOrdenPendiente(false);
       } finally {
         if (activo) setCargandoPreseleccion(false);
       }
@@ -98,6 +101,9 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   const seleccionados = examenesDisponibles
     .filter((ex) => selectedIds.has(String(ex?.id ?? "")))
     .map((ex, index) => normalizeExam(ex, index));
+  const puedeEnviar = guardando || (examenes.length === 0 && !tieneOrdenPendiente)
+    ? false
+    : true;
   const totalPublico = seleccionados.reduce((acc, ex) => acc + ex.precioPublico, 0);
   // Preparado para usar precio convenio en el futuro
   // const totalConvenio = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_convenio) || 0), 0);
@@ -116,16 +122,34 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
       
       const d = await response.json();
       if (d.success) {
-        const fueConsolidada = String(d.modo || '').toLowerCase() === 'consolidada';
+        const modo = String(d.modo || '').toLowerCase();
+        const fueConsolidada = modo === 'consolidada' || modo === 'actualizada';
+        const noRemovidos = Array.isArray(d.examenes_no_removidos_por_resultado)
+          ? d.examenes_no_removidos_por_resultado
+          : [];
+        const examenesFinales = Array.isArray(d.examenes_finales)
+          ? d.examenes_finales
+          : examenes;
         if (d.numero_comprobante) {
           setCotizResult({ numero_comprobante: d.numero_comprobante, total: d.total ?? 0 });
           setMsg(fueConsolidada
             ? `✅ Solicitud actualizada · Cotización ${d.numero_comprobante} consolidada`
             : `✅ Orden enviada · Cotización ${d.numero_comprobante} generada`);
         } else {
-          setMsg(fueConsolidada ? "✅ Solicitud actualizada correctamente" : "✅ Orden enviada correctamente");
+          if (modo === 'cancelada_por_vacio') {
+            setMsg('✅ Solicitud vaciada y cancelada correctamente');
+          } else {
+            setMsg(fueConsolidada ? "✅ Solicitud actualizada correctamente" : "✅ Orden enviada correctamente");
+          }
         }
-        setExamenes([]);
+
+        if (noRemovidos.length > 0) {
+          const lista = noRemovidos.join(', ');
+          setMsg(`✅ Solicitud actualizada. Algunos exámenes no se quitaron porque ya tienen resultados: ${lista}.`);
+        }
+
+        setExamenes(examenesFinales);
+        setTieneOrdenPendiente(modo !== 'cancelada_por_vacio');
         setCargaAnticipada(false);
         setTimeout(() => { setMsg(""); setCotizResult(null); }, 6000);
       } else {
@@ -249,12 +273,12 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
             className={`
               px-6 py-3 rounded-lg font-semibold text-white shadow-lg transition-all duration-200
               flex items-center gap-2 min-w-[140px] justify-center w-full sm:w-auto
-              ${examenes.length === 0 || guardando
+              ${!puedeEnviar
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 hover:shadow-xl transform hover:-translate-y-0.5'
               }
             `}
-            disabled={guardando || examenes.length === 0}
+            disabled={!puedeEnviar}
           >
             {guardando ? (
               <>
@@ -269,7 +293,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                 </svg>
-                <span>Solicitar Exámenes</span>
+                <span>{examenes.length === 0 && tieneOrdenPendiente ? 'Guardar cambios' : 'Solicitar Exámenes'}</span>
               </>
             )}
           </button>

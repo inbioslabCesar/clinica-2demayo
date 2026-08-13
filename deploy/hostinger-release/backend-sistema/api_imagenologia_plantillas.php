@@ -11,7 +11,29 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
-require_once __DIR__ . '/imagenologia_encoding.php';
+
+$imgEncodingPath = __DIR__ . '/imagenologia_encoding.php';
+if (is_file($imgEncodingPath)) {
+    require_once $imgEncodingPath;
+}
+
+if (!function_exists('img_fix_mojibake_string')) {
+    function img_fix_mojibake_string($value): string {
+        return (string)$value;
+    }
+}
+
+if (!function_exists('img_fix_mojibake_recursive')) {
+    function img_fix_mojibake_recursive($value) {
+        if (!is_array($value)) {
+            return $value;
+        }
+        foreach ($value as $k => $v) {
+            $value[$k] = is_array($v) ? img_fix_mojibake_recursive($v) : (is_string($v) ? img_fix_mojibake_string($v) : $v);
+        }
+        return $value;
+    }
+}
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -29,9 +51,22 @@ if (!$usuario) {
 
 $isAdmin = ($rol === 'administrador');
 
+function img_has_column(mysqli $db, string $table, string $column): bool {
+    $stmt = $db->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $ok = ($res && $res->num_rows > 0);
+    $stmt->close();
+    return $ok;
+}
+
 // ─ Migración idempotente: añadir clinic_key si no existe ─────────────────────
-$chkClinic = $mysqli->query("SHOW COLUMNS FROM imagenologia_plantillas LIKE 'clinic_key'");
-if ($chkClinic && $chkClinic->num_rows === 0) {
+if (!img_has_column($mysqli, 'imagenologia_plantillas', 'clinic_key')) {
+    // Mejor esfuerzo: si el usuario DB no tiene ALTER, el endpoint debe seguir funcionando.
     $mysqli->query("ALTER TABLE imagenologia_plantillas ADD COLUMN clinic_key VARCHAR(120) NULL");
 }
 
@@ -203,9 +238,21 @@ if ($method === 'GET') {
             echo json_encode(['success' => false, 'error' => 'Solo administradores pueden listar todas las plantillas']);
             exit;
         }
-        $hasClinicKey = (bool)$mysqli->query("SHOW COLUMNS FROM imagenologia_plantillas LIKE 'clinic_key'")->num_rows;
+        $hasClinicKey = img_has_column($mysqli, 'imagenologia_plantillas', 'clinic_key');
         $clinicKeySel = $hasClinicKey ? ', clinic_key' : ', NULL AS clinic_key';
         $res = $mysqli->query("SELECT id, nombre, tipo_examen, descripcion, es_activa{$clinicKeySel} FROM imagenologia_plantillas ORDER BY tipo_examen, nombre");
+        if (!$res) {
+            http_response_code(500);
+            $payload = ['success' => false, 'error' => 'No se pudo listar plantillas de imagenología'];
+            if (function_exists('api_debug_enabled') && api_debug_enabled()) {
+                $payload['debug'] = [
+                    'mysqli_error' => $mysqli->error,
+                    'code' => $mysqli->errno,
+                ];
+            }
+            echo json_encode($payload);
+            exit;
+        }
         $items = [];
         while ($row = $res->fetch_assoc()) {
             $items[] = $row;

@@ -50,9 +50,14 @@ export default function MisInformesImagenologiaPage({ usuario }) {
   const [loading, setLoading] = useState(true);
   const [ordenParaSubir, setOrdenParaSubir] = useState(null);
   const [ordenExpandidaId, setOrdenExpandidaId] = useState(null);
+  const [edicionInformeActiva, setEdicionInformeActiva] = useState(false);
   const medicoId = Number(usuario?.id || 0);
 
-  const cargarOrdenes = useCallback(async () => {
+  const cargarOrdenes = useCallback(async (opciones = {}) => {
+    const { automatica = false } = opciones;
+    if (automatica && edicionInformeActiva) {
+      return;
+    }
     if (!medicoId) {
       setOrdenes([]);
       setLoading(false);
@@ -72,15 +77,15 @@ export default function MisInformesImagenologiaPage({ usuario }) {
     } finally {
       setLoading(false);
     }
-  }, [filasPorPagina, medicoId, pagina, tipo]);
+  }, [edicionInformeActiva, filasPorPagina, medicoId, pagina, tipo]);
 
   useEffect(() => {
-    cargarOrdenes();
+    cargarOrdenes({ automatica: true });
   }, [cargarOrdenes]);
 
   useEffect(() => {
     const recargarSiEstaVisible = () => {
-      if (document.visibilityState === "visible") cargarOrdenes();
+      if (document.visibilityState === "visible") cargarOrdenes({ automatica: true });
     };
     const intervalo = window.setInterval(recargarSiEstaVisible, 30000);
     window.addEventListener("focus", recargarSiEstaVisible);
@@ -141,8 +146,8 @@ export default function MisInformesImagenologiaPage({ usuario }) {
           <button
             type="button"
             onClick={cargarOrdenes}
-            disabled={loading}
-            title="Actualizar órdenes"
+            disabled={loading || edicionInformeActiva}
+            title={edicionInformeActiva ? "Guarda o cierra el informe antes de actualizar" : "Actualizar órdenes"}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
             <FiRefreshCw aria-hidden="true" /> Actualizar
@@ -239,7 +244,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                             </div>
                           )}
                         </div>
-                        <CardInformeImagenologia ordenImagenId={orden.id} tipoExamen={orden.tipo} pacienteNombre={nombrePaciente(paciente)} medicoNombre={[orden.medico_responsable_nombre, orden.medico_responsable_apellido].filter(Boolean).join(" ")} canEdit={puedeInformar} onInformeActualizado={cargarOrdenes} />
+                        <CardInformeImagenologia ordenImagenId={orden.id} tipoExamen={orden.tipo} pacienteNombre={nombrePaciente(paciente)} medicoNombre={[orden.medico_responsable_nombre, orden.medico_responsable_apellido].filter(Boolean).join(" ")} canEdit={puedeInformar} onInformeActualizado={cargarOrdenes} onEditingChange={setEdicionInformeActiva} />
                       </div>
                     )}
                   </div>
@@ -344,6 +349,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                     medicoNombre={[orden.medico_responsable_nombre, orden.medico_responsable_apellido].filter(Boolean).join(" ")}
                     canEdit={Boolean(orden.can_edit_informe) && orden.estado !== "cancelado"}
                     onInformeActualizado={cargarOrdenes}
+                    onEditingChange={setEdicionInformeActiva}
                   />
                 </article>
               );

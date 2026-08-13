@@ -11,11 +11,121 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const [stats, setStats] = useState({ total: 0, pendientes: 0, emergencias: 0 });
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  const [resumenEconomico, setResumenEconomico] = useState(null);
+  const [resumenEconomicoError, setResumenEconomicoError] = useState("");
+  const [loadingResumenEconomico, setLoadingResumenEconomico] = useState(false);
+  const [expandedServicios, setExpandedServicios] = useState({});
+  const [detalleServiciosByCotizacion, setDetalleServiciosByCotizacion] = useState({});
+  const [loadingDetalleServiciosByCotizacion, setLoadingDetalleServiciosByCotizacion] = useState({});
   
   // Buscador dinámico
   const [busqueda, setBusqueda] = useState("");
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
+
+  const formatMoney = (value) => {
+    const n = Number(value || 0);
+    return `S/ ${n.toFixed(2)}`;
+  };
+
+  const normalizarServicioTipo = (raw) => {
+    const t = String(raw || "").trim().toLowerCase();
+    if (!t) return "";
+    if (t === "rayosx" || t === "rayos_x" || t === "rayos x" || t === "rx") return "rayosx";
+    return t;
+  };
+
+  const etiquetaServicio = (tipo) => {
+    const t = normalizarServicioTipo(tipo);
+    if (t === "consulta") return "Consulta";
+    if (t === "ecografia") return "Ecografía";
+    if (t === "laboratorio") return "Laboratorio";
+    if (t === "rayosx") return "Rayos X";
+    if (t === "procedimiento") return "Procedimiento";
+    if (t === "farmacia") return "Farmacia";
+    if (t === "operacion" || t === "cirugia") return "Operación";
+    if (!t) return "Servicio";
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+
+  const obtenerServiciosResumen = (consulta) => {
+    const tiposRaw = String(consulta?.servicios_tipos_resumen || "").trim();
+    const tipos = tiposRaw
+      ? tiposRaw.split(",").map(normalizarServicioTipo).filter(Boolean)
+      : [];
+    const tiposFinal = tipos.length > 0 ? tipos : ["consulta"];
+    const count = Number(consulta?.servicios_count || tiposFinal.length || 1);
+    const extras = Number(consulta?.servicios_extras_count || 0);
+    return { tipos: tiposFinal, count, extras };
+  };
+
+  const cargarDetalleServiciosCotizacion = async (cotizacionId) => {
+    const cotId = Number(cotizacionId || 0);
+    if (cotId <= 0) return;
+    if (detalleServiciosByCotizacion[cotId]) return;
+
+    setLoadingDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: true }));
+    try {
+      const response = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotId}&_t=${Date.now()}`, { cache: "no-store" });
+      const data = await response.json();
+      const cot = data?.cotizacion || null;
+      const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+      const servicios = detalles
+        .filter((d) => String(d?.estado_item || "").toLowerCase() !== "eliminado")
+        .map((d) => ({
+          id: Number(d?.id || 0),
+          tipo: etiquetaServicio(d?.servicio_tipo || ""),
+          descripcion: String(d?.descripcion || "").trim(),
+          cantidad: Number(d?.cantidad || 1),
+          subtotal: Number(d?.subtotal || 0),
+        }));
+
+      setDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: servicios }));
+    } catch {
+      setDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: [] }));
+    } finally {
+      setLoadingDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: false }));
+    }
+  };
+
+  const toggleServicios = async (consulta) => {
+    const consultaId = Number(consulta?.id || 0);
+    if (consultaId <= 0) return;
+    const cotId = Number(consulta?.cotizacion_id || 0);
+
+    setExpandedServicios((prev) => ({ ...prev, [consultaId]: !prev[consultaId] }));
+    if (cotId > 0) {
+      await cargarDetalleServiciosCotizacion(cotId);
+    }
+  };
+
+  const cargarResumenEconomico = async (signal) => {
+    if (!medicoId) return;
+    setLoadingResumenEconomico(true);
+    setResumenEconomicoError("");
+    try {
+      const response = await authFetch(`api_medico_cuenta_corriente.php?medico_id=${medicoId}`, { signal });
+      const data = await response.json();
+
+      if (!data?.success) {
+        setResumenEconomico(null);
+        setResumenEconomicoError(data?.error || "No se pudo cargar el resumen económico");
+        return;
+      }
+
+      setResumenEconomico({
+        resumen: data.resumen || {},
+        periodo: data.periodo_actual || {},
+        condiciones: data.condiciones_pago || {},
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      setResumenEconomico(null);
+      setResumenEconomicoError("No se pudo cargar el resumen económico");
+    } finally {
+      setLoadingResumenEconomico(false);
+    }
+  };
 
   const cargarConsultas = async (signal) => {
     if (!medicoId) return;
@@ -70,6 +180,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     };
   }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    cargarResumenEconomico(controller.signal);
+    return () => {
+      controller.abort();
+    };
+  }, [medicoId]);
+
   const actualizarEstado = async (id, estado) => {
     setMsg("");
     setLoading(true);
@@ -91,6 +209,18 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   };
   const consultasPaginadas = consultas;
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
+
+  const periodoActualInicio = resumenEconomico?.periodo?.inicio || "-";
+  const periodoActualFin = resumenEconomico?.periodo?.fin || "-";
+  const resumenFin = resumenEconomico?.resumen || {};
+  const saldoPeriodo = Number(resumenFin.deuda_neta_periodo || 0);
+  const saldoTotal = Number(resumenFin.deuda_neta_total || 0);
+  const estadoSaldoPeriodo =
+    saldoPeriodo > 0
+      ? "La clínica te debe"
+      : saldoPeriodo < 0
+        ? "Saldo a favor de clínica"
+        : "Sin saldo pendiente";
 
   // Funciones de paginación
   const handleRowsPerPage = (e) => {
@@ -362,8 +492,19 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     const esHcProxima = Number(consulta?.hc_origen_id || 0) > 0
       || String(consulta?.origen_creacion || '').toLowerCase().trim() === 'hc_proxima';
     const cotizacionPagada = estadoCotizacion === 'pagado' || estadoCotizacion === 'pagada' || estadoCotizacion === 'control';
+    const habilitacionAnticipadaActiva = Number(consulta?.habilitacion_anticipada_activa || 0) === 1;
+    const habilitacionMotivo = String(consulta?.habilitacion_anticipada_motivo || '').trim();
 
     if (esHcProxima && !cotizacionPagada && !tieneCotizacion) {
+      if (habilitacionAnticipadaActiva) {
+        return {
+          faltaPagar: false,
+          label: '⚡ Anticipado autorizado',
+          rowClass: '',
+          badgeClass: 'bg-orange-100 text-orange-800 border-orange-200',
+          title: habilitacionMotivo ? `Motivo: ${habilitacionMotivo}` : 'Habilitación anticipada activa'
+        };
+      }
       return {
         faltaPagar: true,
         label: '⏳ Por cobrar',
@@ -373,6 +514,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     }
 
     if (tieneCotizacion && !cotizacionPagada) {
+      if (habilitacionAnticipadaActiva) {
+        return {
+          faltaPagar: false,
+          label: '⚡ Anticipado autorizado',
+          rowClass: '',
+          badgeClass: 'bg-orange-100 text-orange-800 border-orange-200',
+          title: habilitacionMotivo ? `Motivo: ${habilitacionMotivo}` : 'Habilitación anticipada activa'
+        };
+      }
       return {
         faltaPagar: true,
         label: '⏳ Pago pendiente',
@@ -382,6 +532,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     }
 
     if (estado === 'falta_cancelar' && !cotizacionPagada) {
+      if (habilitacionAnticipadaActiva) {
+        return {
+          faltaPagar: false,
+          label: '⚡ Anticipado autorizado',
+          rowClass: '',
+          badgeClass: 'bg-orange-100 text-orange-800 border-orange-200',
+          title: habilitacionMotivo ? `Motivo: ${habilitacionMotivo}` : 'Habilitación anticipada activa'
+        };
+      }
       return {
         faltaPagar: true,
         label: '⏳ Por cobrar',
@@ -410,7 +569,49 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   const themeGradientMain = "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)";
 
   return (
-    <div className="w-full px-2 sm:px-4 lg:max-w-7xl lg:mx-auto">
+    <div className="w-full px-1 sm:px-2 xl:px-4 2xl:px-6">
+      <div className="mb-4 rounded-2xl bg-white/95 border border-blue-100 shadow p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h3 className="text-sm sm:text-base font-bold text-blue-900">Mi resumen económico</h3>
+          <span className="text-xs text-slate-500">Periodo: {periodoActualInicio} al {periodoActualFin}</span>
+        </div>
+
+        {loadingResumenEconomico ? (
+          <div className="text-sm text-slate-500 py-2">Cargando resumen económico...</div>
+        ) : resumenEconomicoError ? (
+          <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{resumenEconomicoError}</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="rounded-xl p-3 border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
+                <div className="text-xs font-semibold text-blue-700">Honorario pendiente (periodo)</div>
+                <div className="text-xl font-bold text-blue-900 mt-1">{formatMoney(resumenFin.pendiente_honorarios_periodo)}</div>
+              </div>
+
+              <div className="rounded-xl p-3 border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50">
+                <div className="text-xs font-semibold text-amber-700">Adelantos recibidos (periodo)</div>
+                <div className="text-xl font-bold text-amber-900 mt-1">{formatMoney(resumenFin.adelantos_periodo)}</div>
+              </div>
+
+              <div className={`rounded-xl p-3 border ${saldoPeriodo >= 0 ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-red-50"}`}>
+                <div className={`text-xs font-semibold ${saldoPeriodo >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Saldo neto (periodo)</div>
+                <div className={`text-xl font-bold mt-1 ${saldoPeriodo >= 0 ? "text-emerald-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoPeriodo))}</div>
+                <div className={`text-[11px] mt-1 ${saldoPeriodo >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{estadoSaldoPeriodo}</div>
+              </div>
+
+              <div className={`rounded-xl p-3 border ${saldoTotal >= 0 ? "border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-pink-50"}`}>
+                <div className={`text-xs font-semibold ${saldoTotal >= 0 ? "text-violet-700" : "text-rose-700"}`}>Saldo neto (total)</div>
+                <div className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? "text-violet-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoTotal))}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              Cálculo visible: pendiente del periodo {formatMoney(resumenFin.pendiente_honorarios_periodo)} menos adelantos {formatMoney(resumenFin.adelantos_periodo)} igual saldo neto {formatMoney(saldoPeriodo)}.
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Panel compacto: cabecera + resumen + filtros */}
       <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
         <div className="flex flex-col gap-3 sm:gap-4 mb-3 sm:mb-4">
@@ -557,6 +758,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                   <tr>
                     <th className="px-3 py-3 text-left text-sm font-semibold text-white">👤 Paciente</th>
                     <th className="px-3 py-3 text-left text-sm font-semibold text-white">🔁 Tipo agenda</th>
+                    <th className="px-3 py-3 text-left text-sm font-semibold text-white">🧩 Servicios</th>
                     <th className="px-3 py-3 text-left text-sm font-semibold text-white">🏥 HC / DNI</th>
                     <th className="px-3 py-3 text-left text-sm font-semibold text-white">📅 Fecha</th>
                     <th className="px-3 py-3 text-left text-sm font-semibold text-white">⏰ Hora</th>
@@ -577,10 +779,16 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                     const estadoCobro = getEstadoCobro(consulta);
                     const accionesBloqueadas = estadoCobro.faltaPagar;
                     const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
+                    const serviciosResumen = obtenerServiciosResumen(consulta);
+                    const consultaId = Number(consulta?.id || 0);
+                    const cotizacionId = Number(consulta?.cotizacion_id || 0);
+                    const estaExpandido = Boolean(expandedServicios[consultaId]);
+                    const detalleServicios = cotizacionId > 0 ? (detalleServiciosByCotizacion[cotizacionId] || []) : [];
+                    const loadingDetalle = Boolean(loadingDetalleServiciosByCotizacion[cotizacionId]);
                     
-                    return (
+                    return ([
                       <tr
-                        key={consulta.id}
+                        key={`row-${consulta.id}`}
                         className={`${
                           esProgramada ? 'bg-cyan-50/70' : (esFilaPar ? 'bg-white/60' : 'bg-blue-50/40')
                         } ${estadoCobro.rowClass} hover:bg-blue-100/60 transition-all duration-200 hover:shadow-lg transform hover:-translate-y-0.5`}
@@ -627,6 +835,33 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                             <div className="mt-1 text-[11px] text-fuchsia-700 font-medium">
                               {formatDateTime(consulta.reprogramada_en)}
                             </div>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {serviciosResumen.tipos.slice(0, 3).map((tipo) => (
+                              <span key={`${consulta.id}-${tipo}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-200">
+                                {etiquetaServicio(tipo)}
+                              </span>
+                            ))}
+                            {serviciosResumen.tipos.length > 3 && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-slate-100 text-slate-700 border-slate-200">
+                                +{serviciosResumen.tipos.length - 3}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-600">
+                            {serviciosResumen.count} servicio(s)
+                            {serviciosResumen.extras > 0 ? ` · ${serviciosResumen.extras} adicional(es)` : ''}
+                          </div>
+                          {cotizacionId > 0 && (
+                            <button
+                              onClick={() => toggleServicios(consulta)}
+                              className="mt-1 text-[11px] text-blue-700 hover:text-blue-900 underline"
+                            >
+                              {estaExpandido ? 'Ocultar lista' : 'Ver lista'}
+                            </button>
                           )}
                         </td>
                         
@@ -771,8 +1006,32 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                             )}
                           </div>
                         </td>
-                      </tr>
-                    );
+                      </tr>,
+                      estaExpandido ? (
+                        <tr key={`det-${consulta.id}`} className="bg-slate-50">
+                          <td colSpan={9} className="px-4 py-3">
+                            <div className="text-xs text-slate-600 mb-2 font-semibold">Servicios asociados a la consulta</div>
+                            {loadingDetalle ? (
+                              <div className="text-xs text-slate-500">Cargando servicios...</div>
+                            ) : detalleServicios.length === 0 ? (
+                              <div className="text-xs text-slate-500">No se encontraron detalles de servicios en la cotización asociada.</div>
+                            ) : (
+                              <div className="space-y-1">
+                                {detalleServicios.map((item) => (
+                                  <div key={`${consulta.id}-${item.id}-${item.tipo}`} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
+                                    <div>
+                                      <span className="font-semibold text-slate-700">{item.tipo}</span>
+                                      {item.descripcion ? <span className="text-slate-600"> · {item.descripcion}</span> : null}
+                                    </div>
+                                    <div className="text-slate-600">x{item.cantidad} · S/ {Number(item.subtotal || 0).toFixed(2)}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ) : null
+                    ]);
                   })}
                 </tbody>
               </table>
@@ -791,6 +1050,12 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               const estadoCobro = getEstadoCobro(consulta);
               const accionesBloqueadas = estadoCobro.faltaPagar;
               const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
+              const serviciosResumen = obtenerServiciosResumen(consulta);
+              const consultaId = Number(consulta?.id || 0);
+              const cotizacionId = Number(consulta?.cotizacion_id || 0);
+              const estaExpandido = Boolean(expandedServicios[consultaId]);
+              const detalleServicios = cotizacionId > 0 ? (detalleServiciosByCotizacion[cotizacionId] || []) : [];
+              const loadingDetalle = Boolean(loadingDetalleServiciosByCotizacion[cotizacionId]);
               return (
               <div
                 key={consulta.id}
@@ -847,6 +1112,57 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
                     <p className="text-gray-900">{consulta.dni || 'N/A'}</p>
                   </div>
                 </div>
+
+                <div className="mb-3">
+                  <p className="text-gray-600 font-medium text-sm mb-1">🧩 Servicios asociados</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {serviciosResumen.tipos.slice(0, 3).map((tipo) => (
+                      <span key={`${consulta.id}-m-${tipo}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-200">
+                        {etiquetaServicio(tipo)}
+                      </span>
+                    ))}
+                    {serviciosResumen.tipos.length > 3 && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-slate-100 text-slate-700 border-slate-200">
+                        +{serviciosResumen.tipos.length - 3}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-1">
+                    {serviciosResumen.count} servicio(s)
+                    {serviciosResumen.extras > 0 ? ` · ${serviciosResumen.extras} adicional(es)` : ''}
+                  </p>
+                  {cotizacionId > 0 && (
+                    <button
+                      onClick={() => toggleServicios(consulta)}
+                      className="mt-1 text-[11px] text-blue-700 hover:text-blue-900 underline"
+                    >
+                      {estaExpandido ? 'Ocultar lista' : 'Ver lista'}
+                    </button>
+                  )}
+                </div>
+
+                {estaExpandido && (
+                  <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                    <div className="text-xs text-slate-600 mb-2 font-semibold">Servicios asociados a la consulta</div>
+                    {loadingDetalle ? (
+                      <div className="text-xs text-slate-500">Cargando servicios...</div>
+                    ) : detalleServicios.length === 0 ? (
+                      <div className="text-xs text-slate-500">No se encontraron detalles de servicios en la cotización asociada.</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {detalleServicios.map((item) => (
+                          <div key={`${consulta.id}-m-${item.id}-${item.tipo}`} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
+                            <div>
+                              <span className="font-semibold text-slate-700">{item.tipo}</span>
+                              {item.descripcion ? <span className="text-slate-600"> · {item.descripcion}</span> : null}
+                            </div>
+                            <div className="text-slate-600">x{item.cantidad} · S/ {Number(item.subtotal || 0).toFixed(2)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Estados */}
                 <div className="flex flex-wrap gap-2 mb-4">

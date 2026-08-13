@@ -20,10 +20,20 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
   // Nuevo: egresos cubiertos por Yape/Transferencias
   const egreso_electronico = datos.egreso_electronico !== undefined && datos.egreso_electronico !== "" && !isNaN(parseFloat(datos.egreso_electronico)) ? parseFloat(datos.egreso_electronico) : 0;
   const total_egresos = totalesBackend?.total_egresos ?? (egreso_honorarios + egreso_lab_ref + egreso_operativo);
+  const efectivo_esperado = Number(totalesBackend?.efectivo_esperado ?? datos.efectivo_esperado ?? 0);
+  const virtual_esperado = Number(totalesBackend?.virtual_esperado ?? datos.virtual_esperado ?? 0);
+  const virtual_cobrado = Number(totalesBackend?.virtual_cobrado ?? datos.virtual_cobrado ?? (total_yape + total_plin + total_tarjetas + total_transferencias));
+  const egresos_virtuales_clinica = Number(totalesBackend?.egresos_virtuales_clinica ?? datos.egresos_virtuales_clinica ?? 0);
+  const monto_contado = Number(datos.monto_contado ?? 0);
+  const monto_virtual_contado = datos.monto_virtual_contado !== undefined && datos.monto_virtual_contado !== ""
+    ? Number(datos.monto_virtual_contado)
+    : null;
+  const diferencia_efectivo = monto_contado - efectivo_esperado;
+  const diferencia_virtual = monto_virtual_contado === null ? null : (monto_virtual_contado - virtual_esperado);
+
   // Lógica para explicación automática de diferencia negativa
   let explicacionDiferencia = "";
-  const diferencia = (datos.monto_contado !== undefined ? parseFloat(datos.monto_contado) : 0) - total_egresos;
-  if (diferencia < 0) {
+  if (diferencia_efectivo < 0) {
     explicacionDiferencia = "<div class='t-warning'>No hay efectivo suficiente; el egreso fue cubierto por Yape, Plin, transferencia o quedó pendiente.</div>";
   }
   // Recibo compacto tipo etiquetera
@@ -207,6 +217,17 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
       <div class="t-row"><span class="label">Total egresos</span><span class="value">S/ ${total_egresos.toFixed(2)}</span></div>
 
       <hr class="t-hr" />
+      <div class="t-section">Contraste de cierre</div>
+      <div class="t-row"><span class="label">Efectivo esperado</span><span class="value">S/ ${efectivo_esperado.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Efectivo contado</span><span class="value">S/ ${monto_contado.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Dif. efectivo</span><span class="value">S/ ${diferencia_efectivo.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Virtual cobrado</span><span class="value">S/ ${virtual_cobrado.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Egr. virtual clinica</span><span class="value">S/ ${egresos_virtuales_clinica.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Virtual esperado</span><span class="value">S/ ${virtual_esperado.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Virtual contado</span><span class="value">${monto_virtual_contado === null ? '-' : `S/ ${monto_virtual_contado.toFixed(2)}`}</span></div>
+      <div class="t-row"><span class="label">Dif. virtual</span><span class="value">${diferencia_virtual === null ? '-' : `S/ ${diferencia_virtual.toFixed(2)}`}</span></div>
+
+      <hr class="t-hr" />
       <div class="t-section">Ocurrencias</div>
       <div class="t-note">${datos.observaciones || "Sin observaciones"}</div>
       ${explicacionDiferencia}
@@ -287,9 +308,9 @@ export default function CerrarCajaView() {
   const [observaciones, setObservaciones] = useState("");
   const [resumen, setResumen] = useState(null);
   const [montoContado, setMontoContado] = useState("");
+  const [montoVirtualContado, setMontoVirtualContado] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [egresoElectronicoManual, setEgresoElectronicoManual] = useState("");
   const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '' });
   const navigate = useNavigate();
 
@@ -414,6 +435,45 @@ export default function CerrarCajaView() {
       });
     }
     try {
+      const montoFondo = Number(resumen?.monto_apertura || 0);
+      if (montoFondo > 0) {
+        const decidirTraspaso = await Swal.fire({
+          title: "Entrega de fondo fijo",
+          text: `¿Entregar S/ ${montoFondo.toFixed(2)} al siguiente responsable?`,
+          icon: "question",
+          showDenyButton: true,
+          showCancelButton: true,
+          confirmButtonText: "Sí, entregar",
+          denyButtonText: "No, resguardar",
+          cancelButtonText: "Cancelar cierre",
+        });
+        if (decidirTraspaso.isDismissed) return;
+        if (decidirTraspaso.isConfirmed) {
+          const usuarios = await authFetch("api_usuarios.php", { cache: "no-store" }).then(response => response.json());
+          const usuarioActual = Number(JSON.parse(sessionStorage.getItem("usuario") || "{}").id || 0);
+          const opciones = (Array.isArray(usuarios) ? usuarios : [])
+            .filter(usuario => Number(usuario.id) !== usuarioActual && Number(usuario.activo ?? 1) === 1 && ["administrador", "recepcionista"].includes(String(usuario.rol || "").toLowerCase()))
+            .reduce((resultado, usuario) => ({ ...resultado, [usuario.id]: `${usuario.nombre} (${usuario.rol})` }), {});
+          const destino = await Swal.fire({
+            title: "Responsable que recibe el fondo",
+            input: "select",
+            inputOptions: opciones,
+            inputPlaceholder: "Selecciona responsable",
+            showCancelButton: true,
+            inputValidator: value => value ? undefined : "Selecciona quién recibe el fondo.",
+          });
+          if (!destino.isConfirmed) return;
+          const crearTraspaso = await authFetch("api_caja_traspasos.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ usuario_destino_id: Number(destino.value), monto: montoFondo, observaciones: "Fondo fijo transferido al cierre de turno" }),
+          }).then(response => response.json());
+          if (!crearTraspaso?.success) {
+            await Swal.fire("No se pudo registrar el traspaso", crearTraspaso?.error || "Intenta nuevamente.", "error");
+            return;
+          }
+        }
+      }
       const abierta = await verificarCajaAbierta({ mostrarMensaje: true });
       if (!abierta) {
         navigate('/contabilidad', { replace: true });
@@ -430,7 +490,7 @@ export default function CerrarCajaView() {
           total_plin,
           total_tarjetas,
           total_transferencias,
-          egreso_electronico: egresoElectronicoManual
+          egreso_electronico: 0
         })
       });
       const data = await resp.json();
@@ -440,9 +500,10 @@ export default function CerrarCajaView() {
           ...resumen,
           observaciones,
           monto_contado: montoContado,
+          monto_virtual_contado: montoVirtualContado,
           caja_id: data.caja_id,
           fecha: data.fecha || resumen?.fecha || new Date().toISOString().slice(0, 10),
-          egreso_electronico: egresoElectronicoManual,
+          egreso_electronico: 0,
           hora_cierre: data.hora_cierre || new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
           usuario_nombre: data.usuario_nombre || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).nombre : ''),
           usuario_rol: data.usuario_rol || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).rol : ''),
@@ -468,21 +529,21 @@ export default function CerrarCajaView() {
     return efectivo ? parseFloat(efectivo.total_pago) : 0;
   })();
 
-  // Calcular egresos cubiertos por Yape/transferencias
-  const egresoCubiertoElectronico = egresoElectronicoManual !== "" && !isNaN(parseFloat(egresoElectronicoManual))
-    ? parseFloat(egresoElectronicoManual)
-    : 0;
-
   // Calcular total egresos
   const totalEgresos = (resumen.egreso_honorarios ? resumen.egreso_honorarios : 0)
     + (resumen.egreso_lab_ref ? resumen.egreso_lab_ref : 0)
     + (resumen.egreso_operativo ? resumen.egreso_operativo : 0);
 
-  // Efectivo esperado final: efectivo cobrado - (total egresos - egresoCubiertoElectronico)
-  const efectivoEsperado = efectivoCobrado - (totalEgresos - egresoCubiertoElectronico);
+  const egresosPorMetodo = resumen?.egresos_por_metodo || {};
+  const egresosEfectivo = Number(egresosPorMetodo.efectivo || 0) + Number(resumen.egreso_lab_ref || 0);
+  const efectivoEsperado = Number(resumen.monto_apertura || 0) + efectivoCobrado - egresosEfectivo;
+  const virtualCobrado = Number(resumen?.virtual_cobrado || 0);
+  const egresosVirtualesClinica = Number(resumen?.egresos_virtuales_clinica || 0);
+  const virtualEsperado = Number(resumen?.virtual_esperado ?? (virtualCobrado - egresosVirtualesClinica));
 
   // Diferencia: efectivo contado - efectivo esperado
   const diferencia = parseFloat(montoContado || 0) - efectivoEsperado;
+  const diferenciaVirtual = parseFloat(montoVirtualContado || 0) - virtualEsperado;
 
   return (
     <>
@@ -572,20 +633,15 @@ export default function CerrarCajaView() {
             <div className="flex-1 bg-yellow-200 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
               <span className="text-xs text-yellow-700 font-semibold">Efectivo esperado</span>
               <span className="font-bold text-yellow-800 text-3xl">S/ {efectivoEsperado.toFixed(2)}</span>
-              <span className="text-xs text-gray-700 mt-1">(Efectivo cobrado - total egresos + egreso electrónico)</span>
+              <span className="text-xs text-gray-700 mt-1">(Apertura + cobros en efectivo - egresos en efectivo)</span>
             </div>
             <div className="flex-1 bg-purple-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
-              <span className="text-xs text-purple-700 font-semibold">Egresos cubiertos por Yape/Transferencias</span>
-              <input
-                type="number"
-                value={egresoElectronicoManual}
-                onChange={e => setEgresoElectronicoManual(e.target.value)}
-                className="border-2 border-purple-300 rounded-xl px-4 py-2 mt-2 text-xl text-center font-bold w-full max-w-[160px] focus:ring-2 focus:ring-purple-400 bg-white"
-                placeholder="S/ 0.00"
-                min={0}
-                step={0.01}
-              />
-              <span className="text-xs text-gray-700 mt-1">(Descontado del total egreso)</span>
+              <span className="text-xs text-purple-700 font-semibold">Virtual esperado</span>
+              <span className="font-bold text-purple-800 text-3xl">S/ {virtualEsperado.toFixed(2)}</span>
+              <span className="text-xs text-gray-700 mt-1">(Cobros virtuales - egresos virtuales de clínica)</span>
+              <span className="text-xs text-gray-700 mt-1">Cobros virtuales: S/ {virtualCobrado.toFixed(2)}</span>
+              <span className="text-xs text-gray-700 mt-1">Egresos virtuales clínica: S/ {egresosVirtualesClinica.toFixed(2)}</span>
+              <span className="text-xs text-gray-700 mt-1">Externos: S/ {Number(resumen.egresos_externos || 0).toFixed(2)}</span>
             </div>
             <div className="flex-1 bg-green-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
               <span className="text-xs text-green-700 font-semibold">Efectivo contado</span>
@@ -606,6 +662,32 @@ export default function CerrarCajaView() {
                 <span className="text-blue-700 text-xs font-semibold mt-1">Sobra efectivo</span>
               ) : (
                 <span className="text-red-700 text-xs font-semibold mt-1">Falta efectivo</span>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4 mt-4">
+            <div className="flex-1 bg-sky-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
+              <span className="text-xs text-sky-700 font-semibold">Virtual contado</span>
+              <input
+                type="number"
+                value={montoVirtualContado}
+                onChange={e => setMontoVirtualContado(e.target.value)}
+                className="border-2 border-sky-300 rounded-xl px-4 py-2 mt-2 text-xl text-center font-bold w-full max-w-[180px] focus:ring-2 focus:ring-sky-400 bg-white"
+                placeholder="S/ 0.00"
+              />
+              <span className="text-xs text-gray-600 mt-2">Suma real en Yape/Plin/Tarjeta/Transferencia</span>
+            </div>
+            <div className={`flex-1 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg ${montoVirtualContado === "" ? "bg-gray-100" : diferenciaVirtual === 0 ? "bg-green-200" : diferenciaVirtual > 0 ? "bg-blue-100" : "bg-red-100"}`}>
+              <span className="text-xs font-semibold mb-1">Diferencia virtual</span>
+              <span className={`font-bold text-3xl ${montoVirtualContado === "" ? "text-gray-700" : diferenciaVirtual === 0 ? "text-green-700" : diferenciaVirtual > 0 ? "text-blue-700" : "text-red-700"}`}>S/ {diferenciaVirtual.toFixed(2)}</span>
+              {montoVirtualContado === "" ? (
+                <span className="text-gray-700 text-xs font-semibold mt-1">Ingresa lo virtual contado</span>
+              ) : diferenciaVirtual === 0 ? (
+                <span className="text-green-700 text-xs font-semibold mt-1">¡Cuadre virtual perfecto!</span>
+              ) : diferenciaVirtual > 0 ? (
+                <span className="text-blue-700 text-xs font-semibold mt-1">Sobra virtual</span>
+              ) : (
+                <span className="text-red-700 text-xs font-semibold mt-1">Falta virtual</span>
               )}
             </div>
           </div>

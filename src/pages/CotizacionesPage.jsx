@@ -1,6 +1,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
 import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter } from "react-icons/fi";
@@ -62,6 +65,25 @@ function formatDateInput(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatMetodoPagoLabel(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (!v || v === "sin_pago") return "Sin pago";
+  if (v === "mixto") return "Mixto";
+  if (v === "yape") return "Yape";
+  if (v === "plin") return "Plin";
+  if (v === "efectivo") return "Efectivo";
+  if (v === "tarjeta") return "Tarjeta";
+  if (v === "transferencia") return "Transferencia";
+  if (v === "deposito") return "Deposito";
+  if (v === "cheque") return "Cheque";
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
+function formatDateShort(value) {
+  if (!value) return "sin-fecha";
+  return String(value).replace(/[^0-9-]/g, "").slice(0, 10) || "sin-fecha";
 }
 
 function formatDateTime(value) {
@@ -139,9 +161,55 @@ function badgeOrigenVisual(row) {
   return badgeOrigen(row?.origen_cobro_resumen);
 }
 
+function normalizarMetodoPagoResumen(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (!v) return "sin_pago";
+  if (["tarjeta_debito", "tarjeta_credito", "visa", "mastercard"].includes(v)) return "tarjeta";
+  if (["transferencia_bancaria", "transferencia bancaria"].includes(v)) return "transferencia";
+  if (["efectivo", "yape", "plin", "transferencia", "tarjeta", "deposito", "cheque", "mixto", "sin_pago", "otros"].includes(v)) return v;
+  return "otros";
+}
+
+function badgeMetodoPago(row) {
+  const listaRaw = String(row?.metodos_pago_resumen || "").trim();
+  const lista = listaRaw
+    ? Array.from(new Set(
+      listaRaw
+        .split(",")
+        .map((item) => normalizarMetodoPagoResumen(item))
+        .filter((item) => item && item !== "sin_pago")
+    ))
+    : [];
+
+  let resumen = normalizarMetodoPagoResumen(row?.metodo_pago_resumen || "");
+  if (!row?.metodo_pago_resumen && lista.length > 0) {
+    resumen = lista.length > 1 ? "mixto" : lista[0];
+  }
+
+  const map = {
+    sin_pago: { cls: "bg-slate-100 text-slate-700", label: "Sin pago" },
+    efectivo: { cls: "bg-emerald-100 text-emerald-700", label: "Efectivo" },
+    yape: { cls: "bg-fuchsia-100 text-fuchsia-700", label: "Yape" },
+    plin: { cls: "bg-sky-100 text-sky-700", label: "Plin" },
+    transferencia: { cls: "bg-indigo-100 text-indigo-700", label: "Transferencia" },
+    tarjeta: { cls: "bg-cyan-100 text-cyan-700", label: "Tarjeta" },
+    deposito: { cls: "bg-teal-100 text-teal-700", label: "Deposito" },
+    cheque: { cls: "bg-amber-100 text-amber-700", label: "Cheque" },
+    mixto: { cls: "bg-violet-100 text-violet-700", label: "Mixto" },
+    otros: { cls: "bg-gray-100 text-gray-700", label: "Otro" },
+  };
+
+  const base = map[resumen] || map.otros;
+  const title = lista.length > 0
+    ? `Pago registrado: ${lista.join(" + ")}`
+    : (resumen === "sin_pago" ? "Sin abonos registrados" : `Pago registrado: ${base.label}`);
+
+  return { ...base, title };
+}
+
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, badgeEstado, labelEstado }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado }) {
   const estadoRow = String(row.estado || "").toLowerCase();
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
@@ -165,7 +233,13 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const laboratorioUrl = `/documentos-paciente/${row.paciente_id}?cotizacion_id=${row.id}${ordenQuery}&back_to=/cotizaciones`;
   const laboratorioTitulo = tieneResultadosLaboratorio ? "Ver resultados de laboratorio" : "Gestionar resultados de laboratorio";
   const origen = useMemo(() => badgeOrigenVisual(row), [row]);
+  const pagoBadge = useMemo(() => badgeMetodoPago(row), [row]);
   const contratosIds = String(row.contratos_ids_resumen || "").trim();
+  const anticipadoActivo = Number(anticipadoInfo?.habilitacion_anticipada_activa || 0) === 1;
+  const anticipadoEstado = String(anticipadoInfo?.estado_resumen || '').toLowerCase();
+  const anticipadoMotivo = String(anticipadoInfo?.motivo || '').trim();
+  const tieneVinculoClinicoExplicito = Number(anticipadoInfo?.consulta_id || 0) > 0;
+  const puedeGestionarAnticipado = canAutorizarAnticipado && tieneVinculoClinicoExplicito;
 
   // Handler HC separado con useCallback para evitar función anónima nueva en cada render
   const handleVerHC = useCallback(async () => {
@@ -271,7 +345,52 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               {vencimientoMeta.label}
             </span>
           )}
+          {anticipadoActivo && (
+            <span
+              className="px-2 py-1 rounded text-xs font-semibold bg-orange-100 text-orange-800"
+              title={anticipadoMotivo ? `Habilitación anticipada: ${anticipadoMotivo}` : 'Habilitación anticipada activa'}
+            >
+              Anticipado autorizado
+            </span>
+          )}
+          {!anticipadoActivo && anticipadoEstado === 'revocado' && (
+            <span className="px-2 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600" title="Habilitación anticipada revocada">
+              Anticipado revocado
+            </span>
+          )}
+          {!anticipadoActivo && anticipadoEstado === 'expirada' && (
+            <span className="px-2 py-1 rounded text-xs font-semibold bg-rose-100 text-rose-700" title="La habilitación anticipada venció">
+              Anticipado vencido
+            </span>
+          )}
+          {!anticipadoActivo && anticipadoEstado === 'regularizado' && (
+            <span className="px-2 py-1 rounded text-xs font-semibold bg-emerald-100 text-emerald-800" title="Se habilitó de forma anticipada y luego quedó regularizado por pago">
+              Anticipado regularizado
+            </span>
+          )}
+          {!tieneVinculoClinicoExplicito && (estadoRow === 'pendiente' || estadoRow === 'parcial') && (
+            <span
+              className="px-2 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600"
+              title="Esta cotización no tiene consulta_id explícito en su detalle, por eso no aplica habilitación anticipada"
+            >
+              Sin vínculo clínico
+            </span>
+          )}
+          <span
+            className={`lg:hidden px-2 py-1 rounded text-xs font-semibold ${pagoBadge.cls}`}
+            title={pagoBadge.title}
+          >
+            Pago: {pagoBadge.label}
+          </span>
         </div>
+      </td>
+      <td className="px-3 py-2 hidden lg:table-cell">
+        <span
+          className={`px-2 py-1 rounded text-xs font-semibold ${pagoBadge.cls}`}
+          title={pagoBadge.title}
+        >
+          {pagoBadge.label}
+        </span>
       </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-2">
@@ -333,6 +452,25 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               aria-label="Cobrar"
             >
               <FiDollarSign className="text-sm" />
+            </button>
+          )}
+          {canAutorizarAnticipado && (estadoRow === "pendiente" || estadoRow === "parcial") && (
+            <button
+              disabled={!puedeGestionarAnticipado}
+              onClick={() => onToggleAnticipado(row)}
+              className={`${ACTION_BTN_BASE} ${!puedeGestionarAnticipado ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-60' : (anticipadoActivo ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200' : 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200')}`}
+              title={
+                !puedeGestionarAnticipado
+                  ? 'Sin vínculo clínico explícito: no se puede habilitar anticipado'
+                  : (anticipadoActivo ? 'Revocar habilitación anticipada' : 'Habilitar atención anticipada')
+              }
+              aria-label={
+                !puedeGestionarAnticipado
+                  ? 'Sin vínculo clínico explícito'
+                  : (anticipadoActivo ? 'Revocar habilitación anticipada' : 'Habilitar atención anticipada')
+              }
+            >
+              <span className="text-sm font-bold">⚡</span>
             </button>
           )}
           {estadoRow !== "anulada" && (
@@ -418,12 +556,44 @@ export default function CotizacionesPage() {
   const [estadoInput, setEstadoInput] = useState("");
   const [fechaInicioInput, setFechaInicioInput] = useState("");
   const [fechaFinInput, setFechaFinInput] = useState("");
+  const [rolReporte, setRolReporte] = useState("todos");
+  const [usuarioReporte, setUsuarioReporte] = useState("");
+  const [usuariosCatalogo, setUsuariosCatalogo] = useState([]);
+  const [exporting, setExporting] = useState(false);
   const [filtrosAplicados, setFiltrosAplicados] = useState({
     q: "",
     estado: "",
     fechaInicio: "",
     fechaFin: "",
   });
+  const [anticipadoByCotizacion, setAnticipadoByCotizacion] = useState({});
+  const [canAutorizarAnticipado, setCanAutorizarAnticipado] = useState(false);
+
+  const cargarEstadosAnticipados = useCallback(async (rowsInput) => {
+    const ids = Array.from(new Set((rowsInput || []).map((row) => Number(row?.id || 0)).filter((id) => id > 0)));
+    if (ids.length === 0) {
+      setAnticipadoByCotizacion({});
+      setCanAutorizarAnticipado(false);
+      return;
+    }
+
+    try {
+      const res = await authFetch(`api_consultas.php?vista=anticipada&cotizacion_ids=${ids.join(',')}&_t=${Date.now()}`, {
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        setAnticipadoByCotizacion({});
+        setCanAutorizarAnticipado(false);
+        return;
+      }
+      setAnticipadoByCotizacion(data?.estados && typeof data.estados === 'object' ? data.estados : {});
+      setCanAutorizarAnticipado(Boolean(data?.puede_autorizar));
+    } catch {
+      setAnticipadoByCotizacion({});
+      setCanAutorizarAnticipado(false);
+    }
+  }, []);
 
   const cargar = useCallback(async () => {
     abortRef.current?.abort();
@@ -451,8 +621,10 @@ export default function CotizacionesPage() {
       if (!data?.success) {
         throw new Error(data?.error || "No se pudo cargar cotizaciones");
       }
-      setRows(Array.isArray(data.cotizaciones) ? data.cotizaciones : []);
+      const rowsData = Array.isArray(data.cotizaciones) ? data.cotizaciones : [];
+      setRows(rowsData);
       setTotal(Number(data.total || 0));
+      await cargarEstadosAnticipados(rowsData);
     } catch (error) {
       if (error?.name === "AbortError") return;
       Swal.fire("Error", error?.message || "No se pudo cargar la lista", "error");
@@ -464,7 +636,69 @@ export default function CotizacionesPage() {
         setLoading(false);
       }
     }
-  }, [filtrosAplicados, limit, page]);
+  }, [cargarEstadosAnticipados, filtrosAplicados, limit, page]);
+
+  const toggleAnticipado = useCallback(async (row) => {
+    const cotizacionId = Number(row?.id || 0);
+    if (cotizacionId <= 0) return;
+
+    const info = anticipadoByCotizacion[String(cotizacionId)] || anticipadoByCotizacion[cotizacionId] || {};
+    const activo = Number(info?.habilitacion_anticipada_activa || 0) === 1;
+
+    let payload = {
+      accion: activo ? 'revocar_anticipado' : 'habilitar_anticipado',
+      cotizacion_id: cotizacionId,
+    };
+
+    if (activo) {
+      const confirm = await Swal.fire({
+        icon: 'warning',
+        title: 'Revocar habilitación anticipada',
+        text: 'La atención volverá a quedar bloqueada por pago pendiente.',
+        showCancelButton: true,
+        confirmButtonText: 'Revocar',
+        cancelButtonText: 'Cancelar',
+      });
+      if (!confirm.isConfirmed) return;
+    } else {
+      const { value: motivo } = await Swal.fire({
+        title: 'Habilitar atención anticipada',
+        input: 'text',
+        inputLabel: 'Motivo obligatorio',
+        inputPlaceholder: 'Ej: Urgencia clínica, completar procedimiento previo al cobro',
+        showCancelButton: true,
+        confirmButtonText: 'Habilitar',
+        cancelButtonText: 'Cancelar',
+        inputValidator: (value) => {
+          if (!value || !value.trim()) return 'El motivo es obligatorio';
+          if (value.trim().length < 5) return 'Mínimo 5 caracteres';
+          return undefined;
+        },
+      });
+      if (!motivo) return;
+      payload = {
+        ...payload,
+        motivo: motivo.trim(),
+        vence_horas: 24,
+      };
+    }
+
+    try {
+      const res = await authFetch('api_consultas.php', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || 'No se pudo actualizar habilitación anticipada');
+      }
+      await cargarEstadosAnticipados(rows);
+      await Swal.fire('Listo', activo ? 'Habilitación anticipada revocada' : 'Habilitación anticipada activada', 'success');
+    } catch (error) {
+      await Swal.fire('Error', error?.message || 'No se pudo actualizar habilitación anticipada', 'error');
+    }
+  }, [anticipadoByCotizacion, cargarEstadosAnticipados, rows]);
 
   const abrirCobro = useCallback(async (row) => {
     const baseId = Number(row?.id || 0);
@@ -547,6 +781,54 @@ export default function CotizacionesPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const cargarUsuarios = async () => {
+      try {
+        const res = await authFetch(`api_usuarios.php?_t=${Date.now()}`, { cache: "no-store" });
+        const data = await res.json();
+        if (!mounted) return;
+        const rows = Array.isArray(data) ? data : [];
+        const activos = rows.filter((u) => Number(u?.activo ?? 1) === 1);
+        setUsuariosCatalogo(activos);
+      } catch {
+        if (!mounted) return;
+        setUsuariosCatalogo([]);
+      }
+    };
+
+    cargarUsuarios();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const usuariosFiltradosReporte = useMemo(() => {
+    const rol = String(rolReporte || "todos").toLowerCase();
+    if (rol === "todos") return [];
+
+    return usuariosCatalogo.filter((u) => {
+      const r = String(u?.rol || "").toLowerCase().trim();
+      if (rol === "admin") return r === "admin" || r === "administrador";
+      if (rol === "recepcion") return r.includes("recep");
+      return false;
+    });
+  }, [rolReporte, usuariosCatalogo]);
+
+  useEffect(() => {
+    if (rolReporte === "todos") {
+      if (usuarioReporte !== "") setUsuarioReporte("");
+      return;
+    }
+
+    if (!usuarioReporte) return;
+    const stillExists = usuariosFiltradosReporte.some((u) => String(u.id) === String(usuarioReporte));
+    if (!stillExists) {
+      setUsuarioReporte("");
+    }
+  }, [rolReporte, usuarioReporte, usuariosFiltradosReporte]);
+
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
   const filtrar = () => {
@@ -601,6 +883,195 @@ export default function CotizacionesPage() {
       fechaFin: "",
     });
   };
+
+  const construirParamsReporte = useCallback(() => {
+    const params = new URLSearchParams();
+    params.set("accion", "reporte_atenciones_detallado");
+
+    const q = String(qInput || filtrosAplicados.q || "").trim();
+    const estado = String(estadoInput || filtrosAplicados.estado || "").trim();
+    let fechaInicio = String(fechaInicioInput || filtrosAplicados.fechaInicio || "").trim();
+    let fechaFin = String(fechaFinInput || filtrosAplicados.fechaFin || "").trim();
+
+    if (fechaInicio && !fechaFin) fechaFin = fechaInicio;
+    if (fechaFin && !fechaInicio) fechaInicio = fechaFin;
+
+    if (q) params.set("q", q);
+    if (estado) params.set("estado", estado);
+    if (fechaInicio && fechaFin) {
+      params.set("fecha_inicio", fechaInicio);
+      params.set("fecha_fin", fechaFin);
+    }
+    params.set("rol", rolReporte || "todos");
+    if (rolReporte !== "todos" && String(usuarioReporte || "").trim() !== "") {
+      params.set("usuario_id", String(usuarioReporte));
+    }
+
+    return params;
+  }, [estadoInput, fechaFinInput, fechaInicioInput, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, qInput, rolReporte, usuarioReporte]);
+
+  const obtenerReporteAtenciones = useCallback(async () => {
+    const params = construirParamsReporte();
+    const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    const data = await res.json();
+    if (!data?.success) {
+      throw new Error(data?.error || "No se pudo generar el reporte");
+    }
+    return data;
+  }, [construirParamsReporte]);
+
+  const exportarExcelAtenciones = useCallback(async () => {
+    setExporting(true);
+    try {
+      const data = await obtenerReporteAtenciones();
+      const detalle = Array.isArray(data?.detalle) ? data.detalle : [];
+      const resumen = Array.isArray(data?.resumen_por_rol) ? data.resumen_por_rol : [];
+      const filtros = data?.filtros || {};
+      const usuarioSeleccionado = usuariosCatalogo.find((u) => String(u.id) === String(filtros.usuario_id || ""));
+      const usuarioNombre = String(usuarioSeleccionado?.nombre || "").trim();
+
+      if (detalle.length === 0) {
+        await Swal.fire(
+          "Sin filas para exportar",
+          `No hay atenciones para el filtro seleccionado. Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"}`,
+          "info"
+        );
+        return;
+      }
+
+      const wb = XLSX.utils.book_new();
+
+      const resumenRows = resumen.map((row) => ({
+        Rol: row.rol || "-",
+        Cotizaciones: Number(row.cantidad_cotizaciones || 0),
+        "Total cotizado": Number(row.total_cotizado || 0),
+        "Total pagado": Number(row.total_pagado || 0),
+        Saldo: Number(row.saldo_pendiente || 0),
+      }));
+
+      const detalleRows = detalle.map((row) => ({
+        Fecha: row.fecha ? new Date(row.fecha).toLocaleString("es-PE") : "-",
+        "ID cotizacion": row.cotizacion_id,
+        Estado: row.estado || "-",
+        Paciente: row.paciente || "-",
+        DNI: row.dni || "-",
+        HC: row.historia_clinica || "-",
+        Rol: row.rol_responsable || "-",
+        "Usuario responsable": row.usuario_responsable || "-",
+        "Tipo servicio": row.servicio_tipo || "-",
+        Servicio: row.servicio_descripcion || "-",
+        Cantidad: Number(row.cantidad || 0),
+        "Precio unitario": Number(row.precio_unitario || 0),
+        "Subtotal servicio": Number(row.subtotal_servicio || 0),
+        "Pago resumen": formatMetodoPagoLabel(row.tipo_pago_resumen),
+        "Tipo de pago": formatMetodoPagoLabel(row.tipo_pago),
+        "Monto tipo pago": Number(row.monto_tipo_pago || 0),
+        "Total cotizacion": Number(row.total_cotizacion || 0),
+        "Total pagado": Number(row.total_pagado || 0),
+        "Saldo pendiente": Number(row.saldo_pendiente || 0),
+      }));
+
+      const wsFiltros = XLSX.utils.aoa_to_sheet([
+        ["Filtro", "Valor"],
+        ["Fecha inicio", filtros.fecha_inicio || ""],
+        ["Fecha fin", filtros.fecha_fin || ""],
+        ["Rol", filtros.rol || "todos"],
+        ["Usuario", usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")],
+        ["Estado", filtros.estado || "todos"],
+        ["Busqueda", filtros.q || ""],
+      ]);
+      const wsResumen = XLSX.utils.json_to_sheet(resumenRows.length ? resumenRows : [{ Rol: "Sin datos" }]);
+      const wsDetalle = XLSX.utils.json_to_sheet(detalleRows.length ? detalleRows : [{ Estado: "Sin datos" }]);
+
+      // Excel abre la primera hoja del libro; ponemos Detalle primero para mostrar filas al abrir.
+      XLSX.utils.book_append_sheet(wb, wsDetalle, "Detalle");
+      XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen");
+      XLSX.utils.book_append_sheet(wb, wsFiltros, "Filtros");
+
+      const fechaEtiqueta = `${formatDateShort(filtros.fecha_inicio)}_a_${formatDateShort(filtros.fecha_fin)}`;
+      const rolEtiqueta = String(filtros.rol || "todos").toLowerCase();
+      XLSX.writeFile(wb, `reporte_atenciones_${rolEtiqueta}_${fechaEtiqueta}.xlsx`);
+    } catch (error) {
+      Swal.fire("Error", error?.message || "No se pudo exportar a Excel", "error");
+    } finally {
+      setExporting(false);
+    }
+  }, [obtenerReporteAtenciones, usuariosCatalogo]);
+
+  const exportarPdfAtenciones = useCallback(async () => {
+    setExporting(true);
+    try {
+      const data = await obtenerReporteAtenciones();
+      const detalle = Array.isArray(data?.detalle) ? data.detalle : [];
+      const resumen = Array.isArray(data?.resumen_por_rol) ? data.resumen_por_rol : [];
+      const filtros = data?.filtros || {};
+      const usuarioSeleccionado = usuariosCatalogo.find((u) => String(u.id) === String(filtros.usuario_id || ""));
+      const usuarioNombre = String(usuarioSeleccionado?.nombre || "").trim();
+
+      if (detalle.length === 0) {
+        await Swal.fire(
+          "Sin filas para exportar",
+          `No hay atenciones para el filtro seleccionado. Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"}`,
+          "info"
+        );
+        return;
+      }
+
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      doc.setFontSize(13);
+      doc.text("Reporte de Atenciones por Rol", 40, 34);
+      doc.setFontSize(9);
+      doc.text(
+        `Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"} | Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")} | Estado: ${filtros.estado || "todos"}`,
+        40,
+        52
+      );
+
+      autoTable(doc, {
+        startY: 62,
+        head: [["Rol", "Cotizaciones", "Total cotizado", "Total pagado", "Saldo"]],
+        body: (resumen.length ? resumen : [{ rol: "Sin datos", cantidad_cotizaciones: 0, total_cotizado: 0, total_pagado: 0, saldo_pendiente: 0 }]).map((row) => ([
+          row.rol || "-",
+          Number(row.cantidad_cotizaciones || 0),
+          `S/ ${Number(row.total_cotizado || 0).toFixed(2)}`,
+          `S/ ${Number(row.total_pagado || 0).toFixed(2)}`,
+          `S/ ${Number(row.saldo_pendiente || 0).toFixed(2)}`,
+        ])),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [35, 88, 175] },
+      });
+
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 12,
+        head: [["Fecha", "Cot", "Paciente", "Rol", "Usuario", "Servicio", "Subtotal", "Pago", "Monto pago", "Total", "Saldo"]],
+        body: (detalle.length ? detalle : [{ fecha: "", cotizacion_id: "", paciente: "Sin datos", rol_responsable: "", usuario_responsable: "", servicio_descripcion: "", subtotal_servicio: 0, tipo_pago: "sin_pago", monto_tipo_pago: 0, total_cotizacion: 0, saldo_pendiente: 0 }]).map((row) => ([
+          row.fecha ? new Date(row.fecha).toLocaleString("es-PE") : "-",
+          `#${row.cotizacion_id || "-"}`,
+          row.paciente || "-",
+          row.rol_responsable || "-",
+          row.usuario_responsable || "-",
+          row.servicio_descripcion || "-",
+          `S/ ${Number(row.subtotal_servicio || 0).toFixed(2)}`,
+          formatMetodoPagoLabel(row.tipo_pago),
+          `S/ ${Number(row.monto_tipo_pago || 0).toFixed(2)}`,
+          `S/ ${Number(row.total_cotizacion || 0).toFixed(2)}`,
+          `S/ ${Number(row.saldo_pendiente || 0).toFixed(2)}`,
+        ])),
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [31, 41, 55] },
+      });
+
+      const fechaEtiqueta = `${formatDateShort(filtros.fecha_inicio)}_a_${formatDateShort(filtros.fecha_fin)}`;
+      const rolEtiqueta = String(filtros.rol || "todos").toLowerCase();
+      doc.save(`reporte_atenciones_${rolEtiqueta}_${fechaEtiqueta}.pdf`);
+    } catch (error) {
+      Swal.fire("Error", error?.message || "No se pudo exportar a PDF", "error");
+    } finally {
+      setExporting(false);
+    }
+  }, [obtenerReporteAtenciones, usuariosCatalogo]);
 
   const badgeEstado = (value, pagadoConDescuento = 0) => {
     const st = String(value || "").toLowerCase();
@@ -945,6 +1416,46 @@ export default function CotizacionesPage() {
           />
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+          <select
+            value={rolReporte}
+            onChange={(e) => setRolReporte(e.target.value)}
+            className="border rounded px-3 py-2"
+          >
+            <option value="todos">Rol: Todos</option>
+            <option value="admin">Rol: Admin</option>
+            <option value="recepcion">Rol: Recepcion</option>
+          </select>
+          <select
+            value={usuarioReporte}
+            onChange={(e) => setUsuarioReporte(e.target.value)}
+            className="border rounded px-3 py-2"
+            disabled={rolReporte === "todos"}
+          >
+            <option value="">{rolReporte === "todos" ? "Usuario: seleccione rol" : "Usuario: todos"}</option>
+            {usuariosFiltradosReporte.map((u) => (
+              <option key={u.id} value={u.id}>{u.nombre}</option>
+            ))}
+          </select>
+          <button
+            onClick={exportarExcelAtenciones}
+            disabled={exporting}
+            className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {exporting ? "Exportando..." : "Exportar Excel"}
+          </button>
+          <button
+            onClick={exportarPdfAtenciones}
+            disabled={exporting}
+            className="px-4 py-2 rounded bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-60"
+          >
+            {exporting ? "Exportando..." : "Exportar PDF"}
+          </button>
+          <div className="text-xs text-gray-500 flex items-center">
+            Usa un dia (misma fecha) o rango desde/hasta.
+          </div>
+        </div>
+
         <div className="flex flex-wrap gap-2 mb-4">
           <button
             onClick={() => aplicarRangoDias(1)}
@@ -994,17 +1505,18 @@ export default function CotizacionesPage() {
                 <th className="px-3 py-2 text-right">Total</th>
                 <th className="px-3 py-2 text-right">Saldo</th>
                 <th className="px-3 py-2 text-left">Estado</th>
+                <th className="px-3 py-2 text-left hidden lg:table-cell">Pago</th>
                 <th className="px-3 py-2 text-left">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
+                  <td colSpan={12} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
+                  <td colSpan={12} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
               ) : rows.map((row) => (
                 <CotizacionRow
@@ -1014,8 +1526,11 @@ export default function CotizacionesPage() {
                   onAnular={anularCotizacion}
                   onNavigate={navigate}
                   onPrintTicket={imprimirTicketDirecto}
+                  onToggleAnticipado={toggleAnticipado}
                   badgeEstado={badgeEstado}
                   labelEstado={labelEstado}
+                  anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
+                  canAutorizarAnticipado={canAutorizarAnticipado}
                 />
               ))}
             </tbody>

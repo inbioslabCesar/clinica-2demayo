@@ -22,6 +22,20 @@ const defaultItem = {
 
 import { useEffect } from "react";
 
+const normalizeTipo = (value) => {
+  const token = String(value || '').trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z]/gi, '')
+    .toLowerCase();
+
+  if (token === 'campo') return 'Campo';
+  if (token === 'titulo' || token === 'tatulo') return 'Título';
+  if (token === 'subtitulo' || token === 'subtatulo') return 'Subtítulo';
+  if (token === 'textolargo') return 'Texto Largo';
+  return 'Parámetro';
+};
+
 const normalizeOptionItem = (option, index) => {
   if (option && typeof option === 'object') {
     return {
@@ -62,7 +76,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
     }
     // Ensure shape for each item
     return items.map((it, i) => ({
-      tipo: it.tipo || 'Parámetro',
+      tipo: normalizeTipo(it.tipo),
       nombre: typeof it.nombre === 'string' ? it.nombre : (it.titulo || ''),
       metodologia: it.metodologia || '',
       unidad: it.unidad || '',
@@ -381,7 +395,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
             <input type="color" value={item.color_texto} onChange={e => handleItemChange(idx, "color_texto", e.target.value)} title="Color texto" style={{ width: 28, height: 28, minWidth: 28, minHeight: 28, padding: 0, border: 'none' }} />
             <input type="color" value={item.color_fondo} onChange={e => handleItemChange(idx, "color_fondo", e.target.value)} title="Color fondo" style={{ width: 28, height: 28, minWidth: 28, minHeight: 28, padding: 0, border: 'none', marginRight: 64 }} />
           </div>
-          {item.tipo === "Parámetro" && (
+          {normalizeTipo(item.tipo) === "Parámetro" && (
             <>
               <div className="flex gap-2 mb-2">
                 <input value={item.metodologia} onChange={e => handleItemChange(idx, "metodologia", e.target.value)} placeholder="Metodología" className="border rounded px-2 py-1 flex-1" />
@@ -463,7 +477,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
             </>
           )}
 
-          {item.tipo === "Campo" && (
+          {normalizeTipo(item.tipo) === "Campo" && (
             <div className="flex flex-col gap-2 mb-2 mt-2">
               <div className="flex gap-2">
                 <input value={item.metodologia} onChange={e => handleItemChange(idx, "metodologia", e.target.value)} placeholder="Metodología (opcional)" className="border rounded px-2 py-1 flex-1" />
@@ -513,7 +527,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
             </div>
           )}
 
-          {item.tipo === "Texto Largo" && (
+          {normalizeTipo(item.tipo) === "Texto Largo" && (
             <div className="space-y-3 mb-2 mt-2">
               <div className="flex gap-2 items-center">
                 <label className="text-sm text-gray-600">Filas:</label>

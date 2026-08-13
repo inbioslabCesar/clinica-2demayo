@@ -1392,6 +1392,7 @@ class CobroModule
                     'detalle_id' => (int)($det['id'] ?? 0),
                     'tipo'       => $tipoOrden,
                     'descripcion' => strtoupper(trim($det['descripcion'] ?? '')),
+                    'medico_id'  => (int)($det['medico_id'] ?? 0),
                 ];
             }
         }
@@ -1401,6 +1402,7 @@ class CobroModule
 
         $hasCotizacionId = self::columnExists($conn, 'ordenes_imagen', 'cotizacion_id');
         $hasConsultaId   = self::columnExists($conn, 'ordenes_imagen', 'consulta_id');
+        $hasMedicoId     = self::columnExists($conn, 'ordenes_imagen', 'medico_id');
         $hasSolicitadoPor = self::columnExists($conn, 'ordenes_imagen', 'solicitado_por');
         $hasCargaAnticipada = self::columnExists($conn, 'ordenes_imagen', 'carga_anticipada');
 
@@ -1425,6 +1427,18 @@ class CobroModule
             $tipo        = $item['tipo'];
             $detalleId   = $item['detalle_id'];
             $descripcion = $item['descripcion'];
+            $medicoId    = (int)($item['medico_id'] ?? 0);
+
+            if ($medicoId <= 0 && $detalleId > 0 && self::columnExists($conn, 'cotizaciones_detalle', 'medico_id')) {
+                $stmtMedicoDetalle = $conn->prepare('SELECT medico_id FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ? LIMIT 1');
+                if ($stmtMedicoDetalle) {
+                    $stmtMedicoDetalle->bind_param('ii', $detalleId, $cotizacionId);
+                    $stmtMedicoDetalle->execute();
+                    $rowMedicoDetalle = $stmtMedicoDetalle->get_result()->fetch_assoc();
+                    $medicoId = (int)($rowMedicoDetalle['medico_id'] ?? 0);
+                    $stmtMedicoDetalle->close();
+                }
+            }
 
             // Formato token idéntico al de api_cotizaciones.php::crear_ordenes_imagen_cotizacion
             if ($detalleId > 0) {
@@ -1442,9 +1456,17 @@ class CobroModule
                     $exists = $stmtChk->get_result()->fetch_assoc();
                     $stmtChk->close();
                     if ($exists) {
+                        $ordenId = (int)$exists['id'];
+                        if ($hasMedicoId && $medicoId > 0) {
+                            $stmtMedico = $conn->prepare('UPDATE ordenes_imagen SET medico_id = ? WHERE id = ? AND (medico_id IS NULL OR medico_id = 0)');
+                            if ($stmtMedico) {
+                                $stmtMedico->bind_param('ii', $medicoId, $ordenId);
+                                $stmtMedico->execute();
+                                $stmtMedico->close();
+                            }
+                        }
                         // Actualizar consulta_id si aún no está asignado
                         if ($hasConsultaId && $consultaId > 0) {
-                            $ordenId = (int)$exists['id'];
                             $stmtUp = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
                             if ($stmtUp) {
                                 $stmtUp->bind_param('ii', $consultaId, $ordenId);
@@ -1467,6 +1489,12 @@ class CobroModule
                 $vals[]   = '?';
                 $types   .= 'i';
                 $params[] = (int)$usuarioId;
+            }
+            if ($hasMedicoId) {
+                $cols[]   = 'medico_id';
+                $vals[]   = '?';
+                $types   .= 'i';
+                $params[] = $medicoId;
             }
             if ($hasCotizacionId) {
                 $cols[]   = 'cotizacion_id';

@@ -298,6 +298,23 @@ function normalize_resultado_key_token($value)
     return trim((string)$s, '_');
 }
 
+function normalize_tipo_parametro_pdf($value)
+{
+    $tipo = trim((string)$value);
+    $tipo = str_replace(
+        ['Ã¡', 'Ã©', 'Ã­', 'Ã³', 'Ãº', 'Ã±', 'Â'],
+        ['á', 'é', 'í', 'ó', 'ú', 'ñ', ''],
+        $tipo
+    );
+
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $tipo);
+    if ($ascii !== false) {
+        $tipo = $ascii;
+    }
+    $tipo = strtolower($tipo);
+    return preg_replace('/[^a-z]/', '', $tipo);
+}
+
 $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInterno = '') {
     $idText = (string)$exId;
     $nombre = trim((string)$nombreActual);
@@ -358,17 +375,21 @@ $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInte
     }
 
     $prefix = $idText . '__';
+    $metadataSuffixes = [
+        '__imprimir_examen' => true,
+        '__alarma_activa' => true,
+        '__alarma_dias' => true,
+        '__seccion_categoria' => true,
+        '__seccion_titulo' => true,
+        '__seccion_alineacion' => true,
+        '__seccion_color_texto' => true,
+    ];
     $firstNonMetaValue = null;
     foreach ($map as $k => $v) {
         $key = (string)$k;
         if (strpos($key, $prefix) !== 0) continue;
-        if (substr($key, -18) === '__imprimir_examen') continue;
-        if (substr($key, -15) === '__alarma_activa') continue;
-        if (substr($key, -13) === '__alarma_dias') continue;
-        if (substr($key, -19) === '__seccion_categoria') continue;
-        if (substr($key, -16) === '__seccion_titulo') continue;
-        if (substr($key, -19) === '__seccion_alineacion') continue;
-        if (substr($key, -20) === '__seccion_color_texto') continue;
+        $suffix = substr($key, strlen($prefix));
+        if (isset($metadataSuffixes['__' . $suffix])) continue;
         if ($firstNonMetaValue === null) {
             $firstNonMetaValue = $v;
         }
@@ -736,11 +757,10 @@ if (empty($examenes_detalle)) {
         if (!empty($ex['valores_referenciales'])) {
             foreach ($ex['valores_referenciales'] as $param) {
                 $tipo = $param['tipo'] ?? 'Parámetro';
-                $tipoNorm = strtolower(trim((string)$tipo));
-                $tipoNorm = str_replace(['á','é','í','ó','ú'], ['a','e','i','o','u'], $tipoNorm);
+                $tipoNorm = normalize_tipo_parametro_pdf($tipo);
                 $nombre_param = $param['nombre'] ?? '';
 
-                if ($tipoNorm === 'titulo' || $tipoNorm === 'subtitulo') {
+                if ($tipoNorm === 'titulo' || $tipoNorm === 'subtitulo' || strpos($tipoNorm, 'titulo') === 0) {
                     $titleAlign = strtolower(trim((string)($param['alineacion'] ?? 'left')));
                     if (!in_array($titleAlign, ['left', 'center', 'right'], true)) {
                         $titleAlign = 'left';
@@ -760,7 +780,7 @@ if (empty($examenes_detalle)) {
                     continue;
                 }
 
-                if ($tipoNorm === 'texto largo') {
+                if ($tipoNorm === 'textolargo') {
                     $valorTexto = $resolveResultadoValor($resultados_map, $exId, $nombre_param, $param['codigo_interno'] ?? '');
                     $rowsHtml .= '<tr><td colspan="5" style="padding:6px 8px;">'
                         . '<div style="font-weight:bold; margin-bottom:3px;">' . h($nombre_param) . '</div>'

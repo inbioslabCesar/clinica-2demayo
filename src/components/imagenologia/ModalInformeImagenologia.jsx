@@ -78,6 +78,20 @@ function normalizeTipoPlantilla(tipo) {
   return t;
 }
 
+function draftStorageKey(ordenImagenId) {
+  return `imagenologia_informe_borrador_${ordenImagenId}`;
+}
+
+function readDraft(ordenImagenId) {
+  try {
+    const raw = sessionStorage.getItem(draftStorageKey(ordenImagenId));
+    const draft = raw ? JSON.parse(raw) : null;
+    return draft && typeof draft === 'object' ? draft : null;
+  } catch {
+    return null;
+  }
+}
+
 function createSyntheticTemplate(tipoExamen = 'ecografia') {
   return {
     id: 'synthetic-default',
@@ -190,6 +204,7 @@ export default function ModalInformeImagenologia({
   const [titulo, setTitulo] = useState('');
   const [estado, setEstado] = useState('borrador');
   const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const medicoMostrado = [informe?.medico_nombre, informe?.medico_apellido].filter(Boolean).join(' ') || medicoNombre;
 
   // ─ Cargar plantillas y informe existente ─────────────────────────────────
@@ -251,6 +266,7 @@ export default function ModalInformeImagenologia({
         setTodasLasPlantillas(plantillasDisponibles);
         setPlantillaSeleccionada(plantillaFinal);
 
+        const draft = readDraft(ordenImagenId);
         if (dataInf.success && dataInf.informe) {
           const inf = dataInf.informe;
           if (!plantillaFinal && inf?.plantilla_json) {
@@ -258,18 +274,19 @@ export default function ModalInformeImagenologia({
             setPlantillaSeleccionada(plantillaFinal);
           }
           setInforme(inf);
-          setTitulo(inf.titulo || '');
-          setEstado(inf.estado || 'borrador');
+          setTitulo(draft?.titulo ?? inf.titulo ?? '');
+          setEstado(draft?.estado ?? inf.estado ?? 'borrador');
           const contenidoExistente = inf.contenido_json || {};
           const contenidoHibrido = hasAnyContenidoValue(contenidoExistente)
             ? contenidoExistente
             : mergeContenidoWithPlantilla(contenidoExistente, plantillaFinal);
-          setContenido(contenidoHibrido);
+          setContenido(draft?.contenido ?? contenidoHibrido);
         } else {
-          setContenido(buildContenidoFromPlantilla(plantillaFinal));
-          setTitulo(plantillaFinal?.nombre || '');
-          setEstado('borrador');
+          setContenido(draft?.contenido ?? buildContenidoFromPlantilla(plantillaFinal));
+          setTitulo(draft?.titulo ?? plantillaFinal?.nombre ?? '');
+          setEstado(draft?.estado ?? 'borrador');
         }
+        setDirty(Boolean(draft));
       })
       .catch((err) => {
         console.error('Error cargando datos:', err);
@@ -278,8 +295,18 @@ export default function ModalInformeImagenologia({
       .finally(() => setLoading(false));
   }, [open, ordenImagenId, tipoExamen]);
 
+  useEffect(() => {
+    if (!open || loading || !ordenImagenId || !dirty) return;
+    try {
+      sessionStorage.setItem(draftStorageKey(ordenImagenId), JSON.stringify({ titulo, contenido, estado }));
+    } catch {
+      // A storage failure must not block clinical report editing.
+    }
+  }, [open, loading, ordenImagenId, dirty, titulo, contenido, estado]);
+
   // ─ Manejar cambios en campos dinámicos ──────────────────────────────────
   const handleFieldChange = useCallback((sectionId, fieldId, value) => {
+    setDirty(true);
     setContenido((prev) => ({
       ...prev,
       [sectionId]: {
@@ -315,6 +342,8 @@ export default function ModalInformeImagenologia({
           icon: 'success'
         }));
         setInforme((prev) => ({ ...(prev || {}), id: data.informe_id, estado }));
+        sessionStorage.removeItem(draftStorageKey(ordenImagenId));
+        setDirty(false);
         if (onSaved) onSaved();
       } else {
         Swal.fire(swalFrontConfig({
@@ -397,6 +426,8 @@ export default function ModalInformeImagenologia({
           link.click();
         }
         if (onSaved) onSaved();
+        sessionStorage.removeItem(draftStorageKey(ordenImagenId));
+        setDirty(false);
       } else {
         Swal.fire(swalFrontConfig({
           title: 'Error',
@@ -459,7 +490,7 @@ export default function ModalInformeImagenologia({
                   <input
                     type="text"
                     value={titulo}
-                    onChange={(e) => setTitulo(e.target.value)}
+                    onChange={(e) => { setTitulo(e.target.value); setDirty(true); }}
                     placeholder="Ej. Ecografía Abdominal Completa"
                     className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-purple-500 outline-none"
                   />
@@ -494,6 +525,7 @@ export default function ModalInformeImagenologia({
 
                       setPlantillaSeleccionada(p);
                       setContenido((prev) => mergeContenidoWithPlantilla(prev, p));
+                      setDirty(true);
                     }}
                     className="w-full px-3 py-2 border border-blue-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-400 outline-none"
                   >

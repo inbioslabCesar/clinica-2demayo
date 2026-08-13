@@ -1,6 +1,7 @@
 
 import { useState, useEffect } from "react";
 import { authFetch } from "../utils/apiClient";
+import { APP_BASE_PATH } from "../config/config";
 
 function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
@@ -27,10 +28,14 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
     const parsed = new URL(raw, window.location.origin);
     const isDevVite = /^517\d$/.test(String(window.location.port || ''));
-    if (!isDevVite) return parsed.toString();
-
     const isPhpEndpoint = parsed.pathname.includes('.php');
     if (!isPhpEndpoint) return parsed.toString();
+
+    if (!isDevVite) {
+      const basePath = String(APP_BASE_PATH || '/').replace(/\/+$/, '');
+      const endpointPath = raw.replace(/^\/+/, '');
+      return new URL(`${basePath}/${endpointPath}`, window.location.origin).toString();
+    }
 
     const backendOrigin = `${window.location.protocol}//${window.location.hostname}`;
     let backendPath = parsed.pathname;

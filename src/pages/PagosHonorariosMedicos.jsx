@@ -38,7 +38,10 @@ function PagosHonorariosMedicos() {
 
   const metodosPago = [
     { value: 'efectivo', label: 'Efectivo' },
+    { value: 'yape', label: 'Yape' },
+    { value: 'plin', label: 'Plin' },
     { value: 'transferencia', label: 'Transferencia Bancaria' },
+    { value: 'tarjeta', label: 'Tarjeta' },
     { value: 'cheque', label: 'Cheque' },
     { value: 'deposito', label: 'Depósito Bancario' }
   ];
@@ -118,15 +121,26 @@ function PagosHonorariosMedicos() {
     if (!movimientoSeleccionado) return;
 
     try {
-      const response = await authFetch(`api_movimientos_honorarios.php`, {
-        method: 'PUT',
+      const endpoint = datosPago.estado_pago_medico === 'pagado' ? 'api_liquidar_honorario.php' : 'api_movimientos_honorarios.php';
+      const method = datosPago.estado_pago_medico === 'pagado' ? 'POST' : 'PUT';
+      const payload = datosPago.estado_pago_medico === 'pagado'
+        ? {
+            id: movimientoSeleccionado.id,
+            metodo_pago: datosPago.metodo_pago_medico || 'efectivo',
+            fuente_fondos: 'clinica',
+            observaciones: datosPago.observaciones || ''
+          }
+        : {
+            id: movimientoSeleccionado.id,
+            ...datosPago
+          };
+
+      const response = await authFetch(endpoint, {
+        method,
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          id: movimientoSeleccionado.id,
-          ...datosPago
-        }),
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json();
@@ -162,16 +176,16 @@ function PagosHonorariosMedicos() {
 
     if (result.isConfirmed) {
       try {
-        const response = await authFetch(`api_movimientos_honorarios.php`, {
-          method: 'PUT',
+        const response = await authFetch(`api_liquidar_honorario.php`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           credentials: 'include',
           body: JSON.stringify({
             id: movimiento.id,
-            estado_pago_medico: 'pagado',
-            metodo_pago_medico: 'efectivo'
+            metodo_pago: 'efectivo',
+            fuente_fondos: 'clinica'
           }),
         });
 

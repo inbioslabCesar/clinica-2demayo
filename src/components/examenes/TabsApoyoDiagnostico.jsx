@@ -129,11 +129,16 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
   useEffect(() => { cargarOrdenes(); }, [cargarOrdenes]);
 
   const handleCancelar = async (ordenId) => {
-    await authFetch("api_ordenes_imagen.php", {
+    const res = await authFetch("api_ordenes_imagen.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "cancelar", orden_id: ordenId }),
     });
+    const data = await res.json().catch(() => ({}));
+    if (!data?.success) {
+      alert(data?.error || "No se pudo cancelar la solicitud");
+      return;
+    }
     cargarOrdenes();
   };
 
@@ -219,7 +224,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
                   ⬆️ Subir archivos
                 </button>
               )}
-              {ord.estado === "pendiente" && (
+              {ord.estado === "pendiente" && !esPagada(ord.cotizacion) && !(Array.isArray(ord?.archivos) && ord.archivos.length > 0) && (
                 <button
                   type="button"
                   onClick={() => handleCancelar(ord.id)}
@@ -420,6 +425,19 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
     return resultadosLab.every((r) => Number(r?.orden_id || 0) <= 0);
   }, [resultadosLab]);
 
+  const formatFechaOrden = (value) => {
+    if (!value) return "";
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return "";
+    return dt.toLocaleString("es-PE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   return (
     <div className="mb-4">
       <div className="flex flex-wrap gap-1 sm:gap-2 mb-2">
@@ -466,6 +484,12 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
                 <div className="font-semibold text-yellow-800 mb-1">Exámenes solicitados:</div>
                 {ordenesLabOrdenadas.map((orden, idx) => (
                   <ul key={orden.id || idx} className="list-disc ml-5 text-sm">
+                    <li className="text-xs text-slate-600 list-none ml-[-14px] mb-1">
+                      {String(orden?.origen_solicitud || '') === 'cotizacion' ? 'Origen: asociado por cotización' : 'Origen: solicitud en consulta'}
+                      {orden?.cotizacion_numero ? ` · ${orden.cotizacion_numero}` : ''}
+                      {orden?.registrado_por ? ` · Registrado por: ${orden.registrado_por}` : ''}
+                      {formatFechaOrden(orden?.fecha) ? ` · ${formatFechaOrden(orden?.fecha)}` : ''}
+                    </li>
                     {Array.isArray(orden.examenes) && orden.examenes.length > 0 ? (
                       orden.examenes.map((ex, i) => {
                         if (typeof ex === 'string' || typeof ex === 'number') {

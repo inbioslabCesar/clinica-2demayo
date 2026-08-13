@@ -341,7 +341,7 @@ if ($method === 'POST') {
     $consultaId = isset($data['consulta_id']) ? (int)$data['consulta_id'] : 0;
     $procIds = op_normalize_procedimientos_ids($data['procedimientos'] ?? []);
 
-    if ($consultaId <= 0 || empty($procIds)) {
+    if ($consultaId <= 0) {
         echo json_encode(['success' => false, 'error' => 'consulta_id y procedimientos son requeridos']);
         exit;
     }
@@ -371,12 +371,6 @@ if ($method === 'POST') {
         exit;
     }
 
-    $catalogIncoming = op_fetch_tarifas_procedimientos($conn, $procIds);
-    if (empty($catalogIncoming)) {
-        echo json_encode(['success' => false, 'error' => 'No se encontraron tarifas activas para los procedimientos seleccionados']);
-        exit;
-    }
-
     $conn->begin_transaction();
     try {
         $stmtFind = $conn->prepare("SELECT id, procedimientos_json, cotizacion_id
@@ -400,7 +394,85 @@ if ($method === 'POST') {
             $ordenId = (int)($ordenPendiente['id'] ?? 0);
             $cotizacionId = (int)($ordenPendiente['cotizacion_id'] ?? 0);
             $prevIds = op_normalize_procedimientos_ids(json_decode((string)($ordenPendiente['procedimientos_json'] ?? '[]'), true) ?: []);
-            $finalIds = array_values(array_unique(array_merge($prevIds, $procIds)));
+
+            $cotEditable = true;
+            if ($cotizacionId > 0) {
+                $stmtCot = $conn->prepare('SELECT id, estado, numero_comprobante, total FROM cotizaciones WHERE id = ? LIMIT 1 FOR UPDATE');
+                if ($stmtCot) {
+                    $stmtCot->bind_param('i', $cotizacionId);
+                    $stmtCot->execute();
+                    $rowCot = $stmtCot->get_result()->fetch_assoc();
+                    $stmtCot->close();
+                    if ($rowCot) {
+                        $estadoCot = strtolower(trim((string)($rowCot['estado'] ?? 'pendiente')));
+                        $cotEditable = in_array($estadoCot, ['pendiente', 'parcial'], true);
+                    }
+                }
+            }
+
+            $incomingMap = [];
+            foreach ($procIds as $pid) {
+                $incomingMap[(int)$pid] = true;
+            }
+
+            $removidosSolicitados = [];
+            foreach ($prevIds as $pid) {
+                $pid = (int)$pid;
+                if (!isset($incomingMap[$pid])) {
+                    $removidosSolicitados[] = $pid;
+                }
+            }
+
+            if (!empty($removidosSolicitados) && !$cotEditable) {
+                throw new Exception('No se puede quitar procedimientos porque la cotización ya fue cobrada o cerrada.');
+            }
+
+            $finalIds = $procIds;
+
+            if (empty($finalIds)) {
+                if (!$cotEditable) {
+                    throw new Exception('No se puede vaciar la solicitud porque la cotización ya no es editable.');
+                }
+
+                $stmtCancel = $conn->prepare("UPDATE ordenes_procedimientos SET procedimientos_json = '[]', estado = 'cancelado', usuario_id = ? WHERE id = ?");
+                if (!$stmtCancel) {
+                    throw new Exception('No se pudo preparar cancelacion de orden');
+                }
+                $stmtCancel->bind_param('ii', $usuarioIdSesion, $ordenId);
+                if (!$stmtCancel->execute()) {
+                    throw new Exception($stmtCancel->error);
+                }
+                $stmtCancel->close();
+
+                if ($cotizacionId > 0) {
+                    $hasConsulta = op_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+                    if ($hasConsulta) {
+                        $stmtDel = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
+                        $stmtDel->bind_param('ii', $cotizacionId, $consultaId);
+                    } else {
+                        $stmtDel = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
+                        $stmtDel->bind_param('i', $cotizacionId);
+                    }
+                    if ($stmtDel) {
+                        $stmtDel->execute();
+                        $stmtDel->close();
+                    }
+                    op_recalcular_total_cotizacion($conn, $cotizacionId);
+                }
+
+                $conn->commit();
+                echo json_encode([
+                    'success' => true,
+                    'modo' => 'cancelada_por_vacio',
+                    'orden_id' => $ordenId,
+                    'cotizacion_id' => $cotizacionId > 0 ? $cotizacionId : null,
+                    'numero_comprobante' => null,
+                    'total' => 0,
+                    'procedimientos_finales' => [],
+                ]);
+                exit;
+            }
+
             $jsonFinal = json_encode($finalIds);
 
             $stmtUp = $conn->prepare('UPDATE ordenes_procedimientos SET procedimientos_json = ?, paciente_id = CASE WHEN paciente_id IS NULL OR paciente_id = 0 THEN ? ELSE paciente_id END, usuario_id = ? WHERE id = ?');
@@ -412,8 +484,11 @@ if ($method === 'POST') {
                 throw new Exception($stmtUp->error);
             }
             $stmtUp->close();
-            $modo = 'consolidada';
+            $modo = 'actualizada';
         } else {
+            if (empty($procIds)) {
+                throw new Exception('No hay procedimientos válidos para registrar.');
+            }
             $jsonFinal = json_encode($finalIds);
             $stmtIns = $conn->prepare('INSERT INTO ordenes_procedimientos (consulta_id, paciente_id, procedimientos_json, estado, usuario_id) VALUES (?, ?, ?, "pendiente", ?)');
             if (!$stmtIns) {
@@ -425,6 +500,11 @@ if ($method === 'POST') {
             }
             $stmtIns->close();
             $ordenId = (int)$conn->insert_id;
+        }
+
+        $catalogIncoming = op_fetch_tarifas_procedimientos($conn, $procIds);
+        if (empty($catalogIncoming)) {
+            throw new Exception('No se encontraron tarifas activas para los procedimientos seleccionados');
         }
 
         $catalogFinal = op_fetch_tarifas_procedimientos($conn, $finalIds);
@@ -509,6 +589,7 @@ if ($method === 'POST') {
             'cotizacion_id' => $cotizData['cotizacion_id'],
             'numero_comprobante' => $cotizData['numero_comprobante'],
             'total' => $cotizData['total'],
+            'procedimientos_finales' => $finalIds,
         ]);
     } catch (Throwable $e) {
         $conn->rollback();

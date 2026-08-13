@@ -1924,6 +1924,121 @@ function contratos_crear_ordenes_imagen_ejecucion($conn, $cotizacionId, $pacient
     return $ids;
 }
 
+function contratos_crear_ordenes_procedimientos_ejecucion($conn, $cotizacionId, $pacienteId, array $detalles, $consultaId = 0) {
+    if (!contratos_table_exists($conn, 'ordenes_procedimientos')) return [];
+
+    $procIds = [];
+    $consultaRef = (int)$consultaId;
+    foreach ($detalles as $det) {
+        $tipo = contratos_normalizar_servicio_tipo((string)($det['servicio_tipo'] ?? ''));
+        if ($tipo !== 'procedimiento') continue;
+        $sid = (int)($det['servicio_id'] ?? 0);
+        if ($sid > 0) {
+            $procIds[] = $sid;
+        }
+        if ($consultaRef <= 0) {
+            $consultaDet = (int)($det['consulta_id'] ?? 0);
+            if ($consultaDet > 0) {
+                $consultaRef = $consultaDet;
+            }
+        }
+    }
+
+    $procIds = array_values(array_unique(array_filter(array_map('intval', $procIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($procIds) || $consultaRef <= 0) {
+        return [];
+    }
+
+    $json = json_encode($procIds, JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        $json = json_encode($procIds);
+    }
+
+    $hasCotizacionId = contratos_column_exists($conn, 'ordenes_procedimientos', 'cotizacion_id');
+    $hasPacienteId = contratos_column_exists($conn, 'ordenes_procedimientos', 'paciente_id');
+    $hasUsuarioId = contratos_column_exists($conn, 'ordenes_procedimientos', 'usuario_id');
+
+    $ordenId = 0;
+    $existing = null;
+    if ($hasCotizacionId && $cotizacionId > 0) {
+        $stmtFind = $conn->prepare('SELECT id, procedimientos_json FROM ordenes_procedimientos WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1');
+        if ($stmtFind) {
+            $stmtFind->bind_param('i', $cotizacionId);
+            $stmtFind->execute();
+            $existing = $stmtFind->get_result()->fetch_assoc();
+            $stmtFind->close();
+        }
+    }
+
+    if ($existing) {
+        $ordenId = (int)($existing['id'] ?? 0);
+        $prev = json_decode((string)($existing['procedimientos_json'] ?? '[]'), true);
+        if (!is_array($prev)) $prev = [];
+        $prevIds = array_values(array_unique(array_filter(array_map('intval', $prev), function ($id) {
+            return $id > 0;
+        })));
+        $finalIds = array_values(array_unique(array_merge($prevIds, $procIds)));
+        $jsonFinal = json_encode($finalIds, JSON_UNESCAPED_UNICODE);
+        if ($jsonFinal === false) {
+            $jsonFinal = json_encode($finalIds);
+        }
+
+        $sets = ['procedimientos_json = ?', 'consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END'];
+        $types = 'si';
+        $params = [$jsonFinal, $consultaRef];
+        if ($hasPacienteId) {
+            $sets[] = 'paciente_id = CASE WHEN paciente_id IS NULL OR paciente_id = 0 THEN ? ELSE paciente_id END';
+            $types .= 'i';
+            $params[] = (int)$pacienteId;
+        }
+        $types .= 'i';
+        $params[] = $ordenId;
+        $stmtUpd = $conn->prepare('UPDATE ordenes_procedimientos SET ' . implode(', ', $sets) . ' WHERE id = ?');
+        if ($stmtUpd) {
+            $stmtUpd->bind_param($types, ...$params);
+            $stmtUpd->execute();
+            $stmtUpd->close();
+        }
+        return $ordenId > 0 ? [$ordenId] : [];
+    }
+
+    $cols = ['consulta_id', 'procedimientos_json', 'estado'];
+    $vals = ['?', '?', "'pendiente'"];
+    $types = 'is';
+    $params = [$consultaRef, $json];
+
+    if ($hasPacienteId) {
+        $cols[] = 'paciente_id';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = (int)$pacienteId;
+    }
+    if ($hasCotizacionId) {
+        $cols[] = 'cotizacion_id';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = (int)$cotizacionId;
+    }
+    if ($hasUsuarioId) {
+        $cols[] = 'usuario_id';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = (int)($_SESSION['usuario']['id'] ?? 0);
+    }
+
+    $stmtIns = $conn->prepare('INSERT INTO ordenes_procedimientos (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')');
+    if ($stmtIns) {
+        $stmtIns->bind_param($types, ...$params);
+        $stmtIns->execute();
+        $ordenId = (int)$stmtIns->insert_id;
+        $stmtIns->close();
+    }
+
+    return $ordenId > 0 ? [$ordenId] : [];
+}
+
 function contratos_generar_agenda_auto($conn, $contratoId, $plantillaId, $fechaInicio, $usuarioId, $forzar = false, $anchorTipo = 'ninguno', $anchorFecha = null) {
     $contratoId = (int)$contratoId;
     $plantillaId = (int)$plantillaId;
@@ -3849,6 +3964,7 @@ try {
 
                 $ordenesLabIds = contratos_crear_ordenes_laboratorio_ejecucion($conn, $cotizacionEjecucionId, (int)($evRow['paciente_id'] ?? 0), $itemsEjecucion, $consultaIdEjecucion);
                 $ordenesImagenIds = contratos_crear_ordenes_imagen_ejecucion($conn, $cotizacionEjecucionId, (int)($evRow['paciente_id'] ?? 0), $itemsEjecucion, $consultaIdEjecucion);
+                $ordenesProcIds = contratos_crear_ordenes_procedimientos_ejecucion($conn, $cotizacionEjecucionId, (int)($evRow['paciente_id'] ?? 0), $itemsEjecucion, $consultaIdEjecucion);
 
                 $resumenItems['items_inyectados'] = count($itemsEjecucion);
                 foreach ($itemsEjecucion as $ix) {

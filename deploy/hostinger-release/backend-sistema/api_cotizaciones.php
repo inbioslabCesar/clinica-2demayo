@@ -151,6 +151,42 @@ function cotizacion_medico_existe($conn, $medicoId) {
     return $exists;
 }
 
+function normalizar_metodo_pago_cotizacion($metodoRaw) {
+    $metodo = strtolower(trim((string)$metodoRaw));
+    if ($metodo === '') return '';
+
+    if (in_array($metodo, ['tarjeta_debito', 'tarjeta_credito', 'visa', 'mastercard'], true)) {
+        return 'tarjeta';
+    }
+    if ($metodo === 'transferencia_bancaria' || $metodo === 'transferencia bancaria') {
+        return 'transferencia';
+    }
+    if (in_array($metodo, ['efectivo', 'yape', 'plin', 'transferencia', 'tarjeta', 'deposito', 'cheque'], true)) {
+        return $metodo;
+    }
+
+    return 'otros';
+}
+
+function resolver_metodo_pago_resumen_cotizacion($metodosRaw) {
+    $metodos = [];
+    foreach ((array)$metodosRaw as $metodo) {
+        $normalizado = normalizar_metodo_pago_cotizacion($metodo);
+        if ($normalizado !== '' && !in_array($normalizado, $metodos, true)) {
+            $metodos[] = $normalizado;
+        }
+    }
+
+    if (empty($metodos)) {
+        return ['resumen' => 'sin_pago', 'lista' => ''];
+    }
+    if (count($metodos) === 1) {
+        return ['resumen' => $metodos[0], 'lista' => $metodos[0]];
+    }
+
+    return ['resumen' => 'mixto', 'lista' => implode(',', $metodos)];
+}
+
 if (!function_exists('decode_valores_referenciales_any')) {
     function decode_valores_referenciales_any($raw) {
         if ($raw === null || $raw === '') return [];
@@ -1255,10 +1291,19 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
         $valorDeriv = isset($detalle['valor_derivacion']) ? (float)$detalle['valor_derivacion'] : 0;
         $labRef = isset($detalle['laboratorio_referencia']) ? (string)$detalle['laboratorio_referencia'] : '';
         $snapshotPayload = null;
-        if ($hasSnapshotJson && strtolower(trim((string)$servicioTipo)) === 'laboratorio') {
-            $snapshotPayload = build_laboratorio_snapshot_payload($conn, $detalle);
+        if ($hasSnapshotJson) {
+            if (strtolower(trim((string)$servicioTipo)) === 'laboratorio') {
+                $snapshotPayload = build_laboratorio_snapshot_payload($conn, $detalle);
+            }
+            $snapshotPaquete = build_paquete_honorario_snapshot_payload($detalle);
+            if (is_array($snapshotPaquete) && !empty($snapshotPaquete)) {
+                if (!is_array($snapshotPayload)) {
+                    $snapshotPayload = [];
+                }
+                $snapshotPayload = array_merge($snapshotPayload, $snapshotPaquete);
+            }
         }
-        $snapshotJson = $snapshotPayload ? json_encode($snapshotPayload, JSON_UNESCAPED_UNICODE) : null;
+        $snapshotJson = (is_array($snapshotPayload) && !empty($snapshotPayload)) ? json_encode($snapshotPayload, JSON_UNESCAPED_UNICODE) : null;
         $metaContrato = [
             'origen_cobro' => 'regular',
             'contrato_paciente_id' => 0,
@@ -1818,6 +1863,18 @@ function expandir_detalles_paquetes_cotizacion($detalles) {
             if (!isset($item['cotizacion_id']) && isset($detalle['cotizacion_id'])) {
                 $item['cotizacion_id'] = $detalle['cotizacion_id'];
             }
+            if (!isset($item['paquete_id']) && isset($detalle['paquete_id'])) {
+                $item['paquete_id'] = $detalle['paquete_id'];
+            }
+            if (!isset($item['paquete_codigo']) && isset($detalle['paquete_codigo'])) {
+                $item['paquete_codigo'] = $detalle['paquete_codigo'];
+            }
+            if (!isset($item['paquete_tipo']) && isset($detalle['paquete_tipo'])) {
+                $item['paquete_tipo'] = $detalle['paquete_tipo'];
+            }
+            if (!isset($item['paquete_nombre']) && isset($detalle['descripcion'])) {
+                $item['paquete_nombre'] = $detalle['descripcion'];
+            }
             $expandido[] = $item;
         }
     }
@@ -1882,6 +1939,31 @@ function normalizar_detalles_entrada_cotizacion($detalles) {
         $items[] = normalizar_detalle_entrada_cotizacion($detalle);
     }
     return $items;
+}
+
+function build_paquete_honorario_snapshot_payload($detalle) {
+    if (!is_array($detalle)) {
+        return null;
+    }
+
+    $paqueteId = isset($detalle['paquete_id']) ? (int)$detalle['paquete_id'] : 0;
+    $paqueteCodigo = trim((string)($detalle['paquete_codigo'] ?? ''));
+    $paqueteTipo = strtolower(trim((string)($detalle['paquete_tipo'] ?? '')));
+    $paqueteNombre = trim((string)($detalle['paquete_nombre'] ?? ''));
+    $paqueteMontoClinicaFijo = isset($detalle['paquete_monto_clinica_fijo']) ? (float)$detalle['paquete_monto_clinica_fijo'] : 0.0;
+    $honorarioRegla = $detalle['honorario_regla'] ?? null;
+
+    $payload = [];
+    if ($paqueteId > 0) $payload['paquete_id'] = $paqueteId;
+    if ($paqueteCodigo !== '') $payload['paquete_codigo'] = $paqueteCodigo;
+    if ($paqueteTipo !== '') $payload['paquete_tipo'] = $paqueteTipo;
+    if ($paqueteNombre !== '') $payload['paquete_nombre'] = $paqueteNombre;
+    if ($paqueteMontoClinicaFijo > 0) $payload['paquete_monto_clinica_fijo'] = round($paqueteMontoClinicaFijo, 2);
+    if (is_array($honorarioRegla) && !empty($honorarioRegla)) {
+        $payload['honorario_regla'] = $honorarioRegla;
+    }
+
+    return empty($payload) ? null : $payload;
 }
 
 function cotizacion_tiene_servicio_laboratorio($conn, $cotizacionId) {
@@ -2292,6 +2374,167 @@ function cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId) {
     }
 }
 
+function crear_ordenes_procedimientos_cotizacion(mysqli $conn, int $cotizacionId, int $pacienteId, array $detalles, int $consultaId = 0) {
+    if (!table_exists($conn, 'ordenes_procedimientos')) return;
+    if ($cotizacionId <= 0 || $pacienteId <= 0 || empty($detalles)) return;
+
+    $procIds = [];
+    $consultaCandidata = $consultaId > 0 ? $consultaId : 0;
+
+    foreach ($detalles as $det) {
+        $tipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
+        if (!in_array($tipo, ['procedimiento', 'procedimientos'], true)) continue;
+        $servicioId = (int)($det['servicio_id'] ?? 0);
+        if ($servicioId > 0) {
+            $procIds[] = $servicioId;
+        }
+        if ($consultaCandidata <= 0) {
+            $consultaDet = (int)($det['consulta_id'] ?? 0);
+            if ($consultaDet > 0) {
+                $consultaCandidata = $consultaDet;
+            }
+        }
+    }
+
+    $procIds = array_values(array_unique(array_filter(array_map('intval', $procIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($procIds)) return;
+
+    if ($consultaCandidata <= 0 && column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+        $stmtConsulta = $conn->prepare("SELECT consulta_id
+                                        FROM cotizaciones_detalle
+                                        WHERE cotizacion_id = ?
+                                          AND consulta_id IS NOT NULL
+                                          AND consulta_id > 0
+                                        ORDER BY id ASC
+                                        LIMIT 1");
+        if ($stmtConsulta) {
+            $stmtConsulta->bind_param('i', $cotizacionId);
+            $stmtConsulta->execute();
+            $rowConsulta = $stmtConsulta->get_result()->fetch_assoc();
+            $stmtConsulta->close();
+            $consultaCandidata = (int)($rowConsulta['consulta_id'] ?? 0);
+        }
+    }
+
+    if ($consultaCandidata <= 0) {
+        return;
+    }
+
+    $jsonProc = json_encode($procIds, JSON_UNESCAPED_UNICODE);
+    if ($jsonProc === false) {
+        $jsonProc = json_encode($procIds);
+    }
+
+    $hasCotizacionId = column_exists($conn, 'ordenes_procedimientos', 'cotizacion_id');
+    $hasPacienteId = column_exists($conn, 'ordenes_procedimientos', 'paciente_id');
+    $hasUsuarioId = column_exists($conn, 'ordenes_procedimientos', 'usuario_id');
+    $hasUpdatedAt = column_exists($conn, 'ordenes_procedimientos', 'updated_at');
+    $usuarioSesion = get_user_id_from_session();
+
+    $existingId = 0;
+    $existingJson = '[]';
+    if ($hasCotizacionId) {
+        $stmtFind = $conn->prepare('SELECT id, procedimientos_json FROM ordenes_procedimientos WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1');
+        if ($stmtFind) {
+            $stmtFind->bind_param('i', $cotizacionId);
+            $stmtFind->execute();
+            $rowExist = $stmtFind->get_result()->fetch_assoc();
+            $stmtFind->close();
+            $existingId = (int)($rowExist['id'] ?? 0);
+            $existingJson = (string)($rowExist['procedimientos_json'] ?? '[]');
+        }
+    } else {
+        $stmtFind = $conn->prepare('SELECT id, procedimientos_json FROM ordenes_procedimientos WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
+        if ($stmtFind) {
+            $stmtFind->bind_param('i', $consultaCandidata);
+            $stmtFind->execute();
+            $rowExist = $stmtFind->get_result()->fetch_assoc();
+            $stmtFind->close();
+            $existingId = (int)($rowExist['id'] ?? 0);
+            $existingJson = (string)($rowExist['procedimientos_json'] ?? '[]');
+        }
+    }
+
+    if ($existingId > 0) {
+        $prev = json_decode($existingJson, true);
+        if (!is_array($prev)) {
+            $prev = [];
+        }
+        $prevIds = array_values(array_unique(array_filter(array_map('intval', $prev), function ($id) {
+            return $id > 0;
+        })));
+        $finalIds = array_values(array_unique(array_merge($prevIds, $procIds)));
+        $jsonFinal = json_encode($finalIds, JSON_UNESCAPED_UNICODE);
+        if ($jsonFinal === false) {
+            $jsonFinal = json_encode($finalIds);
+        }
+
+        $sets = ['procedimientos_json = ?', 'consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END'];
+        $types = 'si';
+        $params = [$jsonFinal, $consultaCandidata];
+
+        if ($hasPacienteId) {
+            $sets[] = 'paciente_id = CASE WHEN paciente_id IS NULL OR paciente_id = 0 THEN ? ELSE paciente_id END';
+            $types .= 'i';
+            $params[] = $pacienteId;
+        }
+        if ($hasUsuarioId && $usuarioSesion > 0) {
+            $sets[] = 'usuario_id = CASE WHEN usuario_id IS NULL OR usuario_id = 0 THEN ? ELSE usuario_id END';
+            $types .= 'i';
+            $params[] = $usuarioSesion;
+        }
+        if ($hasUpdatedAt) {
+            $sets[] = 'updated_at = NOW()';
+        }
+
+        $types .= 'i';
+        $params[] = $existingId;
+
+        $sqlUpd = 'UPDATE ordenes_procedimientos SET ' . implode(', ', $sets) . ' WHERE id = ?';
+        $stmtUpd = $conn->prepare($sqlUpd);
+        if ($stmtUpd) {
+            $stmtUpd->bind_param($types, ...$params);
+            $stmtUpd->execute();
+            $stmtUpd->close();
+        }
+        return;
+    }
+
+    $cols = ['consulta_id', 'procedimientos_json', 'estado'];
+    $vals = ['?', '?', "'pendiente'"];
+    $types = 'is';
+    $params = [$consultaCandidata, $jsonProc];
+
+    if ($hasPacienteId) {
+        $cols[] = 'paciente_id';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = $pacienteId;
+    }
+    if ($hasCotizacionId) {
+        $cols[] = 'cotizacion_id';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = $cotizacionId;
+    }
+    if ($hasUsuarioId) {
+        $cols[] = 'usuario_id';
+        $vals[] = '?';
+        $types .= 'i';
+        $params[] = $usuarioSesion > 0 ? $usuarioSesion : 0;
+    }
+
+    $sqlIns = 'INSERT INTO ordenes_procedimientos (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+    $stmtIns = $conn->prepare($sqlIns);
+    if ($stmtIns) {
+        $stmtIns->bind_param($types, ...$params);
+        $stmtIns->execute();
+        $stmtIns->close();
+    }
+}
+
 function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $pacienteId, array $detalles, int $consultaId = 0) {
     if (!table_exists($conn, 'ordenes_laboratorio')) return;
 
@@ -2516,6 +2759,9 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
     $hasSolicitadoPor = column_exists($conn, 'ordenes_imagen', 'solicitado_por');
     $hasCargaAnticipada = column_exists($conn, 'ordenes_imagen', 'carga_anticipada');
     $hasMedicoId = column_exists($conn, 'ordenes_imagen', 'medico_id');
+    $consultaColumn = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
+    $consultaAdmiteNull = $consultaColumn && ($consultaMeta = $consultaColumn->fetch_assoc())
+        && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) === 'YES';
     $usuarioId = get_user_id_from_session();
 
     foreach ($detallesImagen as $detImg) {
@@ -2523,6 +2769,18 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
         $detalleId = (int)$detImg['detalle_id'];
         $descripcionItem = (string)$detImg['descripcion'];
         $medicoResponsableId = (int)($detImg['medico_id'] ?? 0);
+
+        // Al sincronizar tras un abono, priorizar el vínculo ya persistido en el detalle.
+        if ($medicoResponsableId <= 0 && $detalleId > 0 && column_exists($conn, 'cotizaciones_detalle', 'medico_id')) {
+            $stmtMedicoDetalle = $conn->prepare('SELECT medico_id FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ? LIMIT 1');
+            if ($stmtMedicoDetalle) {
+                $stmtMedicoDetalle->bind_param('ii', $detalleId, $cotizacionId);
+                $stmtMedicoDetalle->execute();
+                $rowMedicoDetalle = $stmtMedicoDetalle->get_result()->fetch_assoc();
+                $medicoResponsableId = (int)($rowMedicoDetalle['medico_id'] ?? 0);
+                $stmtMedicoDetalle->close();
+            }
+        }
 
         $tokenDetalle = $detalleId > 0 ? ('Detalle #' . $detalleId) : null;
         $indicaciones = ($tokenDetalle ? ($tokenDetalle . ' - ') : '')
@@ -2539,8 +2797,16 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
                 $exists = $stmtChk->get_result()->fetch_assoc();
                 $stmtChk->close();
                 if ($exists) {
+                    $ordenId = (int)($exists['id'] ?? 0);
+                    if ($ordenId > 0 && $hasMedicoId && $medicoResponsableId > 0) {
+                        $stmtUpdMedico = $conn->prepare('UPDATE ordenes_imagen SET medico_id = ? WHERE id = ? AND (medico_id IS NULL OR medico_id = 0)');
+                        if ($stmtUpdMedico) {
+                            $stmtUpdMedico->bind_param('ii', $medicoResponsableId, $ordenId);
+                            $stmtUpdMedico->execute();
+                            $stmtUpdMedico->close();
+                        }
+                    }
                     if ($consultaId > 0 && column_exists($conn, 'ordenes_imagen', 'consulta_id')) {
-                        $ordenId = (int)($exists['id'] ?? 0);
                         if ($ordenId > 0) {
                             $stmtUpd = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
                             if ($stmtUpd) {
@@ -2558,7 +2824,7 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
         $cols = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
         $vals = ['?', '?', '?', '?', "'pendiente'"];
         $types = 'iiss';
-        $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipoOrden, $indicaciones];
+        $params = [$consultaId > 0 ? $consultaId : ($consultaAdmiteNull ? null : 0), $pacienteId, $tipoOrden, $indicaciones];
 
         if ($hasSolicitadoPor) {
             $cols[] = 'solicitado_por';
@@ -2622,7 +2888,6 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
     $stmtCot->close();
     if (!$cot) {
         $out['success'] = false;
-        $out['error'] = 'Cotización no encontrada';
         return $out;
     }
 
@@ -2840,6 +3105,7 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
     $consultaSync = asegurar_consulta_desde_cotizacion_interno($conn, $cotizacionId);
     $consultaId = (int)($consultaSync['consulta_id'] ?? 0);
 
+    crear_ordenes_procedimientos_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
     crear_ordenes_lab_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
     crear_ordenes_imagen_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
 
@@ -4255,6 +4521,311 @@ function listar_pagos_cotizacion($conn, $cotizacionId) {
     respond(['success' => true, 'pagos' => obtener_pagos_cotizacion_rows($conn, $cotizacionId)]);
 }
 
+function normalizar_rol_usuario_reporte($rolRaw) {
+    $rol = strtolower(trim((string)$rolRaw));
+    if ($rol === '' || $rol === 'sistema') return 'sistema';
+    if ($rol === 'admin' || $rol === 'administrador') return 'admin';
+    if (strpos($rol, 'recep') !== false) return 'recepcion';
+    if (strpos($rol, 'caja') !== false || strpos($rol, 'cajero') !== false) return 'caja';
+    if (strpos($rol, 'medic') !== false) return 'medico';
+    return $rol;
+}
+
+function etiqueta_rol_usuario_reporte($rolNormalizado) {
+    if ($rolNormalizado === 'admin') return 'Admin';
+    if ($rolNormalizado === 'recepcion') return 'Recepcion';
+    if ($rolNormalizado === 'caja') return 'Caja';
+    if ($rolNormalizado === 'medico') return 'Medico';
+    if ($rolNormalizado === 'sistema') return 'Sistema';
+    return ucfirst((string)$rolNormalizado);
+}
+
+function fecha_iso_valida($value) {
+    return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1;
+}
+
+function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
+    $map = [];
+    $ids = array_values(array_filter(array_map('intval', (array)$cotizacionIds), function($id) {
+        return $id > 0;
+    }));
+    if (empty($ids) || !table_exists($conn, 'cotizacion_movimientos')) {
+        return $map;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+    $hasCobros = table_exists($conn, 'cobros');
+    $hasTipoPagoCobro = $hasCobros && column_exists($conn, 'cobros', 'tipo_pago');
+    $selectMetodoPago = $hasTipoPagoCobro ? ', c.tipo_pago AS metodo_pago' : ', NULL AS metodo_pago';
+    $joinCobros = $hasTipoPagoCobro ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
+
+    $sql = "SELECT cm.cotizacion_id, cm.tipo_movimiento, cm.monto{$selectMetodoPago}
+            FROM cotizacion_movimientos cm
+            {$joinCobros}
+            WHERE cm.cotizacion_id IN ({$placeholders})
+              AND cm.tipo_movimiento IN ('abono','devolucion')";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $map;
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    foreach ($rows as $row) {
+        $cid = (int)($row['cotizacion_id'] ?? 0);
+        if ($cid <= 0) continue;
+        if (!isset($map[$cid])) $map[$cid] = [];
+        $map[$cid][] = $row;
+    }
+
+    return $map;
+}
+
+function reporte_atenciones_detallado($conn) {
+    $hoyLima = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+    $fechaInicio = trim((string)($_GET['fecha_inicio'] ?? ''));
+    $fechaFin = trim((string)($_GET['fecha_fin'] ?? ''));
+    $estado = trim((string)($_GET['estado'] ?? ''));
+    $q = trim((string)($_GET['q'] ?? ''));
+    $rol = normalizar_rol_usuario_reporte($_GET['rol'] ?? 'todos');
+    $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : 0;
+
+    if ($fechaInicio === '' && $fechaFin === '') {
+        $fechaInicio = $hoyLima;
+        $fechaFin = $hoyLima;
+    } elseif ($fechaInicio === '') {
+        $fechaInicio = $fechaFin;
+    } elseif ($fechaFin === '') {
+        $fechaFin = $fechaInicio;
+    }
+
+    if (!fecha_iso_valida($fechaInicio) || !fecha_iso_valida($fechaFin)) {
+        respond(['success' => false, 'error' => 'Rango de fechas invalido. Use formato YYYY-MM-DD'], 400);
+    }
+
+    $where = ["DATE(c.fecha) BETWEEN ? AND ?"];
+    $types = 'ss';
+    $params = [$fechaInicio, $fechaFin];
+
+    if ($estado !== '') {
+        if (strtolower($estado) === 'informativo') {
+            $where[] = "(LOWER(TRIM(c.estado)) = 'informativo' OR c.observaciones LIKE ?)";
+            $types .= 's';
+            $params[] = '%[COTIZACION_INFORMATIVA]%';
+        } else {
+            $where[] = "LOWER(TRIM(c.estado)) = LOWER(TRIM(?))";
+            $types .= 's';
+            $params[] = $estado;
+        }
+    } else {
+        $where[] = "LOWER(TRIM(c.estado)) NOT IN ('anulada', 'anulado')";
+    }
+
+    if ($rol === 'admin') {
+        $where[] = "LOWER(TRIM(COALESCE(u.rol, ''))) IN ('admin', 'administrador')";
+    } elseif ($rol === 'recepcion') {
+        $where[] = "LOWER(TRIM(COALESCE(u.rol, ''))) LIKE '%recep%'";
+    }
+
+    if ($usuarioId > 0) {
+        $where[] = "c.usuario_id = ?";
+        $types .= 'i';
+        $params[] = $usuarioId;
+    }
+
+    if ($q !== '') {
+        $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR c.observaciones LIKE ? OR CAST(c.id AS CHAR) LIKE ?)";
+        $types .= 'ssssss';
+        $like = "%{$q}%";
+        $params[] = $like;
+        $params[] = $like;
+        $params[] = $like;
+        $params[] = $like;
+        $params[] = $like;
+        $params[] = $like;
+    }
+
+    $whereSql = 'WHERE ' . implode(' AND ', $where);
+
+    $sql = "SELECT c.id, c.fecha, c.paciente_id, c.usuario_id, c.total, c.total_pagado, c.saldo_pendiente, c.estado,
+                   c.observaciones, p.nombre, p.apellido, p.dni, p.historia_clinica,
+                   COALESCE(u.nombre, 'Sistema') AS usuario_nombre,
+                   COALESCE(u.rol, '') AS usuario_rol
+            FROM cotizaciones c
+            LEFT JOIN pacientes p ON p.id = c.paciente_id
+            LEFT JOIN usuarios u ON u.id = c.usuario_id
+            {$whereSql}
+            ORDER BY c.fecha DESC, c.id DESC";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        respond(['success' => false, 'error' => 'No se pudo preparar el reporte'], 500);
+    }
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $cotizaciones = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    if (empty($cotizaciones)) {
+        respond([
+            'success' => true,
+            'filtros' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin,
+                'rol' => $rol,
+                'usuario_id' => $usuarioId,
+                'estado' => $estado,
+                'q' => $q,
+            ],
+            'resumen_por_rol' => [],
+            'detalle' => [],
+        ]);
+    }
+
+    $ids = array_map(function($row) {
+        return (int)($row['id'] ?? 0);
+    }, $cotizaciones);
+    $detallesPorCotizacion = cargar_detalles_cotizaciones($conn, $ids);
+    $pagosPorCotizacion = cargar_pagos_cotizaciones_map($conn, $ids);
+
+    $resumenPorRol = [];
+    $detalle = [];
+
+    foreach ($cotizaciones as $cot) {
+        aplicar_fallback_paciente_temporal($cot);
+        normalizar_estado_informativo_cotizacion($cot);
+
+        $cotizacionId = (int)($cot['id'] ?? 0);
+        if ($cotizacionId <= 0) continue;
+
+        $rolNormalizado = normalizar_rol_usuario_reporte($cot['usuario_rol'] ?? '');
+        $rolLabel = etiqueta_rol_usuario_reporte($rolNormalizado);
+        $usuarioNombre = trim((string)($cot['usuario_nombre'] ?? 'Sistema'));
+        if ($usuarioNombre === '') $usuarioNombre = 'Sistema';
+
+        if (!isset($resumenPorRol[$rolLabel])) {
+            $resumenPorRol[$rolLabel] = [
+                'rol' => $rolLabel,
+                'cantidad_cotizaciones' => 0,
+                'total_cotizado' => 0.0,
+                'total_pagado' => 0.0,
+                'saldo_pendiente' => 0.0,
+            ];
+        }
+
+        $resumenPorRol[$rolLabel]['cantidad_cotizaciones'] += 1;
+        $resumenPorRol[$rolLabel]['total_cotizado'] += (float)($cot['total'] ?? 0);
+        $resumenPorRol[$rolLabel]['total_pagado'] += (float)($cot['total_pagado'] ?? 0);
+        $resumenPorRol[$rolLabel]['saldo_pendiente'] += (float)($cot['saldo_pendiente'] ?? 0);
+
+        $detallesRaw = $detallesPorCotizacion[$cotizacionId] ?? [];
+        $detallesActivos = array_values(array_filter($detallesRaw, function($d) {
+            $estadoItem = strtolower(trim((string)($d['estado_item'] ?? 'activo')));
+            return $estadoItem !== 'eliminado';
+        }));
+
+        if (empty($detallesActivos)) {
+            $detallesActivos = [[
+                'servicio_tipo' => '',
+                'descripcion' => 'Sin detalle',
+                'cantidad' => 0,
+                'precio_unitario' => 0,
+                'subtotal' => 0,
+            ]];
+        }
+
+        $pagosMetodo = [];
+        foreach (($pagosPorCotizacion[$cotizacionId] ?? []) as $pago) {
+            $metodo = normalizar_metodo_pago_cotizacion($pago['metodo_pago'] ?? '');
+            if ($metodo === '') $metodo = 'sin_pago';
+            $monto = (float)($pago['monto'] ?? 0);
+            $tipoMov = strtolower(trim((string)($pago['tipo_movimiento'] ?? 'abono')));
+            if ($tipoMov === 'devolucion') {
+                $monto *= -1;
+            }
+            if (!isset($pagosMetodo[$metodo])) {
+                $pagosMetodo[$metodo] = 0.0;
+            }
+            $pagosMetodo[$metodo] += $monto;
+        }
+
+        if (empty($pagosMetodo)) {
+            $pagosMetodo['sin_pago'] = 0.0;
+        }
+
+        $metodosConMonto = array_values(array_filter(array_keys($pagosMetodo), function($key) use ($pagosMetodo) {
+            if ($key === 'sin_pago') return false;
+            return abs((float)$pagosMetodo[$key]) > 0.00001;
+        }));
+        $resumenMetodo = 'sin_pago';
+        if (count($metodosConMonto) === 1) {
+            $resumenMetodo = $metodosConMonto[0];
+        } elseif (count($metodosConMonto) > 1) {
+            $resumenMetodo = 'mixto';
+        }
+
+        $pacienteNombre = trim((string)($cot['nombre'] ?? '') . ' ' . (string)($cot['apellido'] ?? ''));
+        if ($pacienteNombre === '') $pacienteNombre = 'Paciente sin nombre';
+
+        foreach ($detallesActivos as $det) {
+            $servicioTipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
+            $descripcion = trim((string)($det['descripcion'] ?? ''));
+            $cantidad = (float)($det['cantidad'] ?? 0);
+            $precioUnitario = (float)($det['precio_unitario'] ?? 0);
+            $subtotal = (float)($det['subtotal_neto'] ?? $det['subtotal'] ?? 0);
+
+            foreach ($pagosMetodo as $metodo => $montoMetodo) {
+                $detalle[] = [
+                    'fecha' => (string)($cot['fecha'] ?? ''),
+                    'cotizacion_id' => $cotizacionId,
+                    'estado' => (string)($cot['estado'] ?? ''),
+                    'paciente' => $pacienteNombre,
+                    'dni' => (string)($cot['dni'] ?? ''),
+                    'historia_clinica' => (string)($cot['historia_clinica'] ?? ''),
+                    'rol_responsable' => $rolLabel,
+                    'usuario_responsable' => $usuarioNombre,
+                    'servicio_tipo' => $servicioTipo,
+                    'servicio_descripcion' => $descripcion,
+                    'cantidad' => $cantidad,
+                    'precio_unitario' => round($precioUnitario, 2),
+                    'subtotal_servicio' => round($subtotal, 2),
+                    'tipo_pago_resumen' => $resumenMetodo,
+                    'tipo_pago' => (string)$metodo,
+                    'monto_tipo_pago' => round((float)$montoMetodo, 2),
+                    'total_cotizacion' => round((float)($cot['total'] ?? 0), 2),
+                    'total_pagado' => round((float)($cot['total_pagado'] ?? 0), 2),
+                    'saldo_pendiente' => round((float)($cot['saldo_pendiente'] ?? 0), 2),
+                ];
+            }
+        }
+    }
+
+    $resumenRolRows = array_values(array_map(function($row) {
+        $row['total_cotizado'] = round((float)$row['total_cotizado'], 2);
+        $row['total_pagado'] = round((float)$row['total_pagado'], 2);
+        $row['saldo_pendiente'] = round((float)$row['saldo_pendiente'], 2);
+        return $row;
+    }, $resumenPorRol));
+
+    respond([
+        'success' => true,
+        'filtros' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'rol' => $rol,
+            'usuario_id' => $usuarioId,
+            'estado' => $estado,
+            'q' => $q,
+        ],
+        'resumen_por_rol' => $resumenRolRows,
+        'detalle' => $detalle,
+    ]);
+}
+
 function resumen_diario($conn) {
     $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
     $fechaFin = $_GET['fecha_fin'] ?? $fechaInicio;
@@ -4314,6 +4885,10 @@ switch ($method) {
     case 'GET': {
         if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'resumen_diario') {
             resumen_diario($conn);
+        }
+
+        if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'reporte_atenciones_detallado') {
+            reporte_atenciones_detallado($conn);
         }
 
         if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'buscar_pendiente_farmacia' && isset($_GET['paciente_id'])) {
@@ -4500,6 +5075,8 @@ switch ($method) {
         $consultaRefPorCotizacion = [];
         $origenCobroPorCotizacion = [];
         $contratoResumenPorCotizacion = [];
+        $metodoPagoResumenPorCotizacion = [];
+        $metodosPagoListaPorCotizacion = [];
 
         if (!empty($idsPagina)) {
             $placeholders = implode(',', array_fill(0, count($idsPagina), '?'));
@@ -4520,6 +5097,34 @@ switch ($method) {
                         $cid = (int)($rowDesc['cotizacion_id'] ?? 0);
                         if ($cid > 0) {
                             $descuentoPorCotizacion[$cid] = (float)($rowDesc['total_descuento'] ?? 0);
+                        }
+                    }
+                }
+
+                if (table_exists($conn, 'cobros') && column_exists($conn, 'cobros', 'tipo_pago') && column_exists($conn, 'cotizacion_movimientos', 'cobro_id')) {
+                    $sqlPago = "SELECT cm.cotizacion_id,
+                                       GROUP_CONCAT(DISTINCT LOWER(TRIM(c.tipo_pago)) ORDER BY LOWER(TRIM(c.tipo_pago)) SEPARATOR ',') AS metodos_pago
+                                FROM cotizacion_movimientos cm
+                                INNER JOIN cobros c ON c.id = cm.cobro_id
+                                WHERE cm.cotizacion_id IN ($placeholders)
+                                  AND LOWER(TRIM(cm.tipo_movimiento)) = 'abono'
+                                  AND c.tipo_pago IS NOT NULL
+                                  AND TRIM(c.tipo_pago) <> ''
+                                GROUP BY cm.cotizacion_id";
+                    $stmtPago = $conn->prepare($sqlPago);
+                    if ($stmtPago) {
+                        $stmtPago->bind_param($typesIds, ...$idsPagina);
+                        $stmtPago->execute();
+                        $rowsPago = $stmtPago->get_result()->fetch_all(MYSQLI_ASSOC);
+                        $stmtPago->close();
+
+                        foreach ($rowsPago as $rowPago) {
+                            $cid = (int)($rowPago['cotizacion_id'] ?? 0);
+                            if ($cid <= 0) continue;
+                            $raw = array_filter(array_map('trim', explode(',', (string)($rowPago['metodos_pago'] ?? ''))));
+                            $resumenPago = resolver_metodo_pago_resumen_cotizacion($raw);
+                            $metodoPagoResumenPorCotizacion[$cid] = (string)$resumenPago['resumen'];
+                            $metodosPagoListaPorCotizacion[$cid] = (string)$resumenPago['lista'];
                         }
                     }
                 }
@@ -4740,6 +5345,8 @@ switch ($method) {
                 $cotRow['consulta_ref_id'] = (int)($consultaRefPorCotizacion[$cid] ?? 0);
                 $cotRow['origen_cobro_resumen'] = $origenCobroPorCotizacion[$cid] ?? 'regular';
                 $cotRow['contratos_ids_resumen'] = $contratoResumenPorCotizacion[$cid] ?? '';
+                $cotRow['metodo_pago_resumen'] = $metodoPagoResumenPorCotizacion[$cid] ?? 'sin_pago';
+                $cotRow['metodos_pago_resumen'] = $metodosPagoListaPorCotizacion[$cid] ?? '';
 
                 // Si fue una cotización originada desde HC y no hay un usuario real que la creó
                 // (usuario_id = 0 → sesión de médico), el médico solicitante prevalece como "Quién cotizó".

@@ -823,6 +823,58 @@ if (!function_exists('ol_recalcular_total_cotizacion')) {
     }
 }
 
+if (!function_exists('ol_examenes_con_resultados_en_orden')) {
+    function ol_examenes_con_resultados_en_orden(mysqli $conn, int $ordenId, array $examIds): array
+    {
+        $ordenId = intval($ordenId);
+        $ids = ol_normalize_examenes_ids($examIds);
+        if ($ordenId <= 0 || empty($ids)) {
+            return [];
+        }
+
+        $stmt = $conn->prepare('SELECT resultados FROM resultados_laboratorio WHERE orden_id = ?');
+        if (!$stmt) {
+            return [];
+        }
+
+        $stmt->bind_param('i', $ordenId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $bloqueados = [];
+        while ($row = $res->fetch_assoc()) {
+            $payload = json_decode((string)($row['resultados'] ?? '{}'), true);
+            if (!is_array($payload) || empty($payload)) {
+                continue;
+            }
+
+            foreach ($ids as $examId) {
+                if (isset($bloqueados[$examId])) {
+                    continue;
+                }
+
+                $prefix = $examId . '__';
+                $directKey = (string)$examId;
+                if (array_key_exists($directKey, $payload) && is_result_value_meaningful($payload[$directKey])) {
+                    $bloqueados[$examId] = true;
+                    continue;
+                }
+
+                foreach ($payload as $k => $v) {
+                    $key = (string)$k;
+                    if (strpos($key, $prefix) === 0 && is_result_value_meaningful($v)) {
+                        $bloqueados[$examId] = true;
+                        break;
+                    }
+                }
+            }
+        }
+        $stmt->close();
+
+        return array_keys($bloqueados);
+    }
+}
+
 switch ($method) {
     case 'POST':
         ol_ensure_write_schema($conn);
@@ -851,7 +903,12 @@ switch ($method) {
         }
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
         $examenes = $data['examenes'] ?? null;
-        if (!$examenes || !is_array($examenes) || count($examenes) === 0) {
+        $isConsultaFlow = ($consulta_id !== null && $consulta_id > 0);
+        if (!is_array($examenes)) {
+            echo json_encode(['success' => false, 'error' => 'Faltan exámenes para la orden']);
+            exit;
+        }
+        if (!$isConsultaFlow && count($examenes) === 0) {
             echo json_encode(['success' => false, 'error' => 'Faltan exámenes para la orden']);
             exit;
         }
@@ -891,9 +948,6 @@ switch ($method) {
                 $pacienteIdCotiz = $rowPac ? intval($rowPac['paciente_id']) : 0;
 
                 $incomingExamIds = ol_normalize_examenes_ids($examenes);
-                if (empty($incomingExamIds)) {
-                    throw new Exception('No hay examenes validos para registrar');
-                }
 
                 $stmtFindPend = $conn->prepare("SELECT id, examenes, cotizacion_id, paciente_id, carga_anticipada
                                                 FROM ordenes_laboratorio
@@ -913,7 +967,112 @@ switch ($method) {
                     $ordenId = intval($ordenPendiente['id'] ?? 0);
                     $cotizacionIdOrden = intval($ordenPendiente['cotizacion_id'] ?? 0);
                     $prevExamIds = ol_normalize_examenes_ids(json_decode((string)($ordenPendiente['examenes'] ?? '[]'), true) ?: []);
-                    $examenesFinales = array_values(array_unique(array_merge($prevExamIds, $incomingExamIds)));
+
+                    $cotizacionEditable = true;
+                    if ($cotizacionIdOrden > 0) {
+                        $stmtCot = $conn->prepare('SELECT id, estado, numero_comprobante FROM cotizaciones WHERE id = ? FOR UPDATE');
+                        if ($stmtCot) {
+                            $stmtCot->bind_param('i', $cotizacionIdOrden);
+                            $stmtCot->execute();
+                            $rowCot = $stmtCot->get_result()->fetch_assoc();
+                            $stmtCot->close();
+                            if ($rowCot) {
+                                $estadoCot = strtolower(trim((string)($rowCot['estado'] ?? 'pendiente')));
+                                $cotizacionEditable = in_array($estadoCot, ['pendiente', 'parcial'], true);
+                            }
+                        }
+                    }
+
+                    $bloqueadosPorResultados = ol_examenes_con_resultados_en_orden($conn, $ordenId, $prevExamIds);
+                    $bloqueadosMap = [];
+                    foreach ($bloqueadosPorResultados as $eid) {
+                        $bloqueadosMap[intval($eid)] = true;
+                    }
+
+                    $incomingMap = [];
+                    foreach ($incomingExamIds as $eid) {
+                        $incomingMap[intval($eid)] = true;
+                    }
+
+                    $intentadosEliminarConResultado = [];
+                    foreach ($bloqueadosPorResultados as $eid) {
+                        $eid = intval($eid);
+                        if (!isset($incomingMap[$eid])) {
+                            $intentadosEliminarConResultado[] = $eid;
+                        }
+                    }
+
+                    $removidosSolicitados = [];
+                    $bloqueadosSet = array_flip(array_map('intval', $bloqueadosPorResultados));
+                    foreach ($prevExamIds as $eid) {
+                        $eid = intval($eid);
+                        if (!isset($incomingMap[$eid]) && !isset($bloqueadosSet[$eid])) {
+                            $removidosSolicitados[] = $eid;
+                        }
+                    }
+                    if (!empty($removidosSolicitados) && !$cotizacionEditable) {
+                        throw new Exception('No se puede quitar exámenes porque la cotización ya fue cobrada o cerrada.');
+                    }
+
+                    $examenesFinales = $incomingExamIds;
+                    if (!empty($bloqueadosPorResultados)) {
+                        $examenesFinales = array_values(array_unique(array_merge($incomingExamIds, $bloqueadosPorResultados)));
+                    }
+
+                    // Permitir vaciar solo si no hay resultados bloqueando y aún no está cancelada.
+                    if (empty($examenesFinales)) {
+                        if (!empty($bloqueadosPorResultados)) {
+                            throw new Exception('No se puede vaciar la solicitud porque ya existen resultados asociados.');
+                        }
+
+                        $estadoOrdenActual = strtolower(trim((string)($ordenPendiente['estado'] ?? 'pendiente')));
+                        if ($estadoOrdenActual === 'cancelada') {
+                            throw new Exception('La orden ya está cancelada.');
+                        }
+
+                        if (!$cotizacionEditable) {
+                            throw new Exception('No se puede vaciar la solicitud porque la cotización ya no es editable.');
+                        }
+
+                        $stmtCancel = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = '[]', estado = 'cancelada', carga_anticipada = ? WHERE id = ?");
+                        $stmtCancel->bind_param('ii', $cargaAnticipada, $ordenId);
+                        if (!$stmtCancel->execute()) {
+                            throw new Exception($stmtCancel->error);
+                        }
+                        $stmtCancel->close();
+
+                        if ($cotizacionIdOrden > 0) {
+                            $hasConsultaDetalle = ol_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+                            if ($hasConsultaDetalle) {
+                                $stmtDelLab = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'");
+                                $stmtDelLab->bind_param('ii', $cotizacionIdOrden, $consulta_id);
+                            } else {
+                                $stmtDelLab = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'");
+                                $stmtDelLab->bind_param('i', $cotizacionIdOrden);
+                            }
+                            if ($stmtDelLab) {
+                                $stmtDelLab->execute();
+                                $stmtDelLab->close();
+                            }
+                            ol_recalcular_total_cotizacion($conn, $cotizacionIdOrden);
+                        }
+
+                        $conn->commit();
+                        echo json_encode([
+                            'success' => true,
+                            'modo' => 'cancelada_por_vacio',
+                            'orden_id' => $ordenId,
+                            'paciente_id' => $pacienteIdCotiz,
+                            'cotizacion_id' => $cotizacionIdOrden > 0 ? $cotizacionIdOrden : null,
+                            'numero_comprobante' => null,
+                            'total' => 0,
+                            'examenes_finales' => [],
+                            'examenes_bloqueados_por_resultado' => [],
+                            'examenes_no_removidos_por_resultado' => [],
+                        ]);
+                        exit;
+                    }
+
                     $jsonFinal = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales));
                     $cargaFinal = (intval($ordenPendiente['carga_anticipada'] ?? 0) === 1 || $cargaAnticipada === 1) ? 1 : 0;
 
@@ -923,8 +1082,11 @@ switch ($method) {
                         throw new Exception($stmtUpOrden->error);
                     }
                     $stmtUpOrden->close();
-                    $modoOperacion = 'consolidada';
+                    $modoOperacion = 'actualizada';
                 } else {
+                    if (empty($incomingExamIds)) {
+                        throw new Exception('No hay examenes validos para registrar');
+                    }
                     $jsonFinal = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales));
                     $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
                     $stmt->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
@@ -1035,6 +1197,9 @@ switch ($method) {
                     'cotizacion_id' => $cotizData['cotizacion_id'],
                     'numero_comprobante' => $cotizData['numero_comprobante'],
                     'total' => $cotizData['total'],
+                    'examenes_finales' => $examenesFinales,
+                    'examenes_bloqueados_por_resultado' => $bloqueadosPorResultados ?? [],
+                    'examenes_no_removidos_por_resultado' => $intentadosEliminarConResultado ?? [],
                 ]);
             } else if ($paciente_id && $cobro_id !== null) {
                 // Orden cotizada directamente. Si ya existe una orden para esta cotización, actualizar cobro_id en lugar de duplicar.
@@ -1147,6 +1312,10 @@ switch ($method) {
                     IFNULL(p2.edad, IFNULL(p.edad, p_ref.edad)) AS paciente_edad,
                     m.nombre AS medico_nombre, 
                     m.apellido AS medico_apellido,
+                    ct.numero_comprobante AS cotizacion_numero,
+                    ct.estado AS cotizacion_estado,
+                    ct.usuario_id AS cotizacion_usuario_id,
+                    u_ct.nombre AS cotizacion_usuario_nombre,
                     $derivadoExpr AS tiene_derivados
                 FROM ordenes_laboratorio o 
                 LEFT JOIN consultas c ON o.consulta_id = c.id 
@@ -1161,6 +1330,7 @@ switch ($method) {
                 LEFT JOIN pacientes p_ref ON c_ref.paciente_id = p_ref.id
                 LEFT JOIN pacientes p2 ON o.paciente_id = p2.id 
                 LEFT JOIN cotizaciones ct ON o.cotizacion_id = ct.id
+                LEFT JOIN usuarios u_ct ON u_ct.id = ct.usuario_id
                 LEFT JOIN medicos m ON m.id = COALESCE(c.medico_id, c_ref.medico_id)
                 WHERE 1=1";
         $params = [];
@@ -1725,6 +1895,16 @@ switch ($method) {
             }
 
             $row['tiene_derivados'] = !empty($row['tiene_derivados']);
+
+            $cotizacionId = intval($row['cotizacion_id'] ?? 0);
+            $origen = $cotizacionId > 0 ? 'cotizacion' : 'manual_consulta';
+            $registradoPor = trim((string)($row['cotizacion_usuario_nombre'] ?? ''));
+            if ($registradoPor === '') {
+                $registradoPor = trim((string)($row['medico_nombre'] ?? '') . ' ' . (string)($row['medico_apellido'] ?? ''));
+            }
+            $row['origen_solicitud'] = $origen;
+            $row['registrado_por'] = $registradoPor;
+
             $ordenes[] = $row;
         }
         $stmt->close();

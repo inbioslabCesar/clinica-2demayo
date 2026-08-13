@@ -43,6 +43,9 @@ export default function PagoHonorariosMedicosPage() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [metodoPago, setMetodoPago] = useState("efectivo");
+  const [fuenteFondos, setFuenteFondos] = useState("clinica");
+  const [terceroNombre, setTerceroNombre] = useState("");
+  const [referenciaPago, setReferenciaPago] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [estadoFiltro, setEstadoFiltro] = useState("pendiente");
   const [tipoConsultaFiltro, setTipoConsultaFiltro] = useState("");
@@ -85,6 +88,10 @@ export default function PagoHonorariosMedicosPage() {
       Swal.fire("Selecciona al menos un honorario", "", "warning");
       return;
     }
+    if (fuenteFondos !== "clinica" && !terceroNombre.trim()) {
+      Swal.fire("Falta dato", "Indica quién cubre el pago externo.", "warning");
+      return;
+    }
     const result = await Swal.fire({
       title: "¿Confirmar pago de honorarios?",
       text: `Se marcarán como pagados ${selectedIds.length} honorarios.`,
@@ -102,6 +109,9 @@ export default function PagoHonorariosMedicosPage() {
         body: JSON.stringify({
           ids: selectedIds,
           metodo_pago: metodoPago,
+          fuente_fondos: fuenteFondos,
+          tercero_nombre: terceroNombre,
+          referencia_pago: referenciaPago,
           observaciones,
         }),
       });
@@ -141,10 +151,43 @@ export default function PagoHonorariosMedicosPage() {
           className="border rounded px-3 py-2 ml-2"
         >
           <option value="efectivo">Efectivo</option>
+          <option value="yape">Yape</option>
+          <option value="plin">Plin</option>
           <option value="transferencia">Transferencia</option>
+          <option value="tarjeta">Tarjeta</option>
           <option value="cheque">Cheque</option>
           <option value="deposito">Depósito</option>
         </select>
+        <div className="mt-3">
+          <label className="font-semibold">Fuente de fondos:</label>
+          <select
+            value={fuenteFondos}
+            onChange={(e) => {
+              const nuevaFuente = e.target.value;
+              setFuenteFondos(nuevaFuente);
+              if (nuevaFuente === "clinica") setTerceroNombre("");
+            }}
+            className="border rounded px-3 py-2 ml-2"
+          >
+            <option value="clinica">Saldo de la clínica</option>
+            <option value="tercero_directo">Pago directo del dueño / tercero</option>
+            <option value="tercero_fondeo">Dueño / tercero fondeó a la clínica</option>
+          </select>
+        </div>
+        {fuenteFondos !== "clinica" && (
+          <input
+            value={terceroNombre}
+            onChange={(e) => setTerceroNombre(e.target.value)}
+            className="w-full mt-3 border rounded px-3 py-2"
+            placeholder="Nombre del dueño / tercero que cubre el pago"
+          />
+        )}
+        <input
+          value={referenciaPago}
+          onChange={(e) => setReferenciaPago(e.target.value)}
+          className="w-full mt-3 border rounded px-3 py-2"
+          placeholder="N.º de operación o referencia (opcional)"
+        />
         <textarea
           value={observaciones}
           onChange={(e) => setObservaciones(e.target.value)}

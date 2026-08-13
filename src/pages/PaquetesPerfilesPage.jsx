@@ -22,10 +22,12 @@ const EMPTY_FORM = {
   tipo: "paquete",
   estado: "activo",
   precio_global_venta: "",
+  monto_clinica_fijo: "",
   modo_precio: "fijo_global",
   vigencia_desde: "",
   vigencia_hasta: "",
   items: [],
+  meta: {},
 };
 
 const EMPTY_ITEM = {
@@ -65,6 +67,82 @@ function recalcItem(item) {
   };
 }
 
+function parseMetaObject(metaRaw) {
+  if (metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)) return metaRaw;
+  if (typeof metaRaw === "string" && metaRaw.trim()) {
+    try {
+      const parsed = JSON.parse(metaRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch (_) {
+      return {};
+    }
+  }
+  return {};
+}
+
+function calcularResumenCampana(items, precioGlobal) {
+  const normalizados = (Array.isArray(items) ? items : []).map((it) => recalcItem(it));
+  const subtotalLista = normalizados.reduce((acc, it) => acc + Number(it.subtotal_snapshot || 0), 0);
+  const objetivo = Math.max(0, Number(precioGlobal || 0));
+  const factor = subtotalLista > 0 && objetivo > 0 ? objetivo / subtotalLista : 1;
+
+  let acumulado = 0;
+  const detalles = normalizados.map((it, idx) => {
+    const base = Number(it.subtotal_snapshot || 0);
+    const esUltimo = idx === normalizados.length - 1;
+    const subtotalCampana = objetivo > 0
+      ? (esUltimo ? Number((objetivo - acumulado).toFixed(2)) : Number((base * factor).toFixed(2)))
+      : Number(base.toFixed(2));
+    acumulado = Number((acumulado + subtotalCampana).toFixed(2));
+
+    const regla = it?.honorario_regla || {};
+    const modo = String(regla?.modo_honorario || "usar_configuracion_medico").toLowerCase();
+    const fijo = Number(regla?.monto_fijo_medico || 0);
+    const porcentaje = Number(regla?.porcentaje_medico || 0);
+
+    let montoMedico = null;
+    if (modo === "monto_fijo_medico_paquete") {
+      montoMedico = Number(fijo.toFixed(2));
+    } else if (modo === "porcentaje_medico_paquete") {
+      montoMedico = Number((subtotalCampana * Math.max(0, porcentaje) / 100).toFixed(2));
+    }
+
+    return {
+      item: it,
+      modo,
+      subtotalCampana,
+      montoMedico,
+      excedeSubtotal: montoMedico !== null && montoMedico > subtotalCampana + 0.009,
+    };
+  });
+
+  const sumaMedicos = detalles.reduce((acc, d) => acc + Number(d.montoMedico || 0), 0);
+  const sumaIndeterminada = detalles.some((d) => d.montoMedico === null);
+
+  return {
+    subtotalLista: Number(subtotalLista.toFixed(2)),
+    precioGlobal: Number(objetivo.toFixed(2)),
+    sumaMedicos: Number(sumaMedicos.toFixed(2)),
+    montoClinicaCalculado: Number((objetivo - sumaMedicos).toFixed(2)),
+    sumaIndeterminada,
+    detalles,
+  };
+}
+
+function formatHonorarioValor(item) {
+  const regla = item?.honorario_regla || {};
+  const modo = String(regla?.modo_honorario || "usar_configuracion_medico").toLowerCase();
+  if (modo === "monto_fijo_medico_paquete") {
+    const monto = Number(regla?.monto_fijo_medico || 0);
+    return `S/ ${monto.toFixed(2)}`;
+  }
+  if (modo === "porcentaje_medico_paquete") {
+    const porcentaje = Number(regla?.porcentaje_medico || 0);
+    return `${porcentaje.toFixed(2)}%`;
+  }
+  return "Config. normal";
+}
+
 export default function PaquetesPerfilesPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -79,6 +157,7 @@ export default function PaquetesPerfilesPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [editorOpen, setEditorOpen] = useState(false);
   const [itemDraft, setItemDraft] = useState(EMPTY_ITEM);
+  const [editingItemIndex, setEditingItemIndex] = useState(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogQ, setCatalogQ] = useState("");
   const [catalogResults, setCatalogResults] = useState([]);
@@ -133,6 +212,7 @@ export default function PaquetesPerfilesPage() {
     setForm(EMPTY_FORM);
     setVigenciaIndefinida(true);
     setItemDraft(EMPTY_ITEM);
+    setEditingItemIndex(null);
     setCatalogResults([]);
     setCatalogQ("");
   };
@@ -143,6 +223,8 @@ export default function PaquetesPerfilesPage() {
       const data = await res.json();
       if (!data?.success || !data?.paquete) throw new Error(data?.error || "No se pudo cargar paquete");
       const p = data.paquete;
+      const meta = parseMetaObject(p.meta);
+      const montoClinicaFijo = Number(meta?.reparto_campana?.monto_clinica_fijo || 0);
       setForm({
         id: Number(p.id || 0),
         codigo: p.codigo || "",
@@ -151,9 +233,11 @@ export default function PaquetesPerfilesPage() {
         tipo: p.tipo || "paquete",
         estado: p.estado || "activo",
         precio_global_venta: p.precio_global_venta ?? "",
+        monto_clinica_fijo: montoClinicaFijo > 0 ? montoClinicaFijo : "",
         modo_precio: p.modo_precio || "fijo_global",
         vigencia_desde: p.vigencia_desde || "",
         vigencia_hasta: p.vigencia_hasta || "",
+        meta,
         items: Array.isArray(p.items)
           ? p.items.map((it) => ({
               ...EMPTY_ITEM,
@@ -165,6 +249,8 @@ export default function PaquetesPerfilesPage() {
             }))
           : [],
       });
+      setEditingItemIndex(null);
+      setItemDraft(EMPTY_ITEM);
       setVigenciaIndefinida(!(p.vigencia_hasta || ""));
       openEditor();
     } catch (err) {
@@ -213,13 +299,56 @@ export default function PaquetesPerfilesPage() {
       return;
     }
     const item = recalcItem(itemDraft);
-    setForm((prev) => ({ ...prev, items: [...prev.items, item] }));
+    setForm((prev) => {
+      if (editingItemIndex === null || editingItemIndex < 0 || editingItemIndex >= prev.items.length) {
+        return { ...prev, items: [...prev.items, item] };
+      }
+      const nextItems = [...prev.items];
+      nextItems[editingItemIndex] = item;
+      return { ...prev, items: nextItems };
+    });
     setItemDraft(EMPTY_ITEM);
+    setEditingItemIndex(null);
     setCatalogResults([]);
   };
 
   const removeItem = (idx) => {
     setForm((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }));
+    setEditingItemIndex((prev) => {
+      if (prev === null) return prev;
+      if (prev === idx) {
+        setItemDraft(EMPTY_ITEM);
+        return null;
+      }
+      if (prev > idx) return prev - 1;
+      return prev;
+    });
+  };
+
+  const editItem = (idx) => {
+    const base = form.items[idx];
+    if (!base) return;
+    setItemDraft({
+      ...EMPTY_ITEM,
+      ...base,
+      honorario_regla: {
+        ...EMPTY_ITEM.honorario_regla,
+        ...(base.honorario_regla || {}),
+      },
+    });
+    setEditingItemIndex(idx);
+    setCatalogResults([]);
+    setCatalogQ("");
+    window.requestAnimationFrame(() => {
+      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const cancelEditItem = () => {
+    setEditingItemIndex(null);
+    setItemDraft(EMPTY_ITEM);
+    setCatalogResults([]);
+    setCatalogQ("");
   };
 
   const onChangeForm = (key, value) => {
@@ -236,12 +365,55 @@ export default function PaquetesPerfilesPage() {
       return;
     }
 
+    const precioGlobal = normalizeNumber(form.precio_global_venta);
+    const montoClinicaFijo = normalizeNumber(form.monto_clinica_fijo);
+    if (montoClinicaFijo > 0) {
+      const resumen = calcularResumenCampana(form.items, precioGlobal);
+      if (resumen.sumaIndeterminada) {
+        Swal.fire(
+          "Configuracion incompleta",
+          "Si defines monto fijo para clínica, todos los items médicos deben usar monto fijo o porcentaje de paquete.",
+          "warning"
+        );
+        return;
+      }
+      const excede = resumen.detalles.find((d) => d.excedeSubtotal);
+      if (excede) {
+        Swal.fire(
+          "Regla inválida",
+          `Un item tiene monto médico mayor al subtotal prorrateado de campaña (${excede.item.descripcion_snapshot}).`,
+          "warning"
+        );
+        return;
+      }
+      const diff = Number((resumen.montoClinicaCalculado - montoClinicaFijo).toFixed(2));
+      if (Math.abs(diff) > 0.01) {
+        Swal.fire(
+          "No cuadra el reparto",
+          `Con precio campaña S/ ${resumen.precioGlobal.toFixed(2)}, la clínica queda en S/ ${resumen.montoClinicaCalculado.toFixed(2)} y no en S/ ${montoClinicaFijo.toFixed(2)}.`,
+          "warning"
+        );
+        return;
+      }
+    }
+
     setSaving(true);
     try {
+      const metaActual = parseMetaObject(form.meta);
+      const meta = {
+        ...metaActual,
+        reparto_campana: {
+          ...(metaActual?.reparto_campana || {}),
+          monto_clinica_fijo: montoClinicaFijo > 0 ? Number(montoClinicaFijo.toFixed(2)) : null,
+          validar_cierre: montoClinicaFijo > 0,
+        },
+      };
       const payload = {
         accion: "guardar",
         ...form,
-        precio_global_venta: normalizeNumber(form.precio_global_venta),
+        precio_global_venta: precioGlobal,
+        monto_clinica_fijo: montoClinicaFijo > 0 ? Number(montoClinicaFijo.toFixed(2)) : null,
+        meta,
         items: form.items.map((it, idx) => ({
           ...recalcItem(it),
           item_orden: idx + 1,
@@ -462,6 +634,7 @@ export default function PaquetesPerfilesPage() {
           </select>
           <input className="border rounded px-3 py-2 md:col-span-2" placeholder="Descripcion" value={form.descripcion} onChange={(e) => onChangeForm("descripcion", e.target.value)} />
           <input className="border rounded px-3 py-2" type="number" min="0" step="0.01" placeholder="Precio global" value={form.precio_global_venta} onChange={(e) => onChangeForm("precio_global_venta", e.target.value)} />
+          <input className="border rounded px-3 py-2" type="number" min="0" step="0.01" placeholder="Monto fijo clinica (opcional)" value={form.monto_clinica_fijo} onChange={(e) => onChangeForm("monto_clinica_fijo", e.target.value)} />
           <select className="border rounded px-3 py-2" value={form.modo_precio} onChange={(e) => onChangeForm("modo_precio", e.target.value)}>
             <option value="fijo_global">Fijo global</option>
             <option value="calculado_componentes">Calculado por componentes</option>
@@ -503,10 +676,27 @@ export default function PaquetesPerfilesPage() {
           <div className="md:col-span-4 text-xs text-gray-600 -mt-1">
             Estas fechas definen el periodo en que el paquete/perfil estara vigente para uso y cotizacion.
           </div>
+          {(() => {
+            const fijoClinica = normalizeNumber(form.monto_clinica_fijo);
+            if (fijoClinica <= 0) return null;
+            const resumen = calcularResumenCampana(form.items, form.precio_global_venta);
+            const diff = Number((resumen.montoClinicaCalculado - fijoClinica).toFixed(2));
+            const ok = Math.abs(diff) <= 0.01;
+            return (
+              <div className={`md:col-span-4 text-xs border rounded px-3 py-2 ${ok ? "text-green-700 bg-green-50 border-green-200" : "text-amber-800 bg-amber-50 border-amber-200"}`}>
+                Reparto campaña: Médicos S/ {resumen.sumaMedicos.toFixed(2)} | Clínica calculada S/ {resumen.montoClinicaCalculado.toFixed(2)} | Clínica objetivo S/ {fijoClinica.toFixed(2)}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="border rounded p-3 mb-4">
           <h4 className="font-semibold mb-2">Agregar item</h4>
+          {editingItemIndex !== null && (
+            <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Editando item #{editingItemIndex + 1}. Puedes cambiar tipo, medico, precio y regla de honorario antes de guardar cambios.
+            </div>
+          )}
           <div className="mb-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
             <strong>Guia rapida:</strong> selecciona tipo, busca en catalogo y elige un resultado para autocompletar descripcion, precio y medico.
             Si no eliges del catalogo, completa manualmente descripcion, cantidad y precio unitario.
@@ -639,7 +829,16 @@ export default function PaquetesPerfilesPage() {
             <div className="md:col-span-4 text-xs text-gray-600">
               Subtotal del item: <strong>S/ {Number(itemDraft.subtotal_snapshot || 0).toFixed(2)}</strong>
             </div>
-            <button type="button" className="px-3 py-2 rounded bg-green-600 text-white" onClick={addItemToForm}>Agregar item</button>
+            <div className="flex gap-2">
+              <button type="button" className="px-3 py-2 rounded bg-green-600 text-white" onClick={addItemToForm}>
+                {editingItemIndex === null ? "Agregar item" : "Guardar cambios"}
+              </button>
+              {editingItemIndex !== null && (
+                <button type="button" className="px-3 py-2 rounded bg-gray-200 text-gray-700" onClick={cancelEditItem}>
+                  Cancelar edicion
+                </button>
+              )}
+            </div>
           </div>
 
           {catalogResults.length > 0 && (
@@ -669,12 +868,13 @@ export default function PaquetesPerfilesPage() {
                 <th className="px-2 py-2 text-right">Precio</th>
                 <th className="px-2 py-2 text-right">Subtotal</th>
                 <th className="px-2 py-2 text-left">Hon. modo</th>
-                <th className="px-2 py-2"></th>
+                <th className="px-2 py-2 text-left">Hon. valor</th>
+                <th className="px-2 py-2 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {form.items.length === 0 ? (
-                <tr><td colSpan={8} className="px-2 py-3 text-center text-gray-500">Sin items</td></tr>
+                <tr><td colSpan={9} className="px-2 py-3 text-center text-gray-500">Sin items</td></tr>
               ) : form.items.map((it, idx) => (
                 <tr key={`${it.source_type}-${it.source_id || idx}-${idx}`} className="border-t">
                   <td className="px-2 py-2">{it.source_type}</td>
@@ -684,8 +884,12 @@ export default function PaquetesPerfilesPage() {
                   <td className="px-2 py-2 text-right">{Number(it.precio_lista_snapshot).toFixed(2)}</td>
                   <td className="px-2 py-2 text-right">{Number(it.subtotal_snapshot).toFixed(2)}</td>
                   <td className="px-2 py-2">{it.honorario_regla?.modo_honorario || "usar_configuracion_medico"}</td>
+                  <td className="px-2 py-2">{formatHonorarioValor(it)}</td>
                   <td className="px-2 py-2 text-right">
-                    <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => removeItem(idx)}>Quitar</button>
+                    <div className="flex justify-end gap-2">
+                      <button className="px-2 py-1 rounded bg-blue-100 text-blue-700" onClick={() => editItem(idx)}>Editar</button>
+                      <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => removeItem(idx)}>Quitar</button>
+                    </div>
                   </td>
                 </tr>
               ))}

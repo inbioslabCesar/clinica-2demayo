@@ -140,17 +140,6 @@ if (!function_exists('resolverMedicoResponsableOrdenImagen')) {
             }
         }
 
-        if ($medicoId <= 0 && $consultaId > 0) {
-            $stmtCons = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
-            if ($stmtCons) {
-                $stmtCons->bind_param('i', $consultaId);
-                $stmtCons->execute();
-                $rowCons = $stmtCons->get_result()->fetch_assoc();
-                $stmtCons->close();
-                $medicoId = (int)($rowCons['medico_id'] ?? 0);
-            }
-        }
-
         $info = [
             'medico_id' => $medicoId,
             'medico_responsable_nombre' => null,
@@ -750,16 +739,32 @@ if ($method === 'POST') {
             if (empty($servicios)) {
                 // Sin servicios → orden genérica con indicaciones del usuario
                 $indFinal = $indicacionesUsuario !== '' ? $indicacionesUsuario : strtoupper($tipo);
+                $medicoFallback = 0;
+                $stmtMedicoConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+                if ($stmtMedicoConsulta) {
+                    $stmtMedicoConsulta->bind_param('i', $consulta_id);
+                    $stmtMedicoConsulta->execute();
+                    $rowMedicoConsulta = $stmtMedicoConsulta->get_result()->fetch_assoc();
+                    $stmtMedicoConsulta->close();
+                    $medicoFallback = (int)($rowMedicoConsulta['medico_id'] ?? 0);
+                }
+                if ($medicoFallback <= 0) {
+                    echo json_encode(['success' => false, 'error' => 'No se pudo resolver médico responsable para esta solicitud de imagen.']);
+                    exit;
+                }
                 $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?)');
                 $stmt->bind_param('iissii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada);
                 $stmt->execute();
                 $stmt->close();
                 $oid        = (int)$conn->insert_id;
                 $ordenIds[] = $oid;
+                $conn->query("UPDATE ordenes_imagen SET medico_id = $medicoFallback WHERE id = $oid");
                 if ($cotizId > 0) {
                     $conn->query("UPDATE ordenes_imagen SET cotizacion_id = $cotizId WHERE id = $oid");
                 }
             } else {
+                $serviciosSinMedico = [];
+                $serviciosNormalizados = [];
                 foreach ($servicios as $srv) {
                     $desc = trim((string)($srv['descripcion'] ?? 'Servicio'));
                     $tarifaIdSrv = (int)($srv['tarifa_id'] ?? 0);
@@ -775,6 +780,30 @@ if ($method === 'POST') {
                     if ($medicoResponsableId <= 0) {
                         $medicoResponsableId = (int)($srv['medico_id'] ?? 0);
                     }
+                    if ($medicoResponsableId <= 0) {
+                        $serviciosSinMedico[] = ($desc !== '' ? $desc : ('Tarifa #' . $tarifaIdSrv));
+                        continue;
+                    }
+
+                    $serviciosNormalizados[] = [
+                        'detalle_id' => $detalleId,
+                        'descripcion' => $desc,
+                        'medico_id' => $medicoResponsableId,
+                    ];
+                }
+
+                if (!empty($serviciosSinMedico)) {
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'Hay servicios de imagen sin médico responsable configurado: ' . implode(', ', $serviciosSinMedico),
+                    ]);
+                    exit;
+                }
+
+                foreach ($serviciosNormalizados as $srvNorm) {
+                    $detalleId = (int)$srvNorm['detalle_id'];
+                    $desc = (string)$srvNorm['descripcion'];
+                    $medicoResponsableId = (int)$srvNorm['medico_id'];
 
                     // Formato estricto: compatible con idempotencia de crear_ordenes_imagen_cotizacion
                     // (payment-sync usa este mismo formato para deduplicar)
@@ -883,11 +912,16 @@ if ($method === 'POST') {
 
             $creadas = 0;
             $tiposCreados = [];
+            $omitidasSinMedico = [];
             foreach ($detallesImagen as $detImg) {
                 $detalleId = (int)$detImg['detalle_id'];
                 $tipoOrden = (string)$detImg['tipo'];
                 $descOrden = trim((string)$detImg['descripcion']);
                 $medicoResponsableId = (int)($detImg['medico_id'] ?? 0);
+                if ($medicoResponsableId <= 0) {
+                    $omitidasSinMedico[] = $descOrden !== '' ? $descOrden : ('Detalle #' . $detalleId);
+                    continue;
+                }
                 $consultaRelacionadaId = (int)($detImg['consulta_id'] ?? 0);
                 if ($descOrden === '') {
                     $descOrden = strtoupper($tipoOrden);
@@ -917,7 +951,12 @@ if ($method === 'POST') {
                 }
             }
 
-            echo json_encode(['success' => true, 'creadas' => $creadas, 'tipos' => $tiposCreados]);
+            echo json_encode([
+                'success' => true,
+                'creadas' => $creadas,
+                'tipos' => $tiposCreados,
+                'omitidas_sin_medico' => $omitidasSinMedico,
+            ]);
 
         } elseif ($action === 'toggle_anticipada') {
             $orden_id = (int)($input['orden_id'] ?? 0);
@@ -929,7 +968,46 @@ if ($method === 'POST') {
 
         } elseif ($action === 'cancelar') {
             $orden_id = (int)($input['orden_id'] ?? 0);
-            if ($orden_id > 0) $conn->query("UPDATE ordenes_imagen SET estado = 'cancelado' WHERE id = $orden_id");
+            if ($orden_id <= 0) {
+                echo json_encode(['success' => false, 'error' => 'orden_id requerido']);
+                exit;
+            }
+
+            $rowOrden = $conn->query("SELECT id, estado, cotizacion_id FROM ordenes_imagen WHERE id = $orden_id LIMIT 1")->fetch_assoc();
+            if (!$rowOrden) {
+                echo json_encode(['success' => false, 'error' => 'Orden no encontrada']);
+                exit;
+            }
+
+            $estadoOrden = strtolower(trim((string)($rowOrden['estado'] ?? 'pendiente')));
+            if ($estadoOrden !== 'pendiente') {
+                echo json_encode(['success' => false, 'error' => 'Solo se pueden cancelar solicitudes pendientes.']);
+                exit;
+            }
+
+            $tieneArchivos = false;
+            $tblArch = $conn->query("SHOW TABLES LIKE 'ordenes_imagen_archivos'");
+            if ($tblArch && $tblArch->num_rows > 0) {
+                $chkArch = $conn->query("SELECT COUNT(*) c FROM ordenes_imagen_archivos WHERE orden_id = $orden_id");
+                $tieneArchivos = ((int)($chkArch->fetch_assoc()['c'] ?? 0)) > 0;
+            }
+            if ($tieneArchivos) {
+                echo json_encode(['success' => false, 'error' => 'No se puede cancelar: la solicitud ya fue procesada (tiene archivos).']);
+                exit;
+            }
+
+            $cotizacionId = (int)($rowOrden['cotizacion_id'] ?? 0);
+            if ($cotizacionId > 0) {
+                $cotizRow = $conn->query("SELECT estado FROM cotizaciones WHERE id = $cotizacionId LIMIT 1")->fetch_assoc();
+                $estadoCot = strtolower(trim((string)($cotizRow['estado'] ?? 'pendiente')));
+                $editable = in_array($estadoCot, ['pendiente', 'parcial'], true);
+                if (!$editable) {
+                    echo json_encode(['success' => false, 'error' => 'No se puede cancelar: la cotización ya fue cobrada o cerrada.']);
+                    exit;
+                }
+            }
+
+            $conn->query("UPDATE ordenes_imagen SET estado = 'cancelado' WHERE id = $orden_id");
             echo json_encode(['success' => true]);
 
         } elseif ($action === 'eliminar_archivo') {

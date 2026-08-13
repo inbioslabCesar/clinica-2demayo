@@ -174,6 +174,41 @@ function ruta_imagen_para_mpdf(string $archivoPath): string {
     return str_replace(' ', '%20', $normalizada);
 }
 
+function normalizar_firma_data_uri_pdf(string $dataUri): string {
+    $dataUri = trim($dataUri);
+    if ($dataUri === '') {
+        return '';
+    }
+
+    if (!preg_match('/^data:image\/(png|jpeg|jpg);base64,([A-Za-z0-9+\/=\s]+)$/i', $dataUri, $matches)) {
+        return '';
+    }
+
+    $declaredMime = strtolower((string)$matches[1]);
+    if ($declaredMime === 'jpg') {
+        $declaredMime = 'jpeg';
+    }
+
+    $base64Payload = preg_replace('/\s+/', '', (string)$matches[2]);
+    if ($base64Payload === null || $base64Payload === '') {
+        return '';
+    }
+
+    $binary = base64_decode($base64Payload, true);
+    if ($binary === false || $binary === '') {
+        return '';
+    }
+
+    $detectedMime = $declaredMime;
+    if (strncmp($binary, "\x89PNG\r\n\x1A\n", 8) === 0) {
+        $detectedMime = 'png';
+    } elseif (strncmp($binary, "\xFF\xD8\xFF", 3) === 0) {
+        $detectedMime = 'jpeg';
+    }
+
+    return 'data:image/' . $detectedMime . ';base64,' . $base64Payload;
+}
+
 function normalizar_texto_archivo_pdf(string $texto): string {
     $texto = trim(mb_strtolower($texto, 'UTF-8'));
     $map = [
@@ -235,7 +270,7 @@ $colegiaturaSigla = trim((string)($informe['colegio_sigla'] ?? ''));
 $colegiaturaNumero = trim((string)($informe['nro_colegiatura'] ?? ''));
 $cmp = trim((string)($informe['cmp'] ?? ''));
 $rne = trim((string)($informe['rne'] ?? ''));
-$firmaMedico = trim((string)($informe['firma'] ?? ''));
+$firmaMedico = normalizar_firma_data_uri_pdf((string)($informe['firma'] ?? ''));
 $fechaHoy = date('d/m/Y H:i');
 
 $colegiaturaPartes = [];
@@ -294,7 +329,7 @@ $html = '
         }
         .section {
             margin: 15px 0;
-            page-break-inside: avoid;
+            page-break-inside: auto;
         }
         .section-title {
             font-size: 13px;
@@ -394,9 +429,11 @@ $html = '
         .signature-image {
             max-width: 180px;
             max-height: 70px;
-            margin: 0 auto 8px auto;
+            margin: 0 auto -14px auto;
             display: block;
             object-fit: contain;
+            position: relative;
+            z-index: 2;
         }
         .signature-meta {
             font-size: 10px;

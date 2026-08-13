@@ -63,7 +63,28 @@ $refCA = 'paciente_seguimiento_pagos';
 $stmt->execute([$caja_id, 'contrato_abono', $refCA]);
 $total_contratos_abono = floatval($stmt->fetchColumn());
 
-// Calcular egresos
+// Calcular egresos por método real. Los pagos cubiertos por terceros no reducen el saldo de la clínica.
+$stmtFuente = $pdo->query("SHOW COLUMNS FROM egresos LIKE 'fuente_fondos'");
+$usaFuenteFondos = $stmtFuente && $stmtFuente->fetch(PDO::FETCH_ASSOC);
+$sqlEgresosMetodo = $usaFuenteFondos
+    ? "SELECT metodo_pago, COALESCE(fuente_fondos, 'clinica') AS fuente_fondos, COALESCE(SUM(monto), 0) AS total FROM egresos WHERE caja_id = ? GROUP BY metodo_pago, COALESCE(fuente_fondos, 'clinica')"
+    : "SELECT metodo_pago, 'clinica' AS fuente_fondos, COALESCE(SUM(monto), 0) AS total FROM egresos WHERE caja_id = ? GROUP BY metodo_pago";
+$stmt = $pdo->prepare($sqlEgresosMetodo);
+$stmt->execute([$caja_id]);
+$egresosPorMetodo = ['efectivo' => 0.0, 'yape' => 0.0, 'plin' => 0.0, 'tarjeta' => 0.0, 'transferencia' => 0.0];
+$egresosExternos = 0.0;
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $metodo = strtolower(trim((string)($row['metodo_pago'] ?? 'efectivo')));
+    $monto = (float)($row['total'] ?? 0);
+    if (strtolower(trim((string)($row['fuente_fondos'] ?? 'clinica'))) !== 'clinica') {
+        $egresosExternos += $monto;
+        continue;
+    }
+    if (array_key_exists($metodo, $egresosPorMetodo)) {
+        $egresosPorMetodo[$metodo] += $monto;
+    }
+}
+
 $stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
 $stmt->execute([$caja_id]);
 $egreso_honorarios = $stmt->fetchColumn();
@@ -86,7 +107,11 @@ if ($egreso_operativo === false || $egreso_operativo === null) {
 }
 
 $total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floatval($egreso_operativo);
-$efectivo_esperado = floatval($total_efectivo) - $total_egresos;
+// Los movimientos históricos de laboratorio de referencia no guardan método, por compatibilidad se consideran efectivo.
+$efectivo_esperado = floatval($caja['monto_apertura']) + floatval($total_efectivo) - $egresosPorMetodo['efectivo'] - floatval($egreso_lab_ref);
+$virtual_cobrado = floatval($total_yape) + floatval($total_plin) + floatval($total_tarjetas) + floatval($total_transferencias);
+$egresos_virtuales_clinica = floatval($egresosPorMetodo['yape']) + floatval($egresosPorMetodo['plin']) + floatval($egresosPorMetodo['tarjeta']) + floatval($egresosPorMetodo['transferencia']);
+$virtual_esperado = $virtual_cobrado - $egresos_virtuales_clinica;
 $diferencia = $monto_contado - $efectivo_esperado;
 
 // Calcular ingreso total del día (todos los métodos de pago)
@@ -136,6 +161,12 @@ echo json_encode([
         'egreso_honorarios' => floatval($egreso_honorarios),
         'egreso_lab_ref' => floatval($egreso_lab_ref),
         'egreso_operativo' => floatval($egreso_operativo),
+        'egresos_por_metodo' => $egresosPorMetodo,
+        'egresos_externos' => $egresosExternos,
+        'efectivo_esperado' => $efectivo_esperado,
+        'virtual_cobrado' => $virtual_cobrado,
+        'egresos_virtuales_clinica' => $egresos_virtuales_clinica,
+        'virtual_esperado' => $virtual_esperado,
         'total_egresos' => $total_egresos,
         'total_contratos_abono' => $total_contratos_abono
     ]

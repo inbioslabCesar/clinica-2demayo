@@ -37,8 +37,23 @@ function normalizeServiceType(value) {
   return base;
 }
 
+function parsePackageMeta(metaRaw) {
+  if (metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)) return metaRaw;
+  if (typeof metaRaw === "string" && metaRaw.trim()) {
+    try {
+      const parsed = JSON.parse(metaRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch (_) {
+      return {};
+    }
+  }
+  return {};
+}
+
 function buildPackageComponents(pkg, cotizacionId) {
   const items = Array.isArray(pkg?.items) ? pkg.items : [];
+  const meta = parsePackageMeta(pkg?.meta);
+  const montoClinicaFijo = Number(meta?.reparto_campana?.monto_clinica_fijo || 0);
   return items
     .map((it) => {
       const cantidad = Math.max(1, Number(it.cantidad || 1));
@@ -64,6 +79,7 @@ function buildPackageComponents(pkg, cotizacionId) {
         valor_derivacion: Number(it.valor_derivacion || 0),
         medico_id: Number(it.medico_id || 0) || null,
         honorario_regla: it.honorario_regla || null,
+        paquete_monto_clinica_fijo: montoClinicaFijo > 0 ? Number(montoClinicaFijo.toFixed(2)) : null,
         cotizacion_id: Number(cotizacionId || 0) || null,
       };
     })

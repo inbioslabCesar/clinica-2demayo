@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
 
@@ -14,6 +14,18 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
   const [observaciones, setObservaciones] = useState("");
   const [turno, setTurno] = useState("");
   const [loading, setLoading] = useState(false);
+  const [traspasoPendiente, setTraspasoPendiente] = useState(null);
+
+  useEffect(() => {
+    authFetch("api_caja_traspasos.php", { cache: "no-store" })
+      .then(response => response.json())
+      .then(data => {
+        const traspaso = data?.success ? data.traspaso : null;
+        setTraspasoPendiente(traspaso);
+        if (traspaso) setMontoApertura(Number(traspaso.monto || 0));
+      })
+      .catch(() => setTraspasoPendiente(null));
+  }, []);
 
   const handleApertura = async (e) => {
     e.preventDefault();
@@ -34,6 +46,7 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
           monto_apertura: montoApertura,
           observaciones,
           turno,
+          traspaso_id: traspasoPendiente?.id || 0,
           usuario_id: usuario.id,
           usuario_rol: usuario.rol
         })
@@ -56,6 +69,12 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
   return (
     <form className="bg-white p-4 sm:p-6 rounded-2xl shadow-xl max-w-md mx-auto w-full flex flex-col gap-4" onSubmit={handleApertura}>
       <h3 className="text-xl sm:text-2xl font-extrabold mb-2 text-blue-700 text-center tracking-tight">Apertura de Caja</h3>
+      {traspasoPendiente ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          Fondo pendiente de recibir: <strong>S/ {Number(traspasoPendiente.monto || 0).toFixed(2)}</strong>
+          {traspasoPendiente.entrega_nombre ? ` entregado por ${traspasoPendiente.entrega_nombre}.` : "."}
+        </div>
+      ) : null}
       <div className="flex flex-col gap-1">
         <label className="block text-sm font-semibold text-gray-700">Monto de apertura (S/)</label>
         <input
@@ -64,6 +83,7 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
           step="0.01"
           value={montoApertura}
           onChange={e => setMontoApertura(parseFloat(e.target.value))}
+          readOnly={Boolean(traspasoPendiente)}
           className="w-full border-2 border-blue-200 focus:border-blue-500 rounded-lg px-3 py-2 text-lg bg-blue-50 focus:bg-white transition-all duration-150 outline-none"
           required
         />
