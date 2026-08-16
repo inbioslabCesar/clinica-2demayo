@@ -161,6 +161,30 @@ function badgeOrigenVisual(row) {
   return badgeOrigen(row?.origen_cobro_resumen);
 }
 
+function resolverAnulacionDesdeHC(row, servicios = []) {
+  const estado = String(row?.estado || "").toLowerCase().trim();
+  if (estado !== "anulada") return { activa: false, detalle: "" };
+
+  const referencia = String(row?.referencia_origen || "").trim();
+  const observaciones = String(row?.observaciones || "").trim();
+  const observacionesLower = observaciones.toLowerCase();
+  const referenciaLower = referencia.toLowerCase();
+  const sinServicios = !Array.isArray(servicios) || servicios.length === 0;
+
+  const marcaExplicita = referenciaLower.includes("hc consulta") && referenciaLower.includes("cancelad");
+  const marcaInferida = sinServicios && observacionesLower.includes("procedimientos desde consulta #");
+  if (!marcaExplicita && !marcaInferida) {
+    return { activa: false, detalle: "" };
+  }
+
+  const baseTexto = referencia || observaciones;
+  const match = baseTexto.match(/consulta\s*#\s*(\d+)/i);
+  const consultaId = match?.[1] ? Number(match[1]) : 0;
+  const detalle = consultaId > 0 ? `Consulta #${consultaId}` : "Solicitud clínica";
+
+  return { activa: true, detalle };
+}
+
 function normalizarMetodoPagoResumen(value) {
   const v = String(value || "").toLowerCase().trim();
   if (!v) return "sin_pago";
@@ -235,6 +259,7 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const origen = useMemo(() => badgeOrigenVisual(row), [row]);
   const pagoBadge = useMemo(() => badgeMetodoPago(row), [row]);
   const contratosIds = String(row.contratos_ids_resumen || "").trim();
+  const anulacionDesdeHC = useMemo(() => resolverAnulacionDesdeHC(row, servicios), [row, servicios]);
   const anticipadoActivo = Number(anticipadoInfo?.habilitacion_anticipada_activa || 0) === 1;
   const anticipadoEstado = String(anticipadoInfo?.estado_resumen || '').toLowerCase();
   const anticipadoMotivo = String(anticipadoInfo?.motivo || '').trim();
@@ -307,7 +332,16 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
       </td>
       <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
-      <td className="px-3 py-2 text-xs text-slate-600">{String(row.referencia_origen || "").trim() || "-"}</td>
+      <td className="px-3 py-2 text-xs text-slate-600">
+        <div className="flex flex-col gap-1 items-start">
+          <span>{String(row.referencia_origen || "").trim() || "-"}</span>
+          {anulacionDesdeHC.activa && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-700">
+              Anulada desde HC · {anulacionDesdeHC.detalle}
+            </span>
+          )}
+        </div>
+      </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {servicios.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
@@ -325,6 +359,11 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       <td className="px-3 py-2">
         <div className="flex flex-col gap-1 items-start">
           <span className={`px-2 py-1 rounded text-xs font-semibold ${origen.cls}`}>{origen.label}</span>
+          {anulacionDesdeHC.activa && (
+            <span className="px-2 py-1 rounded text-xs font-semibold bg-rose-100 text-rose-700">
+              HC cancelada
+            </span>
+          )}
           {contratosIds && (
             <span className="text-[11px] text-slate-500">Contrato(s): {contratosIds}</span>
           )}

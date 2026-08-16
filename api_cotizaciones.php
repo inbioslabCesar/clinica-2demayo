@@ -567,10 +567,8 @@ function resolver_contexto_clinico_base_cotizacion($conn, $cotizacionId) {
         }
     }
 
-    if ($consultaId <= 0) {
-        $consultaId = resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
-    }
-
+    // Seguridad clínica: NO usar fallback por paciente/fecha para enlazar detalles.
+    // Solo se permite heredar contexto ya persistido dentro de la misma cotización.
     if ($medicoId <= 0 && $consultaId > 0) {
         $medicoId = obtener_medico_id_desde_consulta($conn, $consultaId);
     }

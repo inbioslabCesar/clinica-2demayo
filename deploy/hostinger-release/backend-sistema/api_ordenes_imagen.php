@@ -79,6 +79,132 @@ function getApiEndpointPath(string $fileName = 'api_ordenes_imagen.php'): string
     return rtrim($dir, '/') . '/' . ltrim($fileName, '/');
 }
 
+if (!function_exists('oi_column_exists')) {
+    function oi_column_exists(mysqli $conn, string $table, string $column): bool {
+        static $cache = [];
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1');
+        if (!$stmt) {
+            $cache[$key] = false;
+            return false;
+        }
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        $cache[$key] = $exists;
+        return $exists;
+    }
+}
+
+if (!function_exists('oi_table_exists')) {
+    function oi_table_exists(mysqli $conn, string $table): bool {
+        static $cache = [];
+        if (array_key_exists($table, $cache)) {
+            return $cache[$table];
+        }
+
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1');
+        if (!$stmt) {
+            $cache[$table] = false;
+            return false;
+        }
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        $cache[$table] = $exists;
+        return $exists;
+    }
+}
+
+if (!function_exists('oi_cotizacion_tiene_pagos')) {
+    function oi_cotizacion_tiene_pagos(mysqli $conn, int $cotizacionId): bool {
+        if ($cotizacionId <= 0) return false;
+
+        if (oi_column_exists($conn, 'cotizaciones', 'total_pagado')) {
+            $stmt = $conn->prepare('SELECT COALESCE(total_pagado, 0) AS total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+            if ($stmt) {
+                $stmt->bind_param('i', $cotizacionId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if ((float)($row['total_pagado'] ?? 0) > 0.00001) {
+                    return true;
+                }
+            }
+        }
+
+        if (!oi_table_exists($conn, 'cotizacion_movimientos')) {
+            return false;
+        }
+        if (!oi_column_exists($conn, 'cotizacion_movimientos', 'cotizacion_id') || !oi_column_exists($conn, 'cotizacion_movimientos', 'monto')) {
+            return false;
+        }
+
+        $stmtMov = $conn->prepare('SELECT COALESCE(SUM(CASE WHEN monto > 0 THEN monto ELSE 0 END), 0) AS total_abonos FROM cotizacion_movimientos WHERE cotizacion_id = ?');
+        if (!$stmtMov) {
+            return false;
+        }
+        $stmtMov->bind_param('i', $cotizacionId);
+        $stmtMov->execute();
+        $rowMov = $stmtMov->get_result()->fetch_assoc();
+        $stmtMov->close();
+
+        return (float)($rowMov['total_abonos'] ?? 0) > 0.00001;
+    }
+}
+
+if (!function_exists('oi_recalcular_total_cotizacion')) {
+    function oi_recalcular_total_cotizacion(mysqli $conn, int $cotizacionId): void {
+        $whereEstado = oi_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND estado_item <> 'eliminado'"
+            : '';
+
+        $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");
+        if (!$stmtTotal) return;
+        $stmtTotal->bind_param('i', $cotizacionId);
+        $stmtTotal->execute();
+        $row = $stmtTotal->get_result()->fetch_assoc();
+        $stmtTotal->close();
+        $total = round((float)($row['total'] ?? 0), 2);
+
+        if (oi_column_exists($conn, 'cotizaciones', 'total_pagado') && oi_column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+            $stmtPag = $conn->prepare('SELECT COALESCE(total_pagado, 0) AS total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+            $pagado = 0.0;
+            if ($stmtPag) {
+                $stmtPag->bind_param('i', $cotizacionId);
+                $stmtPag->execute();
+                $rowPag = $stmtPag->get_result()->fetch_assoc();
+                $stmtPag->close();
+                $pagado = (float)($rowPag['total_pagado'] ?? 0);
+            }
+            $saldo = max(0.0, round($total - $pagado, 2));
+            $estado = $saldo <= 0.00001 ? 'pagado' : ($pagado > 0.00001 ? 'parcial' : 'pendiente');
+            $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
+            if ($stmtUp) {
+                $stmtUp->bind_param('ddsi', $total, $saldo, $estado, $cotizacionId);
+                $stmtUp->execute();
+                $stmtUp->close();
+            }
+            return;
+        }
+
+        $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ? WHERE id = ?');
+        if ($stmtUp) {
+            $stmtUp->bind_param('di', $total, $cotizacionId);
+            $stmtUp->execute();
+            $stmtUp->close();
+        }
+    }
+}
+
 // ─── Helper: crear cotización desde orden de imagen ───────────────────────────
 if (!function_exists('crearCotizacionImagen')) {
     function crearCotizacionImagen(mysqli $conn, int $pacienteId, int $consultaId, array $detalles, int $usuarioId, string $observaciones, int $medicoId = 0): array {
@@ -1005,10 +1131,99 @@ if ($method === 'POST') {
                     echo json_encode(['success' => false, 'error' => 'No se puede cancelar: la cotización ya fue cobrada o cerrada.']);
                     exit;
                 }
+                if (oi_cotizacion_tiene_pagos($conn, $cotizacionId)) {
+                    echo json_encode(['success' => false, 'error' => 'No se puede cancelar: la cotización ya tiene pagos registrados.']);
+                    exit;
+                }
             }
 
-            $conn->query("UPDATE ordenes_imagen SET estado = 'cancelado' WHERE id = $orden_id");
-            echo json_encode(['success' => true]);
+            $conn->begin_transaction();
+            try {
+                $conn->query("UPDATE ordenes_imagen SET estado = 'cancelado' WHERE id = $orden_id");
+
+                if ($cotizacionId > 0) {
+                    $indicaciones = (string)($rowOrden['indicaciones'] ?? '');
+                    $consultaIdRef = (int)($rowOrden['consulta_id'] ?? 0);
+                    $detalleTokenId = 0;
+                    if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+                        $detalleTokenId = (int)($m[1] ?? 0);
+                    }
+
+                    $tipoOrden = strtolower(trim((string)($rowOrden['tipo'] ?? '')));
+                    $whereTipo = '';
+                    if ($tipoOrden === 'ecografia') {
+                        $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'ecografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND LOWER(descripcion) LIKE '%ecograf%'))";
+                    } elseif ($tipoOrden === 'rx') {
+                        $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) IN ('rayosx','rayos_x','rayos x','rx') OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%rayos x%' OR LOWER(descripcion) REGEXP '(^|[^a-z])rx([^a-z]|$)')))";
+                    } elseif ($tipoOrden === 'tomografia') {
+                        $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'tomografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%tomograf%' OR LOWER(descripcion) LIKE '% tac %' OR LOWER(descripcion) LIKE 'tac %' OR LOWER(descripcion) LIKE '% tac')))";
+                    }
+
+                    $hasEstadoItem = oi_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
+                    if ($detalleTokenId > 0) {
+                        if ($hasEstadoItem) {
+                            $stmtDet = $conn->prepare("UPDATE cotizaciones_detalle SET estado_item = 'eliminado' WHERE cotizacion_id = ? AND id = ?");
+                        } else {
+                            $stmtDet = $conn->prepare('DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND id = ?');
+                        }
+                        if ($stmtDet) {
+                            $stmtDet->bind_param('ii', $cotizacionId, $detalleTokenId);
+                            $stmtDet->execute();
+                            $stmtDet->close();
+                        }
+                    } else {
+                        if ($hasEstadoItem) {
+                            $sql = "UPDATE cotizaciones_detalle SET estado_item = 'eliminado' WHERE cotizacion_id = $cotizacionId{$whereTipo}";
+                        } else {
+                            $sql = "DELETE FROM cotizaciones_detalle WHERE cotizacion_id = $cotizacionId{$whereTipo}";
+                        }
+                        $conn->query($sql);
+                    }
+
+                    oi_recalcular_total_cotizacion($conn, $cotizacionId);
+
+                    $stmtCotOut = $conn->prepare('SELECT COALESCE(total, 0) AS total, COALESCE(total_pagado, 0) AS total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+                    $totalCot = 0.0;
+                    $pagadoCot = 0.0;
+                    if ($stmtCotOut) {
+                        $stmtCotOut->bind_param('i', $cotizacionId);
+                        $stmtCotOut->execute();
+                        $rowCotOut = $stmtCotOut->get_result()->fetch_assoc();
+                        $stmtCotOut->close();
+                        $totalCot = (float)($rowCotOut['total'] ?? 0);
+                        $pagadoCot = (float)($rowCotOut['total_pagado'] ?? 0);
+                    }
+
+                    if ($totalCot <= 0.00001 && $pagadoCot <= 0.00001) {
+                        if (oi_column_exists($conn, 'cotizaciones', 'referencia_origen')) {
+                            $ref = 'HC consulta #' . $consultaIdRef . ' · Solicitud de imagen cancelada';
+                            $stmtRef = $conn->prepare("UPDATE cotizaciones SET referencia_origen = CASE WHEN referencia_origen IS NULL OR TRIM(referencia_origen) = '' THEN ? ELSE referencia_origen END WHERE id = ?");
+                            if ($stmtRef) {
+                                $stmtRef->bind_param('si', $ref, $cotizacionId);
+                                $stmtRef->execute();
+                                $stmtRef->close();
+                            }
+                        }
+
+                        if (oi_column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+                            $stmtAn = $conn->prepare("UPDATE cotizaciones SET estado = 'anulada', total = 0, saldo_pendiente = 0 WHERE id = ?");
+                        } else {
+                            $stmtAn = $conn->prepare("UPDATE cotizaciones SET estado = 'anulada', total = 0 WHERE id = ?");
+                        }
+                        if ($stmtAn) {
+                            $stmtAn->bind_param('i', $cotizacionId);
+                            $stmtAn->execute();
+                            $stmtAn->close();
+                        }
+                    }
+                }
+
+                $conn->commit();
+                echo json_encode(['success' => true]);
+            } catch (Throwable $e) {
+                $conn->rollback();
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+            }
 
         } elseif ($action === 'eliminar_archivo') {
             $archivo_id = (int)($input['archivo_id'] ?? 0);

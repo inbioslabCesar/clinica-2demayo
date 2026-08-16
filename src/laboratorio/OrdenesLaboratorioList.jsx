@@ -252,6 +252,14 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     });
   };
 
+  const cotizacionPendientePago = (orden) => {
+    const cotizacionId = Number(orden?.cotizacion_id || 0);
+    if (cotizacionId <= 0) return false;
+    if (Number(orden?.carga_anticipada || 0) === 1) return false;
+    const estadoCotizacion = String(orden?.cotizacion_estado || '').trim().toLowerCase();
+    return estadoCotizacion !== 'pagado';
+  };
+
   const handleCompararResultados = (orden) => {
     const pacienteId = Number(orden?.paciente_id_ref || orden?.paciente_id || 0);
     if (!pacienteId) return;
@@ -573,6 +581,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                             const porcentaje = Number(orden.progreso_porcentaje || 0);
                             const analisisTotales = Number(orden.analisis_totales || 0);
                             const analisisCompletos = Number(orden.analisis_completos || 0);
+                            const bloqueadaPorPago = cotizacionPendientePago(orden);
                             return (
                           <div className="flex flex-col gap-1">
                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -604,6 +613,11 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                                   : `✅ En tiempo (${Number(orden.alerta_en_tiempo || 0)})`}
                               </span>
                             )}
+                            {bloqueadaPorPago && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-rose-50 text-rose-700 border-rose-200">
+                                💳 Pendiente de pago
+                              </span>
+                            )}
                           </div>
                             );
                           })()}
@@ -613,14 +627,24 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                             const estadoVisual = orden.estado_visual || orden.estado;
                             const porcentaje = Number(orden.progreso_porcentaje || 0);
                             const enProceso = estadoVisual !== 'cancelada' && porcentaje > 0 && porcentaje < 100;
+                            const bloqueadaPorPago = estadoVisual !== 'completado' && cotizacionPendientePago(orden);
                             return (
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => onSeleccionarOrden(orden)}
-                              className="inline-flex items-center px-3 py-1.5 text-white text-xs font-medium rounded-lg transition-all shadow-md bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transform hover:scale-105"
-                              title={estadoVisual === 'completado' ? 'Editar resultado' : enProceso ? 'Continuar llenado' : 'Llenar resultados'}
+                              disabled={bloqueadaPorPago}
+                              className={`inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg transition-all shadow-md ${
+                                bloqueadaPorPago
+                                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                  : 'text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transform hover:scale-105'
+                              }`}
+                              title={
+                                bloqueadaPorPago
+                                  ? 'Pendiente de pago en recepción (o activar carga anticipada)'
+                                  : (estadoVisual === 'completado' ? 'Editar resultado' : enProceso ? 'Continuar llenado' : 'Llenar resultados')
+                              }
                             >
-                              {estadoVisual === 'completado' ? '✏️ Editar' : enProceso ? '🧩 Continuar' : '📝 Procesar'}
+                              {bloqueadaPorPago ? '💳 Espera pago' : (estadoVisual === 'completado' ? '✏️ Editar' : enProceso ? '🧩 Continuar' : '📝 Procesar')}
                             </button>
                             <button
                               onClick={() => handleCompararResultados(orden)}
@@ -665,6 +689,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     const analisisTotales = Number(orden.analisis_totales || 0);
                     const analisisCompletos = Number(orden.analisis_completos || 0);
                     const enProceso = estadoVisual !== 'cancelada' && porcentaje > 0 && porcentaje < 100;
+                    const bloqueadaPorPago = estadoVisual !== 'completado' && cotizacionPendientePago(orden);
                     return (
                   <>
                   <div className="flex items-center justify-between mb-4">
@@ -709,6 +734,12 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     </div>
                   )}
 
+                  {cotizacionPendientePago(orden) && (
+                    <div className="mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 font-semibold">
+                      💳 Pendiente de pago en recepción
+                    </div>
+                  )}
+
                   <div className="space-y-3">
                     <div>
                       <p className="text-xs text-gray-500 uppercase tracking-wide">Paciente</p>
@@ -741,9 +772,14 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                     <div className="flex gap-3">
                       <button
                         onClick={() => onSeleccionarOrden(orden)}
-                        className="flex-1 text-white py-2.5 px-4 rounded-lg transition-all font-medium text-sm shadow-md bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 hover:shadow-lg transform hover:scale-105"
+                        disabled={bloqueadaPorPago}
+                        className={`flex-1 py-2.5 px-4 rounded-lg transition-all font-medium text-sm shadow-md ${
+                          bloqueadaPorPago
+                            ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                            : 'text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 hover:shadow-lg transform hover:scale-105'
+                        }`}
                       >
-                        {estadoVisual === 'completado' ? '✏️ Editar Resultado' : enProceso ? '🧩 Continuar Orden' : '📝 Procesar Orden'}
+                        {bloqueadaPorPago ? '💳 Espera pago' : (estadoVisual === 'completado' ? '✏️ Editar Resultado' : enProceso ? '🧩 Continuar Orden' : '📝 Procesar Orden')}
                       </button>
                       <button
                         onClick={() => handleCompararResultados(orden)}

@@ -65,12 +65,16 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         const data = await res.json();
         const ordenes = Array.isArray(data?.ordenes) ? data.ordenes : [];
         const pendientes = ordenes.filter((ord) => String(ord?.estado || 'pendiente').toLowerCase() === 'pendiente');
-        if (activo) setTieneOrdenPendiente(pendientes.length > 0);
+        const pendienteEditable = pendientes.find((ord) => {
+          const cotizacionId = Number.parseInt(ord?.cotizacion_id, 10) || 0;
+          const totalPagado = Number.parseFloat(ord?.cotizacion_total_pagado) || 0;
+          return !(cotizacionId > 0 && totalPagado > 0);
+        }) || pendientes[0] || null;
+        if (activo) setTieneOrdenPendiente(Boolean(pendienteEditable));
 
-        // Unir exámenes de órdenes pendientes para reflejar el estado precargado real.
+        // Precargar solo la orden pendiente activa para evitar arrastrar exámenes ya cobrados de ciclos anteriores.
         const examIds = Array.from(new Set(
-          pendientes
-            .flatMap((ord) => Array.isArray(ord?.examenes) ? ord.examenes : [])
+          (Array.isArray(pendienteEditable?.examenes) ? pendienteEditable.examenes : [])
             .map((it) => {
               if (typeof it === 'object' && it !== null) return it.id;
               return it;
@@ -124,6 +128,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
       if (d.success) {
         const modo = String(d.modo || '').toLowerCase();
         const fueConsolidada = modo === 'consolidada' || modo === 'actualizada';
+          const fueAdicional = modo === 'creada_adicional';
         const noRemovidos = Array.isArray(d.examenes_no_removidos_por_resultado)
           ? d.examenes_no_removidos_por_resultado
           : [];
@@ -132,12 +137,18 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
           : examenes;
         if (d.numero_comprobante) {
           setCotizResult({ numero_comprobante: d.numero_comprobante, total: d.total ?? 0 });
-          setMsg(fueConsolidada
-            ? `✅ Solicitud actualizada · Cotización ${d.numero_comprobante} consolidada`
-            : `✅ Orden enviada · Cotización ${d.numero_comprobante} generada`);
+          if (fueAdicional) {
+            setMsg(`✅ Exámenes adicionales registrados · Cotización ${d.numero_comprobante} generada`);
+          } else {
+            setMsg(fueConsolidada
+              ? `✅ Solicitud actualizada · Cotización ${d.numero_comprobante} consolidada`
+              : `✅ Orden enviada · Cotización ${d.numero_comprobante} generada`);
+          }
         } else {
           if (modo === 'cancelada_por_vacio') {
             setMsg('✅ Solicitud vaciada y cancelada correctamente');
+          } else if (modo === 'sin_cambios') {
+            setMsg('✅ No hubo cambios: no se agregaron exámenes nuevos');
           } else {
             setMsg(fueConsolidada ? "✅ Solicitud actualizada correctamente" : "✅ Orden enviada correctamente");
           }

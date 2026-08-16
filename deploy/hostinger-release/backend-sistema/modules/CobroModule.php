@@ -323,6 +323,75 @@ class CobroModule
         return $expandido;
     }
 
+    private static function enriquecerDetalleDesdeCotizacionDetalle($conn, $detalle)
+    {
+        if (!is_array($detalle) || !self::tableExists($conn, 'cotizaciones_detalle')) {
+            return $detalle;
+        }
+
+        $detalleId = isset($detalle['cotizacion_detalle_id'])
+            ? (int)$detalle['cotizacion_detalle_id']
+            : (isset($detalle['detalle_id']) ? (int)$detalle['detalle_id'] : 0);
+        if ($detalleId <= 0) {
+            return $detalle;
+        }
+
+        $cols = ['id', 'servicio_tipo', 'servicio_id', 'descripcion', 'medico_id', 'consulta_id', 'snapshot_json'];
+        if (self::columnExists($conn, 'cotizaciones_detalle', 'paquete_id')) {
+            $cols[] = 'paquete_id';
+        }
+        if (self::columnExists($conn, 'cotizaciones_detalle', 'paquete_codigo')) {
+            $cols[] = 'paquete_codigo';
+        }
+        if (self::columnExists($conn, 'cotizaciones_detalle', 'paquete_tipo')) {
+            $cols[] = 'paquete_tipo';
+        }
+
+        $stmt = $conn->prepare('SELECT ' . implode(', ', $cols) . ' FROM cotizaciones_detalle WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return $detalle;
+        }
+        $stmt->bind_param('i', $detalleId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            return $detalle;
+        }
+
+        if (!isset($detalle['servicio_tipo']) || trim((string)$detalle['servicio_tipo']) === '') {
+            $detalle['servicio_tipo'] = (string)($row['servicio_tipo'] ?? '');
+        }
+        if (empty($detalle['servicio_id']) && !empty($row['servicio_id'])) {
+            $detalle['servicio_id'] = (int)$row['servicio_id'];
+        }
+        if (!isset($detalle['descripcion']) || trim((string)$detalle['descripcion']) === '') {
+            $detalle['descripcion'] = (string)($row['descripcion'] ?? '');
+        }
+        if (empty($detalle['medico_id']) && !empty($row['medico_id'])) {
+            $detalle['medico_id'] = (int)$row['medico_id'];
+        }
+        if (empty($detalle['consulta_id']) && !empty($row['consulta_id'])) {
+            $detalle['consulta_id'] = (int)$row['consulta_id'];
+        }
+        if ((!isset($detalle['snapshot_json']) || trim((string)$detalle['snapshot_json']) === '') && !empty($row['snapshot_json'])) {
+            $detalle['snapshot_json'] = (string)$row['snapshot_json'];
+        }
+
+        if (!isset($detalle['paquete_id']) && array_key_exists('paquete_id', $row)) {
+            $detalle['paquete_id'] = !empty($row['paquete_id']) ? (int)$row['paquete_id'] : null;
+        }
+        if (!isset($detalle['paquete_codigo']) && array_key_exists('paquete_codigo', $row)) {
+            $detalle['paquete_codigo'] = (string)($row['paquete_codigo'] ?? '');
+        }
+        if (!isset($detalle['paquete_tipo']) && array_key_exists('paquete_tipo', $row)) {
+            $detalle['paquete_tipo'] = (string)($row['paquete_tipo'] ?? '');
+        }
+
+        return $detalle;
+    }
+
     private static function distribuirDescuentoProporcionalEnDetalles($detalles, $montoDescuento)
     {
         if (!is_array($detalles) || empty($detalles)) {
@@ -2021,6 +2090,12 @@ class CobroModule
                         if (!isset($detalleServicio['paciente_id']) || $detalleServicio['paciente_id'] === null) {
                             $detalleServicio['paciente_id'] = $data['paciente_id'] ?? null;
                         }
+
+                        // Rehidratar metadata clínica/paquete desde cotizaciones_detalle para que
+                        // el cálculo de honorarios respete reglas de campaña en cobros mixtos.
+                        $detalleServicio = self::enriquecerDetalleDesdeCotizacionDetalle($conn, $detalleServicio);
+                        $data['detalles'][$i] = $detalleServicio;
+
                         $tarifa = null;
                         if ($detalleServicioKey === 'laboratorio') {
                             $examen_id = intval($detalleServicio['servicio_id'] ?? 0);

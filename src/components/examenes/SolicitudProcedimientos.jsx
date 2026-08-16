@@ -127,6 +127,7 @@ export default function SolicitudProcedimientos({ consultaId }) {
 
       const modo = String(data?.modo || "").toLowerCase();
       const consolidada = modo === "consolidada" || modo === "actualizada";
+      const creadaAdicional = modo === 'creada_adicional';
       const comprobante = data?.numero_comprobante
         ? ` · Cotización ${data.numero_comprobante}`
         : "";
@@ -134,9 +135,13 @@ export default function SolicitudProcedimientos({ consultaId }) {
         tipo: "ok",
         texto: modo === 'cancelada_por_vacio'
           ? 'Solicitud vaciada y cancelada correctamente.'
+          : modo === 'sin_cambios'
+            ? 'No hubo cambios: no se agregaron procedimientos nuevos.'
           : (consolidada
             ? `Solicitud actualizada${comprobante}.`
-            : `Solicitud guardada${comprobante}.`),
+            : (creadaAdicional
+              ? `Procedimientos adicionales registrados${comprobante}.`
+              : `Solicitud guardada${comprobante}.`)),
       });
       setSeleccionados(Array.isArray(data?.procedimientos_finales) ? data.procedimientos_finales : []);
       await cargarOrdenes();

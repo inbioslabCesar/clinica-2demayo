@@ -378,7 +378,12 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
       return Number.isNaN(tsOrden) ? 0 : tsOrden;
     };
 
-    return [...ordenesLab].sort((a, b) => getTs(a) - getTs(b));
+    return [...ordenesLab].sort((a, b) => {
+      const diffTs = getTs(a) - getTs(b);
+      if (diffTs !== 0) return diffTs;
+      // Desempate estable para distinguir claramente la secuencia cuando comparten timestamp.
+      return Number(a?.id || 0) - Number(b?.id || 0);
+    });
   }, [ordenesLab, resultadosLab]);
 
   const hayResultadosRegistrados = React.useMemo(() => {
@@ -435,6 +440,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      second: "2-digit",
     });
   };
 
@@ -485,6 +491,19 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
                 {ordenesLabOrdenadas.map((orden, idx) => (
                   <ul key={orden.id || idx} className="list-disc ml-5 text-sm">
                     <li className="text-xs text-slate-600 list-none ml-[-14px] mb-1">
+                      {ordenesLabOrdenadas.length > 1 && idx === 0 && (
+                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 mr-1">
+                          Primera solicitud
+                        </span>
+                      )}
+                      {ordenesLabOrdenadas.length > 1 && idx === (ordenesLabOrdenadas.length - 1) && (
+                        <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 mr-1">
+                          Última solicitud
+                        </span>
+                      )}
+                      {`Solicitud ${idx + 1}`}
+                      {orden?.id ? ` · Orden #${orden.id}` : ''}
+                      {' · '}
                       {String(orden?.origen_solicitud || '') === 'cotizacion' ? 'Origen: asociado por cotización' : 'Origen: solicitud en consulta'}
                       {orden?.cotizacion_numero ? ` · ${orden.cotizacion_numero}` : ''}
                       {orden?.registrado_por ? ` · Registrado por: ${orden.registrado_por}` : ''}

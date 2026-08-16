@@ -253,7 +253,7 @@ function LiquidacionHonorariosPage() {
     .filter(h => Number(h.monto_medico || 0) > 0);
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="w-full max-w-[1700px] mx-auto px-3 sm:px-4 lg:px-6 py-6">
       <h1 className="text-2xl font-bold mb-4 text-blue-800">Liquidación de Honorarios Médicos</h1>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3 mb-6">

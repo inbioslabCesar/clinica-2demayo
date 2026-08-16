@@ -42,6 +42,44 @@ if (!function_exists('op_table_exists')) {
     }
 }
 
+if (!function_exists('op_cotizacion_tiene_pagos')) {
+    function op_cotizacion_tiene_pagos(mysqli $conn, int $cotizacionId): bool
+    {
+        if ($cotizacionId <= 0) return false;
+
+        if (op_column_exists($conn, 'cotizaciones', 'total_pagado')) {
+            $stmt = $conn->prepare('SELECT COALESCE(total_pagado, 0) AS total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+            if ($stmt) {
+                $stmt->bind_param('i', $cotizacionId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if ((float)($row['total_pagado'] ?? 0) > 0.00001) {
+                    return true;
+                }
+            }
+        }
+
+        if (!op_table_exists($conn, 'cotizacion_movimientos')) {
+            return false;
+        }
+        if (!op_column_exists($conn, 'cotizacion_movimientos', 'cotizacion_id') || !op_column_exists($conn, 'cotizacion_movimientos', 'monto')) {
+            return false;
+        }
+
+        $stmtMov = $conn->prepare('SELECT COALESCE(SUM(CASE WHEN monto > 0 THEN monto ELSE 0 END), 0) AS total_abonos FROM cotizacion_movimientos WHERE cotizacion_id = ?');
+        if (!$stmtMov) {
+            return false;
+        }
+        $stmtMov->bind_param('i', $cotizacionId);
+        $stmtMov->execute();
+        $rowMov = $stmtMov->get_result()->fetch_assoc();
+        $stmtMov->close();
+
+        return (float)($rowMov['total_abonos'] ?? 0) > 0.00001;
+    }
+}
+
 if (!function_exists('op_ensure_schema')) {
     function op_ensure_schema(mysqli $conn)
     {
@@ -389,102 +427,187 @@ if ($method === 'POST') {
         $cotizacionId = 0;
         $modo = 'creada';
         $finalIds = $procIds;
+        $cotizacionConPagos = false;
 
         if ($ordenPendiente) {
             $ordenId = (int)($ordenPendiente['id'] ?? 0);
             $cotizacionId = (int)($ordenPendiente['cotizacion_id'] ?? 0);
             $prevIds = op_normalize_procedimientos_ids(json_decode((string)($ordenPendiente['procedimientos_json'] ?? '[]'), true) ?: []);
+            $cotizacionConPagos = $cotizacionId > 0 ? op_cotizacion_tiene_pagos($conn, $cotizacionId) : false;
 
-            $cotEditable = true;
-            if ($cotizacionId > 0) {
-                $stmtCot = $conn->prepare('SELECT id, estado, numero_comprobante, total FROM cotizaciones WHERE id = ? LIMIT 1 FOR UPDATE');
-                if ($stmtCot) {
-                    $stmtCot->bind_param('i', $cotizacionId);
-                    $stmtCot->execute();
-                    $rowCot = $stmtCot->get_result()->fetch_assoc();
-                    $stmtCot->close();
-                    if ($rowCot) {
-                        $estadoCot = strtolower(trim((string)($rowCot['estado'] ?? 'pendiente')));
-                        $cotEditable = in_array($estadoCot, ['pendiente', 'parcial'], true);
+            if ($cotizacionConPagos) {
+                $prevMap = [];
+                foreach ($prevIds as $pid) {
+                    $prevMap[(int)$pid] = true;
+                }
+
+                $procedimientosNuevos = [];
+                foreach ($procIds as $pid) {
+                    $pid = (int)$pid;
+                    if ($pid > 0 && !isset($prevMap[$pid])) {
+                        $procedimientosNuevos[] = $pid;
                     }
                 }
-            }
+                $procedimientosNuevos = array_values(array_unique($procedimientosNuevos));
 
-            $incomingMap = [];
-            foreach ($procIds as $pid) {
-                $incomingMap[(int)$pid] = true;
-            }
-
-            $removidosSolicitados = [];
-            foreach ($prevIds as $pid) {
-                $pid = (int)$pid;
-                if (!isset($incomingMap[$pid])) {
-                    $removidosSolicitados[] = $pid;
-                }
-            }
-
-            if (!empty($removidosSolicitados) && !$cotEditable) {
-                throw new Exception('No se puede quitar procedimientos porque la cotización ya fue cobrada o cerrada.');
-            }
-
-            $finalIds = $procIds;
-
-            if (empty($finalIds)) {
-                if (!$cotEditable) {
-                    throw new Exception('No se puede vaciar la solicitud porque la cotización ya no es editable.');
+                if (empty($procedimientosNuevos)) {
+                    $conn->commit();
+                    echo json_encode([
+                        'success' => true,
+                        'modo' => 'sin_cambios',
+                        'orden_id' => $ordenId,
+                        'cotizacion_id' => $cotizacionId > 0 ? $cotizacionId : null,
+                        'numero_comprobante' => null,
+                        'total' => 0,
+                        'procedimientos_finales' => $prevIds,
+                    ]);
+                    exit;
                 }
 
-                $stmtCancel = $conn->prepare("UPDATE ordenes_procedimientos SET procedimientos_json = '[]', estado = 'cancelado', usuario_id = ? WHERE id = ?");
-                if (!$stmtCancel) {
-                    throw new Exception('No se pudo preparar cancelacion de orden');
+                $finalIds = $procedimientosNuevos;
+                $jsonFinal = json_encode($finalIds);
+                $stmtIns = $conn->prepare('INSERT INTO ordenes_procedimientos (consulta_id, paciente_id, procedimientos_json, estado, usuario_id) VALUES (?, ?, ?, "pendiente", ?)');
+                if (!$stmtIns) {
+                    throw new Exception('No se pudo preparar insercion de orden adicional');
                 }
-                $stmtCancel->bind_param('ii', $usuarioIdSesion, $ordenId);
-                if (!$stmtCancel->execute()) {
-                    throw new Exception($stmtCancel->error);
+                $stmtIns->bind_param('iisi', $consultaId, $pacienteId, $jsonFinal, $usuarioIdSesion);
+                if (!$stmtIns->execute()) {
+                    throw new Exception($stmtIns->error);
                 }
-                $stmtCancel->close();
+                $stmtIns->close();
 
+                $ordenId = (int)$conn->insert_id;
+                $cotizacionId = 0;
+                $modo = 'creada_adicional';
+            } else {
+
+                $cotEditable = true;
                 if ($cotizacionId > 0) {
-                    $hasConsulta = op_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
-                    if ($hasConsulta) {
-                        $stmtDel = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
-                        $stmtDel->bind_param('ii', $cotizacionId, $consultaId);
-                    } else {
-                        $stmtDel = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
-                        $stmtDel->bind_param('i', $cotizacionId);
+                    $stmtCot = $conn->prepare('SELECT id, estado, numero_comprobante, total FROM cotizaciones WHERE id = ? LIMIT 1 FOR UPDATE');
+                    if ($stmtCot) {
+                        $stmtCot->bind_param('i', $cotizacionId);
+                        $stmtCot->execute();
+                        $rowCot = $stmtCot->get_result()->fetch_assoc();
+                        $stmtCot->close();
+                        if ($rowCot) {
+                            $estadoCot = strtolower(trim((string)($rowCot['estado'] ?? 'pendiente')));
+                            $cotEditable = in_array($estadoCot, ['pendiente', 'parcial'], true);
+                        }
                     }
-                    if ($stmtDel) {
-                        $stmtDel->execute();
-                        $stmtDel->close();
-                    }
-                    op_recalcular_total_cotizacion($conn, $cotizacionId);
                 }
 
-                $conn->commit();
-                echo json_encode([
-                    'success' => true,
-                    'modo' => 'cancelada_por_vacio',
-                    'orden_id' => $ordenId,
-                    'cotizacion_id' => $cotizacionId > 0 ? $cotizacionId : null,
-                    'numero_comprobante' => null,
-                    'total' => 0,
-                    'procedimientos_finales' => [],
-                ]);
-                exit;
-            }
+                $incomingMap = [];
+                foreach ($procIds as $pid) {
+                    $incomingMap[(int)$pid] = true;
+                }
 
-            $jsonFinal = json_encode($finalIds);
+                $removidosSolicitados = [];
+                foreach ($prevIds as $pid) {
+                    $pid = (int)$pid;
+                    if (!isset($incomingMap[$pid])) {
+                        $removidosSolicitados[] = $pid;
+                    }
+                }
 
-            $stmtUp = $conn->prepare('UPDATE ordenes_procedimientos SET procedimientos_json = ?, paciente_id = CASE WHEN paciente_id IS NULL OR paciente_id = 0 THEN ? ELSE paciente_id END, usuario_id = ? WHERE id = ?');
-            if (!$stmtUp) {
-                throw new Exception('No se pudo preparar actualizacion de orden');
+                if (!empty($removidosSolicitados) && !$cotEditable) {
+                    throw new Exception('No se puede quitar procedimientos porque la cotización ya fue cobrada o cerrada.');
+                }
+
+                $finalIds = $procIds;
+
+                if (empty($finalIds)) {
+                    if (!$cotEditable) {
+                        throw new Exception('No se puede vaciar la solicitud porque la cotización ya no es editable.');
+                    }
+
+                    $stmtCancel = $conn->prepare("UPDATE ordenes_procedimientos SET procedimientos_json = '[]', estado = 'cancelado', usuario_id = ? WHERE id = ?");
+                    if (!$stmtCancel) {
+                        throw new Exception('No se pudo preparar cancelacion de orden');
+                    }
+                    $stmtCancel->bind_param('ii', $usuarioIdSesion, $ordenId);
+                    if (!$stmtCancel->execute()) {
+                        throw new Exception($stmtCancel->error);
+                    }
+                    $stmtCancel->close();
+
+                    if ($cotizacionId > 0) {
+                        if (op_cotizacion_tiene_pagos($conn, $cotizacionId)) {
+                            throw new Exception('No se puede vaciar la solicitud porque la cotización ya tiene pagos registrados.');
+                        }
+
+                        $hasConsulta = op_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+                        $hasEstadoItem = op_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
+                        if ($hasConsulta && $hasEstadoItem) {
+                            $stmtDel = $conn->prepare("UPDATE cotizaciones_detalle SET estado_item = 'eliminado' WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
+                            $stmtDel->bind_param('ii', $cotizacionId, $consultaId);
+                        } elseif ($hasEstadoItem) {
+                            $stmtDel = $conn->prepare("UPDATE cotizaciones_detalle SET estado_item = 'eliminado' WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
+                            $stmtDel->bind_param('i', $cotizacionId);
+                        } elseif ($hasConsulta) {
+                            $stmtDel = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
+                            $stmtDel->bind_param('ii', $cotizacionId, $consultaId);
+                        } else {
+                            $stmtDel = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos')");
+                            $stmtDel->bind_param('i', $cotizacionId);
+                        }
+                        if ($stmtDel) {
+                            $stmtDel->execute();
+                            $stmtDel->close();
+                        }
+
+                        if (op_column_exists($conn, 'cotizaciones', 'referencia_origen')) {
+                            $ref = 'HC consulta #' . $consultaId . ' · Solicitud de procedimientos cancelada';
+                            $stmtRef = $conn->prepare("UPDATE cotizaciones SET referencia_origen = CASE WHEN referencia_origen IS NULL OR TRIM(referencia_origen) = '' THEN ? ELSE referencia_origen END WHERE id = ?");
+                            if ($stmtRef) {
+                                $stmtRef->bind_param('si', $ref, $cotizacionId);
+                                $stmtRef->execute();
+                                $stmtRef->close();
+                            }
+                        }
+
+                        if (op_column_exists($conn, 'cotizaciones', 'saldo_pendiente') && op_column_exists($conn, 'cotizaciones', 'total_pagado')) {
+                            $stmtAnular = $conn->prepare("UPDATE cotizaciones SET estado = 'anulada', total = 0, saldo_pendiente = 0 WHERE id = ?");
+                            if ($stmtAnular) {
+                                $stmtAnular->bind_param('i', $cotizacionId);
+                                $stmtAnular->execute();
+                                $stmtAnular->close();
+                            }
+                        } else {
+                            $stmtAnular = $conn->prepare("UPDATE cotizaciones SET estado = 'anulada', total = 0 WHERE id = ?");
+                            if ($stmtAnular) {
+                                $stmtAnular->bind_param('i', $cotizacionId);
+                                $stmtAnular->execute();
+                                $stmtAnular->close();
+                            }
+                        }
+                    }
+
+                    $conn->commit();
+                    echo json_encode([
+                        'success' => true,
+                        'modo' => 'cancelada_por_vacio',
+                        'orden_id' => $ordenId,
+                        'cotizacion_id' => $cotizacionId > 0 ? $cotizacionId : null,
+                        'numero_comprobante' => null,
+                        'total' => 0,
+                        'procedimientos_finales' => [],
+                    ]);
+                    exit;
+                }
+
+                $jsonFinal = json_encode($finalIds);
+
+                $stmtUp = $conn->prepare('UPDATE ordenes_procedimientos SET procedimientos_json = ?, paciente_id = CASE WHEN paciente_id IS NULL OR paciente_id = 0 THEN ? ELSE paciente_id END, usuario_id = ? WHERE id = ?');
+                if (!$stmtUp) {
+                    throw new Exception('No se pudo preparar actualizacion de orden');
+                }
+                $stmtUp->bind_param('siii', $jsonFinal, $pacienteId, $usuarioIdSesion, $ordenId);
+                if (!$stmtUp->execute()) {
+                    throw new Exception($stmtUp->error);
+                }
+                $stmtUp->close();
+                $modo = 'actualizada';
             }
-            $stmtUp->bind_param('siii', $jsonFinal, $pacienteId, $usuarioIdSesion, $ordenId);
-            if (!$stmtUp->execute()) {
-                throw new Exception($stmtUp->error);
-            }
-            $stmtUp->close();
-            $modo = 'actualizada';
         } else {
             if (empty($procIds)) {
                 throw new Exception('No hay procedimientos válidos para registrar.');
