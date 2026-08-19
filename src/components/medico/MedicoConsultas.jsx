@@ -2,13 +2,24 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/apiClient";
 
-function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
+function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "lista" }) {
   const navigate = useNavigate();
   const [consultas, setConsultas] = useState([]);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [totalRows, setTotalRows] = useState(0);
   const [stats, setStats] = useState({ total: 0, pendientes: 0, emergencias: 0 });
+  const [statsServiciosHoy, setStatsServiciosHoy] = useState({
+    fecha_referencia: "",
+    servicios_habilitados: [],
+    pendientes_por_servicio: {},
+  });
+  const [statsImagenologiaPendiente, setStatsImagenologiaPendiente] = useState({
+    fecha_referencia: "",
+    total_pendientes: 0,
+    pendientes_hoy: 0,
+    por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 },
+  });
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [resumenEconomico, setResumenEconomico] = useState(null);
@@ -146,6 +157,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       if (!data?.success) {
         setConsultas([]);
         setStats({ total: 0, pendientes: 0, emergencias: 0 });
+        setStatsServiciosHoy({ fecha_referencia: "", servicios_habilitados: [], pendientes_por_servicio: {} });
+        setStatsImagenologiaPendiente({ fecha_referencia: "", total_pendientes: 0, pendientes_hoy: 0, por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 } });
         setTotalRows(0);
         setMsg(data?.error || "No se pudieron cargar las consultas");
         return;
@@ -153,6 +166,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
 
       setConsultas(data.consultas || []);
       setStats(data.stats || { total: 0, pendientes: 0, emergencias: 0 });
+      setStatsServiciosHoy(data.stats_servicios_hoy || { fecha_referencia: "", servicios_habilitados: [], pendientes_por_servicio: {} });
+      setStatsImagenologiaPendiente(data.stats_imagenologia_pendiente || { fecha_referencia: "", total_pendientes: 0, pendientes_hoy: 0, por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 } });
       setTotalRows(data.pagination?.total ?? data.stats?.total ?? 0);
 
       const totalPagesServidor = data.pagination?.total_pages ?? 1;
@@ -166,6 +181,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       console.error("Error cargando consultas:", error);
       setConsultas([]);
       setStats({ total: 0, pendientes: 0, emergencias: 0 });
+      setStatsServiciosHoy({ fecha_referencia: "", servicios_habilitados: [], pendientes_por_servicio: {} });
+      setStatsImagenologiaPendiente({ fecha_referencia: "", total_pendientes: 0, pendientes_hoy: 0, por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 } });
       setTotalRows(0);
     } finally {
       setLoading(false);
@@ -181,12 +198,17 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
   }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
   useEffect(() => {
+    if (mode !== "dashboard") {
+      setResumenEconomico(null);
+      setResumenEconomicoError("");
+      return;
+    }
     const controller = new AbortController();
     cargarResumenEconomico(controller.signal);
     return () => {
       controller.abort();
     };
-  }, [medicoId]);
+  }, [medicoId, mode]);
 
   const actualizarEstado = async (id, estado) => {
     setMsg("");
@@ -360,6 +382,58 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       default:
         return '⚪ ';
     }
+  };
+
+  const servicioBadgeClass = (tipo) => {
+    switch (normalizarServicioTipo(tipo)) {
+      case 'consulta':
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'ecografia':
+        return 'bg-cyan-100 text-cyan-800 border-cyan-200';
+      case 'rayosx':
+        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      case 'tomografia':
+        return 'bg-violet-100 text-violet-800 border-violet-200';
+      case 'procedimiento':
+        return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'operacion':
+      case 'cirugia':
+        return 'bg-rose-100 text-rose-800 border-rose-200';
+      default:
+        return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
+  };
+
+  const severidadPendienteClass = (cantidad) => {
+    const n = Number(cantidad || 0);
+    if (n <= 0) return 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50';
+    if (n <= 3) return 'border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50';
+    return 'border-rose-200 bg-gradient-to-br from-rose-50 to-red-50';
+  };
+
+  const ordenServicios = ['consulta', 'ecografia', 'rayosx', 'tomografia', 'procedimiento', 'operacion'];
+  const pendientesPorServicio = statsServiciosHoy?.pendientes_por_servicio || {};
+  const serviciosHabilitados = Array.isArray(statsServiciosHoy?.servicios_habilitados)
+    ? statsServiciosHoy.servicios_habilitados.map(normalizarServicioTipo).filter(Boolean)
+    : [];
+  const serviciosConPendientes = Object.keys(pendientesPorServicio)
+    .map(normalizarServicioTipo)
+    .filter((tipo) => Number(pendientesPorServicio[tipo] || 0) > 0);
+  const serviciosCards = Array.from(new Set([...serviciosHabilitados, ...serviciosConPendientes]))
+    .filter(Boolean)
+    .sort((a, b) => {
+      const ia = ordenServicios.indexOf(a);
+      const ib = ordenServicios.indexOf(b);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+  const fechaServiciosRef = statsServiciosHoy?.fecha_referencia || '-';
+  const imagenPendTotal = Number(statsImagenologiaPendiente?.total_pendientes || 0);
+  const imagenPendHoy = Number(statsImagenologiaPendiente?.pendientes_hoy || 0);
+  const imagenPorTipo = statsImagenologiaPendiente?.por_tipo || { ecografia: 0, rayosx: 0, tomografia: 0 };
+  const imagenConciliacion = statsImagenologiaPendiente?.conciliacion || {
+    pendientes_hoy_total: 0,
+    vinculadas_consulta_hoy: 0,
+    sin_consulta_hoy: 0,
   };
 
   const getHoyYmd = () => {
@@ -566,65 +640,63 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
     };
   };
 
+  const esDashboard = mode === "dashboard";
   const themeGradientMain = "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)";
 
   return (
     <div className="w-full px-1 sm:px-2 xl:px-4 2xl:px-6">
-      <div className="mb-4 rounded-2xl bg-white/95 border border-blue-100 shadow p-4 sm:p-5">
-        <div className="flex items-center justify-between mb-3 gap-2">
-          <h3 className="text-sm sm:text-base font-bold text-blue-900">Mi resumen económico</h3>
-          <span className="text-xs text-slate-500">Periodo: {periodoActualInicio} al {periodoActualFin}</span>
+      {esDashboard && (
+        <div className="mb-4 rounded-2xl bg-white/95 border border-blue-100 shadow p-4 sm:p-5">
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <h3 className="text-sm sm:text-base font-bold text-blue-900">Mi resumen económico</h3>
+            <span className="text-xs text-slate-500">Periodo: {periodoActualInicio} al {periodoActualFin}</span>
+          </div>
+
+          {loadingResumenEconomico ? (
+            <div className="text-sm text-slate-500 py-2">Cargando resumen económico...</div>
+          ) : resumenEconomicoError ? (
+            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{resumenEconomicoError}</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="rounded-xl p-3 border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
+                  <div className="text-xs font-semibold text-blue-700">Honorario pendiente (periodo)</div>
+                  <div className="text-xl font-bold text-blue-900 mt-1">{formatMoney(resumenFin.pendiente_honorarios_periodo)}</div>
+                </div>
+                <div className="rounded-xl p-3 border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50">
+                  <div className="text-xs font-semibold text-amber-700">Adelantos recibidos (periodo)</div>
+                  <div className="text-xl font-bold text-amber-900 mt-1">{formatMoney(resumenFin.adelantos_periodo)}</div>
+                </div>
+                <div className={`rounded-xl p-3 border ${saldoPeriodo >= 0 ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-red-50"}`}>
+                  <div className={`text-xs font-semibold ${saldoPeriodo >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Saldo neto (periodo)</div>
+                  <div className={`text-xl font-bold mt-1 ${saldoPeriodo >= 0 ? "text-emerald-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoPeriodo))}</div>
+                  <div className={`text-[11px] mt-1 ${saldoPeriodo >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{estadoSaldoPeriodo}</div>
+                </div>
+                <div className={`rounded-xl p-3 border ${saldoTotal >= 0 ? "border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-pink-50"}`}>
+                  <div className={`text-xs font-semibold ${saldoTotal >= 0 ? "text-violet-700" : "text-rose-700"}`}>Saldo neto (total)</div>
+                  <div className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? "text-violet-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoTotal))}</div>
+                </div>
+              </div>
+              <div className="mt-3 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                Cálculo visible: pendiente del periodo {formatMoney(resumenFin.pendiente_honorarios_periodo)} menos adelantos {formatMoney(resumenFin.adelantos_periodo)} igual saldo neto {formatMoney(saldoPeriodo)}.
+              </div>
+            </>
+          )}
         </div>
+      )}
 
-        {loadingResumenEconomico ? (
-          <div className="text-sm text-slate-500 py-2">Cargando resumen económico...</div>
-        ) : resumenEconomicoError ? (
-          <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{resumenEconomicoError}</div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-              <div className="rounded-xl p-3 border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
-                <div className="text-xs font-semibold text-blue-700">Honorario pendiente (periodo)</div>
-                <div className="text-xl font-bold text-blue-900 mt-1">{formatMoney(resumenFin.pendiente_honorarios_periodo)}</div>
-              </div>
-
-              <div className="rounded-xl p-3 border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50">
-                <div className="text-xs font-semibold text-amber-700">Adelantos recibidos (periodo)</div>
-                <div className="text-xl font-bold text-amber-900 mt-1">{formatMoney(resumenFin.adelantos_periodo)}</div>
-              </div>
-
-              <div className={`rounded-xl p-3 border ${saldoPeriodo >= 0 ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-red-50"}`}>
-                <div className={`text-xs font-semibold ${saldoPeriodo >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Saldo neto (periodo)</div>
-                <div className={`text-xl font-bold mt-1 ${saldoPeriodo >= 0 ? "text-emerald-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoPeriodo))}</div>
-                <div className={`text-[11px] mt-1 ${saldoPeriodo >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{estadoSaldoPeriodo}</div>
-              </div>
-
-              <div className={`rounded-xl p-3 border ${saldoTotal >= 0 ? "border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-pink-50"}`}>
-                <div className={`text-xs font-semibold ${saldoTotal >= 0 ? "text-violet-700" : "text-rose-700"}`}>Saldo neto (total)</div>
-                <div className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? "text-violet-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoTotal))}</div>
-              </div>
-            </div>
-
-            <div className="mt-3 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-              Cálculo visible: pendiente del periodo {formatMoney(resumenFin.pendiente_honorarios_periodo)} menos adelantos {formatMoney(resumenFin.adelantos_periodo)} igual saldo neto {formatMoney(saldoPeriodo)}.
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Panel compacto: cabecera + resumen + filtros */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
-        <div className="flex flex-col gap-3 sm:gap-4 mb-3 sm:mb-4">
-          <div className="flex items-center gap-2 sm:gap-3">
+      {esDashboard ? (
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
+          <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
             <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center" style={{ background: themeGradientMain }}>
               <svg className="w-3 h-3 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
-            <h3 className="text-sm sm:text-base font-semibold text-gray-800">🔍 Mis Consultas: filtros y resumen</h3>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-800">Resumen clínico del día</h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-4">
             <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: themeGradientMain }}>
               <p className="text-white/85 text-[11px] sm:text-xs font-medium">Total consultas</p>
               <p className="text-lg sm:text-xl font-bold leading-tight">{stats.total}</p>
@@ -638,9 +710,125 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
               <p className="text-lg sm:text-xl font-bold leading-tight">{stats.emergencias}</p>
             </div>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+              <div>
+                <h4 className="text-sm sm:text-base font-semibold text-slate-800">Pendientes de agenda por servicio hoy</h4>
+                <p className="text-[11px] text-slate-500">Basado en consultas/agendamiento clínico, no en informes de imagenología.</p>
+              </div>
+              <span className="text-xs text-slate-500">Fecha: {fechaServiciosRef}</span>
+            </div>
+
+            {serviciosCards.length === 0 ? (
+              <div className="text-xs sm:text-sm text-slate-500">No hay servicios clínicos configurados o no hay pendientes para hoy.</div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
+                {serviciosCards.map((tipo) => {
+                  const cantidad = Number(pendientesPorServicio[tipo] || 0);
+                  return (
+                    <div key={`pend-${tipo}`} className={`rounded-xl border p-3 ${severidadPendienteClass(cantidad)}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${servicioBadgeClass(tipo)}`}>
+                          {etiquetaServicio(tipo)}
+                        </span>
+                        <span className="text-[11px] text-slate-600">Pendientes</span>
+                      </div>
+                      <div className="mt-2 text-2xl sm:text-3xl font-bold text-slate-900 leading-none">{cantidad}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 p-3 sm:p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+              <div>
+                <h4 className="text-sm sm:text-base font-semibold text-cyan-900">Pendientes de informes de Imagenología</h4>
+                <p className="text-[11px] text-cyan-700/80">Basado en órdenes de imagen con estado pendiente.</p>
+              </div>
+              <button
+                onClick={() => navigate('/mis-informes-imagenologia')}
+                className="text-xs font-semibold text-cyan-700 hover:text-cyan-900 underline"
+              >
+                Ver módulo
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
+              <div className="rounded-lg border border-cyan-200 bg-white/80 p-3">
+                <div className="text-[11px] text-slate-600">Pendientes totales</div>
+                <div className="text-2xl font-bold text-cyan-900 leading-none mt-1">{imagenPendTotal}</div>
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-white/80 p-3">
+                <div className="text-[11px] text-slate-600">Pendientes hoy</div>
+                <div className="text-2xl font-bold text-cyan-900 leading-none mt-1">{imagenPendHoy}</div>
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-white/80 p-3">
+                <div className="text-[11px] text-slate-600">Ecografías</div>
+                <div className="text-2xl font-bold text-cyan-900 leading-none mt-1">{Number(imagenPorTipo.ecografia || 0)}</div>
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-white/80 p-3">
+                <div className="text-[11px] text-slate-600">Rayos X</div>
+                <div className="text-2xl font-bold text-cyan-900 leading-none mt-1">{Number(imagenPorTipo.rayosx || 0)}</div>
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-white/80 p-3">
+                <div className="text-[11px] text-slate-600">Tomografías</div>
+                <div className="text-2xl font-bold text-cyan-900 leading-none mt-1">{Number(imagenPorTipo.tomografia || 0)}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+              <div className="rounded-lg border border-slate-200 bg-white/80 p-2.5">
+                <div className="text-[11px] text-slate-600">Conciliación hoy</div>
+                <div className="text-sm font-semibold text-slate-800 mt-1">{Number(imagenConciliacion.pendientes_hoy_total || 0)} órdenes pendientes</div>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-2.5">
+                <div className="text-[11px] text-emerald-700">Vinculadas a consulta de hoy</div>
+                <div className="text-sm font-semibold text-emerald-900 mt-1">{Number(imagenConciliacion.vinculadas_consulta_hoy || 0)}</div>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-2.5">
+                <div className="text-[11px] text-amber-700">Sin consulta de hoy</div>
+                <div className="text-sm font-semibold text-amber-900 mt-1">{Number(imagenConciliacion.sin_consulta_hoy || 0)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+            <button
+              onClick={() => navigate('/mis-consultas')}
+              className="rounded-xl px-4 py-3 text-left text-white shadow-md transition hover:opacity-95"
+              style={{ background: themeGradientMain }}
+            >
+              <div className="text-xs text-white/90">Acceso rápido</div>
+              <div className="text-sm sm:text-base font-semibold">Ir a Mis Consultas</div>
+            </button>
+            <button
+              onClick={() => navigate('/mis-informes-imagenologia')}
+              className="rounded-xl px-4 py-3 text-left text-white shadow-md transition hover:opacity-95"
+              style={{ background: "linear-gradient(90deg, var(--color-secondary) 0%, var(--color-accent) 100%)" }}
+            >
+              <div className="text-xs text-white/90">Acceso rápido</div>
+              <div className="text-sm sm:text-base font-semibold">Informes de Imagenología</div>
+            </button>
+            <button
+              onClick={() => navigate('/panel-medico')}
+              className="rounded-xl px-4 py-3 text-left text-white shadow-md transition hover:opacity-95"
+              style={{ background: "linear-gradient(90deg, var(--color-accent) 0%, var(--color-primary) 100%)" }}
+            >
+              <div className="text-xs text-white/90">Acceso rápido</div>
+              <div className="text-sm sm:text-base font-semibold">Gestionar Disponibilidad</div>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
+          <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
+            <h3 className="text-sm sm:text-base font-semibold text-gray-800">Lista de consultas</h3>
+            <span className="text-xs text-slate-500">Total: {stats.total} · Pendientes: {stats.pendientes}</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           {/* Búsqueda general */}
           <div className="col-span-full lg:col-span-2">
             <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Búsqueda general</label>
@@ -707,10 +895,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
             </button>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
-      {/* Leyenda rápida de tipo de consulta */}
-      <div className="mb-4 sm:mb-6 flex flex-wrap items-center gap-2 sm:gap-3 text-xs sm:text-sm">
+      {!esDashboard && (
+        <div className="mb-4 sm:mb-6 flex flex-wrap items-center gap-2 sm:gap-3 text-xs sm:text-sm">
         <span className="text-gray-600 font-medium">Tipo de consulta:</span>
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-cyan-100 text-cyan-800 border-cyan-200 font-medium">
           📅 Programada
@@ -724,9 +913,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 font-medium">
           🔁 Reprogramada
         </span>
-      </div>
+        </div>
+      )}
 
-      {/* Lista de consultas moderna - Responsive */}
+      {!esDashboard && (
+      <>
       {loading ? (
         <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-8 sm:p-12 border border-white/50 flex justify-center">
           <div className="flex flex-col items-center gap-3 sm:gap-4">
@@ -751,6 +942,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       ) : (
         <>
           {/* Vista Desktop - Tabla */}
+      </>
+      )}
           <div className="hidden lg:block bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-white/50 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1284,14 +1477,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle }) {
       )}
 
       {/* Mensaje de estado */}
-      {msg && (
+      {!esDashboard && msg && (
         <div className="mt-3 sm:mt-4 p-3 sm:p-4 bg-blue-100 border border-blue-300 rounded-lg sm:rounded-xl text-blue-800 text-center text-sm sm:text-base">
           {msg}
         </div>
       )}
 
       {/* Paginación moderna responsive */}
-      {totalRows > 0 && (
+      {!esDashboard && totalRows > 0 && (
         <div className="mt-4 sm:mt-8 bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 border border-white/50">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
             {/* Controles de página */}

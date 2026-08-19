@@ -6,7 +6,7 @@ const homeByRole = {
   administrador: "/usuarios",
   recepcionista: "/pacientes",
   enfermero: "/panel-enfermero",
-  medico: "/mis-consultas",
+  medico: "/dashboard-medico",
   laboratorista: "/panel-laboratorio"
 };
 

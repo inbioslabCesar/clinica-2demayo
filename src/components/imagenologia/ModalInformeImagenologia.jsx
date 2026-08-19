@@ -1,8 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { FiX, FiDownload, FiSave, FiLoader } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { authFetch, resolveAppUrl } from '../../utils/apiClient';
+
+const PLANTILLAS_CACHE_TTL_MS = 5 * 60 * 1000;
+let plantillasCache = {
+  data: null,
+  ts: 0,
+};
+
+async function getPlantillasImagenologia(force = false) {
+  const now = Date.now();
+  if (!force && Array.isArray(plantillasCache.data) && (now - plantillasCache.ts) < PLANTILLAS_CACHE_TTL_MS) {
+    return { success: true, plantillas: plantillasCache.data };
+  }
+
+  const res = await authFetch('api_imagenologia_plantillas.php');
+  const data = await res.json();
+  if (data?.success && Array.isArray(data.plantillas)) {
+    plantillasCache = { data: data.plantillas, ts: now };
+  }
+  return data;
+}
 
 function isEmptyValue(value) {
   return value == null || String(value).trim() === '';
@@ -78,6 +98,27 @@ function normalizeTipoPlantilla(tipo) {
   return t;
 }
 
+function normalizeTextForMatch(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function pickTemplateByHintText(templates = [], hint = '') {
+  if (!Array.isArray(templates) || templates.length === 0) return null;
+  const normalizedHint = normalizeTextForMatch(hint);
+  if (!normalizedHint) return null;
+
+  return templates.find((tpl) => {
+    const tplName = normalizeTextForMatch(tpl?.nombre || '');
+    return tplName && normalizedHint.includes(tplName);
+  }) || null;
+}
+
 function draftStorageKey(ordenImagenId) {
   return `imagenologia_informe_borrador_${ordenImagenId}`;
 }
@@ -151,6 +192,16 @@ function resolveTemplateFromReport(templates = [], plantillaInforme = null) {
   return null;
 }
 
+function resolveTemplateByContext(templates = [], { orden = null, informe = null } = {}) {
+  const fromOrder = pickTemplateByHintText(templates, `${orden?.indicaciones || ''} ${orden?.titulo || ''}`);
+  if (fromOrder) return fromOrder;
+
+  const fromTitle = pickTemplateByHintText(templates, `${informe?.titulo || ''}`);
+  if (fromTitle) return fromTitle;
+
+  return null;
+}
+
 function pickTipoPlantilla({ tipoExamenProp, orden, informe }) {
   const fromOrden = normalizeTipoPlantilla(orden?.tipo);
   if (fromOrden) return fromOrden;
@@ -205,6 +256,8 @@ export default function ModalInformeImagenologia({
   const [estado, setEstado] = useState('borrador');
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [tituloEditadoManual, setTituloEditadoManual] = useState(false);
+  const draftTimerRef = useRef(null);
   const medicoMostrado = [informe?.medico_nombre, informe?.medico_apellido].filter(Boolean).join(' ') || medicoNombre;
 
   // ─ Cargar plantillas y informe existente ─────────────────────────────────
@@ -215,11 +268,11 @@ export default function ModalInformeImagenologia({
 
     setLoading(true);
     Promise.all([
-      authFetch('api_imagenologia_plantillas.php'),
+      getPlantillasImagenologia(),
       authFetch(`api_imagenologia_informes.php?orden_imagen_id=${ordenImagenId}`),
-      authFetch(`api_ordenes_imagen.php?orden_id=${ordenImagenId}`)
+      authFetch(`api_ordenes_imagen.php?orden_id=${ordenImagenId}&vista=informe_fast`)
     ])
-      .then(([resPlant, resInf, resOrden]) => Promise.all([resPlant.json(), resInf.json(), resOrden.json()]))
+      .then(([dataPlant, resInf, resOrden]) => Promise.all([Promise.resolve(dataPlant), resInf.json(), resOrden.json()]))
       .then(async ([dataPlant, dataInf, dataOrden]) => {
         let plantillaFinal = null;
         let plantillasDisponibles = [];
@@ -239,7 +292,11 @@ export default function ModalInformeImagenologia({
           // Si hay un informe existente con plantilla guardada, usarla; sino la primera activa
           const plantillaInforme = dataInf?.informe?.plantilla_json;
           const matchPlantilla = resolveTemplateFromReport(plantillasDisponibles, plantillaInforme);
-          plantillaFinal = matchPlantilla || plantillasDisponibles[0];
+          const matchContexto = resolveTemplateByContext(plantillasDisponibles, {
+            orden: ordenActual,
+            informe: dataInf?.informe || null,
+          });
+          plantillaFinal = matchPlantilla || matchContexto || plantillasDisponibles[0];
         }
 
         if (!plantillaFinal) {
@@ -250,7 +307,13 @@ export default function ModalInformeImagenologia({
               if (dataAll.plantillas.length > 0) {
                 plantillasDisponibles = dataAll.plantillas;
                 const plantillaInforme = dataInf?.informe?.plantilla_json;
-                plantillaFinal = resolveTemplateFromReport(plantillasDisponibles, plantillaInforme) || plantillasDisponibles[0];
+                plantillaFinal =
+                  resolveTemplateFromReport(plantillasDisponibles, plantillaInforme)
+                  || resolveTemplateByContext(plantillasDisponibles, {
+                    orden: ordenActual,
+                    informe: dataInf?.informe || null,
+                  })
+                  || plantillasDisponibles[0];
               }
             }
           } catch {
@@ -275,6 +338,7 @@ export default function ModalInformeImagenologia({
           }
           setInforme(inf);
           setTitulo(draft?.titulo ?? inf.titulo ?? '');
+          setTituloEditadoManual(Boolean(draft?.titulo || inf?.titulo));
           setEstado(draft?.estado ?? inf.estado ?? 'borrador');
           const contenidoExistente = inf.contenido_json || {};
           const contenidoHibrido = hasAnyContenidoValue(contenidoExistente)
@@ -284,6 +348,7 @@ export default function ModalInformeImagenologia({
         } else {
           setContenido(draft?.contenido ?? buildContenidoFromPlantilla(plantillaFinal));
           setTitulo(draft?.titulo ?? plantillaFinal?.nombre ?? '');
+          setTituloEditadoManual(Boolean(draft?.titulo));
           setEstado(draft?.estado ?? 'borrador');
         }
         setDirty(Boolean(draft));
@@ -297,12 +362,30 @@ export default function ModalInformeImagenologia({
 
   useEffect(() => {
     if (!open || loading || !ordenImagenId || !dirty) return;
-    try {
-      sessionStorage.setItem(draftStorageKey(ordenImagenId), JSON.stringify({ titulo, contenido, estado }));
-    } catch {
-      // A storage failure must not block clinical report editing.
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
     }
+    draftTimerRef.current = setTimeout(() => {
+      try {
+        sessionStorage.setItem(draftStorageKey(ordenImagenId), JSON.stringify({ titulo, contenido, estado }));
+      } catch {
+        // A storage failure must not block clinical report editing.
+      }
+      draftTimerRef.current = null;
+    }, 250);
+
+    return () => {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+      }
+    };
   }, [open, loading, ordenImagenId, dirty, titulo, contenido, estado]);
+
+  useEffect(() => () => {
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
+  }, []);
 
   // ─ Manejar cambios en campos dinámicos ──────────────────────────────────
   const handleFieldChange = useCallback((sectionId, fieldId, value) => {
@@ -368,25 +451,27 @@ export default function ModalInformeImagenologia({
   const handleGenerarPdf = useCallback(async () => {
     setGenerandoPdf(true);
     try {
-      // Primero guardar si hay cambios
-      const response = await authFetch('api_imagenologia_informes.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orden_imagen_id: ordenImagenId,
-          titulo: titulo || '',
-          contenido_json: contenido,
-          plantilla_json: plantillaSeleccionada,
-          estado
-        })
-      });
+      let informeId = informe?.id || 0;
+      if (dirty || !informeId) {
+        const response = await authFetch('api_imagenologia_informes.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orden_imagen_id: ordenImagenId,
+            titulo: titulo || '',
+            contenido_json: contenido,
+            plantilla_json: plantillaSeleccionada,
+            estado
+          })
+        });
 
-      const saveData = await response.json();
-      if (!saveData.success) {
-        throw new Error(saveData.error || 'No se pudo guardar antes de generar PDF');
+        const saveData = await response.json();
+        if (!saveData.success) {
+          throw new Error(saveData.error || 'No se pudo guardar antes de generar PDF');
+        }
+        informeId = informeId || saveData.informe_id || 0;
       }
 
-      const informeId = informe?.id || saveData.informe_id;
       if (!informeId) {
         throw new Error('No se pudo resolver el ID del informe para generar el PDF');
       }
@@ -445,7 +530,7 @@ export default function ModalInformeImagenologia({
     } finally {
       setGenerandoPdf(false);
     }
-  }, [informe, ordenImagenId, titulo, contenido, plantillaSeleccionada, onSaved]);
+  }, [informe, ordenImagenId, titulo, contenido, plantillaSeleccionada, estado, onSaved, dirty]);
 
   if (!open) return null;
 
@@ -490,7 +575,11 @@ export default function ModalInformeImagenologia({
                   <input
                     type="text"
                     value={titulo}
-                    onChange={(e) => { setTitulo(e.target.value); setDirty(true); }}
+                    onChange={(e) => {
+                      setTitulo(e.target.value);
+                      setTituloEditadoManual(true);
+                      setDirty(true);
+                    }}
                     placeholder="Ej. Ecografía Abdominal Completa"
                     className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-purple-500 outline-none"
                   />
@@ -510,21 +599,39 @@ export default function ModalInformeImagenologia({
                       if (!p) return;
                       if (String(p.id) === String(plantillaSeleccionada?.id)) return;
 
+                      const tituloActual = String(titulo || '').trim();
+                      const tituloPlantillaActual = String(plantillaSeleccionada?.nombre || '').trim();
+                      const puedeSincronizarTitulo = !tituloEditadoManual || tituloActual === '' || tituloActual === tituloPlantillaActual;
+
                       const hayCambios = hasAnyContenidoValue(contenido);
+                      let modoAplicacion = 'replace';
                       if (hayCambios) {
                         const confirm = await Swal.fire(swalFrontConfig({
                           title: 'Cambiar plantilla',
-                          text: 'Se mantendra lo ya escrito y se autocompletaran los campos vacios con el nuevo texto base.',
+                          text: 'Puedes reemplazar el contenido con la nueva plantilla o mantener lo escrito y solo completar campos vacios.',
                           icon: 'question',
                           showCancelButton: true,
-                          confirmButtonText: 'Aplicar',
+                          showDenyButton: true,
+                          confirmButtonText: 'Reemplazar contenido',
+                          denyButtonText: 'Mantener y completar',
                           cancelButtonText: 'Cancelar',
                         }));
-                        if (!confirm.isConfirmed) return;
+                        if (confirm.isDismissed) return;
+                        modoAplicacion = confirm.isDenied ? 'merge' : 'replace';
                       }
 
                       setPlantillaSeleccionada(p);
-                      setContenido((prev) => mergeContenidoWithPlantilla(prev, p));
+                      setContenido((prev) => (
+                        modoAplicacion === 'merge'
+                          ? mergeContenidoWithPlantilla(prev, p)
+                          : buildContenidoFromPlantilla(p)
+                      ));
+
+                      if (puedeSincronizarTitulo) {
+                        setTitulo(String(p?.nombre || ''));
+                        setTituloEditadoManual(false);
+                      }
+
                       setDirty(true);
                     }}
                     className="w-full px-3 py-2 border border-blue-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-400 outline-none"

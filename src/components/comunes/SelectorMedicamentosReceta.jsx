@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
 import { calcularCantidadTotalReceta } from "../../utils/calcularCantidadReceta";
 
@@ -84,6 +84,9 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
   const [protocolos, setProtocolos] = useState([]);
   const [loadingProtocolos, setLoadingProtocolos] = useState(false);
   const [deletingProtocoloId, setDeletingProtocoloId] = useState(0);
+  const searchAbortRef = useRef(null);
+  const searchReqRef = useRef(0);
+  const searchCacheRef = useRef(new Map());
 
   useEffect(() => {
     if (modoManual) {
@@ -127,16 +130,59 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
   }, [consultaId]);
 
   useEffect(() => {
-    if (busqueda.length < 2) {
+    const termino = String(busqueda || "").trim();
+    if (termino.length < 2) {
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort();
+        searchAbortRef.current = null;
+      }
       setResultados([]);
+      setLoading(false);
       return;
     }
 
-    setLoading(true);
-    authFetch(`api_medicamentos.php?busqueda=${encodeURIComponent(busqueda)}`)
-      .then((res) => res.json())
-      .then((data) => setResultados(Array.isArray(data) ? data : []))
-      .finally(() => setLoading(false));
+    const cacheKey = termino.toLowerCase();
+    const cacheEntry = searchCacheRef.current.get(cacheKey);
+    const cacheTtlMs = 60 * 1000;
+    if (cacheEntry && Date.now() - cacheEntry.ts < cacheTtlMs) {
+      setResultados(cacheEntry.data);
+      setLoading(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      const requestId = ++searchReqRef.current;
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+
+      setLoading(true);
+      try {
+        const res = await authFetch(`api_medicamentos.php?busqueda=${encodeURIComponent(termino)}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (requestId !== searchReqRef.current) return;
+        const rows = Array.isArray(data) ? data : [];
+        setResultados(rows);
+        searchCacheRef.current.set(cacheKey, { ts: Date.now(), data: rows });
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+        if (requestId !== searchReqRef.current) return;
+        setResultados([]);
+      } finally {
+        if (requestId === searchReqRef.current) {
+          setLoading(false);
+        }
+      }
+    }, 280);
+
+    return () => {
+      clearTimeout(timer);
+    };
   }, [busqueda]);
 
   const resetFormulario = () => {

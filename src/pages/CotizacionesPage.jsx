@@ -93,6 +93,30 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+async function pauseMainThread() {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+async function mapInChunks(items, mapper, chunkSize = 500) {
+  const source = Array.isArray(items) ? items : [];
+  const safeChunkSize = Math.max(100, Number(chunkSize) || 500);
+  const out = [];
+
+  for (let i = 0; i < source.length; i += safeChunkSize) {
+    const chunk = source.slice(i, i + safeChunkSize);
+    for (const item of chunk) {
+      out.push(mapper(item));
+    }
+    if (i + safeChunkSize < source.length) {
+      await pauseMainThread();
+    }
+  }
+
+  return out;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -239,6 +263,9 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
   const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
   const esParticular = Number(row.paciente_id || 0) <= 0;
+  const profesionalCabecera = String(row.profesional_cabecera || "").trim();
+  const profesionalesCount = Number(row.profesionales_count || (profesionalCabecera ? 1 : 0));
+  const profesionalesExtra = Math.max(0, profesionalesCount - 1);
 
   const servicios = useMemo(() => Array.from(new Set(
     String(row.servicios_tipos || "")
@@ -332,6 +359,23 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
       </td>
       <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
+      <td className="px-3 py-2">
+        {profesionalCabecera ? (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-slate-800">{profesionalCabecera}</span>
+            {profesionalesExtra > 0 && (
+              <span
+                className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-700"
+                title={`Esta atención incluye ${profesionalesCount} profesionales clínicos`}
+              >
+                +{profesionalesExtra}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-gray-400">-</span>
+        )}
+      </td>
       <td className="px-3 py-2 text-xs text-slate-600">
         <div className="flex flex-col gap-1 items-start">
           <span>{String(row.referencia_origen || "").trim() || "-"}</span>
@@ -572,6 +616,7 @@ export default function CotizacionesPage() {
   const location = useLocation();
   const autoAnularRef = useRef(false);
   const abortRef = useRef(null);
+  const anticipadoFetchIdRef = useRef(0);
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -609,8 +654,10 @@ export default function CotizacionesPage() {
   const [canAutorizarAnticipado, setCanAutorizarAnticipado] = useState(false);
 
   const cargarEstadosAnticipados = useCallback(async (rowsInput) => {
+    const fetchId = ++anticipadoFetchIdRef.current;
     const ids = Array.from(new Set((rowsInput || []).map((row) => Number(row?.id || 0)).filter((id) => id > 0)));
     if (ids.length === 0) {
+      if (fetchId !== anticipadoFetchIdRef.current) return;
       setAnticipadoByCotizacion({});
       setCanAutorizarAnticipado(false);
       return;
@@ -621,6 +668,7 @@ export default function CotizacionesPage() {
         cache: 'no-store',
       });
       const data = await res.json();
+      if (fetchId !== anticipadoFetchIdRef.current) return;
       if (!data?.success) {
         setAnticipadoByCotizacion({});
         setCanAutorizarAnticipado(false);
@@ -629,6 +677,7 @@ export default function CotizacionesPage() {
       setAnticipadoByCotizacion(data?.estados && typeof data.estados === 'object' ? data.estados : {});
       setCanAutorizarAnticipado(Boolean(data?.puede_autorizar));
     } catch {
+      if (fetchId !== anticipadoFetchIdRef.current) return;
       setAnticipadoByCotizacion({});
       setCanAutorizarAnticipado(false);
     }
@@ -663,7 +712,7 @@ export default function CotizacionesPage() {
       const rowsData = Array.isArray(data.cotizaciones) ? data.cotizaciones : [];
       setRows(rowsData);
       setTotal(Number(data.total || 0));
-      await cargarEstadosAnticipados(rowsData);
+      void cargarEstadosAnticipados(rowsData);
     } catch (error) {
       if (error?.name === "AbortError") return;
       Swal.fire("Error", error?.message || "No se pudo cargar la lista", "error");
@@ -949,8 +998,9 @@ export default function CotizacionesPage() {
     return params;
   }, [estadoInput, fechaFinInput, fechaInicioInput, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, qInput, rolReporte, usuarioReporte]);
 
-  const obtenerReporteAtenciones = useCallback(async () => {
+  const obtenerReporteAtenciones = useCallback(async ({ expandirMetodosPago = true } = {}) => {
     const params = construirParamsReporte();
+    params.set("expandir_metodos_pago", expandirMetodosPago ? "1" : "0");
     const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
       cache: "no-store",
     });
@@ -964,7 +1014,7 @@ export default function CotizacionesPage() {
   const exportarExcelAtenciones = useCallback(async () => {
     setExporting(true);
     try {
-      const data = await obtenerReporteAtenciones();
+      const data = await obtenerReporteAtenciones({ expandirMetodosPago: false });
       const detalle = Array.isArray(data?.detalle) ? data.detalle : [];
       const resumen = Array.isArray(data?.resumen_por_rol) ? data.resumen_por_rol : [];
       const filtros = data?.filtros || {};
@@ -982,15 +1032,15 @@ export default function CotizacionesPage() {
 
       const wb = XLSX.utils.book_new();
 
-      const resumenRows = resumen.map((row) => ({
+      const resumenRows = await mapInChunks(resumen, (row) => ({
         Rol: row.rol || "-",
         Cotizaciones: Number(row.cantidad_cotizaciones || 0),
         "Total cotizado": Number(row.total_cotizado || 0),
         "Total pagado": Number(row.total_pagado || 0),
         Saldo: Number(row.saldo_pendiente || 0),
-      }));
+      }), 300);
 
-      const detalleRows = detalle.map((row) => ({
+      const detalleRows = await mapInChunks(detalle, (row) => ({
         Fecha: row.fecha ? new Date(row.fecha).toLocaleString("es-PE") : "-",
         "ID cotizacion": row.cotizacion_id,
         Estado: row.estado || "-",
@@ -1010,7 +1060,7 @@ export default function CotizacionesPage() {
         "Total cotizacion": Number(row.total_cotizacion || 0),
         "Total pagado": Number(row.total_pagado || 0),
         "Saldo pendiente": Number(row.saldo_pendiente || 0),
-      }));
+      }), 500);
 
       const wsFiltros = XLSX.utils.aoa_to_sheet([
         ["Filtro", "Valor"],
@@ -1042,7 +1092,7 @@ export default function CotizacionesPage() {
   const exportarPdfAtenciones = useCallback(async () => {
     setExporting(true);
     try {
-      const data = await obtenerReporteAtenciones();
+      const data = await obtenerReporteAtenciones({ expandirMetodosPago: false });
       const detalle = Array.isArray(data?.detalle) ? data.detalle : [];
       const resumen = Array.isArray(data?.resumen_por_rol) ? data.resumen_por_rol : [];
       const filtros = data?.filtros || {};
@@ -1068,24 +1118,29 @@ export default function CotizacionesPage() {
         52
       );
 
-      autoTable(doc, {
-        startY: 62,
-        head: [["Rol", "Cotizaciones", "Total cotizado", "Total pagado", "Saldo"]],
-        body: (resumen.length ? resumen : [{ rol: "Sin datos", cantidad_cotizaciones: 0, total_cotizado: 0, total_pagado: 0, saldo_pendiente: 0 }]).map((row) => ([
+      const resumenBody = await mapInChunks(
+        (resumen.length ? resumen : [{ rol: "Sin datos", cantidad_cotizaciones: 0, total_cotizado: 0, total_pagado: 0, saldo_pendiente: 0 }]),
+        (row) => ([
           row.rol || "-",
           Number(row.cantidad_cotizaciones || 0),
           `S/ ${Number(row.total_cotizado || 0).toFixed(2)}`,
           `S/ ${Number(row.total_pagado || 0).toFixed(2)}`,
           `S/ ${Number(row.saldo_pendiente || 0).toFixed(2)}`,
-        ])),
+        ]),
+        300
+      );
+
+      autoTable(doc, {
+        startY: 62,
+        head: [["Rol", "Cotizaciones", "Total cotizado", "Total pagado", "Saldo"]],
+        body: resumenBody,
         styles: { fontSize: 8 },
         headStyles: { fillColor: [35, 88, 175] },
       });
 
-      autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 12,
-        head: [["Fecha", "Cot", "Paciente", "Rol", "Usuario", "Servicio", "Subtotal", "Pago", "Monto pago", "Total", "Saldo"]],
-        body: (detalle.length ? detalle : [{ fecha: "", cotizacion_id: "", paciente: "Sin datos", rol_responsable: "", usuario_responsable: "", servicio_descripcion: "", subtotal_servicio: 0, tipo_pago: "sin_pago", monto_tipo_pago: 0, total_cotizacion: 0, saldo_pendiente: 0 }]).map((row) => ([
+      const detalleBody = await mapInChunks(
+        (detalle.length ? detalle : [{ fecha: "", cotizacion_id: "", paciente: "Sin datos", rol_responsable: "", usuario_responsable: "", servicio_descripcion: "", subtotal_servicio: 0, tipo_pago: "sin_pago", monto_tipo_pago: 0, total_cotizacion: 0, saldo_pendiente: 0 }]),
+        (row) => ([
           row.fecha ? new Date(row.fecha).toLocaleString("es-PE") : "-",
           `#${row.cotizacion_id || "-"}`,
           row.paciente || "-",
@@ -1097,7 +1152,14 @@ export default function CotizacionesPage() {
           `S/ ${Number(row.monto_tipo_pago || 0).toFixed(2)}`,
           `S/ ${Number(row.total_cotizacion || 0).toFixed(2)}`,
           `S/ ${Number(row.saldo_pendiente || 0).toFixed(2)}`,
-        ])),
+        ]),
+        500
+      );
+
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 12,
+        head: [["Fecha", "Cot", "Paciente", "Rol", "Usuario", "Servicio", "Subtotal", "Pago", "Monto pago", "Total", "Saldo"]],
+        body: detalleBody,
         styles: { fontSize: 7 },
         headStyles: { fillColor: [31, 41, 55] },
       });
@@ -1538,6 +1600,7 @@ export default function CotizacionesPage() {
                 <th className="px-3 py-2 text-left">Fecha</th>
                 <th className="px-3 py-2 text-left">Paciente</th>
                 <th className="px-3 py-2 text-left">Quién cotizó</th>
+                <th className="px-3 py-2 text-left">Profesional cabecera</th>
                 <th className="px-3 py-2 text-left">Referencia origen</th>
                 <th className="px-3 py-2 text-left">Servicios</th>
                 <th className="px-3 py-2 text-left">Origen/Contrato</th>
@@ -1551,11 +1614,11 @@ export default function CotizacionesPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
+                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
+                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
               ) : rows.map((row) => (
                 <CotizacionRow

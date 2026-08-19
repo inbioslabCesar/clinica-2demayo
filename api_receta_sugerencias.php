@@ -20,6 +20,12 @@ function rs_get_int_query($key, $default, $min = 1, $max = 1000) {
     return $val;
 }
 
+function rs_get_bool_query($key, $default = false) {
+    if (!isset($_GET[$key])) return $default;
+    $raw = rs_lower_trim($_GET[$key]);
+    return in_array($raw, ['1', 'true', 'yes', 'si', 'on'], true);
+}
+
 function rs_lower_trim($value) {
     $txt = trim((string)$value);
     if ($txt === '') return '';
@@ -328,30 +334,75 @@ function rs_collect_bucket($conn, $sql, $types, $params, $limitTop) {
 function rs_enrich_with_catalog($conn, $items) {
     if (!is_array($items) || empty($items)) return [];
 
+    $codes = [];
+    $names = [];
+    foreach ($items as $item) {
+        $codigo = trim((string)($item['codigo'] ?? ''));
+        $nombre = trim((string)($item['nombre'] ?? ''));
+        if ($codigo !== '') {
+            $codes[$codigo] = true;
+        }
+        if ($nombre !== '') {
+            $normName = rs_lower_trim($nombre);
+            if ($normName !== '') {
+                $names[$normName] = true;
+            }
+        }
+    }
+
+    $catalogByCode = [];
+    if (!empty($codes)) {
+        $codeList = array_keys($codes);
+        $phCode = implode(',', array_fill(0, count($codeList), '?'));
+        $sqlCode = "SELECT id, codigo, nombre, presentacion, concentracion, laboratorio, stock, estado FROM medicamentos WHERE codigo IN ($phCode) ORDER BY id DESC";
+        $stmtCode = $conn->prepare($sqlCode);
+        if ($stmtCode) {
+            $stmtCode->bind_param(str_repeat('s', count($codeList)), ...$codeList);
+            $stmtCode->execute();
+            $resCode = $stmtCode->get_result();
+            while ($row = $resCode->fetch_assoc()) {
+                $c = trim((string)($row['codigo'] ?? ''));
+                if ($c !== '' && !isset($catalogByCode[$c])) {
+                    $catalogByCode[$c] = $row;
+                }
+            }
+            $stmtCode->close();
+        }
+    }
+
+    $catalogByName = [];
+    if (!empty($names)) {
+        $nameList = array_keys($names);
+        $phName = implode(',', array_fill(0, count($nameList), '?'));
+        $sqlName = "SELECT id, codigo, nombre, presentacion, concentracion, laboratorio, stock, estado FROM medicamentos WHERE LOWER(TRIM(nombre)) IN ($phName) ORDER BY id DESC";
+        $stmtName = $conn->prepare($sqlName);
+        if ($stmtName) {
+            $stmtName->bind_param(str_repeat('s', count($nameList)), ...$nameList);
+            $stmtName->execute();
+            $resName = $stmtName->get_result();
+            while ($row = $resName->fetch_assoc()) {
+                $n = rs_lower_trim($row['nombre'] ?? '');
+                if ($n !== '' && !isset($catalogByName[$n])) {
+                    $catalogByName[$n] = $row;
+                }
+            }
+            $stmtName->close();
+        }
+    }
+
     $out = [];
     foreach ($items as $item) {
         $codigo = trim((string)($item['codigo'] ?? ''));
         $nombre = trim((string)($item['nombre'] ?? ''));
 
         $catalog = null;
-
-        if ($codigo !== '') {
-            $stmtCode = $conn->prepare('SELECT id, codigo, nombre, presentacion, concentracion, laboratorio, stock, estado FROM medicamentos WHERE codigo = ? ORDER BY id DESC LIMIT 1');
-            if ($stmtCode) {
-                $stmtCode->bind_param('s', $codigo);
-                $stmtCode->execute();
-                $catalog = $stmtCode->get_result()->fetch_assoc();
-                $stmtCode->close();
-            }
+        if ($codigo !== '' && isset($catalogByCode[$codigo])) {
+            $catalog = $catalogByCode[$codigo];
         }
-
         if (!$catalog && $nombre !== '') {
-            $stmtName = $conn->prepare('SELECT id, codigo, nombre, presentacion, concentracion, laboratorio, stock, estado FROM medicamentos WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1');
-            if ($stmtName) {
-                $stmtName->bind_param('s', $nombre);
-                $stmtName->execute();
-                $catalog = $stmtName->get_result()->fetch_assoc();
-                $stmtName->close();
+            $nameKey = rs_lower_trim($nombre);
+            if ($nameKey !== '' && isset($catalogByName[$nameKey])) {
+                $catalog = $catalogByName[$nameKey];
             }
         }
 
@@ -388,6 +439,14 @@ function rs_enrich_with_catalog($conn, $items) {
 $consultaId = rs_get_int_query('consulta_id', 0, 0, 1000000000);
 $limit = rs_get_int_query('limit', 10, 3, 30);
 $sample = rs_get_int_query('sample', 300, 50, 2000);
+$profile = rs_lower_trim($_GET['profile'] ?? '');
+$fastProfile = ($profile === 'fast' || $profile === 'hc_fast');
+$skipCatalog = rs_get_bool_query('skip_catalog', false);
+
+if ($fastProfile) {
+    $limit = min($limit, 8);
+    $sample = min($sample, 120);
+}
 
 $medicoId = 0;
 $especialidad = '';
@@ -424,9 +483,11 @@ if ($especialidad !== '') {
 $sqlGen = $sqlBase . ' ORDER BY hc.id DESC LIMIT ?';
 $bucketGeneral = rs_collect_bucket($conn, $sqlGen, 'i', [$sample], $limit);
 
-$bucketMedico = rs_enrich_with_catalog($conn, $bucketMedico);
-$bucketEspecialidad = rs_enrich_with_catalog($conn, $bucketEspecialidad);
-$bucketGeneral = rs_enrich_with_catalog($conn, $bucketGeneral);
+if (!$skipCatalog) {
+    $bucketMedico = rs_enrich_with_catalog($conn, $bucketMedico);
+    $bucketEspecialidad = rs_enrich_with_catalog($conn, $bucketEspecialidad);
+    $bucketGeneral = rs_enrich_with_catalog($conn, $bucketGeneral);
+}
 
 echo json_encode([
     'success' => true,

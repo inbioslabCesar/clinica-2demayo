@@ -481,7 +481,7 @@ export default function RecordatoriosCitasPage() {
   const [statsGlobal, setStatsGlobal] = useState({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
   const [prioridadGlobal, setPrioridadGlobal] = useState({ critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 });
   const usandoVistaUnificada = tipoRecordatorio === "todos";
-  const usaPaginacionCliente = usandoVistaUnificada || tipoRecordatorio === "citas";
+  const usaPaginacionCliente = usandoVistaUnificada;
 
   const cargar = async () => {
     setLoading(true);
@@ -825,6 +825,34 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const actualizarGestionLocal = (item, estado, observacion, proximo, esAgendaServicio = false) => {
+    const itemId = Number(item?.id || 0);
+    const cotizacionId = Number(item?.cotizacion_id || 0);
+    const ahoraIso = new Date().toISOString().slice(0, 19).replace("T", " ");
+    const observacionTexto = String(observacion || "").trim();
+    const proximoTexto = String(proximo || "").trim();
+
+    setItems((prev) => prev.map((row) => {
+      const coincide = esAgendaServicio
+        ? Number(row?.cotizacion_id || 0) > 0
+          && Number(row?.cotizacion_id || 0) === cotizacionId
+          && String(row?.origen_consulta || "") === "agenda_servicio"
+        : Number(row?.id || 0) === itemId;
+
+      if (!coincide) return row;
+
+      return {
+        ...row,
+        estado_gestion: estado,
+        observacion: observacionTexto || String(row?.observacion || ""),
+        fecha_proximo_contacto: proximoTexto || row?.fecha_proximo_contacto || null,
+        fecha_ultimo_contacto: ahoraIso,
+        intentos: Math.max(0, Number(row?.intentos || 0) + 1),
+        gestion_updated_at: ahoraIso,
+      };
+    }));
+  };
+
   const cambiarFiltroDetalleRow = (rowKey, filtroTipo) => {
     const key = String(rowKey || "");
     if (!key) return;
@@ -882,7 +910,7 @@ export default function RecordatoriosCitasPage() {
         throw new Error(data.error || "No se pudo guardar gestion");
       }
       setMensaje("Gestion guardada correctamente.");
-      await cargar();
+      actualizarGestionLocal(item, estado, observacion, proximo, false);
       return true;
     } catch (err) {
       setError(err.message || "No se pudo guardar gestion");
@@ -943,7 +971,7 @@ export default function RecordatoriosCitasPage() {
         throw new Error(data.error || "No se pudo guardar gestion");
       }
       setMensaje("Gestion guardada correctamente.");
-      await cargar();
+      actualizarGestionLocal(item, estado, observacion, proximo, true);
       return true;
     } catch (err) {
       setError(err.message || "No se pudo guardar gestion");
@@ -1010,7 +1038,16 @@ export default function RecordatoriosCitasPage() {
         throw new Error(data.error || "No se pudo reprogramar");
       }
       setMensaje(`Servicios reprogramados para ${fecha} a las ${String(hora).slice(0, 5)}.`);
-      await cargar();
+      setItems((prev) => prev.map((row) => {
+        if (String(row?.origen_consulta || "") !== "agenda_servicio") return row;
+        if (Number(row?.cotizacion_id || 0) <= 0 || Number(row?.cotizacion_id || 0) !== Number(item?.cotizacion_id || 0)) return row;
+        return {
+          ...row,
+          fecha,
+          hora,
+          observacion: `Cita reprogramada para ${fecha} ${String(hora).slice(0, 5)}`,
+        };
+      }));
       return true;
     } catch (err) {
       setError(err.message || "No se pudo reprogramar los servicios");

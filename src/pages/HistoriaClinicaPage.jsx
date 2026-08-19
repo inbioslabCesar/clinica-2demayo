@@ -272,6 +272,8 @@ function HistoriaClinicaPage() {
   const [vistaClinicaActiva, setVistaClinicaActiva] = useState('registro');
   const restoreHistorialRef = useRef(false);
   const restorePreviasUiRef = useRef(false);
+  const continuidadConsultaRef = useRef(0);
+  const continuidadModoCargadoRef = useRef({});
   const previasUiStorageKey = useMemo(
     () => buildPreviasUiStorageKey(consultaId, pacienteId),
     [consultaId, pacienteId]
@@ -331,49 +333,78 @@ function HistoriaClinicaPage() {
   useEffect(() => {
     if (!consultaId) return;
     const noCache = `_t=${Date.now()}`;
-    authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
+    let cancelled = false;
+    let deferredTimer = null;
+
+    // Cargar primero laboratorio (impacta más en la vista inicial).
+    authFetch(`api_resultados_laboratorio.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
       cache: 'no-store',
     })
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data.success && data.resultados) setResultadosLab(data.resultados);
         else setResultadosLab([]);
       })
-      .catch(() => setResultadosLab([]));
-    authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}&${noCache}`, {
+      .catch(() => {
+        if (cancelled) return;
+        setResultadosLab([]);
+      });
+
+    authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
       cache: 'no-store',
     })
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data.success && Array.isArray(data.ordenes)) {
           setOrdenesLab(data.ordenes);
         } else {
           setOrdenesLab([]);
         }
       })
-      .catch(() => setOrdenesLab([]));
+      .catch(() => {
+        if (cancelled) return;
+        setOrdenesLab([]);
+      });
 
-    authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}&${noCache}`, {
-      cache: 'no-store',
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
-        const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
-        setOrdenesImagenPrint(activas);
+    // Diferir apoyos no críticos para evitar pico de concurrencia al abrir HC.
+    deferredTimer = setTimeout(() => {
+      authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
+        cache: 'no-store',
       })
-      .catch(() => setOrdenesImagenPrint([]));
+        .then((res) => res.json())
+        .then((data) => {
+          if (cancelled) return;
+          const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+          const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
+          setOrdenesImagenPrint(activas);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setOrdenesImagenPrint([]);
+        });
 
-    authFetch(`api_ordenes_procedimientos.php?consulta_id=${consultaId}&${noCache}`, {
-      cache: 'no-store',
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
-        const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
-        setOrdenesProcedimientosPrint(activas);
+      authFetch(`api_ordenes_procedimientos.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
+        cache: 'no-store',
       })
-      .catch(() => setOrdenesProcedimientosPrint([]));
+        .then((res) => res.json())
+        .then((data) => {
+          if (cancelled) return;
+          const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+          const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
+          setOrdenesProcedimientosPrint(activas);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setOrdenesProcedimientosPrint([]);
+        });
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      if (deferredTimer) clearTimeout(deferredTimer);
+    };
   }, [consultaId]);
 
   useEffect(() => {
@@ -385,24 +416,27 @@ function HistoriaClinicaPage() {
 
     let cancelled = false;
 
-    authFetch(`api_receta_sugerencias.php?consulta_id=${consultaIdNum}&limit=10&sample=300`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return;
-        const sugerencias = data?.sugerencias && typeof data.sugerencias === "object" ? data.sugerencias : {};
-        setRecetaSugerencias({
-          medico: Array.isArray(sugerencias.medico) ? sugerencias.medico : [],
-          especialidad: Array.isArray(sugerencias.especialidad) ? sugerencias.especialidad : [],
-          general: Array.isArray(sugerencias.general) ? sugerencias.general : [],
+    const timer = setTimeout(() => {
+      authFetch(`api_receta_sugerencias.php?consulta_id=${consultaIdNum}&profile=fast&limit=8&sample=120`, { cache: "no-store" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (cancelled) return;
+          const sugerencias = data?.sugerencias && typeof data.sugerencias === "object" ? data.sugerencias : {};
+          setRecetaSugerencias({
+            medico: Array.isArray(sugerencias.medico) ? sugerencias.medico : [],
+            especialidad: Array.isArray(sugerencias.especialidad) ? sugerencias.especialidad : [],
+            general: Array.isArray(sugerencias.general) ? sugerencias.general : [],
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setRecetaSugerencias({ medico: [], especialidad: [], general: [] });
         });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setRecetaSugerencias({ medico: [], especialidad: [], general: [] });
-      });
+    }, 250);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [consultaId]);
 
@@ -416,7 +450,7 @@ function HistoriaClinicaPage() {
     setTratamientoEstado({ loading: true, data: null, error: "" });
 
     authFetch(
-      `api_tratamientos_enfermeria.php?consulta_id=${consultaId}&estado=pendiente,en_ejecucion,completado,suspendido`,
+      `api_tratamientos_enfermeria.php?consulta_id=${consultaId}&estado=pendiente,en_ejecucion,completado,suspendido&skip_reconcile=1`,
       { cache: "no-store" }
     )
       .then((res) => res.json())
@@ -957,7 +991,7 @@ function HistoriaClinicaPage() {
       }
 
       try {
-        const res = await authFetch(`api_consultas.php?consulta_id=${consultaId}`, {
+        const res = await authFetch(`api_consultas.php?consulta_id=${consultaId}&vista=hc_fast`, {
           cache: 'no-store',
         });
         const data = await res.json();
@@ -1022,6 +1056,8 @@ function HistoriaClinicaPage() {
   useEffect(() => {
     const consultaIdActual = Number(consultaId || 0);
     if (consultaIdActual <= 0) {
+      continuidadConsultaRef.current = 0;
+      continuidadModoCargadoRef.current = {};
       setHistoriasPrevias([]);
       setIndiceHistoriaPrevia(0);
       setHcAnterior(null);
@@ -1032,12 +1068,40 @@ function HistoriaClinicaPage() {
       return;
     }
 
-    setHistoriasPrevias([]);
-    setIndiceHistoriaPrevia(0);
-    setHcAnterior(null);
-    setHcAnteriorError("");
-    setDrawerHistorialAbierto(false);
-    setMostrarHcAnterior(false);
+    const consultaChanged = continuidadConsultaRef.current !== consultaIdActual;
+    if (consultaChanged) {
+      continuidadConsultaRef.current = consultaIdActual;
+      continuidadModoCargadoRef.current[String(consultaIdActual)] = '';
+      setHistoriasPrevias([]);
+      setIndiceHistoriaPrevia(0);
+      setHcAnterior(null);
+      setHcAnteriorError("");
+      setDrawerHistorialAbierto(false);
+      setMostrarHcAnterior(false);
+    }
+
+    const hasNavigationRestore = Boolean(
+      navigationState && (
+        navigationState.restoreContinuidadTab
+        || navigationState.openHistoryDrawer
+        || navigationState.restoreHistoryDrawer
+        || navigationState.historyShowDetail
+        || navigationState.showHistoryDetail
+        || navigationState.restoreHistoryDetail
+        || Number(navigationState.historyConsultaId || 0) > 0
+        || Number.isFinite(Number(navigationState.historyIndex))
+      )
+    );
+
+    const hasQueryRestore = restoreConsultaIdFromQuery > 0
+      || (hasRestoreIndexInQuery && Number.isFinite(restoreIndexFromQuery))
+      || restoreTabFromQuery === 'continuidad';
+
+    const continuityRequested = vistaClinicaActiva === 'continuidad' || hasNavigationRestore || hasQueryRestore;
+    if (!continuityRequested) {
+      setHcAnteriorLoading(false);
+      return;
+    }
 
     let cancelled = false;
 
@@ -1093,7 +1157,15 @@ function HistoriaClinicaPage() {
       return nextIndex;
     };
 
-    const cacheKey = `hc_previas_chain_v1_${consultaId}`;
+    const requestedMode = mostrarHcAnterior ? 'full' : 'lite';
+    const loadedMode = continuidadModoCargadoRef.current[String(consultaIdActual)] || '';
+    const alreadyLoaded = loadedMode === 'full' || loadedMode === requestedMode;
+    if (alreadyLoaded && Array.isArray(historiasPrevias) && historiasPrevias.length > 0) {
+      setHcAnteriorLoading(false);
+      return;
+    }
+
+    const cacheKey = `hc_previas_chain_v2_${consultaId}_${requestedMode}`;
     let cacheHit = false;
     try {
       const raw = sessionStorage.getItem(cacheKey);
@@ -1101,7 +1173,8 @@ function HistoriaClinicaPage() {
         const parsed = JSON.parse(raw);
         const ageMs = Date.now() - Number(parsed?.timestamp || 0);
         const sameConsulta = Number(parsed?.consulta_id || 0) === consultaIdActual;
-        if (sameConsulta && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
+        const sameMode = String(parsed?.mode || '') === requestedMode;
+        if (sameConsulta && sameMode && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
           const chain = parsed.chain;
           const preferredIndex = resolvePreferredPreviaIndex(chain);
           setHistoriasPrevias(chain);
@@ -1109,6 +1182,7 @@ function HistoriaClinicaPage() {
           setHcAnterior(chain[preferredIndex] || chain[0] || null);
           setHcAnteriorError(chain.length === 0 ? 'No hay historias clínicas previas encadenadas.' : '');
           setHcAnteriorLoading(false);
+          continuidadModoCargadoRef.current[String(consultaIdActual)] = requestedMode;
           cacheHit = true;
         }
       }
@@ -1122,7 +1196,7 @@ function HistoriaClinicaPage() {
 
     const cargarHcAnterior = async () => {
       try {
-        const res = await authFetch(`api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1`);
+        const res = await authFetch(`api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1&chain_mode=${requestedMode}`);
         const data = await res.json();
         if (cancelled) return;
         const chain = Array.isArray(data.historias_previas) ? data.historias_previas : [];
@@ -1132,10 +1206,12 @@ function HistoriaClinicaPage() {
           setIndiceHistoriaPrevia(preferredIndex);
           setHcAnterior(chain[preferredIndex] || chain[0] || null);
           setHcAnteriorError("");
+          continuidadModoCargadoRef.current[String(consultaIdActual)] = requestedMode;
           try {
             sessionStorage.setItem(cacheKey, JSON.stringify({
               timestamp: Date.now(),
               consulta_id: consultaIdActual,
+              mode: requestedMode,
               chain,
             }));
           } catch {
@@ -1145,26 +1221,37 @@ function HistoriaClinicaPage() {
             setHcAnteriorError('No hay historias clínicas previas encadenadas.');
           }
         } else {
-          setHistoriasPrevias([]);
-          setIndiceHistoriaPrevia(0);
-          setHcAnterior(null);
-          setHcAnteriorError(data.error || 'No se pudo cargar la HC anterior');
+          if (requestedMode === 'full' && loadedMode === 'lite') {
+            setHcAnteriorError(data.error || 'No se pudo ampliar el detalle de continuidad.');
+          } else {
+            setHistoriasPrevias([]);
+            setIndiceHistoriaPrevia(0);
+            setHcAnterior(null);
+            setHcAnteriorError(data.error || 'No se pudo cargar la HC anterior');
+          }
         }
       } catch {
         if (cancelled) return;
-        setHistoriasPrevias([]);
-        setIndiceHistoriaPrevia(0);
-        setHcAnterior(null);
-        setHcAnteriorError('Error al cargar la HC anterior');
+        if (requestedMode === 'full' && loadedMode === 'lite') {
+          setHcAnteriorError('Error al ampliar el detalle de continuidad');
+        } else {
+          setHistoriasPrevias([]);
+          setIndiceHistoriaPrevia(0);
+          setHcAnterior(null);
+          setHcAnteriorError('Error al cargar la HC anterior');
+        }
       } finally {
         if (!cancelled) setHcAnteriorLoading(false);
       }
     };
 
-    cargarHcAnterior();
+    const timerCadena = setTimeout(() => {
+      cargarHcAnterior();
+    }, 250);
 
     return () => {
       cancelled = true;
+      clearTimeout(timerCadena);
     };
   }, [
     consultaId,
@@ -1173,6 +1260,10 @@ function HistoriaClinicaPage() {
     hasRestoreIndexInQuery,
     restoreConsultaIdFromQuery,
     restoreIndexFromQuery,
+    restoreTabFromQuery,
+    vistaClinicaActiva,
+    mostrarHcAnterior,
+    historiasPrevias,
   ]);
 
   useEffect(() => {
@@ -1281,7 +1372,8 @@ function HistoriaClinicaPage() {
 
   useEffect(() => {
     const consultaPreviaId = Number(hcAnterior?.consulta_id || 0);
-    if (consultaPreviaId <= 0) {
+    const puedeCargar = vistaClinicaActiva === 'continuidad' || mostrarHcAnterior;
+    if (!puedeCargar || consultaPreviaId <= 0) {
       setTratamientoEstadoHcPrevia({ loading: false, data: null, error: "" });
       return;
     }
@@ -1290,7 +1382,7 @@ function HistoriaClinicaPage() {
     setTratamientoEstadoHcPrevia({ loading: true, data: null, error: "" });
 
     authFetch(
-      `api_tratamientos_enfermeria.php?consulta_id=${consultaPreviaId}&estado=pendiente,en_ejecucion,completado,suspendido`,
+      `api_tratamientos_enfermeria.php?consulta_id=${consultaPreviaId}&estado=pendiente,en_ejecucion,completado,suspendido&skip_reconcile=1`,
       { cache: "no-store" }
     )
       .then((res) => res.json())
@@ -1332,7 +1424,7 @@ function HistoriaClinicaPage() {
     return () => {
       cancelled = true;
     };
-  }, [hcAnterior?.consulta_id]);
+  }, [hcAnterior?.consulta_id, vistaClinicaActiva, mostrarHcAnterior]);
 
   const totalHistoriasPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
   useEffect(() => {

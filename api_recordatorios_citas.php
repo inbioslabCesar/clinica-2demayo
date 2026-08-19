@@ -333,8 +333,11 @@ if ($method === 'GET') {
     }
 
     rc_require_schema($conn);
-    $aplicarPaginacionEnMemoria = $usarPaginacion;
-    $usarPaginacion = false;
+    $hasAgendaServicios = rc_table_exists($conn, 'agenda_servicios_cotizacion');
+    $permitirAgendaPorFiltro = ($origenConsulta === '' || $origenConsulta === 'agendada');
+    $considerarAgendaEnListado = $hasAgendaServicios && $permitirAgendaPorFiltro && ($estadoGestion === '' || $estadoGestion === 'pendiente');
+    $aplicarPaginacionEnMemoria = $usarPaginacion && $considerarAgendaEnListado;
+    $aplicarPaginacionSql = $usarPaginacion && !$aplicarPaginacionEnMemoria;
 
     $from = " FROM consultas c
             INNER JOIN pacientes p ON p.id = c.paciente_id
@@ -403,20 +406,8 @@ if ($method === 'GET') {
 
     $whereSql = ' WHERE ' . implode(' AND ', $where);
 
-    $countSql = 'SELECT COUNT(*) AS total' . $from . $whereSql;
-    $stmtCount = $conn->prepare($countSql);
-    if (!$stmtCount) {
-        http_response_code(500);
-        echo json_encode(['success' => false, 'error' => 'No se pudo preparar conteo de recordatorios']);
-        exit;
-    }
-    $stmtCount->bind_param($types, ...$params);
-    $stmtCount->execute();
-    $countRow = $stmtCount->get_result()->fetch_assoc() ?: [];
-    $stmtCount->close();
-    $totalItems = (int)($countRow['total'] ?? 0);
-
     $statsSql = "SELECT
+                COUNT(*) AS total,
                 SUM(CASE
                     WHEN DATEDIFF(c.fecha, CURDATE()) <= 1
                      AND COALESCE(rc.estado, 'pendiente') IN ('pendiente', 'no_contesta')
@@ -486,6 +477,8 @@ if ($method === 'GET') {
     $statsRow = $stmtStats->get_result()->fetch_assoc() ?: [];
     $stmtStats->close();
 
+    $totalItems = (int)($statsRow['total'] ?? 0);
+
     $prAtendido = (int)($statsRow['pr_atendido'] ?? 0);
     $prResuelto = (int)($statsRow['pr_resuelto'] ?? 0);
     $prCritico = (int)($statsRow['pr_critico'] ?? 0);
@@ -543,7 +536,7 @@ if ($method === 'GET') {
 
     $paramsList = $params;
     $typesList = $types;
-    if ($usarPaginacion) {
+    if ($aplicarPaginacionSql) {
         $offset = ($page - 1) * $perPage;
         $sql .= ' LIMIT ? OFFSET ?';
         $typesList .= 'ii';
@@ -599,9 +592,7 @@ if ($method === 'GET') {
     $stmt->close();
 
     $agendaRows = [];
-    $hasAgendaServicios = rc_table_exists($conn, 'agenda_servicios_cotizacion');
-    $permitirAgendaPorFiltro = ($origenConsulta === '' || $origenConsulta === 'agendada');
-    if ($hasAgendaServicios && $permitirAgendaPorFiltro && ($estadoGestion === '' || $estadoGestion === 'pendiente')) {
+    if ($considerarAgendaEnListado) {
         $agendaWhere = [
             "LOWER(TRIM(COALESCE(a.estado_evento, ''))) IN ('pendiente', 'confirmado')",
             'a.fecha_programada >= CURDATE()',
@@ -729,7 +720,9 @@ if ($method === 'GET') {
         });
     }
 
-    $totalItems = count($items);
+    if ($considerarAgendaEnListado || !$usarPaginacion) {
+        $totalItems = count($items);
+    }
     if ($aplicarPaginacionEnMemoria) {
         $offset = max(0, ($page - 1) * $perPage);
         $items = array_slice($items, $offset, $perPage);

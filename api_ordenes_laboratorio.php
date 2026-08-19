@@ -350,12 +350,24 @@ if (!function_exists('ol_ensure_write_schema')) {
         $migCols = [
             'cotizacion_id' => 'ALTER TABLE ordenes_laboratorio ADD COLUMN cotizacion_id INT DEFAULT NULL',
             'carga_anticipada' => 'ALTER TABLE ordenes_laboratorio ADD COLUMN carga_anticipada TINYINT(1) NOT NULL DEFAULT 0',
+            'paciente_id' => 'ALTER TABLE ordenes_laboratorio ADD COLUMN paciente_id INT DEFAULT NULL',
+            'historia_clinica_id' => 'ALTER TABLE ordenes_laboratorio ADD COLUMN historia_clinica_id INT DEFAULT NULL',
         ];
 
         foreach ($migCols as $col => $sql) {
             if (!ol_column_exists($conn, 'ordenes_laboratorio', $col)) {
                 $conn->query($sql);
             }
+        }
+
+        $idxPaciente = $conn->query("SHOW INDEX FROM ordenes_laboratorio WHERE Key_name = 'idx_ol_paciente_id'");
+        if (!$idxPaciente || $idxPaciente->num_rows === 0) {
+            $conn->query('ALTER TABLE ordenes_laboratorio ADD INDEX idx_ol_paciente_id (paciente_id)');
+        }
+
+        $idxHistoria = $conn->query("SHOW INDEX FROM ordenes_laboratorio WHERE Key_name = 'idx_ol_historia_clinica_id'");
+        if (!$idxHistoria || $idxHistoria->num_rows === 0) {
+            $conn->query('ALTER TABLE ordenes_laboratorio ADD INDEX idx_ol_historia_clinica_id (historia_clinica_id)');
         }
 
         if (!ol_column_exists($conn, 'cotizaciones_detalle', 'derivado')) {
@@ -1078,8 +1090,13 @@ switch ($method) {
 
                         $examenesFinales = $examenesNuevos;
                         $jsonFinal = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales));
-                        $stmtNueva = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
-                        $stmtNueva->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
+                        if (ol_column_exists($conn, 'ordenes_laboratorio', 'paciente_id') && $pacienteIdCotiz > 0) {
+                            $stmtNueva = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, paciente_id, carga_anticipada) VALUES (?, ?, ?, ?)');
+                            $stmtNueva->bind_param('isii', $consulta_id, $jsonFinal, $pacienteIdCotiz, $cargaAnticipada);
+                        } else {
+                            $stmtNueva = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
+                            $stmtNueva->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
+                        }
                         if (!$stmtNueva->execute()) {
                             throw new Exception($stmtNueva->error);
                         }
@@ -1248,8 +1265,13 @@ switch ($method) {
                         throw new Exception('No hay examenes validos para registrar');
                     }
                     $jsonFinal = json_encode(ol_build_detalles_laboratorio_cotizacion($conn, $examenesFinales));
-                    $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
-                    $stmt->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
+                    if (ol_column_exists($conn, 'ordenes_laboratorio', 'paciente_id') && $pacienteIdCotiz > 0) {
+                        $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, paciente_id, carga_anticipada) VALUES (?, ?, ?, ?)');
+                        $stmt->bind_param('isii', $consulta_id, $jsonFinal, $pacienteIdCotiz, $cargaAnticipada);
+                    } else {
+                        $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (?, ?, ?)');
+                        $stmt->bind_param('isi', $consulta_id, $jsonFinal, $cargaAnticipada);
+                    }
                     if (!$stmt->execute()) throw new Exception($stmt->error);
                     $stmt->close();
                     $ordenId = $conn->insert_id;
@@ -1397,11 +1419,7 @@ switch ($method) {
                 $stmt->close();
                 echo json_encode(['success' => true, 'orden_id' => $conn->insert_id]);
             } else {
-                $stmt = $conn->prepare('INSERT INTO ordenes_laboratorio (consulta_id, examenes, carga_anticipada) VALUES (NULL, ?, ?)');
-                $stmt->bind_param('si', $json, $cargaAnticipada);
-                if (!$stmt->execute()) throw new Exception($stmt->error);
-                $stmt->close();
-                echo json_encode(['success' => true, 'orden_id' => $conn->insert_id]);
+                throw new Exception('No se puede crear orden de laboratorio sin consulta_id ni paciente_id.');
             }
         } catch (Exception $e) {
             error_log('Error al guardar orden laboratorio: ' . $e->getMessage());
@@ -1411,6 +1429,7 @@ switch ($method) {
     case 'GET':
         // Listar órdenes de laboratorio (por estado o consulta_id)
         $estado = $_GET['estado'] ?? null;
+        $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
         $filtro_alerta = isset($_GET['filtro_alerta']) ? strtolower(trim((string)$_GET['filtro_alerta'])) : '';
         $resumen_alertas = isset($_GET['resumen_alertas']) && intval($_GET['resumen_alertas']) === 1;
@@ -1432,6 +1451,99 @@ switch ($method) {
                 echo json_encode(['success' => false, 'error' => 'No autorizado para ver órdenes de esta consulta']);
                 break;
             }
+        }
+
+        // Vista ligera para HC: evita joins/subconsultas pesadas del listado general
+        // y retorna solo lo necesario para panel/impresión por consulta.
+        if ($vista === 'hc_fast' && $consulta_id && $consulta_id > 0) {
+            $sqlFast = 'SELECT * FROM ordenes_laboratorio WHERE consulta_id = ?';
+            $typesFast = 'i';
+            $paramsFast = [$consulta_id];
+
+            if (!empty($estado)) {
+                $sqlFast .= ' AND estado = ?';
+                $typesFast .= 's';
+                $paramsFast[] = $estado;
+            }
+
+            $sqlFast .= ' ORDER BY fecha DESC, id DESC';
+            if ($usePagination && !$resumen_alertas) {
+                $sqlFast .= ' LIMIT ? OFFSET ?';
+                $typesFast .= 'ii';
+                $paramsFast[] = $limit;
+                $paramsFast[] = $offset;
+            }
+
+            $stmtFast = $conn->prepare($sqlFast);
+            if (!$stmtFast) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'No se pudo preparar listado rápido de órdenes']);
+                break;
+            }
+
+            $stmtFast->bind_param($typesFast, ...$paramsFast);
+            $stmtFast->execute();
+            $rowsFast = $stmtFast->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtFast->close();
+
+            $allExamIds = [];
+            $examIdsByOrder = [];
+            foreach ($rowsFast as $rowFast) {
+                $orderId = intval($rowFast['id'] ?? 0);
+                if ($orderId <= 0) {
+                    continue;
+                }
+                $decoded = json_decode((string)($rowFast['examenes'] ?? '[]'), true);
+                $ids = ol_normalize_examenes_ids(is_array($decoded) ? $decoded : []);
+                $examIdsByOrder[$orderId] = $ids;
+                foreach ($ids as $eid) {
+                    $allExamIds[] = $eid;
+                }
+            }
+
+            $snapshot = ol_build_examenes_snapshot($conn, array_values(array_unique($allExamIds)));
+            $snapshotById = [];
+            foreach ($snapshot as $sx) {
+                $sid = intval($sx['id'] ?? 0);
+                if ($sid > 0) {
+                    $snapshotById[$sid] = $sx;
+                }
+            }
+
+            $ordenesFast = [];
+            foreach ($rowsFast as $rowFast) {
+                $orderId = intval($rowFast['id'] ?? 0);
+                $ids = $examIdsByOrder[$orderId] ?? [];
+                $detalles = [];
+                foreach ($ids as $eid) {
+                    if (isset($snapshotById[$eid])) {
+                        $detalles[] = $snapshotById[$eid];
+                    } else {
+                        $detalles[] = [
+                            'id' => $eid,
+                            'nombre' => 'Examen ' . $eid,
+                            'descripcion' => 'Examen ' . $eid,
+                            'valores_referenciales' => [],
+                        ];
+                    }
+                }
+
+                $rowFast['examenes'] = $detalles;
+                $rowFast['estado_visual'] = (string)($rowFast['estado'] ?? '');
+                $rowFast['registrado_por'] = '';
+                $rowFast['origen_solicitud'] = !empty($rowFast['cotizacion_id']) ? 'cotizacion' : 'manual_consulta';
+                $ordenesFast[] = $rowFast;
+            }
+
+            $payloadFast = ['success' => true, 'ordenes' => $ordenesFast];
+            if ($usePagination && !$resumen_alertas) {
+                $payloadFast['page'] = $page;
+                $payloadFast['limit'] = $limit;
+                $payloadFast['total'] = count($ordenesFast);
+            }
+
+            echo json_encode($payloadFast);
+            break;
         }
 
         // Fast path: si no hay órdenes, evitar consultas/joins pesados.

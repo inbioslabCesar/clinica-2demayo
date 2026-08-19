@@ -8,6 +8,10 @@ export default function SidebarMedico({ onClose }) {
 
   return (
     <>
+      <Link to="/dashboard-medico" className="py-2 px-3 rounded-lg hover:bg-white/70 font-medium flex items-center gap-2" style={itemStyle} onClick={onClose}>
+        <Icon iconName="BIDashboard" className="text-xl" />
+        Dashboard Médico
+      </Link>
       <Link to="/mis-consultas" className="py-2 px-3 rounded-lg hover:bg-white/70 font-medium flex items-center gap-2" style={itemStyle} onClick={onClose}>
         <Icon iconName="Contact" className="text-xl" />
         Mis Consultas

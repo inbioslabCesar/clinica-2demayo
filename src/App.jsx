@@ -737,7 +737,7 @@ function App() {
                 path="/"
                 element={
                   usuario?.rol === "medico" ? (
-                    <Navigate to="/mis-consultas" replace />
+                    <Navigate to="/dashboard-medico" replace />
                   ) : usuario?.rol === "laboratorista" ? (
                     <Navigate to="/panel-laboratorio" replace />
                   ) : usuario?.rol === "enfermero" ? (
@@ -790,13 +790,24 @@ function App() {
               {usuario?.rol === "medico" && (
                 <>
                   <Route
+                    path="/dashboard-medico"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <MedicoConsultasPage usuario={usuario} mode="dashboard" />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/mis-consultas"
                     element={
                       <ProtectedRoute
                         usuario={usuario}
                         rolesPermitidos={["medico"]}
                       >
-                        <MedicoConsultasPage usuario={usuario} />
+                        <MedicoConsultasPage usuario={usuario} mode="lista" />
                       </ProtectedRoute>
                     }
                   />

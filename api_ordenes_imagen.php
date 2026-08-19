@@ -435,8 +435,6 @@ if (!function_exists('usuarioPuedeVerOrdenImagen')) {
 
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
-    global $rol, $usuarioId;
-
     $oid     = (int)$orden['id'];
     $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
     $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
@@ -467,6 +465,12 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
             'fecha'           => $a['fecha'],
         ];
     }
+    completarMetadatosOrdenImagen($conn, $orden);
+}
+
+function completarMetadatosOrdenImagen(mysqli $conn, array &$orden): void {
+    global $rol, $usuarioId;
+
     // Enriquecer con medico responsable, estado de la cotización y nombres de servicios
     $medInfo = resolverMedicoResponsableOrdenImagen($conn, $orden);
     $orden['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
@@ -524,6 +528,46 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
     }
 }
 
+function obtenerArchivosOrdenesMap(mysqli $conn, array $ordenIds): array {
+    $ids = [];
+    foreach ($ordenIds as $id) {
+        $idInt = (int)$id;
+        if ($idInt > 0) {
+            $ids[] = $idInt;
+        }
+    }
+    $ids = array_values(array_unique($ids));
+    if (empty($ids)) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "SELECT * FROM ordenes_imagen_archivos WHERE orden_id IN ($placeholders) ORDER BY orden_id ASC, fecha ASC";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $map = [];
+    while ($row = $res->fetch_assoc()) {
+        $oid = (int)($row['orden_id'] ?? 0);
+        if ($oid <= 0) {
+            continue;
+        }
+        if (!isset($map[$oid])) {
+            $map[$oid] = [];
+        }
+        $map[$oid][] = $row;
+    }
+    $stmt->close();
+
+    return $map;
+}
+
 // ─── Download ────────────────────────────────────────────────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'download') {
     $archivo_id = (int)($_GET['archivo_id'] ?? 0);
@@ -563,6 +607,9 @@ $method = $_SERVER['REQUEST_METHOD'];
 // ─── GET ─────────────────────────────────────────────────────────────────────
 if ($method === 'GET') {
     $consulta_id = (int)($_GET['consulta_id'] ?? 0);
+    $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
+    $isHcFast = ($vista === 'hc_fast');
+    $isInformeFast = ($vista === 'informe_fast');
     $paciente_id = (int)($_GET['paciente_id'] ?? 0);
     $medico_id   = (int)($_GET['medico_id'] ?? 0);
     $orden_id    = (int)($_GET['orden_id'] ?? 0);
@@ -576,11 +623,42 @@ if ($method === 'GET') {
         // Un solo orden con detalles completos
         $row = $conn->query("SELECT * FROM ordenes_imagen WHERE id = $orden_id")->fetch_assoc();
         if (!$row) { echo json_encode(['success' => false, 'error' => 'Orden no encontrada']); exit; }
-        adjuntarArchivos($conn, $row);
+
+        if ($isInformeFast) {
+            $row['archivos'] = [];
+            $medInfo = resolverMedicoResponsableOrdenImagen($conn, $row);
+            $row['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
+            $row['medico_responsable_nombre'] = $medInfo['medico_responsable_nombre'];
+            $row['medico_responsable_apellido'] = $medInfo['medico_responsable_apellido'];
+            $row['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
+            $row['can_upload_archivos'] = usuarioPuedeOperarOrdenImagen($row, (string)$rol, (int)$usuarioId);
+            $row['can_edit_informe'] = usuarioPuedeEditarInformeOrdenImagen($row, (string)$rol, (int)$usuarioId);
+        } else {
+            adjuntarArchivos($conn, $row);
+        }
 
         if (!usuarioPuedeVerOrdenImagen($conn, $row, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
             http_response_code(403);
             echo json_encode(['success' => false, 'error' => 'No autorizado para ver esta orden']);
+            exit;
+        }
+
+        if ($isInformeFast) {
+            $ordenLite = [
+                'id' => (int)($row['id'] ?? 0),
+                'consulta_id' => (int)($row['consulta_id'] ?? 0),
+                'paciente_id' => (int)($row['paciente_id'] ?? 0),
+                'medico_id' => (int)($row['medico_id'] ?? 0),
+                'tipo' => (string)($row['tipo'] ?? ''),
+                'indicaciones' => (string)($row['indicaciones'] ?? ''),
+                'estado' => (string)($row['estado'] ?? ''),
+                'fecha' => (string)($row['fecha'] ?? ''),
+                'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+                'medico_responsable_nombre' => (string)($row['medico_responsable_nombre'] ?? ''),
+                'medico_responsable_apellido' => (string)($row['medico_responsable_apellido'] ?? ''),
+                'can_edit_informe' => !empty($row['can_edit_informe']),
+            ];
+            echo json_encode(['success' => true, 'orden' => $ordenLite]);
             exit;
         }
 
@@ -603,12 +681,113 @@ if ($method === 'GET') {
     } elseif ($consulta_id > 0) {
         // Todas las órdenes de una consulta
         $res = $conn->query("SELECT * FROM ordenes_imagen WHERE consulta_id = $consulta_id ORDER BY fecha DESC");
-        $rows = [];
+        $rowsBase = [];
+        $orderIds = [];
         while ($r = $res->fetch_assoc()) {
-            adjuntarArchivos($conn, $r);
+            $rowsBase[] = $r;
+            $orderIds[] = (int)($r['id'] ?? 0);
+        }
+
+        $archivosMap = [];
+        $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
+        $contextQuery = '';
+        if ($contextConsultaId > 0 || $contextPacienteId > 0) {
+            $ctxParts = [];
+            if ($contextConsultaId > 0) {
+                $ctxParts[] = 'context_consulta_id=' . $contextConsultaId;
+            }
+            if ($contextPacienteId > 0) {
+                $ctxParts[] = 'context_paciente_id=' . $contextPacienteId;
+            }
+            $contextQuery = '&' . implode('&', $ctxParts);
+        }
+
+        if (!$isHcFast) {
+            $archivosRawMap = obtenerArchivosOrdenesMap($conn, $orderIds);
+            foreach ($archivosRawMap as $oid => $rawItems) {
+                $archivosMap[$oid] = [];
+                foreach ($rawItems as $a) {
+                    $mt = !empty($a['mime_type']) ? $a['mime_type'] : 'application/octet-stream';
+                    $archivosMap[$oid][] = [
+                        'id' => (int)($a['id'] ?? 0),
+                        'nombre_original' => (string)($a['nombre_original'] ?? ''),
+                        'tamano' => (int)($a['tamano'] ?? 0),
+                        'mime_type' => $mt,
+                        'es_imagen' => strpos($mt, 'image/') === 0,
+                        'es_dicom' => $mt === 'application/dicom',
+                        'url' => $downloadBaseUrl . '?action=download&archivo_id=' . (int)($a['id'] ?? 0) . $contextQuery,
+                        'fecha' => (string)($a['fecha'] ?? ''),
+                    ];
+                }
+            }
+        }
+
+        $rows = [];
+        foreach ($rowsBase as $r) {
+            if (!$isHcFast) {
+                $oid = (int)($r['id'] ?? 0);
+                $r['archivos'] = $archivosMap[$oid] ?? [];
+                // Mantener metadatos de orden (médico, permisos, servicios, cotización)
+                // sin disparar un SELECT por archivos por cada fila.
+                $medInfo = resolverMedicoResponsableOrdenImagen($conn, $r);
+                $r['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
+                $r['medico_responsable_nombre'] = $medInfo['medico_responsable_nombre'];
+                $r['medico_responsable_apellido'] = $medInfo['medico_responsable_apellido'];
+                $r['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
+                $r['can_upload_archivos'] = usuarioPuedeOperarOrdenImagen($r, (string)$rol, (int)$usuarioId);
+                $r['can_edit_informe'] = usuarioPuedeEditarInformeOrdenImagen($r, (string)$rol, (int)$usuarioId);
+            } else {
+                $r['archivos'] = [];
+            }
+
             if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
                 continue;
             }
+
+            if (!$isHcFast) {
+                $cotizId = (int)($r['cotizacion_id'] ?? 0);
+                if ($cotizId > 0) {
+                    $cRow = $conn->query("SELECT estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id = $cotizId")->fetch_assoc();
+                    $r['cotizacion'] = $cRow ?: null;
+
+                    $descs = [];
+                    $tipoOrden = strtolower(trim((string)($r['tipo'] ?? '')));
+                    $detalleTokenId = 0;
+                    $indicaciones = (string)($r['indicaciones'] ?? '');
+                    if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+                        $detalleTokenId = (int)($m[1] ?? 0);
+                    }
+
+                    if ($detalleTokenId > 0) {
+                        $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId AND id = $detalleTokenId LIMIT 1");
+                        if ($dRes && ($d = $dRes->fetch_assoc())) {
+                            $descs[] = (string)($d['descripcion'] ?? '');
+                        }
+                    }
+
+                    if (empty($descs)) {
+                        $whereTipo = '';
+                        if ($tipoOrden === 'ecografia') {
+                            $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'ecografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND LOWER(descripcion) LIKE '%ecograf%'))";
+                        } elseif ($tipoOrden === 'rx') {
+                            $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) IN ('rayosx','rayos_x','rayos x','rx') OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%rayos x%' OR LOWER(descripcion) REGEXP '(^|[^a-z])rx([^a-z]|$)')))";
+                        } elseif ($tipoOrden === 'tomografia') {
+                            $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'tomografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%tomograf%' OR LOWER(descripcion) LIKE '% tac %' OR LOWER(descripcion) LIKE 'tac %' OR LOWER(descripcion) LIKE '% tac')))";
+                        }
+
+                        $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId{$whereTipo} ORDER BY id ASC");
+                        while ($dRes && ($d = $dRes->fetch_assoc())) {
+                            $descs[] = (string)($d['descripcion'] ?? '');
+                        }
+                    }
+
+                    $r['servicios_nombres'] = $descs;
+                } else {
+                    $r['cotizacion'] = null;
+                    $r['servicios_nombres'] = [];
+                }
+            }
+
             $rows[] = $r;
         }
         echo json_encode(['success' => true, 'ordenes' => $rows]);
@@ -637,14 +816,74 @@ if ($method === 'GET') {
         $pagina = min($pagina, $totalPaginas);
         $offset = ($pagina - 1) * $limite;
         $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY oi.fecha DESC LIMIT $limite OFFSET $offset");
-        $rows = [];
+        $rowsBase = [];
+        $orderIds = [];
+        $pacienteIds = [];
         while ($r = $res->fetch_assoc()) {
-            adjuntarArchivos($conn, $r);
+            $rowsBase[] = $r;
+            $orderIds[] = (int)($r['id'] ?? 0);
+            $pid = (int)($r['paciente_id'] ?? 0);
+            if ($pid > 0) {
+                $pacienteIds[] = $pid;
+            }
+        }
+
+        $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
+        $contextQuery = '';
+        if ($contextConsultaId > 0 || $contextPacienteId > 0) {
+            $ctxParts = [];
+            if ($contextConsultaId > 0) {
+                $ctxParts[] = 'context_consulta_id=' . $contextConsultaId;
+            }
+            if ($contextPacienteId > 0) {
+                $ctxParts[] = 'context_paciente_id=' . $contextPacienteId;
+            }
+            $contextQuery = '&' . implode('&', $ctxParts);
+        }
+
+        $archivosMap = [];
+        $archivosRawMap = obtenerArchivosOrdenesMap($conn, $orderIds);
+        foreach ($archivosRawMap as $oid => $rawItems) {
+            $archivosMap[$oid] = [];
+            foreach ($rawItems as $a) {
+                $mt = !empty($a['mime_type']) ? $a['mime_type'] : 'application/octet-stream';
+                $archivosMap[$oid][] = [
+                    'id' => (int)($a['id'] ?? 0),
+                    'nombre_original' => (string)($a['nombre_original'] ?? ''),
+                    'tamano' => (int)($a['tamano'] ?? 0),
+                    'mime_type' => $mt,
+                    'es_imagen' => strpos($mt, 'image/') === 0,
+                    'es_dicom' => $mt === 'application/dicom',
+                    'url' => $downloadBaseUrl . '?action=download&archivo_id=' . (int)($a['id'] ?? 0) . $contextQuery,
+                    'fecha' => (string)($a['fecha'] ?? ''),
+                ];
+            }
+        }
+
+        $pacienteMap = [];
+        $pacienteIds = array_values(array_unique(array_filter($pacienteIds, static function ($id) {
+            return (int)$id > 0;
+        })));
+        if (!empty($pacienteIds)) {
+            $inPac = implode(',', $pacienteIds);
+            $resPac = $conn->query("SELECT id, nombre, apellido, dni, historia_clinica FROM pacientes WHERE id IN ($inPac)");
+            while ($resPac && ($p = $resPac->fetch_assoc())) {
+                $pacienteMap[(int)($p['id'] ?? 0)] = $p;
+            }
+        }
+
+        $rows = [];
+        foreach ($rowsBase as $r) {
+            $oid = (int)($r['id'] ?? 0);
+            $r['archivos'] = $archivosMap[$oid] ?? [];
+            completarMetadatosOrdenImagen($conn, $r);
+
             if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
                 continue;
             }
-            $paciente = $conn->query('SELECT id, nombre, apellido, dni, historia_clinica FROM pacientes WHERE id = ' . (int)$r['paciente_id'] . ' LIMIT 1')->fetch_assoc();
-            $r['paciente'] = $paciente ?: null;
+
+            $pid = (int)($r['paciente_id'] ?? 0);
+            $r['paciente'] = $pacienteMap[$pid] ?? null;
             $rows[] = $r;
         }
         echo json_encode([
@@ -742,14 +981,28 @@ if ($method === 'POST') {
         ];
         $mimesPermitidos = array_keys($extMap);
 
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        if (!$finfo) {
+            echo json_encode(['success' => false, 'error' => 'No se pudo inicializar validación de archivos']);
+            exit;
+        }
+
+        $stmtInsertArchivo = $conn->prepare(
+            'INSERT INTO ordenes_imagen_archivos (orden_id, nombre_original, archivo_path, tamano, mime_type) VALUES (?, ?, ?, ?, ?)'
+        );
+        if (!$stmtInsertArchivo) {
+            finfo_close($finfo);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar registro de archivos']);
+            exit;
+        }
+
         $subidos = 0;
         for ($i = 0; $i < $count; $i++) {
             if ($files['error'][$i] !== UPLOAD_ERR_OK) continue;
             if ($files['size'][$i] > 100 * 1024 * 1024) continue; // 100 MB max
 
-            $finfo    = finfo_open(FILEINFO_MIME_TYPE);
             $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
-            finfo_close($finfo);
+            if ($mimeType === false) continue;
 
             $extArchivo = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
             if ($mimeType === 'application/octet-stream' && $extArchivo === 'dcm') {
@@ -765,14 +1018,15 @@ if ($method === 'POST') {
 
             if (!move_uploaded_file($files['tmp_name'][$i], $destPath)) continue;
 
-            $stmt = $conn->prepare(
-                'INSERT INTO ordenes_imagen_archivos (orden_id, nombre_original, archivo_path, tamano, mime_type) VALUES (?, ?, ?, ?, ?)'
-            );
-            $stmt->bind_param('issis', $orden_id, $nombreOriginal, $destPath, $tamano, $mimeType);
-            $stmt->execute();
-            $stmt->close();
+            $stmtInsertArchivo->bind_param('issis', $orden_id, $nombreOriginal, $destPath, $tamano, $mimeType);
+            if (!$stmtInsertArchivo->execute()) {
+                continue;
+            }
             $subidos++;
         }
+
+        $stmtInsertArchivo->close();
+        finfo_close($finfo);
 
         if ($subidos > 0) {
             $conn->query("UPDATE ordenes_imagen SET estado = 'completado' WHERE id = $orden_id");

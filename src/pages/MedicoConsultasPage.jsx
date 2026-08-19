@@ -2,8 +2,9 @@
 import MedicoConsultas from "../components/medico/MedicoConsultas";
 import { formatProfesionalName } from "../utils/profesionalDisplay";
 
-function MedicoConsultasPage({ usuario }) {
+function MedicoConsultasPage({ usuario, mode = "lista" }) {
   const medicoId = usuario?.id;
+  const esDashboard = mode === "dashboard";
   if (!medicoId) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-red-100 flex items-center justify-center">
@@ -50,17 +51,28 @@ function MedicoConsultasPage({ usuario }) {
                 <p className="text-white/80 text-sm">{formatProfesionalName(usuario || {})}</p>
               </div>
             </div>
-            <h2 className="text-3xl font-bold text-white mb-2">📋 Mis Consultas Programadas</h2>
-            <p className="text-white/80 max-w-2xl mx-auto">
-              Gestiona tus citas médicas, revisa el historial de pacientes y mantén un seguimiento completo de tus consultas
-            </p>
+            {esDashboard ? (
+              <>
+                <h2 className="text-3xl font-bold text-white mb-2">📊 Dashboard Médico</h2>
+                <p className="text-white/80 max-w-2xl mx-auto">
+                  Visualiza tus pendientes del día y accede rápido a tus módulos clínicos
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold text-white mb-1">📋 Mis Consultas</h2>
+                <p className="text-white/80 max-w-2xl mx-auto text-sm">
+                  Lista operativa para atención clínica diaria
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* Contenido principal */}
-      <div className="w-full max-w-[1700px] mx-auto px-3 sm:px-6 xl:px-10 py-8">
-        <MedicoConsultas medicoId={medicoId} />
+      <div className={`w-full max-w-[1700px] mx-auto px-3 sm:px-6 xl:px-10 ${esDashboard ? "py-8" : "py-4 sm:py-5"}`}>
+        <MedicoConsultas medicoId={medicoId} mode={mode} />
       </div>
     </div>
   );

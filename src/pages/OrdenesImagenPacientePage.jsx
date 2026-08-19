@@ -31,6 +31,11 @@ function formatBytes(b) {
 function esArchivoPermitido(f) {
   return f.type === "application/pdf" || f.type.startsWith("image/") || f.name.toLowerCase().endsWith(".dcm");
 }
+const MAX_ARCHIVOS_POR_SUBIDA = 30;
+const MAX_TOTAL_MB_POR_SUBIDA = 500;
+function firmaArchivoLocal(f) {
+  return `${String(f?.name || "").toLowerCase()}::${Number(f?.size || 0)}::${Number(f?.lastModified || 0)}`;
+}
 const cotizEstadoPagado = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
 
 // ── Modal de subida de archivos ───────────────────────────────────────────────
@@ -46,7 +51,27 @@ export function ModalSubir({ orden, onClose, onSubido }) {
     if (permitidos.length < todos.length) {
       Swal.fire("Archivos ignorados", "Solo se aceptan: PDF, imágenes (JPG/PNG/WebP/GIF/BMP/TIFF) y DICOM (.dcm).", "warning");
     }
-    setArchivos((p) => [...p, ...permitidos]);
+
+    setArchivos((previos) => {
+      const existentes = new Set(previos.map(firmaArchivoLocal));
+      const nuevos = [];
+      for (const file of permitidos) {
+        const firma = firmaArchivoLocal(file);
+        if (existentes.has(firma)) continue;
+        existentes.add(firma);
+        nuevos.push(file);
+      }
+
+      const combinados = [...previos, ...nuevos];
+      if (combinados.length > MAX_ARCHIVOS_POR_SUBIDA) {
+        Swal.fire(
+          "Límite de archivos",
+          `Máximo ${MAX_ARCHIVOS_POR_SUBIDA} archivos por subida para evitar bloqueos del navegador o del servidor.`,
+          "warning"
+        );
+      }
+      return combinados.slice(0, MAX_ARCHIVOS_POR_SUBIDA);
+    });
   };
 
   const quitar = (i) => setArchivos((p) => p.filter((_, idx) => idx !== i));
@@ -58,6 +83,18 @@ export function ModalSubir({ orden, onClose, onSubido }) {
 
   const handleSubir = async () => {
     if (!archivos.length) return;
+
+    const totalBytes = archivos.reduce((acc, f) => acc + Number(f?.size || 0), 0);
+    const totalMb = totalBytes / (1024 * 1024);
+    if (totalMb > MAX_TOTAL_MB_POR_SUBIDA) {
+      Swal.fire(
+        "Carga demasiado grande",
+        `El lote supera ${MAX_TOTAL_MB_POR_SUBIDA} MB. Divide la subida en partes para prevenir tiempos de espera y errores.`,
+        "warning"
+      );
+      return;
+    }
+
     setSubiendo(true);
     const fd = new FormData();
     fd.append("orden_id", orden.id);

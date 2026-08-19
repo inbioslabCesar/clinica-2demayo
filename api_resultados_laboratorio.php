@@ -860,6 +860,8 @@ switch ($method) {
 
         // Obtener resultados de laboratorio por consulta_id
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
+        $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
+        $isHcFast = ($vista === 'hc_fast');
         if (!$consulta_id) {
             echo json_encode(['success' => false, 'error' => 'Falta consulta_id']);
             exit;
@@ -916,6 +918,16 @@ switch ($method) {
                 $resultados[] = $row;
             }
             $stmt->close();
+        }
+
+        if ($isHcFast) {
+            echo json_encode([
+                'success' => true,
+                'resultados' => $resultados,
+                'documentos_externos' => [],
+                'examenes_referenciados_pendientes' => [],
+            ]);
+            break;
         }
 
         $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';

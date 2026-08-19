@@ -343,6 +343,227 @@ function consultas_resolver_consulta_explicita_por_cotizacion($conn, $cotizacion
     return (int)($map[$cotizacionId] ?? 0);
 }
 
+function consultas_normalizar_servicio_tipo($raw) {
+    $t = strtolower(trim((string)$raw));
+    if ($t === '' || $t === 'consulta_medica' || $t === 'consulta médica' || $t === 'consulta medica') {
+        return 'consulta';
+    }
+    if ($t === 'rayos_x' || $t === 'rayos x' || $t === 'rx') {
+        return 'rayosx';
+    }
+    if ($t === 'procedimientos') {
+        return 'procedimiento';
+    }
+    if ($t === 'operaciones') {
+        return 'operacion';
+    }
+    return $t;
+}
+
+function consultas_es_servicio_clinico_panel_medico($tipo) {
+    $validos = ['consulta', 'ecografia', 'rayosx', 'tomografia', 'procedimiento', 'operacion'];
+    return in_array(consultas_normalizar_servicio_tipo($tipo), $validos, true);
+}
+
+function consultas_servicios_habilitados_medico($conn, $medicoId) {
+    $medicoId = (int)$medicoId;
+    if ($medicoId <= 0) {
+        return ['consulta'];
+    }
+
+    $servicios = [];
+    $stmt = $conn->prepare('SELECT DISTINCT LOWER(TRIM(servicio_tipo)) AS servicio_tipo FROM tarifas WHERE activo = 1 AND medico_id = ?');
+    if ($stmt) {
+        $stmt->bind_param('i', $medicoId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $tipo = consultas_normalizar_servicio_tipo($row['servicio_tipo'] ?? '');
+            if ($tipo !== '' && consultas_es_servicio_clinico_panel_medico($tipo)) {
+                $servicios[$tipo] = true;
+            }
+        }
+        $stmt->close();
+    }
+
+    // Consulta suele ser parte del flujo clínico base del médico.
+    $servicios['consulta'] = true;
+
+    return array_keys($servicios);
+}
+
+function consultas_stats_servicios_pendientes_hoy($conn, $medicoId, $fechaYmd) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    $conteo = [
+        'consulta' => 0,
+        'ecografia' => 0,
+        'rayosx' => 0,
+        'tomografia' => 0,
+        'procedimiento' => 0,
+        'operacion' => 0,
+    ];
+
+    if ($medicoId <= 0 || $fechaYmd === '') {
+        return $conteo;
+    }
+
+    $whereDetalleActivoServicios = columna_existe_local($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND LOWER(TRIM(COALESCE(cd.estado_item, 'activo'))) <> 'eliminado'"
+        : '';
+
+    $sql = 'SELECT c.id, COALESCE(svc_ref.servicios_tipos_resumen, "") AS servicios_tipos_resumen'
+        . ' FROM consultas c'
+        . ' LEFT JOIN ('
+        . '   SELECT cd.consulta_id,'
+        . '          GROUP_CONCAT(DISTINCT LOWER(TRIM(cd.servicio_tipo)) ORDER BY LOWER(TRIM(cd.servicio_tipo)) ASC SEPARATOR ",") AS servicios_tipos_resumen'
+        . '   FROM cotizaciones_detalle cd'
+        . '   INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
+        . '   WHERE cd.consulta_id IS NOT NULL'
+        . '     AND cd.consulta_id > 0'
+        . '     AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada")'
+        . $whereDetalleActivoServicios
+        . '   GROUP BY cd.consulta_id'
+        . ' ) svc_ref ON svc_ref.consulta_id = c.id'
+        . ' WHERE c.medico_id = ?'
+        . '   AND c.fecha = ?'
+        . '   AND LOWER(TRIM(COALESCE(c.estado, ""))) NOT IN ("cancelada", "cancelado", "completada", "completado")';
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $conteo;
+    }
+
+    $stmt->bind_param('is', $medicoId, $fechaYmd);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    while ($row = $res->fetch_assoc()) {
+        $tiposRaw = trim((string)($row['servicios_tipos_resumen'] ?? ''));
+        $tipos = [];
+        if ($tiposRaw !== '') {
+            foreach (explode(',', $tiposRaw) as $t) {
+                $norm = consultas_normalizar_servicio_tipo($t);
+                if ($norm !== '' && consultas_es_servicio_clinico_panel_medico($norm)) {
+                    $tipos[$norm] = true;
+                }
+            }
+        }
+
+        if (empty($tipos)) {
+            $tipos['consulta'] = true;
+        }
+
+        foreach (array_keys($tipos) as $tipo) {
+            if (!array_key_exists($tipo, $conteo)) {
+                $conteo[$tipo] = 0;
+            }
+            $conteo[$tipo]++;
+        }
+    }
+
+    $stmt->close();
+    return $conteo;
+}
+
+function consultas_stats_imagenologia_pendientes($conn, $medicoId, $fechaYmd) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    $base = [
+        'total_pendientes' => 0,
+        'pendientes_hoy' => 0,
+        'por_tipo' => [
+            'ecografia' => 0,
+            'rayosx' => 0,
+            'tomografia' => 0,
+        ],
+    ];
+
+    if ($medicoId <= 0) {
+        return $base;
+    }
+
+    $stmt = $conn->prepare('SELECT LOWER(TRIM(tipo)) AS tipo, LOWER(TRIM(estado)) AS estado, DATE(fecha) AS fecha_orden FROM ordenes_imagen WHERE medico_id = ?');
+    if (!$stmt) {
+        return $base;
+    }
+
+    $stmt->bind_param('i', $medicoId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    while ($row = $res->fetch_assoc()) {
+        $estado = strtolower(trim((string)($row['estado'] ?? '')));
+        if ($estado !== 'pendiente') {
+            continue;
+        }
+
+        $tipo = strtolower(trim((string)($row['tipo'] ?? '')));
+        if ($tipo === 'rx' || $tipo === 'rayos_x' || $tipo === 'rayos x') {
+            $tipo = 'rayosx';
+        }
+        if (!isset($base['por_tipo'][$tipo])) {
+            continue;
+        }
+
+        $base['total_pendientes']++;
+        $base['por_tipo'][$tipo]++;
+
+        $fechaOrden = trim((string)($row['fecha_orden'] ?? ''));
+        if ($fechaYmd !== '' && $fechaOrden === $fechaYmd) {
+            $base['pendientes_hoy']++;
+        }
+    }
+
+    $stmt->close();
+    return $base;
+}
+
+function consultas_stats_imagenologia_conciliacion($conn, $medicoId, $fechaYmd) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    $out = [
+        'pendientes_hoy_total' => 0,
+        'vinculadas_consulta_hoy' => 0,
+        'sin_consulta_hoy' => 0,
+    ];
+
+    if ($medicoId <= 0 || $fechaYmd === '') {
+        return $out;
+    }
+
+    $sql = 'SELECT oi.consulta_id, c.id AS consulta_hoy_id'
+        . ' FROM ordenes_imagen oi'
+        . ' LEFT JOIN consultas c ON c.id = oi.consulta_id'
+        . '  AND c.medico_id = ?'
+        . '  AND c.fecha = ?'
+        . ' WHERE oi.medico_id = ?'
+        . '   AND DATE(oi.fecha) = ?'
+        . '   AND LOWER(TRIM(COALESCE(oi.estado, ""))) = "pendiente"';
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $out;
+    }
+
+    $stmt->bind_param('isis', $medicoId, $fechaYmd, $medicoId, $fechaYmd);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    while ($row = $res->fetch_assoc()) {
+        $out['pendientes_hoy_total']++;
+        $tieneConsultaHoy = (int)($row['consulta_hoy_id'] ?? 0) > 0;
+        if ($tieneConsultaHoy) {
+            $out['vinculadas_consulta_hoy']++;
+        } else {
+            $out['sin_consulta_hoy']++;
+        }
+    }
+
+    $stmt->close();
+    return $out;
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $sessionMedico = $_SESSION['medico'] ?? null;
@@ -1074,6 +1295,55 @@ switch ($method) {
             $types .= 's';
         }
 
+        // Vista ligera para HC: evita stats y joins/subconsultas pesadas cuando
+        // solo se necesita el contexto de una consulta puntual.
+        if ($vista === 'hc_fast' && $consulta_id && $consulta_id > 0) {
+            $sqlHcFast = 'SELECT consultas.*, '
+                . 'pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni, '
+                . 'medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido, medicos.especialidad AS medico_especialidad, '
+                . 'medicos.cmp AS medico_cmp, medicos.rne AS medico_rne, medicos.firma AS medico_firma, '
+                . 'medicos.tipo_profesional AS medico_tipo_profesional, medicos.abreviatura_profesional AS medico_abreviatura_profesional, '
+                . 'medicos.colegio_sigla AS medico_colegio_sigla, medicos.nro_colegiatura AS medico_nro_colegiatura '
+                . 'FROM consultas '
+                . 'LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id '
+                . 'LEFT JOIN medicos ON consultas.medico_id = medicos.id '
+                . 'WHERE consultas.id = ?';
+
+            $typesHcFast = 'i';
+            $paramsHcFast = [$consulta_id];
+
+            if ($esSesionMedico && $medicoSesionId > 0) {
+                $sqlHcFast .= ' AND consultas.medico_id = ?';
+                $typesHcFast .= 'i';
+                $paramsHcFast[] = $medicoSesionId;
+            }
+
+            $sqlHcFast .= ' LIMIT 1';
+
+            $stmtHcFast = $conn->prepare($sqlHcFast);
+            if (!$stmtHcFast) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'Error al preparar consulta rápida']);
+                exit;
+            }
+
+            $stmtHcFast->bind_param($typesHcFast, ...$paramsHcFast);
+            $stmtHcFast->execute();
+            $rowHcFast = $stmtHcFast->get_result()->fetch_assoc();
+            $stmtHcFast->close();
+
+            echo json_encode([
+                'success' => true,
+                'consultas' => $rowHcFast ? [$rowHcFast] : [],
+                'stats' => [
+                    'total' => $rowHcFast ? 1 : 0,
+                    'pendientes' => 0,
+                    'emergencias' => 0,
+                ],
+            ]);
+            exit;
+        }
+
         if ($solo_activas) {
             if ($incluir_completadas_sin_triaje) {
                 // En panel de triaje mostrar también consultas completadas para que no desaparezcan tras guardar.
@@ -1335,6 +1605,35 @@ switch ($method) {
                 'emergencias' => intval($statsRow['emergencias'] ?? 0),
             ],
         ];
+
+        if ($esSesionMedico) {
+            $hoyYmd = date('Y-m-d');
+            $serviciosHabilitados = consultas_servicios_habilitados_medico($conn, $medicoSesionId);
+            $pendientesPorServicio = consultas_stats_servicios_pendientes_hoy($conn, $medicoSesionId, $hoyYmd);
+            $statsImagenologiaPendiente = consultas_stats_imagenologia_pendientes($conn, $medicoSesionId, $hoyYmd);
+            $statsImagenologiaConciliacion = consultas_stats_imagenologia_conciliacion($conn, $medicoSesionId, $hoyYmd);
+
+            $respuesta['stats_servicios_hoy'] = [
+                'fecha_referencia' => $hoyYmd,
+                'servicios_habilitados' => array_values($serviciosHabilitados),
+                'pendientes_por_servicio' => $pendientesPorServicio,
+            ];
+            $respuesta['stats_imagenologia_pendiente'] = [
+                'fecha_referencia' => $hoyYmd,
+                'total_pendientes' => (int)($statsImagenologiaPendiente['total_pendientes'] ?? 0),
+                'pendientes_hoy' => (int)($statsImagenologiaPendiente['pendientes_hoy'] ?? 0),
+                'por_tipo' => $statsImagenologiaPendiente['por_tipo'] ?? [
+                    'ecografia' => 0,
+                    'rayosx' => 0,
+                    'tomografia' => 0,
+                ],
+                'conciliacion' => [
+                    'pendientes_hoy_total' => (int)($statsImagenologiaConciliacion['pendientes_hoy_total'] ?? 0),
+                    'vinculadas_consulta_hoy' => (int)($statsImagenologiaConciliacion['vinculadas_consulta_hoy'] ?? 0),
+                    'sin_consulta_hoy' => (int)($statsImagenologiaConciliacion['sin_consulta_hoy'] ?? 0),
+                ],
+            ];
+        }
 
         if ($usar_paginacion) {
             $respuesta['pagination'] = [

@@ -412,33 +412,40 @@ $html = '
             overflow: hidden;
         }
         .signature-section {
-            margin-top: 30px;
+            margin-top: 18px;
             border-top: 1px solid #ccc;
-            padding-top: 15px;
+            padding-top: 8px;
             text-align: center;
-            font-size: 11px;
+            font-size: 10px;
         }
         .signature-line {
-            margin-top: 20px;
+            margin-top: 8px;
             border-top: 1px solid #333;
             width: 250px;
             margin-left: auto;
             margin-right: auto;
-            padding-top: 5px;
+            padding-top: 3px;
         }
         .signature-image {
-            max-width: 180px;
-            max-height: 70px;
-            margin: 0 auto -14px auto;
+            max-width: 170px;
+            max-height: 56px;
+            margin: 0 auto -10px auto;
             display: block;
             object-fit: contain;
             position: relative;
             z-index: 2;
         }
+        .signature-name {
+            font-size: 9px;
+            font-weight: 600;
+            line-height: 1.2;
+            margin-top: 1px;
+        }
         .signature-meta {
-            font-size: 10px;
+            font-size: 8px;
             color: #666;
-            margin-top: 4px;
+            line-height: 1.2;
+            margin-top: 1px;
         }
         .footer {
             text-align: center;
@@ -712,6 +719,29 @@ if (!empty($plantillaSections)) {
 $html .= '</div>';
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FIRMA
+// ═══════════════════════════════════════════════════════════════════════════
+$html .= '<div class="signature-section">
+    <div>Realizado por:</div>';
+
+if ($firmaMedico !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaMedico)) {
+    $html .= '<img class="signature-image" src="' . $firmaMedico . '" alt="Firma del médico">';
+} else {
+    $html .= '<div class="signature-line"></div>';
+}
+
+$html .= '<div class="signature-name">' . htmlspecialchars($medicoNombre) . '</div>';
+
+if ($especialidad !== '') {
+    $html .= '<div class="signature-meta">' . htmlspecialchars($especialidad) . '</div>';
+}
+if ($colegiaturaTexto !== '') {
+    $html .= '<div class="signature-meta">' . htmlspecialchars($colegiaturaTexto) . '</div>';
+}
+
+$html .= '</div>';
+
+// ═══════════════════════════════════════════════════════════════════════════
 // IMÁGENES
 // ═══════════════════════════════════════════════════════════════════════════
 if (!empty($archivos)) {
@@ -771,27 +801,6 @@ if (!empty($archivos)) {
     $html .= '</div>';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FIRMA
-// ═══════════════════════════════════════════════════════════════════════════
-$html .= '<div class="signature-section">
-    <div>Realizado por:</div>';
-
-if ($firmaMedico !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaMedico)) {
-    $html .= '<img class="signature-image" src="' . $firmaMedico . '" alt="Firma del médico">';
-} else {
-    $html .= '<div class="signature-line"></div>';
-}
-
-$html .= '<div>' . htmlspecialchars($medicoNombre) . '</div>';
-
-if ($especialidad !== '') {
-    $html .= '<div class="signature-meta">' . htmlspecialchars($especialidad) . '</div>';
-}
-if ($colegiaturaTexto !== '') {
-    $html .= '<div class="signature-meta">' . htmlspecialchars($colegiaturaTexto) . '</div>';
-}
-
 $html .= '</div>
 
 <!-- PIE DE PÁGINA -->
@@ -839,6 +848,9 @@ try {
         'margin_bottom' => 15,
         'encoding' => 'UTF-8',
     ]);
+
+    // Footer global con numeracion por pagina (ej: Pagina 1 de 2)
+    $mpdf->SetHTMLFooter('<div style="text-align:right; font-size:9px; color:#666; border-top:1px solid #ddd; padding-top:4px;">Pagina {PAGENO} de {nbpg}</div>');
     
     // Escribir HTML
     $mpdf->WriteHTML($html);
