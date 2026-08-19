@@ -603,8 +603,19 @@ if (tipoDescuento === 'porcentaje') {
       }
 
       if (result.success) {
-        // Mostrar comprobante
-        await mostrarComprobante(result.cobro_id, cobroData);
+        let comprobanteOk = true;
+        try {
+          // Mostrar comprobante
+          await mostrarComprobante(result.cobro_id, cobroData);
+        } catch {
+          comprobanteOk = false;
+          await Swal.fire({
+            icon: 'warning',
+            title: 'Cobro registrado',
+            text: `El cobro #${Number(result.cobro_id || 0)} se guardo correctamente, pero no se pudo abrir el comprobante en este momento.`,
+            confirmButtonText: 'Continuar',
+          });
+        }
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
           onCobroCompleto(result.cobro_id, servicio, {
@@ -612,6 +623,9 @@ if (tipoDescuento === 'porcentaje') {
             monto_descuento: Number(descuento || 0),
             total_cobrado: Number(cobroData.total || 0),
           });
+        }
+        if (!comprobanteOk) {
+          return;
         }
       } else {
         Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
@@ -672,7 +686,47 @@ if (tipoDescuento === 'porcentaje') {
           return `${d}/${m}/${y}`;
         })()
       : fechaConsulta;
+    const esConsultaMedica = consulta.key === 'consulta';
     const numeroOrden = tipoConsultaRaw === 'programada' ? (consulta.numero_orden || consultaVinculada?.numero_orden || 'N/A') : '';
+    let correlativoDiaConsulta = null;
+    const medicoConsultaId = Number(
+      consultaVinculada?.medico_id
+      || consulta?.medico_id
+      || detalleConsulta?.medico_id
+      || 0
+    );
+    const horaConsultaNorm = String(horaConsulta || '').slice(0, 5);
+    if (esConsultaMedica && medicoConsultaId > 0 && /^\d{4}-\d{2}-\d{2}$/.test(fechaConsulta)) {
+      try {
+        const qs = new URLSearchParams({
+          medico_id: String(medicoConsultaId),
+          fecha_desde: fechaConsulta,
+          fecha_hasta: fechaConsulta,
+        });
+        const resCorrelativo = await authFetch(`api_consultas.php?${qs.toString()}`);
+        const dataCorrelativo = await resCorrelativo.json();
+        if (dataCorrelativo?.success && Array.isArray(dataCorrelativo.consultas)) {
+          const activasDia = dataCorrelativo.consultas
+            .filter((c) => String(c?.estado || '').toLowerCase().trim() !== 'cancelada')
+            .sort((a, b) => {
+              const horaA = String(a?.hora || '').slice(0, 5);
+              const horaB = String(b?.hora || '').slice(0, 5);
+              if (horaA < horaB) return -1;
+              if (horaA > horaB) return 1;
+              return Number(a?.id || 0) - Number(b?.id || 0);
+            });
+
+          const idxConsulta = activasDia.findIndex((c) => Number(c?.id || 0) === consultaId);
+          if (idxConsulta >= 0) {
+            correlativoDiaConsulta = idxConsulta + 1;
+          } else if (horaConsultaNorm) {
+            correlativoDiaConsulta = activasDia.filter((c) => String(c?.hora || '').slice(0, 5) <= horaConsultaNorm).length + 1;
+          }
+        }
+      } catch {
+        correlativoDiaConsulta = null;
+      }
+    }
     const logoSrc = clinicBrand.logo || '/2demayo.svg';
     const cotizacionIdsTicket = Array.from(new Set([
       ...(Array.isArray(datosComprobante?.cotizacion_ids) ? datosComprobante.cotizacion_ids : []),
@@ -706,9 +760,6 @@ if (tipoDescuento === 'porcentaje') {
     const saldoRestanteCobro = Math.max(0, saldoAnteriorCobro - abonoAplicadoCobro - descuentoAplicadoCobro);
     const esAdelantoCobro = tieneSaldoPendiente && (modoCobro === 'parcial' || saldoRestanteCobro > 0);
     const mostrarResumenSaldo = tieneSaldoPendiente && (esCobroCotizacion || esAdelantoCobro);
-
-    // Determinar si el servicio es consulta médica
-    const esConsultaMedica = consulta.key === 'consulta';
 
     // Buscar profesional en consulta vinculada/detalles/servicio
     let nombreMedico = '';
@@ -926,6 +977,7 @@ if (tipoDescuento === 'porcentaje') {
         ${esConsultaMedica ? `<div class="t-meta">Consulta: ${tipoConsulta}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Fecha consulta: ${fechaConsultaFmt || 'No registrada'}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Hora consulta: ${horaConsulta || 'No registrada'}</div>` : ''}
+        ${esConsultaMedica && Number(correlativoDiaConsulta || 0) > 0 ? `<div class="t-meta">Correlativo del dia: N° ${Number(correlativoDiaConsulta)}</div>` : ''}
         ${esConsultaMedica && tipoConsultaRaw === 'programada' ? `<div class="t-meta">Orden: ${numeroOrden}</div>` : ''}
         ${nombreProfesional ? `<div class="t-meta">Profesional: ${nombreProfesional}</div>` : ''}
 

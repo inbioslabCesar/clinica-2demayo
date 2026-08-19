@@ -2,6 +2,7 @@ import { authFetch } from "../../utils/apiClient";
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
+import { validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 import DisponibilidadMedicos from "../medico/DisponibilidadMedicos";
 import FormularioAgendarConsulta from "./FormularioAgendarConsulta";
 import ResumenConsultaAgendada from "../comunes/ResumenConsultaAgendada";
@@ -789,7 +790,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     return true;
   };
 
-  const crearConsultaYDetalle = async () => {
+  const crearConsultaYDetalle = async ({ horaProgramadaOverride = "" } = {}) => {
+    const horaProgramada = String(horaProgramadaOverride || hora || "").slice(0, 5);
     const res = await authFetch(BASE_URL + "api_consultas.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -798,7 +800,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         paciente_id: pacienteId,
         medico_id: medicoId,
         fecha,
-        hora,
+        hora: horaProgramada,
         tipo_consulta: tipoConsultaPersistible,
         origen_creacion: resolverOrigenCreacion("agendada"),
       }),
@@ -825,7 +827,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       tipo_consulta: tipoConsulta,
       medico_especialidad: medicoSeleccionado?.especialidad,
       fecha,
-      hora,
+      hora: horaProgramada,
       paciente_id: pacienteId,
     };
 
@@ -843,13 +845,35 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       return;
     }
 
+    let horaSeleccionada = String(hora || "").slice(0, 5);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal: MySwal,
+      entries: [{
+        tipo: "consulta",
+        medicoId: Number(medicoId),
+        fecha: String(fecha || "").slice(0, 10),
+        hora: horaSeleccionada,
+      }],
+      onApplySuggestion: (_entry, nuevaHora) => {
+        horaSeleccionada = String(nuevaHora || horaSeleccionada).slice(0, 5);
+        setHora(horaSeleccionada);
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
+
     if (!(await validarCajaParaEspontanea())) {
       return;
     }
 
     setProcessingAction(accion);
     try {
-      const { consultaInfo, detalleConsulta, total } = await crearConsultaYDetalle();
+      const { consultaInfo, detalleConsulta, total } = await crearConsultaYDetalle({
+        horaProgramadaOverride: horaSeleccionada,
+      });
       const cotizacionId = await registrarCotizacionConsulta(
         consultaInfo,
         detalleConsulta,

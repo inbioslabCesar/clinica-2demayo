@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
 const SERVICE_TYPE_LABELS = {
   consulta: "Consulta",
@@ -421,6 +422,37 @@ export default function CotizarPaquetesPerfilesPage() {
         hora_programada: String(it.horaProgramada || ""),
         cotizacion_id: Number(it.cotizacionId || 0) || null,
       }));
+
+      const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
+      const agendaCheck = await validarAgendaAntesDeCotizar({
+        authFetch,
+        baseUrl: BASE_URL,
+        Swal,
+        entries: agendaEntries,
+        onApplySuggestion: (entry, nuevaHora) => {
+          const horaNueva = String(nuevaHora || "").slice(0, 5);
+          detallesPaquete.forEach((detalle) => {
+            const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
+            const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
+            if (fechaDet === entry.fecha && horaDet === entry.hora) {
+              detalle.hora_programada = horaNueva;
+            }
+
+            const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
+            componentes.forEach((comp) => {
+              const medicoIdComp = Number(comp?.medico_id || 0);
+              const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
+              const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
+              if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
+                comp.hora_programada = horaNueva;
+              }
+            });
+          });
+        },
+      });
+      if (!agendaCheck?.ok) {
+        return;
+      }
 
       let detallesFinales = detallesPaquete;
       if (isEditingCotizacion && cotizacionId > 0) {

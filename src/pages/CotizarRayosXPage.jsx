@@ -5,6 +5,7 @@ import withReactContent from "sweetalert2-react-content";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
@@ -534,6 +535,26 @@ export default function CotizarRayosXPage() {
     }
     // Construir detalles para cotización
     const detalles = construirDetallesSeleccionados();
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora) => {
+        detalles.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(d?.hora_programada || "").slice(0, 5);
+          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+          }
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
 
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
