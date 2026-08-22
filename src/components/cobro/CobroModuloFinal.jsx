@@ -576,29 +576,128 @@ if (tipoDescuento === 'porcentaje') {
         reparto_manual_aplicado: usarRepartoManual ? 1 : 0,
         motivo: descuento > 0 ? motivo : ''
       };
-      const response = await authFetch("api_cobros.php", {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(cobroData)
-      });
-      let result;
-      try {
-        result = await response.json();
-      } catch {
-        const text = await response.text();
-        Swal.fire('Error', 'Respuesta inesperada del servidor: ' + text, 'error');
-        setLoading(false);
-        return;
-      }
-      // Mostrar error con SweetAlert2 si el backend responde error
-      if (!result.success && result.error) {
-        Swal.fire({
-          icon: 'error',
-          title: 'Error en el cobro',
-          text: result.error,
+      let payloadCobro = { ...cobroData };
+      let result = null;
+      let intentoReprogramacion = 0;
+
+      while (true) {
+        const response = await authFetch("api_cobros.php", {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payloadCobro)
         });
+
+        try {
+          result = await response.json();
+        } catch {
+          const text = await response.text();
+          Swal.fire('Error', 'Respuesta inesperada del servidor: ' + text, 'error');
+          setLoading(false);
+          return;
+        }
+
+        if (result?.success) {
+          break;
+        }
+
+        const conflictos = Array.isArray(result?.conflictos) ? result.conflictos : [];
+        const esConflictoHorario = String(result?.code || '') === 'conflicto_horario';
+        if (esConflictoHorario && conflictos.length > 0 && intentoReprogramacion === 0) {
+          const reprogramacion = {};
+          const usadosPorMedicoFecha = new Map();
+          const keyGrupo = (conf) => `${Number(conf?.medico_id || 0)}|${String(conf?.fecha_programada || '')}`;
+          const keySlot = (slot) => `${String(slot?.fecha_programada || '')}|${String(slot?.hora_programada || '')}`;
+
+          const conflictosOrdenados = [...conflictos].sort((a, b) => {
+            const ma = Number(a?.medico_id || 0);
+            const mb = Number(b?.medico_id || 0);
+            if (ma !== mb) return ma - mb;
+            const fa = String(a?.fecha_programada || '');
+            const fb = String(b?.fecha_programada || '');
+            if (fa !== fb) return fa.localeCompare(fb);
+            const ha = String(a?.hora_programada || '');
+            const hb = String(b?.hora_programada || '');
+            if (ha !== hb) return ha.localeCompare(hb);
+            return Number(a?.detalle_id || 0) - Number(b?.detalle_id || 0);
+          });
+
+          const resumen = conflictosOrdenados.map((conf) => {
+            const desc = String(conf?.descripcion || 'Servicio');
+            const fecha = String(conf?.fecha_programada || '-');
+            const hora = conf?.hora_programada ? String(conf.hora_programada).slice(0, 5) : 'sin hora';
+            const sugeridos = Array.isArray(conf?.horarios_sugeridos) ? conf.horarios_sugeridos : [];
+            const grupo = keyGrupo(conf);
+            if (!usadosPorMedicoFecha.has(grupo)) {
+              usadosPorMedicoFecha.set(grupo, new Set());
+            }
+            const usadosGrupo = usadosPorMedicoFecha.get(grupo);
+
+            let elegido = null;
+            if (sugeridos.length > 0) {
+              for (const slot of sugeridos) {
+                const claveSlot = keySlot(slot);
+                if (claveSlot === '|' || usadosGrupo.has(claveSlot)) {
+                  continue;
+                }
+                elegido = slot;
+                usadosGrupo.add(claveSlot);
+                break;
+              }
+            }
+
+            if (!elegido && Number(conf?.detalle_id || 0) > 0) {
+              // fallback conservador: si no hay slot libre en lista, no forzar duplicados
+              // para evitar segundo rechazo por conflicto en el backend.
+            }
+
+            if (elegido && Number(conf?.detalle_id || 0) > 0) {
+              reprogramacion[String(Number(conf.detalle_id))] = {
+                fecha_programada: elegido.fecha_programada,
+                hora_programada: elegido.hora_programada,
+              };
+            }
+            const sugeridosTxt = sugeridos.length > 0
+              ? sugeridos.map((s) => `${String(s?.fecha_programada || '')} ${String(s?.hora_label || String(s?.hora_programada || '').slice(0, 5))}`.trim()).join(', ')
+              : 'sin sugerencias disponibles';
+            return `• ${desc} (${fecha} ${hora}) → ${sugeridosTxt}`;
+          }).join('\n');
+
+          const puedeReprogramar = Object.keys(reprogramacion).length > 0;
+          const decision = await Swal.fire({
+            icon: 'warning',
+            title: 'Conflicto de horario detectado',
+            text: puedeReprogramar
+              ? `El médico ya tiene turnos ocupados.\n\n${resumen}\n\n¿Deseas reprogramar automáticamente a la primera hora sugerida y continuar con el cobro?`
+              : `No hay horario asignado/disponible para algunos servicios.\n\n${resumen}`,
+            showCancelButton: puedeReprogramar,
+            confirmButtonText: puedeReprogramar ? 'Reprogramar y cobrar' : 'Entendido',
+            cancelButtonText: 'Cancelar',
+          });
+
+          if (decision.isConfirmed && puedeReprogramar) {
+            payloadCobro = {
+              ...payloadCobro,
+              reprogramacion_horaria: reprogramacion,
+            };
+            intentoReprogramacion = 1;
+            continue;
+          }
+
+          return;
+        }
+
+        if (result?.error) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Error en el cobro',
+            text: result.error,
+          });
+          return;
+        }
+
+        Swal.fire('Error', 'Error al procesar el cobro', 'error');
         return;
       }
 
@@ -606,7 +705,7 @@ if (tipoDescuento === 'porcentaje') {
         let comprobanteOk = true;
         try {
           // Mostrar comprobante
-          await mostrarComprobante(result.cobro_id, cobroData);
+          await mostrarComprobante(result.cobro_id, payloadCobro);
         } catch {
           comprobanteOk = false;
           await Swal.fire({
@@ -621,14 +720,12 @@ if (tipoDescuento === 'porcentaje') {
           onCobroCompleto(result.cobro_id, servicio, {
             monto_original: Number(montoOriginal || 0),
             monto_descuento: Number(descuento || 0),
-            total_cobrado: Number(cobroData.total || 0),
+            total_cobrado: Number(payloadCobro.total || 0),
           });
         }
         if (!comprobanteOk) {
           return;
         }
-      } else {
-        Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
       }
     } catch {
       // Eliminado log de error en producción

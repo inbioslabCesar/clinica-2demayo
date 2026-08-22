@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQuoteCart } from "../../context/QuoteCartContext";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
+import { validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 
 function getLimaDate() {
   const now = new Date();
@@ -42,6 +43,27 @@ function esConsultaProgramadaDelCarrito(item) {
   if (!esConsulta) return false;
   const tipoConsulta = String(item?.consultaTipoConsulta || "programada").toLowerCase();
   return tipoConsulta === "programada";
+}
+
+function buildEntryKey(row) {
+  return [
+    Number(row?.medicoId || 0),
+    String(row?.fecha || ""),
+    String(row?.hora || ""),
+    String(row?.tipo || ""),
+  ].join("|");
+}
+
+function actualizarDescripcionConsultaProgramada(descripcion, fecha, hora) {
+  const base = String(descripcion || "Consulta medica").trim();
+  const fechaNorm = String(fecha || "").slice(0, 10);
+  const horaNorm = String(hora || "").slice(0, 5);
+  if (!fechaNorm || !horaNorm) {
+    return base;
+  }
+
+  const baseSinHorario = base.replace(/\(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?\)\s*$/i, "").trim();
+  return `${baseSinHorario} (${fechaNorm} ${horaNorm})`;
 }
 
 const XL_BREAKPOINT = 1280;
@@ -199,6 +221,8 @@ export default function QuoteCartPanel() {
         paquete_tipo: String(it.packageType || ""),
         componentes: Array.isArray(it.componentes) ? it.componentes : [],
         cotizacion_id: Number(it.cotizacionId || 0) || null,
+        consulta_id: Number(it.consultaId || it.consulta_id || 0) || null,
+        medico_id: Number(it.medico_id || it.medicoId || it.consultaMedicoId || 0) || null,
         fecha_programada: String(it.fechaProgramada || it.fecha_programada || ""),
         hora_programada: String(it.horaProgramada || it.hora_programada || ""),
       };
@@ -314,6 +338,68 @@ export default function QuoteCartPanel() {
       return;
     }
 
+    const agendaEntries = [];
+    const agendaSeen = new Set();
+    for (let i = 0; i < detalles.length; i++) {
+      const d = detalles[i] || {};
+      const tipo = String(d.servicio_tipo || "").toLowerCase();
+      if (!esServicioProgramableParaAgenda(tipo)) {
+        continue;
+      }
+
+      const cartItem = cart.items[i] || {};
+      const medicoId = Number(
+        d.medico_id
+        || cartItem?.medico_id
+        || cartItem?.medicoId
+        || cartItem?.consultaMedicoId
+        || 0
+      );
+      const fecha = String(d.fecha_programada || "").slice(0, 10);
+      const hora = String(d.hora_programada || "").slice(0, 5);
+      if (medicoId <= 0 || !fecha || !hora) {
+        continue;
+      }
+
+      const entry = {
+        tipo,
+        medicoId,
+        fecha,
+        hora,
+        consultaIdExcluir: tipo === "consulta" ? Number(d.consulta_id || 0) : 0,
+        __index: i,
+      };
+      const dedupeKey = buildEntryKey(entry);
+      if (agendaSeen.has(dedupeKey)) {
+        continue;
+      }
+      agendaSeen.add(dedupeKey);
+      agendaEntries.push(entry);
+    }
+
+    if (agendaEntries.length > 0) {
+      const agendaCheck = await validarAgendaAntesDeCotizar({
+        authFetch,
+        baseUrl: "",
+        Swal,
+        entries: agendaEntries,
+        onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
+          const idx = Number(entry?.__index);
+          if (!Number.isFinite(idx) || idx < 0 || idx >= detalles.length) {
+            return;
+          }
+
+          const fechaActual = String(detalles[idx]?.fecha_programada || "").slice(0, 10);
+          detalles[idx].fecha_programada = String(nuevaFecha || fechaActual || "").slice(0, 10);
+          detalles[idx].hora_programada = String(nuevaHora || detalles[idx]?.hora_programada || "").slice(0, 5);
+        },
+      });
+
+      if (!agendaCheck?.ok) {
+        return;
+      }
+    }
+
     try {
       const resumenServicios = Array.from(new Set(detalles.map((d) => String(d.servicio_tipo || "otros"))));
       const confirm = await Swal.fire({
@@ -340,12 +426,14 @@ export default function QuoteCartPanel() {
         const d = detalles[i];
         const cartItem = cart.items[i];
         const consultaProgramada = esConsultaProgramadaDelCarrito(cartItem);
-        const consultaFechaFinal = (usarProgramacionGlobal && !consultaProgramada)
+        const detalleFechaFinal = String(d?.fecha_programada || "").slice(0, 10);
+        const detalleHoraFinal = String(d?.hora_programada || "").slice(0, 5);
+        const consultaFechaFinal = detalleFechaFinal || ((usarProgramacionGlobal && !consultaProgramada)
           ? fechaGlobal
-          : String(cartItem?.consultaFecha || "").slice(0, 10);
-        const consultaHoraFinal = (usarProgramacionGlobal && !consultaProgramada)
+          : String(cartItem?.consultaFecha || "").slice(0, 10));
+        const consultaHoraFinal = detalleHoraFinal || ((usarProgramacionGlobal && !consultaProgramada)
           ? horaGlobal
-          : String(cartItem?.consultaHora || "").slice(0, 5);
+          : String(cartItem?.consultaHora || "").slice(0, 5));
 
         if (
           String(d.servicio_tipo).toLowerCase() === "consulta" &&
@@ -367,6 +455,11 @@ export default function QuoteCartPanel() {
           if (consultaFechaFinal && consultaHoraFinal) {
             detalles[i].fecha_programada = consultaFechaFinal;
             detalles[i].hora_programada = consultaHoraFinal;
+            detalles[i].descripcion = actualizarDescripcionConsultaProgramada(
+              detalles[i].descripcion,
+              consultaFechaFinal,
+              consultaHoraFinal
+            );
           }
           detalles[i].consulta_id = Number(detalles[i].consulta_id || cartItem?.consultaId || 0);
           detalles[i].medico_id = Number(detalles[i].medico_id || cartItem?.consultaMedicoId || 0);

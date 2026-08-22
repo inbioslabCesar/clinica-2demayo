@@ -1092,6 +1092,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                             <span className="font-medium text-gray-900">
                               {consulta.hora || 'N/A'}
                             </span>
+                            {Number(consulta?.correlativo_dia_medico || 0) > 0 && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 border border-indigo-200" title="Correlativo del día por médico">
+                                N° {Number(consulta.correlativo_dia_medico)}
+                              </span>
+                            )}
                           </div>
                         </td>
                         
@@ -1294,7 +1299,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                   </div>
                   <div>
                     <p className="text-gray-600 font-medium">⏰ Hora</p>
-                    <p className="text-gray-900">{consulta.hora || 'N/A'}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-gray-900">{consulta.hora || 'N/A'}</p>
+                      {Number(consulta?.correlativo_dia_medico || 0) > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 border border-indigo-200" title="Correlativo del día por médico">
+                          N° {Number(consulta.correlativo_dia_medico)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <p className="text-gray-600 font-medium">🏥 HC</p>

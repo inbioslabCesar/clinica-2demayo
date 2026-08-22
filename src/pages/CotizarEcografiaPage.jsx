@@ -5,6 +5,7 @@ import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor } from "../utils/medicoAccent";
 
 export default function CotizarEcografiaPage() {
     const [busqueda, setBusqueda] = useState("");
@@ -872,12 +873,14 @@ export default function CotizarEcografiaPage() {
                 if (tarifa && tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
                   medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
                 }
+                const medicoNombre = medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "";
+                const medicoColor = getMedicoAccentColor(medicoNombre);
                 const precioMostrar = Number(getDisplayPrice(tarifa) || 0).toFixed(2);
                 return (
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                      <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
+                      <div className="text-xs mt-1" style={{ color: medicoColor }}>Doctor: {medicoNombre || "Sin doctor"}</div>
                       {coverageStatusByTarifa[Number(tarifa.id)] === 'pending' ? (
                         <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
                       ) : String(getCoberturaTarifa(tarifa.id)?.origen_cobro || '') === 'contrato' ? (

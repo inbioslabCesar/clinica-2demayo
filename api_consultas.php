@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
 
 function consultas_column_exists($conn, $table, $column) {
     $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
@@ -252,6 +253,47 @@ function consultas_regularizar_habilitacion_por_pago($conn, $consultaId, $cotiza
     $stmt->bind_param('i', $consultaId);
     $stmt->execute();
     $stmt->close();
+}
+
+function consultas_enriquecer_correlativo_diario($conn, &$rows) {
+    if (!is_array($rows) || empty($rows)) {
+        return;
+    }
+
+    $pares = [];
+    foreach ($rows as $row) {
+        $medicoId = intval($row['medico_id'] ?? 0);
+        $fecha = trim((string)($row['fecha'] ?? ''));
+        if ($medicoId <= 0 || $fecha === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
+            continue;
+        }
+        $key = $medicoId . '|' . $fecha;
+        if (!isset($pares[$key])) {
+            $pares[$key] = ['medico_id' => $medicoId, 'fecha' => $fecha];
+        }
+    }
+
+    if (empty($pares)) {
+        foreach ($rows as &$row) {
+            $corrPersistido = intval($row['correlativo_dia_medico'] ?? 0);
+            $row['correlativo_dia_medico'] = $corrPersistido > 0 ? $corrPersistido : null;
+        }
+        unset($row);
+        return;
+    }
+
+    $pairs = array_values($pares);
+    $rankMaps = correlativo_operativo_rank_maps($conn, $pairs);
+    $rankByConsultaId = is_array($rankMaps['consulta'] ?? null) ? $rankMaps['consulta'] : [];
+
+    foreach ($rows as &$row) {
+        $consultaId = intval($row['id'] ?? 0);
+        $corrPersistido = intval($row['correlativo_dia_medico'] ?? 0);
+        $row['correlativo_dia_medico'] = $consultaId > 0 && isset($rankByConsultaId[$consultaId])
+            ? intval($rankByConsultaId[$consultaId])
+            : ($corrPersistido > 0 ? $corrPersistido : null);
+    }
+    unset($row);
 }
 
 function consultas_cotizacion_estado_map($conn, $cotizacionIds) {
@@ -610,6 +652,125 @@ function consultas_medico_existe($conn, $medicoId) {
     $exists = (bool)$stmt->get_result()->fetch_row();
     $stmt->close();
     return $exists;
+}
+
+function consultas_buscar_conflicto_agenda_horario($conn, $medicoId, $fechaYmd, $horaHms) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    $horaHms = trim((string)$horaHms);
+    if ($medicoId <= 0 || $fechaYmd === '' || $horaHms === '') {
+        return null;
+    }
+    if (!consultas_table_exists($conn, 'agenda_servicios_cotizacion')) {
+        return null;
+    }
+    if (!columna_existe_local($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+        || !columna_existe_local($conn, 'agenda_servicios_cotizacion', 'hora_programada')) {
+        return null;
+    }
+
+    $hasAgendaMedico = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'medico_id');
+    $hasAgendaEstado = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+    $hasAgendaDetalle = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id');
+    $hasAgendaServicioId = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'servicio_id');
+    $hasAgendaCotizacion = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'cotizacion_id');
+    $hasDetalleTable = consultas_table_exists($conn, 'cotizaciones_detalle');
+    $hasTarifasTable = consultas_table_exists($conn, 'tarifas');
+    $hasDetalleMedico = $hasDetalleTable && columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id');
+    $hasDetalleId = $hasDetalleTable && columna_existe_local($conn, 'cotizaciones_detalle', 'id');
+    $hasDetalleServicioId = $hasDetalleTable && columna_existe_local($conn, 'cotizaciones_detalle', 'servicio_id');
+    $hasTarifaMedico = $hasTarifasTable && columna_existe_local($conn, 'tarifas', 'medico_id');
+    $hasTarifaId = $hasTarifasTable && columna_existe_local($conn, 'tarifas', 'id');
+
+    $selectCot = $hasAgendaCotizacion ? 'a.cotizacion_id' : '0 AS cotizacion_id';
+    $selectDet = $hasAgendaDetalle ? 'a.cotizacion_detalle_id' : '0 AS cotizacion_detalle_id';
+    $selectEstado = $hasAgendaEstado ? 'LOWER(TRIM(COALESCE(a.estado_evento, ""))) AS estado_evento' : '"" AS estado_evento';
+    $joinDetalle = ($hasAgendaDetalle && $hasDetalleTable && $hasDetalleId) ? ' LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id' : '';
+    $joinTarifa = ($hasTarifasTable && $hasTarifaId)
+        ? ' LEFT JOIN tarifas t ON t.id = COALESCE(' . ($hasDetalleServicioId ? 'cd.servicio_id, ' : '') . ($hasAgendaServicioId ? 'a.servicio_id' : '0') . ')'
+        : '';
+
+    $medicoExprParts = [];
+    if ($hasAgendaMedico) $medicoExprParts[] = 'a.medico_id';
+    if ($hasDetalleMedico) $medicoExprParts[] = 'cd.medico_id';
+    if ($hasTarifaMedico) $medicoExprParts[] = 't.medico_id';
+    $medicoExpr = empty($medicoExprParts) ? '0' : ('COALESCE(' . implode(', ', $medicoExprParts) . ', 0)');
+
+    $whereEstado = $hasAgendaEstado
+        ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado")'
+        : '';
+
+    $sql = 'SELECT a.id, ' . $selectCot . ', ' . $selectDet . ', ' . $selectEstado
+        . ' FROM agenda_servicios_cotizacion a'
+        . $joinDetalle
+        . $joinTarifa
+        . ' WHERE ' . $medicoExpr . ' = ?'
+        . ' AND a.fecha_programada = ? AND a.hora_programada = ?'
+        . $whereEstado
+        . ' ORDER BY a.id ASC LIMIT 1';
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param('iss', $medicoId, $fechaYmd, $horaHms);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function consultas_calcular_siguiente_correlativo_reprogramacion($conn, $medicoId, $fechaYmd, $consultaIdExcluir = 0) {
+    $medicoId = (int)$medicoId;
+    $consultaIdExcluir = (int)$consultaIdExcluir;
+    $fechaYmd = trim((string)$fechaYmd);
+    if ($medicoId <= 0 || $fechaYmd === '') {
+        return 0;
+    }
+
+    $maxConsultas = 0;
+    $stmtC = $conn->prepare('SELECT COALESCE(MAX(COALESCE(correlativo_dia_medico, 0)), 0) AS max_corr FROM consultas WHERE medico_id = ? AND fecha = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada")');
+    if ($stmtC) {
+        $stmtC->bind_param('isi', $medicoId, $fechaYmd, $consultaIdExcluir);
+        $stmtC->execute();
+        $rowC = $stmtC->get_result()->fetch_assoc();
+        $stmtC->close();
+        $maxConsultas = (int)($rowC['max_corr'] ?? 0);
+    }
+
+    $maxAgenda = 0;
+    $hasAgenda = consultas_table_exists($conn, 'agenda_servicios_cotizacion');
+    $hasRas = consultas_table_exists($conn, 'recordatorios_agenda_servicios');
+    $hasRasTurnoOriginal = $hasRas && columna_existe_local($conn, 'recordatorios_agenda_servicios', 'turno_original');
+    $hasRasTurnoVigente = $hasRas && columna_existe_local($conn, 'recordatorios_agenda_servicios', 'turno_vigente');
+    if ($hasAgenda) {
+        if ($hasRasTurnoOriginal && $hasRasTurnoVigente) {
+            $exprAgenda = 'COALESCE(NULLIF(ras.turno_vigente, 0), NULLIF(ras.turno_original, 0), 0)';
+        } elseif ($hasRasTurnoOriginal) {
+            $exprAgenda = 'COALESCE(NULLIF(ras.turno_original, 0), 0)';
+        } else {
+            $exprAgenda = '0';
+        }
+
+        $sqlA = 'SELECT COALESCE(MAX(' . $exprAgenda . '), 0) AS max_corr'
+            . ' FROM agenda_servicios_cotizacion a'
+            . ' LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id'
+            . ' LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)'
+            . ($hasRas ? ' LEFT JOIN recordatorios_agenda_servicios ras ON ras.cotizacion_id = a.cotizacion_id' : '')
+            . ' WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?'
+            . '   AND a.fecha_programada = ?'
+            . '   AND a.estado_evento IN ("pendiente", "confirmado")';
+        $stmtA = $conn->prepare($sqlA);
+        if ($stmtA) {
+            $stmtA->bind_param('is', $medicoId, $fechaYmd);
+            $stmtA->execute();
+            $rowA = $stmtA->get_result()->fetch_assoc();
+            $stmtA->close();
+            $maxAgenda = (int)($rowA['max_corr'] ?? 0);
+        }
+    }
+
+    return max($maxConsultas, $maxAgenda) + 1;
 }
 
 function resolver_consulta_id_por_cotizacion($conn, $cotizacionId) {
@@ -1332,6 +1493,10 @@ switch ($method) {
             $rowHcFast = $stmtHcFast->get_result()->fetch_assoc();
             $stmtHcFast->close();
 
+            $rowsHcFast = $rowHcFast ? [$rowHcFast] : [];
+            consultas_enriquecer_correlativo_diario($conn, $rowsHcFast);
+            $rowHcFast = !empty($rowsHcFast) ? $rowsHcFast[0] : null;
+
             echo json_encode([
                 'success' => true,
                 'consultas' => $rowHcFast ? [$rowHcFast] : [],
@@ -1409,6 +1574,8 @@ switch ($method) {
                 $rowsSimple[] = $rowSimple;
             }
             $stmtSimple->close();
+
+            consultas_enriquecer_correlativo_diario($conn, $rowsSimple);
 
             $totalSimple = 0;
             if ($usar_paginacion) {
@@ -1542,6 +1709,8 @@ switch ($method) {
         while ($row = $res->fetch_assoc()) {
             $rows[] = $row;
         }
+
+        consultas_enriquecer_correlativo_diario($conn, $rows);
 
         $consultaIdsListado = [];
         foreach ($rows as $tmpRow) {
@@ -1791,6 +1960,19 @@ switch ($method) {
                 exit;
             }
 
+            $conflictoAgenda = consultas_buscar_conflicto_agenda_horario($conn, (int)$medico_id, (string)$fecha, (string)$hora);
+            if ($conflictoAgenda) {
+                $conn->rollback();
+                $agendaId = (int)($conflictoAgenda['id'] ?? 0);
+                $agendaEstado = (string)($conflictoAgenda['estado_evento'] ?? 'pendiente');
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'El médico ya tiene un servicio programado en ese horario',
+                    'detalle' => "Agenda ID {$agendaId} con estado '{$agendaEstado}'",
+                ]);
+                exit;
+            }
+
             // 5. Insertar la consulta dentro de la transacción
             $stmtIns = $conn->prepare(
                 'INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, origen_creacion)
@@ -2021,12 +2203,32 @@ switch ($method) {
         }
 
         $esReprogramacion = false;
+        $turnoAntesReprogramacion = 0;
+        $turnoAhoraReprogramacion = 0;
         if ($actualizarAgenda) {
             $fechaActual = trim((string)($ownerRow['fecha'] ?? ''));
             $horaActual = trim((string)($ownerRow['hora'] ?? ''));
             $horaActualNorm = $horaActual !== '' ? substr($horaActual, 0, 5) : '';
             $horaNuevaNorm = $hora !== null ? substr((string)$hora, 0, 5) : '';
             $esReprogramacion = ($fechaActual !== (string)$fecha) || ($horaActualNorm !== $horaNuevaNorm) || (intval($ownerRow['medico_id'] ?? 0) !== intval($medico_id));
+
+            if ($esReprogramacion && columna_existe_local($conn, 'consultas', 'correlativo_dia_medico')) {
+                $turnoAntesReprogramacion = intval($ownerRow['correlativo_dia_medico'] ?? 0);
+                if ($turnoAntesReprogramacion <= 0) {
+                    $stmtTurnoActual = $conn->prepare('SELECT COALESCE(correlativo_dia_medico, 0) AS corr FROM consultas WHERE id = ? LIMIT 1');
+                    if ($stmtTurnoActual) {
+                        $stmtTurnoActual->bind_param('i', $id);
+                        $stmtTurnoActual->execute();
+                        $rowTurnoActual = $stmtTurnoActual->get_result()->fetch_assoc();
+                        $stmtTurnoActual->close();
+                        $turnoAntesReprogramacion = intval($rowTurnoActual['corr'] ?? 0);
+                    }
+                }
+                $turnoAhoraReprogramacion = consultas_calcular_siguiente_correlativo_reprogramacion($conn, intval($medico_id), (string)$fecha, intval($id));
+                if ($turnoAhoraReprogramacion <= 0) {
+                    $turnoAhoraReprogramacion = max(1, $turnoAntesReprogramacion);
+                }
+            }
 
             $stmtConflicto = $conn->prepare('SELECT id, estado FROM consultas WHERE medico_id=? AND fecha=? AND hora=? AND id<>? AND estado NOT IN ("cancelada", "completada") LIMIT 1');
             $stmtConflicto->bind_param('issi', $medico_id, $fecha, $hora, $id);
@@ -2039,6 +2241,18 @@ switch ($method) {
                     'success' => false,
                     'error' => 'El médico ya tiene una consulta pendiente en ese horario',
                     'detalle' => "Consulta ID {$conflicto['id']} con estado '{$conflicto['estado']}'",
+                ]);
+                exit;
+            }
+
+            $conflictoAgenda = consultas_buscar_conflicto_agenda_horario($conn, (int)$medico_id, (string)$fecha, (string)$hora);
+            if ($conflictoAgenda) {
+                $agendaId = (int)($conflictoAgenda['id'] ?? 0);
+                $agendaEstado = (string)($conflictoAgenda['estado_evento'] ?? 'pendiente');
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'El médico ya tiene un servicio programado en ese horario',
+                    'detalle' => "Agenda ID {$agendaId} con estado '{$agendaEstado}'",
                 ]);
                 exit;
             }
@@ -2056,6 +2270,87 @@ switch ($method) {
         }
 
         $ok = $stmt->execute();
+
+        if ($ok && $actualizarAgenda && $esReprogramacion && $turnoAhoraReprogramacion > 0 && columna_existe_local($conn, 'consultas', 'correlativo_dia_medico')) {
+            $stmtCorr = $conn->prepare('UPDATE consultas SET correlativo_dia_medico = ? WHERE id = ? LIMIT 1');
+            if ($stmtCorr) {
+                $stmtCorr->bind_param('ii', $turnoAhoraReprogramacion, $id);
+                $stmtCorr->execute();
+                $stmtCorr->close();
+            }
+
+            if (consultas_table_exists($conn, 'recordatorios_consultas')) {
+                $turnoAntesFinal = max(1, intval($turnoAntesReprogramacion));
+                $turnoAhoraFinal = max(1, intval($turnoAhoraReprogramacion));
+                $horaObs = substr((string)$hora, 0, 5);
+                $observacionReprog = sprintf(
+                    'Cita reprogramada para %s %s. Turno: Antes N°%d -> Ahora N°%d.',
+                    (string)$fecha,
+                    $horaObs,
+                    $turnoAntesFinal,
+                    $turnoAhoraFinal
+                );
+                $usuarioIdActor = consultas_actor_usuario_id($sessionUsuario);
+                $hasRcTurnoOriginal = columna_existe_local($conn, 'recordatorios_consultas', 'turno_original');
+                $hasRcTurnoVigente = columna_existe_local($conn, 'recordatorios_consultas', 'turno_vigente');
+
+                if ($hasRcTurnoOriginal && $hasRcTurnoVigente) {
+                    $stmtRc = $conn->prepare(
+                        'INSERT INTO recordatorios_consultas (consulta_id, estado, observacion, fecha_ultimo_contacto, intentos, actualizado_por, turno_original, turno_vigente)
+                         VALUES (?, "pendiente", ?, NOW(), 1, ?, ?, ?)
+                         ON DUPLICATE KEY UPDATE
+                           estado = "pendiente",
+                           observacion = VALUES(observacion),
+                           fecha_ultimo_contacto = NOW(),
+                           intentos = intentos + 1,
+                           actualizado_por = VALUES(actualizado_por),
+                           turno_original = COALESCE(NULLIF(turno_original, 0), VALUES(turno_original)),
+                           turno_vigente = VALUES(turno_vigente),
+                           updated_at = CURRENT_TIMESTAMP'
+                    );
+                    if ($stmtRc) {
+                        $stmtRc->bind_param('isiii', $id, $observacionReprog, $usuarioIdActor, $turnoAntesFinal, $turnoAhoraFinal);
+                        $stmtRc->execute();
+                        $stmtRc->close();
+                    }
+                } elseif ($hasRcTurnoOriginal) {
+                    $stmtRc = $conn->prepare(
+                        'INSERT INTO recordatorios_consultas (consulta_id, estado, observacion, fecha_ultimo_contacto, intentos, actualizado_por, turno_original)
+                         VALUES (?, "pendiente", ?, NOW(), 1, ?, ?)
+                         ON DUPLICATE KEY UPDATE
+                           estado = "pendiente",
+                           observacion = VALUES(observacion),
+                           fecha_ultimo_contacto = NOW(),
+                           intentos = intentos + 1,
+                           actualizado_por = VALUES(actualizado_por),
+                           turno_original = COALESCE(NULLIF(turno_original, 0), VALUES(turno_original)),
+                           updated_at = CURRENT_TIMESTAMP'
+                    );
+                    if ($stmtRc) {
+                        $stmtRc->bind_param('isii', $id, $observacionReprog, $usuarioIdActor, $turnoAntesFinal);
+                        $stmtRc->execute();
+                        $stmtRc->close();
+                    }
+                } else {
+                    $stmtRc = $conn->prepare(
+                        'INSERT INTO recordatorios_consultas (consulta_id, estado, observacion, fecha_ultimo_contacto, intentos, actualizado_por)
+                         VALUES (?, "pendiente", ?, NOW(), 1, ?)
+                         ON DUPLICATE KEY UPDATE
+                           estado = "pendiente",
+                           observacion = VALUES(observacion),
+                           fecha_ultimo_contacto = NOW(),
+                           intentos = intentos + 1,
+                           actualizado_por = VALUES(actualizado_por),
+                           updated_at = CURRENT_TIMESTAMP'
+                    );
+                    if ($stmtRc) {
+                        $stmtRc->bind_param('isi', $id, $observacionReprog, $usuarioIdActor);
+                        $stmtRc->execute();
+                        $stmtRc->close();
+                    }
+                }
+            }
+        }
 
         if ($ok && $actualizarAgenda && $esReprogramacion && columna_existe_local($conn, 'consultas', 'es_reprogramada')) {
             if (columna_existe_local($conn, 'consultas', 'reprogramada_en')) {
@@ -2107,6 +2402,8 @@ switch ($method) {
             'success' => $ok,
             'cotizacion_sync' => $syncCotizacion,
             'historia_clinica_proxima_sync' => $syncHistoriaClinicaProxima,
+            'turno_antes' => $turnoAntesReprogramacion > 0 ? intval($turnoAntesReprogramacion) : null,
+            'turno_ahora' => $turnoAhoraReprogramacion > 0 ? intval($turnoAhoraReprogramacion) : null,
         ]);
         $stmt->close();
         break;

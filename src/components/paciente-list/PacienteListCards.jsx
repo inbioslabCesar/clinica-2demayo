@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 
-const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, page, setPage, totalPages }) {
+const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, onCotizarPaciente, cotizarLabel = "Cotizar", page, setPage, totalPages }) {
   return (
     <>
       <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -27,9 +27,9 @@ const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar,
                   </svg>
                 </button>
                 <button
-                  onClick={() => onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`)}
+                  onClick={() => (onCotizarPaciente ? onCotizarPaciente(p) : onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`))}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-full transition-colors"
-                  title="Cotizar / seleccionar servicio"
+                  title={cotizarLabel === "Agendar" ? "Seleccionar y agendar consulta" : "Cotizar / seleccionar servicio"}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />

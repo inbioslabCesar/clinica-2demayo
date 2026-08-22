@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 
-const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, sortBy, sortDir, handleSort, page, setPage, totalPages }) {
+const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, onCotizarPaciente, cotizarLabel = "Cotizar", sortBy, sortDir, handleSort, page, setPage, totalPages }) {
   return (
     <div className="hidden lg:block overflow-x-auto w-full">
       <table className="min-w-full text-sm border">
@@ -32,11 +32,11 @@ const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar,
                   <button onClick={() => onEditar(p)} className="bg-yellow-400 text-white px-1 py-1 rounded text-xs hover:bg-yellow-500">Editar</button>
                   <button onClick={() => onEliminar(p)} className="bg-red-500 text-white px-1 py-1 rounded text-xs hover:bg-red-600">Eliminar</button>
                   <button
-                    onClick={() => onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`)}
+                    onClick={() => (onCotizarPaciente ? onCotizarPaciente(p) : onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`))}
                     className="bg-indigo-600 text-white px-1 py-1 rounded text-xs hover:bg-indigo-700"
-                    title="Cotizar / seleccionar servicio"
+                    title={cotizarLabel === "Agendar" ? "Seleccionar y agendar consulta" : "Cotizar / seleccionar servicio"}
                   >
-                    Cotizar
+                    {cotizarLabel}
                   </button>
                   {tieneContrato && (
                     <button

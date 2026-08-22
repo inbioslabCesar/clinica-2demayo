@@ -32,9 +32,26 @@ export default function SolicitudImagenPage() {
   const [guardando, setGuardando] = useState(false);
   const [resultado, setResultado] = useState(null); // {orden_id, cotizacion_id, numero_comprobante, total}
   const [error, setError] = useState("");
+  const [fechaProgramada, setFechaProgramada] = useState("");
+  const [horaProgramada, setHoraProgramada] = useState("");
 
   // Paciente desde la consulta (para poder crear la orden)
   const [pacienteId, setPacienteId] = useState(null);
+
+  const getTodayYmd = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const getNowHm = () => {
+    const d = new Date();
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    return `${h}:${m}`;
+  };
 
   useEffect(() => {
     // Cargar tarifas del tipo correspondiente
@@ -66,8 +83,15 @@ export default function SolicitudImagenPage() {
       .then((d) => {
         const consulta = d.consultas?.[0] ?? d.consulta ?? null;
         if (consulta?.paciente_id) setPacienteId(consulta.paciente_id);
+        const fecha = String(consulta?.fecha || "").slice(0, 10);
+        const hora = String(consulta?.hora || "").slice(0, 5);
+        setFechaProgramada(fecha || getTodayYmd());
+        setHoraProgramada(hora || getNowHm());
       })
-      .catch(() => {});
+      .catch(() => {
+        setFechaProgramada(getTodayYmd());
+        setHoraProgramada(getNowHm());
+      });
   }, [consultaId, cfg.label, cfg.servTipo]);
 
   const tarifasFiltradas = useMemo(() => {
@@ -104,6 +128,10 @@ export default function SolicitudImagenPage() {
       setError("No se pudo obtener el paciente de esta consulta.");
       return;
     }
+    if (!fechaProgramada || !horaProgramada) {
+      setError("Selecciona fecha y hora para programar el servicio.");
+      return;
+    }
     setError("");
     setGuardando(true);
     try {
@@ -117,6 +145,8 @@ export default function SolicitudImagenPage() {
           tipo,
           indicaciones,
           carga_anticipada: cargaAnticipada,
+          fecha_programada: fechaProgramada,
+          hora_programada: horaProgramada,
           servicios: seleccionados,
         }),
       });
@@ -347,6 +377,36 @@ export default function SolicitudImagenPage() {
               placeholder={`Ej: Tórax AP y lateral, ${cfg.label.toLowerCase()} de abdomen...`}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none resize-none"
             />
+          </div>
+
+          {/* Programacion */}
+          <div className="bg-white rounded-xl shadow border border-gray-100 p-4">
+            <p className="text-sm font-semibold text-gray-700 mb-3">Programacion del servicio</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Fecha</label>
+                <input
+                  type="date"
+                  value={fechaProgramada}
+                  onChange={(e) => setFechaProgramada(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Hora</label>
+                <input
+                  type="time"
+                  value={horaProgramada}
+                  onChange={(e) => setHoraProgramada(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none"
+                  required
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-500 mt-2">
+              Esta programacion se guardara en agenda en estado pendiente hasta registrar el pago.
+            </p>
           </div>
 
           {/* Carga anticipada */}

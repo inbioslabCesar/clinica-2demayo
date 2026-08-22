@@ -5,6 +5,7 @@ import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor } from "../utils/medicoAccent";
 
 export default function CotizarOperacionPage() {
     const [medicos, setMedicos] = useState([]);
@@ -752,17 +753,21 @@ export default function CotizarOperacionPage() {
                 <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                   <div className="flex-1">
                     <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                    <div className="text-xs text-blue-700 mt-1">
-                      Doctor: {(() => {
-                        if (tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
-                          const medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
-                          if (medico) {
-                            return `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
-                          }
+                    {(() => {
+                      let medicoNombre = "";
+                      if (tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
+                        const medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
+                        if (medico) {
+                          medicoNombre = `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
                         }
-                        return "Sin doctor";
-                      })()}
-                    </div>
+                      }
+                      const medicoColor = getMedicoAccentColor(medicoNombre);
+                      return (
+                        <div className="text-xs mt-1" style={{ color: medicoColor }}>
+                          Doctor: {medicoNombre || "Sin doctor"}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="min-w-[110px] text-right">
                     <div className="font-bold text-green-700 text-lg leading-none">S/ {Number(tarifa.precio_particular || 0).toFixed(2)}</div>

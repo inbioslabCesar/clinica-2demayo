@@ -102,7 +102,7 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
 }
 
 // ── Sub-panel para un tipo de imagen ─────────────────────────────────────────
-function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft, pacienteId, medicoNombre }) {
+function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft, pacienteId, medicoNombre, readOnly = false }) {
   const [ordenes, setOrdenes]             = useState([]);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
   const [ordenSubir, setOrdenSubir] = useState(null);
@@ -169,13 +169,15 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
   return (
     <div>
       {/* Botón navegar a SolicitudImagenPage */}
-      <button
-        type="button"
-        onClick={() => navigateWithDraft(`/solicitud-imagen/${consultaId}/${tipo}`)}
-        className={`mb-4 bg-${color}-600 text-white px-4 py-2 rounded hover:bg-${color}-700 transition text-sm font-semibold`}
-      >
-        {emoji} Solicitar {label}
-      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          onClick={() => navigateWithDraft(`/solicitud-imagen/${consultaId}/${tipo}`)}
+          className={`mb-4 bg-${color}-600 text-white px-4 py-2 rounded hover:bg-${color}-700 transition text-sm font-semibold`}
+        >
+          {emoji} Solicitar {label}
+        </button>
+      )}
 
       {/* Lista de órdenes */}
       {loadingOrdenes && <p className="text-xs text-gray-400">Cargando...</p>}
@@ -215,7 +217,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
                   🖼️ Ver Imágenes
                 </button>
               )}
-              {Boolean(ord?.can_upload_archivos) && (
+              {!readOnly && Boolean(ord?.can_upload_archivos) && (
                 <button
                   type="button"
                   onClick={() => setOrdenSubir(ord)}
@@ -224,7 +226,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
                   ⬆️ Subir archivos
                 </button>
               )}
-              {ord.estado === "pendiente" && !esPagada(ord.cotizacion) && !(Array.isArray(ord?.archivos) && ord.archivos.length > 0) && (
+              {!readOnly && ord.estado === "pendiente" && !esPagada(ord.cotizacion) && !(Array.isArray(ord?.archivos) && ord.archivos.length > 0) && (
                 <button
                   type="button"
                   onClick={() => handleCancelar(ord.id)}
@@ -281,8 +283,9 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
 
 const STORAGE_KEY = "apoyo_diagnostico_tab";
 
-export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate }) {
+export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate, readOnly = false }) {
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
+  const navigate = useNavigate();
   const rolActual = React.useMemo(() => {
     try {
       const rawUsuario = sessionStorage.getItem("usuario");
@@ -300,7 +303,6 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
     setTab(t);
   };
   const [examenes, setExamenes] = useState([]);
-  const navigate = useNavigate();
   const medicoNombre = React.useMemo(() => {
     try {
       const rawUsuario = sessionStorage.getItem("usuario");
@@ -312,24 +314,31 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
     }
   }, []);
 
-  const navigateWithDraft = useCallback((path) => {
+  const flushDraftIfNeeded = useCallback(() => {
     try {
       if (typeof onBeforeNavigate === "function") onBeforeNavigate();
     } catch {
       // No bloquear navegacion por errores de guardado local.
     }
+  }, [onBeforeNavigate]);
+
+  const navigateWithDraft = useCallback((path) => {
+    if (readOnly) return;
+    flushDraftIfNeeded();
     navigate(path);
-  }, [navigate, onBeforeNavigate]);
+  }, [flushDraftIfNeeded, navigate, readOnly]);
 
   useEffect(() => {
     if (tab === "procedimientos" && debeBloquearProcedimientos) {
-      navigateWithDraft("/usuarios");
+      flushDraftIfNeeded();
+      cambiarTab("laboratorio");
     }
-  }, [tab, debeBloquearProcedimientos, navigateWithDraft]);
+  }, [tab, debeBloquearProcedimientos, flushDraftIfNeeded]);
 
   const abrirTabProcedimientos = () => {
-    if (debeBloquearProcedimientos) {
-      navigateWithDraft("/usuarios");
+    if (readOnly || debeBloquearProcedimientos) {
+      flushDraftIfNeeded();
+      cambiarTab("laboratorio");
       return;
     }
     cambiarTab("procedimientos");
@@ -464,20 +473,23 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
         </button>
         <button type="button" onClick={abrirTabProcedimientos}
-          className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
+          disabled={readOnly}
+          className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"} ${readOnly ? "opacity-50 cursor-not-allowed" : ""}`}>
           🛠️ <span className="hidden sm:inline">Procedimientos</span><span className="sm:hidden">Proc</span>
         </button>
       </div>
       <div className="border rounded-b bg-white p-3 overflow-hidden">
         {tab === "laboratorio" && (
           <>
-            <button
-              type="button"
-              className="mb-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
-              onClick={() => navigateWithDraft(`/solicitud-laboratorio/${consultaId}`)}
-            >
-              Solicitar análisis de laboratorio
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                className="mb-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+                onClick={() => navigateWithDraft(`/solicitud-laboratorio/${consultaId}`)}
+              >
+                Solicitar análisis de laboratorio
+              </button>
+            )}
             {/* Si no hay exámenes solicitados */}
             {(!ordenesLab || ordenesLab.length === 0) && (
               <div className="mb-3 p-2 bg-gray-50 border border-gray-200 rounded text-gray-600">
@@ -572,15 +584,15 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           </>
         )}
         {tab === "rx" && (
-          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} />
+          <PanelImagen tipo="rx" label="Rayos X" emoji="📸" color="sky" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} readOnly={readOnly} />
         )}
         {tab === "ecografia" && (
-          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} />
+          <PanelImagen tipo="ecografia" label="Ecografía" emoji="🫀" color="violet" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} readOnly={readOnly} />
         )}
         {tab === "tomografia" && (
-          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} />
+          <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} readOnly={readOnly} />
         )}
-        {tab === "procedimientos" && (
+        {tab === "procedimientos" && !readOnly && (
           <SolicitudProcedimientos consultaId={consultaId} />
         )}
       </div>

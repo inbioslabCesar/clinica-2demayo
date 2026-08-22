@@ -86,6 +86,24 @@ function formatDateShort(value) {
   return String(value).replace(/[^0-9-]/g, "").slice(0, 10) || "sin-fecha";
 }
 
+function formatCorrelativoFechaAtencion(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const ymd = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    const [y, m, d] = ymd.split("-");
+    return `${d}/${m}/${y}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleDateString("es-PE");
+  }
+
+  return raw;
+}
+
 function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
@@ -162,11 +180,64 @@ function getVencimientoMeta(row) {
   };
 }
 
+function getUltimoPagoMeta(ultimoPagoAt) {
+  const raw = String(ultimoPagoAt || "").trim();
+  if (!raw) {
+    return {
+      label: "Sin pago",
+      className: "bg-slate-100 text-slate-700",
+      title: "Sin abonos registrados",
+    };
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return {
+      label: raw,
+      className: "bg-amber-100 text-amber-800",
+      title: "Pago registrado",
+    };
+  }
+
+  const hoy = formatDateInput(new Date());
+  const fechaPago = formatDateInput(parsed);
+  const esHoy = fechaPago === hoy;
+
+  return {
+    label: parsed.toLocaleString(),
+    className: esHoy ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800",
+    title: esHoy ? "Pagado hoy" : "Pagado en fecha distinta",
+  };
+}
+
 // Constantes de estilo fuera del componente — referencia estable, nunca se recrean
 const ACTION_BTN_BASE = "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-transform hover:scale-105";
 const THEME_GRADIENT = { backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)" };
 const THEME_PRIMARY_SOFT = { backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" };
 const THEME_OUTLINE = { color: "var(--color-primary-dark)", borderColor: "var(--color-primary-light)" };
+function stableHashString(value) {
+  const input = String(value || "");
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function getMedicoAccentColor(profesionalCabecera) {
+  const nombre = String(profesionalCabecera || "").trim().toLowerCase();
+  if (!nombre) return "#94a3b8";
+  const hue = stableHashString(nombre) % 360;
+  return `hsl(${hue} 72% 36%)`;
+}
+
+function getMedicoAccentSoftBg(profesionalCabecera) {
+  const nombre = String(profesionalCabecera || "").trim().toLowerCase();
+  if (!nombre) return "transparent";
+  const hue = stableHashString(nombre) % 360;
+  return `hsl(${hue} 88% 92%)`;
+}
 
 function badgeOrigen(value) {
   const v = String(value || "regular").toLowerCase();
@@ -257,7 +328,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, onToggleBloqueDetalle, bloqueDetalleAbierto, bloqueDetalleCargando }) {
   const estadoRow = String(row.estado || "").toLowerCase();
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
@@ -266,6 +337,12 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const profesionalCabecera = String(row.profesional_cabecera || "").trim();
   const profesionalesCount = Number(row.profesionales_count || (profesionalCabecera ? 1 : 0));
   const profesionalesExtra = Math.max(0, profesionalesCount - 1);
+  const medicoAccentColor = useMemo(() => getMedicoAccentColor(profesionalCabecera), [profesionalCabecera]);
+  const medicoAccentSoftBg = useMemo(() => getMedicoAccentSoftBg(profesionalCabecera), [profesionalCabecera]);
+  const usuarioCotizoNombre = String(row.usuario_nombre || "-").trim() || "-";
+  const usuarioCotizoRol = String(row.usuario_rol || row.rol_responsable || "").toLowerCase();
+  const usuarioCotizoEsMedico = usuarioCotizoRol.includes("medico");
+  const ultimoPagoMeta = useMemo(() => getUltimoPagoMeta(row.ultimo_pago_at), [row.ultimo_pago_at]);
 
   const servicios = useMemo(() => Array.from(new Set(
     String(row.servicios_tipos || "")
@@ -294,7 +371,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const puedeGestionarAnticipado = canAutorizarAnticipado && tieneVinculoClinicoExplicito;
 
   // Handler HC separado con useCallback para evitar función anónima nueva en cada render
-  const handleVerHC = useCallback(async () => {
+  const handleVerHC = useCallback(async (event) => {
+    if (event?.preventDefault) event.preventDefault();
+    if (event?.stopPropagation) event.stopPropagation();
+
     let consultaId = Number(row.consulta_ref_id || 0);
     if (consultaId <= 0) {
       try {
@@ -339,7 +419,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   }, [row.id, row.paciente_id, row.consulta_ref_id, onNavigate]);
 
   return (
-    <tr className="border-t align-top">
+    <tr
+      className="border-t align-top"
+      style={profesionalCabecera ? { borderLeft: `3px solid ${medicoAccentColor}` } : undefined}
+    >
       <td className="px-3 py-2 font-semibold">
         <div>#{row.id}</div>
         {numeroComprobante && (
@@ -347,6 +430,14 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         )}
       </td>
       <td className="px-3 py-2 whitespace-nowrap">{row.fecha}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        <span
+          className={`inline-flex items-center rounded px-2 py-1 text-xs font-semibold ${ultimoPagoMeta.className}`}
+          title={ultimoPagoMeta.title}
+        >
+          {ultimoPagoMeta.label}
+        </span>
+      </td>
       <td className="px-3 py-2">
         <div className="flex items-center gap-2 flex-wrap">
           <div className="font-medium">{row.nombre} {row.apellido}</div>
@@ -357,12 +448,54 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
           )}
         </div>
         <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
+        {Number(correlativoDia || 0) > 0 && (
+          <div
+            className="mt-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-bold"
+            style={{
+              backgroundColor: "rgba(255, 255, 255, 0.9)",
+              color: medicoAccentColor,
+            }}
+            title="Orden del dia de atencion del medico"
+          >
+            <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: medicoAccentColor }} />
+            <span>
+              Orden del dia de atencion: N° {Number(correlativoDia)}
+              {correlativoLabel ? ` (${String(correlativoLabel)})` : ""}
+              {formatCorrelativoFechaAtencion(correlativoFechaAtencion)
+                ? ` · Atencion ${formatCorrelativoFechaAtencion(correlativoFechaAtencion)}`
+                : " · Fecha atencion no definida"}
+              {String(correlativoDetalleTexto || "").trim() ? ` · ${String(correlativoDetalleTexto).trim()}` : ""}
+            </span>
+          </div>
+        )}
+        {Number(row?.bloque_id || 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => onToggleBloqueDetalle?.(row)}
+            className="mt-2 inline-flex items-center rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+            title="Ver desglose operativo del bloque"
+          >
+            {bloqueDetalleCargando ? "Cargando..." : (bloqueDetalleAbierto ? "Ocultar bloque" : "Ver bloque")}
+          </button>
+        )}
       </td>
-      <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
+      <td className="px-3 py-2">
+        <span
+          className={usuarioCotizoEsMedico ? "font-semibold" : undefined}
+          style={usuarioCotizoEsMedico ? { color: medicoAccentColor } : undefined}
+        >
+          {usuarioCotizoNombre}
+        </span>
+      </td>
       <td className="px-3 py-2">
         {profesionalCabecera ? (
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-slate-800">{profesionalCabecera}</span>
+          <div className="inline-flex flex-wrap items-center gap-1 px-2 py-0.5 rounded-md" style={{ backgroundColor: medicoAccentSoftBg }}>
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full"
+              style={{ backgroundColor: medicoAccentColor }}
+              title={`Color asignado a ${profesionalCabecera}`}
+            />
+            <span className="font-semibold" style={{ color: medicoAccentColor }}>{profesionalCabecera}</span>
             {profesionalesExtra > 0 && (
               <span
                 className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-700"
@@ -379,6 +512,11 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       <td className="px-3 py-2 text-xs text-slate-600">
         <div className="flex flex-col gap-1 items-start">
           <span>{String(row.referencia_origen || "").trim() || "-"}</span>
+          {Number(row?.bloque_conflicto || 0) === 1 && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800">
+              Conflicto bloque: {Number(row?.bloque_conflicto_items || 0)} de {Number(row?.bloque_eventos_items || 0)} evento(s)
+            </span>
+          )}
           {anulacionDesdeHC.activa && (
             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-700">
               Anulada desde HC · {anulacionDesdeHC.detalle}
@@ -650,8 +788,17 @@ export default function CotizacionesPage() {
     fechaInicio: "",
     fechaFin: "",
   });
+  const [soloConflictosBloque, setSoloConflictosBloque] = useState(false);
   const [anticipadoByCotizacion, setAnticipadoByCotizacion] = useState({});
   const [canAutorizarAnticipado, setCanAutorizarAnticipado] = useState(false);
+  const [correlativoByConsultaId, setCorrelativoByConsultaId] = useState({});
+  const [correlativoImagenByCotizacionId, setCorrelativoImagenByCotizacionId] = useState({});
+  const [correlativosImagenDetalleByCotizacionId, setCorrelativosImagenDetalleByCotizacionId] = useState({});
+  const [correlativoFechaByConsultaId, setCorrelativoFechaByConsultaId] = useState({});
+  const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
+  const [bloqueDetalleOpenByCotizacionId, setBloqueDetalleOpenByCotizacionId] = useState({});
+  const [bloqueDetalleLoadingByCotizacionId, setBloqueDetalleLoadingByCotizacionId] = useState({});
+  const [bloqueDetalleByCotizacionId, setBloqueDetalleByCotizacionId] = useState({});
 
   const cargarEstadosAnticipados = useCallback(async (rowsInput) => {
     const fetchId = ++anticipadoFetchIdRef.current;
@@ -813,6 +960,56 @@ export default function CotizacionesPage() {
     navigate(`/cobrar-cotizacion/${targetId}${query}`);
   }, [navigate]);
 
+  const toggleBloqueDetalle = useCallback(async (row) => {
+    const cotizacionId = Number(row?.id || 0);
+    if (cotizacionId <= 0) return;
+
+    const abierto = Boolean(bloqueDetalleOpenByCotizacionId[cotizacionId]);
+    setBloqueDetalleOpenByCotizacionId((prev) => ({
+      ...prev,
+      [cotizacionId]: !abierto,
+    }));
+
+    if (abierto) return;
+    if (bloqueDetalleByCotizacionId[cotizacionId] || bloqueDetalleLoadingByCotizacionId[cotizacionId]) return;
+
+    setBloqueDetalleLoadingByCotizacionId((prev) => ({
+      ...prev,
+      [cotizacionId]: true,
+    }));
+
+    try {
+      const res = await authFetch(`api_cotizaciones.php?accion=resumen_bloque&cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo cargar el bloque");
+      }
+
+      setBloqueDetalleByCotizacionId((prev) => ({
+        ...prev,
+        [cotizacionId]: {
+          resumen: data?.resumen || null,
+          error: "",
+        },
+      }));
+    } catch (error) {
+      setBloqueDetalleByCotizacionId((prev) => ({
+        ...prev,
+        [cotizacionId]: {
+          resumen: null,
+          error: error?.message || "No se pudo cargar el bloque",
+        },
+      }));
+    } finally {
+      setBloqueDetalleLoadingByCotizacionId((prev) => ({
+        ...prev,
+        [cotizacionId]: false,
+      }));
+    }
+  }, [bloqueDetalleByCotizacionId, bloqueDetalleLoadingByCotizacionId, bloqueDetalleOpenByCotizacionId]);
+
   useEffect(() => {
     cargar();
     return () => {
@@ -820,6 +1017,133 @@ export default function CotizacionesPage() {
       abortRef.current = null;
     };
   }, [cargar]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const consultaIds = Array.from(new Set(
+      (Array.isArray(rows) ? rows : [])
+        .map((row) => Number(row?.consulta_ref_id || 0))
+        .filter((id) => id > 0)
+    ));
+
+    if (consultaIds.length === 0) {
+      setCorrelativoByConsultaId({});
+      setCorrelativoFechaByConsultaId({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const cargarCorrelativos = async () => {
+      const out = {};
+      const outFecha = {};
+      await Promise.all(consultaIds.map(async (consultaId) => {
+        try {
+          const res = await authFetch(`api_consultas.php?consulta_id=${consultaId}&vista=hc_fast`, { cache: "no-store" });
+          const data = await res.json();
+          const consulta = Array.isArray(data?.consultas) ? data.consultas[0] : null;
+          const correlativo = Number(consulta?.correlativo_dia_medico || 0);
+          if (correlativo > 0) {
+            out[consultaId] = correlativo;
+            outFecha[consultaId] = String(consulta?.fecha || "").trim();
+          }
+        } catch {
+          // Ignorar error de fila individual para no bloquear la tabla.
+        }
+      }));
+
+      if (!cancelled) {
+        setCorrelativoByConsultaId(out);
+        setCorrelativoFechaByConsultaId(outFecha);
+      }
+    };
+
+    cargarCorrelativos();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cotizacionIdsImagen = Array.from(new Set(
+      (Array.isArray(rows) ? rows : [])
+        .filter((row) => {
+          const tipos = String(row?.servicios_tipos || "")
+            .split(",")
+            .map(normalizarServicioTipo)
+            .filter(Boolean);
+          const incluyeConsulta = tipos.includes("consulta");
+          const incluyeImagen = tieneServicioImagen(tipos);
+          return !incluyeConsulta && incluyeImagen;
+        })
+        .map((row) => Number(row?.id || 0))
+        .filter((id) => id > 0)
+    ));
+
+    if (cotizacionIdsImagen.length === 0) {
+      setCorrelativoImagenByCotizacionId({});
+      setCorrelativosImagenDetalleByCotizacionId({});
+      setCorrelativoFechaImagenByCotizacionId({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const cargarCorrelativosImagen = async () => {
+      const out = {};
+      const outDetalle = {};
+      const outFecha = {};
+      await Promise.all(cotizacionIdsImagen.map(async (cotizacionId) => {
+        try {
+          const res = await authFetch(`api_ordenes_imagen.php?cotizacion_id=${cotizacionId}&vista=hc_fast&_t=${Date.now()}`, {
+            cache: "no-store",
+          });
+          const data = await res.json();
+          const ordenes = Array.isArray(data?.ordenes) ? data.ordenes : [];
+          const candidatos = ordenes
+            .map((orden) => ({
+              correlativo: Number(orden?.correlativo_operativo || 0),
+              fecha: String(orden?.fecha_programada || orden?.fecha || "").trim(),
+              hora: String(orden?.hora_programada || "").trim(),
+              id: Number(orden?.id || 0),
+            }))
+            .filter((item) => item.correlativo > 0)
+            .sort((a, b) => {
+              if (a.correlativo !== b.correlativo) return a.correlativo - b.correlativo;
+              const fa = (a.fecha || "").slice(0, 10);
+              const fb = (b.fecha || "").slice(0, 10);
+              if (fa !== fb) return fa.localeCompare(fb);
+              const ha = (a.hora || "").slice(0, 5);
+              const hb = (b.hora || "").slice(0, 5);
+              if (ha !== hb) return ha.localeCompare(hb);
+              return a.id - b.id;
+            });
+
+          if (candidatos.length > 0) {
+            out[cotizacionId] = candidatos[0].correlativo;
+            outFecha[cotizacionId] = candidatos[0].fecha;
+            outDetalle[cotizacionId] = candidatos;
+          }
+        } catch {
+          // Ignorar error por fila para no bloquear la tabla.
+        }
+      }));
+
+      if (!cancelled) {
+        setCorrelativoImagenByCotizacionId(out);
+        setCorrelativosImagenDetalleByCotizacionId(outDetalle);
+        setCorrelativoFechaImagenByCotizacionId(outFecha);
+      }
+    };
+
+    cargarCorrelativosImagen();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
 
   useEffect(() => {
     let mounted = true;
@@ -868,6 +1192,11 @@ export default function CotizacionesPage() {
       mounted = false;
     };
   }, []);
+
+  const rowsVisibles = useMemo(() => {
+    if (!soloConflictosBloque) return rows;
+    return (Array.isArray(rows) ? rows : []).filter((row) => Number(row?.bloque_conflicto || 0) === 1);
+  }, [rows, soloConflictosBloque]);
 
   useEffect(() => {
     let mounted = true;
@@ -1590,6 +1919,14 @@ export default function CotizacionesPage() {
         <div className="flex flex-wrap gap-2 mb-4">
           <button onClick={filtrar} className="text-white px-4 py-2 rounded" style={THEME_GRADIENT}>Filtrar</button>
           <button onClick={limpiarFiltros} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Limpiar</button>
+          <label className="inline-flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+            <input
+              type="checkbox"
+              checked={soloConflictosBloque}
+              onChange={(e) => setSoloConflictosBloque(e.target.checked)}
+            />
+            Solo conflictos de bloque
+          </label>
         </div>
 
         <div className="overflow-x-auto border border-gray-200 rounded-lg">
@@ -1598,6 +1935,7 @@ export default function CotizacionesPage() {
               <tr>
                 <th className="px-3 py-2 text-left">ID</th>
                 <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Ultimo pago</th>
                 <th className="px-3 py-2 text-left">Paciente</th>
                 <th className="px-3 py-2 text-left">Quién cotizó</th>
                 <th className="px-3 py-2 text-left">Profesional cabecera</th>
@@ -1614,26 +1952,146 @@ export default function CotizacionesPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
+                  <td colSpan={14} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
-              ) : rows.length === 0 ? (
+              ) : rowsVisibles.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
+                  <td colSpan={14} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
-              ) : rows.map((row) => (
-                <CotizacionRow
-                  key={row.id}
-                  row={row}
-                  onCobrar={abrirCobro}
-                  onAnular={anularCotizacion}
-                  onNavigate={navigate}
-                  onPrintTicket={imprimirTicketDirecto}
-                  onToggleAnticipado={toggleAnticipado}
-                  badgeEstado={badgeEstado}
-                  labelEstado={labelEstado}
-                  anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
-                  canAutorizarAnticipado={canAutorizarAnticipado}
-                />
+              ) : rowsVisibles.map((row) => (
+                (() => {
+                  const serviciosRow = String(row?.servicios_tipos || "")
+                    .split(",")
+                    .map(normalizarServicioTipo)
+                    .filter(Boolean);
+                  const incluyeConsulta = serviciosRow.includes("consulta");
+                  const incluyeImagen = tieneServicioImagen(serviciosRow);
+                  const correlativoConsulta = correlativoByConsultaId[Number(row?.consulta_ref_id || 0)] || null;
+                  const correlativoImagen = correlativoImagenByCotizacionId[Number(row?.id || 0)] || null;
+                  const correlativosImagenDetalle = correlativosImagenDetalleByCotizacionId[Number(row?.id || 0)] || [];
+                  const correlativoFila = incluyeConsulta ? correlativoConsulta : (incluyeImagen ? correlativoImagen : null);
+                  const correlativoFechaAtencion = incluyeConsulta
+                    ? (correlativoFechaByConsultaId[Number(row?.consulta_ref_id || 0)] || "")
+                    : (incluyeImagen ? (correlativoFechaImagenByCotizacionId[Number(row?.id || 0)] || "") : "");
+                  const correlativoLabel = incluyeConsulta
+                    ? "Correlativo consulta"
+                    : (incluyeImagen ? "Correlativo imagen" : "Correlativo día");
+                  const detalleCorrelativo = (() => {
+                    if (!incluyeImagen || !Array.isArray(correlativosImagenDetalle) || correlativosImagenDetalle.length <= 1) {
+                      return "";
+                    }
+                    const extras = correlativosImagenDetalle.slice(1, 4).map((item) => `N° ${Number(item?.correlativo || 0)}`).filter((txt) => txt !== 'N° 0');
+                    const restantes = Math.max(0, correlativosImagenDetalle.length - 1 - extras.length);
+                    if (extras.length === 0) {
+                      return `+${Math.max(1, correlativosImagenDetalle.length - 1)} correlativos adicionales`;
+                    }
+                    return `Otros: ${extras.join(', ')}${restantes > 0 ? ` +${restantes}` : ''}`;
+                  })();
+                  const cotizacionId = Number(row?.id || 0);
+                  const bloqueAbierto = Boolean(bloqueDetalleOpenByCotizacionId[cotizacionId]);
+                  const bloqueCargando = Boolean(bloqueDetalleLoadingByCotizacionId[cotizacionId]);
+                  const bloqueDetalle = bloqueDetalleByCotizacionId[cotizacionId] || null;
+
+                  const resumenBloque = bloqueDetalle?.resumen?.bloque || null;
+                  const eventosOperativos = Array.isArray(bloqueDetalle?.resumen?.eventos_operativos)
+                    ? bloqueDetalle.resumen.eventos_operativos
+                    : [];
+                  const subbloquesOperativos = Array.isArray(bloqueDetalle?.resumen?.subbloques_operativos)
+                    ? bloqueDetalle.resumen.subbloques_operativos
+                    : [];
+
+                  const fmtHora = (value) => {
+                    const raw = String(value || "").trim();
+                    return raw.length >= 5 ? raw.slice(0, 5) : raw;
+                  };
+
+                  return (
+                <React.Fragment key={`row-${row.id}`}>
+                  <CotizacionRow
+                    key={row.id}
+                    row={row}
+                    onCobrar={abrirCobro}
+                    onAnular={anularCotizacion}
+                    onNavigate={navigate}
+                    onPrintTicket={imprimirTicketDirecto}
+                    onToggleAnticipado={toggleAnticipado}
+                    badgeEstado={badgeEstado}
+                    labelEstado={labelEstado}
+                    anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
+                    canAutorizarAnticipado={canAutorizarAnticipado}
+                    correlativoDia={correlativoFila}
+                    correlativoLabel={correlativoLabel}
+                    correlativoFechaAtencion={correlativoFechaAtencion}
+                    correlativoDetalleTexto={detalleCorrelativo}
+                    onToggleBloqueDetalle={toggleBloqueDetalle}
+                    bloqueDetalleAbierto={bloqueAbierto}
+                    bloqueDetalleCargando={bloqueCargando}
+                  />
+                  {bloqueAbierto && (
+                    <tr className="border-t bg-slate-50/70">
+                      <td colSpan={14} className="px-3 py-3">
+                        {bloqueCargando ? (
+                          <div className="text-sm text-slate-600">Cargando desglose del bloque...</div>
+                        ) : bloqueDetalle?.error ? (
+                          <div className="text-sm text-rose-700">{bloqueDetalle.error}</div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="rounded bg-slate-200 px-2 py-1 font-semibold text-slate-700">
+                                Bloque #{Number(resumenBloque?.id || row?.bloque_id || 0)}
+                              </span>
+                              <span className="rounded bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">
+                                Estado: {String(resumenBloque?.estado_global || row?.bloque_estado_global || "-")}
+                              </span>
+                              <span className="rounded bg-emerald-100 px-2 py-1 font-semibold text-emerald-700">
+                                Fecha base: {formatCorrelativoFechaAtencion(resumenBloque?.fecha_base || row?.bloque_fecha_base || "") || "-"}
+                              </span>
+                              <span className="rounded bg-amber-100 px-2 py-1 font-semibold text-amber-700">
+                                Hora objetivo: {fmtHora(resumenBloque?.hora_objetivo || row?.bloque_hora_objetivo || "") || "-"}
+                              </span>
+                            </div>
+
+                            {eventosOperativos.length > 0 ? (
+                              <div className="grid gap-1">
+                                {eventosOperativos.map((evento, idx) => (
+                                  <div key={`evt-${Number(evento?.agenda_id || 0)}-${idx}`} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                                    <span className="font-semibold text-slate-800">{String(evento?.medico_nombre || "Sin medico")}</span>
+                                    {" · "}
+                                    <span>{formatCorrelativoFechaAtencion(evento?.fecha_programada) || "sin fecha"}</span>
+                                    {" "}
+                                    <span>{fmtHora(evento?.hora_programada) || "--:--"}</span>
+                                    {" · "}
+                                    <span>{String(evento?.titulo_evento || evento?.servicio_tipo || "Evento")}</span>
+                                    {Number(evento?.correlativo_operativo || 0) > 0 ? ` · Correlativo N° ${Number(evento?.correlativo_operativo || 0)}` : ""}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : subbloquesOperativos.length > 0 ? (
+                              <div className="grid gap-1">
+                                {subbloquesOperativos.map((sub, idx) => (
+                                  <div key={`sub-${idx}`} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                                    <span className="font-semibold text-slate-800">{String(sub?.medico_nombre || `Medico #${Number(sub?.medico_id || 0)}`)}</span>
+                                    {" · "}
+                                    <span>{formatCorrelativoFechaAtencion(sub?.fecha_programada) || "sin fecha"}</span>
+                                    {" · "}
+                                    <span>{fmtHora(sub?.hora_inicio) || "--:--"} - {fmtHora(sub?.hora_fin) || "--:--"}</span>
+                                    {Array.isArray(sub?.correlativos) && sub.correlativos.length > 0
+                                      ? ` · Correlativos: ${sub.correlativos.map((c) => `N° ${Number(c)}`).join(', ')}`
+                                      : ""}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-slate-500">No hay eventos operativos para este bloque.</div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+                  );
+                })()
               ))}
             </tbody>
           </table>

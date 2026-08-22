@@ -25,6 +25,9 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const origenFlujo = String(qs.get("origen") || "");
   const accionFlujo = String(qs.get("accion") || "");
   const backTo = String(qs.get("back_to") || "");
+  const medicoIdPrefill = Number(qs.get("medico_id") || 0);
+  const fechaPrefill = String(qs.get("fecha") || "").trim();
+  const horaPrefill = String(qs.get("hora") || "").trim().slice(0, 5);
   const hasEditIntent = Boolean(isEditIntent || consultaId || (qs.get("modo") === "editar" && cotizacionIdNum > 0));
   const pacienteIdNum = Number(pacienteId || 0);
   const esPacienteTemporal = pacienteIdNum <= 0;
@@ -85,10 +88,17 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
 
-  const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal) => {
+  const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal, opts = {}) => {
     if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
 
-    const observacionBase = `Cita reprogramada para ${fecha} ${String(hora || "").slice(0, 5)}.`;
+    const fechaObs = String(opts?.fecha || fecha || "").slice(0, 10);
+    const horaObs = String(opts?.hora || hora || "").slice(0, 5);
+    const turnoAntes = Number(opts?.turnoAntes || 0);
+    const turnoAhora = Number(opts?.turnoAhora || 0);
+    const observacionBase =
+      turnoAntes > 0 && turnoAhora > 0
+        ? `Cita reprogramada para ${fechaObs} ${horaObs}. Turno: Antes N°${turnoAntes} -> Ahora N°${turnoAhora}.`
+        : `Cita reprogramada para ${fechaObs} ${horaObs}.`;
     const response = await authFetch(`${BASE_URL}api_recordatorios_citas.php`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -477,6 +487,19 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     cargarConsulta();
   }, [consultaIdNum, isEditingConsulta]);
 
+  useEffect(() => {
+    if (isEditingConsulta) return;
+    if (medicoIdPrefill > 0) {
+      setMedicoId(String(medicoIdPrefill));
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fechaPrefill)) {
+      setFecha(fechaPrefill);
+    }
+    if (/^\d{2}:\d{2}$/.test(horaPrefill)) {
+      setHora(horaPrefill);
+    }
+  }, [isEditingConsulta, medicoIdPrefill, fechaPrefill, horaPrefill]);
+
   const seleccionarConsultaParaEditar = (detalle) => {
     setConsultasDisponibles([]);
     setModoAgregarConsulta(false);
@@ -654,6 +677,34 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       return;
     }
 
+    let fechaSeleccionada = String(fecha || "").slice(0, 10);
+    let horaSeleccionada = String(hora || "").slice(0, 5);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal: MySwal,
+      entries: [{
+        tipo: "consulta",
+        medicoId: Number(medicoId),
+        fecha: fechaSeleccionada,
+        hora: horaSeleccionada,
+        consultaIdExcluir: consultaIdNum > 0 ? Number(consultaIdNum) : 0,
+      }],
+      onApplySuggestion: (_entry, nuevaHora, nuevaFecha) => {
+        if (nuevaFecha) {
+          fechaSeleccionada = String(nuevaFecha).slice(0, 10);
+          setFecha(fechaSeleccionada);
+        }
+        if (nuevaHora) {
+          horaSeleccionada = String(nuevaHora).slice(0, 5);
+          setHora(horaSeleccionada);
+        }
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
+
     setProcessingAction("editar");
     setMsg("");
     try {
@@ -668,8 +719,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           body: JSON.stringify({
             paciente_id: Number(pacienteId),
             medico_id: Number(medicoId),
-            fecha,
-            hora,
+            fecha: fechaSeleccionada,
+            hora: horaSeleccionada,
             tipo_consulta: tipoConsultaPersistible,
             origen_creacion: resolverOrigenCreacion("cotizador"),
           }),
@@ -720,8 +771,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           id: consultaIdNum,
           cotizacion_id: cotizacionIdNum > 0 ? cotizacionIdNum : undefined,
           medico_id: Number(medicoId),
-          fecha,
-          hora,
+            fecha: fechaSeleccionada,
+            hora: horaSeleccionada,
           tipo_consulta: tipoConsultaPersistible,
         }),
       });
@@ -747,7 +798,12 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       });
 
       try {
-        await sincronizarRecordatorioPostReprogramacion(consultaIdNum);
+        await sincronizarRecordatorioPostReprogramacion(consultaIdNum, {
+          fecha: fechaSeleccionada,
+          hora: horaSeleccionada,
+          turnoAntes: Number(result?.turno_antes || 0),
+          turnoAhora: Number(result?.turno_ahora || 0),
+        });
       } catch (e) {
         await MySwal.fire({
           icon: "warning",

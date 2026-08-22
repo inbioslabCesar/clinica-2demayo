@@ -2,6 +2,45 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+if (!function_exists('hdisp_table_exists')) {
+    function hdisp_table_exists(mysqli $conn, string $table): bool {
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1');
+        if (!$stmt) return false;
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $ok = (bool)($res && $res->num_rows > 0);
+        $stmt->close();
+        return $ok;
+    }
+}
+
+if (!function_exists('hdisp_column_exists')) {
+    function hdisp_column_exists(mysqli $conn, string $table, string $column): bool {
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1');
+        if (!$stmt) return false;
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $ok = (bool)($res && $res->num_rows > 0);
+        $stmt->close();
+        return $ok;
+    }
+}
+
+if (!function_exists('hdisp_normalize_hora_hms')) {
+    function hdisp_normalize_hora_hms($value): ?string {
+        $raw = trim((string)$value);
+        if ($raw === '') return null;
+        if (preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $raw, $m)) {
+            return sprintf('%02d:%02d:00', (int)$m[1], (int)$m[2]);
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) return null;
+        return date('H:i:00', $ts);
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
@@ -29,7 +68,7 @@ if ($method === 'GET') {
         
         $horariosDisponibles = [];
         
-        $horariosOcupados = [];
+        $horariosOcupadosSet = [];
         if ($consulta_id_excluir > 0) {
             $stmt_consultas = $conn->prepare('
                 SELECT hora FROM consultas 
@@ -47,9 +86,76 @@ if ($method === 'GET') {
         $stmt_consultas->execute();
         $res_consultas = $stmt_consultas->get_result();
         while ($consulta = $res_consultas->fetch_assoc()) {
-            $horariosOcupados[] = $consulta['hora'];
+            $horaNorm = hdisp_normalize_hora_hms($consulta['hora'] ?? null);
+            if ($horaNorm !== null) {
+                $horariosOcupadosSet[$horaNorm] = true;
+            }
         }
         $stmt_consultas->close();
+
+        // Unificar ocupados de agenda de servicios para que la disponibilidad
+        // refleje la misma verdad operativa usada en Recordatorios.
+        if (hdisp_table_exists($conn, 'agenda_servicios_cotizacion')
+            && hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+            && hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada')) {
+
+            $hasAgendaEstado = hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+            $hasAgendaMedico = hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id');
+            $hasAgendaDetalle = hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id');
+            $hasAgendaServicio = hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_id');
+
+            $hasDetalle = hdisp_table_exists($conn, 'cotizaciones_detalle');
+            $hasDetalleId = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'id');
+            $hasDetalleMed = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'medico_id');
+            $hasDetalleServ = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'servicio_id');
+
+            $hasTarifas = hdisp_table_exists($conn, 'tarifas');
+            $hasTarifaId = $hasTarifas && hdisp_column_exists($conn, 'tarifas', 'id');
+            $hasTarifaMed = $hasTarifas && hdisp_column_exists($conn, 'tarifas', 'medico_id');
+
+            $joinDetalle = ($hasAgendaDetalle && $hasDetalle && $hasDetalleId)
+                ? ' LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id'
+                : '';
+            $joinTarifa = ($hasTarifas && $hasTarifaId)
+                ? ' LEFT JOIN tarifas t ON t.id = COALESCE('
+                    . ($hasDetalleServ ? 'cd.servicio_id, ' : '')
+                    . ($hasAgendaServicio ? 'a.servicio_id' : '0')
+                    . ')'
+                : '';
+
+            $medicoParts = [];
+            if ($hasAgendaMedico) $medicoParts[] = 'a.medico_id';
+            if ($hasDetalleMed) $medicoParts[] = 'cd.medico_id';
+            if ($hasTarifaMed) $medicoParts[] = 't.medico_id';
+            $medicoExpr = empty($medicoParts) ? '0' : ('COALESCE(' . implode(', ', $medicoParts) . ', 0)');
+
+            $whereEstado = $hasAgendaEstado
+                ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado")'
+                : '';
+
+            $sqlAgenda = 'SELECT a.hora_programada FROM agenda_servicios_cotizacion a'
+                . $joinDetalle
+                . $joinTarifa
+                . ' WHERE ' . $medicoExpr . ' = ? AND a.fecha_programada = ?'
+                . $whereEstado;
+
+            $stmtAgenda = $conn->prepare($sqlAgenda);
+            if ($stmtAgenda) {
+                $stmtAgenda->bind_param('is', $medico_id, $fecha);
+                $stmtAgenda->execute();
+                $resAgenda = $stmtAgenda->get_result();
+                while ($ag = $resAgenda->fetch_assoc()) {
+                    $horaNorm = hdisp_normalize_hora_hms($ag['hora_programada'] ?? null);
+                    if ($horaNorm !== null) {
+                        $horariosOcupadosSet[$horaNorm] = true;
+                    }
+                }
+                $stmtAgenda->close();
+            }
+        }
+
+        $horariosOcupados = array_keys($horariosOcupadosSet);
+        sort($horariosOcupados);
 
         while ($row = $res->fetch_assoc()) {
             
@@ -66,7 +172,7 @@ if ($method === 'GET') {
                 $horaStr = sprintf("%02d:%02d:00", $h, $m); // Formato completo con segundos
                 
                 // Solo agregar si no está ocupado
-                if (!in_array($horaStr, $horariosOcupados)) {
+                if (!isset($horariosOcupadosSet[$horaStr])) {
                     $horariosDisponibles[] = [
                         'hora' => sprintf("%02d:%02d", $h, $m), // Para mostrar en frontend sin segundos
                         'hora_db' => $horaStr, // Para comparar con BD
@@ -91,6 +197,7 @@ if ($method === 'GET') {
         echo json_encode([
             'success' => true, 
             'horarios_disponibles' => $horariosDisponibles,
+            'horarios_ocupados' => $horariosOcupados,
             'total' => count($horariosDisponibles),
             'consulta_excluida' => $consulta_id_excluir > 0 ? $consulta_id_excluir : null,
         ]);

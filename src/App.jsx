@@ -1329,18 +1329,6 @@ function App() {
                     }
                   />
                   <Route
-                    path="/historia-clinica-lectura/:pacienteId/:consultaId"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["administrador", "recepcionista"]}
-                        permisosRequeridos={["ver_pacientes"]}
-                      >
-                        <HistoriaClinicaPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
                     path="/cotizaciones"
                     element={
                       <ProtectedRoute
@@ -1509,6 +1497,17 @@ function App() {
                     permisosRequeridos={["ver_panel_laboratorio"]}
                   >
                     <VisorImagenPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/historia-clinica-lectura/:pacienteId/:consultaId"
+                element={
+                  <ProtectedRoute
+                    usuario={usuario}
+                    rolesPermitidos={["administrador", "recepcionista"]}
+                  >
+                    <HistoriaClinicaPage />
                   </ProtectedRoute>
                 }
               />

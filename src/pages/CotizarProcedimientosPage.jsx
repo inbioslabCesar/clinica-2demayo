@@ -5,6 +5,7 @@ import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor, getMedicoSoftColor } from "../utils/medicoAccent";
 
 export default function CotizarProcedimientosPage() {
    
@@ -729,8 +730,13 @@ export default function CotizarProcedimientosPage() {
                           const m = medicos.find(x => Number(x.id) === Number(proc.medico_id));
                           if (!m) return null;
                           const nombre = `${m.nombres || m.nombre || ''} ${m.apellidos || m.apellido || ''}`.trim();
+                          const color = getMedicoAccentColor(nombre);
+                          const soft = getMedicoSoftColor(nombre);
                           return (
-                            <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
+                            <span
+                              className="inline-block mt-1 text-xs rounded-full px-2 py-0.5"
+                              style={{ backgroundColor: soft, color }}
+                            >
                               👨‍⚕️ {nombre}
                             </span>
                           );

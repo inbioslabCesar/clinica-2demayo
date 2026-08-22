@@ -6,6 +6,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor } from "../utils/medicoAccent";
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
@@ -770,12 +771,13 @@ export default function CotizarRayosXPage() {
             <ul className="divide-y divide-gray-100">
               {tarifasFiltradas.map(tarifa => {
                 const medicoNombre = obtenerNombreMedicoTarifa(tarifa);
+                const medicoColor = getMedicoAccentColor(medicoNombre);
                 const precioMostrar = Number(tarifa.precio_particular || 0).toFixed(2);
                 return (
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                      <div className="text-xs text-blue-700 mt-1">Doctor: {medicoNombre || "Sin doctor"}</div>
+                      <div className="text-xs mt-1" style={{ color: medicoColor }}>Doctor: {medicoNombre || "Sin doctor"}</div>
                     </div>
                     <div className="min-w-[110px] text-right">
                       <div className="font-bold text-green-700 text-lg leading-none">S/ {precioMostrar}</div>

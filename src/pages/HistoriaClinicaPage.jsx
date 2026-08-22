@@ -2551,6 +2551,7 @@ function HistoriaClinicaPage() {
               resultadosLab={resultadosLab}
               ordenesLab={ordenesLab}
               onBeforeNavigate={persistDraftNow}
+              readOnly={readOnly}
             />
           </div>
           {/* Diagnósticos CIE10 */}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FiChevronDown, FiChevronUp, FiFileText, FiRefreshCw, FiTrash2, FiUser } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
@@ -42,6 +42,35 @@ function formatearFechaSolicitud(fecha) {
     minute: "2-digit",
     hour12: true,
   });
+}
+
+function formatearFechaProgramada(fecha, hora) {
+  const fechaTxt = String(fecha || "").trim();
+  if (!fechaTxt) return "Sin programación";
+
+  const partesFecha = fechaTxt.split("-");
+  if (partesFecha.length !== 3) {
+    return hora ? `${fechaTxt} ${String(hora).slice(0, 5)}` : fechaTxt;
+  }
+
+  const [yyyy, mm, dd] = partesFecha;
+  const horaRaw = String(hora || "").trim();
+  if (!horaRaw) {
+    return `${dd}/${mm}/${yyyy}`;
+  }
+
+  const [hStr, minStr] = horaRaw.split(":");
+  const h = Number(hStr || 0);
+  const m = Number(minStr || 0);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) {
+    return `${dd}/${mm}/${yyyy} ${horaRaw.slice(0, 5)}`;
+  }
+
+  const isPm = h >= 12;
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  const minute = String(m).padStart(2, "0");
+  const ampm = isPm ? "PM" : "AM";
+  return `${dd}/${mm}/${yyyy} ${String(hour12).padStart(2, "0")}:${minute} ${ampm}`;
 }
 
 export default function MisInformesImagenologiaPage({ usuario }) {
@@ -147,6 +176,45 @@ export default function MisInformesImagenologiaPage({ usuario }) {
       .includes(filtro);
   });
 
+  const correlativoFallbackByOrdenId = useMemo(() => {
+    const elegibles = (Array.isArray(ordenesVisibles) ? ordenesVisibles : [])
+      .filter((orden) => Number(orden?.medico_id || 0) > 0)
+      .filter((orden) => ["confirmado", "atendido", "espontaneo", "completado", "pagado"].includes(String(orden?.estado_evento_agenda || "").toLowerCase().trim()))
+      .filter((orden) => String(orden?.fecha_programada || "").trim() !== "")
+      .filter((orden) => String(orden?.hora_programada || "").trim() !== "")
+      .slice()
+      .sort((a, b) => {
+        const keyA = `${Number(a?.medico_id || 0)}|${String(a?.fecha_programada || "")}|${String(a?.hora_programada || "").slice(0, 5)}|${Number(a?.agenda_id || 0)}|${Number(a?.id || 0)}`;
+        const keyB = `${Number(b?.medico_id || 0)}|${String(b?.fecha_programada || "")}|${String(b?.hora_programada || "").slice(0, 5)}|${Number(b?.agenda_id || 0)}|${Number(b?.id || 0)}`;
+        return keyA.localeCompare(keyB);
+      });
+
+    const contador = {};
+    const out = {};
+    for (const orden of elegibles) {
+      const ordenId = Number(orden?.id || 0);
+      if (ordenId <= 0) continue;
+      const key = `${Number(orden?.medico_id || 0)}|${String(orden?.fecha_programada || "")}`;
+      contador[key] = Number(contador[key] || 0) + 1;
+      out[ordenId] = contador[key];
+    }
+    return out;
+  }, [ordenesVisibles]);
+
+  const correlativoByOrdenId = useMemo(() => {
+    const out = {};
+    for (const orden of Array.isArray(ordenesVisibles) ? ordenesVisibles : []) {
+      const ordenId = Number(orden?.id || 0);
+      if (ordenId <= 0) continue;
+      const correlativoOperativo = Number(orden?.correlativo_operativo || 0);
+      const correlativoFallback = Number(correlativoFallbackByOrdenId[ordenId] || 0);
+      out[ordenId] = correlativoOperativo > 0
+        ? correlativoOperativo
+        : correlativoFallback;
+    }
+    return out;
+  }, [correlativoFallbackByOrdenId, ordenesVisibles]);
+
   return (
     <main className="min-h-full bg-slate-50 px-4 py-5 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-6xl">
@@ -205,7 +273,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
               <div className="grid grid-cols-[minmax(175px,1.2fr)_minmax(175px,1.1fr)_150px_110px_80px_105px_150px] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <span>Paciente</span>
                 <span>Estudio</span>
-                <span>Solicitado</span>
+                <span>Programado</span>
                 <span>Origen</span>
                 <span>Archivos</span>
                 <span>Informe</span>
@@ -214,6 +282,8 @@ export default function MisInformesImagenologiaPage({ usuario }) {
               {ordenesVisibles.map((orden) => {
                 const paciente = orden.paciente || {};
                 const tieneConsulta = Number(orden.consulta_id || 0) > 0;
+                const correlativo = Number(correlativoByOrdenId[Number(orden.id || 0)] || 0);
+                const sinProgramacion = String(orden?.fecha_programada || "").trim() === "" || String(orden?.hora_programada || "").trim() === "";
                 const expandida = ordenExpandidaId === orden.id;
                 const puedeGestionar = Boolean(orden.can_upload_archivos) && orden.estado !== "cancelado";
                 const puedeInformar = Boolean(orden.can_edit_informe) && orden.estado !== "cancelado";
@@ -223,12 +293,21 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-slate-900">{nombrePaciente(paciente)}</p>
                         <p className="mt-0.5 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
+                        {correlativo > 0 && (
+                          <p className="mt-1 text-xs font-semibold text-indigo-700">Correlativo día: N° {correlativo}</p>
+                        )}
+                        {correlativo <= 0 && sinProgramacion && (
+                          <p className="mt-1 text-xs font-medium text-amber-700">Sin correlativo operativo (falta programación)</p>
+                        )}
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                         <p className="mt-0.5 truncate text-xs text-slate-500">{(orden.servicios_nombres || []).join(" · ") || "Sin descripción"}</p>
                       </div>
-                      <span className="text-xs text-slate-600">{formatearFechaSolicitud(orden.fecha)}</span>
+                      <div className="min-w-0">
+                        <p className="text-xs text-slate-700">{formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
+                      </div>
                       <span className="text-xs text-slate-600">{tieneConsulta ? "Consulta" : "Atención directa"}</span>
                       <span className="text-xs font-medium text-slate-700">{orden.archivos?.length || 0}</span>
                       <span className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
@@ -292,6 +371,8 @@ export default function MisInformesImagenologiaPage({ usuario }) {
             {ordenesVisibles.map((orden) => {
               const paciente = orden.paciente || {};
               const tieneConsulta = Number(orden.consulta_id || 0) > 0;
+              const correlativo = Number(correlativoByOrdenId[Number(orden.id || 0)] || 0);
+              const sinProgramacion = String(orden?.fecha_programada || "").trim() === "" || String(orden?.hora_programada || "").trim() === "";
               const informeAbierto = ordenInformeMobileId === orden.id;
               return (
                 <article key={orden.id} className="border border-slate-200 bg-white p-4 shadow-sm">
@@ -304,7 +385,10 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       <p className="mt-1 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
                       <p className="mt-2 text-sm font-medium capitalize text-slate-700">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                       {(orden.servicios_nombres || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{orden.servicios_nombres.join(" · ")}</p>}
+                      <p className="mt-1 text-xs text-slate-500">Programado: {formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
                       <p className="mt-1 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
+                      {correlativo > 0 && <p className="mt-1 text-xs font-semibold text-indigo-700">Correlativo día: N° {correlativo}</p>}
+                      {correlativo <= 0 && sinProgramacion && <p className="mt-1 text-xs font-medium text-amber-700">Sin correlativo operativo (falta programación)</p>}
                     </div>
                     <div className="shrink-0 text-right">
                       <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>

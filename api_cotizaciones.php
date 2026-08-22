@@ -4,6 +4,7 @@ require_once "config.php";
 require_once "auth_check.php";
 require_once __DIR__ . '/modules/CotizacionSyncService.php';
 require_once __DIR__ . '/modules/ContratoModule.php';
+require_once __DIR__ . '/modules/BloqueAtencionModule.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -1288,6 +1289,50 @@ function buscar_cotizacion_pendiente_farmacia($conn, $pacienteId) {
     respond(['success' => true, 'encontrada' => true, 'cotizacion' => $cotizacion]);
 }
 
+function resumen_bloque_atencion($conn, $cotizacionId = 0, $bloqueId = 0, $usuarioId = 0) {
+    $cotizacionId = (int)$cotizacionId;
+    $bloqueId = (int)$bloqueId;
+    $usuarioId = (int)$usuarioId;
+
+    if ($cotizacionId <= 0 && $bloqueId <= 0) {
+        respond(['success' => false, 'error' => 'cotizacion_id o bloque_id requerido'], 400);
+    }
+
+    if ($bloqueId > 0) {
+        $resumen = bloque_atencion_resumen_por_id($conn, $bloqueId);
+    } else {
+        $resumen = bloque_atencion_resumen_por_cotizacion($conn, $cotizacionId, $usuarioId);
+    }
+
+    if (!is_array($resumen) || empty($resumen['bloque'])) {
+        respond(['success' => false, 'error' => 'No se pudo resolver el bloque de atencion'], 404);
+    }
+
+    respond(['success' => true, 'resumen' => $resumen]);
+}
+
+function optimizar_horario_bloque_atencion($conn, $cotizacionId = 0, $bloqueId = 0, $usuarioId = 0) {
+    $cotizacionId = (int)$cotizacionId;
+    $bloqueId = (int)$bloqueId;
+    $usuarioId = (int)$usuarioId;
+
+    if ($bloqueId <= 0 && $cotizacionId > 0) {
+        $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
+    }
+    if ($bloqueId <= 0) {
+        respond(['success' => false, 'error' => 'No se pudo resolver bloque para optimizacion'], 404);
+    }
+
+    $resultado = bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+    $resumen = bloque_atencion_resumen_por_id($conn, $bloqueId);
+    respond([
+        'success' => true,
+        'bloque_id' => $bloqueId,
+        'resultado' => $resultado,
+        'resumen' => $resumen,
+    ]);
+}
+
 function obtener_cotizacion($conn, $cotizacionId) {
     $stmt = $conn->prepare("
         SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica,
@@ -1322,6 +1367,19 @@ function obtener_cotizacion($conn, $cotizacionId) {
         $cot['usuario_nombre'] = $cot['medico_solicitante'];
         $cot['usuario_rol'] = 'medico';
     }
+
+    $mapBloque = bloque_atencion_map_por_cotizaciones($conn, [$cotizacionId], get_user_id_from_session());
+    $metaBloque = $mapBloque[(int)$cotizacionId] ?? null;
+    $mapConflicto = bloque_atencion_conflictos_map_por_cotizaciones($conn, [$cotizacionId], get_user_id_from_session());
+    $metaConflicto = $mapConflicto[(int)$cotizacionId] ?? null;
+    $cot['bloque_id'] = (int)($metaBloque['bloque_id'] ?? 0);
+    $cot['bloque_estado_global'] = (string)($metaBloque['estado_global'] ?? '');
+    $cot['bloque_fecha_base'] = (string)($metaBloque['fecha_base'] ?? '');
+    $cot['bloque_hora_objetivo'] = (string)($metaBloque['hora_objetivo'] ?? '');
+    $cot['bloque_conflicto'] = (int)($metaConflicto['bloque_conflicto'] ?? 0);
+    $cot['bloque_conflicto_items'] = (int)($metaConflicto['bloque_conflicto_items'] ?? 0);
+    $cot['bloque_eventos_items'] = (int)($metaConflicto['bloque_eventos_items'] ?? 0);
+
     return $cot;
 }
 
@@ -3637,9 +3695,21 @@ function registrar_cotizacion($conn, $data) {
             }
         }
 
+        $bloqueId = 0;
+        try {
+            $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
+            if ($bloqueId > 0) {
+                bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+                bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
+            }
+        } catch (Throwable $bloqueError) {
+            error_log('Post-proceso bloque registrar_cotizacion (no bloqueante): ' . $bloqueError->getMessage());
+        }
+
         respond([
             'success' => true,
             'cotizacion_id' => $cotizacionId,
+            'bloque_id' => $bloqueId,
             'numero_comprobante' => sprintf("Q%06d", $cotizacionId),
             'fecha_vencimiento' => $fechaVencimiento,
             'total' => $totalReal,
@@ -3790,7 +3860,18 @@ function editar_cotizacion($conn, $data) {
             }
         }
 
-        respond(['success' => true, 'message' => 'Cotización actualizada', 'cotizacion_id' => $cotizacionId]);
+        $bloqueId = 0;
+        try {
+            $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
+            if ($bloqueId > 0) {
+                bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+                bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
+            }
+        } catch (Throwable $bloqueError) {
+            error_log('Post-proceso bloque editar_cotizacion (no bloqueante): ' . $bloqueError->getMessage());
+        }
+
+        respond(['success' => true, 'message' => 'Cotización actualizada', 'cotizacion_id' => $cotizacionId, 'bloque_id' => $bloqueId]);
     } catch (Exception $e) {
         $conn->rollback();
         error_log("Error al editar cotización: " . $e->getMessage());
@@ -3906,10 +3987,25 @@ function crear_adenda_cotizacion($conn, $data) {
             }
         }
 
+        $bloqueId = 0;
+        try {
+            $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $nuevaId, $usuarioId, [
+                'consulta_origen_id' => (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionId),
+            ]);
+            if ($bloqueId > 0) {
+                bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
+                bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+                bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
+            }
+        } catch (Throwable $bloqueError) {
+            error_log('Post-proceso bloque crear_adenda (no bloqueante): ' . $bloqueError->getMessage());
+        }
+
         respond([
             'success' => true,
             'message' => 'Adenda creada correctamente',
             'cotizacion_id' => $nuevaId,
+            'bloque_id' => $bloqueId,
             'cotizacion_padre_id' => $cotizacionId,
             'numero_comprobante' => sprintf("Q%06d", $nuevaId)
         ]);
@@ -4375,6 +4471,11 @@ function registrar_abono_cotizacion($conn, $data) {
 
             if ($nuevoEstado === 'pagado') {
                 sincronizar_servicios_clinicos_post_pago_cotizacion($conn, $cotizacionId, $usuarioId);
+            }
+            $bloqueIdPost = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
+            if ($bloqueIdPost > 0) {
+                bloque_atencion_optimizar_agenda($conn, $bloqueIdPost, $usuarioId);
+                bloque_atencion_recalcular($conn, $bloqueIdPost, $usuarioId);
             }
         } catch (Throwable $postError) {
             error_log('Post-proceso registrar_abono (no bloqueante): ' . $postError->getMessage());
@@ -5261,6 +5362,18 @@ switch ($method) {
             sugerir_grupo_cobro_unificado($conn, (int)$_GET['cotizacion_id']);
         }
 
+        if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'resumen_bloque') {
+            $cotizacionIdReq = isset($_GET['cotizacion_id']) ? (int)$_GET['cotizacion_id'] : 0;
+            $bloqueIdReq = isset($_GET['bloque_id']) ? (int)$_GET['bloque_id'] : 0;
+            resumen_bloque_atencion($conn, $cotizacionIdReq, $bloqueIdReq, get_user_id_from_session());
+        }
+
+        if (isset($_GET['accion']) && strtolower($_GET['accion']) === 'optimizar_bloque') {
+            $cotizacionIdReq = isset($_GET['cotizacion_id']) ? (int)$_GET['cotizacion_id'] : 0;
+            $bloqueIdReq = isset($_GET['bloque_id']) ? (int)$_GET['bloque_id'] : 0;
+            optimizar_horario_bloque_atencion($conn, $cotizacionIdReq, $bloqueIdReq, get_user_id_from_session());
+        }
+
         if (isset($_GET['paciente_id'])) {
             $pacienteId = (int)$_GET['paciente_id'];
             $stmt = $conn->prepare("
@@ -5284,6 +5397,27 @@ switch ($method) {
                 aplicar_fallback_paciente_temporal($cotizacion);
                 normalizar_estado_informativo_cotizacion($cotizacion);
                 $cotizacion['detalles'] = $detallesPorCotizacion[(int)$cotizacion['id']] ?? [];
+            }
+            unset($cotizacion);
+
+            $idsCot = array_values(array_filter(array_map(function ($row) {
+                return (int)($row['id'] ?? 0);
+            }, $cotizaciones), function ($id) {
+                return $id > 0;
+            }));
+            $mapBloques = bloque_atencion_map_por_cotizaciones($conn, $idsCot, get_user_id_from_session());
+            $mapConflictos = bloque_atencion_conflictos_map_por_cotizaciones($conn, $idsCot, get_user_id_from_session());
+            foreach ($cotizaciones as &$cotizacion) {
+                $cid = (int)($cotizacion['id'] ?? 0);
+                $metaBloque = $mapBloques[$cid] ?? null;
+                $metaConflicto = $mapConflictos[$cid] ?? null;
+                $cotizacion['bloque_id'] = (int)($metaBloque['bloque_id'] ?? 0);
+                $cotizacion['bloque_estado_global'] = (string)($metaBloque['estado_global'] ?? '');
+                $cotizacion['bloque_fecha_base'] = (string)($metaBloque['fecha_base'] ?? '');
+                $cotizacion['bloque_hora_objetivo'] = (string)($metaBloque['hora_objetivo'] ?? '');
+                $cotizacion['bloque_conflicto'] = (int)($metaConflicto['bloque_conflicto'] ?? 0);
+                $cotizacion['bloque_conflicto_items'] = (int)($metaConflicto['bloque_conflicto_items'] ?? 0);
+                $cotizacion['bloque_eventos_items'] = (int)($metaConflicto['bloque_eventos_items'] ?? 0);
             }
             unset($cotizacion);
 
@@ -5315,6 +5449,8 @@ switch ($method) {
         $hasReferenciaOrigenList = column_exists($conn, 'cotizaciones', 'referencia_origen');
         $hasResponsableFarmaciaList = column_exists($conn, 'cotizaciones', 'responsable_farmacia_id');
         $hasLabCotizacion = column_exists($conn, 'ordenes_laboratorio', 'cotizacion_id');
+        $hasCotizacionMovimientos = table_exists($conn, 'cotizacion_movimientos');
+        $hasCotizacionMovimientosCreatedAt = $hasCotizacionMovimientos && column_exists($conn, 'cotizacion_movimientos', 'created_at');
 
         $where = [];
         $types = '';
@@ -5377,6 +5513,9 @@ switch ($method) {
         $joinResponsableFarmacia = $hasResponsableFarmaciaList
             ? 'LEFT JOIN usuarios uf ON uf.id = c.responsable_farmacia_id'
             : '';
+        $selectUltimoPagoAt = $hasCotizacionMovimientosCreatedAt
+            ? "(SELECT MAX(cm.created_at) FROM cotizacion_movimientos cm WHERE cm.cotizacion_id = c.id AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ''))) = 'abono' AND COALESCE(cm.monto, 0) > 0) AS ultimo_pago_at,"
+            : "NULL AS ultimo_pago_at,";
 
         $sql = "
             SELECT
@@ -5384,6 +5523,7 @@ switch ($method) {
                 c.paciente_id,
                 c.usuario_id,
                 c.fecha,
+                {$selectUltimoPagoAt}
                 " . ($hasNumeroComprobante ? "c.numero_comprobante," : "NULL AS numero_comprobante,") . "
                 " . ($hasFechaVencimiento ? "c.fecha_vencimiento," : "NULL AS fecha_vencimiento,") . "
                 " . ($hasReferenciaOrigenList ? "c.referencia_origen," : "NULL AS referencia_origen,") . "
@@ -5884,6 +6024,22 @@ switch ($method) {
             $estado = strtolower(trim((string)($cotizacion['estado'] ?? '')));
             $descuento = (float)($descuentoPorCotizacion[$cid] ?? 0);
             $cotizacion['pagado_con_descuento'] = ($estado === 'pagado' && $descuento > 0) ? 1 : 0;
+        }
+        unset($cotizacion);
+
+        $mapBloques = bloque_atencion_map_por_cotizaciones($conn, $idsPagina, get_user_id_from_session());
+        $mapConflictos = bloque_atencion_conflictos_map_por_cotizaciones($conn, $idsPagina, get_user_id_from_session());
+        foreach ($cotizaciones as &$cotizacion) {
+            $cid = (int)($cotizacion['id'] ?? 0);
+            $metaBloque = $mapBloques[$cid] ?? null;
+            $metaConflicto = $mapConflictos[$cid] ?? null;
+            $cotizacion['bloque_id'] = (int)($metaBloque['bloque_id'] ?? 0);
+            $cotizacion['bloque_estado_global'] = (string)($metaBloque['estado_global'] ?? '');
+            $cotizacion['bloque_fecha_base'] = (string)($metaBloque['fecha_base'] ?? '');
+            $cotizacion['bloque_hora_objetivo'] = (string)($metaBloque['hora_objetivo'] ?? '');
+            $cotizacion['bloque_conflicto'] = (int)($metaConflicto['bloque_conflicto'] ?? 0);
+            $cotizacion['bloque_conflicto_items'] = (int)($metaConflicto['bloque_conflicto_items'] ?? 0);
+            $cotizacion['bloque_eventos_items'] = (int)($metaConflicto['bloque_eventos_items'] ?? 0);
         }
         unset($cotizacion);
 
