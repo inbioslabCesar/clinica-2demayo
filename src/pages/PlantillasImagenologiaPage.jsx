@@ -21,10 +21,22 @@ function slugify(text) {
     .replace(/_+/g, "_") || "campo";
 }
 
-function createCampo(label = "Nuevo campo") {
+function ensureUniqueId(baseCandidate, usedIds = new Set()) {
+  const base = slugify(baseCandidate || "campo");
+  if (!usedIds.has(base)) return base;
+  let i = 2;
+  let candidate = `${base}_${i}`;
+  while (usedIds.has(candidate)) {
+    i += 1;
+    candidate = `${base}_${i}`;
+  }
+  return candidate;
+}
+
+function createCampo(label = "Nuevo campo", usedIds = new Set()) {
   return {
     _id: nextId("c"),
-    id: slugify(label),
+    id: ensureUniqueId(slugify(label), usedIds),
     label,
     type: "textarea",
     placeholder: "",
@@ -34,8 +46,8 @@ function createCampo(label = "Nuevo campo") {
   };
 }
 
-function createSeccion(nombre = "Nueva sección") {
-  return { _id: nextId("s"), id: slugify(nombre), nombre, campos: [createCampo()] };
+function createSeccion(nombre = "Nueva sección", usedIds = new Set()) {
+  return { _id: nextId("s"), id: ensureUniqueId(slugify(nombre), usedIds), nombre, campos: [createCampo()] };
 }
 
 function estructuraToBuilder(estructura) {
@@ -73,6 +85,27 @@ function builderToEstructura(secciones) {
       })),
     })),
   };
+}
+
+function getDuplicatedStructureError(secciones) {
+  const sectionIds = new Set();
+  for (const sec of secciones) {
+    const secId = slugify(sec?.id || sec?.nombre || "");
+    if (sectionIds.has(secId)) {
+      return `ID de sección duplicado: "${secId}". Cada sección debe tener un ID único.`;
+    }
+    sectionIds.add(secId);
+
+    const fieldIds = new Set();
+    for (const campo of (sec?.campos || [])) {
+      const fieldId = slugify(campo?.id || campo?.label || "");
+      if (fieldIds.has(fieldId)) {
+        return `En la sección "${sec?.nombre || secId}", el ID de campo "${fieldId}" está repetido.`;
+      }
+      fieldIds.add(fieldId);
+    }
+  }
+  return "";
 }
 
 function emptyForm(tipo = "ecografia") {
@@ -158,6 +191,9 @@ export default function PlantillasImagenologiaPage() {
       if (!s.campos.length) { showMsg(`La sección "${s.nombre}" no tiene campos`, "error"); return; }
     }
 
+    const duplicatedError = getDuplicatedStructureError(form.secciones);
+    if (duplicatedError) { showMsg(duplicatedError, "error"); return; }
+
     setSaving(true);
     try {
       const payload = {
@@ -213,7 +249,10 @@ export default function PlantillasImagenologiaPage() {
   };
 
   // ─ Builder helpers ──────────────────────────────────────────────────────────
-  const addSeccion  = () => setForm((f) => ({ ...f, secciones: [...f.secciones, createSeccion()] }));
+  const addSeccion  = () => setForm((f) => {
+    const usedSectionIds = new Set((f.secciones || []).map((s) => slugify(s.id || s.nombre || "")));
+    return { ...f, secciones: [...f.secciones, createSeccion("Nueva sección", usedSectionIds)] };
+  });
   const removeSeccion = (sid) => setForm((f) => ({ ...f, secciones: f.secciones.filter((s) => s._id !== sid) }));
   const updateSeccion = (sid, patch) => setForm((f) => ({
     ...f, secciones: f.secciones.map((s) => s._id === sid ? { ...s, ...patch } : s),
@@ -227,7 +266,12 @@ export default function PlantillasImagenologiaPage() {
     return { ...f, secciones: arr };
   });
   const addCampo = (sid) => setForm((f) => ({
-    ...f, secciones: f.secciones.map((s) => s._id === sid ? { ...s, campos: [...s.campos, createCampo()] } : s),
+    ...f,
+    secciones: f.secciones.map((s) => {
+      if (s._id !== sid) return s;
+      const usedFieldIds = new Set((s.campos || []).map((c) => slugify(c.id || c.label || "")));
+      return { ...s, campos: [...s.campos, createCampo("Nuevo campo", usedFieldIds)] };
+    }),
   }));
   const removeCampo = (sid, cid) => setForm((f) => ({
     ...f, secciones: f.secciones.map((s) => s._id === sid ? { ...s, campos: s.campos.filter((c) => c._id !== cid) } : s),

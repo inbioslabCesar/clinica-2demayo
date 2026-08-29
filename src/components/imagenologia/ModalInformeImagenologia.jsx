@@ -427,7 +427,7 @@ export default function ModalInformeImagenologia({
         setInforme((prev) => ({ ...(prev || {}), id: data.informe_id, estado }));
         sessionStorage.removeItem(draftStorageKey(ordenImagenId));
         setDirty(false);
-        if (onSaved) onSaved();
+        if (onSaved) onSaved({ refreshListado: false, informeId: data.informe_id || null, estado });
       } else {
         Swal.fire(swalFrontConfig({
           title: 'Error',
@@ -510,7 +510,7 @@ export default function ModalInformeImagenologia({
           link.download = pdfData.pdf_filename || `informe_imagenologia_${informeId}.pdf`;
           link.click();
         }
-        if (onSaved) onSaved();
+        if (onSaved) onSaved({ refreshListado: true, informeId, estado: 'completado' });
         sessionStorage.removeItem(draftStorageKey(ordenImagenId));
         setDirty(false);
       } else {

@@ -152,8 +152,9 @@ function CajasCerradasTable({ cajas, resumenDiario = [], page, rowsPerPage, user
 				</div>
 			</div>
 			{/* Vista tabla en desktop */}
-			<div className="hidden md:block overflow-x-auto">
-				<table className="min-w-full divide-y divide-gray-200">
+			<div className="hidden md:block">
+				<div className="overflow-x-auto">
+					<table className="min-w-full divide-y divide-gray-200">
 					<thead className="bg-gray-50">
 						<tr>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
@@ -226,9 +227,10 @@ function CajasCerradasTable({ cajas, resumenDiario = [], page, rowsPerPage, user
 							))
 						)}
 					</tbody>
-				</table>
-				{/* Paginación */}
-				<div className="flex justify-between items-center mt-4">
+					</table>
+				</div>
+				{/* Paginación fuera del scroll horizontal */}
+				<div className="flex justify-between items-center mt-4 px-4 pb-4">
 					<div>
 						Página {page} de {Math.max(1, Math.ceil(cajas.length / rowsPerPage))}
 					</div>

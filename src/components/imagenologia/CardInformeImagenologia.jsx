@@ -83,8 +83,11 @@ export default function CardInformeImagenologia({
   const handleCerrarModal = () => {
     setModalOpen(false);
     if (onEditingChange) onEditingChange(false);
-    cargarInforme(); // Recargar después de editar
-    if (onInformeActualizado) {
+  };
+
+  const handleSavedModal = async (payload = {}) => {
+    await cargarInforme();
+    if (payload?.refreshListado && onInformeActualizado) {
       onInformeActualizado();
     }
   };
@@ -196,7 +199,7 @@ export default function CardInformeImagenologia({
           pacienteNombre={pacienteNombre}
           medicoNombre={medicoNombre}
           onClose={handleCerrarModal}
-          onSaved={cargarInforme}
+          onSaved={handleSavedModal}
         />
       )}
     </>

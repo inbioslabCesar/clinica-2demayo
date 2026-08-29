@@ -1,6 +1,11 @@
 <?php
 // Módulo de Honorarios: lógica para registrar movimiento de honorarios médicos
 class HonorarioModule {
+    private static function servicioPermiteHonorario($servicioTipo) {
+        $tipo = self::normalizarTipoServicioMovimiento($servicioTipo);
+        return in_array($tipo, ['consulta', 'rayosx', 'ecografia', 'operacion', 'procedimientos'], true);
+    }
+
     private static function tableExists($conn, $tableName) {
         $stmt = $conn->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1");
         if (!$stmt) {
@@ -176,7 +181,12 @@ class HonorarioModule {
             ];
         }
 
-        $tarifa_total = floatval($tarifa[$precio_key]);
+        $tarifa_total_unitario = floatval($tarifa[$precio_key]);
+        $cantidadDetalle = self::toFloatFlexible($detalleConsulta['cantidad'] ?? 1);
+        if ($cantidadDetalle <= 0) {
+            $cantidadDetalle = 1.0;
+        }
+        $tarifa_total = round($tarifa_total_unitario * $cantidadDetalle, 2);
         $snapshot = self::decodificarSnapshotDetalle($detalleConsulta);
         $esPaquete = self::esDetallePaquete($detalleConsulta, $snapshot);
         $reglaPaquete = self::obtenerReglaHonorarioPaquete($detalleConsulta, $snapshot);
@@ -216,7 +226,8 @@ class HonorarioModule {
         if ($monto_medico === null && $esPaquete && $reglaPaquete && in_array($modoHonorarioPaquete, ['monto_fijo_medico_paquete', 'porcentaje_medico_paquete'], true)) {
             if ($modoHonorarioPaquete === 'monto_fijo_medico_paquete') {
                 $montoFijo = max(0.0, self::toFloatFlexible($reglaPaquete['monto_fijo_medico'] ?? 0));
-                $monto_medico = round(min($montoFijo, max(0.0, $tarifa_total)), 2);
+                $montoFijoEscalado = $montoFijo * $cantidadDetalle;
+                $monto_medico = round(min($montoFijoEscalado, max(0.0, $tarifa_total)), 2);
                 $porcentaje_aplicado_medico = $tarifa_total > 0 ? round(($monto_medico * 100) / $tarifa_total, 2) : 0.0;
             } else {
                 $porcentaje = self::toFloatFlexible($reglaPaquete['porcentaje_medico'] ?? 0);
@@ -225,7 +236,7 @@ class HonorarioModule {
                 $porcentaje_aplicado_medico = $porcentaje;
             }
         } elseif ($monto_medico === null && !empty($tarifa['monto_medico'])) {
-            $monto_medico = floatval($tarifa['monto_medico']);
+            $monto_medico = round(floatval($tarifa['monto_medico']) * $cantidadDetalle, 2);
             $porcentaje_aplicado_medico = 0;
         } elseif ($monto_medico === null && !empty($tarifa['porcentaje_medico'])) {
             $monto_medico = round($tarifa_total * floatval($tarifa['porcentaje_medico']) / 100, 2);
@@ -242,7 +253,7 @@ class HonorarioModule {
             $monto_clinica = round(max(0.0, $tarifa_total - $monto_medico), 2);
             $porcentaje_aplicado_clinica = $tarifa_total > 0 ? round(($monto_clinica * 100) / $tarifa_total, 2) : 0.0;
         } elseif (!empty($tarifa['monto_clinica'])) {
-            $monto_clinica = floatval($tarifa['monto_clinica']);
+            $monto_clinica = round(floatval($tarifa['monto_clinica']) * $cantidadDetalle, 2);
             $porcentaje_aplicado_clinica = 0;
         } elseif (!empty($tarifa['porcentaje_clinica'])) {
             $monto_clinica = round($tarifa_total * floatval($tarifa['porcentaje_clinica']) / 100, 2);
@@ -341,6 +352,10 @@ class HonorarioModule {
             return null;
         }
 
+        if (!self::servicioPermiteHonorario($servicio_key)) {
+            return null;
+        }
+
         $datos = self::calcularDatosMovimiento($detalleConsulta, $tarifa, $servicio_key, $metodo_pago);
         if (!($datos['success'] ?? false)) {
             return $datos;
@@ -365,6 +380,10 @@ class HonorarioModule {
 
     public static function registrarPorCobrar($conn, $detalleConsulta, $tarifa, $servicio_key, $metodo_pago, $cobro_id, $cotizacion_id, $usuario_cobro_id, $caja_id = null, $turno = null) {
         if (!empty($detalleConsulta['renuncia_honorario_medico'])) {
+            return ['success' => true, 'sin_honorario_medico' => true];
+        }
+
+        if (!self::servicioPermiteHonorario($servicio_key)) {
             return ['success' => true, 'sin_honorario_medico' => true];
         }
 

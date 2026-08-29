@@ -4,6 +4,9 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor, getMedicoSoftColor } from "../utils/medicoAccent";
+import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 export default function CotizarProcedimientosPage() {
    
@@ -21,6 +24,7 @@ export default function CotizarProcedimientosPage() {
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [medicos, setMedicos] = useState([]);
   const [programacionPorProcedimiento, setProgramacionPorProcedimiento] = useState({});
+  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
   const [isSaving, setIsSaving] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
@@ -60,10 +64,68 @@ export default function CotizarProcedimientosPage() {
     const actual = programacionPorProcedimiento[pid];
     if (actual?.fecha_programada || actual?.hora_programada) return actual;
     const fuente = [...(Array.isArray(preloadedItems) ? preloadedItems : [])].reverse().find((it) => Number(it?.servicio_id || 0) === pid);
+    const proc = procedimientos.find((p) => Number(p.id) === pid);
+    const medicoId = Number(proc?.medico_id || 0);
+    const fechaBase = String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || "").slice(0, 10) || getLimaDate();
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
     return {
-      fecha_programada: String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || "").slice(0, 10) || getLimaDate(),
-      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || "").slice(0, 5) || getDefaultTime(),
+      fecha_programada: fechaBase,
+      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || "").slice(0, 5) || String(sugerida?.hora || getDefaultTime()).slice(0, 5),
     };
+  };
+
+  const getSiguienteProgramacionProcedimiento = (procedimientoId, fechaPreferida = "") => {
+    const pid = Number(procedimientoId || 0);
+    const proc = procedimientos.find((p) => Number(p.id) === pid);
+    const medicoId = Number(proc?.medico_id || 0);
+    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+    return {
+      fecha_programada: fechaBase,
+      hora_programada: String(sugerida?.hora || getDefaultTime()).slice(0, 5),
+    };
+  };
+
+  const aplicarSiguienteHorarioSugeridoProcedimiento = (procedimientoId) => {
+    const pid = Number(procedimientoId || 0);
+    const actual = getProgramacionProcedimiento(pid);
+    const fechaActual = String(actual?.fecha_programada || getLimaDate()).slice(0, 10);
+    const horaActual = String(actual?.hora_programada || "").slice(0, 5);
+    const next = getSiguienteProgramacionProcedimiento(pid, fechaActual);
+    const horaAplicada = getNextSuggestedHoraVisible({
+      horaActual,
+      horaSugerida: next.hora_programada,
+      stepMinutes: 30,
+    });
+    setProgramacionPorProcedimiento((prev) => ({
+      ...prev,
+      [pid]: {
+        ...next,
+        hora_programada: horaAplicada || next.hora_programada,
+      },
+    }));
+
+    const horaFinal = String(horaAplicada || next.hora_programada || "").slice(0, 5);
+    setFeedbackProgramacion((prev) => ({
+      ...prev,
+      [pid]: `Hora aplicada: ${horaFinal}`,
+    }));
+    window.setTimeout(() => {
+      setFeedbackProgramacion((prev) => {
+        if (!prev[pid]) return prev;
+        const after = { ...prev };
+        delete after[pid];
+        return after;
+      });
+    }, 1500);
   };
 
    const [busqueda, setBusqueda] = useState("");
@@ -487,6 +549,26 @@ export default function CotizarProcedimientosPage() {
       return;
     }
     const detalles = construirDetallesSeleccionados();
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora) => {
+        detalles.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(d?.hora_programada || "").slice(0, 5);
+          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+          }
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
 
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
@@ -708,8 +790,13 @@ export default function CotizarProcedimientosPage() {
                           const m = medicos.find(x => Number(x.id) === Number(proc.medico_id));
                           if (!m) return null;
                           const nombre = `${m.nombres || m.nombre || ''} ${m.apellidos || m.apellido || ''}`.trim();
+                          const color = getMedicoAccentColor(nombre);
+                          const soft = getMedicoSoftColor(nombre);
                           return (
-                            <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
+                            <span
+                              className="inline-block mt-1 text-xs rounded-full px-2 py-0.5"
+                              style={{ backgroundColor: soft, color }}
+                            >
                               👨‍⚕️ {nombre}
                             </span>
                           );
@@ -800,6 +887,20 @@ export default function CotizarProcedimientosPage() {
                           />
                         </label>
                       </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => aplicarSiguienteHorarioSugeridoProcedimiento(pid)}
+                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                        >
+                          Usar siguiente hora sugerida
+                        </button>
+                      </div>
+                      {feedbackProgramacion[pid] && (
+                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
+                          {feedbackProgramacion[pid]}
+                        </div>
+                      )}
                     </li>
                   ) : null;
                 })}

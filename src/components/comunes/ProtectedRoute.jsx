@@ -4,6 +4,7 @@ import { hasPermiso } from "../../config/recepcionPermisos";
 // rolesPermitidos: array de strings con los roles permitidos para la ruta
 const homeByRole = {
   administrador: "/usuarios",
+  admin: "/usuarios",
   recepcionista: "/pacientes",
   enfermero: "/panel-enfermero",
   medico: "/dashboard-medico",
@@ -11,11 +12,17 @@ const homeByRole = {
 };
 
 function normalizeRole(value) {
-  return String(value || "")
+  const normalized = String(value || "")
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+  if (normalized === "admin") {
+    return "administrador";
+  }
+
+  return normalized;
 }
 
 export default function ProtectedRoute({ usuario, rolesPermitidos, permisosRequeridos = [], children }) {

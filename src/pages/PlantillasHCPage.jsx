@@ -70,6 +70,7 @@ function normalizeFieldMeta(rawMeta = {}) {
     options: Array.from(new Set(optionsRaw.map((opt) => String(opt).trim()).filter(Boolean))),
     breakAfter: Boolean(rawMeta?.breakAfter ?? rawMeta?.break_after ?? false),
     label: String(rawMeta?.label || "").trim(),
+    prefillText: String(rawMeta?.prefillText ?? rawMeta?.prefill_text ?? ""),
   };
 }
 
@@ -172,6 +173,7 @@ function builderToSections(builderSections = []) {
           options: normalizedMeta.options,
           break_after: normalizedMeta.breakAfter,
           label: fieldLabel,
+          prefill_text: normalizedMeta.prefillText,
         };
       }
     });
@@ -301,6 +303,8 @@ export default function PlantillasHCPage() {
   };
 
   const previewSampleValue = (field, fieldKey) => {
+    const prefillText = String(field?.prefillText || field?.prefill_text || "");
+    if (prefillText.trim()) return prefillText;
     const label = field.title || humanizeKey(fieldKey);
     const type = String(field.type || "textarea").toLowerCase();
     if (type === "number") return "120";
@@ -1209,6 +1213,21 @@ export default function PlantillasHCPage() {
                                           />
                                           Cortar fila despues
                                         </label>
+                                      </div>
+
+                                      <div className="md:col-span-2 lg:col-span-4">
+                                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Texto precargado</label>
+                                        <textarea
+                                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
+                                          rows={3}
+                                          value={String(field.prefillText ?? "")}
+                                          onChange={(e) =>
+                                            updateFieldConfig(section.id, field.id, {
+                                              prefillText: e.target.value,
+                                            })
+                                          }
+                                          placeholder="Texto inicial editable para este campo en la HC"
+                                        />
                                       </div>
                                     </div>
                                     <p className="mt-2 text-xs text-slate-400">Arrastra con el mouse para reordenar campos dentro de la seccion.</p>

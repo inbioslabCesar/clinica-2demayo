@@ -1,5 +1,6 @@
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
 import { BASE_URL } from "../../config/config.js";
+import { resolverEdadDisplayClinica } from "../../utils/edadClinica";
 
 const ImpresionHistoriaClinica = ({ 
   paciente, 
@@ -46,6 +47,8 @@ const ImpresionHistoriaClinica = ({
 
   const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
   const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
+  const edadPaciente = resolverEdadDisplayClinica(paciente);
+  const edadPacienteTexto = edadPaciente === "No registrada" ? "-" : edadPaciente;
   const motivoConsulta = triaje?.motivo || triaje?.motivo_consulta || '';
   const sintomasPrincipales = triaje?.sintomas || triaje?.sintomas_principales || triaje?.sintoma_principal || '';
   const nivelConciencia = triaje?.nivel_conciencia || triaje?.nivelConciencia || '';
@@ -392,7 +395,7 @@ const ImpresionHistoriaClinica = ({
           <div className="space-y-0.5 text-xs">
             <p><strong>Nombre:</strong> {nombrePaciente} {apellidoPaciente}</p>
             <p><strong>DNI:</strong> {paciente?.dni}</p>
-            <p><strong>Edad:</strong> {paciente?.edad} años</p>
+            <p><strong>Edad:</strong> {edadPacienteTexto}</p>
             <p><strong>Sexo:</strong> {paciente?.sexo}</p>
             <p><strong>Teléfono:</strong> {paciente?.telefono}</p>
           </div>

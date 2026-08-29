@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FiChevronDown, FiChevronUp, FiFileText, FiRefreshCw, FiTrash2, FiUser } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
@@ -29,6 +29,116 @@ function nombrePaciente(paciente) {
   return [paciente?.nombre, paciente?.apellido].filter(Boolean).join(" ") || "Paciente sin nombre";
 }
 
+function parseIsoDate(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [y, m, d] = raw.split("-").map((v) => Number(v));
+  const date = new Date(y, m - 1, d);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function formatearFechaNacimiento(value) {
+  const date = parseIsoDate(value);
+  if (!date) return "No registrada";
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(date.getFullYear());
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function calcularEdadClinica(fechaNacimientoRaw, fechaReferenciaRaw = null) {
+  const nacimiento = parseIsoDate(fechaNacimientoRaw);
+  if (!nacimiento) {
+    return { dias: null, meses: null, anios: null, mesesResto: null, diasResto: null };
+  }
+
+  const ref = parseIsoDate(fechaReferenciaRaw) || new Date();
+  const hoyInicio = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  const nacimientoInicio = new Date(nacimiento.getFullYear(), nacimiento.getMonth(), nacimiento.getDate());
+
+  if (hoyInicio.getTime() < nacimientoInicio.getTime()) {
+    return { dias: 0, meses: 0, anios: 0, mesesResto: 0, diasResto: 0 };
+  }
+
+  const diffMs = hoyInicio.getTime() - nacimientoInicio.getTime();
+  const dias = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+
+  let meses = (hoyInicio.getFullYear() - nacimientoInicio.getFullYear()) * 12 + (hoyInicio.getMonth() - nacimientoInicio.getMonth());
+  if (hoyInicio.getDate() < nacimientoInicio.getDate()) {
+    meses -= 1;
+  }
+  meses = Math.max(0, meses);
+
+  let anios = hoyInicio.getFullYear() - nacimientoInicio.getFullYear();
+  const noCumplioEsteAnio =
+    hoyInicio.getMonth() < nacimientoInicio.getMonth()
+    || (hoyInicio.getMonth() === nacimientoInicio.getMonth() && hoyInicio.getDate() < nacimientoInicio.getDate());
+  if (noCumplioEsteAnio) {
+    anios -= 1;
+  }
+  anios = Math.max(0, anios);
+
+  let mesesResto = hoyInicio.getMonth() - nacimientoInicio.getMonth();
+  if (hoyInicio.getDate() < nacimientoInicio.getDate()) {
+    mesesResto -= 1;
+  }
+  if (mesesResto < 0) {
+    mesesResto += 12;
+  }
+
+  let diasResto;
+  if (hoyInicio.getDate() >= nacimientoInicio.getDate()) {
+    diasResto = hoyInicio.getDate() - nacimientoInicio.getDate();
+  } else {
+    const diasMesPrevio = new Date(hoyInicio.getFullYear(), hoyInicio.getMonth(), 0).getDate();
+    diasResto = diasMesPrevio - nacimientoInicio.getDate() + hoyInicio.getDate();
+  }
+
+  return {
+    dias,
+    meses,
+    anios,
+    mesesResto: Math.max(0, mesesResto),
+    diasResto: Math.max(0, diasResto),
+  };
+}
+
+function resolverEdadDisplay(paciente) {
+  const formatUnidad = (valor, singular, plural) => `${valor} ${Math.abs(Number(valor)) === 1 ? singular : plural}`;
+  const edad = String(paciente?.edad ?? "").trim();
+  const unidadRaw = String(paciente?.edad_unidad || "").trim();
+  const unidad = unidadRaw.toLowerCase();
+  const { dias, meses, anios, mesesResto, diasResto } = calcularEdadClinica(
+    paciente?.fecha_nacimiento,
+    paciente?.edad_referencia_fecha || null
+  );
+
+  const isRnPorUnidad = unidad.includes("rn") || unidad.includes("reci") || unidad.includes("neo");
+  const isRnPorDias = Number.isFinite(dias) && dias !== null && dias <= 28;
+  const esRn = isRnPorUnidad || isRnPorDias;
+
+  if (esRn && dias !== null && meses !== null) {
+    return `${formatUnidad(dias, "día", "días")} (${formatUnidad(meses, "mes", "meses")})`;
+  }
+
+  if (meses !== null && meses < 12) {
+    return formatUnidad(meses, "mes", "meses");
+  }
+
+  if (anios !== null && anios >= 1) {
+    const mesesMostrar = Number.isFinite(mesesResto) ? Math.max(0, mesesResto) : 0;
+    const diasMostrar = Number.isFinite(diasResto) ? Math.max(0, diasResto) : 0;
+    return `${formatUnidad(anios, "año", "años")} ${formatUnidad(mesesMostrar, "mes", "meses")} ${formatUnidad(diasMostrar, "día", "días")}`;
+  }
+
+  if (edad !== "") {
+    return unidadRaw ? `${edad} ${unidadRaw}` : edad;
+  }
+
+  return "No registrada";
+}
+
 function formatearFechaSolicitud(fecha) {
   if (!fecha) return "Sin fecha";
   const fechaNormalizada = String(fecha).includes("T") ? String(fecha) : String(fecha).replace(" ", "T");
@@ -42,6 +152,35 @@ function formatearFechaSolicitud(fecha) {
     minute: "2-digit",
     hour12: true,
   });
+}
+
+function formatearFechaProgramada(fecha, hora) {
+  const fechaTxt = String(fecha || "").trim();
+  if (!fechaTxt) return "Sin programación";
+
+  const partesFecha = fechaTxt.split("-");
+  if (partesFecha.length !== 3) {
+    return hora ? `${fechaTxt} ${String(hora).slice(0, 5)}` : fechaTxt;
+  }
+
+  const [yyyy, mm, dd] = partesFecha;
+  const horaRaw = String(hora || "").trim();
+  if (!horaRaw) {
+    return `${dd}/${mm}/${yyyy}`;
+  }
+
+  const [hStr, minStr] = horaRaw.split(":");
+  const h = Number(hStr || 0);
+  const m = Number(minStr || 0);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) {
+    return `${dd}/${mm}/${yyyy} ${horaRaw.slice(0, 5)}`;
+  }
+
+  const isPm = h >= 12;
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  const minute = String(m).padStart(2, "0");
+  const ampm = isPm ? "PM" : "AM";
+  return `${dd}/${mm}/${yyyy} ${String(hour12).padStart(2, "0")}:${minute} ${ampm}`;
 }
 
 export default function MisInformesImagenologiaPage({ usuario }) {
@@ -88,21 +227,6 @@ export default function MisInformesImagenologiaPage({ usuario }) {
 
   useEffect(() => {
     cargarOrdenes({ automatica: true });
-  }, [cargarOrdenes]);
-
-  useEffect(() => {
-    const recargarSiEstaVisible = () => {
-      if (document.visibilityState === "visible") cargarOrdenes({ automatica: true });
-    };
-    const intervalo = window.setInterval(recargarSiEstaVisible, 30000);
-    window.addEventListener("focus", recargarSiEstaVisible);
-    document.addEventListener("visibilitychange", recargarSiEstaVisible);
-
-    return () => {
-      window.clearInterval(intervalo);
-      window.removeEventListener("focus", recargarSiEstaVisible);
-      document.removeEventListener("visibilitychange", recargarSiEstaVisible);
-    };
   }, [cargarOrdenes]);
 
   useEffect(() => {
@@ -205,7 +329,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
               <div className="grid grid-cols-[minmax(175px,1.2fr)_minmax(175px,1.1fr)_150px_110px_80px_105px_150px] gap-4 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <span>Paciente</span>
                 <span>Estudio</span>
-                <span>Solicitado</span>
+                <span>Programado</span>
                 <span>Origen</span>
                 <span>Archivos</span>
                 <span>Informe</span>
@@ -223,12 +347,17 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-slate-900">{nombrePaciente(paciente)}</p>
                         <p className="mt-0.5 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">F. nac: {formatearFechaNacimiento(paciente.fecha_nacimiento)}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">Edad: {resolverEdadDisplay(paciente)}</p>
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                         <p className="mt-0.5 truncate text-xs text-slate-500">{(orden.servicios_nombres || []).join(" · ") || "Sin descripción"}</p>
                       </div>
-                      <span className="text-xs text-slate-600">{formatearFechaSolicitud(orden.fecha)}</span>
+                      <div className="min-w-0">
+                        <p className="text-xs text-slate-700">{formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
+                      </div>
                       <span className="text-xs text-slate-600">{tieneConsulta ? "Consulta" : "Atención directa"}</span>
                       <span className="text-xs font-medium text-slate-700">{orden.archivos?.length || 0}</span>
                       <span className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
@@ -302,8 +431,11 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                         <span className="truncate">{nombrePaciente(paciente)}</span>
                       </div>
                       <p className="mt-1 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
+                      <p className="mt-1 text-xs text-slate-500">F. nac: {formatearFechaNacimiento(paciente.fecha_nacimiento)}</p>
+                      <p className="mt-1 text-xs text-slate-500">Edad: {resolverEdadDisplay(paciente)}</p>
                       <p className="mt-2 text-sm font-medium capitalize text-slate-700">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                       {(orden.servicios_nombres || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{orden.servicios_nombres.join(" · ")}</p>}
+                      <p className="mt-1 text-xs text-slate-500">Programado: {formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
                       <p className="mt-1 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
                     </div>
                     <div className="shrink-0 text-right">

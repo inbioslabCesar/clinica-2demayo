@@ -22,6 +22,15 @@ const serviciosMedicos = [
   { value: "procedimientos", label: "Procedimientos Médicos" },
 ];
 const todosLosServicios = [...serviciosMedicos];
+const TARIFAS_FILAS_STORAGE_KEY = "gestion_tarifas_filas_v1";
+
+function normalizarTextoBusqueda(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
 
 function GestionTarifasPage() {
   // Hooks personalizados
@@ -29,6 +38,8 @@ function GestionTarifasPage() {
   const {
     filtroMedico,
     setFiltroMedico,
+    filtroDescripcion,
+    setFiltroDescripcion,
     filtroServicio,
     setFiltroServicio,
   } = useFiltrosTarifas();
@@ -56,12 +67,12 @@ function GestionTarifasPage() {
     tarifasFiltradas = tarifasFiltradas.filter((t) => t.servicio_tipo === filtroServicio);
   }
   if (filtroMedico.trim()) {
-    const filtroLower = filtroMedico.trim().toLowerCase();
+    const filtroLower = normalizarTextoBusqueda(filtroMedico);
     tarifasFiltradas = tarifasFiltradas.filter((t) => {
       const medico = medicos.find((m) => Number(m.id) === Number(t.medico_id));
       if (!medico) return false;
-      const nombre = (medico.nombres || medico.nombre || "").toLowerCase();
-      const apellido = (medico.apellidos || medico.apellido || "").toLowerCase();
+      const nombre = normalizarTextoBusqueda(medico.nombres || medico.nombre || "");
+      const apellido = normalizarTextoBusqueda(medico.apellidos || medico.apellido || "");
       const nombreCompleto = `${nombre} ${apellido}`.trim();
       return (
         nombreCompleto.includes(filtroLower) ||
@@ -69,6 +80,12 @@ function GestionTarifasPage() {
         apellido.includes(filtroLower)
       );
     });
+  }
+  if (filtroDescripcion.trim()) {
+    const filtroDescLower = normalizarTextoBusqueda(filtroDescripcion);
+    tarifasFiltradas = tarifasFiltradas.filter((t) =>
+      normalizarTextoBusqueda(t?.descripcion || "").includes(filtroDescLower)
+    );
   }
 
   // Paginación
@@ -85,10 +102,34 @@ function GestionTarifasPage() {
   } = usePaginacion(totalElementos);
   const tarifasPaginadas = tarifasFiltradas.slice(indiceInicio, indiceFin);
 
-  // Reiniciar a primera página cuando cambie el filtro de servicio
+  // Reiniciar a primera página cuando cambien filtros
   useEffect(() => {
     setPaginaActual(1);
-  }, [filtroServicio, setPaginaActual]);
+  }, [filtroServicio, filtroMedico, filtroDescripcion, setPaginaActual]);
+
+  // Restaurar cantidad de filas guardada para esta vista.
+  useEffect(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(TARIFAS_FILAS_STORAGE_KEY) || 3);
+      const permitidos = [3, 5, 10, 25, 50, 100];
+      if (permitidos.includes(stored) && stored !== elementosPorPagina) {
+        cambiarElementosPorPagina(stored);
+      }
+    } catch {
+      // Si localStorage no está disponible, usar valor por defecto.
+    }
+    // Solo al montar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persistir selección de filas.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TARIFAS_FILAS_STORAGE_KEY, String(elementosPorPagina));
+    } catch {
+      // Si localStorage no está disponible, mantener estado en memoria.
+    }
+  }, [elementosPorPagina]);
 
   // Regenerar descripción cuando se cargan los médicos
   useEffect(() => {
@@ -140,6 +181,8 @@ function GestionTarifasPage() {
         totalPaginas={totalPaginas}
         filtroMedico={filtroMedico}
         setFiltroMedico={setFiltroMedico}
+        filtroDescripcion={filtroDescripcion}
+        setFiltroDescripcion={setFiltroDescripcion}
       />
       <Paginacion
         paginaActual={paginaActual}
@@ -147,6 +190,8 @@ function GestionTarifasPage() {
         cambiarPagina={cambiarPagina}
         elementosPorPagina={elementosPorPagina}
         cambiarElementosPorPagina={cambiarElementosPorPagina}
+        defaultElementosPorPagina={3}
+        opcionesElementosPorPagina={[3, 5, 10, 25, 50, 100]}
       />
       <TarifasTable
         tarifas={tarifasPaginadas}

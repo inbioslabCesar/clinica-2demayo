@@ -159,11 +159,25 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       });
       const result = await response.json();
       if (result.success) {
-        // Mostrar comprobante
-        await mostrarComprobante(result.cobro_id, cobroData);
+        let comprobanteOk = true;
+        try {
+          // Mostrar comprobante
+          await mostrarComprobante(result.cobro_id, cobroData);
+        } catch {
+          comprobanteOk = false;
+          await Swal.fire({
+            icon: 'warning',
+            title: 'Cobro registrado',
+            text: `El cobro #${Number(result.cobro_id || 0)} se guardo correctamente, pero no se pudo abrir el comprobante en este momento.`,
+            confirmButtonText: 'Continuar',
+          });
+        }
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
           onCobroCompleto(result.cobro_id, servicio);
+        }
+        if (!comprobanteOk) {
+          return;
         }
       } else {
         Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');

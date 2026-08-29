@@ -2,6 +2,7 @@ import { authFetch } from "../../utils/apiClient";
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
+import { validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 import DisponibilidadMedicos from "../medico/DisponibilidadMedicos";
 import FormularioAgendarConsulta from "./FormularioAgendarConsulta";
 import ResumenConsultaAgendada from "../comunes/ResumenConsultaAgendada";
@@ -24,6 +25,9 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const origenFlujo = String(qs.get("origen") || "");
   const accionFlujo = String(qs.get("accion") || "");
   const backTo = String(qs.get("back_to") || "");
+  const medicoIdPrefill = Number(qs.get("medico_id") || 0);
+  const fechaPrefill = String(qs.get("fecha") || "").trim();
+  const horaPrefill = String(qs.get("hora") || "").trim().slice(0, 5);
   const hasEditIntent = Boolean(isEditIntent || consultaId || (qs.get("modo") === "editar" && cotizacionIdNum > 0));
   const pacienteIdNum = Number(pacienteId || 0);
   const esPacienteTemporal = pacienteIdNum <= 0;
@@ -83,11 +87,15 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
+  const medicoIdNormalizado = Number.parseInt(String(medicoId || "").trim(), 10) || 0;
+  const medicoIdRespaldo = medicoIdNormalizado > 0 ? medicoIdNormalizado : medicoIdPrefill;
 
-  const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal) => {
+  const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal, opts = {}) => {
     if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
 
-    const observacionBase = `Cita reprogramada para ${fecha} ${String(hora || "").slice(0, 5)}.`;
+    const fechaObs = String(opts?.fecha || fecha || "").slice(0, 10);
+    const horaObs = String(opts?.hora || hora || "").slice(0, 5);
+    const observacionBase = `Cita reprogramada para ${fechaObs} ${horaObs}.`;
     const response = await authFetch(`${BASE_URL}api_recordatorios_citas.php`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -345,11 +353,11 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
 
   // Cargar horarios disponibles cuando se selecciona médico y fecha
   useEffect(() => {
-    if (medicoId && fecha) {
+    if (medicoIdRespaldo > 0 && fecha) {
       setCargandoHorarios(true);
 
       const params = new URLSearchParams({
-        medico_id: String(medicoId),
+        medico_id: String(medicoIdRespaldo),
         fecha: String(fecha),
       });
       if (isEditingConsulta && consultaIdNum > 0) {
@@ -377,7 +385,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     } else {
       setHorariosDisponibles([]);
     }
-  }, [medicoId, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
+  }, [medicoIdRespaldo, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
 
   useEffect(() => {
     // Cargar información del paciente
@@ -462,7 +470,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           throw new Error(data?.error || "No se encontró la consulta a editar");
         }
 
-        setMedicoId(String(consulta.medico_id || ""));
+        const medicoConsulta = Number.parseInt(String(consulta.medico_id || "").trim(), 10) || 0;
+        setMedicoId(String(medicoConsulta > 0 ? medicoConsulta : (medicoIdPrefill || "")));
         setFecha(String(consulta.fecha || "").slice(0, 10));
         setHora(String(consulta.hora || "").slice(0, 5));
         setTipoConsulta(consulta.tipo_consulta || "programada");
@@ -474,7 +483,20 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     };
 
     cargarConsulta();
-  }, [consultaIdNum, isEditingConsulta]);
+  }, [consultaIdNum, isEditingConsulta, medicoIdPrefill]);
+
+  useEffect(() => {
+    if (isEditingConsulta) return;
+    if (medicoIdPrefill > 0) {
+      setMedicoId(String(medicoIdPrefill));
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fechaPrefill)) {
+      setFecha(fechaPrefill);
+    }
+    if (/^\d{2}:\d{2}$/.test(horaPrefill)) {
+      setHora(horaPrefill);
+    }
+  }, [isEditingConsulta, medicoIdPrefill, fechaPrefill, horaPrefill]);
 
   const seleccionarConsultaParaEditar = (detalle) => {
     setConsultasDisponibles([]);
@@ -653,6 +675,34 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       return;
     }
 
+    let fechaSeleccionada = String(fecha || "").slice(0, 10);
+    let horaSeleccionada = String(hora || "").slice(0, 5);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal: MySwal,
+      entries: [{
+        tipo: "consulta",
+        medicoId: Number(medicoId),
+        fecha: fechaSeleccionada,
+        hora: horaSeleccionada,
+        consultaIdExcluir: consultaIdNum > 0 ? Number(consultaIdNum) : 0,
+      }],
+      onApplySuggestion: (_entry, nuevaHora, nuevaFecha) => {
+        if (nuevaFecha) {
+          fechaSeleccionada = String(nuevaFecha).slice(0, 10);
+          setFecha(fechaSeleccionada);
+        }
+        if (nuevaHora) {
+          horaSeleccionada = String(nuevaHora).slice(0, 5);
+          setHora(horaSeleccionada);
+        }
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
+
     setProcessingAction("editar");
     setMsg("");
     try {
@@ -667,8 +717,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           body: JSON.stringify({
             paciente_id: Number(pacienteId),
             medico_id: Number(medicoId),
-            fecha,
-            hora,
+            fecha: fechaSeleccionada,
+            hora: horaSeleccionada,
             tipo_consulta: tipoConsultaPersistible,
             origen_creacion: resolverOrigenCreacion("cotizador"),
           }),
@@ -719,8 +769,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           id: consultaIdNum,
           cotizacion_id: cotizacionIdNum > 0 ? cotizacionIdNum : undefined,
           medico_id: Number(medicoId),
-          fecha,
-          hora,
+            fecha: fechaSeleccionada,
+            hora: horaSeleccionada,
           tipo_consulta: tipoConsultaPersistible,
         }),
       });
@@ -746,7 +796,12 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       });
 
       try {
-        await sincronizarRecordatorioPostReprogramacion(consultaIdNum);
+        await sincronizarRecordatorioPostReprogramacion(consultaIdNum, {
+          fecha: fechaSeleccionada,
+          hora: horaSeleccionada,
+          turnoAntes: Number(result?.turno_antes || 0),
+          turnoAhora: Number(result?.turno_ahora || 0),
+        });
       } catch (e) {
         await MySwal.fire({
           icon: "warning",
@@ -789,7 +844,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     return true;
   };
 
-  const crearConsultaYDetalle = async () => {
+  const crearConsultaYDetalle = async ({ horaProgramadaOverride = "" } = {}) => {
+    const horaProgramada = String(horaProgramadaOverride || hora || "").slice(0, 5);
     const res = await authFetch(BASE_URL + "api_consultas.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -798,7 +854,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         paciente_id: pacienteId,
         medico_id: medicoId,
         fecha,
-        hora,
+        hora: horaProgramada,
         tipo_consulta: tipoConsultaPersistible,
         origen_creacion: resolverOrigenCreacion("agendada"),
       }),
@@ -825,7 +881,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       tipo_consulta: tipoConsulta,
       medico_especialidad: medicoSeleccionado?.especialidad,
       fecha,
-      hora,
+      hora: horaProgramada,
       paciente_id: pacienteId,
     };
 
@@ -843,13 +899,35 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       return;
     }
 
+    let horaSeleccionada = String(hora || "").slice(0, 5);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal: MySwal,
+      entries: [{
+        tipo: "consulta",
+        medicoId: Number(medicoId),
+        fecha: String(fecha || "").slice(0, 10),
+        hora: horaSeleccionada,
+      }],
+      onApplySuggestion: (_entry, nuevaHora) => {
+        horaSeleccionada = String(nuevaHora || horaSeleccionada).slice(0, 5);
+        setHora(horaSeleccionada);
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
+
     if (!(await validarCajaParaEspontanea())) {
       return;
     }
 
     setProcessingAction(accion);
     try {
-      const { consultaInfo, detalleConsulta, total } = await crearConsultaYDetalle();
+      const { consultaInfo, detalleConsulta, total } = await crearConsultaYDetalle({
+        horaProgramadaOverride: horaSeleccionada,
+      });
       const cotizacionId = await registrarCotizacionConsulta(
         consultaInfo,
         detalleConsulta,
@@ -1019,6 +1097,9 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             quantity: 1,
             unitPrice: Number(precio),
             source: "consulta",
+            medicoId: Number(medicoId || 0),
+            fechaProgramada: String(fecha || "").slice(0, 10),
+            horaProgramada: String(hora || "").slice(0, 5),
             consultaMedicoId: Number(medicoId),
             consultaFecha: fecha,
             consultaHora: hora,

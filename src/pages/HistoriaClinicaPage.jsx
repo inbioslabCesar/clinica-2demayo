@@ -12,6 +12,7 @@ import ImpresionAnalisisLaboratorio from "../components/print/ImpresionAnalisisL
 import ImpresionRecetaMedicamentos from "../components/print/ImpresionRecetaMedicamentos";
 import ImpresionServiciosSolicitados from "../components/print/ImpresionServiciosSolicitados";
 import ImpresionInformeProcedimiento from "../components/print/ImpresionInformeProcedimiento";
+import TriageForm from "../components/enfermero/TriageForm";
 import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintReceta, usePrintServicios, usePrintInformeProcedimiento } from "../hooks/usePrint";
 import { formatColegiatura, formatProfesionalName } from "../utils/profesionalDisplay";
 
@@ -209,11 +210,36 @@ function normalizeHistoriaData(rawDatos) {
   };
 }
 
+function enforceManualProximaSelection(hcData) {
+  const base = hcData && typeof hcData === "object" ? hcData : {};
+  const proxima = base?.proxima_cita;
+  if (!proxima || typeof proxima !== "object") return base;
+
+  // If the next appointment comes from automatic contract resolution,
+  // never auto-check scheduling. Doctor must confirm manually.
+  const origen = String(proxima?.origen || "").trim().toLowerCase();
+  if (origen !== "contrato_agenda") return base;
+
+  if (!proxima.programar) return base;
+  return {
+    ...base,
+    proxima_cita: {
+      ...proxima,
+      programar: false,
+    },
+  };
+}
+
 function buildHcSnapshot(model) {
   const base = model && typeof model === "object" ? model : {};
   const hc = normalizeHistoriaData(base.hc || {});
   const diagnosticos = Array.isArray(base.diagnosticos) ? base.diagnosticos : [];
   return JSON.stringify({ hc, diagnosticos });
+}
+
+function resolveTemplatePrefillText(fieldMeta) {
+  if (!fieldMeta || typeof fieldMeta !== "object" || Array.isArray(fieldMeta)) return "";
+  return String(fieldMeta.prefill_text ?? fieldMeta.prefillText ?? "");
 }
 
 function HistoriaClinicaPage() {
@@ -243,6 +269,8 @@ function HistoriaClinicaPage() {
   const [ordenesLab, setOrdenesLab] = useState([]);
   const [ordenesImagenPrint, setOrdenesImagenPrint] = useState([]);
   const [ordenesProcedimientosPrint, setOrdenesProcedimientosPrint] = useState([]);
+  const [cargandoOrdenesImagenPrint, setCargandoOrdenesImagenPrint] = useState(false);
+  const [cargandoOrdenesProcedimientosPrint, setCargandoOrdenesProcedimientosPrint] = useState(false);
   const [recetaSugerencias, setRecetaSugerencias] = useState({
     medico: [],
     especialidad: [],
@@ -267,9 +295,15 @@ function HistoriaClinicaPage() {
     data: null,
     error: "",
   });
+  const [triajeHcPrevia, setTriajeHcPrevia] = useState({
+    loading: false,
+    data: null,
+    error: "",
+  });
   const [previewAdjuntoImagen, setPreviewAdjuntoImagen] = useState(null);
   const [mostrarImportarDiagnosticoModal, setMostrarImportarDiagnosticoModal] = useState(false);
   const [vistaClinicaActiva, setVistaClinicaActiva] = useState('registro');
+  const [continuidadScope, setContinuidadScope] = useState('all');
   const restoreHistorialRef = useRef(false);
   const restorePreviasUiRef = useRef(false);
   const continuidadConsultaRef = useRef(0);
@@ -330,6 +364,28 @@ function HistoriaClinicaPage() {
     clearHistoryRestoreState();
   }, [clearHistoryRestoreState]);
 
+  const clearContinuidadChainCache = useCallback((consultaRef) => {
+    const consulta = Number(consultaRef || 0);
+    if (consulta <= 0) return;
+
+    const scopes = ['chain', 'all'];
+    const modes = ['lite', 'full'];
+    try {
+      scopes.forEach((scope) => {
+        modes.forEach((mode) => {
+          sessionStorage.removeItem(`hc_previas_chain_v3_${consulta}_${scope}_${mode}`);
+        });
+      });
+    } catch {
+      // Ignorar errores de storage.
+    }
+
+    const key = String(consulta);
+    if (continuidadConsultaRef.current === consulta) {
+      continuidadModoCargadoRef.current[key] = '';
+    }
+  }, []);
+
   useEffect(() => {
     if (!consultaId) return;
     const noCache = `_t=${Date.now()}`;
@@ -369,7 +425,10 @@ function HistoriaClinicaPage() {
       });
 
     // Diferir apoyos no críticos para evitar pico de concurrencia al abrir HC.
+    // En solo lectura se cargan bajo demanda (impresión), no en el primer render.
     deferredTimer = setTimeout(() => {
+      if (readOnly) return;
+
       authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
         cache: 'no-store',
       })
@@ -405,11 +464,16 @@ function HistoriaClinicaPage() {
       cancelled = true;
       if (deferredTimer) clearTimeout(deferredTimer);
     };
-  }, [consultaId]);
+  }, [consultaId, readOnly]);
 
   useEffect(() => {
     const consultaIdNum = Number(consultaId || 0);
     if (consultaIdNum <= 0) {
+      setRecetaSugerencias({ medico: [], especialidad: [], general: [] });
+      return;
+    }
+
+    if (readOnly) {
       setRecetaSugerencias({ medico: [], especialidad: [], general: [] });
       return;
     }
@@ -438,7 +502,7 @@ function HistoriaClinicaPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [consultaId]);
+  }, [consultaId, readOnly]);
 
   useEffect(() => {
     if (!consultaId) {
@@ -611,6 +675,9 @@ function HistoriaClinicaPage() {
   };
   const [paciente, setPaciente] = useState(null);
   const [triaje, setTriaje] = useState(null);
+  const [triajeMeta, setTriajeMeta] = useState(null);
+  const [triajeEditando, setTriajeEditando] = useState(false);
+  const [triajeGuardando, setTriajeGuardando] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [hc, setHc] = useState({
@@ -711,7 +778,10 @@ function HistoriaClinicaPage() {
     })
       .then((res) => res.json())
       .then((data) => {
-        const fromApiHc = normalizeHistoriaData(data.success && data.datos ? data.datos : {});
+        let fromApiHc = normalizeHistoriaData(data.success && data.datos ? data.datos : {});
+        if (!readOnly) {
+          fromApiHc = enforceManualProximaSelection(fromApiHc);
+        }
         const fromApiDiagnosticos = Array.isArray(data?.datos?.diagnosticos) ? data.datos.diagnosticos : [];
         const apiSnapshot = buildHcSnapshot({ hc: fromApiHc, diagnosticos: fromApiDiagnosticos });
         setServerSnapshot(apiSnapshot);
@@ -736,7 +806,8 @@ function HistoriaClinicaPage() {
                 ...current,
                 proxima_cita: {
                   ...DEFAULT_PROXIMA_CITA,
-                  programar: true,
+                  // Suggest values but keep manual opt-in required.
+                  programar: false,
                   consulta_id: Number(proximaContrato.consulta_id) || null,
                   fecha: String(proximaContrato.fecha || '').slice(0, 10),
                   hora: String(proximaContrato.hora || '').slice(0, 5),
@@ -763,6 +834,9 @@ function HistoriaClinicaPage() {
                   hc: normalizeHistoriaData(parsedDraft?.hc || {}),
                   diagnosticos: Array.isArray(parsedDraft?.diagnosticos) ? parsedDraft.diagnosticos : [],
                 };
+                if (!readOnly) {
+                  draftModel.hc = enforceManualProximaSelection(draftModel.hc);
+                }
                 const draftSnapshot = buildHcSnapshot(draftModel);
                 if (draftSnapshot && draftSnapshot !== apiSnapshot) {
                   setHc(normalizeHistoriaData(draftModel.hc || {}));
@@ -821,9 +895,9 @@ function HistoriaClinicaPage() {
 
       Object.values(sections).forEach((sectionFields) => {
         if (!sectionFields || typeof sectionFields !== "object" || Array.isArray(sectionFields)) return;
-        Object.keys(sectionFields).forEach((fieldKey) => {
+        Object.entries(sectionFields).forEach(([fieldKey, fieldMeta]) => {
           if (typeof next[fieldKey] === "undefined") {
-            next[fieldKey] = "";
+            next[fieldKey] = resolveTemplatePrefillText(fieldMeta);
             changed = true;
           }
         });
@@ -853,6 +927,10 @@ function HistoriaClinicaPage() {
     let cancelled = false;
 
     const hidratarProximaDesdeConsultas = async () => {
+      if (readOnly) {
+        return;
+      }
+
       const actualConsultaId = Number(consultaId || 0);
       const actualMedicoId = Number(consultaActual?.medico_id || 0);
       const actualPacienteId = Number(pacienteId || consultaActual?.paciente_id || 0);
@@ -918,7 +996,8 @@ function HistoriaClinicaPage() {
             proxima_cita: {
               ...DEFAULT_PROXIMA_CITA,
               ...currProx,
-              programar: true,
+              // Suggest values but keep manual opt-in required.
+              programar: false,
               consulta_id: Number(objetivo?.id || 0) || null,
               fecha: String(objetivo?.fecha || '').slice(0, 10),
               hora: String(objetivo?.hora || '').slice(0, 5),
@@ -956,17 +1035,158 @@ function HistoriaClinicaPage() {
         setLoading(false);
       });
   }, [pacienteId]);
-  useEffect(() => {
-    if (!consultaId) return;
-    authFetch(`api_triaje.php?consulta_id=${consultaId}`, { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.triaje && data.triaje.datos)
-          setTriaje(data.triaje.datos);
-        else setTriaje(null);
-      })
-      .catch(() => setTriaje(null));
+
+  const cargarTriajeActual = useCallback(async () => {
+    if (!consultaId) {
+      setTriaje(null);
+      setTriajeMeta(null);
+      return;
+    }
+
+    try {
+      const res = await authFetch(`api_triaje.php?consulta_id=${consultaId}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (data.success && data.triaje && data.triaje.datos) {
+        const row = data.triaje;
+        setTriaje(row.datos);
+        setTriajeMeta({
+          origen: String(row?.origen_registro || '').trim(),
+          actualizado_por_nombre: String(row?.actualizado_por_nombre || row?.creado_por_nombre || '').trim(),
+          actualizado_por_rol: String(row?.actualizado_por_rol || row?.creado_por_rol || '').trim(),
+          fecha_registro: String(row?.fecha_registro || '').trim(),
+        });
+      } else {
+        setTriaje(null);
+        setTriajeMeta(null);
+      }
+    } catch {
+      setTriaje(null);
+      setTriajeMeta(null);
+    }
   }, [consultaId]);
+
+  useEffect(() => {
+    cargarTriajeActual();
+  }, [cargarTriajeActual]);
+
+  const rolSesionActual = useMemo(() => {
+    try {
+      const usuarioRaw = sessionStorage.getItem('usuario');
+      if (usuarioRaw) {
+        const usuario = JSON.parse(usuarioRaw);
+        const rol = String(usuario?.rol || '').trim().toLowerCase();
+        if (rol) return rol;
+      }
+    } catch {
+      // Ignorar parse errors de storage
+    }
+    try {
+      const medicoRaw = sessionStorage.getItem('medico');
+      if (medicoRaw) {
+        const medico = JSON.parse(medicoRaw);
+        if (medico && (medico.id || medico.medico_id)) return 'medico';
+      }
+    } catch {
+      // Ignorar parse errors de storage
+    }
+    return '';
+  }, []);
+
+  const puedeEditarTriajeEnHC = useMemo(() => {
+    if (readOnly) return false;
+    if (rolSesionActual === 'medico' || rolSesionActual === 'enfermero' || rolSesionActual === 'administrador' || rolSesionActual === 'admin') {
+      return true;
+    }
+    return false;
+  }, [readOnly, rolSesionActual]);
+
+  const guardarTriajeDesdeHC = useCallback(async (datosTriaje) => {
+    const consultaNum = Number(consultaId || 0);
+    if (consultaNum <= 0) return;
+
+    setTriajeGuardando(true);
+    try {
+      const payload = {
+        consulta_id: consultaNum,
+        datos: {
+          ...(datosTriaje || {}),
+          paciente_id: Number(pacienteId || 0) || null,
+          origen_registro: rolSesionActual === 'enfermero' ? 'hc_enfermeria' : 'hc_medico',
+        },
+      };
+
+      const res = await authFetch('api_triaje.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        setMsg(data?.error || 'No se pudo guardar el triaje desde la HC.');
+        return;
+      }
+
+      await cargarTriajeActual();
+      setTriajeEditando(false);
+      setMsg('Triaje guardado correctamente desde la HC.');
+    } catch {
+      setMsg('Error de red al guardar triaje desde la HC.');
+    } finally {
+      setTriajeGuardando(false);
+    }
+  }, [consultaId, pacienteId, rolSesionActual, cargarTriajeActual]);
+
+  const triajeMetaLabel = useMemo(() => {
+    if (!triajeMeta || !triaje) return '';
+
+    const origenRaw = String(triajeMeta.origen || '').toLowerCase();
+    const origenMap = {
+      hc_medico: 'HC médico',
+      hc_enfermeria: 'HC enfermería',
+      panel_enfermeria: 'Panel enfermería',
+    };
+    const origen = origenMap[origenRaw] || (origenRaw ? origenRaw : 'No especificado');
+    const actor = String(triajeMeta.actualizado_por_nombre || '').trim() || 'Sin nombre';
+    const rol = String(triajeMeta.actualizado_por_rol || '').trim() || 'rol no definido';
+    const fechaRaw = String(triajeMeta.fecha_registro || '').trim();
+    const fecha = fechaRaw ? new Date(fechaRaw).toLocaleString('es-PE') : '';
+
+    return `Registrado por ${actor} (${rol})${fecha ? ` · ${fecha}` : ''} · Origen: ${origen}`;
+  }, [triajeMeta, triaje]);
+
+  const triajeMetaToneClass = useMemo(() => {
+    if (!triajeMeta || !triaje) {
+      return {
+        box: 'border-sky-200 bg-sky-50',
+        text: 'text-sky-800',
+      };
+    }
+
+    const rol = String(triajeMeta.actualizado_por_rol || '').toLowerCase();
+    const origen = String(triajeMeta.origen || '').toLowerCase();
+
+    const esEnfermeria = rol.includes('enfer') || origen.includes('enfermeria');
+    const esMedico = rol.includes('medic') || origen.includes('hc_medico');
+
+    if (esEnfermeria) {
+      return {
+        box: 'border-emerald-200 bg-emerald-50',
+        text: 'text-emerald-800',
+      };
+    }
+    if (esMedico) {
+      return {
+        box: 'border-indigo-200 bg-indigo-50',
+        text: 'text-indigo-800',
+      };
+    }
+
+    return {
+      box: 'border-slate-200 bg-slate-50',
+      text: 'text-slate-800',
+    };
+  }, [triajeMeta, triaje]);
+
   useEffect(() => {
     authFetch("api_get_configuracion.php", { cache: 'no-store' })
       .then((res) => res.json())
@@ -1103,6 +1323,10 @@ function HistoriaClinicaPage() {
       return;
     }
 
+    const emptyContinuidadMessage = continuidadScope === 'all'
+      ? 'No hay consultas previas para este paciente.'
+      : 'No hay historias clínicas previas encadenadas.';
+
     let cancelled = false;
 
     const resolvePreferredPreviaIndex = (chain) => {
@@ -1158,14 +1382,15 @@ function HistoriaClinicaPage() {
     };
 
     const requestedMode = mostrarHcAnterior ? 'full' : 'lite';
+    const requestedKey = `${continuidadScope}:${requestedMode}`;
     const loadedMode = continuidadModoCargadoRef.current[String(consultaIdActual)] || '';
-    const alreadyLoaded = loadedMode === 'full' || loadedMode === requestedMode;
-    if (alreadyLoaded && Array.isArray(historiasPrevias) && historiasPrevias.length > 0) {
+    const alreadyLoaded = loadedMode === requestedKey || loadedMode === `${continuidadScope}:full`;
+    if (alreadyLoaded) {
       setHcAnteriorLoading(false);
       return;
     }
 
-    const cacheKey = `hc_previas_chain_v2_${consultaId}_${requestedMode}`;
+    const cacheKey = `hc_previas_chain_v3_${consultaId}_${continuidadScope}_${requestedMode}`;
     let cacheHit = false;
     try {
       const raw = sessionStorage.getItem(cacheKey);
@@ -1174,15 +1399,16 @@ function HistoriaClinicaPage() {
         const ageMs = Date.now() - Number(parsed?.timestamp || 0);
         const sameConsulta = Number(parsed?.consulta_id || 0) === consultaIdActual;
         const sameMode = String(parsed?.mode || '') === requestedMode;
-        if (sameConsulta && sameMode && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
+        const sameScope = String(parsed?.scope || 'chain') === continuidadScope;
+        if (sameConsulta && sameScope && sameMode && ageMs >= 0 && ageMs <= HC_PREVIAS_CACHE_TTL_MS && Array.isArray(parsed?.chain)) {
           const chain = parsed.chain;
           const preferredIndex = resolvePreferredPreviaIndex(chain);
           setHistoriasPrevias(chain);
           setIndiceHistoriaPrevia(preferredIndex);
           setHcAnterior(chain[preferredIndex] || chain[0] || null);
-          setHcAnteriorError(chain.length === 0 ? 'No hay historias clínicas previas encadenadas.' : '');
+          setHcAnteriorError(chain.length === 0 ? emptyContinuidadMessage : '');
           setHcAnteriorLoading(false);
-          continuidadModoCargadoRef.current[String(consultaIdActual)] = requestedMode;
+          continuidadModoCargadoRef.current[String(consultaIdActual)] = requestedKey;
           cacheHit = true;
         }
       }
@@ -1196,7 +1422,7 @@ function HistoriaClinicaPage() {
 
     const cargarHcAnterior = async () => {
       try {
-        const res = await authFetch(`api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1&chain_mode=${requestedMode}`);
+        const res = await authFetch(`api_historia_clinica.php?consulta_id=${consultaId}&include_chain=1&chain_mode=${requestedMode}&chain_scope=${continuidadScope}`);
         const data = await res.json();
         if (cancelled) return;
         const chain = Array.isArray(data.historias_previas) ? data.historias_previas : [];
@@ -1206,11 +1432,12 @@ function HistoriaClinicaPage() {
           setIndiceHistoriaPrevia(preferredIndex);
           setHcAnterior(chain[preferredIndex] || chain[0] || null);
           setHcAnteriorError("");
-          continuidadModoCargadoRef.current[String(consultaIdActual)] = requestedMode;
+          continuidadModoCargadoRef.current[String(consultaIdActual)] = requestedKey;
           try {
             sessionStorage.setItem(cacheKey, JSON.stringify({
               timestamp: Date.now(),
               consulta_id: consultaIdActual,
+              scope: continuidadScope,
               mode: requestedMode,
               chain,
             }));
@@ -1218,7 +1445,7 @@ function HistoriaClinicaPage() {
             // Ignorar error de storage y continuar.
           }
           if (chain.length === 0) {
-            setHcAnteriorError('No hay historias clínicas previas encadenadas.');
+            setHcAnteriorError(emptyContinuidadMessage);
           }
         } else {
           if (requestedMode === 'full' && loadedMode === 'lite') {
@@ -1255,6 +1482,7 @@ function HistoriaClinicaPage() {
     };
   }, [
     consultaId,
+    continuidadScope,
     pacienteId,
     navigationState,
     hasRestoreIndexInQuery,
@@ -1426,7 +1654,45 @@ function HistoriaClinicaPage() {
     };
   }, [hcAnterior?.consulta_id, vistaClinicaActiva, mostrarHcAnterior]);
 
+  useEffect(() => {
+    const consultaPreviaId = Number(hcAnterior?.consulta_id || 0);
+    const puedeCargar = vistaClinicaActiva === 'continuidad' || mostrarHcAnterior;
+    if (!puedeCargar || consultaPreviaId <= 0) {
+      setTriajeHcPrevia({ loading: false, data: null, error: "" });
+      return;
+    }
+
+    let cancelled = false;
+    setTriajeHcPrevia({ loading: true, data: null, error: "" });
+
+    authFetch(`api_triaje.php?consulta_id=${consultaPreviaId}`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.success && data?.triaje?.datos && typeof data.triaje.datos === 'object') {
+          setTriajeHcPrevia({ loading: false, data: data.triaje.datos, error: "" });
+          return;
+        }
+        setTriajeHcPrevia({ loading: false, data: null, error: "" });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTriajeHcPrevia({
+          loading: false,
+          data: null,
+          error: "No se pudo cargar el triaje de la HC previa.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hcAnterior?.consulta_id, vistaClinicaActiva, mostrarHcAnterior]);
+
   const totalHistoriasPrevias = Array.isArray(historiasPrevias) ? historiasPrevias.length : 0;
+  const continuidadModoLabel = continuidadScope === 'all'
+    ? 'Consultas previas del paciente'
+    : 'HC previas encadenadas';
   useEffect(() => {
     const handleOpenHistoryDrawer = () => {
       if (totalHistoriasPrevias <= 0 || hcAnteriorLoading || hcAnteriorError) return;
@@ -2036,7 +2302,7 @@ function HistoriaClinicaPage() {
     ? truncarTexto(diagnosticosPrevios[0], 72)
     : 'Sin diagnóstico previo';
   const resumenAsistenteItems = useMemo(() => ([
-    `Antecedentes HC encadenados: ${totalHistoriasPrevias}`,
+    `${continuidadModoLabel}: ${totalHistoriasPrevias}`,
     `Ultima HC registrada: ${fechaHcPreviaResumen}`,
     `Diagnostico previo principal: ${diagnosticoHcPreviaResumen}`,
     `Laboratorio: ${resumenLaboratorioTexto}`,
@@ -2045,6 +2311,7 @@ function HistoriaClinicaPage() {
     `Tratamiento enfermería: ${resumenTratamientoTexto}`,
     `Apoyo diagnostico previo: Lab ${laboratorioDisponible ? 'con resultados' : 'sin resultados'} · Ecografía ${ecografiaDisponible ? 'con imágenes' : 'sin imágenes'}`,
   ]), [
+    continuidadModoLabel,
     totalHistoriasPrevias,
     fechaHcPreviaResumen,
     diagnosticoHcPreviaResumen,
@@ -2231,6 +2498,24 @@ function HistoriaClinicaPage() {
     background: 'linear-gradient(to right, var(--color-primary-dark, #1d4ed8), var(--color-secondary, #4f46e5))',
   };
 
+  const pacienteParaVista = useMemo(() => {
+    if (!paciente) return null;
+    const edadSnapshotValor = Number(consultaActual?.edad_snapshot_valor);
+    const unidadSnapshot = String(consultaActual?.edad_snapshot_unidad || '').trim();
+    if (!Number.isFinite(edadSnapshotValor) || edadSnapshotValor < 0 || unidadSnapshot === '') {
+      return paciente;
+    }
+
+    return {
+      ...paciente,
+      edad: Math.floor(edadSnapshotValor),
+      edad_unidad: unidadSnapshot,
+      edad_es_estimada: Number(consultaActual?.edad_snapshot_es_estimada || 0),
+      edad_referencia_fecha: String(consultaActual?.edad_snapshot_fecha_calculo || '').trim() || null,
+      edad_fuente: 'consulta_snapshot',
+    };
+  }, [paciente, consultaActual?.edad_snapshot_valor, consultaActual?.edad_snapshot_unidad, consultaActual?.edad_snapshot_es_estimada, consultaActual?.edad_snapshot_fecha_calculo]);
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={themedPageBg}>
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/50 flex flex-col items-center gap-4">
@@ -2354,7 +2639,7 @@ function HistoriaClinicaPage() {
           <div className="mb-3 text-sm text-gray-700">
             <span className="font-semibold">Fecha de consulta:</span> {fechaConsultaVisible}
           </div>
-          <DatosPaciente paciente={paciente} />
+          <DatosPaciente paciente={pacienteParaVista} />
         </div>
         {/* Triaje en tarjeta moderna */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 mb-6 border border-white/50">
@@ -2365,7 +2650,42 @@ function HistoriaClinicaPage() {
               </svg>
             </div>
             <h2 className="text-lg font-semibold text-gray-800">🚨 Triaje y Signos Vitales</h2>
+            {puedeEditarTriajeEnHC && (
+              <button
+                type="button"
+                onClick={() => setTriajeEditando((v) => !v)}
+                className={`ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                  triajeEditando
+                    ? 'bg-slate-100 text-slate-700 border-slate-300'
+                    : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                }`}
+              >
+                {triajeEditando ? 'Cerrar edición' : (triaje ? 'Editar triaje' : 'Registrar triaje')}
+              </button>
+            )}
           </div>
+
+          {puedeEditarTriajeEnHC && triajeEditando && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50/60 p-3">
+              <p className="text-xs text-red-800 font-semibold mb-2">
+                Captura de triaje desde HC ({rolSesionActual || 'usuario clínico'})
+              </p>
+              <TriageForm
+                consulta={{ id: Number(consultaId || 0), paciente_id: Number(pacienteId || 0) }}
+                initialData={triaje || {}}
+                onGuardar={guardarTriajeDesdeHC}
+                onCancelar={() => setTriajeEditando(false)}
+              />
+              {triajeGuardando && <p className="text-xs text-slate-600 mt-2">Guardando triaje...</p>}
+            </div>
+          )}
+
+          {triajeMetaLabel && (
+            <div className={`mb-3 rounded-lg border px-3 py-2 ${triajeMetaToneClass.box}`}>
+              <p className={`text-xs font-medium ${triajeMetaToneClass.text}`}>{triajeMetaLabel}</p>
+            </div>
+          )}
+
           <TriajePaciente triaje={triaje} />
         </div>
 
@@ -2394,7 +2714,7 @@ function HistoriaClinicaPage() {
               Continuidad clínica
             </button>
             <span className="text-xs text-slate-500 ml-auto">
-              HC previas encadenadas: {totalHistoriasPrevias}
+              {continuidadModoLabel}: {totalHistoriasPrevias}
             </span>
           </div>
         </div>
@@ -2439,6 +2759,7 @@ function HistoriaClinicaPage() {
               const data = await res.json();
 
               if (data.success) {
+                clearContinuidadChainCache(Number(consultaId || 0));
                 const proximaInfo = data.proxima_cita || null;
                 const fechaProxima = String(proximaInfo?.fecha || "").trim();
                 const horaProxima = String(proximaInfo?.hora || "").trim();
@@ -2551,6 +2872,7 @@ function HistoriaClinicaPage() {
               resultadosLab={resultadosLab}
               ordenesLab={ordenesLab}
               onBeforeNavigate={persistDraftNow}
+              readOnly={readOnly}
             />
           </div>
           {/* Diagnósticos CIE10 */}
@@ -2578,28 +2900,74 @@ function HistoriaClinicaPage() {
               </div>
               <h2 className="text-lg font-semibold text-gray-800">💊 Tratamiento y Receta Médica</h2>
             </div>
-            <TratamientoPaciente
-              receta={hc.receta || []}
-              setReceta={(recetaNueva) =>
-                setHc((h) => {
-                  const nextReceta = typeof recetaNueva === 'function'
-                    ? recetaNueva(h.receta)
-                    : recetaNueva;
-                  return {
-                    ...h,
-                    receta: Array.isArray(nextReceta)
-                      ? nextReceta.map(({ recomendaciones: _omit, ...item }) => item)
-                      : [],
-                  };
-                })
-              }
-              tratamiento={hc.tratamiento || ""}
-              setTratamiento={valor => setHc(h => ({ ...h, tratamiento: valor }))}
-              recomendaciones={hc.recomendaciones || ""}
-              setRecomendaciones={valor => setHc(h => ({ ...h, recomendaciones: valor }))}
-              sugerenciasReceta={recetaSugerencias}
-              consultaId={consultaId}
-            />
+            {readOnly ? (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2 mt-4">Tratamiento</h3>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                    {String(hc?.tratamiento || "").trim() || "Sin tratamiento registrado."}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800 mb-2">Receta</h3>
+                  {Array.isArray(hc?.receta) && hc.receta.length > 0 ? (
+                    <ul className="space-y-2">
+                      {hc.receta.map((item, idx) => {
+                        const nombre = String(item?.nombre || item?.medicamento || item?.codigo || '').trim() || `Medicamento ${idx + 1}`;
+                        const dosis = String(item?.dosis || '').trim();
+                        const frecuencia = String(item?.frecuencia || '').trim();
+                        const duracion = String(item?.duracion || '').trim();
+                        const observaciones = String(item?.observaciones || '').trim();
+                        return (
+                          <li key={`receta-ro-${idx}`} className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                            <p className="font-semibold text-slate-800">{nombre}</p>
+                            {(dosis || frecuencia || duracion) && (
+                              <p className="mt-1 text-xs text-slate-600">
+                                {[dosis, frecuencia, duracion].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
+                            {observaciones && (
+                              <p className="mt-1 text-xs text-slate-600">Obs: {observaciones}</p>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">Sin medicamentos registrados.</p>
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800 mb-2">Recomendaciones</h3>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                    {String(hc?.recomendaciones || "").trim() || "Sin recomendaciones registradas."}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <TratamientoPaciente
+                receta={hc.receta || []}
+                setReceta={(recetaNueva) =>
+                  setHc((h) => {
+                    const nextReceta = typeof recetaNueva === 'function'
+                      ? recetaNueva(h.receta)
+                      : recetaNueva;
+                    return {
+                      ...h,
+                      receta: Array.isArray(nextReceta)
+                        ? nextReceta.map(({ recomendaciones: _omit, ...item }) => item)
+                        : [],
+                    };
+                  })
+                }
+                tratamiento={hc.tratamiento || ""}
+                setTratamiento={valor => setHc(h => ({ ...h, tratamiento: valor }))}
+                recomendaciones={hc.recomendaciones || ""}
+                setRecomendaciones={valor => setHc(h => ({ ...h, recomendaciones: valor }))}
+                sugerenciasReceta={recetaSugerencias}
+                consultaId={consultaId}
+              />
+            )}
           </div>
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -2949,38 +3317,92 @@ function HistoriaClinicaPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (printImagenRef.current && ordenesImagenPrint && ordenesImagenPrint.length > 0) {
-                      handlePrintImagen();
-                    } else {
-                      console.warn('Referencia de imagen no disponible o sin órdenes de imagen');
+                  onClick={async () => {
+                    if (cargandoOrdenesImagenPrint) return;
+                    if (!printImagenRef.current) {
+                      console.warn('Referencia de imagen no disponible');
+                      return;
                     }
+
+                    if (!ordenesImagenPrint || ordenesImagenPrint.length === 0) {
+                      setCargandoOrdenesImagenPrint(true);
+                      try {
+                        const noCache = `_t=${Date.now()}`;
+                        const res = await authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
+                          cache: 'no-store',
+                        });
+                        const data = await res.json();
+                        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+                        const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
+                        setOrdenesImagenPrint(activas);
+                        if (activas.length === 0) {
+                          setMsg('No hay ordenes de imagen activas para imprimir.');
+                          return;
+                        }
+                        setMsg('Se cargaron ordenes de imagen. Presione nuevamente para imprimir.');
+                      } catch {
+                        setOrdenesImagenPrint([]);
+                        setMsg('No se pudieron cargar las ordenes de imagen para impresion.');
+                      } finally {
+                        setCargandoOrdenesImagenPrint(false);
+                      }
+                      return;
+                    }
+
+                    handlePrintImagen();
                   }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
                   style={brandActionStyle}
-                  disabled={!ordenesImagenPrint || ordenesImagenPrint.length === 0}
+                  disabled={cargandoOrdenesImagenPrint}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                   </svg>
-                  <span>🖼️ Img</span>
+                  <span>{cargandoOrdenesImagenPrint ? 'Cargando Img...' : '🖼️ Img'}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (printProcRef.current && ordenesProcedimientosPrint && ordenesProcedimientosPrint.length > 0) {
-                      handlePrintProcedimientos();
-                    } else {
-                      console.warn('Referencia de procedimientos no disponible o sin órdenes');
+                  onClick={async () => {
+                    if (cargandoOrdenesProcedimientosPrint) return;
+                    if (!printProcRef.current) {
+                      console.warn('Referencia de procedimientos no disponible');
+                      return;
                     }
+
+                    if (!ordenesProcedimientosPrint || ordenesProcedimientosPrint.length === 0) {
+                      setCargandoOrdenesProcedimientosPrint(true);
+                      try {
+                        const noCache = `_t=${Date.now()}`;
+                        const res = await authFetch(`api_ordenes_procedimientos.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
+                          cache: 'no-store',
+                        });
+                        const data = await res.json();
+                        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+                        const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
+                        setOrdenesProcedimientosPrint(activas);
+                        if (activas.length === 0) {
+                          setMsg('No hay ordenes de procedimientos activas para imprimir.');
+                          return;
+                        }
+                        setMsg('Se cargaron ordenes de procedimientos. Presione nuevamente para imprimir.');
+                      } catch {
+                        setOrdenesProcedimientosPrint([]);
+                        setMsg('No se pudieron cargar las ordenes de procedimientos para impresion.');
+                      } finally {
+                        setCargandoOrdenesProcedimientosPrint(false);
+                      }
+                      return;
+                    }
+
+                    handlePrintProcedimientos();
                   }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
-                  disabled={!ordenesProcedimientosPrint || ordenesProcedimientosPrint.length === 0}
+                  disabled={cargandoOrdenesProcedimientosPrint}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M7 7h10M7 17h10M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
-                  <span>🛠️ Proc</span>
+                  <span>{cargandoOrdenesProcedimientosPrint ? 'Cargando Proc...' : '🛠️ Proc'}</span>
                 </button>
                 <button
                   type="button"
@@ -3130,7 +3552,9 @@ function HistoriaClinicaPage() {
           <div className="rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
             <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/95 backdrop-blur px-4 py-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-800">Historial Clínico Previo</p>
+                <p className="text-sm font-semibold text-slate-800">
+                  {continuidadScope === 'all' ? 'Historial de Consultas del Paciente' : 'Historial Clínico Previo'}
+                </p>
                 <button
                   type="button"
                   onClick={() => setVistaClinicaActiva('registro')}
@@ -3139,6 +3563,35 @@ function HistoriaClinicaPage() {
                 >
                   ←
                 </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setContinuidadScope('all')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                    continuidadScope === 'all'
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  Todas las consultas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContinuidadScope('chain')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                    continuidadScope === 'chain'
+                      ? 'bg-cyan-600 text-white border-cyan-600'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  Solo encadenadas
+                </button>
+                <span className="text-[11px] text-slate-500">
+                  {continuidadScope === 'all'
+                    ? 'Vista cronológica de atenciones previas del paciente en clínica.'
+                    : 'Vista de continuidad técnica por cadena HC.'}
+                </span>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
@@ -3230,7 +3683,9 @@ function HistoriaClinicaPage() {
 
               {!hcAnteriorLoading && !hcAnterior && !hcAnteriorError && (
                 <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
-                  No hay historias clínicas previas encadenadas para mostrar en este paciente/consulta.
+                  {continuidadScope === 'all'
+                    ? 'No hay consultas previas para mostrar en este paciente.'
+                    : 'No hay historias clínicas previas encadenadas para mostrar en este paciente/consulta.'}
                 </div>
               )}
 
@@ -3238,8 +3693,8 @@ function HistoriaClinicaPage() {
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-700">
                     <div>
-                      <span className="font-semibold">Fecha HC previa:</span>{' '}
-                      {formatearFechaCorta(hcAnterior?.fecha_registro)}
+                      <span className="font-semibold">Fecha atención previa:</span>{' '}
+                      {formatearFechaCorta(hcAnterior?.fecha_consulta || hcAnterior?.fecha_registro)}
                     </div>
                     <div>
                       <span className="font-semibold">Consulta origen:</span>{' '}
@@ -3249,6 +3704,13 @@ function HistoriaClinicaPage() {
                       <span className="font-semibold">Médico que atendió:</span>{' '}
                       {medicoLabelPrevio}
                     </div>
+                    {!Number(hcAnterior?.hc_id || 0) && (
+                      <div className="md:col-span-2">
+                        <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                          Consulta sin HC registrada
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Metadatos de cadena — solo cuando la migración 18 está aplicada */}
@@ -3275,6 +3737,21 @@ function HistoriaClinicaPage() {
                   )}
 
                   <div className="mt-3 text-xs text-slate-800">
+                    <p className="font-semibold">Triaje previo</p>
+                    {triajeHcPrevia.loading && (
+                      <p className="mt-1 text-slate-600">Cargando triaje...</p>
+                    )}
+                    {!triajeHcPrevia.loading && triajeHcPrevia.error && (
+                      <p className="mt-1 text-red-600">{triajeHcPrevia.error}</p>
+                    )}
+                    {!triajeHcPrevia.loading && !triajeHcPrevia.error && (
+                      <p className="mt-1 text-slate-700">
+                        {triajeHcPrevia.data ? 'Triaje registrado para esta consulta previa.' : 'Sin triaje registrado.'}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-3 text-xs text-slate-800">
                     <p className="font-semibold">Diagnóstico previo</p>
                     <p className="mt-1 text-slate-700">
                       {diagnosticosPrevios.length > 0 ? diagnosticosPrevios[0] : 'Sin diagnóstico registrado'}
@@ -3290,6 +3767,21 @@ function HistoriaClinicaPage() {
 
                   {mostrarHcAnterior && (
                     <div className="mt-4 space-y-3 border-t border-slate-100 pt-3">
+                      <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="font-semibold">Triaje previo (detalle)</p>
+                        {triajeHcPrevia.loading && (
+                          <p className="mt-2 text-slate-600">Cargando triaje...</p>
+                        )}
+                        {!triajeHcPrevia.loading && triajeHcPrevia.error && (
+                          <p className="mt-2 text-red-600">{triajeHcPrevia.error}</p>
+                        )}
+                        {!triajeHcPrevia.loading && !triajeHcPrevia.error && (
+                          <div className="mt-2">
+                            <TriajePaciente triaje={triajeHcPrevia.data} />
+                          </div>
+                        )}
+                      </div>
+
                       {diagnosticosPreviosDetalle.length > 0 && (
                         <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
                           <p className="font-semibold">Diagnósticos previos (detalle)</p>
@@ -3746,7 +4238,7 @@ function HistoriaClinicaPage() {
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printRef}>
           <ImpresionHistoriaClinica
-            paciente={paciente}
+            paciente={pacienteParaVista || paciente}
             triaje={triaje}
             hc={hc}
             fechaConsulta={fechaConsulta}
@@ -3767,7 +4259,7 @@ function HistoriaClinicaPage() {
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printLabRef}>
           <ImpresionAnalisisLaboratorio
-            paciente={paciente}
+            paciente={pacienteParaVista || paciente}
             ordenesLaboratorio={ordenesLab}
             medicoInfo={medicoInfo}
             firmaMedico={firmaMedico}
@@ -3779,7 +4271,7 @@ function HistoriaClinicaPage() {
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printRecetaRef}>
           <ImpresionRecetaMedicamentos
-            paciente={paciente}
+            paciente={pacienteParaVista || paciente}
             medicamentos={hc.receta}
             recomendaciones={hc.recomendaciones || ''}
             medicoInfo={medicoInfo}
@@ -3792,7 +4284,7 @@ function HistoriaClinicaPage() {
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printImagenRef}>
           <ImpresionServiciosSolicitados
-            paciente={paciente}
+            paciente={pacienteParaVista || paciente}
             medicoInfo={medicoInfo}
             firmaMedico={firmaMedico}
             configuracionClinica={configuracionClinica}
@@ -3805,7 +4297,7 @@ function HistoriaClinicaPage() {
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printProcRef}>
           <ImpresionServiciosSolicitados
-            paciente={paciente}
+            paciente={pacienteParaVista || paciente}
             medicoInfo={medicoInfo}
             firmaMedico={firmaMedico}
             configuracionClinica={configuracionClinica}
@@ -3818,7 +4310,7 @@ function HistoriaClinicaPage() {
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         <div ref={printInformeProcRef}>
           <ImpresionInformeProcedimiento
-            paciente={paciente}
+            paciente={pacienteParaVista || paciente}
             medicoInfo={medicoInfo}
             firmaMedico={firmaMedico}
             configuracionClinica={configuracionClinica}

@@ -366,12 +366,17 @@ $html = '
             border-bottom: 1px solid #ccc;
             padding-bottom: 5px;
             margin-bottom: 10px;
+            page-break-after: avoid;
+        }
+        .images-heading-block {
+            page-break-after: avoid;
         }
         .images-grid {
             width: 100%;
             border-collapse: separate;
             border-spacing: 5px 6px;
             table-layout: fixed;
+            page-break-before: avoid;
         }
         .images-grid tr {
             page-break-inside: avoid;
@@ -715,8 +720,7 @@ $html .= '</div>';
 // IMÁGENES
 // ═══════════════════════════════════════════════════════════════════════════
 if (!empty($archivos)) {
-    $html .= '<div class="images-container">
-        <div class="images-title">Imágenes Diagnósticas</div>';
+    $html .= '<div class="images-container">';
 
     $imagenesValidas = [];
     foreach ($archivos as $archivo) {
@@ -739,6 +743,7 @@ if (!empty($archivos)) {
     }
 
     if (!empty($imagenesValidas)) {
+        $html .= '<div class="images-heading-block"><div class="images-title">Imágenes Diagnósticas</div></div>';
         $html .= '<table class="images-grid">';
 
         foreach ($imagenesValidas as $i => $img) {
@@ -771,48 +776,48 @@ if (!empty($archivos)) {
     $html .= '</div>';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FIRMA
-// ═══════════════════════════════════════════════════════════════════════════
-$html .= '<div class="signature-section">
-    <div>Realizado por:</div>';
-
-if ($firmaMedico !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaMedico)) {
-    $html .= '<img class="signature-image" src="' . $firmaMedico . '" alt="Firma del médico">';
-} else {
-    $html .= '<div class="signature-line"></div>';
-}
-
-$html .= '<div>' . htmlspecialchars($medicoNombre) . '</div>';
-
-if ($especialidad !== '') {
-    $html .= '<div class="signature-meta">' . htmlspecialchars($especialidad) . '</div>';
-}
-if ($colegiaturaTexto !== '') {
-    $html .= '<div class="signature-meta">' . htmlspecialchars($colegiaturaTexto) . '</div>';
-}
-
 $html .= '</div>
-
-<!-- PIE DE PÁGINA -->
-<div class="footer" style="border-top: 2px solid #0066cc; padding-top: 10px; margin-top: 20px;">
-    <div style="font-size: 9px; color: #333; margin-bottom: 4px; font-weight: bold;">
-        ' . htmlspecialchars($nombreClinica) . '
-    </div>
-    <div style="font-size: 8px; color: #666; margin-bottom: 2px;">
-        ' . ($direccion ? htmlspecialchars($direccion) . ' | ' : '') .
-        ($telefono ? htmlspecialchars($telefono) . ' | ' : '') .
-        ($email ? htmlspecialchars($email) . ' | ' : '') .
-        ($website ? htmlspecialchars($website) : '') . '
-    </div>
-    <div style="font-size: 8px; color: #999;">
-        Documento generado electrónicamente el ' . htmlspecialchars($fechaHoy) . ' | RUC: ' . htmlspecialchars($ruc) . '
-    </div>
-</div>
 
 </body>
 </html>
 ';
+
+$footerFirmaHtml = '';
+if ($firmaMedico !== '' && preg_match('/^data:image\/(png|jpeg|jpg);base64,/', $firmaMedico)) {
+    $footerFirmaHtml .= '<img src="' . $firmaMedico . '" alt="Firma del médico" style="max-width: 230px; max-height: 66px; display: block; margin: 4px auto -18px auto; object-fit: contain;">';
+}
+
+$footerBloqueMedicoHtml = '<div style="width: 220px; margin: 0 auto; text-align: center;">
+    <div style="font-size: 10px; color: #666; margin-bottom: 1px; line-height: 1.1;">Realizado por</div>
+    <div style="margin: 0 auto 1px auto;">' . $footerFirmaHtml . '</div>
+    <div style="font-size: 10px; font-weight: 600; line-height: 1.15;">' . htmlspecialchars($medicoNombre) . '</div>' .
+    ($especialidad !== '' ? '<div style="font-size: 9px; color: #666; line-height: 1.1;">' . htmlspecialchars($especialidad) . '</div>' : '') .
+    ($colegiaturaTexto !== '' ? '<div style="font-size: 9px; color: #666; line-height: 1.1;">' . htmlspecialchars($colegiaturaTexto) . '</div>' : '') . '
+</div>';
+
+$footerHtml = '<div style="font-family: Arial, sans-serif; font-size: 8px; color: #444;">
+    <div style="padding-top: 3px;">
+        <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
+            <tr>
+                <td width="62%" style="vertical-align: top;"></td>
+                <td width="38%" style="text-align: center; vertical-align: top;">
+                    ' . $footerBloqueMedicoHtml . '
+                </td>
+            </tr>
+        </table>
+    </div>
+    <div style="border-top: 2px solid #0066cc; margin-top: 3px; padding-top: 3px; text-align: center;">
+        <div style="font-size: 8px; color: #333; margin-bottom: 1px; font-weight: bold;">' . htmlspecialchars($nombreClinica) . '</div>
+        <div style="font-size: 7px; color: #666; margin-bottom: 1px;">'
+            . ($direccion ? htmlspecialchars($direccion) . ' | ' : '')
+            . ($telefono ? htmlspecialchars($telefono) . ' | ' : '')
+            . ($email ? htmlspecialchars($email) . ' | ' : '')
+            . ($website ? htmlspecialchars($website) : '') .
+        '</div>
+        <div style="font-size: 7px; color: #999;">Documento generado electrónicamente el ' . htmlspecialchars($fechaHoy) . ' | RUC: ' . htmlspecialchars($ruc) . '</div>
+    </div>
+    <div style="text-align: right; font-size: 8px; color: #666; margin-top: 2px;">Pagina {PAGENO} de {nbpg}</div>
+</div>';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 5. Generar PDF con mPDF
@@ -836,9 +841,13 @@ try {
         'margin_left' => 10,
         'margin_right' => 10,
         'margin_top' => 15,
-        'margin_bottom' => 15,
+        'margin_bottom' => 44,
+        'margin_footer' => 4,
         'encoding' => 'UTF-8',
     ]);
+
+    // Footer fijo con firma/sello + datos de clinica y numeracion en todas las paginas.
+    $mpdf->SetHTMLFooter($footerHtml);
     
     // Escribir HTML
     $mpdf->WriteHTML($html);

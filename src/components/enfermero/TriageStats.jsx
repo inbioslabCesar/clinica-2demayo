@@ -2,6 +2,13 @@ import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
 function TriageStats({ totalRows, triajeStatus }) {
+  const pendientes = Number.isFinite(Number(triajeStatus?.pendientes))
+    ? Number(triajeStatus.pendientes)
+    : Object.values(triajeStatus || {}).filter((status) => status === 'Pendiente').length;
+  const completados = Number.isFinite(Number(triajeStatus?.completados))
+    ? Number(triajeStatus.completados)
+    : Object.values(triajeStatus || {}).filter((status) => status === 'Completado').length;
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div className="bg-gradient-to-r from-emerald-500 to-green-600 rounded-2xl p-4 text-white">
@@ -22,7 +29,7 @@ function TriageStats({ totalRows, triajeStatus }) {
           </div>
           <div>
             <div className="text-2xl font-bold">
-              {Object.values(triajeStatus).filter(status => status === 'Pendiente').length}
+              {pendientes}
             </div>
             <div className="text-sm text-yellow-100">Triajes Pendientes</div>
           </div>
@@ -35,7 +42,7 @@ function TriageStats({ totalRows, triajeStatus }) {
           </div>
           <div>
             <div className="text-2xl font-bold">
-              {Object.values(triajeStatus).filter(status => status === 'Completado').length}
+              {completados}
             </div>
             <div className="text-sm text-blue-100">Triajes Completados</div>
           </div>

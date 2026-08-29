@@ -1,5 +1,6 @@
 import { BASE_URL } from "../../config/config";
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
+import { resolverEdadDisplayClinica } from "../../utils/edadClinica";
 
 function resolveLogoUrl(rawValue) {
   const raw = String(rawValue || "").trim();
@@ -46,6 +47,8 @@ export default function ImpresionInformeProcedimiento({
   const websiteDisplay = websiteRaw.replace(/^https?:\/\//i, "") || "-";
 
   const nombrePaciente = `${paciente?.nombre || paciente?.nombres || ""} ${paciente?.apellido || paciente?.apellidos || ""}`.trim();
+  const edadPaciente = resolverEdadDisplayClinica(paciente);
+  const edadPacienteTexto = edadPaciente === "No registrada" ? "-" : edadPaciente;
 
   return (
     <div
@@ -116,7 +119,7 @@ export default function ImpresionInformeProcedimiento({
           <div className="grid grid-cols-2 gap-2">
             <p><strong>Paciente:</strong> {nombrePaciente || "-"}</p>
             <p><strong>DNI:</strong> {paciente?.dni || "-"}</p>
-            <p><strong>Edad:</strong> {paciente?.edad || "-"} anos</p>
+            <p><strong>Edad:</strong> {edadPacienteTexto}</p>
             <p><strong>Sexo:</strong> {paciente?.sexo || "-"}</p>
             <p className="col-span-2"><strong>Fecha atencion:</strong> {fechaConsultaTexto || "-"}</p>
           </div>

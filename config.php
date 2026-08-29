@@ -51,29 +51,34 @@ $mysqli->query("SET time_zone = '{$dbSessionTimeZone}'");
 // Alias para compatibilidad
 $conn = $mysqli;
 
-try {
-    $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
-    $pdo = new PDO($dsn, DB_USER, DB_PASS, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
-    $pdo->exec("SET time_zone = '{$dbSessionTimeZone}'");
-} catch (PDOException $e) {
-    http_response_code(500);
-    $payload = ['error' => 'Error de conexión PDO a la base de datos'];
-    if (function_exists('api_debug_enabled') && api_debug_enabled()) {
-        $payload['debug'] = [
-            'db_host' => DB_HOST,
-            'db_name' => DB_NAME,
-            'db_user' => DB_USER,
-            'pdo_code' => $e->getCode(),
-            'pdo_message' => $e->getMessage(),
-            'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
-        ];
+$skipPdoInit = defined('SKIP_PDO_INIT') && SKIP_PDO_INIT;
+$pdo = null;
+
+if (!$skipPdoInit) {
+    try {
+        $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
+        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+        $pdo->exec("SET time_zone = '{$dbSessionTimeZone}'");
+    } catch (PDOException $e) {
+        http_response_code(500);
+        $payload = ['error' => 'Error de conexión PDO a la base de datos'];
+        if (function_exists('api_debug_enabled') && api_debug_enabled()) {
+            $payload['debug'] = [
+                'db_host' => DB_HOST,
+                'db_name' => DB_NAME,
+                'db_user' => DB_USER,
+                'pdo_code' => $e->getCode(),
+                'pdo_message' => $e->getMessage(),
+                'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
+            ];
+        }
+        echo json_encode($payload);
+        exit;
     }
-    echo json_encode($payload);
-    exit;
 }
 
 if (session_status() === PHP_SESSION_NONE) {

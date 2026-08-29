@@ -2,13 +2,30 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/apiClient";
 
+function getTodayYmdLocal() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "lista" }) {
   const navigate = useNavigate();
   const [consultas, setConsultas] = useState([]);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [totalRows, setTotalRows] = useState(0);
-  const [stats, setStats] = useState({ total: 0, pendientes: 0, emergencias: 0 });
+  const [stats, setStats] = useState({ total: 0, pendientes: 0, emergencias: 0, operativas: 0, pendientes_operativas: 0, excluidas_canceladas: 0 });
+  const [statsClinicosHoy, setStatsClinicosHoy] = useState({
+    fecha_referencia: "",
+    consultas_total_hoy: 0,
+    consultas_abiertas_hoy: 0,
+    agenda_abierta_hoy: 0,
+    cola_clinica_hoy: 0,
+    consultas_completadas_hoy: 0,
+    total_historico_filtrado: 0,
+  });
   const [statsServiciosHoy, setStatsServiciosHoy] = useState({
     fecha_referencia: "",
     servicios_habilitados: [],
@@ -20,6 +37,17 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     pendientes_hoy: 0,
     por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 },
   });
+  const [cierreHonorariosHoy, setCierreHonorariosHoy] = useState({
+    fecha_referencia: "",
+    pagables_hoy: 0,
+    pendientes_cobro_hoy: 0,
+    excluidas_hoy: 0,
+    total_consultas_hoy: 0,
+    monto_fijo_consulta: null,
+    monto_pagable_estimado: null,
+  });
+  const [loadingCierreHonorariosHoy, setLoadingCierreHonorariosHoy] = useState(false);
+  const [cierreHonorariosHoyError, setCierreHonorariosHoyError] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [resumenEconomico, setResumenEconomico] = useState(null);
@@ -28,11 +56,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const [expandedServicios, setExpandedServicios] = useState({});
   const [detalleServiciosByCotizacion, setDetalleServiciosByCotizacion] = useState({});
   const [loadingDetalleServiciosByCotizacion, setLoadingDetalleServiciosByCotizacion] = useState({});
+  const [clockTick, setClockTick] = useState(0);
   
   // Buscador dinámico
   const [busqueda, setBusqueda] = useState("");
-  const [fechaDesde, setFechaDesde] = useState("");
-  const [fechaHasta, setFechaHasta] = useState("");
+  const [fechaDesde, setFechaDesde] = useState(getTodayYmdLocal);
+  const [fechaHasta, setFechaHasta] = useState(getTodayYmdLocal);
+  const [filtroEstado, setFiltroEstado] = useState("activas");
+  const [filtroPago, setFiltroPago] = useState("solo_pagadas");
+  const [filtroSemaforo, setFiltroSemaforo] = useState("todas");
 
   const formatMoney = (value) => {
     const n = Number(value || 0);
@@ -138,6 +170,46 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     }
   };
 
+  const cargarCierreHonorariosHoy = async (signal) => {
+    if (!medicoId) return;
+    setLoadingCierreHonorariosHoy(true);
+    setCierreHonorariosHoyError("");
+    try {
+      const response = await authFetch(`api_cierre_honorarios_medico.php?medico_id=${medicoId}&incluir_detalle=0`, { signal });
+      const data = await response.json();
+
+      if (!data?.success) {
+        setCierreHonorariosHoy({
+          fecha_referencia: "",
+          pagables_hoy: 0,
+          pendientes_cobro_hoy: 0,
+          excluidas_hoy: 0,
+          total_consultas_hoy: 0,
+          monto_fijo_consulta: null,
+          monto_pagable_estimado: null,
+        });
+        setCierreHonorariosHoyError(data?.error || "No se pudo cargar el cierre diario");
+        return;
+      }
+
+      const r = data?.resumen || {};
+      setCierreHonorariosHoy({
+        fecha_referencia: data?.fecha_referencia || "",
+        pagables_hoy: Number(r.pagables_hoy || 0),
+        pendientes_cobro_hoy: Number(r.pendientes_cobro_hoy || 0),
+        excluidas_hoy: Number(r.excluidas_hoy || 0),
+        total_consultas_hoy: Number(r.total_consultas_hoy || 0),
+        monto_fijo_consulta: r.monto_fijo_consulta === null || r.monto_fijo_consulta === undefined ? null : Number(r.monto_fijo_consulta),
+        monto_pagable_estimado: r.monto_pagable_estimado === null || r.monto_pagable_estimado === undefined ? null : Number(r.monto_pagable_estimado),
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      setCierreHonorariosHoyError("No se pudo cargar el cierre diario");
+    } finally {
+      setLoadingCierreHonorariosHoy(false);
+    }
+  };
+
   const cargarConsultas = async (signal) => {
     if (!medicoId) return;
     setLoading(true);
@@ -150,13 +222,25 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       if (busqueda.trim()) params.set('search', busqueda.trim());
       if (fechaDesde) params.set('fecha_desde', fechaDesde);
       if (fechaHasta) params.set('fecha_hasta', fechaHasta);
+      if (filtroEstado) params.set('estado_panel', filtroEstado);
+      if (filtroPago) params.set('filtro_pago_panel', filtroPago);
+      if (filtroSemaforo) params.set('semaforo_panel', filtroSemaforo);
 
       const response = await authFetch(`api_consultas.php?${params.toString()}`, { signal });
       const data = await response.json();
 
       if (!data?.success) {
         setConsultas([]);
-        setStats({ total: 0, pendientes: 0, emergencias: 0 });
+        setStats({ total: 0, pendientes: 0, emergencias: 0, operativas: 0, pendientes_operativas: 0, excluidas_canceladas: 0 });
+        setStatsClinicosHoy({
+          fecha_referencia: "",
+          consultas_total_hoy: 0,
+          consultas_abiertas_hoy: 0,
+          agenda_abierta_hoy: 0,
+          cola_clinica_hoy: 0,
+          consultas_completadas_hoy: 0,
+          total_historico_filtrado: 0,
+        });
         setStatsServiciosHoy({ fecha_referencia: "", servicios_habilitados: [], pendientes_por_servicio: {} });
         setStatsImagenologiaPendiente({ fecha_referencia: "", total_pendientes: 0, pendientes_hoy: 0, por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 } });
         setTotalRows(0);
@@ -165,7 +249,16 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       }
 
       setConsultas(data.consultas || []);
-      setStats(data.stats || { total: 0, pendientes: 0, emergencias: 0 });
+      setStats(data.stats || { total: 0, pendientes: 0, emergencias: 0, operativas: 0, pendientes_operativas: 0, excluidas_canceladas: 0 });
+      setStatsClinicosHoy(data.stats_clinicos_hoy || {
+        fecha_referencia: "",
+        consultas_total_hoy: 0,
+        consultas_abiertas_hoy: 0,
+        agenda_abierta_hoy: 0,
+        cola_clinica_hoy: 0,
+        consultas_completadas_hoy: 0,
+        total_historico_filtrado: 0,
+      });
       setStatsServiciosHoy(data.stats_servicios_hoy || { fecha_referencia: "", servicios_habilitados: [], pendientes_por_servicio: {} });
       setStatsImagenologiaPendiente(data.stats_imagenologia_pendiente || { fecha_referencia: "", total_pendientes: 0, pendientes_hoy: 0, por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 } });
       setTotalRows(data.pagination?.total ?? data.stats?.total ?? 0);
@@ -180,7 +273,16 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       }
       console.error("Error cargando consultas:", error);
       setConsultas([]);
-      setStats({ total: 0, pendientes: 0, emergencias: 0 });
+      setStats({ total: 0, pendientes: 0, emergencias: 0, operativas: 0, pendientes_operativas: 0, excluidas_canceladas: 0 });
+      setStatsClinicosHoy({
+        fecha_referencia: "",
+        consultas_total_hoy: 0,
+        consultas_abiertas_hoy: 0,
+        agenda_abierta_hoy: 0,
+        cola_clinica_hoy: 0,
+        consultas_completadas_hoy: 0,
+        total_historico_filtrado: 0,
+      });
       setStatsServiciosHoy({ fecha_referencia: "", servicios_habilitados: [], pendientes_por_servicio: {} });
       setStatsImagenologiaPendiente({ fecha_referencia: "", total_pendientes: 0, pendientes_hoy: 0, por_tipo: { ecografia: 0, rayosx: 0, tomografia: 0 } });
       setTotalRows(0);
@@ -195,16 +297,18 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     return () => {
       controller.abort();
     };
-  }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
+  }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta, filtroEstado, filtroPago, filtroSemaforo]);
 
   useEffect(() => {
     if (mode !== "dashboard") {
       setResumenEconomico(null);
       setResumenEconomicoError("");
+      setCierreHonorariosHoyError("");
       return;
     }
     const controller = new AbortController();
     cargarResumenEconomico(controller.signal);
+    cargarCierreHonorariosHoy(controller.signal);
     return () => {
       controller.abort();
     };
@@ -235,6 +339,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const periodoActualInicio = resumenEconomico?.periodo?.inicio || "-";
   const periodoActualFin = resumenEconomico?.periodo?.fin || "-";
   const resumenFin = resumenEconomico?.resumen || {};
+  const pagadoPeriodo = Number(resumenFin.pagado_honorarios_periodo || 0);
+  const pagadoTotal = Number(resumenFin.pagado_honorarios_total || 0);
   const saldoPeriodo = Number(resumenFin.deuda_neta_periodo || 0);
   const saldoTotal = Number(resumenFin.deuda_neta_total || 0);
   const estadoSaldoPeriodo =
@@ -427,6 +533,12 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
     });
   const fechaServiciosRef = statsServiciosHoy?.fecha_referencia || '-';
+  const fechaClinicaRef = statsClinicosHoy?.fecha_referencia || '-';
+  const colaClinicaHoy = Number(statsClinicosHoy?.cola_clinica_hoy || 0);
+  const consultasAbiertasHoy = Number(statsClinicosHoy?.consultas_abiertas_hoy || 0);
+  const agendaAbiertaHoy = Number(statsClinicosHoy?.agenda_abierta_hoy || 0);
+  const completadasHoy = Number(statsClinicosHoy?.consultas_completadas_hoy || 0);
+  const totalHistoricoFiltrado = Number(statsClinicosHoy?.total_historico_filtrado || stats.total || 0);
   const imagenPendTotal = Number(statsImagenologiaPendiente?.total_pendientes || 0);
   const imagenPendHoy = Number(statsImagenologiaPendiente?.pendientes_hoy || 0);
   const imagenPorTipo = statsImagenologiaPendiente?.por_tipo || { ecografia: 0, rayosx: 0, tomografia: 0 };
@@ -435,14 +547,25 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     vinculadas_consulta_hoy: 0,
     sin_consulta_hoy: 0,
   };
+  const pagablesHoy = Number(cierreHonorariosHoy?.pagables_hoy || 0);
+  const pendientesCobroHoy = Number(cierreHonorariosHoy?.pendientes_cobro_hoy || 0);
+  const excluidasHoy = Number(cierreHonorariosHoy?.excluidas_hoy || 0);
+  const totalCierreHoy = Number(cierreHonorariosHoy?.total_consultas_hoy || 0);
+  const montoFijoConsulta = cierreHonorariosHoy?.monto_fijo_consulta;
+  const montoPagableEstimado = cierreHonorariosHoy?.monto_pagable_estimado;
+  const fechaCierreRef = cierreHonorariosHoy?.fecha_referencia || "-";
 
   const getHoyYmd = () => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return getTodayYmdLocal();
   };
+
+  // Fuerza recálculo visual del semáforo cada minuto (incluye cambio automático al pasar medianoche)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setClockTick((prev) => prev + 1);
+    }, 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const getTipoConsultaMeta = (consulta) => {
     const origen = String(consulta?.origen_creacion || '').trim().toLowerCase();
@@ -505,7 +628,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const getOrigenConsultaMeta = (consulta) => {
     const origen = String(consulta?.origen_creacion || '').trim().toLowerCase();
     const hcOrigenId = Number(consulta?.hc_origen_id || 0);
-    if (origen === 'hc_proxima' || hcOrigenId > 0) {
+    const fechaConsulta = String(consulta?.fecha || '').slice(0, 10);
+    const esFechaFutura = /^\d{4}-\d{2}-\d{2}$/.test(fechaConsulta)
+      ? fechaConsulta > getHoyYmd()
+      : false;
+    if ((origen === 'hc_proxima' || hcOrigenId > 0) && esFechaFutura) {
       return {
         visible: true,
         label: 'HC proxima',
@@ -640,6 +767,120 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     };
   };
 
+  const parseConsultaDateTime = (consulta) => {
+    const fecha = String(consulta?.fecha || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return null;
+    const hora = String(consulta?.hora || '').slice(0, 5);
+    const hhmm = /^\d{2}:\d{2}$/.test(hora) ? hora : '00:00';
+    const d = new Date(`${fecha}T${hhmm}:00`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const getSemaforoMeta = (consulta) => {
+    void clockTick;
+    const estado = String(consulta?.estado || '').trim().toLowerCase();
+    if (estado === 'completada' || estado === 'completado') {
+      return {
+        rowClass: 'bg-emerald-50/70',
+        cardClass: 'bg-emerald-50/80 border-emerald-200/70',
+        markerClass: 'border-l-emerald-500'
+      };
+    }
+
+    if (estado === 'cancelada' || estado === 'cancelado' || estado === 'anulada' || estado === 'anulado') {
+      return {
+        rowClass: 'bg-slate-100/80',
+        cardClass: 'bg-slate-100/80 border-slate-300/70',
+        markerClass: 'border-l-slate-400'
+      };
+    }
+
+    const fechaConsulta = String(consulta?.fecha || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fechaConsulta) && fechaConsulta === getHoyYmd()) {
+      return {
+        rowClass: 'bg-rose-100/90',
+        cardClass: 'bg-rose-100/90 border-rose-300/90',
+        markerClass: 'border-l-rose-700'
+      };
+    }
+
+    const dt = parseConsultaDateTime(consulta);
+    if (dt) {
+      const now = new Date();
+      const delta = dt.getTime() - now.getTime();
+      if (delta <= 0) {
+        return {
+          rowClass: 'bg-rose-100/90',
+          cardClass: 'bg-rose-100/90 border-rose-300/90',
+          markerClass: 'border-l-rose-700'
+        };
+      }
+      return {
+        rowClass: 'bg-amber-50/85',
+        cardClass: 'bg-amber-50/85 border-amber-200/80',
+        markerClass: 'border-l-amber-500'
+      };
+    }
+
+    return {
+      rowClass: 'bg-sky-50/70',
+      cardClass: 'bg-sky-50/75 border-sky-200/70',
+      markerClass: 'border-l-sky-500'
+    };
+  };
+
+  const colaEstadoLabel = (estado) => {
+    const t = String(estado || '').toLowerCase().trim();
+    if (t === 'llego') return 'Llegó';
+    if (t === 'en_sala') return 'En sala';
+    if (t === 'llamando') return 'Llamando';
+    if (t === 'en_atencion') return 'En atención';
+    if (t === 'retirado') return 'Retirado';
+    return 'Pendiente';
+  };
+
+  const colaPrioridadLabel = (prioridad) => {
+    const p = String(prioridad || '').toLowerCase().trim();
+    if (p === 'adulto_mayor') return 'Adulto mayor';
+    if (p === 'nino') return 'Niño';
+    if (p === 'embarazada') return 'Embarazada';
+    if (p === 'urgente') return 'Urgente';
+    return 'Normal';
+  };
+
+  const colaEstadoBadgeClass = (estado) => {
+    const t = String(estado || '').toLowerCase().trim();
+    if (t === 'en_sala') return 'bg-rose-100 text-rose-700 border-rose-200';
+    if (t === 'llamando') return 'bg-amber-100 text-amber-700 border-amber-200';
+    if (t === 'en_atencion') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    if (t === 'llego') return 'bg-sky-100 text-sky-700 border-sky-200';
+    if (t === 'retirado') return 'bg-slate-200 text-slate-700 border-slate-300';
+    return 'bg-slate-100 text-slate-700 border-slate-200';
+  };
+
+  const colaPrioridadBadgeClass = (prioridad) => {
+    const p = String(prioridad || '').toLowerCase().trim();
+    if (p === 'urgente') return 'bg-rose-100 text-rose-700 border-rose-200';
+    if (p === 'embarazada') return 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200';
+    if (p === 'nino') return 'bg-cyan-100 text-cyan-700 border-cyan-200';
+    if (p === 'adulto_mayor') return 'bg-orange-100 text-orange-700 border-orange-200';
+    return 'bg-slate-100 text-slate-700 border-slate-200';
+  };
+
+  const colaOperativaHoy = consultas
+    .filter((c) => String(c?.fecha || '').slice(0, 10) === getHoyYmd())
+    .filter((c) => ['llego', 'en_sala', 'llamando', 'en_atencion'].includes(String(c?.cola_estado || '').toLowerCase().trim()));
+  const colaActivos = colaOperativaHoy.filter((c) => ['llego', 'en_sala', 'llamando'].includes(String(c?.cola_estado || '').toLowerCase().trim()));
+  const colaActual = colaActivos
+    .slice()
+    .sort((a, b) => {
+      const ca = Number(a?.cola_correlativo || 0) > 0 ? Number(a?.cola_correlativo || 0) : 9999;
+      const cb = Number(b?.cola_correlativo || 0) > 0 ? Number(b?.cola_correlativo || 0) : 9999;
+      if (ca !== cb) return ca - cb;
+      return String(a?.hora || '').localeCompare(String(b?.hora || ''));
+    })[0] || null;
+  const colaSiguiente = colaActivos.find((c) => Number(c?.cola_es_siguiente || 0) === 1) || null;
+
   const esDashboard = mode === "dashboard";
   const themeGradientMain = "linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 55%, var(--color-accent) 100%)";
 
@@ -658,10 +899,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
             <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{resumenEconomicoError}</div>
           ) : (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 <div className="rounded-xl p-3 border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
                   <div className="text-xs font-semibold text-blue-700">Honorario pendiente (periodo)</div>
                   <div className="text-xl font-bold text-blue-900 mt-1">{formatMoney(resumenFin.pendiente_honorarios_periodo)}</div>
+                </div>
+                <div className="rounded-xl p-3 border border-cyan-200 bg-gradient-to-br from-cyan-50 to-sky-50">
+                  <div className="text-xs font-semibold text-cyan-700">Honorario pagado (periodo)</div>
+                  <div className="text-xl font-bold text-cyan-900 mt-1">{formatMoney(pagadoPeriodo)}</div>
                 </div>
                 <div className="rounded-xl p-3 border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50">
                   <div className="text-xs font-semibold text-amber-700">Adelantos recibidos (periodo)</div>
@@ -675,6 +920,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 <div className={`rounded-xl p-3 border ${saldoTotal >= 0 ? "border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50" : "border-rose-200 bg-gradient-to-br from-rose-50 to-pink-50"}`}>
                   <div className={`text-xs font-semibold ${saldoTotal >= 0 ? "text-violet-700" : "text-rose-700"}`}>Saldo neto (total)</div>
                   <div className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? "text-violet-900" : "text-rose-900"}`}>{formatMoney(Math.abs(saldoTotal))}</div>
+                </div>
+                <div className="rounded-xl p-3 border border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50">
+                  <div className="text-xs font-semibold text-emerald-700">Honorario pagado (total)</div>
+                  <div className="text-xl font-bold text-emerald-900 mt-1">{formatMoney(pagadoTotal)}</div>
                 </div>
               </div>
               <div className="mt-3 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
@@ -693,29 +942,85 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
-            <h3 className="text-sm sm:text-base font-semibold text-gray-800">Resumen clínico del día</h3>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-800">Resumen clínico operativo</h3>
           </div>
+
+          <div className="text-[11px] text-slate-500 mb-2">Fecha de referencia: {fechaClinicaRef}</div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-4">
             <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: themeGradientMain }}>
-              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Total consultas</p>
-              <p className="text-lg sm:text-xl font-bold leading-tight">{stats.total}</p>
+              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Cola clínica de hoy</p>
+              <p className="text-lg sm:text-xl font-bold leading-tight">{colaClinicaHoy}</p>
+              <p className="text-[10px] sm:text-[11px] text-white/80 mt-0.5">Consultas: {consultasAbiertasHoy} · Agenda: {agendaAbiertaHoy}</p>
             </div>
             <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: "linear-gradient(90deg, var(--color-secondary) 0%, var(--color-accent) 100%)" }}>
-              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Pendientes</p>
-              <p className="text-lg sm:text-xl font-bold leading-tight">{stats.pendientes}</p>
+              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Atendidas hoy</p>
+              <p className="text-lg sm:text-xl font-bold leading-tight">{completadasHoy}</p>
+              <p className="text-[10px] sm:text-[11px] text-white/80 mt-0.5">Cierre clínico del día</p>
             </div>
             <div className="rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-md" style={{ background: "linear-gradient(90deg, var(--color-accent) 0%, var(--color-primary) 100%)" }}>
-              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Emergencias</p>
-              <p className="text-lg sm:text-xl font-bold leading-tight">{stats.emergencias}</p>
+              <p className="text-white/85 text-[11px] sm:text-xs font-medium">Total histórico filtrado</p>
+              <p className="text-lg sm:text-xl font-bold leading-tight">{totalHistoricoFiltrado}</p>
+              <p className="text-[10px] sm:text-[11px] text-white/80 mt-0.5">Contexto del listado</p>
             </div>
+          </div>
+
+          <div className="mb-4 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            Emergencias en filtro actual: <span className="font-semibold text-slate-800">{stats.emergencias}</span>
+          </div>
+
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-lime-50 p-3 sm:p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+              <div>
+                <h4 className="text-sm sm:text-base font-semibold text-emerald-900">Cierre diario de consultas pagables</h4>
+                <p className="text-[11px] text-emerald-800/80">Base para pago fijo por consulta del medico.</p>
+              </div>
+              <span className="text-xs text-emerald-700">Fecha: {fechaCierreRef}</span>
+            </div>
+
+            {loadingCierreHonorariosHoy ? (
+              <div className="text-xs sm:text-sm text-emerald-700">Cargando cierre diario...</div>
+            ) : cierreHonorariosHoyError ? (
+              <div className="text-xs sm:text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{cierreHonorariosHoyError}</div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+                  <div className="rounded-lg border border-emerald-300 bg-white/80 p-3">
+                    <div className="text-[11px] text-slate-600">Pagables hoy</div>
+                    <div className="text-2xl font-bold text-emerald-900 leading-none mt-1">{pagablesHoy}</div>
+                  </div>
+                  <div className="rounded-lg border border-amber-300 bg-white/80 p-3">
+                    <div className="text-[11px] text-slate-600">Pendientes de cobro</div>
+                    <div className="text-2xl font-bold text-amber-900 leading-none mt-1">{pendientesCobroHoy}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-300 bg-white/80 p-3">
+                    <div className="text-[11px] text-slate-600">Excluidas</div>
+                    <div className="text-2xl font-bold text-slate-900 leading-none mt-1">{excluidasHoy}</div>
+                  </div>
+                </div>
+
+                <div className="mt-3 text-xs text-slate-700 bg-white/70 border border-emerald-100 rounded-lg px-3 py-2">
+                  Total consultas del dia: <span className="font-semibold">{totalCierreHoy}</span>
+                  {montoFijoConsulta !== null ? (
+                    <>
+                      {' '}· Monto fijo por consulta: <span className="font-semibold">{formatMoney(montoFijoConsulta)}</span>
+                      {' '}· Total pagable estimado: <span className="font-semibold text-emerald-800">{formatMoney(montoPagableEstimado || 0)}</span>
+                    </>
+                  ) : (
+                    <>
+                      {' '}· Sin monto fijo configurado para consulta en configuracion de honorarios.
+                    </>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
               <div>
                 <h4 className="text-sm sm:text-base font-semibold text-slate-800">Pendientes de agenda por servicio hoy</h4>
-                <p className="text-[11px] text-slate-500">Basado en consultas/agendamiento clínico, no en informes de imagenología.</p>
+                <p className="text-[11px] text-slate-500">Basado en consultas/agendamiento clínico; para Procedimiento también considera registros del módulo de procedimientos del día. No incluye informes de imagenología.</p>
               </div>
               <span className="text-xs text-slate-500">Fecha: {fechaServiciosRef}</span>
             </div>
@@ -823,9 +1128,26 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
         </div>
       ) : (
         <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
-          <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-            <h3 className="text-sm sm:text-base font-semibold text-gray-800">Lista de consultas</h3>
-            <span className="text-xs text-slate-500">Total: {stats.total} · Pendientes: {stats.pendientes}</span>
+          <div className="mb-3 sm:mb-4">
+            <h3 className="text-sm sm:text-base font-semibold text-gray-800 mb-2">Lista de consultas</h3>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+              <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 to-blue-100 px-3 py-2">
+                <div className="text-[11px] sm:text-xs font-semibold text-sky-700 uppercase tracking-wide">Total</div>
+                <div className="text-xl sm:text-2xl font-extrabold text-sky-900 leading-tight">{Number(stats.total || 0)}</div>
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-100 px-3 py-2">
+                <div className="text-[11px] sm:text-xs font-semibold text-indigo-700 uppercase tracking-wide">Operativas</div>
+                <div className="text-xl sm:text-2xl font-extrabold text-indigo-900 leading-tight">{Number(stats.operativas || 0)}</div>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-100 px-3 py-2">
+                <div className="text-[11px] sm:text-xs font-semibold text-amber-700 uppercase tracking-wide">Pendientes</div>
+                <div className="text-xl sm:text-2xl font-extrabold text-amber-900 leading-tight">{Number(stats.pendientes_operativas || 0)}</div>
+              </div>
+              <div className="rounded-xl border border-slate-300 bg-gradient-to-br from-slate-100 to-slate-200 px-3 py-2">
+                <div className="text-[11px] sm:text-xs font-semibold text-slate-700 uppercase tracking-wide">Excluidas/Canceladas</div>
+                <div className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">{Number(stats.excluidas_canceladas || 0)}</div>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
@@ -841,7 +1163,18 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               <input
                 type="text"
                 value={busqueda}
-                onChange={e => { setBusqueda(e.target.value); setPage(1); }}
+                onChange={e => {
+                  const value = String(e.target.value || "");
+                  const hasSearch = value.trim() !== "";
+                  setBusqueda(value);
+                  if (hasSearch) {
+                    // Al buscar por texto, evitar que filtros restrictivos oculten coincidencias.
+                    setFiltroEstado("todas");
+                    setFiltroPago("todas");
+                    setFiltroSemaforo("todas");
+                  }
+                  setPage(1);
+                }}
                 placeholder="Buscar por nombre, HC o DNI..."
                 className="pl-8 sm:pl-10 w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
                 onFocus={(e) => {
@@ -850,6 +1183,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 style={{ boxShadow: "none" }}
               />
             </div>
+            {busqueda.trim() !== "" && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Al buscar por texto, el sistema cambia automáticamente Estado, Pago y Semáforo a "Todas" para mostrar coincidencias.
+              </p>
+            )}
           </div>
           
           {/* Fecha desde */}
@@ -879,13 +1217,80 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               }}
             />
           </div>
+
+          <div>
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">📌 Estado de lista</label>
+            <select
+              value={filtroEstado}
+              onChange={(e) => {
+                const nextEstado = e.target.value;
+                setFiltroEstado(nextEstado);
+                if (nextEstado === 'canceladas_excluidas') {
+                  setFiltroPago('todas');
+                }
+                setPage(1);
+              }}
+              className="w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
+            >
+              <option value="activas">Activas (por defecto)</option>
+              <option value="pendientes">Solo pendientes</option>
+              <option value="completadas">Solo completadas</option>
+              <option value="canceladas_excluidas">Canceladas / eliminadas</option>
+              <option value="todas">Todas</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">💳 Pago de consulta</label>
+            <select
+              value={filtroPago}
+              onChange={(e) => { setFiltroPago(e.target.value); setPage(1); }}
+              disabled={filtroEstado === 'canceladas_excluidas'}
+              className={`w-full px-3 sm:px-4 py-2 text-sm border rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 ${filtroEstado === 'canceladas_excluidas' ? 'bg-gray-100 text-gray-500 border-gray-200 cursor-not-allowed' : 'bg-white/80 border-gray-300'}`}
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
+            >
+              <option value="solo_pagadas">Solo pagadas (por defecto)</option>
+              <option value="solo_no_pagadas">Solo no pagadas</option>
+              <option value="todas">Pagadas y no pagadas</option>
+            </select>
+            {filtroEstado === 'canceladas_excluidas' && (
+              <p className="mt-1 text-[11px] text-gray-500">Para canceladas/eliminadas se muestra todo sin filtrar por pago.</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">🚦 Semáforo</label>
+            <select
+              value={filtroSemaforo}
+              onChange={(e) => { setFiltroSemaforo(e.target.value); setPage(1); }}
+              className="w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+              onFocus={(e) => {
+                e.currentTarget.style.setProperty("--tw-ring-color", "var(--color-primary)");
+              }}
+            >
+              <option value="todas">Todas</option>
+              <option value="proxima">Solo Próxima</option>
+            </select>
+          </div>
         </div>
         
         {/* Botón limpiar filtros */}
         {(busqueda || fechaDesde || fechaHasta) && (
           <div className="mt-2 sm:mt-3 flex justify-center sm:justify-end">
             <button 
-              onClick={() => { setBusqueda(""); setFechaDesde(""); setFechaHasta(""); setPage(1); }}
+              onClick={() => {
+                const hoy = getTodayYmdLocal();
+                setBusqueda("");
+                setFechaDesde(hoy);
+                setFechaHasta(hoy);
+                setFiltroSemaforo('todas');
+                setPage(1);
+              }}
               className="inline-flex items-center gap-1 sm:gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-all duration-200 hover:scale-105 text-sm"
             >
               <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -895,6 +1300,59 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
             </button>
           </div>
         )}
+        </div>
+      )}
+
+      {!esDashboard && (
+        <div className="mb-4 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">Torre de sala</div>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+              Activos en cola: {colaActivos.length}
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className={`rounded-xl border p-3 ${colaActual ? 'border-rose-300 bg-white animate-pulse' : 'border-slate-200 bg-white'}`}>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Paciente en sala</div>
+              {colaActual ? (
+                <>
+                  <div className="mt-1 text-lg font-extrabold text-rose-700">
+                    {Number(colaActual?.cola_correlativo || 0) > 0 ? `N-${Number(colaActual?.cola_correlativo || 0)} · ` : ''}
+                    {colaActual?.paciente_nombre} {colaActual?.paciente_apellido || ''}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${colaEstadoBadgeClass(colaActual?.cola_estado)}`}>
+                      {colaEstadoLabel(colaActual?.cola_estado)}
+                    </span>
+                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${colaPrioridadBadgeClass(colaActual?.cola_prioridad)}`}>
+                      {colaPrioridadLabel(colaActual?.cola_prioridad)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-1 text-sm text-slate-500">Sin paciente marcado en sala.</div>
+              )}
+            </div>
+            <div className={`rounded-xl border p-3 ${colaSiguiente ? 'border-indigo-300 bg-white' : 'border-slate-200 bg-white'}`}>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Siguiente de cola</div>
+              {colaSiguiente ? (
+                <>
+                  <div className="mt-1 text-lg font-extrabold text-indigo-700">
+                    {Number(colaSiguiente?.cola_correlativo || 0) > 0 ? `N-${Number(colaSiguiente?.cola_correlativo || 0)} · ` : ''}
+                    {colaSiguiente?.paciente_nombre} {colaSiguiente?.paciente_apellido || ''}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">Siguiente</span>
+                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${colaPrioridadBadgeClass(colaSiguiente?.cola_prioridad)}`}>
+                      {colaPrioridadLabel(colaSiguiente?.cola_prioridad)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-1 text-sm text-slate-500">No hay siguiente marcado.</div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -912,6 +1370,20 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
         </span>
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 font-medium">
           🔁 Reprogramada
+        </span>
+        <span className="mx-1 text-gray-400">|</span>
+        <span className="text-gray-600 font-medium">Semáforo:</span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-rose-100 text-rose-700 border-rose-200 font-medium">
+          🔴 Falta atender
+        </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-amber-100 text-amber-800 border-amber-200 font-medium">
+          🟠 Próxima
+        </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-emerald-100 text-emerald-700 border-emerald-200 font-medium">
+          🟢 Atendida
+        </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border bg-slate-100 text-slate-700 border-slate-300 font-medium">
+          ⚪ Cancelada
         </span>
         </div>
       )}
@@ -961,17 +1433,20 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {consultasPaginadas.map((consulta, index) => {
-                    const esFilaPar = index % 2 === 0;
+                  {consultasPaginadas.map((consulta) => {
                     const tipoMeta = getTipoConsultaMeta(consulta);
                     const agendaMeta = getAgendaMeta(consulta);
                     const origenMeta = getOrigenConsultaMeta(consulta);
                     const contratoMeta = getContratoMeta(consulta);
                     const estadoVisual = getEstadoVisual(consulta);
-                    const esProgramada = tipoMeta.label === 'Programada';
                     const estadoCobro = getEstadoCobro(consulta);
+                    const semaforoMeta = getSemaforoMeta(consulta);
+                    const fechaConsultaYmd = String(consulta?.fecha || '').slice(0, 10);
+                    const esConsultaFutura = fechaConsultaYmd !== '' && fechaConsultaYmd > getHoyYmd();
                     const accionesBloqueadas = estadoCobro.faltaPagar;
+                    const accionesClinicasBloqueadas = accionesBloqueadas || esConsultaFutura;
                     const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
+                    const tituloAccionesFuturas = 'La consulta tiene fecha futura. Solo puede cancelarse o reprogramarse.';
                     const serviciosResumen = obtenerServiciosResumen(consulta);
                     const consultaId = Number(consulta?.id || 0);
                     const cotizacionId = Number(consulta?.cotizacion_id || 0);
@@ -983,11 +1458,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                       <tr
                         key={`row-${consulta.id}`}
                         className={`${
-                          esProgramada ? 'bg-cyan-50/70' : (esFilaPar ? 'bg-white/60' : 'bg-blue-50/40')
+                          semaforoMeta.rowClass
                         } ${estadoCobro.rowClass} hover:bg-blue-100/60 transition-all duration-200 hover:shadow-lg transform hover:-translate-y-0.5`}
                         title={estadoCobro.faltaPagar ? 'Esta cita está pendiente de pago. No se puede editar hasta que se registre el pago.' : ''}
                       >
-                        <td className="px-3 py-3">
+                        <td className={`px-3 py-3 border-l-4 ${semaforoMeta.markerClass}`}>
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
                               <span className="text-white font-semibold text-sm">
@@ -1101,6 +1576,18 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                               {estadoVisual.icon}
                               {estadoVisual.label}
                             </span>
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${colaEstadoBadgeClass(consulta?.cola_estado)}`}>
+                              {Number(consulta?.cola_correlativo || 0) > 0 ? `N-${Number(consulta?.cola_correlativo || 0)} · ` : ''}
+                              {colaEstadoLabel(consulta?.cola_estado)}
+                            </span>
+                            {Number(consulta?.cola_es_siguiente || 0) === 1 && (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border border-indigo-200 bg-indigo-100 text-indigo-700">
+                                Siguiente
+                              </span>
+                            )}
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${colaPrioridadBadgeClass(consulta?.cola_prioridad)} w-fit`}>
+                              {colaPrioridadLabel(consulta?.cola_prioridad)}
+                            </span>
                             {estadoCobro.label && (
                               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${estadoCobro.badgeClass} w-fit`}>
                                 {estadoCobro.label}
@@ -1123,13 +1610,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                               <>
                                 <button
                                   onClick={() => actualizarEstado(consulta.id, 'completada')}
-                                  disabled={accionesBloqueadas}
+                                  disabled={accionesClinicasBloqueadas}
                                   className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-medium transition-all duration-200 shadow-md ${
-                                    accionesBloqueadas
+                                    accionesClinicasBloqueadas
                                       ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-60'
                                       : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white hover:scale-105'
                                   }`}
-                                  title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Completar consulta'}
+                                  title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : 'Completar consulta')}
                                 >
                                   <span className="text-sm">✔️</span>
                                 </button>
@@ -1150,13 +1637,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                             
                             <button
                               onClick={() => navigate(`/historia-clinica/${consulta.paciente_id}/${consulta.id}`)}
-                              disabled={accionesBloqueadas}
+                              disabled={accionesClinicasBloqueadas}
                               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-medium transition-all duration-200 ${
-                                accionesBloqueadas
+                                accionesClinicasBloqueadas
                                   ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-50'
                                   : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white hover:scale-105 shadow-md'
                               }`}
-                              title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Ver Historia Clínica'}
+                              title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : 'Ver Historia Clínica')}
                             >
                               <span className="text-sm">📖</span>
                             </button>
@@ -1164,13 +1651,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                             {onIniciarConsulta && (
                               <button
                                 onClick={() => onIniciarConsulta(consulta)}
-                                disabled={accionesBloqueadas}
+                                disabled={accionesClinicasBloqueadas}
                                 className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 shadow-md ${
-                                  accionesBloqueadas
+                                  accionesClinicasBloqueadas
                                     ? 'bg-gray-300 text-gray-600 cursor-not-allowed opacity-60'
                                     : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white hover:scale-105'
                                 }`}
-                                title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Iniciar consulta'}
+                                title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : 'Iniciar consulta')}
                               >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -1239,10 +1726,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               const origenMeta = getOrigenConsultaMeta(consulta);
               const contratoMeta = getContratoMeta(consulta);
               const estadoVisual = getEstadoVisual(consulta);
-              const esProgramada = tipoMeta.label === 'Programada';
               const estadoCobro = getEstadoCobro(consulta);
+              const semaforoMeta = getSemaforoMeta(consulta);
+              const fechaConsultaYmd = String(consulta?.fecha || '').slice(0, 10);
+              const esConsultaFutura = fechaConsultaYmd !== '' && fechaConsultaYmd > getHoyYmd();
               const accionesBloqueadas = estadoCobro.faltaPagar;
+              const accionesClinicasBloqueadas = accionesBloqueadas || esConsultaFutura;
               const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
+              const tituloAccionesFuturas = 'La consulta tiene fecha futura. Solo puede cancelarse o reprogramarse.';
               const serviciosResumen = obtenerServiciosResumen(consulta);
               const consultaId = Number(consulta?.id || 0);
               const cotizacionId = Number(consulta?.cotizacion_id || 0);
@@ -1253,9 +1744,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               <div
                 key={consulta.id}
                   title={estadoCobro.faltaPagar ? 'Esta cita está pendiente de pago' : ''}
-                className={`backdrop-blur-sm rounded-xl shadow-lg border p-4 hover:shadow-xl transition-all duration-200 hover:scale-[1.02] ${
-                  esProgramada ? 'bg-cyan-50/80 border-cyan-200/70' : 'bg-white/80 border-white/50'
-                  } ${estadoCobro.rowClass}`}
+                className={`backdrop-blur-sm rounded-xl shadow-lg border-l-4 p-4 hover:shadow-xl transition-all duration-200 hover:scale-[1.02] ${
+                  semaforoMeta.cardClass
+                  } ${semaforoMeta.markerClass} ${estadoCobro.rowClass}`}
               >
                 {/* Header de la tarjeta con paciente */}
                 <div className="flex items-center gap-3 mb-3">
@@ -1294,7 +1785,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                   </div>
                   <div>
                     <p className="text-gray-600 font-medium">⏰ Hora</p>
-                    <p className="text-gray-900">{consulta.hora || 'N/A'}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-gray-900">{consulta.hora || 'N/A'}</p>
+                    </div>
                   </div>
                   <div>
                     <p className="text-gray-600 font-medium">🏥 HC</p>
@@ -1392,10 +1885,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                     <>
                       <button
                         onClick={() => actualizarEstado(consulta.id, 'completada')}
-                        disabled={accionesBloqueadas}
-                        title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Completar consulta'}
+                        disabled={accionesClinicasBloqueadas}
+                        title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : 'Completar consulta')}
                         className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
-                          accionesBloqueadas
+                          accionesClinicasBloqueadas
                             ? 'bg-gray-400 text-gray-200 cursor-not-allowed opacity-60'
                             : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white'
                         }`}
@@ -1421,10 +1914,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                   
                   <button
                     onClick={() => navigate(`/historia-clinica/${consulta.paciente_id}/${consulta.id}`)}
-                    disabled={accionesBloqueadas}
-                    title={accionesBloqueadas ? tituloAccionesBloqueadas : ''}
+                    disabled={accionesClinicasBloqueadas}
+                    title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : '')}
                       className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
-                        accionesBloqueadas
+                        accionesClinicasBloqueadas
                           ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
                           : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white'
                       }`}
@@ -1436,10 +1929,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                   {onIniciarConsulta && (
                     <button
                       onClick={() => onIniciarConsulta(consulta)}
-                      disabled={accionesBloqueadas}
-                      title={accionesBloqueadas ? tituloAccionesBloqueadas : 'Iniciar consulta'}
+                      disabled={accionesClinicasBloqueadas}
+                      title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : 'Iniciar consulta')}
                       className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${
-                        accionesBloqueadas
+                        accionesClinicasBloqueadas
                           ? 'bg-gray-400 text-gray-200 cursor-not-allowed opacity-60'
                           : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white'
                       }`}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { authFetch } from "../../utils/apiClient";
 import AperturaCajaForm from "./AperturaCajaForm";
@@ -21,8 +21,8 @@ export default function CajaAdminDashboard() {
   // ...existing code...
 
   // Función para cargar resumen (reutilizable)
-  const fetchResumen = async () => {
-    setLoading(true);
+  const fetchResumen = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const resp = await authFetch("api_resumen_diario.php");
       const data = await resp.json();
@@ -48,12 +48,16 @@ export default function CajaAdminDashboard() {
           setCajaActual(null);
         }
       } else {
-        setError(data.error || "Error al cargar resumen");
+        if (!silent) {
+          setError(data.error || "Error al cargar resumen");
+        }
       }
     } catch {
-      setError("Error de conexión");
+      if (!silent) {
+        setError("Error de conexión");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -61,7 +65,38 @@ export default function CajaAdminDashboard() {
     const usuarioSession = JSON.parse(sessionStorage.getItem("usuario") || "{}");
     setUsuario(usuarioSession);
     fetchResumen();
+
+    const timerId = window.setInterval(() => {
+      fetchResumen({ silent: true });
+    }, 10000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
   }, []);
+
+  const cajasRecepcionistas = useMemo(() => {
+    if (!Array.isArray(resumen?.cajas_resumen)) return [];
+    return resumen.cajas_resumen.filter((caja) => {
+      const rol = (caja.usuario_rol || caja.rol || caja.user_rol || "").toString().toLowerCase();
+      return rol.includes("recepcionista");
+    });
+  }, [resumen]);
+
+  const consolidadoRecepcion = useMemo(() => {
+    const totalIngresos = cajasRecepcionistas.reduce((acc, caja) => acc + Number(caja?.total_caja || 0), 0);
+    const totalGanancia = cajasRecepcionistas.reduce((acc, caja) => acc + Number(caja?.ganancia_dia || 0), 0);
+    const cajasAbiertas = cajasRecepcionistas.filter((caja) => String(caja?.estado || "").toLowerCase() === "abierta").length;
+    const usuariosUnicos = new Set(cajasRecepcionistas.map((caja) => String(caja?.usuario_id || "")).filter(Boolean)).size;
+    return {
+      totalIngresos,
+      totalGanancia,
+      cajasAbiertas,
+      usuariosUnicos,
+    };
+  }, [cajasRecepcionistas]);
+
+  const esAdmin = String(usuario?.rol || "").toLowerCase() === "administrador";
 
   if (loading)
     return <div className="p-8 text-center">Cargando resumen...</div>;
@@ -92,7 +127,10 @@ export default function CajaAdminDashboard() {
           </div>
         </Modal>
         <div className="w-full">
-          <CajaResumenDiario resumen={resumen} />
+          <CajaResumenDiario
+            resumen={resumen}
+            adminRecepConsolidado={esAdmin ? consolidadoRecepcion : null}
+          />
         </div>
         <ModalCorregirApertura
           open={showCorregirAperturaModal}
@@ -101,12 +139,9 @@ export default function CajaAdminDashboard() {
           onClose={() => setShowCorregirAperturaModal(false)}
           onUpdated={fetchResumen}
         />
-        {usuario && usuario.rol === "administrador" && (
+        {esAdmin && (
           <div className="w-full">
-            <CajaRecepcionistasResumen cajasRecep={resumen.cajas_resumen ? resumen.cajas_resumen.filter(caja => {
-              const rol = (caja.usuario_rol || caja.rol || caja.user_rol || "").toString().toLowerCase();
-              return rol.includes("recepcionista");
-            }) : []} />
+            <CajaRecepcionistasResumen cajasRecep={cajasRecepcionistas} />
           </div>
         )}
       </div>

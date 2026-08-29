@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
@@ -15,6 +15,7 @@ const ESTADOS_GESTION = [
 ];
 
 const ORDER_STORAGE_KEY = "recordatorios_citas_orden_v1";
+const ROWS_STORAGE_KEY = "recordatorios_citas_rows_v1";
 
 function estadoBadgeClasses(estado) {
   switch (estado) {
@@ -50,6 +51,46 @@ function formatFechaHora(fecha, hora) {
   return `${formatFecha(fecha)} ${hh || ""}`.trim();
 }
 
+function getLimaDateYmd() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  const d = parts.find((p) => p.type === "day")?.value;
+  return `${y}-${m}-${d}`;
+}
+
+function horaHm(value) {
+  return String(value || "").slice(0, 5);
+}
+
+function disponibilidadPagoLabel(cita) {
+  const cotId = Number(cita?.cotizacion_id || 0);
+  const saldo = Number(cita?.saldo_pendiente || 0);
+  const estado = String(cita?.cotizacion_estado || "").toLowerCase();
+
+  if (cotId <= 0) return "Sin orden";
+  if (saldo > 0) return `Saldo S/ ${saldo.toFixed(2)}`;
+  if (["pagado", "pagada", "control"].includes(estado)) return "Pagado";
+  return "Sin saldo";
+}
+
+function disponibilidadPagoBadge(cita) {
+  const cotId = Number(cita?.cotizacion_id || 0);
+  const saldo = Number(cita?.saldo_pendiente || 0);
+  const estado = String(cita?.cotizacion_estado || "").toLowerCase();
+
+  if (cotId <= 0) return "border-slate-300 bg-slate-100 text-slate-700";
+  if (saldo > 0) return "border-rose-300 bg-rose-100 text-rose-700";
+  if (["pagado", "pagada", "control"].includes(estado)) return "border-emerald-300 bg-emerald-100 text-emerald-700";
+  return "border-slate-300 bg-slate-100 text-slate-700";
+}
+
 function diasParaCita(fecha) {
   if (!fecha) return null;
   const hoy = new Date();
@@ -75,6 +116,44 @@ function estadoLabel(estado) {
     default:
       return "Pendiente";
   }
+}
+
+function colaEstadoLabel(estado) {
+  const t = String(estado || "").toLowerCase().trim();
+  if (t === "llego") return "Llegó";
+  if (t === "en_sala") return "En sala";
+  if (t === "llamando") return "Llamando";
+  if (t === "en_atencion") return "En atención";
+  if (t === "retirado") return "Retirado";
+  return "Pendiente";
+}
+
+function colaEstadoBadge(estado) {
+  const t = String(estado || "").toLowerCase().trim();
+  if (t === "en_sala") return "bg-rose-100 text-rose-700 border-rose-200";
+  if (t === "llamando") return "bg-amber-100 text-amber-700 border-amber-200";
+  if (t === "en_atencion") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  if (t === "llego") return "bg-sky-100 text-sky-700 border-sky-200";
+  if (t === "retirado") return "bg-slate-200 text-slate-700 border-slate-300";
+  return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+function colaPrioridadLabel(prioridad) {
+  const p = String(prioridad || "").toLowerCase().trim();
+  if (p === "adulto_mayor") return "Adulto mayor";
+  if (p === "nino") return "Niño";
+  if (p === "embarazada") return "Embarazada";
+  if (p === "urgente") return "Urgente";
+  return "Normal";
+}
+
+function colaPrioridadBadge(prioridad) {
+  const p = String(prioridad || "").toLowerCase().trim();
+  if (p === "urgente") return "bg-rose-100 text-rose-700 border-rose-200";
+  if (p === "embarazada") return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
+  if (p === "nino") return "bg-cyan-100 text-cyan-700 border-cyan-200";
+  if (p === "adulto_mayor") return "bg-orange-100 text-orange-700 border-orange-200";
+  return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
 
@@ -278,6 +357,10 @@ function agruparRecordatoriosAgendaServicio(items) {
     const primerAgendaConMedico = agendas.find((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim() !== "") || null;
     const fechasUnicas = Array.from(new Set(agendasBase.map((ag) => String(ag.fecha || "").trim()).filter(Boolean)));
     const pagoConsolidado = consolidarPagoGrupo(agendas, Number(item?.cotizacion_id || 0));
+    const correlativosEstables = agendas
+      .map((ag) => Number(ag?.correlativo_estable || 0))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .sort((a, b) => a - b);
 
     item.servicio_tipo = "paquete";
     item.servicios_label = serviciosUnicos.join(" + ") || "Paquete";
@@ -290,6 +373,7 @@ function agruparRecordatoriosAgendaServicio(items) {
     item.hora = agendasBase[0]?.hora || item.hora || "";
     item.fecha_fin = agendasBase[agendasBase.length - 1]?.fecha || item.fecha_fin || "";
     item.hora_fin = agendasBase[agendasBase.length - 1]?.hora || item.hora_fin || "";
+    item.correlativo_estable = correlativosEstables[0] || Number(item?.correlativo_estable || 0) || null;
     item._pago_grupo = pagoConsolidado;
   }
 
@@ -375,6 +459,46 @@ function pagoServicioBadge(item) {
   return "bg-slate-50 text-slate-500 border-slate-200";
 }
 
+function origenFinancieroLabel(item) {
+  const pago = item?._pago_grupo || item;
+  const saldo = Number(pago?.saldo_pendiente || 0);
+  const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  const cotId = Number(pago?.cotizacion_id || 0);
+
+  if (esRecordatorioFaltaCancelar(item)) return "Cuenta por cobrar";
+
+  if (esRecordatorioAgendaServicio(item)) {
+    if (saldo > 0) return "Deuda de servicio";
+    if (estado === "pagado" || estado === "pagada" || estado === "control") return "Servicio pagado";
+    if (cotId > 0) return "Servicio sin deuda";
+    return "Servicio sin cobro";
+  }
+
+  if (String(item?.servicio_tipo || "").toLowerCase() === "consulta") {
+    if (saldo > 0) return "Deuda de consulta";
+    if (estado === "pagado" || estado === "pagada" || estado === "control") return "Consulta pagada";
+    if (cotId > 0) return "Consulta sin deuda";
+    return "Consulta sin cobro";
+  }
+
+  return "Origen financiero";
+}
+
+function origenFinancieroBadge(item) {
+  const pago = item?._pago_grupo || item;
+  const saldo = Number(pago?.saldo_pendiente || 0);
+  const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  const cotId = Number(pago?.cotizacion_id || 0);
+
+  if (esRecordatorioFaltaCancelar(item)) return "bg-amber-100 text-amber-700 border-amber-200";
+
+  if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
+  if (estado === "pagado" || estado === "pagada" || estado === "control") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  if (cotId > 0) return "bg-slate-100 text-slate-700 border-slate-200";
+
+  return "bg-slate-50 text-slate-500 border-slate-200";
+}
+
 function normalizarDetallesCotizacion(detalles) {
   if (!Array.isArray(detalles)) return [];
 
@@ -455,6 +579,15 @@ export default function RecordatoriosCitasPage() {
     }
   })();
 
+  const initialRowsPerPage = (() => {
+    try {
+      const stored = Number(window.localStorage.getItem(ROWS_STORAGE_KEY) || 10);
+      return [10, 20, 30, 50].includes(stored) ? stored : 10;
+    } catch {
+      return 10;
+    }
+  })();
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -475,11 +608,21 @@ export default function RecordatoriosCitasPage() {
   const [detalleCotizacionCache, setDetalleCotizacionCache] = useState({});
   const [detalleCotizacionLoading, setDetalleCotizacionLoading] = useState({});
   const [page, setPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [rowsPerPage, setRowsPerPage] = useState(initialRowsPerPage);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [statsGlobal, setStatsGlobal] = useState({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
   const [prioridadGlobal, setPrioridadGlobal] = useState({ critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 });
+  const [medicosCatalogo, setMedicosCatalogo] = useState([]);
+  const [busquedaMedicoDisponibilidad, setBusquedaMedicoDisponibilidad] = useState("");
+  const [medicoDisponibilidadId, setMedicoDisponibilidadId] = useState("");
+  const [fechaDisponibilidad, setFechaDisponibilidad] = useState(getLimaDateYmd());
+  const [filtroPagoDisponibilidad, setFiltroPagoDisponibilidad] = useState("todos");
+  const [agendaMedicoLoading, setAgendaMedicoLoading] = useState(false);
+  const [agendaMedicoError, setAgendaMedicoError] = useState("");
+  const [agendaMedicoData, setAgendaMedicoData] = useState(null);
+  const skipFirstPaginationFetchRef = useRef(true);
+  const skipNextPaginationFetchRef = useRef(false);
   const usandoVistaUnificada = tipoRecordatorio === "todos";
   const usaPaginacionCliente = usandoVistaUnificada;
 
@@ -591,22 +734,109 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const cargarMedicos = async () => {
+    try {
+      const res = await authFetch("api_medicos.php", { credentials: "include" });
+      const data = await res.json();
+      const rows = Array.isArray(data?.medicos) ? data.medicos : [];
+      const activos = rows.filter((m) => Number(m?.activo ?? 1) === 1 || String(m?.activo ?? "1") === "1");
+      setMedicosCatalogo(activos);
+    } catch {
+      setMedicosCatalogo([]);
+    }
+  };
+
+  const cargarAgendaPorMedico = async () => {
+    const medicoId = Number(medicoDisponibilidadId || 0);
+    const fecha = String(fechaDisponibilidad || "").trim();
+    if (medicoId <= 0 || !fecha) {
+      setAgendaMedicoError("Selecciona medico y fecha para consultar disponibilidad.");
+      setAgendaMedicoData(null);
+      return;
+    }
+
+    setAgendaMedicoLoading(true);
+    setAgendaMedicoError("");
+    try {
+      const paramsVista = new URLSearchParams({
+        vista: "disponibilidad_medico",
+        medico_id: String(medicoId),
+        fecha,
+        _t: String(Date.now()),
+      });
+      const paramsDisp = new URLSearchParams({
+        medico_id: String(medicoId),
+        fecha,
+      });
+
+      const [resVista, resDisp] = await Promise.all([
+        authFetch(`api_recordatorios_citas.php?${paramsVista.toString()}`),
+        authFetch(`api_horarios_disponibles.php?${paramsDisp.toString()}`),
+      ]);
+
+      const [dataVista, dataDisp] = await Promise.all([resVista.json(), resDisp.json()]);
+      if (!dataVista?.success) {
+        throw new Error(dataVista?.error || "No se pudo cargar agenda del médico");
+      }
+
+      const citas = Array.isArray(dataVista?.citas_programadas) ? dataVista.citas_programadas : [];
+      const horasOcupadas = Array.isArray(dataVista?.horas_ocupadas) ? dataVista.horas_ocupadas : [];
+      const horasLibres = (dataDisp?.success && Array.isArray(dataDisp?.horarios_disponibles))
+        ? dataDisp.horarios_disponibles.map((h) => String(h?.hora || "").trim()).filter(Boolean)
+        : [];
+
+      setAgendaMedicoData({
+        medico_id: medicoId,
+        fecha,
+        citas,
+        horas_ocupadas: horasOcupadas,
+        horas_libres: horasLibres,
+      });
+    } catch (err) {
+      setAgendaMedicoData(null);
+      setAgendaMedicoError(err?.message || "No se pudo consultar disponibilidad.");
+    } finally {
+      setAgendaMedicoLoading(false);
+    }
+  };
+
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dias, estadoGestion, origenConsulta, soloSinGestion, tipoRecordatorio]);
 
   useEffect(() => {
+    cargarMedicos();
+  }, []);
+
+  useEffect(() => {
+    if (medicoDisponibilidadId) return;
+    if (!Array.isArray(medicosCatalogo) || medicosCatalogo.length === 0) return;
+    setMedicoDisponibilidadId(String(medicosCatalogo[0].id || ""));
+  }, [medicoDisponibilidadId, medicosCatalogo]);
+
+  useEffect(() => {
     if (usaPaginacionCliente) return;
+    if (skipFirstPaginationFetchRef.current) {
+      skipFirstPaginationFetchRef.current = false;
+      return;
+    }
+    if (skipNextPaginationFetchRef.current) {
+      skipNextPaginationFetchRef.current = false;
+      return;
+    }
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, rowsPerPage, usaPaginacionCliente]);
 
   useEffect(() => {
+    if (!usaPaginacionCliente && page !== 1) {
+      skipNextPaginationFetchRef.current = true;
+    }
     setPage(1);
     setDetalleExpandedRows({});
     setDetalleTipoFiltroRows({});
-  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio, usaPaginacionCliente, page]);
 
   useEffect(() => {
     if (!usaPaginacionCliente) return;
@@ -620,6 +850,14 @@ export default function RecordatoriosCitasPage() {
       // Si localStorage no está disponible, se conserva el comportamiento en memoria.
     }
   }, [ordenCitas]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ROWS_STORAGE_KEY, String(rowsPerPage));
+    } catch {
+      // Si localStorage no está disponible, se conserva el comportamiento en memoria.
+    }
+  }, [rowsPerPage]);
 
   const pendientesUrgentes = useMemo(
     () => items.filter((item) => {
@@ -641,6 +879,121 @@ export default function RecordatoriosCitasPage() {
     confirmadas: Number(statsGlobal.confirmadas || 0),
     atendidas: Number(statsGlobal.atendidas || 0),
   }), [statsGlobal]);
+
+  const medicoDisponibilidadActual = useMemo(() => {
+    const id = Number(medicoDisponibilidadId || 0);
+    if (id <= 0) return null;
+    return medicosCatalogo.find((m) => Number(m?.id || 0) === id) || null;
+  }, [medicoDisponibilidadId, medicosCatalogo]);
+
+  const medicosDisponibilidadFiltrados = useMemo(() => {
+    const q = String(busquedaMedicoDisponibilidad || "").trim().toLowerCase();
+    if (!q) return medicosCatalogo;
+    return medicosCatalogo.filter((m) => {
+      const full = `${String(m?.nombre || "")} ${String(m?.apellido || "")}`.toLowerCase();
+      const especialidad = String(m?.especialidad || "").toLowerCase();
+      return full.includes(q) || especialidad.includes(q);
+    });
+  }, [busquedaMedicoDisponibilidad, medicosCatalogo]);
+
+  const citasDisponibilidadFiltradas = useMemo(() => {
+    const citas = Array.isArray(agendaMedicoData?.citas) ? agendaMedicoData.citas : [];
+    if (filtroPagoDisponibilidad === "saldo_pendiente") {
+      return citas
+        .filter((cita) => Number(cita?.saldo_pendiente || 0) > 0)
+        .sort((a, b) => {
+          const saldoA = Number(a?.saldo_pendiente || 0);
+          const saldoB = Number(b?.saldo_pendiente || 0);
+          if (saldoB !== saldoA) return saldoB - saldoA;
+          const horaA = String(a?.hora || "").slice(0, 5);
+          const horaB = String(b?.hora || "").slice(0, 5);
+          return horaA.localeCompare(horaB);
+        });
+    }
+    return citas;
+  }, [agendaMedicoData, filtroPagoDisponibilidad]);
+
+  const irAAgendarConHora = (hora) => {
+    const medicoId = Number(medicoDisponibilidadId || 0);
+    const fecha = String(fechaDisponibilidad || "").trim();
+    const hh = String(hora || "").trim();
+    if (medicoId <= 0 || !fecha || !hh) return;
+
+    const medicoNombre = medicoDisponibilidadActual
+      ? `${medicoDisponibilidadActual.nombre || ""} ${medicoDisponibilidadActual.apellido || ""}`.trim()
+      : "";
+    const medicoEspecialidad = String(medicoDisponibilidadActual?.especialidad || "").trim();
+
+    const params = new URLSearchParams({
+      agendar_medico_id: String(medicoId),
+      agendar_fecha: fecha,
+      agendar_hora: hh,
+      agendar_origen: "recordatorios_disponibilidad",
+      back_to: "/recordatorios-citas",
+    });
+    if (medicoNombre) params.set("agendar_medico_nombre", medicoNombre);
+    if (medicoEspecialidad) params.set("agendar_medico_especialidad", medicoEspecialidad);
+
+    navigate(`/pacientes?${params.toString()}`);
+  };
+
+  const construirMensajeDisponibilidadRapida = () => {
+    if (!agendaMedicoData) return "";
+    const nombreMedico = medicoDisponibilidadActual
+      ? `${medicoDisponibilidadActual.nombre || ""} ${medicoDisponibilidadActual.apellido || ""}`.trim()
+      : `Medico #${agendaMedicoData.medico_id}`;
+    const fecha = formatFecha(agendaMedicoData.fecha);
+    const libres = Array.isArray(agendaMedicoData.horas_libres)
+      ? agendaMedicoData.horas_libres.map((h) => horaHm(h)).filter(Boolean)
+      : [];
+
+    if (libres.length === 0) {
+      return [
+        "Estimado(a) paciente,",
+        `para ${nombreMedico} el ${fecha} no contamos con horarios libres por el momento.`,
+        "Si desea, podemos revisar otra fecha u otro profesional disponible.",
+      ].join("\n");
+    }
+
+    const top5 = libres.slice(0, 5);
+    const cola = libres.length > 5
+      ? `\nTenemos mas horarios disponibles ese dia (${libres.length} en total).`
+      : "";
+
+    return [
+      "Estimado(a) paciente,",
+      `para ${nombreMedico} el ${fecha} tenemos disponible: ${top5.join(", ")}.`,
+      "Indiquenos que horario le acomoda para agendar su cita.",
+    ].join("\n") + cola;
+  };
+
+  const copiarMensajeDisponibilidadRapida = async () => {
+    const texto = construirMensajeDisponibilidadRapida();
+    if (!texto) {
+      setAgendaMedicoError("Primero consulta la disponibilidad para copiar el mensaje.");
+      return;
+    }
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(texto);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = texto;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setMensaje("Mensaje de disponibilidad copiado al portapapeles.");
+      setAgendaMedicoError("");
+    } catch {
+      setAgendaMedicoError("No se pudo copiar automaticamente. Intenta nuevamente.");
+    }
+  };
 
   const itemsVista = useMemo(() => {
     const base = agruparRecordatoriosAgendaServicio(items);
@@ -1057,6 +1410,84 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const actualizarColaMedico = async (item, cambios = {}) => {
+    const esAgenda = esRecordatorioAgendaServicio(item);
+    const consultaId = esAgenda ? Number(item?.consulta_id_ref || 0) : Number(item?.id || 0);
+    const cotizacionId = Number(item?.cotizacion_id || 0);
+    const medicoId = Number(item?.medico_id || 0);
+    const fecha = String(item?.fecha || "").slice(0, 10);
+    if (medicoId <= 0 || !fecha) {
+      setError("No se pudo actualizar cola: falta médico o fecha.");
+      return false;
+    }
+
+    const payload = {
+      action: "actualizar_cola_medico",
+      consulta_id: consultaId,
+      cotizacion_id: cotizacionId,
+      medico_id: medicoId,
+      fecha,
+      estado_cola: String(cambios?.estado_cola || item?.cola_estado || "pendiente"),
+      prioridad_cola: String(cambios?.prioridad_cola || item?.cola_prioridad || "normal"),
+      prioridad_detalle: String(cambios?.prioridad_detalle || item?.cola_prioridad_detalle || ""),
+      es_siguiente: Number(cambios?.es_siguiente ?? item?.cola_es_siguiente ?? 0) === 1 ? 1 : 0,
+    };
+
+    setSavingId(`cola-${String(item?._rowKey || item?.id || "")}`);
+    setMensaje("");
+    setError("");
+    try {
+      const res = await authFetch(`api_recordatorios_citas.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo actualizar cola médica");
+      }
+
+      const cola = data?.cola || {};
+      setItems((prev) => prev.map((row) => {
+        const rowEsAgenda = esRecordatorioAgendaServicio(row);
+        const rowConsultaId = rowEsAgenda ? Number(row?.consulta_id_ref || 0) : Number(row?.id || 0);
+        const rowCotId = Number(row?.cotizacion_id || 0);
+        const mismoRegistro = (consultaId > 0 && rowConsultaId === consultaId)
+          || (consultaId <= 0 && cotizacionId > 0 && rowCotId === cotizacionId);
+
+        const mismoMedicoFecha = Number(row?.medico_id || 0) === medicoId
+          && String(row?.fecha || "").slice(0, 10) === fecha;
+
+        if (!mismoRegistro && !(cola.es_siguiente === 1 && mismoMedicoFecha)) {
+          return row;
+        }
+
+        if (!mismoRegistro && cola.es_siguiente === 1 && mismoMedicoFecha) {
+          return { ...row, cola_es_siguiente: 0 };
+        }
+
+        return {
+          ...row,
+          cola_source_key: String(cola.source_key || ""),
+          cola_estado: String(cola.estado_cola || "pendiente"),
+          cola_correlativo: Number(cola.correlativo_cola || 0),
+          cola_es_siguiente: Number(cola.es_siguiente || 0),
+          cola_prioridad: String(cola.prioridad_cola || "normal"),
+          cola_prioridad_detalle: String(cola.prioridad_detalle || ""),
+          cola_updated_at: new Date().toISOString().slice(0, 19).replace("T", " "),
+        };
+      }));
+
+      setMensaje("Cola médica actualizada.");
+      return true;
+    } catch (err) {
+      setError(err?.message || "No se pudo actualizar cola médica");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const crearCotizacion = async (item) => {
     if (item.cotizacion_id) {
       navigate(`/cobrar-cotizacion/${item.cotizacion_id}`);
@@ -1202,6 +1633,209 @@ export default function RecordatoriosCitasPage() {
               </label>
             </div>
           </div>
+
+          <div className="mt-5 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-cyan-50 p-4">
+            <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-base font-bold text-indigo-900">Disponibilidad por medico y fecha</h2>
+                <p className="text-xs text-indigo-700">
+                  Vista rapida para recepcion: identifica horas ocupadas y libres para responder llamadas en segundos.
+                </p>
+              </div>
+              {agendaMedicoData && (
+                <div className="rounded-xl border border-indigo-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-indigo-800">
+                  Programadas: {Number(agendaMedicoData?.citas?.length || 0)} · Libres: {Number(agendaMedicoData?.horas_libres?.length || 0)}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-6">
+              <div className="lg:col-span-1">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">Buscar medico</label>
+                <input
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"
+                  value={busquedaMedicoDisponibilidad}
+                  onChange={(e) => setBusquedaMedicoDisponibilidad(e.target.value)}
+                  placeholder="Ej: perez"
+                />
+              </div>
+
+              <div className="lg:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">Medico</label>
+                <select
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"
+                  value={medicoDisponibilidadId}
+                  onChange={(e) => setMedicoDisponibilidadId(e.target.value)}
+                >
+                  <option value="">Seleccionar medico</option>
+                  {medicosDisponibilidadFiltrados.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {`${m.nombre || ""} ${m.apellido || ""}`.trim() || `Medico #${m.id}`}
+                      {m?.especialidad ? ` - ${m.especialidad}` : " - Sin especialidad"}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-1 text-[11px] text-indigo-700">
+                  {medicosDisponibilidadFiltrados.length} medico(s) encontrado(s)
+                </div>
+              </div>
+
+              <div className="lg:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">Fecha</label>
+                <input
+                  type="date"
+                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"
+                  value={fechaDisponibilidad}
+                  onChange={(e) => setFechaDisponibilidad(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-end">
+                <div className="grid w-full grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={cargarAgendaPorMedico}
+                    disabled={agendaMedicoLoading}
+                    className="w-full rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {agendaMedicoLoading ? "Consultando..." : "Consultar"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={copiarMensajeDisponibilidadRapida}
+                    disabled={!agendaMedicoData || agendaMedicoLoading}
+                    className="w-full rounded-lg border border-indigo-300 bg-white px-4 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Copiar respuesta rapida
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {agendaMedicoError && (
+              <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {agendaMedicoError}
+              </div>
+            )}
+
+            {agendaMedicoData && !agendaMedicoError && (
+              <div className="mt-4 space-y-3">
+                <div className="rounded-xl border border-indigo-200 bg-white/80 px-3 py-2 text-xs text-indigo-900">
+                  <span className="font-semibold">Medico:</span>{" "}
+                  {medicoDisponibilidadActual
+                    ? `${medicoDisponibilidadActual.nombre || ""} ${medicoDisponibilidadActual.apellido || ""}`.trim()
+                    : `#${agendaMedicoData.medico_id}`}
+                  {medicoDisponibilidadActual?.especialidad ? ` (${medicoDisponibilidadActual.especialidad})` : ""}
+                  <span className="mx-2 text-indigo-300">|</span>
+                  <span className="font-semibold">Fecha:</span> {formatFecha(agendaMedicoData.fecha)}
+                </div>
+
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
+                  {construirMensajeDisponibilidadRapida() || "Sin mensaje disponible."}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs">
+                  <span className="font-semibold text-amber-800">Filtro pago:</span>
+                  <button
+                    type="button"
+                    onClick={() => setFiltroPagoDisponibilidad("todos")}
+                    className={`rounded-full border px-2.5 py-1 font-semibold ${filtroPagoDisponibilidad === "todos" ? "border-amber-300 bg-white text-amber-800" : "border-amber-200 bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
+                  >
+                    Todos ({Array.isArray(agendaMedicoData?.citas) ? agendaMedicoData.citas.length : 0})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiltroPagoDisponibilidad("saldo_pendiente")}
+                    className={`rounded-full border px-2.5 py-1 font-semibold ${filtroPagoDisponibilidad === "saldo_pendiente" ? "border-rose-300 bg-white text-rose-700" : "border-rose-200 bg-rose-100 text-rose-700 hover:bg-rose-200"}`}
+                  >
+                    Solo saldo pendiente ({(Array.isArray(agendaMedicoData?.citas) ? agendaMedicoData.citas : []).filter((cita) => Number(cita?.saldo_pendiente || 0) > 0).length})
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">Horas libres</div>
+                    {Array.isArray(agendaMedicoData.horas_libres) && agendaMedicoData.horas_libres.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {agendaMedicoData.horas_libres.map((hora) => (
+                          <button
+                            key={`libre-${hora}`}
+                            type="button"
+                            onClick={() => irAAgendarConHora(horaHm(hora))}
+                            className="rounded-full border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                            title="Ir a agendar en esta hora"
+                          >
+                            {horaHm(hora)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-emerald-700">No hay horas libres para esta fecha.</div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-700">Horas ocupadas</div>
+                    {Array.isArray(agendaMedicoData.horas_ocupadas) && agendaMedicoData.horas_ocupadas.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {agendaMedicoData.horas_ocupadas.map((hora) => (
+                          <span
+                            key={`ocupada-${hora}`}
+                            className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700"
+                          >
+                            {horaHm(hora)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-rose-700">No hay horas ocupadas para esta fecha.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-indigo-200 bg-white">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-indigo-100 text-indigo-900">
+                      <tr>
+                        <th className="p-2 text-left">Hora</th>
+                        <th className="p-2 text-left">Paciente</th>
+                        <th className="p-2 text-left">Servicio</th>
+                        <th className="p-2 text-left">Origen</th>
+                        <th className="p-2 text-left">Estado</th>
+                        <th className="p-2 text-left">Pago</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {citasDisponibilidadFiltradas.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-3 text-center text-slate-500">
+                            {filtroPagoDisponibilidad === "saldo_pendiente"
+                              ? "No hay citas con saldo pendiente para este medico en la fecha seleccionada."
+                              : "Sin citas programadas para este medico en la fecha seleccionada."}
+                          </td>
+                        </tr>
+                      ) : (
+                        citasDisponibilidadFiltradas.map((cita) => (
+                          <tr key={`${cita.origen}-${cita.id}`} className="border-t border-indigo-50">
+                            <td className="p-2 font-semibold text-indigo-800">{horaHm(cita.hora)}</td>
+                            <td className="p-2 text-slate-700">{cita.paciente_nombre || "-"}</td>
+                            <td className="p-2 text-slate-700">{cita.detalle || cita.servicio || "-"}</td>
+                            <td className="p-2 text-slate-600">{cita.origen === "agenda_servicio" ? "Agenda" : "Consulta"}</td>
+                            <td className="p-2 text-slate-600">{cita.estado || "-"}</td>
+                            <td className="p-2">
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge(cita)}`}>
+                                {disponibilidadPagoLabel(cita)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {error && (
@@ -1344,11 +1978,19 @@ export default function RecordatoriosCitasPage() {
                   const detalleItemsFiltrados = filtroDetalleActivo === "todos"
                     ? detalleItems
                     : detalleItems.filter((det) => String(det?.tipo_label || "") === filtroDetalleActivo);
+                  const colaEstado = String(item?.cola_estado || "pendiente").toLowerCase();
+                  const colaCorrelativo = Number(item?.cola_correlativo || 0);
+                  const colaEsSiguiente = Number(item?.cola_es_siguiente || 0) === 1;
+                  const colaPrioridad = String(item?.cola_prioridad || "normal").toLowerCase();
+                  const colaSavingKey = `cola-${String(item?._rowKey || item?.id || "")}`;
+                  const referenciaOrigen = String(item?.origen_consulta || "") === "agenda_servicio"
+                    ? `Ref agenda #${Number(item?.id || 0)}`
+                    : `Ref consulta #${Number(item?.id || 0)}`;
                   return (
                     <Fragment key={item._rowKey}>
                       <tr id={`rc-row-${item._rowKey}`} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
                         <td className="p-3">
-                          <div className="font-semibold text-slate-800">#{item.id}</div>
+                          <div className="mt-1 text-[11px] text-slate-500">{referenciaOrigen}</div>
                           <div className="mt-1">
                             {esFaltaCancelar ? (
                               <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
@@ -1415,6 +2057,11 @@ export default function RecordatoriosCitasPage() {
                               {pagoServicioLabel(item)}
                             </span>
                           </div>
+                          <div className="mt-1">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${origenFinancieroBadge(item)}`}>
+                              {origenFinancieroLabel(item)}
+                            </span>
+                          </div>
                         </td>
                         <td className="p-3">
                           {cotizacionId > 0 ? (
@@ -1444,24 +2091,23 @@ export default function RecordatoriosCitasPage() {
                           <div className="mt-1 text-xs text-slate-500">
                             Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
                           </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaEstadoBadge(colaEstado)}`}>
+                              {colaCorrelativo > 0 ? `N-${colaCorrelativo} · ` : ""}{colaEstadoLabel(colaEstado)}
+                            </span>
+                            {colaEsSiguiente && (
+                              <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                                Siguiente
+                              </span>
+                            )}
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaPrioridadBadge(colaPrioridad)}`}>
+                              {colaPrioridadLabel(colaPrioridad)}
+                            </span>
+                          </div>
                           {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
                             <div className="mt-1">
                               <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
                                 Saldo: S/ {Number(item?.saldo_pendiente || 0).toFixed(2)}
-                              </span>
-                            </div>
-                          )}
-                          {puedeRegistrarCobro && (
-                            <div className="mt-1">
-                              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                                ⏳ Por cobrar
-                              </span>
-                            </div>
-                          )}
-                          {cotizacionPagada && (
-                            <div className="mt-1">
-                              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                                ✅ Cotizacion pagada
                               </span>
                             </div>
                           )}
@@ -1567,6 +2213,9 @@ export default function RecordatoriosCitasPage() {
                                         const params = new URLSearchParams({
                                           paciente_id: String(Number(item.paciente_id || 0)),
                                           consulta_id: String(Number(item.id || 0)),
+                                          medico_id: String(Number(item.medico_id || 0)),
+                                          fecha: String(item.fecha || "").slice(0, 10),
+                                          hora: String(item.hora || "").slice(0, 5),
                                           origen: "recordatorios",
                                           accion: "reprogramar",
                                           back_to: "/recordatorios-citas",
@@ -1580,6 +2229,67 @@ export default function RecordatoriosCitasPage() {
                                     </button>
                                   </>
                                 )}
+                              </>
+                            )}
+
+                            {!esFaltaCancelar && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { estado_cola: "en_sala" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                >
+                                  En sala
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { es_siguiente: 1, estado_cola: colaEstado === "pendiente" ? "llego" : colaEstado })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                >
+                                  Siguiente
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { estado_cola: "en_atencion", es_siguiente: 0 })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                >
+                                  En atención
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "adulto_mayor" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 hover:bg-orange-100"
+                                >
+                                  Adulto mayor
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "nino" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                                >
+                                  Niño
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "embarazada" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                >
+                                  Embarazada
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "normal", es_siguiente: 0, estado_cola: "pendiente" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                                >
+                                  Reset cola
+                                </button>
                               </>
                             )}
                           </div>

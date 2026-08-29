@@ -1,5 +1,5 @@
 // Orquesta la vista principal y conecta los componentes
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
 import { authFetch } from "../../utils/apiClient";
@@ -73,6 +73,67 @@ function PacienteList() {
   const [editData, setEditData] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  const contextoAgendarDesdeDisponibilidad = useMemo(() => {
+    const medicoId = Number(searchParams.get("agendar_medico_id") || 0);
+    const fecha = String(searchParams.get("agendar_fecha") || "").trim();
+    const hora = String(searchParams.get("agendar_hora") || "").trim();
+    const origen = String(searchParams.get("agendar_origen") || "").trim();
+    const backTo = String(searchParams.get("back_to") || "/recordatorios-citas").trim();
+    const medicoNombre = String(searchParams.get("agendar_medico_nombre") || "").trim();
+    const medicoEspecialidad = String(searchParams.get("agendar_medico_especialidad") || "").trim();
+
+    const activo = medicoId > 0
+      && /^\d{4}-\d{2}-\d{2}$/.test(fecha)
+      && /^\d{2}:\d{2}$/.test(hora);
+
+    return {
+      activo,
+      medicoId,
+      fecha,
+      hora,
+      origen: origen || "recordatorios_disponibilidad",
+      backTo: backTo.startsWith("/") ? backTo : "/recordatorios-citas",
+      medicoNombre,
+      medicoEspecialidad,
+    };
+  }, [searchParams]);
+
+  const manejarCotizarPaciente = useCallback((paciente) => {
+    const pacienteId = Number(paciente?.id || 0);
+    if (pacienteId <= 0) return;
+
+    if (contextoAgendarDesdeDisponibilidad.activo) {
+      const params = new URLSearchParams({
+        paciente_id: String(pacienteId),
+        medico_id: String(contextoAgendarDesdeDisponibilidad.medicoId),
+        fecha: contextoAgendarDesdeDisponibilidad.fecha,
+        hora: contextoAgendarDesdeDisponibilidad.hora,
+        origen: contextoAgendarDesdeDisponibilidad.origen,
+        back_to: contextoAgendarDesdeDisponibilidad.backTo,
+      });
+      navigate(`/agendar-consulta?${params.toString()}`);
+      return;
+    }
+
+    navigate(`/seleccionar-servicio?paciente_id=${pacienteId}`);
+  }, [contextoAgendarDesdeDisponibilidad, navigate]);
+
+  const cancelarContextoAgendarDisponibilidad = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      [
+        "agendar_medico_id",
+        "agendar_fecha",
+        "agendar_hora",
+        "agendar_origen",
+        "agendar_medico_nombre",
+        "agendar_medico_especialidad",
+        "back_to",
+      ].forEach((key) => next.delete(key));
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   // Abrir modal con DNI pre-llenado si viene desde CotizadorRapido
   useEffect(() => {
@@ -198,6 +259,33 @@ function PacienteList() {
   return (
     <div className="p-4 bg-white rounded shadow">
       <PacienteListHeader onAgregar={handleAgregar} totalRows={totalRows} />
+      {contextoAgendarDesdeDisponibilidad.activo && (
+        <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <span className="font-semibold">Selecciona un paciente para agendar:</span>{" "}
+              {contextoAgendarDesdeDisponibilidad.medicoNombre || `Medico #${contextoAgendarDesdeDisponibilidad.medicoId}`}
+              {contextoAgendarDesdeDisponibilidad.medicoEspecialidad ? ` (${contextoAgendarDesdeDisponibilidad.medicoEspecialidad})` : ""}
+              {" · "}
+              {contextoAgendarDesdeDisponibilidad.fecha} {contextoAgendarDesdeDisponibilidad.hora}
+            </div>
+            <button
+              type="button"
+              onClick={cancelarContextoAgendarDisponibilidad}
+              className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+            >
+              Cancelar contexto
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(contextoAgendarDesdeDisponibilidad.backTo || "/recordatorios-citas")}
+              className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+            >
+              Volver a Recordatorios
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row gap-2 mb-4 w-full">
         <button
           onClick={handleExportarExcel}
@@ -248,6 +336,8 @@ function PacienteList() {
             onEliminar={handleEliminar}
             onDescargarCaratula={handleDescargarCaratula}
             onNavigate={navigate}
+            onCotizarPaciente={manejarCotizarPaciente}
+            cotizarLabel={contextoAgendarDesdeDisponibilidad.activo ? "Agendar" : "Cotizar"}
             sortBy={sortBy}
             sortDir={sortDir}
             handleSort={handleSort}
@@ -261,6 +351,8 @@ function PacienteList() {
             onEliminar={handleEliminar}
             onDescargarCaratula={handleDescargarCaratula}
             onNavigate={navigate}
+            onCotizarPaciente={manejarCotizarPaciente}
+            cotizarLabel={contextoAgendarDesdeDisponibilidad.activo ? "Agendar" : "Cotizar"}
             page={page}
             setPage={setPage}
             totalPages={totalPages}

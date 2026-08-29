@@ -1,5 +1,6 @@
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
 import { BASE_URL } from "../../config/config.js";
+import { resolverEdadDisplayClinica } from "../../utils/edadClinica";
 
 const ImpresionAnalisisLaboratorio = ({ 
   paciente, 
@@ -11,6 +12,8 @@ const ImpresionAnalisisLaboratorio = ({
   const firmaSolicitante = firmaMedico || medicoInfo?.firma || null;
   const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
   const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
+  const edadPaciente = resolverEdadDisplayClinica(paciente);
+  const edadPacienteTexto = edadPaciente === "No registrada" ? "-" : edadPaciente;
 
   // Resolver logo con base URL del servidor PHP (lab logo prioritario)
   const resolveLogoUrl = (rawValue) => {
@@ -110,7 +113,7 @@ const ImpresionAnalisisLaboratorio = ({
           <p className="text-black"><strong>Paciente:</strong> {nombrePaciente} {apellidoPaciente}</p>
           <div className="grid grid-cols-3 gap-2">
             <p className="text-black"><strong>DNI:</strong> {paciente?.dni}</p>
-            <p className="text-black"><strong>Edad:</strong> {paciente?.edad} años</p>
+            <p className="text-black"><strong>Edad:</strong> {edadPacienteTexto}</p>
             <p className="text-black"><strong>Sexo:</strong> {paciente?.sexo}</p>
           </div>
         </div>

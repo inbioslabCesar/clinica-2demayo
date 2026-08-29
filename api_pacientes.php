@@ -195,6 +195,115 @@ function obtener_paciente_por_id($conn, int $id): ?array {
     return $row;
 }
 
+function pacientes_parse_date_safe($value): ?DateTime {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+        return $dt instanceof DateTime ? $dt : null;
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    $dt = new DateTime();
+    $dt->setTimestamp($ts);
+    return $dt;
+}
+
+function pacientes_normalizar_unidad_edad($unidad): string {
+    $u = strtolower(trim((string)$unidad));
+    if ($u === '') return 'anios';
+
+    if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    return 'anios';
+}
+
+function pacientes_set_edad_row(array &$row): void {
+    $hoy = new DateTime('today');
+    $fechaNac = pacientes_parse_date_safe($row['fecha_nacimiento'] ?? null);
+
+    if ($fechaNac instanceof DateTime) {
+        $fechaNac->setTime(0, 0, 0);
+        $diff = $fechaNac->diff($hoy);
+        $dias = (int)$diff->days;
+        $meses = max(0, ((int)$diff->y * 12) + (int)$diff->m);
+        $anios = max(0, (int)$diff->y);
+
+        if ($dias <= 28) {
+            $row['edad'] = $dias;
+            $row['edad_unidad'] = 'dias';
+        } elseif ($meses < 12) {
+            $row['edad'] = $meses;
+            $row['edad_unidad'] = 'meses';
+        } else {
+            $row['edad'] = $anios;
+            $row['edad_unidad'] = 'años';
+        }
+
+        $row['edad_es_estimada'] = 0;
+        $row['edad_fuente'] = 'fecha_nacimiento';
+        $row['edad_referencia_fecha'] = $hoy->format('Y-m-d');
+        return;
+    }
+
+    $edadBase = isset($row['edad']) && $row['edad'] !== '' ? (int)$row['edad'] : null;
+    if ($edadBase === null || $edadBase < 0) {
+        $row['edad'] = null;
+        $row['edad_unidad'] = $row['edad_unidad'] ?? null;
+        $row['edad_es_estimada'] = 0;
+        $row['edad_fuente'] = 'sin_datos';
+        $row['edad_referencia_fecha'] = null;
+        return;
+    }
+
+    $unidadBase = pacientes_normalizar_unidad_edad($row['edad_unidad'] ?? 'anios');
+    $fechaRef = pacientes_parse_date_safe($row['creado_en'] ?? null);
+    if (!$fechaRef instanceof DateTime) {
+        $row['edad'] = $edadBase;
+        $row['edad_unidad'] = $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias');
+        $row['edad_es_estimada'] = 1;
+        $row['edad_fuente'] = 'edad_base_sin_fecha_ref';
+        $row['edad_referencia_fecha'] = null;
+        return;
+    }
+
+    $fechaRef->setTime(0, 0, 0);
+    $diffRef = $fechaRef->diff($hoy);
+    $aniosTrans = max(0, (int)$diffRef->y);
+    $mesesTrans = max(0, ((int)$diffRef->y * 12) + (int)$diffRef->m);
+    $diasTrans = max(0, (int)$diffRef->days);
+
+    if ($unidadBase === 'dias') {
+        $totalDias = $edadBase + $diasTrans;
+        if ($totalDias <= 28) {
+            $row['edad'] = $totalDias;
+            $row['edad_unidad'] = 'dias';
+        } else {
+            $row['edad'] = (int)floor($totalDias / 30);
+            $row['edad_unidad'] = 'meses';
+        }
+    } elseif ($unidadBase === 'meses') {
+        $totalMeses = $edadBase + $mesesTrans;
+        if ($totalMeses < 12) {
+            $row['edad'] = $totalMeses;
+            $row['edad_unidad'] = 'meses';
+        } else {
+            $row['edad'] = (int)floor($totalMeses / 12);
+            $row['edad_unidad'] = 'años';
+        }
+    } else {
+        $row['edad'] = $edadBase + $aniosTrans;
+        $row['edad_unidad'] = 'años';
+    }
+
+    $row['edad_es_estimada'] = 1;
+    $row['edad_fuente'] = 'edad_base_progresiva';
+    $row['edad_referencia_fecha'] = $fechaRef->format('Y-m-d');
+}
+
 // Función para generar el próximo número de historia clínica
 function generarProximaHistoriaClinica($conn) {
     // Obtener el último número de HC de la base de datos
@@ -401,13 +510,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
     $row = obtener_paciente_por_id($conn, $id);
     if ($row) {
-        // Calcular edad si no está
-        if (empty($row['edad']) && !empty($row['fecha_nacimiento'])) {
-            $birth = new DateTime($row['fecha_nacimiento']);
-            $today = new DateTime();
-            $row['edad'] = $today->diff($birth)->y;
-            $row['edad_unidad'] = 'años';
-        }
+        pacientes_set_edad_row($row);
         echo json_encode(['success' => true, 'paciente' => $row]);
     } else {
         echo json_encode(['success' => false, 'error' => 'Paciente no encontrado']);
@@ -479,17 +582,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
     $pacientes = [];
     while ($row = $result->fetch_assoc()) {
-        // Si edad está en la BD, úsala; si no, calcula desde fecha_nacimiento
-        if (!empty($row['edad'])) {
-            // Ya viene de la BD
-        } else if (!empty($row['fecha_nacimiento'])) {
-            $birth = new DateTime($row['fecha_nacimiento']);
-            $today = new DateTime();
-            $row['edad'] = $today->diff($birth)->y;
-            $row['edad_unidad'] = 'años';
-        } else {
-            $row['edad'] = null;
-        }
+        pacientes_set_edad_row($row);
         $row['acompanantes'] = obtener_acompanantes_paciente($conn, (int)$row['id']);
         $pacientes[] = $row;
     }

@@ -45,6 +45,9 @@ const MedicoConsultasPage = lazy(() =>
 const MisInformesImagenologiaPage = lazy(() =>
   import("./pages/MisInformesImagenologiaPage.jsx")
 );
+const MisProcedimientosPage = lazy(() =>
+  import("./pages/MisProcedimientosPage.jsx")
+);
 const MedicosPage = lazy(() => import("./pages/MedicosPage.jsx"));
 const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
@@ -823,6 +826,17 @@ function App() {
                     }
                   />
                   <Route
+                    path="/mis-procedimientos"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <MisProcedimientosPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/panel-medico"
                     element={
                       <ProtectedRoute
@@ -1329,18 +1343,6 @@ function App() {
                     }
                   />
                   <Route
-                    path="/historia-clinica-lectura/:pacienteId/:consultaId"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["administrador", "recepcionista"]}
-                        permisosRequeridos={["ver_pacientes"]}
-                      >
-                        <HistoriaClinicaPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
                     path="/cotizaciones"
                     element={
                       <ProtectedRoute
@@ -1509,6 +1511,17 @@ function App() {
                     permisosRequeridos={["ver_panel_laboratorio"]}
                   >
                     <VisorImagenPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/historia-clinica-lectura/:pacienteId/:consultaId"
+                element={
+                  <ProtectedRoute
+                    usuario={usuario}
+                    rolesPermitidos={["administrador", "recepcionista"]}
+                  >
+                    <HistoriaClinicaPage />
                   </ProtectedRoute>
                 }
               />

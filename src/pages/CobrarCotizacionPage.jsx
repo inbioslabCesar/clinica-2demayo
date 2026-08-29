@@ -159,46 +159,6 @@ export default function CobrarCotizacionPage() {
     };
   }, [cotizacionIds]);
 
-  useEffect(() => {
-    if (loading) return;
-    if (cotizacionIds.length !== 1) return;
-
-    const baseId = Number(cotizacionIds[0] || 0);
-    if (baseId <= 0) return;
-
-    let cancelled = false;
-    const resolverGrupo = async () => {
-      try {
-        const res = await authFetch(
-          `api_cotizaciones.php?accion=sugerir_grupo_cobro&cotizacion_id=${baseId}&_t=${Date.now()}`,
-          { cache: "no-store" }
-        );
-        const data = await res.json();
-        if (cancelled || !data?.success || !Array.isArray(data.ids)) return;
-
-        const sugeridos = Array.from(
-          new Set(
-            data.ids
-              .map((value) => Number(value))
-              .filter((value) => Number.isFinite(value) && value > 0)
-          )
-        );
-
-        if (sugeridos.length <= 1) return;
-
-        const query = `?ids=${sugeridos.join(",")}`;
-        navigate(`/cobrar-cotizacion/${Number(sugeridos[0])}${query}`, { replace: true });
-      } catch {
-        // Si falla la sugerencia, mantener el flujo normal de cobro individual.
-      }
-    };
-
-    resolverGrupo();
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, cotizacionIds, navigate]);
-
   const cotizacionesActivas = useMemo(() => {
     if (selectedIds.size === 0) return cotizacionesSeleccionadas;
     return cotizacionesSeleccionadas.filter((c) => selectedIds.has(String(c.id)));
@@ -599,6 +559,23 @@ export default function CobrarCotizacionPage() {
       </button>
 
       <div className="rounded p-4 mb-4 text-sm border" style={themePrimarySoft}>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-700">Modo de cobro:</span>
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+              esCobroUnificado
+                ? "bg-indigo-100 text-indigo-800 border border-indigo-200"
+                : "bg-emerald-100 text-emerald-800 border border-emerald-200"
+            }`}
+          >
+            {esCobroUnificado ? "Cobro unificado" : "Cobro individual"}
+          </span>
+          <span className="text-xs text-gray-600">
+            {esCobroUnificado
+              ? `${cotizacionIds.length} atenciones incluidas en este ticket`
+              : "1 atención en este ticket"}
+          </span>
+        </div>
         <div><b>{esCobroUnificado ? "Atenciones" : "Atención"}:</b> {cotizacionIds.map((id) => `#${id}`).join(", ")}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
         <div><b>Saldo actual:</b> S/ {Number(saldoPendiente).toFixed(2)}</div>

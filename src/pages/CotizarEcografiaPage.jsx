@@ -4,6 +4,9 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor } from "../utils/medicoAccent";
+import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 export default function CotizarEcografiaPage() {
     const [busqueda, setBusqueda] = useState("");
@@ -16,6 +19,7 @@ export default function CotizarEcografiaPage() {
     const [seleccionados, setSeleccionados] = useState([]);
     const [cantidades, setCantidades] = useState({});
     const [programacionPorTarifa, setProgramacionPorTarifa] = useState({});
+    const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
     const [mensaje, setMensaje] = useState("");
     const [coverageByTarifa, setCoverageByTarifa] = useState({});
     const [coverageStatusByTarifa, setCoverageStatusByTarifa] = useState({});
@@ -87,6 +91,21 @@ export default function CotizarEcografiaPage() {
     fecha: getLimaDate(),
     hora: getHoraProgramadaDefault(),
   });
+
+  const getProgramacionSugeridaTarifa = (tarifaId, fechaPreferida = "") => {
+    const tarifa = tarifas.find((t) => Number(t.id) === Number(tarifaId));
+    const medicoId = Number(tarifa?.medico_id || 0);
+    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+    return {
+      fecha: fechaBase,
+      hora: String(sugerida?.hora || getHoraProgramadaDefault()).slice(0, 5),
+    };
+  };
 
   useEffect(() => {
     authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteId}`, {
@@ -478,9 +497,10 @@ export default function CotizarEcografiaPage() {
       seleccionados.forEach((id) => {
         const key = Number(id);
         const actual = prev[key];
+        const sugerida = getProgramacionSugeridaTarifa(key, actual?.fecha || "");
         next[key] = {
-          fecha: actual?.fecha || getLimaDate(),
-          hora: actual?.hora || getHoraProgramadaDefault(),
+          fecha: actual?.fecha || sugerida.fecha,
+          hora: actual?.hora || sugerida.hora,
         };
       });
       return next;
@@ -489,13 +509,47 @@ export default function CotizarEcografiaPage() {
 
   const actualizarProgramacion = (tarifaId, campo, valor) => {
     const key = Number(tarifaId);
+    const sugerida = getProgramacionSugeridaTarifa(key, "");
     setProgramacionPorTarifa((prev) => ({
       ...prev,
       [key]: {
-        ...(prev[key] || crearProgramacionDefault()),
+        ...(prev[key] || sugerida),
         [campo]: valor,
       },
     }));
+  };
+
+  const aplicarSiguienteHorarioSugeridoTarifa = (tarifaId) => {
+    const key = Number(tarifaId);
+    const fechaActual = String(programacionPorTarifa[key]?.fecha || getLimaDate()).slice(0, 10);
+    const horaActual = String(programacionPorTarifa[key]?.hora || "").slice(0, 5);
+    const sugerida = getProgramacionSugeridaTarifa(key, fechaActual);
+    const horaAplicada = getNextSuggestedHoraVisible({
+      horaActual,
+      horaSugerida: sugerida.hora,
+      stepMinutes: 30,
+    });
+    setProgramacionPorTarifa((prev) => ({
+      ...prev,
+      [key]: {
+        fecha: sugerida.fecha,
+        hora: horaAplicada || sugerida.hora,
+      },
+    }));
+
+    const horaFinal = String(horaAplicada || sugerida.hora || "").slice(0, 5);
+    setFeedbackProgramacion((prev) => ({
+      ...prev,
+      [key]: `Hora aplicada: ${horaFinal}`,
+    }));
+    window.setTimeout(() => {
+      setFeedbackProgramacion((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 1500);
   };
 
   const calcularTotal = () => {
@@ -519,6 +573,7 @@ export default function CotizarEcografiaPage() {
           medico_nombre = `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
         }
       }
+      const programacion = programacionPorTarifa[Number(tid)] || getProgramacionSugeridaTarifa(Number(tid));
       return tarifa ? {
         servicio_tipo: "ecografia",
         servicio_id: tid,
@@ -530,8 +585,8 @@ export default function CotizarEcografiaPage() {
         medico_nombre,
         especialidad: tarifa.especialidad || "",
         paciente_id: paciente?.id,
-        fecha_programada: programacionPorTarifa[Number(tid)]?.fecha || getLimaDate(),
-        hora_programada: programacionPorTarifa[Number(tid)]?.hora || getHoraProgramadaDefault(),
+        fecha_programada: programacion.fecha,
+        hora_programada: programacion.hora,
       } : null;
     }).filter(Boolean);
   };
@@ -587,6 +642,9 @@ export default function CotizarEcografiaPage() {
         quantity: Number(d.cantidad || 1),
         unitPrice: Number(d.precio_unitario || 0),
         source: 'ecografia',
+        medicoId: Number(d.medico_id || 0) || null,
+        fechaProgramada: String(d.fecha_programada || ""),
+        horaProgramada: String(d.hora_programada || ""),
       })),
     });
 
@@ -624,6 +682,26 @@ export default function CotizarEcografiaPage() {
     }
     // Construir detalles para cotización, incluyendo medico_id y especialidad
     const detalles = construirDetallesSeleccionados();
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora) => {
+        detalles.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(d?.hora_programada || "").slice(0, 5);
+          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+          }
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
 
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
@@ -851,12 +929,14 @@ export default function CotizarEcografiaPage() {
                 if (tarifa && tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
                   medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
                 }
+                const medicoNombre = medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "";
+                const medicoColor = getMedicoAccentColor(medicoNombre);
                 const precioMostrar = Number(getDisplayPrice(tarifa) || 0).toFixed(2);
                 return (
                   <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                      <div className="text-xs text-blue-700 mt-1">Doctor: {medico ? `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}` : "Sin doctor"}</div>
+                      <div className="text-xs mt-1" style={{ color: medicoColor }}>Doctor: {medicoNombre || "Sin doctor"}</div>
                       {coverageStatusByTarifa[Number(tarifa.id)] === 'pending' ? (
                         <div className="text-xs text-slate-500 mt-1">Verificando cobertura...</div>
                       ) : String(getCoberturaTarifa(tarifa.id)?.origen_cobro || '') === 'contrato' ? (
@@ -935,6 +1015,20 @@ export default function CotizarEcografiaPage() {
                           />
                         </label>
                       </div>
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => aplicarSiguienteHorarioSugeridoTarifa(tid)}
+                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                        >
+                          Usar siguiente hora sugerida
+                        </button>
+                      </div>
+                      {feedbackProgramacion[Number(tid)] && (
+                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
+                          {feedbackProgramacion[Number(tid)]}
+                        </div>
+                      )}
                     </li>
                   ) : null;
                 })}

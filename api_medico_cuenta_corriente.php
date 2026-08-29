@@ -213,6 +213,24 @@ if ($method === 'GET') {
     $pendienteActoPeriodo = floatval(($stmtPenPer->get_result()->fetch_assoc()['total'] ?? 0));
     $stmtPenPer->close();
 
+        $stmtPag = $conn->prepare("SELECT COALESCE(SUM(monto_medico), 0) AS total
+                                                             FROM honorarios_medicos_movimientos
+                                                             WHERE medico_id = ? AND LOWER(TRIM(COALESCE(estado_pago_medico, ''))) IN ('pagado', 'pagada')");
+        $stmtPag->bind_param('i', $medicoId);
+        $stmtPag->execute();
+        $pagadoActoTotal = floatval(($stmtPag->get_result()->fetch_assoc()['total'] ?? 0));
+        $stmtPag->close();
+
+        $stmtPagPer = $conn->prepare("SELECT COALESCE(SUM(monto_medico), 0) AS total
+                                                                    FROM honorarios_medicos_movimientos
+                                                                    WHERE medico_id = ?
+                                                                        AND LOWER(TRIM(COALESCE(estado_pago_medico, ''))) IN ('pagado', 'pagada')
+                                                                        AND fecha BETWEEN ? AND ?");
+        $stmtPagPer->bind_param('iss', $medicoId, $periodoInicio, $periodoFin);
+        $stmtPagPer->execute();
+        $pagadoActoPeriodo = floatval(($stmtPagPer->get_result()->fetch_assoc()['total'] ?? 0));
+        $stmtPagPer->close();
+
     // Pendiente total = devengado hora (si aplica) + honorarios por acto
     $pendienteTotal  = $esModalidadHora ? ($devengadoHoraTotal  + $pendienteActoTotal)  : $pendienteActoTotal;
     $pendientePeriodo= $esModalidadHora ? ($devengadoHoraPeriodo + $pendienteActoPeriodo): $pendienteActoPeriodo;
@@ -294,8 +312,12 @@ if ($method === 'GET') {
             // Honorarios por acto (siempre presente)
             'pendiente_honorarios_acto_total'   => round($pendienteActoTotal, 2),
             'pendiente_honorarios_acto_periodo' => round($pendienteActoPeriodo, 2),
+            'pagado_honorarios_acto_total'      => round($pagadoActoTotal, 2),
+            'pagado_honorarios_acto_periodo'    => round($pagadoActoPeriodo, 2),
             // Totales combinados
             'pendiente_honorarios_total'    => round($pendienteTotal, 2),
+            'pagado_honorarios_total'       => round($pagadoActoTotal, 2),
+            'pagado_honorarios_periodo'     => round($pagadoActoPeriodo, 2),
             'adelantos_activos_total'       => round($adelantosActivos, 2),
             'deuda_neta_total'              => $deudaNeta,
             'saldo_a_favor_clinica_total'   => $deudaNeta < 0 ? abs($deudaNeta) : 0,

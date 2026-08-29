@@ -1,5 +1,6 @@
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
 import { BASE_URL } from "../../config/config.js";
+import { resolverEdadDisplayClinica } from "../../utils/edadClinica";
 
 const ImpresionRecetaMedicamentos = ({ 
   paciente, 
@@ -11,6 +12,8 @@ const ImpresionRecetaMedicamentos = ({
 }) => {
   const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
   const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
+  const edadPaciente = resolverEdadDisplayClinica(paciente);
+  const edadPacienteTexto = edadPaciente === "No registrada" ? "-" : edadPaciente;
 
   // Resolver logo con base URL del servidor PHP
   const resolveLogoUrl = (rawValue) => {
@@ -139,7 +142,7 @@ const ImpresionRecetaMedicamentos = ({
             <div className="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[11px] leading-tight">
               <p className="col-span-3"><span className="font-semibold">Paciente:</span> {nombrePaciente} {apellidoPaciente}</p>
               <p><span className="font-semibold">DNI:</span> {paciente?.dni || "-"}</p>
-              <p><span className="font-semibold">Edad:</span> {paciente?.edad ? `${paciente.edad} años` : "-"}</p>
+              <p><span className="font-semibold">Edad:</span> {edadPacienteTexto}</p>
               <p><span className="font-semibold">Sexo:</span> {paciente?.sexo || "-"}</p>
             </div>
           </section>

@@ -12,6 +12,10 @@ import { BASE_URL } from "../config/config";
 
 const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
+const COTIZACIONES_LIMIT_STORAGE_KEY = "cotizaciones_rows_limit_v1";
+const MAX_HC_HYDRATION_PER_LOAD = 6;
+const MAX_IMAGEN_HYDRATION_PER_LOAD = 4;
+const HYDRATION_CONCURRENCY = 2;
 
 function buildBrandFromConfig(cfg = {}) {
   const rawLogo = String(cfg.logo_url || "").trim();
@@ -60,6 +64,26 @@ function normalizarServicioTipo(value) {
   return base;
 }
 
+function formatServicioCorrelativoLabel(tipoRaw) {
+  const tipo = normalizarServicioTipo(tipoRaw);
+  if (tipo === "consulta") return "Consulta";
+  if (tipo === "ecografia") return "Ecografia";
+  if (tipo === "rayosx") return "Rayos X";
+  if (tipo === "tomografia") return "Tomografia";
+  if (tipo === "procedimiento") return "Procedimiento";
+  if (tipo === "operacion") return "Operacion";
+  if (tipo === "hospitalizacion") return "Hospitalizacion";
+  if (tipo === "imagenologia" || tipo === "imagen") return "Imagenologia";
+  if (!tipo) return "Servicio";
+  return tipo.charAt(0).toUpperCase() + tipo.slice(1);
+}
+
+function formatServicioCorrelativoDetalle(value) {
+  const raw = String(value || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  return raw.length > 28 ? `${raw.slice(0, 28).trim()}...` : raw;
+}
+
 function formatDateInput(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -84,6 +108,40 @@ function formatMetodoPagoLabel(value) {
 function formatDateShort(value) {
   if (!value) return "sin-fecha";
   return String(value).replace(/[^0-9-]/g, "").slice(0, 10) || "sin-fecha";
+}
+
+function formatCorrelativoFechaAtencion(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const ymd = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    const [y, m, d] = ymd.split("-");
+    return `${d}/${m}/${y}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleDateString("es-PE");
+  }
+
+  return raw;
+}
+
+function formatHoraAtencion(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/^(\d{2}):(\d{2})/);
+  if (match) {
+    return `${match[1]}:${match[2]}`;
+  }
+
+  const parsed = new Date(`1970-01-01T${raw}`);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+
+  return raw;
 }
 
 function formatDateTime(value) {
@@ -117,12 +175,29 @@ async function mapInChunks(items, mapper, chunkSize = 500) {
   return out;
 }
 
+async function runWithConcurrency(items, worker, concurrency = 2) {
+  const source = Array.isArray(items) ? items : [];
+  const maxConcurrency = Math.max(1, Number(concurrency) || 1);
+  if (source.length === 0) return;
+
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(maxConcurrency, source.length) }, async () => {
+    while (cursor < source.length) {
+      const current = source[cursor++];
+      // eslint-disable-next-line no-await-in-loop
+      await worker(current);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
+    .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
 
@@ -162,11 +237,64 @@ function getVencimientoMeta(row) {
   };
 }
 
+function getUltimoPagoMeta(ultimoPagoAt) {
+  const raw = String(ultimoPagoAt || "").trim();
+  if (!raw) {
+    return {
+      label: "Sin pago",
+      className: "bg-slate-100 text-slate-700",
+      title: "Sin abonos registrados",
+    };
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return {
+      label: raw,
+      className: "bg-amber-100 text-amber-800",
+      title: "Pago registrado",
+    };
+  }
+
+  const hoy = formatDateInput(new Date());
+  const fechaPago = formatDateInput(parsed);
+  const esHoy = fechaPago === hoy;
+
+  return {
+    label: parsed.toLocaleString(),
+    className: esHoy ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800",
+    title: esHoy ? "Pagado hoy" : "Pagado en fecha distinta",
+  };
+}
+
 // Constantes de estilo fuera del componente — referencia estable, nunca se recrean
 const ACTION_BTN_BASE = "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-transform hover:scale-105";
 const THEME_GRADIENT = { backgroundImage: "linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)" };
 const THEME_PRIMARY_SOFT = { backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" };
 const THEME_OUTLINE = { color: "var(--color-primary-dark)", borderColor: "var(--color-primary-light)" };
+function stableHashString(value) {
+  const input = String(value || "");
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function getMedicoAccentColor(profesionalCabecera) {
+  const nombre = String(profesionalCabecera || "").trim().toLowerCase();
+  if (!nombre) return "#94a3b8";
+  const hue = stableHashString(nombre) % 360;
+  return `hsl(${hue} 72% 36%)`;
+}
+
+function getMedicoAccentSoftBg(profesionalCabecera) {
+  const nombre = String(profesionalCabecera || "").trim().toLowerCase();
+  if (!nombre) return "transparent";
+  const hue = stableHashString(nombre) % 360;
+  return `hsl(${hue} 88% 92%)`;
+}
 
 function badgeOrigen(value) {
   const v = String(value || "regular").toLowerCase();
@@ -207,6 +335,173 @@ function resolverAnulacionDesdeHC(row, servicios = []) {
   const detalle = consultaId > 0 ? `Consulta #${consultaId}` : "Solicitud clínica";
 
   return { activa: true, detalle };
+}
+
+function resolverSolicitudDesdeHC(row) {
+  const referencia = String(row?.referencia_origen || "").trim();
+  const observaciones = String(row?.observaciones || "").trim();
+  const referenciaLower = referencia.toLowerCase();
+  const observacionesLower = observaciones.toLowerCase();
+
+  const marcaReferencia =
+    referenciaLower.includes("hc consulta")
+    || referenciaLower.includes("desde hc")
+    || referenciaLower.includes("historia clinica")
+    || referenciaLower.includes("historia clínica");
+
+  const marcaObservacion =
+    observacionesLower.includes("desde consulta #")
+    || observacionesLower.includes("procedimientos desde consulta #")
+    || observacionesLower.includes("solicitud hc");
+
+  const consultaOrigenConfiable = extraerConsultaOrigenIdConfiable(row);
+  const servicios = parseServiciosTipos(row?.servicios_tipos || "");
+  const esConsultaPura = servicios.length === 1 && servicios.includes("consulta");
+  const marcaVinculoConfiableNoConsulta = consultaOrigenConfiable > 0 && !esConsultaPura;
+
+  if (!marcaReferencia && !marcaObservacion && !marcaVinculoConfiableNoConsulta) {
+    return { activa: false, detalle: "" };
+  }
+
+  const baseTexto = `${referencia} ${observaciones}`.trim();
+  const match = baseTexto.match(/consulta\s*#\s*(\d+)/i);
+  const consultaId = match?.[1] ? Number(match[1]) : consultaOrigenConfiable;
+  const detalle = consultaId > 0 ? `Consulta #${consultaId}` : "Solicitud clínica";
+
+  return { activa: true, detalle };
+}
+
+function extraerConsultaOrigenId(row) {
+  const directo = Number(row?.consulta_ref_id || 0);
+  if (directo > 0) return directo;
+
+  const referencia = String(row?.referencia_origen || "").trim();
+  const observaciones = String(row?.observaciones || "").trim();
+  const baseTexto = `${referencia} ${observaciones}`.trim();
+  const match = baseTexto.match(/consulta\s*#\s*(\d+)/i);
+  return match?.[1] ? Number(match[1]) : 0;
+}
+
+function extraerConsultaOrigenIdExplicita(row) {
+  const referencia = String(row?.referencia_origen || "").trim();
+  const observaciones = String(row?.observaciones || "").trim();
+  const baseTexto = `${referencia} ${observaciones}`.trim();
+  const match = baseTexto.match(/consulta\s*#\s*(\d+)/i);
+  return match?.[1] ? Number(match[1]) : 0;
+}
+
+function extraerConsultaOrigenIdConfiable(row) {
+  const explicita = extraerConsultaOrigenIdExplicita(row);
+  if (explicita > 0) return explicita;
+
+  const consultaRefId = Number(row?.consulta_ref_id || 0);
+  if (consultaRefId <= 0) return 0;
+
+  // Solo confiar en consulta_ref_id cuando viene con metadata de consulta real
+  // (evita enlaces débiles inferidos por fallback de paciente).
+  const correlativo = Number(row?.consulta_ref_correlativo_dia_medico || 0);
+  const fechaRef = String(row?.consulta_ref_fecha || "").trim();
+  if (correlativo > 0 || /^\d{4}-\d{2}-\d{2}$/.test(fechaRef)) {
+    return consultaRefId;
+  }
+
+  return 0;
+}
+
+function parseCotizacionTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return Number.NaN;
+  const ts = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));
+  return Number.isNaN(ts) ? Number.NaN : ts;
+}
+
+function parseConsultaRefDayTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return Number.NaN;
+  const ymd = raw.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return Number.NaN;
+  const ts = Date.parse(`${ymd}T00:00:00`);
+  return Number.isNaN(ts) ? Number.NaN : ts;
+}
+
+function origenConsultaNoFuturo(row) {
+  const cotTs = parseCotizacionTimestamp(row?.fecha);
+  const consultaTs = parseConsultaRefDayTimestamp(row?.consulta_ref_fecha);
+  if (!Number.isFinite(cotTs) || !Number.isFinite(consultaTs)) return true;
+  return consultaTs <= cotTs;
+}
+
+function parseServiciosTipos(rawValue) {
+  return Array.from(new Set(
+    String(rawValue || "")
+      .split(",")
+      .map(normalizarServicioTipo)
+      .filter(Boolean)
+  ));
+}
+
+function construirRelacionPorCotizacion(rows) {
+  const lista = Array.isArray(rows) ? rows : [];
+  const grupos = new Map();
+  const solicitudesActivas = [];
+
+  lista.forEach((row) => {
+    const cotizacionId = Number(row?.id || 0);
+    const consultaOrigenId = extraerConsultaOrigenIdConfiable(row);
+    if (cotizacionId <= 0 || consultaOrigenId <= 0) return;
+    if (!origenConsultaNoFuturo(row)) return;
+
+    if (!grupos.has(consultaOrigenId)) {
+      grupos.set(consultaOrigenId, []);
+    }
+
+    const servicios = parseServiciosTipos(row?.servicios_tipos || "");
+    const fechaTs = parseCotizacionTimestamp(row?.fecha);
+    grupos.get(consultaOrigenId).push({
+      cotizacionId,
+      servicios,
+      fechaTs,
+    });
+
+    const solicitud = resolverSolicitudDesdeHC(row);
+    if (solicitud.activa) {
+      solicitudesActivas.push({ cotizacionId, consultaOrigenId });
+    }
+  });
+
+  const out = {};
+  const basePorConsulta = new Map();
+
+  grupos.forEach((items, consultaOrigenId) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const conConsulta = items.filter((item) => item.servicios.includes("consulta"));
+    const base = (conConsulta.length > 0 ? conConsulta : items)
+      .slice()
+      .sort((a, b) => {
+        const aTs = Number.isFinite(a.fechaTs) ? a.fechaTs : Number.POSITIVE_INFINITY;
+        const bTs = Number.isFinite(b.fechaTs) ? b.fechaTs : Number.POSITIVE_INFINITY;
+        if (aTs !== bTs) return aTs - bTs;
+        return a.cotizacionId - b.cotizacionId;
+      })[0];
+
+    const baseCotizacionId = Number(base?.cotizacionId || 0);
+    if (baseCotizacionId <= 0) return;
+
+    basePorConsulta.set(consultaOrigenId, baseCotizacionId);
+  });
+
+  solicitudesActivas.forEach(({ cotizacionId, consultaOrigenId }) => {
+    const baseCotizacionId = Number(basePorConsulta.get(consultaOrigenId) || 0);
+    if (cotizacionId <= 0 || baseCotizacionId <= 0) return;
+    out[cotizacionId] = {
+      consultaOrigenId,
+      baseCotizacionId,
+      tipo: cotizacionId === baseCotizacionId ? "base" : "derivada",
+    };
+  });
+
+  return out;
 }
 
 function normalizarMetodoPagoResumen(value) {
@@ -257,22 +552,57 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
   const estadoRow = String(row.estado || "").toLowerCase();
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
   const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
   const esParticular = Number(row.paciente_id || 0) <= 0;
-  const profesionalCabecera = String(row.profesional_cabecera || "").trim();
-  const profesionalesCount = Number(row.profesionales_count || (profesionalCabecera ? 1 : 0));
+  const profesionalCabeceraRaw = String(row.profesional_cabecera || "").trim();
+  const responsableClinico = String(row.responsable_clinico || profesionalCabeceraRaw || "").trim();
+  const responsableLaboratorio = String(row.responsable_laboratorio || "").trim();
+  const responsableFarmaciaArea = String(row.responsable_farmacia_area || "").trim();
+  const profesionalesCount = Number(row.profesionales_count || (responsableClinico ? 1 : 0));
   const profesionalesExtra = Math.max(0, profesionalesCount - 1);
+  const medicoAccentColor = useMemo(() => getMedicoAccentColor(responsableClinico), [responsableClinico]);
+  const medicoAccentSoftBg = useMemo(() => getMedicoAccentSoftBg(responsableClinico), [responsableClinico]);
+  const usuarioCotizoNombre = String(row.usuario_nombre || "-").trim() || "-";
+  const usuarioCotizoRol = String(row.usuario_rol || row.rol_responsable || "").toLowerCase();
+  const usuarioCotizoEsMedico = usuarioCotizoRol.includes("medico");
+  const ultimoPagoMeta = useMemo(() => getUltimoPagoMeta(row.ultimo_pago_at), [row.ultimo_pago_at]);
+  const correlativosServiciosList = useMemo(() => {
+    if (!Array.isArray(correlativosServicios)) return [];
+    return correlativosServicios
+      .map((item) => ({
+        servicio_tipo: normalizarServicioTipo(item?.servicio_tipo || ""),
+        servicio_descripcion: formatServicioCorrelativoDetalle(item?.servicio_descripcion || ""),
+        correlativo: Number(item?.correlativo || 0),
+        fecha_atencion: String(item?.fecha_atencion || "").trim(),
+        hora_atencion: String(item?.hora_atencion || "").trim(),
+        unidad_token: String(item?.unidad_token || "").trim(),
+      }))
+      .filter((item) => item.servicio_tipo && item.correlativo > 0)
+      .sort((a, b) => a.correlativo - b.correlativo);
+  }, [correlativosServicios]);
 
-  const servicios = useMemo(() => Array.from(new Set(
-    String(row.servicios_tipos || "")
-      .split(",")
-      .map(normalizarServicioTipo)
-      .filter(Boolean)
-  )), [row.servicios_tipos]);
+  const citaProgramadaTexto = useMemo(() => {
+    const consultaProgramada = correlativosServiciosList.find((item) => (
+      item.servicio_tipo === "consulta" && String(item.fecha_atencion || "").trim() !== ""
+    ));
+
+    const primerEvento = consultaProgramada || correlativosServiciosList.find((item) => (
+      String(item.fecha_atencion || "").trim() !== ""
+    ));
+
+    const fechaBase = String(primerEvento?.fecha_atencion || correlativoFechaAtencion || "").trim();
+    if (!fechaBase) return "";
+
+    const fechaTxt = formatCorrelativoFechaAtencion(fechaBase);
+    const horaTxt = formatHoraAtencion(primerEvento?.hora_atencion || "");
+    return horaTxt ? `Cita: ${fechaTxt} ${horaTxt}` : `Cita: ${fechaTxt}`;
+  }, [correlativosServiciosList, correlativoFechaAtencion]);
+
+  const servicios = useMemo(() => parseServiciosTipos(row.servicios_tipos || ""), [row.servicios_tipos]);
 
   const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
   const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
@@ -287,14 +617,18 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const pagoBadge = useMemo(() => badgeMetodoPago(row), [row]);
   const contratosIds = String(row.contratos_ids_resumen || "").trim();
   const anulacionDesdeHC = useMemo(() => resolverAnulacionDesdeHC(row, servicios), [row, servicios]);
+  const solicitudDesdeHC = useMemo(() => resolverSolicitudDesdeHC(row), [row]);
   const anticipadoActivo = Number(anticipadoInfo?.habilitacion_anticipada_activa || 0) === 1;
   const anticipadoEstado = String(anticipadoInfo?.estado_resumen || '').toLowerCase();
   const anticipadoMotivo = String(anticipadoInfo?.motivo || '').trim();
-  const tieneVinculoClinicoExplicito = Number(anticipadoInfo?.consulta_id || 0) > 0;
-  const puedeGestionarAnticipado = canAutorizarAnticipado && tieneVinculoClinicoExplicito;
+  const tieneVinculoOperativoExplicito = Number(anticipadoInfo?.vinculo_anticipado_valido || 0) === 1;
+  const puedeGestionarAnticipado = canAutorizarAnticipado && tieneVinculoOperativoExplicito;
 
   // Handler HC separado con useCallback para evitar función anónima nueva en cada render
-  const handleVerHC = useCallback(async () => {
+  const handleVerHC = useCallback(async (event) => {
+    if (event?.preventDefault) event.preventDefault();
+    if (event?.stopPropagation) event.stopPropagation();
+
     let consultaId = Number(row.consulta_ref_id || 0);
     if (consultaId <= 0) {
       try {
@@ -339,7 +673,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   }, [row.id, row.paciente_id, row.consulta_ref_id, onNavigate]);
 
   return (
-    <tr className="border-t align-top">
+    <tr
+      className="border-t align-top"
+      style={responsableClinico ? { borderLeft: `3px solid ${medicoAccentColor}` } : undefined}
+    >
       <td className="px-3 py-2 font-semibold">
         <div>#{row.id}</div>
         {numeroComprobante && (
@@ -347,6 +684,14 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         )}
       </td>
       <td className="px-3 py-2 whitespace-nowrap">{row.fecha}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        <span
+          className={`inline-flex items-center rounded px-2 py-1 text-xs font-semibold ${ultimoPagoMeta.className}`}
+          title={ultimoPagoMeta.title}
+        >
+          {ultimoPagoMeta.label}
+        </span>
+      </td>
       <td className="px-3 py-2">
         <div className="flex items-center gap-2 flex-wrap">
           <div className="font-medium">{row.nombre} {row.apellido}</div>
@@ -358,27 +703,74 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         </div>
         <div className="text-xs text-gray-500">DNI: {row.dni || "-"} | HC: {row.historia_clinica || "-"}</div>
       </td>
-      <td className="px-3 py-2">{row.usuario_nombre || "-"}</td>
       <td className="px-3 py-2">
-        {profesionalCabecera ? (
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-slate-800">{profesionalCabecera}</span>
-            {profesionalesExtra > 0 && (
+        <span
+          className={usuarioCotizoEsMedico ? "font-semibold" : undefined}
+          style={usuarioCotizoEsMedico ? { color: medicoAccentColor } : undefined}
+        >
+          {usuarioCotizoNombre}
+        </span>
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex flex-col items-start gap-1">
+          {responsableClinico ? (
+            <div className="inline-flex flex-wrap items-center gap-1 px-2 py-0.5 rounded-md" style={{ backgroundColor: medicoAccentSoftBg }}>
               <span
-                className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-700"
-                title={`Esta atención incluye ${profesionalesCount} profesionales clínicos`}
-              >
-                +{profesionalesExtra}
+                className="inline-block w-2.5 h-2.5 rounded-full"
+                style={{ backgroundColor: medicoAccentColor }}
+                title={`Color asignado a ${responsableClinico}`}
+              />
+              <span className="font-semibold" style={{ color: medicoAccentColor }}>
+                Clínico: {responsableClinico}
               </span>
-            )}
+              {profesionalesExtra > 0 && (
+                <span
+                  className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-700"
+                  title={`Esta atención incluye ${profesionalesCount} profesionales clínicos`}
+                >
+                  +{profesionalesExtra}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs text-gray-500">Responsable: -</span>
+          )}
+
+          {responsableLaboratorio && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800">
+              Lab: {responsableLaboratorio}
+            </span>
+          )}
+
+          {responsableFarmaciaArea && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+              Farmacia: {responsableFarmaciaArea}
+            </span>
+          )}
           </div>
-        ) : (
-          <span className="text-gray-400">-</span>
-        )}
       </td>
       <td className="px-3 py-2 text-xs text-slate-600">
         <div className="flex flex-col gap-1 items-start">
           <span>{String(row.referencia_origen || "").trim() || "-"}</span>
+          {relacionSolicitud?.baseCotizacionId > 0 && (
+            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${relacionSolicitud.tipo === 'base' ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'}`}>
+              {relacionSolicitud.tipo === 'base'
+                ? `Base #${Number(relacionSolicitud.baseCotizacionId)}`
+                : `Derivada de #${Number(relacionSolicitud.baseCotizacionId)}`}
+            </span>
+          )}
+          {solicitudDesdeHC.activa && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-cyan-100 text-cyan-800">
+              Solicitud HC{relacionSolicitud?.baseCotizacionId > 0 && relacionSolicitud.tipo === 'derivada'
+                ? ` · Derivada de #${Number(relacionSolicitud.baseCotizacionId)}`
+                : ''}
+            </span>
+          )}
+          {citaProgramadaTexto && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800">
+              {citaProgramadaTexto}
+            </span>
+          )}
           {anulacionDesdeHC.activa && (
             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-700">
               Anulada desde HC · {anulacionDesdeHC.detalle}
@@ -451,12 +843,12 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               Anticipado regularizado
             </span>
           )}
-          {!tieneVinculoClinicoExplicito && (estadoRow === 'pendiente' || estadoRow === 'parcial') && (
+          {!tieneVinculoOperativoExplicito && (estadoRow === 'pendiente' || estadoRow === 'parcial') && (
             <span
               className="px-2 py-1 rounded text-xs font-semibold bg-slate-100 text-slate-600"
-              title="Esta cotización no tiene consulta_id explícito en su detalle, por eso no aplica habilitación anticipada"
+              title="Esta cotización no tiene vínculo operativo médico explícito, por eso no aplica habilitación anticipada"
             >
-              Sin vínculo clínico
+              Sin vínculo operativo
             </span>
           )}
           <span
@@ -544,12 +936,12 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               className={`${ACTION_BTN_BASE} ${!puedeGestionarAnticipado ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-60' : (anticipadoActivo ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200' : 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200')}`}
               title={
                 !puedeGestionarAnticipado
-                  ? 'Sin vínculo clínico explícito: no se puede habilitar anticipado'
+                  ? 'Sin vínculo operativo explícito: no se puede habilitar anticipado'
                   : (anticipadoActivo ? 'Revocar habilitación anticipada' : 'Habilitar atención anticipada')
               }
               aria-label={
                 !puedeGestionarAnticipado
-                  ? 'Sin vínculo clínico explícito'
+                  ? 'Sin vínculo operativo explícito'
                   : (anticipadoActivo ? 'Revocar habilitación anticipada' : 'Habilitar atención anticipada')
               }
             >
@@ -617,12 +1009,26 @@ export default function CotizacionesPage() {
   const autoAnularRef = useRef(false);
   const abortRef = useRef(null);
   const anticipadoFetchIdRef = useRef(0);
+  const consultaCorrelativoCacheRef = useRef(new Map());
+  const consultaCorrelativoFechaCacheRef = useRef(new Map());
+  const imagenCorrelativoCacheRef = useRef(new Map());
+  const imagenCorrelativoFechaCacheRef = useRef(new Map());
+  const imagenCorrelativoDetalleCacheRef = useRef(new Map());
+
+  const initialLimit = (() => {
+    try {
+      const stored = Number(window.localStorage.getItem(COTIZACIONES_LIMIT_STORAGE_KEY) || 10);
+      return [10, 20, 50].includes(stored) ? stored : 10;
+    } catch {
+      return 10;
+    }
+  })();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(initialLimit);
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
     logo: "",
@@ -640,6 +1046,7 @@ export default function CotizacionesPage() {
   const [estadoInput, setEstadoInput] = useState("");
   const [fechaInicioInput, setFechaInicioInput] = useState("");
   const [fechaFinInput, setFechaFinInput] = useState("");
+  const [filtroSolicitudHC, setFiltroSolicitudHC] = useState("todas");
   const [rolReporte, setRolReporte] = useState("todos");
   const [usuarioReporte, setUsuarioReporte] = useState("");
   const [usuariosCatalogo, setUsuariosCatalogo] = useState([]);
@@ -650,8 +1057,15 @@ export default function CotizacionesPage() {
     fechaInicio: "",
     fechaFin: "",
   });
+  
   const [anticipadoByCotizacion, setAnticipadoByCotizacion] = useState({});
   const [canAutorizarAnticipado, setCanAutorizarAnticipado] = useState(false);
+  const [correlativoByConsultaId, setCorrelativoByConsultaId] = useState({});
+  const [correlativoImagenByCotizacionId, setCorrelativoImagenByCotizacionId] = useState({});
+  const [correlativosImagenDetalleByCotizacionId, setCorrelativosImagenDetalleByCotizacionId] = useState({});
+  const [correlativoFechaByConsultaId, setCorrelativoFechaByConsultaId] = useState({});
+  const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
+
 
   const cargarEstadosAnticipados = useCallback(async (rowsInput) => {
     const fetchId = ++anticipadoFetchIdRef.current;
@@ -813,6 +1227,8 @@ export default function CotizacionesPage() {
     navigate(`/cobrar-cotizacion/${targetId}${query}`);
   }, [navigate]);
 
+
+
   useEffect(() => {
     cargar();
     return () => {
@@ -820,6 +1236,90 @@ export default function CotizacionesPage() {
       abortRef.current = null;
     };
   }, [cargar]);
+
+  useEffect(() => {
+    const out = {};
+    const outFecha = {};
+
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const consultaId = Number(row?.consulta_ref_id || 0);
+      if (consultaId <= 0) return;
+
+      const correlativoDirecto = Number(row?.consulta_ref_correlativo_dia_medico || 0);
+      const fechaDirecta = String(row?.consulta_ref_fecha || "").trim();
+      if (correlativoDirecto > 0) {
+        out[consultaId] = correlativoDirecto;
+        if (fechaDirecta) outFecha[consultaId] = fechaDirecta;
+        return;
+      }
+
+      const correlativosServiciosApi = Array.isArray(row?.correlativos_operativos_servicios)
+        ? row.correlativos_operativos_servicios
+        : [];
+      const itemConsulta = correlativosServiciosApi
+        .map((item) => ({
+          servicio_tipo: normalizarServicioTipo(item?.servicio_tipo || ""),
+          correlativo: Number(item?.correlativo || 0),
+          fecha_atencion: String(item?.fecha_atencion || "").trim(),
+        }))
+        .filter((item) => item.servicio_tipo === "consulta" && item.correlativo > 0)
+        .sort((a, b) => a.correlativo - b.correlativo)[0];
+
+      if (itemConsulta) {
+        out[consultaId] = itemConsulta.correlativo;
+        if (itemConsulta.fecha_atencion) outFecha[consultaId] = itemConsulta.fecha_atencion;
+      }
+    });
+
+    setCorrelativoByConsultaId(out);
+    setCorrelativoFechaByConsultaId(outFecha);
+  }, [rows]);
+
+  useEffect(() => {
+    const out = {};
+    const outDetalle = {};
+    const outFecha = {};
+
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const cotizacionId = Number(row?.id || 0);
+      if (cotizacionId <= 0) return;
+
+      const correlativosServiciosApi = Array.isArray(row?.correlativos_operativos_servicios)
+        ? row.correlativos_operativos_servicios
+        : [];
+
+      const candidatos = correlativosServiciosApi
+        .map((item) => ({
+          servicio_tipo: normalizarServicioTipo(item?.servicio_tipo || ""),
+          correlativo: Number(item?.correlativo || 0),
+          fecha: String(item?.fecha_atencion || "").trim(),
+          hora: String(item?.hora_atencion || "").trim(),
+          id: Number(item?.agenda_id || item?.cotizacion_detalle_id || 0),
+          unidad_token: String(item?.unidad_token || "").trim(),
+        }))
+        .filter((item) => SERVICIOS_IMAGEN.has(item.servicio_tipo) && item.correlativo > 0)
+        .sort((a, b) => {
+          if (a.correlativo !== b.correlativo) return a.correlativo - b.correlativo;
+          const fa = (a.fecha || "").slice(0, 10);
+          const fb = (b.fecha || "").slice(0, 10);
+          if (fa !== fb) return fa.localeCompare(fb);
+          const ha = (a.hora || "").slice(0, 5);
+          const hb = (b.hora || "").slice(0, 5);
+          if (ha !== hb) return ha.localeCompare(hb);
+          return a.id - b.id;
+        });
+
+      if (candidatos.length > 0) {
+        out[cotizacionId] = candidatos[0].correlativo;
+        outFecha[cotizacionId] = candidatos[0].fecha;
+        outDetalle[cotizacionId] = candidatos;
+      }
+    });
+
+    setCorrelativoImagenByCotizacionId(out);
+    setCorrelativosImagenDetalleByCotizacionId(outDetalle);
+    setCorrelativoFechaImagenByCotizacionId(outFecha);
+  }, [rows]);
 
   useEffect(() => {
     let mounted = true;
@@ -869,7 +1369,22 @@ export default function CotizacionesPage() {
     };
   }, []);
 
+  const rowsVisibles = useMemo(() => {
+    const base = Array.isArray(rows) ? rows : [];
+    if (filtroSolicitudHC !== "solo_hc") return base;
+    return base.filter((row) => resolverSolicitudDesdeHC(row).activa);
+  }, [rows, filtroSolicitudHC]);
+
+  const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rows), [rows]);
+
   useEffect(() => {
+    if (rolReporte === "todos") {
+      return undefined;
+    }
+    if (Array.isArray(usuariosCatalogo) && usuariosCatalogo.length > 0) {
+      return undefined;
+    }
+
     let mounted = true;
 
     const cargarUsuarios = async () => {
@@ -890,7 +1405,7 @@ export default function CotizacionesPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [rolReporte, usuariosCatalogo]);
 
   const usuariosFiltradosReporte = useMemo(() => {
     const rol = String(rolReporte || "todos").toLowerCase();
@@ -963,6 +1478,7 @@ export default function CotizacionesPage() {
     setEstadoInput("");
     setFechaInicioInput("");
     setFechaFinInput("");
+    setFiltroSolicitudHC("todas");
     setPage(1);
     setFiltrosAplicados({
       q: "",
@@ -1375,7 +1891,7 @@ export default function CotizacionesPage() {
         return;
       }
 
-      win.document.write(`<!doctype html><html><head><meta charset=\"utf-8\"><title>Ticket Cotizacion</title>${ticketCss}</head><body>${ticketBody}</body></html>`);
+      win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ticket Cotizacion</title>${ticketCss}</head><body>${ticketBody}</body></html>`);
       win.document.close();
 
       const doPrint = () => {
@@ -1472,6 +1988,14 @@ export default function CotizacionesPage() {
     ejecutarAnulacion();
   }, [location.search, loading, rows, anularCotizacion, navigate]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COTIZACIONES_LIMIT_STORAGE_KEY, String(limit));
+    } catch {
+      // Si localStorage no está disponible, se mantiene en memoria.
+    }
+  }, [limit]);
+
   return (
     <div className="max-w-full mx-auto p-4 md:p-8">
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6">
@@ -1515,6 +2039,17 @@ export default function CotizacionesPage() {
             onChange={(e) => setFechaFinInput(e.target.value)}
             className="border rounded px-3 py-2"
           />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+          <select
+            value={filtroSolicitudHC}
+            onChange={(e) => setFiltroSolicitudHC(e.target.value)}
+            className="border rounded px-3 py-2"
+          >
+            <option value="todas">Solicitud: Todas</option>
+            <option value="solo_hc">Solicitud: Solo desde HC</option>
+          </select>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
@@ -1598,9 +2133,10 @@ export default function CotizacionesPage() {
               <tr>
                 <th className="px-3 py-2 text-left">ID</th>
                 <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Ultimo pago</th>
                 <th className="px-3 py-2 text-left">Paciente</th>
                 <th className="px-3 py-2 text-left">Quién cotizó</th>
-                <th className="px-3 py-2 text-left">Profesional cabecera</th>
+                <th className="px-3 py-2 text-left">Responsable</th>
                 <th className="px-3 py-2 text-left">Referencia origen</th>
                 <th className="px-3 py-2 text-left">Servicios</th>
                 <th className="px-3 py-2 text-left">Origen/Contrato</th>
@@ -1614,26 +2150,87 @@ export default function CotizacionesPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
+                  <td colSpan={14} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
-              ) : rows.length === 0 ? (
+              ) : rowsVisibles.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
+                  <td colSpan={14} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
-              ) : rows.map((row) => (
-                <CotizacionRow
-                  key={row.id}
-                  row={row}
-                  onCobrar={abrirCobro}
-                  onAnular={anularCotizacion}
-                  onNavigate={navigate}
-                  onPrintTicket={imprimirTicketDirecto}
-                  onToggleAnticipado={toggleAnticipado}
-                  badgeEstado={badgeEstado}
-                  labelEstado={labelEstado}
-                  anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
-                  canAutorizarAnticipado={canAutorizarAnticipado}
-                />
+              ) : rowsVisibles.map((row) => (
+                (() => {
+                  const serviciosRow = String(row?.servicios_tipos || "")
+                    .split(",")
+                    .map(normalizarServicioTipo)
+                    .filter(Boolean);
+                  const incluyeConsulta = serviciosRow.includes("consulta");
+                  const incluyeImagen = tieneServicioImagen(serviciosRow);
+                  const correlativoConsulta = correlativoByConsultaId[Number(row?.consulta_ref_id || 0)] || null;
+                  const correlativoImagen = correlativoImagenByCotizacionId[Number(row?.id || 0)] || null;
+                  const correlativosImagenDetalle = correlativosImagenDetalleByCotizacionId[Number(row?.id || 0)] || [];
+                  const correlativoFila = incluyeConsulta ? correlativoConsulta : (incluyeImagen ? correlativoImagen : null);
+                  const correlativoFechaAtencion = incluyeConsulta
+                    ? (correlativoFechaByConsultaId[Number(row?.consulta_ref_id || 0)] || "")
+                    : (incluyeImagen ? (correlativoFechaImagenByCotizacionId[Number(row?.id || 0)] || "") : "");
+                  const correlativoLabel = incluyeConsulta
+                    ? "Correlativo consulta"
+                    : (incluyeImagen ? "Correlativo imagen" : "Correlativo día");
+                  const detalleCorrelativo = (() => {
+                    if (!incluyeImagen || !Array.isArray(correlativosImagenDetalle) || correlativosImagenDetalle.length <= 1) {
+                      return "";
+                    }
+                    const extras = correlativosImagenDetalle.slice(1, 4).map((item) => `N° ${Number(item?.correlativo || 0)}`).filter((txt) => txt !== 'N° 0');
+                    const restantes = Math.max(0, correlativosImagenDetalle.length - 1 - extras.length);
+                    if (extras.length === 0) {
+                      return `+${Math.max(1, correlativosImagenDetalle.length - 1)} correlativos adicionales`;
+                    }
+                    return `Otros: ${extras.join(', ')}${restantes > 0 ? ` +${restantes}` : ''}`;
+                  })();
+                  const correlativosServiciosApi = Array.isArray(row?.correlativos_operativos_servicios)
+                    ? row.correlativos_operativos_servicios
+                    : [];
+                  const correlativosServicios = correlativosServiciosApi
+                    .map((item) => ({
+                      servicio_tipo: normalizarServicioTipo(item?.servicio_tipo || ""),
+                      servicio_descripcion: String(item?.servicio_descripcion || "").trim(),
+                      correlativo: Number(item?.correlativo || 0),
+                      fecha_atencion: String(item?.fecha_atencion || "").trim(),
+                      hora_atencion: String(item?.hora_atencion || "").trim(),
+                      unidad_token: String(item?.unidad_token || "").trim(),
+                    }))
+                    .filter((item) => item.servicio_tipo && item.correlativo > 0)
+                    .sort((a, b) => a.correlativo - b.correlativo);
+                  if (correlativosServicios.length === 0 && Number(correlativoFila || 0) > 0) {
+                    correlativosServicios.push({
+                      servicio_tipo: incluyeConsulta ? "consulta" : (incluyeImagen ? "imagenologia" : "servicio"),
+                      servicio_descripcion: "",
+                      correlativo: Number(correlativoFila || 0),
+                      fecha_atencion: String(correlativoFechaAtencion || "").trim(),
+                      hora_atencion: "",
+                      unidad_token: "",
+                    });
+                  }
+                  return (
+                  <CotizacionRow
+                    key={row.id}
+                    row={row}
+                    onCobrar={abrirCobro}
+                    onAnular={anularCotizacion}
+                    onNavigate={navigate}
+                    onPrintTicket={imprimirTicketDirecto}
+                    onToggleAnticipado={toggleAnticipado}
+                    badgeEstado={badgeEstado}
+                    labelEstado={labelEstado}
+                    anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
+                    canAutorizarAnticipado={canAutorizarAnticipado}
+                    correlativoDia={correlativoFila}
+                    correlativoLabel={correlativoLabel}
+                    correlativoFechaAtencion={correlativoFechaAtencion}
+                    correlativoDetalleTexto={detalleCorrelativo}
+                    correlativosServicios={correlativosServicios}
+                    relacionSolicitud={relacionSolicitudByCotizacion[Number(row?.id || 0)] || null}
+                  />
+                  );
+                })()
               ))}
             </tbody>
           </table>

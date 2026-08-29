@@ -7,6 +7,7 @@ import Swal from "sweetalert2";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 export default function CotizarLaboratorioPage() {
   const safeText = (value) => String(value || "");
@@ -106,6 +107,7 @@ export default function CotizarLaboratorioPage() {
   // Estado para configuración de derivación por examen
   const [derivaciones, setDerivaciones] = useState({}); // { [examenId]: { derivado: bool, tipo: 'monto'|'porcentaje', valor: number, laboratorio: string } }
   const [programacionPorExamen, setProgramacionPorExamen] = useState({}); // { [examenId]: { fecha: 'YYYY-MM-DD', hora: 'HH:mm' } }
+  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
   // const [cotizacionReady, setCotizacionReady] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -143,6 +145,25 @@ export default function CotizarLaboratorioPage() {
   const getDisplayPrice = (examenId, basePrice) => String(getCoberturaExamen(examenId)?.origen_cobro || "") === "contrato"
     ? 0
     : Number(basePrice || 0);
+
+  const getProgramacionSugeridaExamen = (examenId, fechaPreferida = "") => {
+    const exIdNum = Number(examenId || 0);
+    const tarifa = tarifas.find((t) => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
+    const ex = examenes.find((e) => Number(e.id) === exIdNum);
+    const medicoId = Number(tarifa?.medico_id || ex?.medico_id || 0);
+    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+
+    return {
+      fecha: fechaBase,
+      hora: String(sugerida?.hora || getDefaultTime()).slice(0, 5),
+      medico_id: medicoId > 0 ? medicoId : null,
+    };
+  };
 
   useEffect(() => {
     // Cargar exámenes, tarifas, ranking y paciente
@@ -450,9 +471,10 @@ export default function CotizarLaboratorioPage() {
       const next = {};
       for (const exId of seleccionados) {
         const key = Number(exId);
+        const sugerida = getProgramacionSugeridaExamen(key, prev[key]?.fecha || "");
         next[key] = {
-          fecha: prev[key]?.fecha || getLimaDate(),
-          hora: prev[key]?.hora || getDefaultTime(),
+          fecha: prev[key]?.fecha || sugerida.fecha,
+          hora: prev[key]?.hora || sugerida.hora,
         };
       }
       return next;
@@ -772,13 +794,47 @@ export default function CotizarLaboratorioPage() {
 
   const actualizarProgramacion = (examenId, campo, valor) => {
     const key = Number(examenId);
+    const sugerida = getProgramacionSugeridaExamen(key, "");
     setProgramacionPorExamen((prev) => ({
       ...prev,
       [key]: {
-        ...(prev[key] || { fecha: getLimaDate(), hora: getDefaultTime() }),
+        ...(prev[key] || { fecha: sugerida.fecha, hora: sugerida.hora }),
         [campo]: valor,
       },
     }));
+  };
+
+  const aplicarSiguienteHorarioSugeridoExamen = (examenId) => {
+    const key = Number(examenId);
+    const fechaActual = String(programacionPorExamen[key]?.fecha || getLimaDate()).slice(0, 10);
+    const horaActual = String(programacionPorExamen[key]?.hora || "").slice(0, 5);
+    const sugerida = getProgramacionSugeridaExamen(key, fechaActual);
+    const horaAplicada = getNextSuggestedHoraVisible({
+      horaActual,
+      horaSugerida: sugerida.hora,
+      stepMinutes: 30,
+    });
+    setProgramacionPorExamen((prev) => ({
+      ...prev,
+      [key]: {
+        fecha: sugerida.fecha,
+        hora: horaAplicada || sugerida.hora,
+      },
+    }));
+
+    const horaFinal = String(horaAplicada || sugerida.hora || "").slice(0, 5);
+    setFeedbackProgramacion((prev) => ({
+      ...prev,
+      [key]: `Hora aplicada: ${horaFinal}`,
+    }));
+    window.setTimeout(() => {
+      setFeedbackProgramacion((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 1500);
   };
 
   const construirDetallesSeleccionados = () => {
@@ -790,6 +846,8 @@ export default function CotizarLaboratorioPage() {
       const derivacion = derivaciones[exId] || { derivado: false };
       const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
       const precio = getDisplayPrice(exIdNum, basePrecio);
+      const programacion = programacionPorExamen[exIdNum] || getProgramacionSugeridaExamen(exIdNum);
+      const medicoIdDetalle = Number(tarifa?.medico_id || ex?.medico_id || 0);
       return {
         servicio_tipo: "laboratorio",
         servicio_id: exIdNum,
@@ -797,12 +855,13 @@ export default function CotizarLaboratorioPage() {
         cantidad: 1,
         precio_unitario: precio,
         subtotal: precio,
+        medico_id: medicoIdDetalle > 0 ? medicoIdDetalle : null,
         derivado: derivacion.derivado || false,
         tipo_derivacion: derivacion.tipo || '',
         valor_derivacion: derivacion.valor || 0,
         laboratorio_referencia: derivacion.laboratorio || '',
-        fecha_programada: programacionPorExamen[exIdNum]?.fecha || getLimaDate(),
-        hora_programada: programacionPorExamen[exIdNum]?.hora || getDefaultTime(),
+        fecha_programada: programacion.fecha,
+        hora_programada: programacion.hora,
       };
     });
   };
@@ -873,6 +932,9 @@ export default function CotizarLaboratorioPage() {
         quantity: Number(d.cantidad || 1),
         unitPrice: Number(d.precio_unitario || 0),
         source: 'laboratorio',
+        medicoId: Number(d.medico_id || 0) || null,
+        fechaProgramada: String(d.fecha_programada || ""),
+        horaProgramada: String(d.hora_programada || ""),
         derivado: Boolean(d.derivado),
         tipoDerivacion: d.tipo_derivacion || '',
         valorDerivacion: Number(d.valor_derivacion || 0),
@@ -1384,6 +1446,20 @@ export default function CotizarLaboratorioPage() {
                           />
                         </label>
                       </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => aplicarSiguienteHorarioSugeridoExamen(exIdNum)}
+                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                        >
+                          Usar siguiente hora sugerida
+                        </button>
+                      </div>
+                      {feedbackProgramacion[exIdNum] && (
+                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
+                          {feedbackProgramacion[exIdNum]}
+                        </div>
+                      )}
                     </li>
                   );
                 })}

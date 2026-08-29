@@ -15,7 +15,12 @@ function toSafeText(value, fallback = "") {
   return String(value).trim() || fallback;
 }
 
-export default function ExamenesSelector({ selected, setSelected }) {
+export default function ExamenesSelector({
+  selected,
+  setSelected,
+  examenesCatalogo = null,
+  cargandoCatalogo = false,
+}) {
   const [examenes, setExamenes] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,22 +28,33 @@ export default function ExamenesSelector({ selected, setSelected }) {
   const searchInputRef = useRef(null);
 
   useEffect(() => {
+    if (Array.isArray(examenesCatalogo)) {
+      setExamenes([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
       .then(data => setExamenes(data.examenes || []))
       .finally(() => setLoading(false));
-  }, []);
+  }, [examenesCatalogo]);
+
+  const sourceExamenes = useMemo(() => (
+    Array.isArray(examenesCatalogo) ? examenesCatalogo : examenes
+  ), [examenesCatalogo, examenes]);
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase();
-    return examenes.filter(ex =>
+    return sourceExamenes.filter(ex =>
       toSafeText(ex?.nombre).toLowerCase().includes(query) ||
       toSafeText(ex?.metodologia).toLowerCase().includes(query)
     );
-  }, [examenes, search]);
+  }, [sourceExamenes, search]);
 
   const selectedIds = useMemo(() => new Set((selected || []).map((id) => String(id))), [selected]);
+  const loadingState = Array.isArray(examenesCatalogo) ? cargandoCatalogo : loading;
 
   useEffect(() => {
     if (filtered.length > 0) {
@@ -82,7 +98,7 @@ export default function ExamenesSelector({ selected, setSelected }) {
         className="border rounded p-2 text-xs w-full mb-2"
       />
       <div className="max-h-48 overflow-y-auto border rounded bg-white">
-        {loading ? (
+        {loadingState ? (
           <div className="p-2 text-center text-gray-500 text-xs">Cargando...</div>
         ) : filtered.length === 0 ? (
           <div className="p-2 text-center text-gray-500 text-xs">Sin exámenes</div>

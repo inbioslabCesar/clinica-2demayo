@@ -576,45 +576,170 @@ if (tipoDescuento === 'porcentaje') {
         reparto_manual_aplicado: usarRepartoManual ? 1 : 0,
         motivo: descuento > 0 ? motivo : ''
       };
-      const response = await authFetch("api_cobros.php", {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(cobroData)
-      });
-      let result;
-      try {
-        result = await response.json();
-      } catch {
-        const text = await response.text();
-        Swal.fire('Error', 'Respuesta inesperada del servidor: ' + text, 'error');
-        setLoading(false);
-        return;
-      }
-      // Mostrar error con SweetAlert2 si el backend responde error
-      if (!result.success && result.error) {
-        Swal.fire({
-          icon: 'error',
-          title: 'Error en el cobro',
-          text: result.error,
+      let payloadCobro = { ...cobroData };
+      let result = null;
+      let intentoReprogramacion = 0;
+
+      while (true) {
+        const response = await authFetch("api_cobros.php", {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payloadCobro)
         });
+
+        try {
+          result = await response.json();
+        } catch {
+          const text = await response.text();
+          Swal.fire('Error', 'Respuesta inesperada del servidor: ' + text, 'error');
+          setLoading(false);
+          return;
+        }
+
+        if (result?.success) {
+          break;
+        }
+
+        const conflictos = Array.isArray(result?.conflictos) ? result.conflictos : [];
+        const esConflictoHorario = String(result?.code || '') === 'conflicto_horario';
+        if (esConflictoHorario && conflictos.length > 0 && intentoReprogramacion === 0) {
+          const reprogramacion = {};
+          const usadosPorMedicoFecha = new Map();
+          const keyGrupo = (conf) => `${Number(conf?.medico_id || 0)}|${String(conf?.fecha_programada || '')}`;
+          const keySlot = (slot) => `${String(slot?.fecha_programada || '')}|${String(slot?.hora_programada || '')}`;
+
+          const cotizacionesConflicto = Array.from(new Set(
+            conflictos
+              .map((conf) => Number(conf?.cotizacion_id || 0))
+              .filter((id) => id > 0)
+          ));
+
+          const conflictosOrdenados = [...conflictos].sort((a, b) => {
+            const ma = Number(a?.medico_id || 0);
+            const mb = Number(b?.medico_id || 0);
+            if (ma !== mb) return ma - mb;
+            const fa = String(a?.fecha_programada || '');
+            const fb = String(b?.fecha_programada || '');
+            if (fa !== fb) return fa.localeCompare(fb);
+            const ha = String(a?.hora_programada || '');
+            const hb = String(b?.hora_programada || '');
+            if (ha !== hb) return ha.localeCompare(hb);
+            return Number(a?.detalle_id || 0) - Number(b?.detalle_id || 0);
+          });
+
+          const resumen = conflictosOrdenados.map((conf) => {
+            const desc = String(conf?.descripcion || 'Servicio');
+            const cotId = Number(conf?.cotizacion_id || 0);
+            const fecha = String(conf?.fecha_programada || '-');
+            const hora = conf?.hora_programada ? String(conf.hora_programada).slice(0, 5) : 'sin hora';
+            const sugeridos = Array.isArray(conf?.horarios_sugeridos) ? conf.horarios_sugeridos : [];
+            const grupo = keyGrupo(conf);
+            if (!usadosPorMedicoFecha.has(grupo)) {
+              usadosPorMedicoFecha.set(grupo, new Set());
+            }
+            const usadosGrupo = usadosPorMedicoFecha.get(grupo);
+
+            let elegido = null;
+            if (sugeridos.length > 0) {
+              for (const slot of sugeridos) {
+                const claveSlot = keySlot(slot);
+                if (claveSlot === '|' || usadosGrupo.has(claveSlot)) {
+                  continue;
+                }
+                elegido = slot;
+                usadosGrupo.add(claveSlot);
+                break;
+              }
+            }
+
+            if (!elegido && Number(conf?.detalle_id || 0) > 0) {
+              // fallback conservador: si no hay slot libre en lista, no forzar duplicados
+              // para evitar segundo rechazo por conflicto en el backend.
+            }
+
+            if (elegido && Number(conf?.detalle_id || 0) > 0) {
+              reprogramacion[String(Number(conf.detalle_id))] = {
+                fecha_programada: elegido.fecha_programada,
+                hora_programada: elegido.hora_programada,
+              };
+            }
+            const sugeridosTxt = sugeridos.length > 0
+              ? sugeridos.map((s) => `${String(s?.fecha_programada || '')} ${String(s?.hora_label || String(s?.hora_programada || '').slice(0, 5))}`.trim()).join(', ')
+              : 'sin sugerencias disponibles';
+            const cabecera = cotId > 0
+              ? `Cotización #${cotId} · ${desc}`
+              : desc;
+            return `• ${cabecera} (Cita objetivo: ${fecha} ${hora}) → ${sugeridosTxt}`;
+          }).join('\n');
+
+          const cotizacionesTxt = cotizacionesConflicto.length > 0
+            ? `Cotizaciones involucradas: ${cotizacionesConflicto.map((id) => `#${id}`).join(', ')}\n\n`
+            : '';
+
+          const puedeReprogramar = Object.keys(reprogramacion).length > 0;
+          const decision = await Swal.fire({
+            icon: 'warning',
+            title: 'Conflicto de horario detectado',
+            text: puedeReprogramar
+              ? `El médico ya tiene turnos ocupados.\n\n${cotizacionesTxt}${resumen}\n\n¿Deseas reprogramar automáticamente a la primera hora sugerida y continuar con el cobro?`
+              : `No hay horario asignado/disponible para algunos servicios.\n\n${cotizacionesTxt}${resumen}`,
+            showCancelButton: puedeReprogramar,
+            confirmButtonText: puedeReprogramar ? 'Reprogramar y cobrar' : 'Entendido',
+            cancelButtonText: 'Cancelar',
+          });
+
+          if (decision.isConfirmed && puedeReprogramar) {
+            payloadCobro = {
+              ...payloadCobro,
+              reprogramacion_horaria: reprogramacion,
+            };
+            intentoReprogramacion = 1;
+            continue;
+          }
+
+          return;
+        }
+
+        if (result?.error) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Error en el cobro',
+            text: result.error,
+          });
+          return;
+        }
+
+        Swal.fire('Error', 'Error al procesar el cobro', 'error');
         return;
       }
 
       if (result.success) {
-        // Mostrar comprobante
-        await mostrarComprobante(result.cobro_id, cobroData);
+        let comprobanteOk = true;
+        try {
+          // Mostrar comprobante
+          await mostrarComprobante(result.cobro_id, payloadCobro);
+        } catch {
+          comprobanteOk = false;
+          await Swal.fire({
+            icon: 'warning',
+            title: 'Cobro registrado',
+            text: `El cobro #${Number(result.cobro_id || 0)} se guardo correctamente, pero no se pudo abrir el comprobante en este momento.`,
+            confirmButtonText: 'Continuar',
+          });
+        }
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
           onCobroCompleto(result.cobro_id, servicio, {
             monto_original: Number(montoOriginal || 0),
             monto_descuento: Number(descuento || 0),
-            total_cobrado: Number(cobroData.total || 0),
+            total_cobrado: Number(payloadCobro.total || 0),
           });
         }
-      } else {
-        Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
+        if (!comprobanteOk) {
+          return;
+        }
       }
     } catch {
       // Eliminado log de error en producción
@@ -672,7 +797,47 @@ if (tipoDescuento === 'porcentaje') {
           return `${d}/${m}/${y}`;
         })()
       : fechaConsulta;
+    const esConsultaMedica = consulta.key === 'consulta';
     const numeroOrden = tipoConsultaRaw === 'programada' ? (consulta.numero_orden || consultaVinculada?.numero_orden || 'N/A') : '';
+    let correlativoDiaConsulta = null;
+    const medicoConsultaId = Number(
+      consultaVinculada?.medico_id
+      || consulta?.medico_id
+      || detalleConsulta?.medico_id
+      || 0
+    );
+    const horaConsultaNorm = String(horaConsulta || '').slice(0, 5);
+    if (esConsultaMedica && medicoConsultaId > 0 && /^\d{4}-\d{2}-\d{2}$/.test(fechaConsulta)) {
+      try {
+        const qs = new URLSearchParams({
+          medico_id: String(medicoConsultaId),
+          fecha_desde: fechaConsulta,
+          fecha_hasta: fechaConsulta,
+        });
+        const resCorrelativo = await authFetch(`api_consultas.php?${qs.toString()}`);
+        const dataCorrelativo = await resCorrelativo.json();
+        if (dataCorrelativo?.success && Array.isArray(dataCorrelativo.consultas)) {
+          const activasDia = dataCorrelativo.consultas
+            .filter((c) => String(c?.estado || '').toLowerCase().trim() !== 'cancelada')
+            .sort((a, b) => {
+              const horaA = String(a?.hora || '').slice(0, 5);
+              const horaB = String(b?.hora || '').slice(0, 5);
+              if (horaA < horaB) return -1;
+              if (horaA > horaB) return 1;
+              return Number(a?.id || 0) - Number(b?.id || 0);
+            });
+
+          const idxConsulta = activasDia.findIndex((c) => Number(c?.id || 0) === consultaId);
+          if (idxConsulta >= 0) {
+            correlativoDiaConsulta = idxConsulta + 1;
+          } else if (horaConsultaNorm) {
+            correlativoDiaConsulta = activasDia.filter((c) => String(c?.hora || '').slice(0, 5) <= horaConsultaNorm).length + 1;
+          }
+        }
+      } catch {
+        correlativoDiaConsulta = null;
+      }
+    }
     const logoSrc = clinicBrand.logo || '/2demayo.svg';
     const cotizacionIdsTicket = Array.from(new Set([
       ...(Array.isArray(datosComprobante?.cotizacion_ids) ? datosComprobante.cotizacion_ids : []),
@@ -706,9 +871,6 @@ if (tipoDescuento === 'porcentaje') {
     const saldoRestanteCobro = Math.max(0, saldoAnteriorCobro - abonoAplicadoCobro - descuentoAplicadoCobro);
     const esAdelantoCobro = tieneSaldoPendiente && (modoCobro === 'parcial' || saldoRestanteCobro > 0);
     const mostrarResumenSaldo = tieneSaldoPendiente && (esCobroCotizacion || esAdelantoCobro);
-
-    // Determinar si el servicio es consulta médica
-    const esConsultaMedica = consulta.key === 'consulta';
 
     // Buscar profesional en consulta vinculada/detalles/servicio
     let nombreMedico = '';
@@ -926,6 +1088,7 @@ if (tipoDescuento === 'porcentaje') {
         ${esConsultaMedica ? `<div class="t-meta">Consulta: ${tipoConsulta}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Fecha consulta: ${fechaConsultaFmt || 'No registrada'}</div>` : ''}
         ${esConsultaMedica ? `<div class="t-meta">Hora consulta: ${horaConsulta || 'No registrada'}</div>` : ''}
+        ${esConsultaMedica && Number(correlativoDiaConsulta || 0) > 0 ? `<div class="t-meta">Correlativo del dia: N° ${Number(correlativoDiaConsulta)}</div>` : ''}
         ${esConsultaMedica && tipoConsultaRaw === 'programada' ? `<div class="t-meta">Orden: ${numeroOrden}</div>` : ''}
         ${nombreProfesional ? `<div class="t-meta">Profesional: ${nombreProfesional}</div>` : ''}
 

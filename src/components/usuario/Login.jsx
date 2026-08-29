@@ -230,35 +230,8 @@ function Login({ onLogin }) {
     const esEmail = usuario.includes("@") && usuario.includes(".");
     try {
       if (esEmail) {
-        // Flujo secuencial para evitar condiciones de carrera de sesión entre endpoints.
-        let resMedico, dataMedico;
-        try {
-          resMedico = await authFetch("api_login_medico.php", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ email: usuario, password }),
-          });
-          dataMedico = await resMedico.json();
-        } catch {
-          resMedico = { ok: false };
-          dataMedico = {};
-        }
-
-        // Prioridad médico.
-        if (resMedico.ok && dataMedico?.success) {
-          const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
-          sessionStorage.removeItem('usuario');
-          sessionStorage.removeItem('user_role');
-          sessionStorage.setItem('medico', JSON.stringify(medicoConRol));
-          onLogin && onLogin(medicoConRol);
-          navigate("/");
-          return;
-        }
-
-        // Fallback usuario normal si no autentica como médico.
+        // En producción la mayoría de cuentas internas usan email,
+        // por eso intentamos primero usuario normal para evitar doble request.
         let resUsuario, dataUsuario;
         try {
           resUsuario = await authFetch("api_login.php", {
@@ -288,6 +261,33 @@ function Login({ onLogin }) {
             sessionStorage.setItem('user_role', 'recepcionista');
           }
           onLogin && onLogin(usuarioNormalizado);
+          navigate("/");
+          return;
+        }
+
+        // Fallback médico si no autentica como usuario.
+        let resMedico, dataMedico;
+        try {
+          resMedico = await authFetch("api_login_medico.php", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            body: JSON.stringify({ email: usuario, password }),
+          });
+          dataMedico = await resMedico.json();
+        } catch {
+          resMedico = { ok: false };
+          dataMedico = {};
+        }
+
+        if (resMedico.ok && dataMedico?.success) {
+          const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
+          sessionStorage.removeItem('usuario');
+          sessionStorage.removeItem('user_role');
+          sessionStorage.setItem('medico', JSON.stringify(medicoConRol));
+          onLogin && onLogin(medicoConRol);
           navigate("/");
           return;
         }

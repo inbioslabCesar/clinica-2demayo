@@ -4,6 +4,9 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getMedicoAccentColor } from "../utils/medicoAccent";
+import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 export default function CotizarOperacionPage() {
     const [medicos, setMedicos] = useState([]);
@@ -21,6 +24,7 @@ export default function CotizarOperacionPage() {
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [programacionPorOperacion, setProgramacionPorOperacion] = useState({});
+  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
   const [mostrarResumenCotizacion, setMostrarResumenCotizacion] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
@@ -60,10 +64,68 @@ export default function CotizarOperacionPage() {
     const actual = programacionPorOperacion[oid];
     if (actual?.fecha_programada || actual?.hora_programada) return actual;
     const fuente = [...(Array.isArray(preloadedItems) ? preloadedItems : [])].reverse().find((it) => Number(it?.servicio_id || 0) === oid);
+    const tarifa = tarifas.find((t) => Number(t.id) === oid);
+    const medicoId = Number(tarifa?.medico_id || 0);
+    const fechaBase = String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || '').slice(0, 10) || getLimaDate();
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
     return {
-      fecha_programada: String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || '').slice(0, 10) || getLimaDate(),
-      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || '').slice(0, 5) || getDefaultTime(),
+      fecha_programada: fechaBase,
+      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || '').slice(0, 5) || String(sugerida?.hora || getDefaultTime()).slice(0, 5),
     };
+  };
+
+  const getSiguienteProgramacionOperacion = (operacionId, fechaPreferida = '') => {
+    const oid = Number(operacionId || 0);
+    const tarifa = tarifas.find((t) => Number(t.id) === oid);
+    const medicoId = Number(tarifa?.medico_id || 0);
+    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+    return {
+      fecha_programada: fechaBase,
+      hora_programada: String(sugerida?.hora || getDefaultTime()).slice(0, 5),
+    };
+  };
+
+  const aplicarSiguienteHorarioSugeridoOperacion = (operacionId) => {
+    const oid = Number(operacionId || 0);
+    const actual = getProgramacionOperacion(oid);
+    const fechaActual = String(actual?.fecha_programada || getLimaDate()).slice(0, 10);
+    const horaActual = String(actual?.hora_programada || "").slice(0, 5);
+    const next = getSiguienteProgramacionOperacion(oid, fechaActual);
+    const horaAplicada = getNextSuggestedHoraVisible({
+      horaActual,
+      horaSugerida: next.hora_programada,
+      stepMinutes: 30,
+    });
+    setProgramacionPorOperacion((prev) => ({
+      ...prev,
+      [oid]: {
+        ...next,
+        hora_programada: horaAplicada || next.hora_programada,
+      },
+    }));
+
+    const horaFinal = String(horaAplicada || next.hora_programada || "").slice(0, 5);
+    setFeedbackProgramacion((prev) => ({
+      ...prev,
+      [oid]: `Hora aplicada: ${horaFinal}`,
+    }));
+    window.setTimeout(() => {
+      setFeedbackProgramacion((prev) => {
+        if (!prev[oid]) return prev;
+        const after = { ...prev };
+        delete after[oid];
+        return after;
+      });
+    }, 1500);
   };
 
     const [busqueda, setBusqueda] = useState("");
@@ -500,6 +562,26 @@ export default function CotizarOperacionPage() {
     }
     // Construir detalles para cotización, incluyendo medico_id y especialidad
     const detalles = construirDetallesSeleccionados();
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora) => {
+        detalles.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(d?.hora_programada || "").slice(0, 5);
+          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+          }
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
 
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
@@ -731,17 +813,21 @@ export default function CotizarOperacionPage() {
                 <li key={tarifa.id} className="flex items-center gap-4 py-3 px-2 hover:bg-blue-50 rounded-lg transition-all">
                   <div className="flex-1">
                     <div className="font-semibold text-gray-800">{tarifa.descripcion || tarifa.nombre}</div>
-                    <div className="text-xs text-blue-700 mt-1">
-                      Doctor: {(() => {
-                        if (tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
-                          const medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
-                          if (medico) {
-                            return `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
-                          }
+                    {(() => {
+                      let medicoNombre = "";
+                      if (tarifa.medico_id !== undefined && tarifa.medico_id !== null) {
+                        const medico = medicos.find(m => Number(m.id) === Number(tarifa.medico_id));
+                        if (medico) {
+                          medicoNombre = `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
                         }
-                        return "Sin doctor";
-                      })()}
-                    </div>
+                      }
+                      const medicoColor = getMedicoAccentColor(medicoNombre);
+                      return (
+                        <div className="text-xs mt-1" style={{ color: medicoColor }}>
+                          Doctor: {medicoNombre || "Sin doctor"}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="min-w-[110px] text-right">
                     <div className="font-bold text-green-700 text-lg leading-none">S/ {Number(tarifa.precio_particular || 0).toFixed(2)}</div>
@@ -834,6 +920,20 @@ export default function CotizarOperacionPage() {
                           />
                         </label>
                       </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => aplicarSiguienteHorarioSugeridoOperacion(tid)}
+                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                        >
+                          Usar siguiente hora sugerida
+                        </button>
+                      </div>
+                      {feedbackProgramacion[tid] && (
+                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
+                          {feedbackProgramacion[tid]}
+                        </div>
+                      )}
                     </li>
                   ) : null;
                 })}

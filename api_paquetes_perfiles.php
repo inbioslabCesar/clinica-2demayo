@@ -516,7 +516,23 @@ try {
             $includeItems = isset($_GET['include_items']) && (string)$_GET['include_items'] === '1';
 
             $params = [];
-            $whereSql = "WHERE p.estado = 'activo'";
+            // Mostrar solo paquetes operativos: activos, con items activos y sin referencias huérfanas/inactivas.
+            $whereSql = "WHERE p.estado = 'activo'"
+                . " AND EXISTS (SELECT 1 FROM paquetes_perfiles_items i_ok WHERE i_ok.paquete_id = p.id AND i_ok.activo = 1)"
+                . " AND NOT EXISTS ("
+                . "   SELECT 1"
+                . "   FROM paquetes_perfiles_items i_bad"
+                . "   WHERE i_bad.paquete_id = p.id"
+                . "     AND i_bad.activo = 1"
+                . "     AND ("
+                . "       (LOWER(i_bad.source_type) IN ('consulta','ecografia','rayosx','procedimiento','procedimientos','operacion','operaciones')"
+                . "          AND (i_bad.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.id = i_bad.source_id AND t.activo = 1)))"
+                . "       OR (LOWER(i_bad.source_type) = 'laboratorio'"
+                . "          AND (i_bad.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM examenes_laboratorio e WHERE e.id = i_bad.source_id AND e.activo = 1)))"
+                . "       OR (LOWER(i_bad.source_type) = 'farmacia'"
+                . "          AND (i_bad.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM medicamentos m WHERE m.id = i_bad.source_id AND m.estado = 'activo')))"
+                . "     )"
+                . " )";
             if ($q !== '') {
                 $whereSql .= " AND (p.nombre LIKE ? OR p.codigo LIKE ?)";
                 $like = '%' . $q . '%';

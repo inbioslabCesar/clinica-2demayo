@@ -52,8 +52,15 @@ if (!$usuario) {
 $isAdmin = ($rol === 'administrador');
 
 function img_has_column(mysqli $db, string $table, string $column): bool {
+    static $cache = [];
+    $cacheKey = $table . '.' . $column;
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
     $stmt = $db->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
     if (!$stmt) {
+        $cache[$cacheKey] = false;
         return false;
     }
     $stmt->bind_param('ss', $table, $column);
@@ -61,16 +68,22 @@ function img_has_column(mysqli $db, string $table, string $column): bool {
     $res = $stmt->get_result();
     $ok = ($res && $res->num_rows > 0);
     $stmt->close();
+    $cache[$cacheKey] = $ok;
     return $ok;
 }
 
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+    // Permite paralelizar lecturas en frontend (evita cola por lock de sesión PHP).
+    session_write_close();
+}
+
 // ─ Migración idempotente: añadir clinic_key si no existe ─────────────────────
-if (!img_has_column($mysqli, 'imagenologia_plantillas', 'clinic_key')) {
+if ($method !== 'GET' && !img_has_column($mysqli, 'imagenologia_plantillas', 'clinic_key')) {
     // Mejor esfuerzo: si el usuario DB no tiene ALTER, el endpoint debe seguir funcionando.
     $mysqli->query("ALTER TABLE imagenologia_plantillas ADD COLUMN clinic_key VARCHAR(120) NULL");
 }
-
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 // Solo administradores pueden escribir
 if ($method !== 'GET' && !$isAdmin) {
@@ -183,6 +196,34 @@ function img_normalize_secciones(array $sections): array {
         }
     }
     return $clean;
+}
+
+function img_validate_structure_ids(array $sections): string {
+    $sectionIds = [];
+    foreach ($sections as $section) {
+        $sectionId = strtolower(trim((string)($section['id'] ?? '')));
+        if ($sectionId === '') {
+            continue;
+        }
+        if (isset($sectionIds[$sectionId])) {
+            return 'Hay IDs de sección duplicados. Cada sección debe tener un ID técnico único.';
+        }
+        $sectionIds[$sectionId] = true;
+
+        $fieldIds = [];
+        foreach ((array)($section['campos'] ?? []) as $campo) {
+            $fieldId = strtolower(trim((string)($campo['id'] ?? '')));
+            if ($fieldId === '') {
+                continue;
+            }
+            if (isset($fieldIds[$fieldId])) {
+                $sectionNombre = trim((string)($section['nombre'] ?? $sectionId));
+                return 'La sección "' . $sectionNombre . '" tiene IDs de campo duplicados. Corrige los IDs antes de guardar.';
+            }
+            $fieldIds[$fieldId] = true;
+        }
+    }
+    return '';
 }
 
 function img_decode_row(array $row): array {
@@ -348,6 +389,13 @@ if ($method === 'POST') {
     if (empty($sections)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'La plantilla debe tener al menos una sección con campos']);
+        exit;
+    }
+
+    $structureError = img_validate_structure_ids($sections);
+    if ($structureError !== '') {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => $structureError]);
         exit;
     }
 

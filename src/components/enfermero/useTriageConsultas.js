@@ -4,6 +4,7 @@ import { authFetch } from "../../utils/apiClient";
 export default function useTriageConsultas() {
   const [consultas, setConsultas] = useState([]);
   const [triajeStatus, setTriajeStatus] = useState({});
+  const [triajeStats, setTriajeStats] = useState({ pendientes: 0, completados: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [triajeActual, setTriajeActual] = useState(null);
@@ -15,17 +16,24 @@ export default function useTriageConsultas() {
   const [busqueda, setBusqueda] = useState("");
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
-
-  const normalizarHora = (hora) => {
-    const valor = String(hora || '').trim();
-    if (!valor) return '00:00:00';
-    if (valor.length === 5) return `${valor}:00`;
-    return valor;
-  };
+  const [totalRows, setTotalRows] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const recargarConsultas = () => {
     setLoading(true);
-    authFetch("api_consultas.php?solo_activas=1&incluir_completadas_sin_triaje=1")
+    const params = new URLSearchParams({
+      vista: "triaje_panel",
+      solo_activas: "1",
+      incluir_completadas_sin_triaje: "1",
+      page: String(page),
+      per_page: String(rowsPerPage),
+      search: busqueda.trim(),
+      fecha_desde: fechaDesde,
+      fecha_hasta: fechaHasta,
+      _t: String(Date.now()),
+    });
+
+    authFetch(`api_consultas.php?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
@@ -38,59 +46,59 @@ export default function useTriageConsultas() {
             statusObj[c.id] = realizado ? 'Completado' : 'Pendiente';
           });
           setTriajeStatus(statusObj);
+
+          const pendientes = Number(data?.stats?.pendientes ?? Math.max(0, Number(data?.pagination?.total || 0) - Number(data?.stats?.completados || 0)));
+          const completados = Number(data?.stats?.completados ?? 0);
+          setTriajeStats({ pendientes, completados });
+
+          const total = Number(data?.pagination?.total ?? listaConsultas.length ?? 0);
+          const totalPagesSrv = Math.max(1, Number(data?.pagination?.total_pages ?? 1));
+          setTotalRows(total);
+          setTotalPages(totalPagesSrv);
           setError(null);
         } else {
           setError(data.error || "Error al cargar consultas");
+          setConsultas([]);
+          setTriajeStatus({});
+          setTriajeStats({ pendientes: 0, completados: 0 });
+          setTotalRows(0);
+          setTotalPages(1);
         }
         setLoading(false);
       })
       .catch((_err) => {
         setError("Error de red");
+        setConsultas([]);
+        setTriajeStatus({});
+        setTriajeStats({ pendientes: 0, completados: 0 });
+        setTotalRows(0);
+        setTotalPages(1);
         setLoading(false);
       });
   };
 
   useEffect(() => {
-    recargarConsultas();
-  }, []);
+    const timer = setTimeout(() => {
+      recargarConsultas();
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
 
-  const consultasFiltradas = useMemo(() => {
-    const texto = busqueda.trim().toLowerCase();
+  const consultasFiltradas = consultas;
+  const consultasPagina = consultas;
+  const startIdx = useMemo(() => Math.max(0, (page - 1) * rowsPerPage), [page, rowsPerPage]);
+  const endIdx = useMemo(() => startIdx + consultasPagina.length, [startIdx, consultasPagina.length]);
 
-    const filtradas = consultas.filter((c) => {
-      if (texto) {
-        const match = (c.historia_clinica && c.historia_clinica.toLowerCase().includes(texto)) ||
-                     (c.paciente_nombre && c.paciente_nombre.toLowerCase().includes(texto)) ||
-                     (c.paciente_apellido && c.paciente_apellido.toLowerCase().includes(texto)) ||
-                     (c.medico_nombre && c.medico_nombre.toLowerCase().includes(texto));
-        if (!match) return false;
-      }
-      if (!fechaDesde && !fechaHasta) return true;
-      if (!c.fecha) return false;
-      if (fechaDesde && c.fecha < fechaDesde) return false;
-      if (fechaHasta && c.fecha > fechaHasta) return false;
-      return true;
-    });
-
-    return filtradas.sort((a, b) => {
-      const fechaHoraA = `${a.fecha || ''} ${normalizarHora(a.hora)}`;
-      const fechaHoraB = `${b.fecha || ''} ${normalizarHora(b.hora)}`;
-      return fechaHoraB.localeCompare(fechaHoraA);
-    });
-  }, [consultas, busqueda, fechaDesde, fechaHasta]);
-
-  const totalRows = consultasFiltradas.length;
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(totalRows / rowsPerPage)), [totalRows, rowsPerPage]);
-  const startIdx = useMemo(() => (page - 1) * rowsPerPage, [page, rowsPerPage]);
-  const endIdx = startIdx + rowsPerPage;
-  const consultasPagina = useMemo(
-    () => consultasFiltradas.slice(startIdx, endIdx),
-    [consultasFiltradas, startIdx, endIdx]
-  );
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   return {
     consultas,
     triajeStatus,
+    triajeStats,
     loading,
     error,
     triajeActual,
