@@ -14,6 +14,7 @@ import { authFetch } from "../../utils/apiClient";
 function TriageList() {
   const {
     triajeStatus,
+    triajeStats,
     loading,
     error,
     triajeActual,
@@ -107,7 +108,7 @@ function TriageList() {
 
   return (
     <div className="space-y-6">
-      <TriageStats totalRows={totalRows} triajeStatus={triajeStatus} />
+      <TriageStats totalRows={totalRows} triajeStatus={triajeStats} />
       <TriageFilters
         busqueda={busqueda}
         setBusqueda={setBusqueda}
@@ -140,8 +141,8 @@ function TriageList() {
                 </h3>
               </div>
               <div className="text-sm text-gray-600">
-                {consultasFiltradas.length > 0
-                  ? `Mostrando ${consultasPagina.length} de ${consultasFiltradas.length} pacientes`
+                {totalRows > 0
+                  ? `Mostrando ${consultasPagina.length} de ${totalRows} pacientes`
                   : 'No hay pacientes'}
               </div>
             </div>

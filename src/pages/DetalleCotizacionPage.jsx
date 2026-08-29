@@ -626,11 +626,22 @@ export default function DetalleCotizacionPage() {
     const modal = await Swal.fire({
       title: "",
       html: ticketHtml,
+      showDenyButton: true,
       showCancelButton: true,
       confirmButtonText: "Imprimir",
+      denyButtonText: "Descargar PDF",
       cancelButtonText: "Cerrar",
       width: 420,
     });
+
+    if (modal.isDenied) {
+      const cotizacionPdfId = Number(cotizacion?.id || 0);
+      if (cotizacionPdfId > 0) {
+        const apiBase = String(BASE_URL || "").replace(/\/+$/, "");
+        window.open(`${apiBase}/api_cotizacion_ticket_pdf.php?cotizacion_id=${cotizacionPdfId}&_t=${Date.now()}`, "_blank", "noopener");
+      }
+      return;
+    }
 
     if (!modal.isConfirmed) return;
 
@@ -741,6 +752,16 @@ export default function DetalleCotizacionPage() {
           <div className="flex flex-wrap gap-2">
             <button onClick={() => navigate("/cotizaciones")} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver a Atenciones</button>
             <button onClick={emitirTicket} className="bg-slate-700 text-white px-4 py-2 rounded hover:bg-slate-800">Emitir ticket</button>
+            <button
+              onClick={() => {
+                const cotizacionPdfId = Number(cotizacion?.id || 0);
+                if (cotizacionPdfId > 0) {
+                  const apiBase = String(BASE_URL || "").replace(/\/+$/, "");
+                  window.open(`${apiBase}/api_cotizacion_ticket_pdf.php?cotizacion_id=${cotizacionPdfId}&_t=${Date.now()}`, "_blank", "noopener");
+                }
+              }}
+              className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+            >Descargar PDF</button>
             {puedeEditar && (
               <button
                 onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(cotizacion?.paciente_id || 0)}&cotizacion_id=${Number(cotizacion?.id || 0)}&back_to=/cotizaciones&modo=editar`, {
@@ -769,7 +790,13 @@ export default function DetalleCotizacionPage() {
                         cancelButtonText: 'Solo esta cotización',
                       });
                       if (result.isConfirmed) {
-                        navigate(`/cobrar-cotizacion?ids=${data.grupo.join(',')}`);
+                        const idsGrupo = Array.isArray(data.ids)
+                          ? data.ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+                          : [];
+                        if (idsGrupo.length > 1) {
+                          navigate(`/cobrar-cotizacion/${idsGrupo[0]}?ids=${idsGrupo.join(',')}`);
+                          return;
+                        }
                         return;
                       }
                     }

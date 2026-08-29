@@ -302,127 +302,13 @@ export async function validarAgendaAntesDeCotizar({
   onApplySuggestion,
   maxFutureDays = 14,
 }) {
-  const lista = Array.isArray(entries) ? entries : [];
-  for (const entry of lista) {
-    const advisory = await getAgendaAdvisory({
-      authFetch,
-      baseUrl,
-      medicoId: Number(entry?.medicoId || 0),
-      fecha: entry?.fecha,
-      hora: entry?.hora,
-      consultaIdExcluir: Number(entry?.consultaIdExcluir || 0),
-    });
-
-    if (!advisory?.shouldWarn) {
-      continue;
-    }
-
-    const texto = advisory.hasExact
-      ? `El medico ya tiene una atencion en ${advisory.requestedHour}.\nPendientes del dia: ${advisory.totalPendientesDia}.\nConsecutivo estimado si registras ahora: N° ${advisory.estimatedConsecutivoRequested}.\nPendientes que podrian reordenarse: ${advisory.pendientesAfectados}.\nHora sugerida para no afectar el orden: ${advisory.suggestedHour} (N° ${advisory.estimatedConsecutivoSuggested}).`
-      : `El medico ya tiene pacientes asignados despues de ${advisory.requestedHour}.\nPendientes del dia: ${advisory.totalPendientesDia}.\nConsecutivo estimado si registras ahora: N° ${advisory.estimatedConsecutivoRequested}.\nPendientes que podrian reordenarse: ${advisory.pendientesAfectados}.\nHora sugerida para no afectar el orden: ${advisory.suggestedHour} (N° ${advisory.estimatedConsecutivoSuggested}).`;
-    const opciones = Array.isArray(advisory.selectableLaterHours)
-      ? advisory.selectableLaterHours.filter(Boolean)
-      : [];
-
-    const opcionesFechaHora = [];
-    const fechaBase = String(advisory.requestedDate || entry?.fecha || "").trim();
-    for (const horaSugerida of opciones) {
-      opcionesFechaHora.push({ fecha: fechaBase, hora: horaSugerida });
-    }
-
-    if (fechaBase) {
-      const futurosLimite = Math.max(0, Number(maxFutureDays || 0));
-      for (let dayOffset = 1; dayOffset <= futurosLimite && opcionesFechaHora.length < 8; dayOffset += 1) {
-        const fechaCandidata = addDaysYmd(fechaBase, dayOffset);
-        if (!fechaCandidata) continue;
-
-        let horasDisponibles = [];
-        try {
-          horasDisponibles = await fetchHorariosDisponiblesPorFecha({
-            authFetch,
-            baseUrl,
-            medicoId: Number(entry?.medicoId || 0),
-            fecha: fechaCandidata,
-            consultaIdExcluir: Number(entry?.consultaIdExcluir || 0),
-          });
-        } catch {
-          horasDisponibles = [];
-        }
-
-        const horasRecortadas = Array.from(new Set(horasDisponibles)).slice(0, 2);
-        for (const h of horasRecortadas) {
-          if (opcionesFechaHora.length >= 8) break;
-          opcionesFechaHora.push({ fecha: fechaCandidata, hora: h });
-        }
-      }
-    }
-
-    if (opcionesFechaHora.length > 0) {
-      const optionsMap = {};
-      opcionesFechaHora.forEach(({ fecha, hora }) => {
-        const value = `${fecha}|${hora}`;
-        const mismaFecha = fecha === fechaBase;
-        optionsMap[value] = mismaFecha ? `Usar ${hora}` : `Usar ${fecha} ${hora}`;
-      });
-
-      const sugeridaValue = `${fechaBase}|${advisory.suggestedHour}`;
-      const tieneSugerida = Boolean(optionsMap[sugeridaValue]);
-      const primerValor = Object.keys(optionsMap)[0] || "";
-
-      const result = await Swal.fire({
-        icon: "warning",
-        title: "Agenda del medico con conflicto",
-        text: `${texto}\nTambien puedes elegir un horario en dias posteriores.`,
-        input: "select",
-        inputOptions: optionsMap,
-        inputValue: tieneSugerida ? sugeridaValue : primerValor,
-        inputPlaceholder: "Selecciona un horario sugerido",
-        showCancelButton: true,
-        confirmButtonText: "Usar hora elegida",
-        cancelButtonText: "Cancelar",
-        preConfirm: (value) => {
-          if (!value) {
-            Swal.showValidationMessage("Selecciona una hora para continuar");
-            return false;
-          }
-          return value;
-        },
-      });
-
-      if (result?.isConfirmed && result?.value) {
-        const [fechaElegida = fechaBase, horaElegida = ""] = String(result.value).split("|");
-        if (typeof onApplySuggestion === "function") {
-          onApplySuggestion(entry, String(horaElegida || ""), String(fechaElegida || fechaBase));
-        }
-        entry.fecha = String(fechaElegida || fechaBase);
-        entry.hora = String(horaElegida || entry?.hora || "");
-        continue;
-      }
-
-      return { ok: false, cancelled: true };
-    }
-
-    const result = await Swal.fire({
-      icon: "warning",
-      title: "Agenda del medico con conflicto",
-      text: advisory.suggestedHour
-        ? `${texto}\nDebes usar un horario sugerido para mantener el orden del consecutivo.`
-        : `${texto}\nNo hay sugerencias disponibles en este momento. Reprograma a otra fecha u hora.`,
-      showCancelButton: true,
-      showConfirmButton: Boolean(advisory.suggestedHour),
-      confirmButtonText: advisory.suggestedHour ? `Usar ${advisory.suggestedHour}` : "Usar sugerencia",
-      cancelButtonText: "Cancelar",
-    });
-
-    if (result?.isConfirmed && advisory.suggestedHour) {
-      if (typeof onApplySuggestion === "function") {
-        onApplySuggestion(entry, advisory.suggestedHour);
-      }
-      continue;
-    }
-
-    return { ok: false, cancelled: true };
-  }
-
+  // Nuevo flujo operativo: el correlativo se conserva para auditoria,
+  // pero no bloquea ni fuerza cambios de hora al registrar agenda.
+  void authFetch;
+  void baseUrl;
+  void Swal;
+  void entries;
+  void onApplySuggestion;
+  void maxFutureDays;
   return { ok: true };
 }

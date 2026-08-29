@@ -51,6 +51,91 @@ function printable($value, $fallback = '-') {
     return $v === '' ? $fallback : $v;
 }
 
+function caratula_parse_date_safe($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+        return ($dt instanceof DateTime) ? $dt : null;
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    $dt = new DateTime();
+    $dt->setTimestamp($ts);
+    return $dt;
+}
+
+function caratula_normalizar_unidad_edad($unidad) {
+    $u = strtolower(trim((string)$unidad));
+    if ($u === '') return 'anios';
+    if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    return 'anios';
+}
+
+function caratula_resolver_edad_actual(array $paciente) {
+    $hoy = new DateTime('today');
+    $fechaNac = caratula_parse_date_safe($paciente['fecha_nacimiento'] ?? null);
+
+    if ($fechaNac instanceof DateTime) {
+        $fechaNac->setTime(0, 0, 0);
+        if ($fechaNac <= $hoy) {
+            $diff = $fechaNac->diff($hoy);
+            $dias = max(0, (int)$diff->days);
+            $meses = max(0, ((int)$diff->y * 12) + (int)$diff->m);
+            $anios = max(0, (int)$diff->y);
+
+            if ($dias <= 28) return $dias . ' días';
+            if ($meses < 12) return $meses . ' meses';
+            return $anios . ' años';
+        }
+    }
+
+    $edadBase = isset($paciente['edad']) && $paciente['edad'] !== '' && is_numeric($paciente['edad'])
+        ? max(0, (int)$paciente['edad'])
+        : null;
+    if ($edadBase === null) {
+        return '-';
+    }
+
+    $unidadBase = caratula_normalizar_unidad_edad($paciente['edad_unidad'] ?? 'anios');
+    $fechaRef = caratula_parse_date_safe($paciente['creado_en'] ?? null);
+    if (!($fechaRef instanceof DateTime)) {
+        if ($unidadBase === 'dias') return $edadBase . ' días';
+        if ($unidadBase === 'meses') return $edadBase . ' meses';
+        return $edadBase . ' años';
+    }
+
+    $fechaRef->setTime(0, 0, 0);
+    if ($fechaRef > $hoy) {
+        if ($unidadBase === 'dias') return $edadBase . ' días';
+        if ($unidadBase === 'meses') return $edadBase . ' meses';
+        return $edadBase . ' años';
+    }
+
+    $diffRef = $fechaRef->diff($hoy);
+    $aniosTrans = max(0, (int)$diffRef->y);
+    $mesesTrans = max(0, ((int)$diffRef->y * 12) + (int)$diffRef->m);
+    $diasTrans = max(0, (int)$diffRef->days);
+
+    if ($unidadBase === 'dias') {
+        $totalDias = $edadBase + $diasTrans;
+        if ($totalDias <= 28) return $totalDias . ' días';
+        return (int)floor($totalDias / 30) . ' meses';
+    }
+
+    if ($unidadBase === 'meses') {
+        $totalMeses = $edadBase + $mesesTrans;
+        if ($totalMeses < 12) return $totalMeses . ' meses';
+        return (int)floor($totalMeses / 12) . ' años';
+    }
+
+    return ($edadBase + $aniosTrans) . ' años';
+}
+
 if (!isset($_GET['paciente_id'])) {
     cleanOutputBuffers();
     header('Content-Type: application/json');
@@ -60,7 +145,7 @@ if (!isset($_GET['paciente_id'])) {
 
 $paciente_id = intval($_GET['paciente_id']);
 
-$sql = "SELECT *, DATE(creado_en) as fecha_hc FROM pacientes WHERE id = ? LIMIT 1";
+$sql = "SELECT *, creado_en, DATE(creado_en) as fecha_hc FROM pacientes WHERE id = ? LIMIT 1";
 $stmt = $conn->prepare($sql);
 $stmt->bind_param('i', $paciente_id);
 $stmt->execute();
@@ -84,7 +169,7 @@ $apellido = h(printable($paciente['apellido'] ?? ''));
 $nombre = h(printable($paciente['nombre'] ?? ''));
 $dni = h(printable($paciente['dni'] ?? ''));
 $fechaNacimiento = h(printable($paciente['fecha_nacimiento'] ?? ''));
-$edad = h(printable($paciente['edad'] ?? ''));
+$edadTexto = h(caratula_resolver_edad_actual($paciente));
 $sexo = h(printable($paciente['sexo'] ?? ''));
 $telefono = h(printable($paciente['telefono'] ?? ''));
 $direccion = h(printable($paciente['direccion'] ?? ''));
@@ -166,7 +251,7 @@ body {
     <tr><td class="label">Nombres:</td><td class="value">{$nombre}</td></tr>
     <tr><td class="label">DNI:</td><td class="value">{$dni}</td></tr>
     <tr><td class="label">Fecha de Nac.:</td><td class="value">{$fechaNacimiento}</td></tr>
-    <tr><td class="label">Edad:</td><td class="value">{$edad} años</td></tr>
+    <tr><td class="label">Edad:</td><td class="value">{$edadTexto}</td></tr>
     <tr><td class="label">Sexo:</td><td class="value">{$sexo}</td></tr>
     <tr><td class="label">Telefono:</td><td class="value">{$telefono}</td></tr>
     <tr><td class="label">Direccion:</td><td class="value">{$direccion}</td></tr>
@@ -189,7 +274,7 @@ $htmlOverlayMpdf = <<<HTML
     <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Nombres:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$nombre}</td></tr>
     <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">DNI:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$dni}</td></tr>
     <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Fecha de Nac.:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$fechaNacimiento}</td></tr>
-    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Edad:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$edad} años</td></tr>
+    <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Edad:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$edadTexto}</td></tr>
     <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Sexo:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$sexo}</td></tr>
     <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Telefono:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$telefono}</td></tr>
     <tr><td style="width:42mm; color:#5b21b6; font-size:18px; font-weight:bold; text-transform:uppercase; vertical-align:middle; padding:16px 8px 16px 0;">Direccion:</td><td style="background:transparent; color:#111111; font-size:16px; line-height:1.32; font-weight:600; padding:16px 10px; vertical-align:middle; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">{$direccion}</td></tr>

@@ -37,6 +37,16 @@ export default function SidebarMedico() {
       >
         Mis informes de imagenología
       </Link>
+      <Link
+        to="/mis-procedimientos"
+        className={
+          location.pathname.startsWith("/mis-procedimientos")
+            ? "font-bold text-blue-700"
+            : "text-blue-900 hover:underline"
+        }
+      >
+        Mis procedimientos
+      </Link>
       
       {/* Botón Firma Digital */}
       <div className="border-t border-blue-200 pt-3 mt-3">

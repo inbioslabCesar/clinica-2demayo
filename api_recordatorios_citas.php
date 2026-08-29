@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 function rc_require_session_roles(array $rolesPermitidos) {
@@ -18,25 +21,227 @@ function rc_require_session_roles(array $rolesPermitidos) {
 }
 
 function rc_column_exists($conn, $table, $column) {
-    $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
-    if (!$stmt) {
+    static $cache = [];
+
+    $tableKey = strtolower(trim((string)$table));
+    $columnKey = strtolower(trim((string)$column));
+    if ($tableKey === '' || $columnKey === '') {
         return false;
     }
-    $stmt->bind_param('ss', $table, $column);
+
+    $cacheKey = $tableKey . '.' . $columnKey;
+    if (array_key_exists($cacheKey, $cache)) {
+        return (bool)$cache[$cacheKey];
+    }
+
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
+    if (!$stmt) {
+        $cache[$cacheKey] = false;
+        return false;
+    }
+    $stmt->bind_param('ss', $tableKey, $columnKey);
     $stmt->execute();
     $res = $stmt->get_result();
-    return $res && $res->num_rows > 0;
+    $exists = $res && $res->num_rows > 0;
+    $stmt->close();
+
+    $cache[$cacheKey] = $exists;
+    return $exists;
 }
 
 function rc_table_exists($conn, $table) {
-    $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
-    if (!$stmt) {
+    static $cache = [];
+
+    $tableKey = strtolower(trim((string)$table));
+    if ($tableKey === '') {
         return false;
     }
-    $stmt->bind_param('s', $table);
+
+    if (array_key_exists($tableKey, $cache)) {
+        return (bool)$cache[$tableKey];
+    }
+
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
+    if (!$stmt) {
+        $cache[$tableKey] = false;
+        return false;
+    }
+    $stmt->bind_param('s', $tableKey);
     $stmt->execute();
     $res = $stmt->get_result();
-    return $res && $res->num_rows > 0;
+    $exists = $res && $res->num_rows > 0;
+    $stmt->close();
+
+    $cache[$tableKey] = $exists;
+    return $exists;
+}
+
+function rc_ensure_cola_medico_schema($conn) {
+    $sql = "CREATE TABLE IF NOT EXISTS recordatorios_cola_medico (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        source_key VARCHAR(64) NOT NULL,
+        consulta_id INT NULL,
+        cotizacion_id INT NULL,
+        medico_id INT NOT NULL,
+        fecha_atencion DATE NOT NULL,
+        estado_cola VARCHAR(24) NOT NULL DEFAULT 'pendiente',
+        correlativo_cola INT NULL,
+        es_siguiente TINYINT(1) NOT NULL DEFAULT 0,
+        prioridad_cola VARCHAR(24) NOT NULL DEFAULT 'normal',
+        prioridad_detalle VARCHAR(120) NULL,
+        actualizado_por INT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_rcm_source_key (source_key),
+        KEY idx_rcm_medico_fecha (medico_id, fecha_atencion),
+        KEY idx_rcm_consulta (consulta_id),
+        KEY idx_rcm_cotizacion (cotizacion_id),
+        KEY idx_rcm_estado (estado_cola)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+    @mysqli_query($conn, $sql);
+}
+
+function rc_cola_source_key($consultaId, $cotizacionId) {
+    $consultaId = (int)$consultaId;
+    $cotizacionId = (int)$cotizacionId;
+    if ($consultaId > 0) {
+        return 'consulta:' . $consultaId;
+    }
+    if ($cotizacionId > 0) {
+        return 'cotizacion:' . $cotizacionId;
+    }
+    return '';
+}
+
+function rc_cola_siguiente_correlativo($conn, $medicoId, $fechaAtencion) {
+    $medicoId = (int)$medicoId;
+    $fechaAtencion = trim((string)$fechaAtencion);
+    if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaAtencion)) {
+        return 1;
+    }
+
+    $stmt = $conn->prepare('SELECT COALESCE(MAX(COALESCE(correlativo_cola, 0)), 0) AS max_corr FROM recordatorios_cola_medico WHERE medico_id = ? AND fecha_atencion = ?');
+    if (!$stmt) {
+        return 1;
+    }
+    $stmt->bind_param('is', $medicoId, $fechaAtencion);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+    return max(1, ((int)($row['max_corr'] ?? 0)) + 1);
+}
+
+function rc_cola_map_for_items($conn, $items) {
+    $out = [
+        'by_consulta' => [],
+        'by_cotizacion' => [],
+    ];
+    if (!rc_table_exists($conn, 'recordatorios_cola_medico')) {
+        return $out;
+    }
+
+    $consultaIds = [];
+    $cotizacionIds = [];
+    foreach ((array)$items as $it) {
+        $consultaIds[] = (int)($it['id'] ?? 0);
+        $consultaIds[] = (int)($it['consulta_id_ref'] ?? 0);
+        $cotizacionIds[] = (int)($it['cotizacion_id'] ?? 0);
+    }
+    $consultaIds = array_values(array_unique(array_filter($consultaIds, function ($id) { return $id > 0; })));
+    $cotizacionIds = array_values(array_unique(array_filter($cotizacionIds, function ($id) { return $id > 0; })));
+    if (empty($consultaIds) && empty($cotizacionIds)) {
+        return $out;
+    }
+
+    $whereParts = [];
+    $types = '';
+    $params = [];
+    if (!empty($consultaIds)) {
+        $ph = implode(',', array_fill(0, count($consultaIds), '?'));
+        $whereParts[] = "consulta_id IN ({$ph})";
+        $types .= str_repeat('i', count($consultaIds));
+        foreach ($consultaIds as $id) $params[] = $id;
+    }
+    if (!empty($cotizacionIds)) {
+        $ph = implode(',', array_fill(0, count($cotizacionIds), '?'));
+        $whereParts[] = "cotizacion_id IN ({$ph})";
+        $types .= str_repeat('i', count($cotizacionIds));
+        foreach ($cotizacionIds as $id) $params[] = $id;
+    }
+
+    $sql = 'SELECT source_key, consulta_id, cotizacion_id, medico_id, fecha_atencion, estado_cola, correlativo_cola, es_siguiente, prioridad_cola, prioridad_detalle, updated_at'
+        . ' FROM recordatorios_cola_medico WHERE ' . implode(' OR ', $whereParts);
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $out;
+    }
+    if ($types !== '') {
+        $stmt->bind_param($types, ...$params);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $normalized = [
+            'source_key' => (string)($row['source_key'] ?? ''),
+            'consulta_id' => (int)($row['consulta_id'] ?? 0),
+            'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+            'medico_id' => (int)($row['medico_id'] ?? 0),
+            'fecha_atencion' => (string)($row['fecha_atencion'] ?? ''),
+            'estado_cola' => (string)($row['estado_cola'] ?? 'pendiente'),
+            'correlativo_cola' => (int)($row['correlativo_cola'] ?? 0),
+            'es_siguiente' => (int)($row['es_siguiente'] ?? 0),
+            'prioridad_cola' => (string)($row['prioridad_cola'] ?? 'normal'),
+            'prioridad_detalle' => (string)($row['prioridad_detalle'] ?? ''),
+            'cola_updated_at' => (string)($row['updated_at'] ?? ''),
+        ];
+        $consultaId = (int)($row['consulta_id'] ?? 0);
+        $cotId = (int)($row['cotizacion_id'] ?? 0);
+        if ($consultaId > 0) {
+            $out['by_consulta'][$consultaId] = $normalized;
+        }
+        if ($cotId > 0) {
+            $out['by_cotizacion'][$cotId] = $normalized;
+        }
+    }
+    $stmt->close();
+    return $out;
+}
+
+function rc_attach_cola_to_items(&$items, $colaMap) {
+    $byConsulta = is_array($colaMap['by_consulta'] ?? null) ? $colaMap['by_consulta'] : [];
+    $byCot = is_array($colaMap['by_cotizacion'] ?? null) ? $colaMap['by_cotizacion'] : [];
+
+    foreach ($items as &$item) {
+        $consultaId = (int)($item['id'] ?? 0);
+        if ((string)($item['origen_consulta'] ?? '') === 'agenda_servicio') {
+            $consultaId = (int)($item['consulta_id_ref'] ?? 0);
+        }
+        $cotId = (int)($item['cotizacion_id'] ?? 0);
+
+        $cola = null;
+        if ($consultaId > 0 && isset($byConsulta[$consultaId])) {
+            $cola = $byConsulta[$consultaId];
+        } elseif ($cotId > 0 && isset($byCot[$cotId])) {
+            $cola = $byCot[$cotId];
+        }
+
+        $item['cola_source_key'] = (string)($cola['source_key'] ?? '');
+        $item['cola_estado'] = (string)($cola['estado_cola'] ?? 'pendiente');
+        $item['cola_correlativo'] = (int)($cola['correlativo_cola'] ?? 0);
+        $item['cola_es_siguiente'] = (int)($cola['es_siguiente'] ?? 0);
+        $item['cola_prioridad'] = (string)($cola['prioridad_cola'] ?? 'normal');
+        $item['cola_prioridad_detalle'] = (string)($cola['prioridad_detalle'] ?? '');
+        $item['cola_updated_at'] = (string)($cola['cola_updated_at'] ?? '');
+
+        $estadoConsulta = strtolower(trim((string)($item['estado_consulta'] ?? '')));
+        if (in_array($estadoConsulta, ['completada', 'completado', 'cancelada', 'cancelado', 'anulada', 'anulado'], true)) {
+            $item['cola_estado'] = 'en_atencion';
+            $item['cola_correlativo'] = 0;
+            $item['cola_es_siguiente'] = 0;
+        }
+    }
+    unset($item);
 }
 
 function rc_require_schema($conn) {
@@ -146,6 +351,11 @@ function rc_servicio_pretty_label($value) {
     if ($tipo === 'operacion') return 'Operación';
     if ($tipo === 'hospitalizacion') return 'Hospitalización';
     return $tipo !== '' ? ucfirst($tipo) : 'Servicio';
+}
+
+function rc_where_servicios_medicos_agenda($alias = 'a') {
+    $col = $alias . ".servicio_tipo";
+    return "LOWER(TRIM(COALESCE({$col}, ''))) IN ('consulta','rayosx','rayos x','rayos_x','rx','ecografia','procedimiento','procedimientos','operacion','operaciones','cirugia','cirugias')";
 }
 
 function rc_calcular_turno_original_agenda($conn, $cotizacionId) {
@@ -433,6 +643,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
     rc_require_session_roles(['administrador', 'recepcionista']);
+    rc_ensure_cola_medico_schema($conn);
 
     $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
     if ($vista === 'disponibilidad_medico') {
@@ -548,8 +759,10 @@ if ($method === 'GET') {
             $medicoExpr = empty($medicoParts) ? '0' : ('COALESCE(' . implode(', ', $medicoParts) . ', 0)');
 
             $whereEstado = $hasAgendaEstado
-                ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado")'
+                ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")'
                 : '';
+
+            $whereServicioMedico = ' AND ' . rc_where_servicios_medicos_agenda('a');
 
             $estadoSelect = $hasAgendaEstado ? 'a.estado_evento' : '"" AS estado_evento';
 
@@ -574,6 +787,7 @@ if ($method === 'GET') {
                           . $joinTarifa
                           . $joinCotAgenda
                           . ' WHERE ' . $medicoExpr . ' = ? AND a.fecha_programada = ?'
+                         . $whereServicioMedico
                           . $whereEstado
                           . ' ORDER BY a.hora_programada ASC, a.id ASC';
 
@@ -1141,6 +1355,7 @@ if ($method === 'GET') {
             "LOWER(TRIM(COALESCE(a.estado_evento, ''))) IN ('pendiente', 'confirmado')",
             'a.fecha_programada >= CURDATE()',
             'a.fecha_programada <= DATE_ADD(CURDATE(), INTERVAL ? DAY)',
+            rc_where_servicios_medicos_agenda('a'),
         ];
         $agendaTypes = 'i';
         $agendaParams = [$dias];
@@ -1168,6 +1383,7 @@ if ($method === 'GET') {
                 a.id,
                 a.paciente_id,
             COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) AS medico_id,
+                COALESCE(cd.consulta_id, 0) AS consulta_id_ref,
                 a.fecha_programada,
                 a.hora_programada,
                 a.estado_evento,
@@ -1238,6 +1454,7 @@ if ($method === 'GET') {
 
                 $agendaRows[] = [
                     'id' => (int)($row['id'] ?? 0),
+                    'consulta_id_ref' => (int)($row['consulta_id_ref'] ?? 0),
                     'paciente_id' => (int)($row['paciente_id'] ?? 0),
                     'medico_id' => (int)($row['medico_id'] ?? 0),
                     'fecha' => (string)($row['fecha_programada'] ?? ''),
@@ -1296,6 +1513,9 @@ if ($method === 'GET') {
         rc_reasignar_correlativo_unificado($items);
     }
 
+    $colaMap = rc_cola_map_for_items($conn, $items);
+    rc_attach_cola_to_items($items, $colaMap);
+
     if ($considerarAgendaEnListado || !$usarPaginacion) {
         $totalItems = count($items);
     }
@@ -1343,6 +1563,7 @@ if ($method === 'GET') {
 if ($method === 'POST' || $method === 'PUT') {
     rc_require_session_roles(['administrador', 'recepcionista']);
     rc_require_schema($conn);
+    rc_ensure_cola_medico_schema($conn);
     $hasRasTurnoOriginal = rc_table_exists($conn, 'recordatorios_agenda_servicios')
         && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'turno_original');
     $hasRasTurnoVigente = rc_table_exists($conn, 'recordatorios_agenda_servicios')
@@ -1357,6 +1578,135 @@ if ($method === 'POST' || $method === 'PUT') {
 
     // ── Acción especial: crear cotización para consulta falta_cancelar ──
     $accion = trim((string)($payload['action'] ?? ''));
+    if ($accion === 'actualizar_cola_medico') {
+        $consultaId = (int)($payload['consulta_id'] ?? 0);
+        $cotizacionId = (int)($payload['cotizacion_id'] ?? 0);
+        $medicoId = (int)($payload['medico_id'] ?? 0);
+        $fechaAtencion = trim((string)($payload['fecha'] ?? ''));
+        $estadoCola = strtolower(trim((string)($payload['estado_cola'] ?? 'pendiente')));
+        $prioridadCola = strtolower(trim((string)($payload['prioridad_cola'] ?? 'normal')));
+        $prioridadDetalle = trim((string)($payload['prioridad_detalle'] ?? ''));
+        $esSiguiente = !empty($payload['es_siguiente']) ? 1 : 0;
+
+        $sourceKey = rc_cola_source_key($consultaId, $cotizacionId);
+        if ($sourceKey === '') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'consulta_id o cotizacion_id es requerido']);
+            exit;
+        }
+        if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaAtencion)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'medico_id y fecha (YYYY-MM-DD) son requeridos']);
+            exit;
+        }
+
+        $estadosPermitidos = ['pendiente', 'llego', 'en_sala', 'llamando', 'en_atencion', 'retirado'];
+        if (!in_array($estadoCola, $estadosPermitidos, true)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'estado_cola no permitido']);
+            exit;
+        }
+
+        $prioridadesPermitidas = ['normal', 'adulto_mayor', 'nino', 'embarazada', 'urgente'];
+        if (!in_array($prioridadCola, $prioridadesPermitidas, true)) {
+            $prioridadCola = 'normal';
+        }
+
+        $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
+        $correlativo = 0;
+        $stmtActual = $conn->prepare('SELECT correlativo_cola FROM recordatorios_cola_medico WHERE source_key = ? LIMIT 1');
+        if ($stmtActual) {
+            $stmtActual->bind_param('s', $sourceKey);
+            $stmtActual->execute();
+            $rowActual = $stmtActual->get_result()->fetch_assoc();
+            $stmtActual->close();
+            $correlativo = (int)($rowActual['correlativo_cola'] ?? 0);
+        }
+        if ($estadoCola === 'en_sala' && $correlativo <= 0) {
+            $correlativo = rc_cola_siguiente_correlativo($conn, $medicoId, $fechaAtencion);
+        }
+
+        if ($esSiguiente === 1) {
+            $stmtClear = $conn->prepare('UPDATE recordatorios_cola_medico SET es_siguiente = 0 WHERE medico_id = ? AND fecha_atencion = ? AND source_key <> ?');
+            if ($stmtClear) {
+                $stmtClear->bind_param('iss', $medicoId, $fechaAtencion, $sourceKey);
+                $stmtClear->execute();
+                $stmtClear->close();
+            }
+        }
+
+        if ($estadoCola === 'en_atencion') {
+            $esSiguiente = 0;
+        }
+
+        $stmtUp = $conn->prepare(
+            'INSERT INTO recordatorios_cola_medico
+            (source_key, consulta_id, cotizacion_id, medico_id, fecha_atencion, estado_cola, correlativo_cola, es_siguiente, prioridad_cola, prioridad_detalle, actualizado_por)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              consulta_id = VALUES(consulta_id),
+              cotizacion_id = VALUES(cotizacion_id),
+              medico_id = VALUES(medico_id),
+              fecha_atencion = VALUES(fecha_atencion),
+              estado_cola = VALUES(estado_cola),
+              correlativo_cola = CASE
+                WHEN VALUES(correlativo_cola) > 0 THEN VALUES(correlativo_cola)
+                ELSE correlativo_cola
+              END,
+              es_siguiente = VALUES(es_siguiente),
+              prioridad_cola = VALUES(prioridad_cola),
+              prioridad_detalle = VALUES(prioridad_detalle),
+              actualizado_por = VALUES(actualizado_por),
+              updated_at = CURRENT_TIMESTAMP'
+        );
+
+        if (!$stmtUp) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar actualización de cola']);
+            exit;
+        }
+
+        $stmtUp->bind_param(
+            'siiissiissi',
+            $sourceKey,
+            $consultaId,
+            $cotizacionId,
+            $medicoId,
+            $fechaAtencion,
+            $estadoCola,
+            $correlativo,
+            $esSiguiente,
+            $prioridadCola,
+            $prioridadDetalle,
+            $usuarioId
+        );
+        $ok = $stmtUp->execute();
+        $stmtUp->close();
+
+        if (!$ok) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo actualizar cola médica']);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => true,
+            'cola' => [
+                'source_key' => $sourceKey,
+                'consulta_id' => $consultaId,
+                'cotizacion_id' => $cotizacionId,
+                'medico_id' => $medicoId,
+                'fecha_atencion' => $fechaAtencion,
+                'estado_cola' => $estadoCola,
+                'correlativo_cola' => $correlativo,
+                'es_siguiente' => $esSiguiente,
+                'prioridad_cola' => $prioridadCola,
+                'prioridad_detalle' => $prioridadDetalle,
+            ],
+        ]);
+        exit;
+    }
+
     if ($accion === 'crear_cotizacion') {
         $consultaId = (int)($payload['consulta_id'] ?? 0);
         if ($consultaId <= 0) {

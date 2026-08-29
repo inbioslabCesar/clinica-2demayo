@@ -2,6 +2,9 @@
 
 <?php
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 const LOGIN_MAX_ATTEMPTS = 5;

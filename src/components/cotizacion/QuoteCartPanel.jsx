@@ -66,6 +66,33 @@ function actualizarDescripcionConsultaProgramada(descripcion, fecha, hora) {
   return `${baseSinHorario} (${fechaNorm} ${horaNorm})`;
 }
 
+function getProgramacionItem(it) {
+  const fecha = String(it?.fechaProgramada || it?.fecha_programada || it?.consultaFecha || "").slice(0, 10);
+  const hora = String(it?.horaProgramada || it?.hora_programada || it?.consultaHora || "").slice(0, 5);
+  return { fecha, hora };
+}
+
+function getMedicoIdProgramacionItem(it) {
+  return Number(it?.medicoId || it?.medico_id || it?.consultaMedicoId || 0);
+}
+
+function buildProgramacionConflictKey(it) {
+  const medicoId = getMedicoIdProgramacionItem(it);
+  const slot = getProgramacionItem(it);
+  if (medicoId <= 0 || !slot.fecha || !slot.hora) return "";
+  return `${medicoId}|${slot.fecha}|${slot.hora}`;
+}
+
+function formatProgramacionItem(fecha, hora) {
+  const f = String(fecha || "").trim();
+  const h = String(hora || "").trim();
+  if (!f && !h) return "";
+  if (!f) return `Horario: ${h}`;
+  const [y, m, d] = f.split("-");
+  const fechaFmt = y && m && d ? `${d}/${m}/${y}` : f;
+  return `Programado: ${fechaFmt}${h ? ` ${h}` : ""}`;
+}
+
 const XL_BREAKPOINT = 1280;
 
 export default function QuoteCartPanel() {
@@ -99,6 +126,16 @@ export default function QuoteCartPanel() {
   const grouped = useMemo(() => {
     return cart.items.slice().sort((a, b) => String(a.source).localeCompare(String(b.source)));
   }, [cart.items]);
+
+  const conflictoProgramacionMap = useMemo(() => {
+    const out = {};
+    for (const it of Array.isArray(cart?.items) ? cart.items : []) {
+      const key = buildProgramacionConflictKey(it);
+      if (!key) continue;
+      out[key] = Number(out[key] || 0) + 1;
+    }
+    return out;
+  }, [cart?.items]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -557,6 +594,22 @@ export default function QuoteCartPanel() {
                 <div className="text-[11px] uppercase tracking-wide text-indigo-600 font-semibold">{it.source}</div>
                 <div className="text-sm font-medium text-gray-800 truncate">{it.description}</div>
                 <div className="text-xs text-gray-500">S/ {Number(it.unitPrice || 0).toFixed(2)} c/u</div>
+                {(() => {
+                  const slot = getProgramacionItem(it);
+                  const label = formatProgramacionItem(slot.fecha, slot.hora);
+                  if (!label) return null;
+                  return <div className="text-[11px] text-indigo-700 mt-0.5">{label}</div>;
+                })()}
+                {(() => {
+                  const key = buildProgramacionConflictKey(it);
+                  const conflicts = key ? Number(conflictoProgramacionMap[key] || 0) : 0;
+                  if (conflicts <= 1) return null;
+                  return (
+                    <div className="mt-1 inline-flex items-center rounded bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                      Cruce detectado: mismo medico y horario
+                    </div>
+                  );
+                })()}
                 {renderDerivacionInfo(it)}
               </div>
               <button

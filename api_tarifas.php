@@ -269,13 +269,13 @@ switch($method) {
             break;
         }
         
-        $stmt = $conn->prepare("DELETE FROM tarifas WHERE id = ?");
+        $stmt = $conn->prepare("UPDATE tarifas SET activo = 0 WHERE id = ?");
         $stmt->bind_param("i", $id);
         
         if ($stmt->execute()) {
             echo json_encode(['success' => true]);
         } else {
-            echo json_encode(['success' => false, 'error' => 'Error al eliminar tarifa']);
+            echo json_encode(['success' => false, 'error' => 'Error al desactivar tarifa']);
         }
         break;
         

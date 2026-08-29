@@ -124,6 +124,11 @@ function rc_servicio_pretty_label($value) {
     return $tipo !== '' ? ucfirst($tipo) : 'Servicio';
 }
 
+function rc_where_servicios_medicos_agenda($alias = 'a') {
+    $col = $alias . ".servicio_tipo";
+    return "LOWER(TRIM(COALESCE({$col}, ''))) IN ('consulta','rayosx','rayos x','rayos_x','rx','ecografia','procedimiento','procedimientos','operacion','operaciones','cirugia','cirugias')";
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
@@ -606,6 +611,7 @@ if ($method === 'GET') {
             "LOWER(TRIM(COALESCE(a.estado_evento, ''))) IN ('pendiente', 'confirmado')",
             'a.fecha_programada >= CURDATE()',
             'a.fecha_programada <= DATE_ADD(CURDATE(), INTERVAL ? DAY)',
+            rc_where_servicios_medicos_agenda('a'),
         ];
         $agendaTypes = 'i';
         $agendaParams = [$dias];

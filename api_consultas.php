@@ -1,6 +1,9 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
 
@@ -255,6 +258,99 @@ function consultas_regularizar_habilitacion_por_pago($conn, $consultaId, $cotiza
     $stmt->close();
 }
 
+function consultas_regularizar_habilitacion_por_pago_cotizacion($conn, $cotizacionId, $cotizacionEstado) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return;
+    }
+    if (!consultas_table_exists($conn, 'consultas_habilitaciones_anticipadas')) {
+        return;
+    }
+    if (!consultas_es_cotizacion_pagada($cotizacionEstado)) {
+        return;
+    }
+
+    $stmt = $conn->prepare("UPDATE consultas_habilitaciones_anticipadas
+                            SET estado = 'regularizado',
+                                revocado_en = COALESCE(revocado_en, NOW()),
+                                motivo_revocacion = CASE
+                                    WHEN motivo_revocacion IS NULL OR TRIM(motivo_revocacion) = '' THEN 'Regularizado automáticamente por pago'
+                                    ELSE motivo_revocacion
+                                END
+                            WHERE cotizacion_id = ?
+                              AND COALESCE(consulta_id, 0) <= 0
+                              AND estado = 'activo'");
+    if (!$stmt) {
+        return;
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    $stmt->execute();
+    $stmt->close();
+}
+
+function consultas_regularizar_habilitacion_por_pago_consultas_lote($conn, $consultaIds) {
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)$consultaIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return;
+    }
+    if (!consultas_table_exists($conn, 'consultas_habilitaciones_anticipadas')) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+    $sql = "UPDATE consultas_habilitaciones_anticipadas
+            SET estado = 'regularizado',
+                revocado_en = COALESCE(revocado_en, NOW()),
+                motivo_revocacion = CASE
+                    WHEN motivo_revocacion IS NULL OR TRIM(motivo_revocacion) = '' THEN 'Regularizado automáticamente por pago'
+                    ELSE motivo_revocacion
+                END
+            WHERE consulta_id IN ({$placeholders})
+              AND estado = 'activo'";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return;
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $stmt->close();
+}
+
+function consultas_regularizar_habilitacion_por_pago_cotizaciones_lote($conn, $cotizacionIds) {
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return;
+    }
+    if (!consultas_table_exists($conn, 'consultas_habilitaciones_anticipadas')) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+    $sql = "UPDATE consultas_habilitaciones_anticipadas
+            SET estado = 'regularizado',
+                revocado_en = COALESCE(revocado_en, NOW()),
+                motivo_revocacion = CASE
+                    WHEN motivo_revocacion IS NULL OR TRIM(motivo_revocacion) = '' THEN 'Regularizado automáticamente por pago'
+                    ELSE motivo_revocacion
+                END
+            WHERE cotizacion_id IN ({$placeholders})
+              AND COALESCE(consulta_id, 0) <= 0
+              AND estado = 'activo'";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return;
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $stmt->close();
+}
+
 function consultas_enriquecer_correlativo_diario($conn, &$rows) {
     if (!is_array($rows) || empty($rows)) {
         return;
@@ -385,6 +481,165 @@ function consultas_resolver_consulta_explicita_por_cotizacion($conn, $cotizacion
     return (int)($map[$cotizacionId] ?? 0);
 }
 
+function consultas_cotizacion_vinculo_medico_operativo_map($conn, $cotizacionIds) {
+    $out = [];
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return $out;
+    }
+
+    foreach ($ids as $id) {
+        $out[$id] = [
+            'cotizacion_id' => (int)$id,
+            'vinculo_anticipado_valido' => 0,
+            'medico_id' => 0,
+            'servicios_medicos_count' => 0,
+            'medicos_distintos' => 0,
+        ];
+    }
+
+    if (!columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id')) {
+        return $out;
+    }
+
+    $whereDetalleActivo = columna_existe_local($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND LOWER(TRIM(COALESCE(estado_item, 'activo'))) <> 'eliminado'"
+        : '';
+
+    $serviciosSql = "'consulta','ecografia','rayosx','procedimiento','procedimientos','operacion','operaciones'";
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+    $sql = "SELECT cotizacion_id,
+                   COUNT(*) AS servicios_medicos_count,
+                   COUNT(DISTINCT CASE WHEN medico_id IS NOT NULL AND medico_id > 0 THEN medico_id END) AS medicos_distintos,
+                   MIN(CASE WHEN medico_id IS NOT NULL AND medico_id > 0 THEN medico_id END) AS medico_id_ref
+            FROM cotizaciones_detalle
+            WHERE cotizacion_id IN ({$placeholders})
+              AND LOWER(TRIM(COALESCE(servicio_tipo, ''))) IN ({$serviciosSql}){$whereDetalleActivo}
+            GROUP BY cotizacion_id";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $out;
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $cotId = (int)($row['cotizacion_id'] ?? 0);
+        if ($cotId <= 0) {
+            continue;
+        }
+        $countServicios = (int)($row['servicios_medicos_count'] ?? 0);
+        $medicosDistintos = (int)($row['medicos_distintos'] ?? 0);
+        $medicoRef = (int)($row['medico_id_ref'] ?? 0);
+        $valido = ($countServicios > 0 && $medicosDistintos === 1 && $medicoRef > 0) ? 1 : 0;
+
+        $out[$cotId] = [
+            'cotizacion_id' => $cotId,
+            'vinculo_anticipado_valido' => $valido,
+            'medico_id' => $medicoRef,
+            'servicios_medicos_count' => $countServicios,
+            'medicos_distintos' => $medicosDistintos,
+        ];
+    }
+    $stmt->close();
+
+    return $out;
+}
+
+function consultas_resolver_habilitaciones_por_cotizacion_ids($conn, $cotizacionIds) {
+    $out = [];
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return $out;
+    }
+    if (!consultas_table_exists($conn, 'consultas_habilitaciones_anticipadas')) {
+        return $out;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+    $sql = "SELECT h.*, agg.historial_count
+            FROM consultas_habilitaciones_anticipadas h
+            INNER JOIN (
+                SELECT cotizacion_id, MAX(id) AS max_id, COUNT(*) AS historial_count
+                FROM consultas_habilitaciones_anticipadas
+                WHERE cotizacion_id IN ({$placeholders})
+                  AND COALESCE(consulta_id, 0) <= 0
+                GROUP BY cotizacion_id
+            ) agg ON agg.max_id = h.id";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $out;
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $ahora = time();
+
+    while ($row = $res->fetch_assoc()) {
+        $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+        if ($cotizacionId <= 0) {
+            continue;
+        }
+        $estado = strtolower(trim((string)($row['estado'] ?? '')));
+        $venceEnRaw = trim((string)($row['vence_en'] ?? ''));
+        $venceTs = $venceEnRaw !== '' ? strtotime($venceEnRaw) : false;
+        $expirada = ($venceEnRaw !== '' && $venceTs !== false && $venceTs < $ahora);
+        $activa = ($estado === 'activo' && !$expirada);
+        $estadoResumen = $activa ? 'habilitado_anticipado' : ($expirada ? 'expirada' : ($estado !== '' ? $estado : 'sin_habilitacion'));
+
+        $out[$cotizacionId] = [
+            'consulta_id' => 0,
+            'cotizacion_id' => $cotizacionId,
+            'habilitacion_anticipada_activa' => $activa ? 1 : 0,
+            'estado_resumen' => $estadoResumen,
+            'historial_count' => max(0, (int)($row['historial_count'] ?? 0)),
+            'motivo' => trim((string)($row['motivo'] ?? '')) !== '' ? trim((string)$row['motivo']) : null,
+            'autorizado_por' => isset($row['autorizado_por']) ? (int)$row['autorizado_por'] : null,
+            'autorizado_rol' => trim((string)($row['autorizado_rol'] ?? '')) !== '' ? trim((string)$row['autorizado_rol']) : null,
+            'autorizado_nombre' => trim((string)($row['autorizado_nombre'] ?? '')) !== '' ? trim((string)$row['autorizado_nombre']) : null,
+            'autorizado_en' => trim((string)($row['autorizado_en'] ?? '')) !== '' ? trim((string)$row['autorizado_en']) : null,
+            'vence_en' => $venceEnRaw !== '' ? $venceEnRaw : null,
+        ];
+    }
+    $stmt->close();
+
+    return $out;
+}
+
+function consultas_resolver_objetivo_anticipado_por_cotizacion($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return ['ok' => false, 'consulta_id' => 0, 'cotizacion_id' => 0, 'modo' => '', 'motivo' => 'Cotización inválida'];
+    }
+
+    $consultaId = consultas_resolver_consulta_explicita_por_cotizacion($conn, $cotizacionId);
+    if ($consultaId > 0) {
+        return ['ok' => true, 'consulta_id' => $consultaId, 'cotizacion_id' => $cotizacionId, 'modo' => 'consulta'];
+    }
+
+    $mapVinculo = consultas_cotizacion_vinculo_medico_operativo_map($conn, [$cotizacionId]);
+    $v = $mapVinculo[$cotizacionId] ?? null;
+    if (is_array($v) && (int)($v['vinculo_anticipado_valido'] ?? 0) === 1) {
+        return ['ok' => true, 'consulta_id' => 0, 'cotizacion_id' => $cotizacionId, 'modo' => 'cotizacion'];
+    }
+
+    return [
+        'ok' => false,
+        'consulta_id' => 0,
+        'cotizacion_id' => $cotizacionId,
+        'modo' => '',
+        'motivo' => 'La cotización no tiene vínculo operativo médico explícito para gestionar habilitación anticipada',
+    ];
+}
+
 function consultas_normalizar_servicio_tipo($raw) {
     $t = strtolower(trim((string)$raw));
     if ($t === '' || $t === 'consulta_medica' || $t === 'consulta médica' || $t === 'consulta medica') {
@@ -506,6 +761,186 @@ function consultas_stats_servicios_pendientes_hoy($conn, $medicoId, $fechaYmd) {
 
     $stmt->close();
     return $conteo;
+}
+
+function consultas_stats_procedimientos_modulo_hoy($conn, $medicoId, $fechaYmd) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    if ($medicoId <= 0 || $fechaYmd === '') {
+        return 0;
+    }
+
+    $hasCdEstadoItem = columna_existe_local($conn, 'cotizaciones_detalle', 'estado_item');
+    $hasCdMedicoId = columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id');
+    $hasCdConsultaId = columna_existe_local($conn, 'cotizaciones_detalle', 'consulta_id');
+
+    $where = [];
+    $params = [];
+    $types = '';
+
+    $where[] = 'LOWER(TRIM(COALESCE(cd.servicio_tipo, ""))) IN ("procedimiento", "procedimientos")';
+    $where[] = 'LOWER(TRIM(COALESCE(ct.estado, ""))) NOT IN ("anulado", "anulada")';
+    if ($hasCdEstadoItem) {
+        $where[] = 'LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) <> "eliminado"';
+    }
+
+    if ($hasCdMedicoId) {
+        $where[] = '(COALESCE(cd.medico_id, 0) = ? OR COALESCE(c.medico_id, 0) = ?)';
+        $params[] = $medicoId;
+        $params[] = $medicoId;
+        $types .= 'ii';
+    } else {
+        $where[] = 'COALESCE(c.medico_id, 0) = ?';
+        $params[] = $medicoId;
+        $types .= 'i';
+    }
+
+    $where[] = '(COALESCE(c.fecha, DATE(ct.fecha)) = ? OR DATE(ct.fecha) = ?)';
+    $params[] = $fechaYmd;
+    $params[] = $fechaYmd;
+    $types .= 'ss';
+
+    $sql = 'SELECT COUNT(*) AS total'
+        . ' FROM cotizaciones_detalle cd'
+        . ' INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
+        . ' LEFT JOIN consultas c ON c.id = ' . ($hasCdConsultaId ? 'cd.consulta_id' : 'NULL')
+        . ' WHERE ' . implode(' AND ', $where);
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return 0;
+    }
+    if ($types !== '') {
+        $stmt->bind_param($types, ...$params);
+    }
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+
+    return (int)($row['total'] ?? 0);
+}
+
+function consultas_stats_consultas_hoy($conn, $medicoId, $fechaYmd) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    $base = [
+        'total_hoy' => 0,
+        'abiertas_hoy' => 0,
+        'completadas_hoy' => 0,
+    ];
+
+    if ($medicoId <= 0 || $fechaYmd === '') {
+        return $base;
+    }
+
+    $sql = 'SELECT '
+        . 'SUM(CASE WHEN c.fecha = ? THEN 1 ELSE 0 END) AS total_hoy, '
+        . 'SUM(CASE '
+        . '  WHEN c.fecha = ? AND LOWER(TRIM(COALESCE(c.estado, ""))) NOT IN ("cancelada", "cancelado", "anulada", "anulado", "completada", "completado") THEN 1 '
+        . '  ELSE 0 '
+        . 'END) AS abiertas_hoy, '
+        . 'SUM(CASE '
+        . '  WHEN LOWER(TRIM(COALESCE(c.estado, ""))) IN ("completada", "completado") '
+        . '   AND (c.fecha = ? OR COALESCE(hc_hoy.tiene_registro_hoy, 0) = 1) THEN 1 '
+        . '  ELSE 0 '
+        . 'END) AS completadas_hoy '
+        . 'FROM consultas c '
+        . 'LEFT JOIN ('
+        . '  SELECT consulta_id, 1 AS tiene_registro_hoy '
+        . '  FROM historia_clinica '
+        . '  WHERE DATE(fecha_registro) = ? '
+        . '  GROUP BY consulta_id'
+        . ') hc_hoy ON hc_hoy.consulta_id = c.id '
+        . 'WHERE c.medico_id = ? '
+        . '  AND (c.fecha = ? OR hc_hoy.tiene_registro_hoy = 1)';
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $base;
+    }
+
+    $stmt->bind_param('ssssis', $fechaYmd, $fechaYmd, $fechaYmd, $fechaYmd, $medicoId, $fechaYmd);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+
+    $base['total_hoy'] = (int)($row['total_hoy'] ?? 0);
+    $base['abiertas_hoy'] = (int)($row['abiertas_hoy'] ?? 0);
+    $base['completadas_hoy'] = (int)($row['completadas_hoy'] ?? 0);
+    return $base;
+}
+
+function consultas_stats_agenda_clinica_abierta_hoy($conn, $medicoId, $fechaYmd) {
+    $medicoId = (int)$medicoId;
+    $fechaYmd = trim((string)$fechaYmd);
+    if ($medicoId <= 0 || $fechaYmd === '') {
+        return 0;
+    }
+
+    if (!columna_existe_local($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+        return 0;
+    }
+
+    $hasAgendaMedico = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'medico_id');
+    $hasAgendaDetalle = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id');
+    $hasAgendaServicioId = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'servicio_id');
+    $hasAgendaEstado = columna_existe_local($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+    $hasDetalleId = columna_existe_local($conn, 'cotizaciones_detalle', 'id');
+    $hasDetalleMed = columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id');
+    $hasDetalleServ = columna_existe_local($conn, 'cotizaciones_detalle', 'servicio_id');
+    $hasTarifaId = columna_existe_local($conn, 'tarifas', 'id');
+    $hasTarifaMed = columna_existe_local($conn, 'tarifas', 'medico_id');
+
+    $joinDetalle = ($hasAgendaDetalle && $hasDetalleId)
+        ? ' LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id'
+        : '';
+    $joinTarifa = $hasTarifaId
+        ? ' LEFT JOIN tarifas t ON t.id = COALESCE('
+            . ($hasDetalleServ ? 'cd.servicio_id, ' : '')
+            . ($hasAgendaServicioId ? 'a.servicio_id' : '0')
+            . ')'
+        : '';
+
+    $medicoParts = [];
+    if ($hasAgendaMedico) {
+        $medicoParts[] = 'a.medico_id';
+    }
+    if ($hasDetalleMed) {
+        $medicoParts[] = 'cd.medico_id';
+    }
+    if ($hasTarifaMed) {
+        $medicoParts[] = 't.medico_id';
+    }
+    if (empty($medicoParts)) {
+        return 0;
+    }
+
+    $medicoExpr = 'COALESCE(' . implode(', ', $medicoParts) . ', 0)';
+    $whereEstado = $hasAgendaEstado
+        ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado")'
+        : '';
+    $whereServicioMedico = ' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ""))) IN ("consulta", "rayosx", "rayos x", "rayos_x", "rx", "ecografia", "procedimiento", "procedimientos", "operacion", "operaciones", "cirugia", "cirugias")';
+
+    $sql = 'SELECT COUNT(*) AS total '
+        . 'FROM agenda_servicios_cotizacion a '
+        . $joinDetalle
+        . $joinTarifa
+        . ' WHERE ' . $medicoExpr . ' = ?'
+        . ' AND a.fecha_programada = ?'
+        . $whereServicioMedico
+        . $whereEstado;
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return 0;
+    }
+
+    $stmt->bind_param('is', $medicoId, $fechaYmd);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+
+    return (int)($row['total'] ?? 0);
 }
 
 function consultas_stats_imagenologia_pendientes($conn, $medicoId, $fechaYmd) {
@@ -652,6 +1087,132 @@ function consultas_medico_existe($conn, $medicoId) {
     $exists = (bool)$stmt->get_result()->fetch_row();
     $stmt->close();
     return $exists;
+}
+
+function consultas_ensure_edad_snapshot_columns($conn) {
+    $alterations = [];
+    if (!columna_existe_local($conn, 'consultas', 'edad_snapshot_valor')) {
+        $alterations[] = "ADD COLUMN edad_snapshot_valor INT NULL";
+    }
+    if (!columna_existe_local($conn, 'consultas', 'edad_snapshot_unidad')) {
+        $alterations[] = "ADD COLUMN edad_snapshot_unidad VARCHAR(16) NULL";
+    }
+    if (!columna_existe_local($conn, 'consultas', 'edad_snapshot_es_estimada')) {
+        $alterations[] = "ADD COLUMN edad_snapshot_es_estimada TINYINT(1) NOT NULL DEFAULT 0";
+    }
+    if (!columna_existe_local($conn, 'consultas', 'edad_snapshot_fecha_calculo')) {
+        $alterations[] = "ADD COLUMN edad_snapshot_fecha_calculo DATE NULL";
+    }
+
+    foreach ($alterations as $sqlPart) {
+        @mysqli_query($conn, "ALTER TABLE consultas " . $sqlPart);
+    }
+}
+
+function consultas_parse_date_safe($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+        return ($dt instanceof DateTime) ? $dt : null;
+    }
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    $dt = new DateTime();
+    $dt->setTimestamp($ts);
+    return $dt;
+}
+
+function consultas_normalizar_unidad_edad($unidad) {
+    $u = strtolower(trim((string)$unidad));
+    if ($u === '') return 'anios';
+    if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    return 'anios';
+}
+
+function consultas_resolver_edad_snapshot($conn, $pacienteId, $fechaReferenciaYmd) {
+    $pacienteId = (int)$pacienteId;
+    $fechaReferenciaYmd = trim((string)$fechaReferenciaYmd);
+    if ($pacienteId <= 0 || $fechaReferenciaYmd === '') {
+        return ['valor' => null, 'unidad' => null, 'es_estimada' => 0, 'fecha_calculo' => null];
+    }
+
+    $stmtPac = $conn->prepare('SELECT fecha_nacimiento, edad, edad_unidad, creado_en FROM pacientes WHERE id = ? LIMIT 1');
+    if (!$stmtPac) {
+        return ['valor' => null, 'unidad' => null, 'es_estimada' => 0, 'fecha_calculo' => null];
+    }
+    $stmtPac->bind_param('i', $pacienteId);
+    $stmtPac->execute();
+    $rowPac = $stmtPac->get_result()->fetch_assoc();
+    $stmtPac->close();
+    if (!$rowPac) {
+        return ['valor' => null, 'unidad' => null, 'es_estimada' => 0, 'fecha_calculo' => null];
+    }
+
+    $fechaRef = consultas_parse_date_safe($fechaReferenciaYmd);
+    if (!($fechaRef instanceof DateTime)) {
+        return ['valor' => null, 'unidad' => null, 'es_estimada' => 0, 'fecha_calculo' => null];
+    }
+    $fechaRef->setTime(0, 0, 0);
+
+    $fechaNac = consultas_parse_date_safe($rowPac['fecha_nacimiento'] ?? null);
+    if ($fechaNac instanceof DateTime) {
+        $fechaNac->setTime(0, 0, 0);
+        $diff = $fechaNac->diff($fechaRef);
+        $dias = max(0, (int)$diff->days);
+        $meses = max(0, ((int)$diff->y * 12) + (int)$diff->m);
+        $anios = max(0, (int)$diff->y);
+
+        if ($dias <= 28) {
+            return ['valor' => $dias, 'unidad' => 'dias', 'es_estimada' => 0, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+        }
+        if ($meses < 12) {
+            return ['valor' => $meses, 'unidad' => 'meses', 'es_estimada' => 0, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+        }
+        return ['valor' => $anios, 'unidad' => 'años', 'es_estimada' => 0, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+    }
+
+    $edadBaseRaw = $rowPac['edad'] ?? null;
+    if ($edadBaseRaw === null || $edadBaseRaw === '') {
+        return ['valor' => null, 'unidad' => null, 'es_estimada' => 0, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+    }
+
+    $edadBase = max(0, (int)$edadBaseRaw);
+    $unidadBase = consultas_normalizar_unidad_edad($rowPac['edad_unidad'] ?? 'anios');
+    $fechaBase = consultas_parse_date_safe($rowPac['creado_en'] ?? null);
+    if (!($fechaBase instanceof DateTime)) {
+        return [
+            'valor' => $edadBase,
+            'unidad' => $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias'),
+            'es_estimada' => 1,
+            'fecha_calculo' => $fechaRef->format('Y-m-d'),
+        ];
+    }
+
+    $fechaBase->setTime(0, 0, 0);
+    $diffBase = $fechaBase->diff($fechaRef);
+    $aniosTrans = max(0, (int)$diffBase->y);
+    $mesesTrans = max(0, ((int)$diffBase->y * 12) + (int)$diffBase->m);
+    $diasTrans = max(0, (int)$diffBase->days);
+
+    if ($unidadBase === 'dias') {
+        $totalDias = $edadBase + $diasTrans;
+        if ($totalDias <= 28) {
+            return ['valor' => $totalDias, 'unidad' => 'dias', 'es_estimada' => 1, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+        }
+        return ['valor' => (int)floor($totalDias / 30), 'unidad' => 'meses', 'es_estimada' => 1, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+    }
+    if ($unidadBase === 'meses') {
+        $totalMeses = $edadBase + $mesesTrans;
+        if ($totalMeses < 12) {
+            return ['valor' => $totalMeses, 'unidad' => 'meses', 'es_estimada' => 1, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+        }
+        return ['valor' => (int)floor($totalMeses / 12), 'unidad' => 'años', 'es_estimada' => 1, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
+    }
+
+    return ['valor' => $edadBase + $aniosTrans, 'unidad' => 'años', 'es_estimada' => 1, 'fecha_calculo' => $fechaRef->format('Y-m-d')];
 }
 
 function consultas_buscar_conflicto_agenda_horario($conn, $medicoId, $fechaYmd, $horaHms) {
@@ -1303,8 +1864,17 @@ switch ($method) {
         $page = isset($_GET['page']) ? intval($_GET['page']) : 0;
         $per_page = isset($_GET['per_page']) ? intval($_GET['per_page']) : 0;
         $search = isset($_GET['search']) ? trim($_GET['search']) : '';
+        $searchNorm = preg_replace('/\s+/', ' ', $search);
+        $searchNorm = is_string($searchNorm) ? trim($searchNorm) : '';
+        $searchDoc = strtoupper($searchNorm);
+        $searchDoc = str_ireplace(['DNI', 'HC'], '', $searchDoc);
+        $searchDoc = preg_replace('/[^A-Z0-9]/', '', $searchDoc);
+        $searchDoc = is_string($searchDoc) ? trim($searchDoc) : '';
         $fecha_desde = isset($_GET['fecha_desde']) ? trim($_GET['fecha_desde']) : '';
         $fecha_hasta = isset($_GET['fecha_hasta']) ? trim($_GET['fecha_hasta']) : '';
+        $estado_panel = strtolower(trim((string)($_GET['estado_panel'] ?? '')));
+        $filtro_pago_panel = strtolower(trim((string)($_GET['filtro_pago_panel'] ?? '')));
+        $semaforo_panel = strtolower(trim((string)($_GET['semaforo_panel'] ?? '')));
         $solo_activas = isset($_GET['solo_activas'])
             ? in_array(strtolower(trim((string)$_GET['solo_activas'])), ['1', 'true', 'si', 'sí', 'yes'], true)
             : false;
@@ -1340,6 +1910,7 @@ switch ($method) {
             $consultaIds = [];
             $cotEstadoMap = consultas_cotizacion_estado_map($conn, $cotizacionIds);
             $mapConsultaExplicita = consultas_cotizacion_consulta_explicita_map($conn, $cotizacionIds);
+            $mapVinculoOperativo = consultas_cotizacion_vinculo_medico_operativo_map($conn, $cotizacionIds);
             foreach ($cotizacionIds as $cotId) {
                 $consultaRef = (int)($mapConsultaExplicita[(int)$cotId] ?? 0);
                 $mapCotizacionConsulta[$cotId] = $consultaRef > 0 ? (int)$consultaRef : 0;
@@ -1371,20 +1942,36 @@ switch ($method) {
                 }
             }
 
+            $consultasPagadas = [];
+            $cotizacionesPagadasSinConsulta = [];
             foreach ($cotizacionIds as $cotId) {
-                $consultaRef = (int)($mapCotizacionConsulta[$cotId] ?? 0);
                 $estadoCot = $cotEstadoMap[(int)$cotId] ?? '';
+                if (!consultas_es_cotizacion_pagada($estadoCot)) {
+                    continue;
+                }
+                $consultaRef = (int)($mapCotizacionConsulta[$cotId] ?? 0);
                 if ($consultaRef > 0) {
-                    consultas_regularizar_habilitacion_por_pago($conn, $consultaRef, $estadoCot);
+                    $consultasPagadas[] = $consultaRef;
+                } else {
+                    $cotizacionesPagadasSinConsulta[] = (int)$cotId;
                 }
             }
+            consultas_regularizar_habilitacion_por_pago_consultas_lote($conn, $consultasPagadas);
+            consultas_regularizar_habilitacion_por_pago_cotizaciones_lote($conn, $cotizacionesPagadasSinConsulta);
 
             $habByConsulta = consultas_resolver_habilitaciones_por_consulta_ids($conn, $consultaIds);
+            $habByCotizacion = consultas_resolver_habilitaciones_por_cotizacion_ids($conn, $cotizacionIds);
             $estados = [];
             foreach ($cotizacionIds as $cotId) {
                 $consultaRef = (int)($mapCotizacionConsulta[$cotId] ?? 0);
                 $estadoItem = consultas_habilitacion_estado_default($consultaRef, (int)$cotId);
                 $estadoCot = $cotEstadoMap[(int)$cotId] ?? '';
+                $vinculoOperativo = $mapVinculoOperativo[(int)$cotId] ?? [
+                    'vinculo_anticipado_valido' => 0,
+                    'medico_id' => 0,
+                    'servicios_medicos_count' => 0,
+                    'medicos_distintos' => 0,
+                ];
 
                 if ($consultaRef > 0 && isset($habByConsulta[$consultaRef])) {
                     $estadoItem = array_merge($estadoItem, $habByConsulta[$consultaRef]);
@@ -1395,7 +1982,20 @@ switch ($method) {
                         $estadoItem['habilitacion_anticipada_activa'] = 0;
                         $estadoItem['estado_resumen'] = 'regularizado';
                     }
+                } elseif ($consultaRef <= 0 && isset($habByCotizacion[(int)$cotId])) {
+                    $estadoItem = array_merge($estadoItem, $habByCotizacion[(int)$cotId]);
+                    $historial = (int)($estadoItem['historial_count'] ?? 0);
+                    if (consultas_es_cotizacion_pagada($estadoCot) && $historial > 0) {
+                        $estadoItem['habilitacion_anticipada_activa'] = 0;
+                        $estadoItem['estado_resumen'] = 'regularizado';
+                    }
                 }
+
+                $estadoItem['vinculo_anticipado_valido'] = (int)($vinculoOperativo['vinculo_anticipado_valido'] ?? 0);
+                $estadoItem['vinculo_anticipado_modo'] = $consultaRef > 0 ? 'consulta' : ((int)($vinculoOperativo['vinculo_anticipado_valido'] ?? 0) === 1 ? 'cotizacion' : 'ninguno');
+                $estadoItem['vinculo_anticipado_medico_id'] = (int)($vinculoOperativo['medico_id'] ?? 0);
+                $estadoItem['vinculo_anticipado_servicios_count'] = (int)($vinculoOperativo['servicios_medicos_count'] ?? 0);
+                $estadoItem['vinculo_anticipado_medicos_distintos'] = (int)($vinculoOperativo['medicos_distintos'] ?? 0);
                 $estados[(string)$cotId] = $estadoItem;
             }
 
@@ -1405,6 +2005,174 @@ switch ($method) {
                 'puede_autorizar' => consultas_es_rol_autorizador_anticipado($rolSesion),
             ]);
             break;
+        }
+
+        if ($vista === 'triaje_panel') {
+            $page = max(1, (int)$page);
+            $per_page = max(1, (int)$per_page);
+            if ($per_page > 100) {
+                $per_page = 100;
+            }
+            $hasTriajeRealizadoCol = consultas_column_exists($conn, 'consultas', 'triaje_realizado');
+            $triajeRealizadoExpr = $hasTriajeRealizadoCol
+                ? 'COALESCE(consultas.triaje_realizado, 0)'
+                : 'CASE WHEN EXISTS (SELECT 1 FROM triaje t WHERE t.consulta_id = consultas.id) THEN 1 ELSE 0 END';
+
+            $whereTri = [];
+            $paramsTri = [];
+            $typesTri = '';
+
+            if ($esSesionMedico && $medicoSesionId > 0) {
+                $whereTri[] = 'consultas.medico_id = ?';
+                $paramsTri[] = $medicoSesionId;
+                $typesTri .= 'i';
+            } elseif ($medico_id) {
+                $whereTri[] = 'consultas.medico_id = ?';
+                $paramsTri[] = $medico_id;
+                $typesTri .= 'i';
+            }
+
+            if ($paciente_id) {
+                $whereTri[] = 'consultas.paciente_id = ?';
+                $paramsTri[] = $paciente_id;
+                $typesTri .= 'i';
+            }
+
+            if ($solo_activas) {
+                if ($incluir_completadas_sin_triaje) {
+                    $whereTri[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'cancelado', 'anulada', 'anulado')";
+                } else {
+                    $whereTri[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'cancelado', 'anulada', 'anulado', 'completada', 'completado')";
+                }
+            }
+
+            if ($fecha_desde !== '') {
+                $whereTri[] = 'consultas.fecha >= ?';
+                $paramsTri[] = $fecha_desde;
+                $typesTri .= 's';
+            }
+
+            if ($fecha_hasta !== '') {
+                $whereTri[] = 'consultas.fecha <= ?';
+                $paramsTri[] = $fecha_hasta;
+                $typesTri .= 's';
+            }
+
+            if ($searchNorm !== '') {
+                $whereTri[] = '('
+                    . 'pacientes.nombre LIKE ? '
+                    . 'OR pacientes.apellido LIKE ? '
+                    . 'OR CONCAT_WS(" ", pacientes.nombre, pacientes.apellido) LIKE ? '
+                    . 'OR pacientes.historia_clinica LIKE ? '
+                    . 'OR pacientes.dni LIKE ? '
+                    . 'OR medicos.nombre LIKE ? '
+                    . 'OR medicos.apellido LIKE ? '
+                    . 'OR medicos.especialidad LIKE ? '
+                    . 'OR CAST(consultas.id AS CHAR) LIKE ?'
+                    . ')';
+                $searchLike = '%' . $searchNorm . '%';
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchLike;
+                $typesTri .= 'sssssssss';
+            }
+
+            $fromTri = ' FROM consultas '
+                . 'LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id '
+                . 'LEFT JOIN medicos ON consultas.medico_id = medicos.id';
+            $whereSqlTri = count($whereTri) ? (' WHERE ' . implode(' AND ', $whereTri)) : '';
+
+            $statsSqlTri = 'SELECT COUNT(*) AS total, '
+                . 'SUM(CASE WHEN ' . $triajeRealizadoExpr . ' = 1 THEN 1 ELSE 0 END) AS completados '
+                . $fromTri
+                . $whereSqlTri;
+
+            $stmtStatsTri = $conn->prepare($statsSqlTri);
+            if (!$stmtStatsTri) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'Error al preparar estadísticas de triaje']);
+                exit;
+            }
+            if ($typesTri !== '') {
+                $stmtStatsTri->bind_param($typesTri, ...$paramsTri);
+            }
+            $stmtStatsTri->execute();
+            $statsTri = $stmtStatsTri->get_result()->fetch_assoc() ?: ['total' => 0, 'completados' => 0];
+            $stmtStatsTri->close();
+
+            $totalTri = (int)($statsTri['total'] ?? 0);
+            $completadosTri = (int)($statsTri['completados'] ?? 0);
+            $pendientesTri = max(0, $totalTri - $completadosTri);
+            $totalPagesTri = max(1, (int)ceil($totalTri / $per_page));
+            $offsetTri = ($page - 1) * $per_page;
+
+            $sqlTri = 'SELECT '
+                . 'consultas.id, consultas.paciente_id, consultas.medico_id, consultas.fecha, consultas.hora, consultas.estado, '
+                . $triajeRealizadoExpr . ' AS triaje_realizado, '
+                . 'pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni AS paciente_dni, '
+                . 'medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido, medicos.especialidad AS medico_especialidad '
+                . $fromTri
+                . $whereSqlTri
+                . ' ORDER BY consultas.fecha DESC, consultas.hora DESC, consultas.id DESC '
+                . 'LIMIT ? OFFSET ?';
+
+            $stmtTri = $conn->prepare($sqlTri);
+            if (!$stmtTri) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'Error al preparar lista de triaje']);
+                exit;
+            }
+
+            $typesListTri = $typesTri . 'ii';
+            $paramsListTri = $paramsTri;
+            $paramsListTri[] = $per_page;
+            $paramsListTri[] = $offsetTri;
+            $stmtTri->bind_param($typesListTri, ...$paramsListTri);
+            $stmtTri->execute();
+            $resTri = $stmtTri->get_result();
+            $consultasTri = [];
+            while ($rowTri = $resTri->fetch_assoc()) {
+                $consultasTri[] = [
+                    'id' => (int)($rowTri['id'] ?? 0),
+                    'paciente_id' => (int)($rowTri['paciente_id'] ?? 0),
+                    'medico_id' => (int)($rowTri['medico_id'] ?? 0),
+                    'fecha' => (string)($rowTri['fecha'] ?? ''),
+                    'hora' => (string)($rowTri['hora'] ?? ''),
+                    'estado' => (string)($rowTri['estado'] ?? ''),
+                    'triaje_realizado' => (int)($rowTri['triaje_realizado'] ?? 0),
+                    'paciente_nombre' => (string)($rowTri['paciente_nombre'] ?? ''),
+                    'paciente_apellido' => (string)($rowTri['paciente_apellido'] ?? ''),
+                    'historia_clinica' => (string)($rowTri['historia_clinica'] ?? ''),
+                    'paciente_dni' => (string)($rowTri['paciente_dni'] ?? ''),
+                    'medico_nombre' => (string)($rowTri['medico_nombre'] ?? ''),
+                    'medico_apellido' => (string)($rowTri['medico_apellido'] ?? ''),
+                    'medico_especialidad' => (string)($rowTri['medico_especialidad'] ?? ''),
+                ];
+            }
+            $stmtTri->close();
+
+            echo json_encode([
+                'success' => true,
+                'consultas' => $consultasTri,
+                'stats' => [
+                    'total' => $totalTri,
+                    'pendientes' => $pendientesTri,
+                    'completados' => $completadosTri,
+                ],
+                'pagination' => [
+                    'page' => $page,
+                    'per_page' => $per_page,
+                    'total' => $totalTri,
+                    'total_pages' => $totalPagesTri,
+                ],
+            ]);
+            exit;
         }
 
         $from = ' FROM consultas LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id LEFT JOIN medicos ON consultas.medico_id = medicos.id';
@@ -1428,20 +2196,38 @@ switch ($method) {
             $types .= 'i';
         }
 
-        if ($search !== '') {
-            $where[] = '(pacientes.nombre LIKE ? OR pacientes.apellido LIKE ? OR pacientes.historia_clinica LIKE ? OR pacientes.dni LIKE ? OR medicos.nombre LIKE ? OR medicos.apellido LIKE ? OR medicos.especialidad LIKE ? OR consultas.estado LIKE ? OR consultas.tipo_consulta LIKE ? OR CAST(consultas.id AS CHAR) LIKE ?)';
-            $searchLike = '%' . $search . '%';
+        if ($searchNorm !== '') {
+            $where[] = '('
+                . 'pacientes.nombre LIKE ? '
+                . 'OR pacientes.apellido LIKE ? '
+                . 'OR CONCAT_WS(" ", pacientes.nombre, pacientes.apellido) LIKE ? '
+                . 'OR pacientes.historia_clinica LIKE ? '
+                . 'OR pacientes.dni LIKE ? '
+                . 'OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pacientes.historia_clinica, ""), "HC", ""), ":", ""), "-", ""), " ", "")) LIKE ? '
+                . 'OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pacientes.dni, ""), "DNI", ""), ":", ""), "-", ""), " ", "")) LIKE ? '
+                . 'OR medicos.nombre LIKE ? '
+                . 'OR medicos.apellido LIKE ? '
+                . 'OR medicos.especialidad LIKE ? '
+                . 'OR consultas.estado LIKE ? '
+                . 'OR consultas.tipo_consulta LIKE ? '
+                . 'OR CAST(consultas.id AS CHAR) LIKE ?'
+                . ')';
+            $searchLike = '%' . $searchNorm . '%';
+            $searchDocLike = '%' . $searchDoc . '%';
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $params[] = $searchDocLike;
+            $params[] = $searchDocLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
-            $params[] = $searchLike;
-            $params[] = $searchLike;
-            $params[] = $searchLike;
-            $params[] = $searchLike;
-            $types .= 'ssssssssss';
+            $types .= 'sssssssssssss';
         }
 
         if ($fecha_desde !== '') {
@@ -1518,6 +2304,90 @@ switch ($method) {
             }
         }
 
+        $hasDetalleEstadoItemFiltro = columna_existe_local($conn, 'cotizaciones_detalle', 'estado_item');
+        $existsConsultaEliminadaSql = 'EXISTS ('
+            . 'SELECT 1 FROM cotizaciones_detalle cdx '
+            . 'WHERE cdx.consulta_id = consultas.id '
+            . '  AND LOWER(TRIM(COALESCE(cdx.servicio_tipo, ""))) = "consulta" '
+            . '  AND LOWER(TRIM(COALESCE(cdx.estado_item, "activo"))) = "eliminado"'
+            . ')';
+        $notExistsConsultaEliminadaSql = 'NOT EXISTS ('
+            . 'SELECT 1 FROM cotizaciones_detalle cdx '
+            . 'WHERE cdx.consulta_id = consultas.id '
+            . '  AND LOWER(TRIM(COALESCE(cdx.servicio_tipo, ""))) = "consulta" '
+            . '  AND LOWER(TRIM(COALESCE(cdx.estado_item, "activo"))) = "eliminado"'
+            . ')';
+
+        $whereDetallePagoActivo = $hasDetalleEstadoItemFiltro
+            ? ' AND LOWER(TRIM(COALESCE(cdp.estado_item, "activo"))) <> "eliminado"'
+            : '';
+        $existsConsultaPagadaSql = 'EXISTS ('
+            . 'SELECT 1 FROM cotizaciones_detalle cdp '
+            . 'INNER JOIN cotizaciones ctp ON ctp.id = cdp.cotizacion_id '
+            . 'WHERE cdp.consulta_id = consultas.id '
+            . '  AND LOWER(TRIM(COALESCE(cdp.servicio_tipo, ""))) = "consulta" '
+            . $whereDetallePagoActivo
+            . '  AND LOWER(TRIM(COALESCE(ctp.estado, ""))) IN ("pagado", "pagada", "control")'
+            . ')';
+
+        switch ($estado_panel) {
+            case 'activas':
+                $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'cancelado', 'anulada', 'anulado', 'completada', 'completado')";
+                if ($hasDetalleEstadoItemFiltro) {
+                    $where[] = $notExistsConsultaEliminadaSql;
+                }
+                break;
+            case 'pendientes':
+                $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) = 'pendiente'";
+                if ($hasDetalleEstadoItemFiltro) {
+                    $where[] = $notExistsConsultaEliminadaSql;
+                }
+                break;
+            case 'completadas':
+                $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) IN ('completada', 'completado')";
+                if ($hasDetalleEstadoItemFiltro) {
+                    $where[] = $notExistsConsultaEliminadaSql;
+                }
+                break;
+            case 'canceladas_excluidas':
+                if ($hasDetalleEstadoItemFiltro) {
+                    $where[] = '(LOWER(TRIM(COALESCE(consultas.estado, ""))) IN ("cancelada", "cancelado", "anulada", "anulado") OR ' . $existsConsultaEliminadaSql . ')';
+                } else {
+                    $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) IN ('cancelada', 'cancelado', 'anulada', 'anulado')";
+                }
+                break;
+            case 'todas':
+            case '':
+            default:
+                break;
+        }
+
+        if ($estado_panel !== 'canceladas_excluidas') {
+            switch ($filtro_pago_panel) {
+                case 'solo_pagadas':
+                    $where[] = '(COALESCE(consultas.es_control, 0) = 1 OR ' . $existsConsultaPagadaSql . ')';
+                    break;
+                case 'solo_no_pagadas':
+                    $where[] = '(COALESCE(consultas.es_control, 0) = 0 AND NOT ' . $existsConsultaPagadaSql . ')';
+                    break;
+                case 'todas':
+                case '':
+                default:
+                    break;
+            }
+        }
+
+        switch ($semaforo_panel) {
+            case 'proxima':
+                $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('completada', 'completado', 'cancelada', 'cancelado', 'anulada', 'anulado')";
+                $where[] = 'consultas.fecha > CURDATE()';
+                break;
+            case 'todas':
+            case '':
+            default:
+                break;
+        }
+
         // Vista optimizada para calendario de disponibilidad: evita JOINs pesados
         // y retorna únicamente campos necesarios para cálculo de cupos.
         if ($vista === 'disponibilidad') {
@@ -1549,7 +2419,7 @@ switch ($method) {
             $whereSqlSimple = count($where) ? (' WHERE ' . implode(' AND ', $where)) : '';
             $sqlSimple = 'SELECT consultas.id, consultas.medico_id, consultas.fecha, consultas.hora, consultas.estado FROM consultas'
                 . $whereSqlSimple
-                . ' ORDER BY consultas.fecha DESC, consultas.hora DESC';
+                . ' ORDER BY consultas.fecha ASC, consultas.hora ASC';
 
             if ($usar_paginacion) {
                 $offset = ($page - 1) * $per_page;
@@ -1636,10 +2506,16 @@ switch ($method) {
 
         $hasCdOrigenCobro = columna_existe_local($conn, 'cotizaciones_detalle', 'origen_cobro');
         $hasCotEsCostoCeroContrato = columna_existe_local($conn, 'cotizaciones', 'es_costo_cero_contrato');
+        $hasDetalleEstadoItem = columna_existe_local($conn, 'cotizaciones_detalle', 'estado_item');
+        $hasColaMedico = consultas_table_exists($conn, 'recordatorios_cola_medico');
 
         $selectContratoOrigenExpr = $hasCdOrigenCobro
             ? 'MAX(CASE WHEN LOWER(TRIM(COALESCE(cd.origen_cobro, ""))) = "contrato" THEN 1 ELSE 0 END) AS tiene_origen_contrato'
             : '0 AS tiene_origen_contrato';
+
+        $selectConsultaItemEstadoActualExpr = $hasDetalleEstadoItem
+            ? 'SUBSTRING_INDEX(GROUP_CONCAT(LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) ORDER BY cd.id DESC SEPARATOR ","), ",", 1) AS consulta_item_estado_actual'
+            : '"activo" AS consulta_item_estado_actual';
 
         $selectCotEsCostoCeroExpr = $hasCotEsCostoCeroContrato
             ? 'COALESCE(cot.es_costo_cero_contrato, 0) AS cot_es_costo_cero_contrato'
@@ -1653,7 +2529,7 @@ switch ($method) {
             . ' LEFT JOIN pacientes ON consultas.paciente_id = pacientes.id'
             . ' LEFT JOIN medicos ON consultas.medico_id = medicos.id'
             . ' LEFT JOIN ('
-            . '   SELECT cd.consulta_id, MAX(cd.cotizacion_id) AS cotizacion_id, ' . $selectContratoOrigenExpr
+            . '   SELECT cd.consulta_id, MAX(cd.cotizacion_id) AS cotizacion_id, ' . $selectContratoOrigenExpr . ', ' . $selectConsultaItemEstadoActualExpr
             . '   FROM cotizaciones_detalle cd'
             . '   INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
             . '   WHERE cd.consulta_id IS NOT NULL'
@@ -1662,6 +2538,12 @@ switch ($method) {
             . '     AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada")'
             . '   GROUP BY cd.consulta_id'
             . ' ) cot_ref ON cot_ref.consulta_id = consultas.id'
+            . ($hasColaMedico
+                ? ' LEFT JOIN recordatorios_cola_medico cola_consulta ON cola_consulta.consulta_id = consultas.id'
+                : '')
+            . ($hasColaMedico
+                ? ' LEFT JOIN recordatorios_cola_medico cola_cotizacion ON cola_cotizacion.consulta_id IS NULL AND cola_cotizacion.cotizacion_id = cot_ref.cotizacion_id'
+                : '')
             . ' LEFT JOIN cotizaciones cot ON cot.id = cot_ref.cotizacion_id'
             . ' LEFT JOIN ('
             . '   SELECT cd.consulta_id,'
@@ -1681,13 +2563,36 @@ switch ($method) {
             . ' cot_ref.cotizacion_id AS cotizacion_id,'
             . ' cot.estado AS cotizacion_estado,'
             . ' cot_ref.tiene_origen_contrato AS cot_tiene_origen_contrato,'
+            . ($hasColaMedico ? ' COALESCE(cola_consulta.source_key, cola_cotizacion.source_key, "") AS cola_source_key,' : ' "" AS cola_source_key,')
+            . ($hasColaMedico
+                ? ' CASE'
+                . ' WHEN LOWER(TRIM(COALESCE(consultas.estado, ""))) IN ("completada", "completado", "cancelada", "cancelado", "anulada", "anulado") THEN "en_atencion"'
+                . ' ELSE COALESCE(cola_consulta.estado_cola, cola_cotizacion.estado_cola, "pendiente")'
+                . ' END AS cola_estado,'
+                : ' "pendiente" AS cola_estado,')
+            . ($hasColaMedico
+                ? ' CASE'
+                . ' WHEN LOWER(TRIM(COALESCE(consultas.estado, ""))) IN ("completada", "completado", "cancelada", "cancelado", "anulada", "anulado") THEN 0'
+                . ' ELSE COALESCE(cola_consulta.correlativo_cola, cola_cotizacion.correlativo_cola, 0)'
+                . ' END AS cola_correlativo,'
+                : ' 0 AS cola_correlativo,')
+            . ($hasColaMedico
+                ? ' CASE'
+                . ' WHEN LOWER(TRIM(COALESCE(consultas.estado, ""))) IN ("completada", "completado", "cancelada", "cancelado", "anulada", "anulado") THEN 0'
+                . ' ELSE COALESCE(cola_consulta.es_siguiente, cola_cotizacion.es_siguiente, 0)'
+                . ' END AS cola_es_siguiente,'
+                : ' 0 AS cola_es_siguiente,')
+            . ($hasColaMedico ? ' COALESCE(cola_consulta.prioridad_cola, cola_cotizacion.prioridad_cola, "normal") AS cola_prioridad,' : ' "normal" AS cola_prioridad,')
+            . ($hasColaMedico ? ' COALESCE(cola_consulta.prioridad_detalle, cola_cotizacion.prioridad_detalle, "") AS cola_prioridad_detalle,' : ' "" AS cola_prioridad_detalle,')
+            . ($hasColaMedico ? ' COALESCE(cola_consulta.updated_at, cola_cotizacion.updated_at) AS cola_updated_at,' : ' NULL AS cola_updated_at,')
+            . ' COALESCE(cot_ref.consulta_item_estado_actual, "activo") AS consulta_item_estado_actual,'
             . ' COALESCE(svc_ref.servicios_tipos_resumen, "") AS servicios_tipos_resumen,'
             . ' COALESCE(svc_ref.servicios_count, 0) AS servicios_count,'
             . ' COALESCE(svc_ref.servicios_extras_count, 0) AS servicios_extras_count,'
             . ' ' . $selectCotEsCostoCeroExpr
             . $fromData
             . $whereSql
-            . ' ORDER BY consultas.fecha DESC, consultas.hora DESC';
+            . ' ORDER BY consultas.fecha ASC, consultas.hora ASC';
 
         if ($usar_paginacion) {
             $offset = ($page - 1) * $per_page;
@@ -1730,6 +2635,10 @@ switch ($method) {
 
         $habByConsultaListado = consultas_resolver_habilitaciones_por_consulta_ids($conn, $consultaIdsListado);
 
+        $statsOperativasListado = 0;
+        $statsExcluidasListado = 0;
+        $statsPendientesOperativasListado = 0;
+
         foreach ($rows as &$row) {
             $cotId = intval($row['cotizacion_id'] ?? 0);
             $cotEstado = trim((string)($row['cotizacion_estado'] ?? ''));
@@ -1741,9 +2650,24 @@ switch ($method) {
             $row['cotizacion_id'] = $cotId > 0 ? $cotId : null;
             $row['cotizacion_estado'] = $cotEstado !== '' ? $cotEstado : null;
             $row['es_contrato'] = ($cotTieneOrigenContrato || $cotEsCostoCeroContrato || $esContratoLegacy) ? 1 : 0;
+            $row['consulta_item_estado_actual'] = strtolower(trim((string)($row['consulta_item_estado_actual'] ?? 'activo')));
             $row['servicios_tipos_resumen'] = trim((string)($row['servicios_tipos_resumen'] ?? ''));
             $row['servicios_count'] = intval($row['servicios_count'] ?? 0);
             $row['servicios_extras_count'] = intval($row['servicios_extras_count'] ?? 0);
+
+            $estadoConsultaNorm = strtolower(trim((string)($row['estado'] ?? '')));
+            $consultaCancelada = in_array($estadoConsultaNorm, ['cancelada', 'cancelado', 'anulada', 'anulado'], true);
+            $consultaDetalleEliminado = ($row['consulta_item_estado_actual'] === 'eliminado');
+            $row['es_consulta_excluida_operativa'] = ($consultaCancelada || $consultaDetalleEliminado) ? 1 : 0;
+
+            if (intval($row['es_consulta_excluida_operativa']) === 1) {
+                $statsExcluidasListado++;
+            } else {
+                $statsOperativasListado++;
+                if ($estadoConsultaNorm === 'pendiente') {
+                    $statsPendientesOperativasListado++;
+                }
+            }
 
             $consultaId = intval($row['id'] ?? 0);
             $hab = $habByConsultaListado[$consultaId] ?? consultas_habilitacion_estado_default($consultaId, $cotId);
@@ -1772,15 +2696,37 @@ switch ($method) {
                 'total' => $totalFiltrado,
                 'pendientes' => intval($statsRow['pendientes'] ?? 0),
                 'emergencias' => intval($statsRow['emergencias'] ?? 0),
+                'operativas' => $statsOperativasListado,
+                'pendientes_operativas' => $statsPendientesOperativasListado,
+                'excluidas_canceladas' => $statsExcluidasListado,
             ],
         ];
 
         if ($esSesionMedico) {
             $hoyYmd = date('Y-m-d');
+            $statsConsultasHoy = consultas_stats_consultas_hoy($conn, $medicoSesionId, $hoyYmd);
+            $agendaClinicaAbiertaHoy = consultas_stats_agenda_clinica_abierta_hoy($conn, $medicoSesionId, $hoyYmd);
             $serviciosHabilitados = consultas_servicios_habilitados_medico($conn, $medicoSesionId);
             $pendientesPorServicio = consultas_stats_servicios_pendientes_hoy($conn, $medicoSesionId, $hoyYmd);
+            $procedimientosModuloHoy = consultas_stats_procedimientos_modulo_hoy($conn, $medicoSesionId, $hoyYmd);
+            if (!isset($pendientesPorServicio['procedimiento'])) {
+                $pendientesPorServicio['procedimiento'] = 0;
+            }
+            $pendientesPorServicio['procedimiento'] = max((int)$pendientesPorServicio['procedimiento'], (int)$procedimientosModuloHoy);
             $statsImagenologiaPendiente = consultas_stats_imagenologia_pendientes($conn, $medicoSesionId, $hoyYmd);
             $statsImagenologiaConciliacion = consultas_stats_imagenologia_conciliacion($conn, $medicoSesionId, $hoyYmd);
+
+            $colaClinicaHoy = (int)($statsConsultasHoy['abiertas_hoy'] ?? 0) + $agendaClinicaAbiertaHoy;
+
+            $respuesta['stats_clinicos_hoy'] = [
+                'fecha_referencia' => $hoyYmd,
+                'consultas_total_hoy' => (int)($statsConsultasHoy['total_hoy'] ?? 0),
+                'consultas_abiertas_hoy' => (int)($statsConsultasHoy['abiertas_hoy'] ?? 0),
+                'agenda_abierta_hoy' => $agendaClinicaAbiertaHoy,
+                'cola_clinica_hoy' => $colaClinicaHoy,
+                'consultas_completadas_hoy' => (int)($statsConsultasHoy['completadas_hoy'] ?? 0),
+                'total_historico_filtrado' => $totalFiltrado,
+            ];
 
             $respuesta['stats_servicios_hoy'] = [
                 'fecha_referencia' => $hoyYmd,
@@ -1974,11 +2920,51 @@ switch ($method) {
             }
 
             // 5. Insertar la consulta dentro de la transacción
-            $stmtIns = $conn->prepare(
-                'INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, origen_creacion)
-                 VALUES (?, ?, ?, ?, ?, ?)'
-            );
-            $stmtIns->bind_param('iissss', $paciente_id, $medico_id, $fecha, $hora, $tipo_consulta, $origen_creacion);
+            consultas_ensure_edad_snapshot_columns($conn);
+            $hasOrigenCreacion = columna_existe_local($conn, 'consultas', 'origen_creacion');
+            $hasEdadSnapshotValor = columna_existe_local($conn, 'consultas', 'edad_snapshot_valor');
+            $hasEdadSnapshotUnidad = columna_existe_local($conn, 'consultas', 'edad_snapshot_unidad');
+            $hasEdadSnapshotEstimada = columna_existe_local($conn, 'consultas', 'edad_snapshot_es_estimada');
+            $hasEdadSnapshotFecha = columna_existe_local($conn, 'consultas', 'edad_snapshot_fecha_calculo');
+            $edadSnapshot = consultas_resolver_edad_snapshot($conn, (int)$paciente_id, (string)$fecha);
+
+            $insertCols = ['paciente_id', 'medico_id', 'fecha', 'hora', 'tipo_consulta'];
+            $insertTypes = 'iisss';
+            $insertParams = [(int)$paciente_id, (int)$medico_id, (string)$fecha, (string)$hora, (string)$tipo_consulta];
+
+            if ($hasOrigenCreacion) {
+                $insertCols[] = 'origen_creacion';
+                $insertTypes .= 's';
+                $insertParams[] = (string)$origen_creacion;
+            }
+
+            if (
+                $hasEdadSnapshotValor
+                && $hasEdadSnapshotUnidad
+                && $hasEdadSnapshotEstimada
+                && $hasEdadSnapshotFecha
+                && $edadSnapshot['valor'] !== null
+            ) {
+                $insertCols[] = 'edad_snapshot_valor';
+                $insertCols[] = 'edad_snapshot_unidad';
+                $insertCols[] = 'edad_snapshot_es_estimada';
+                $insertCols[] = 'edad_snapshot_fecha_calculo';
+                $insertTypes .= 'isis';
+                $insertParams[] = (int)$edadSnapshot['valor'];
+                $insertParams[] = (string)$edadSnapshot['unidad'];
+                $insertParams[] = (int)$edadSnapshot['es_estimada'];
+                $insertParams[] = (string)$edadSnapshot['fecha_calculo'];
+            }
+
+            $placeholders = implode(', ', array_fill(0, count($insertCols), '?'));
+            $sqlInsertConsulta = 'INSERT INTO consultas (' . implode(', ', $insertCols) . ') VALUES (' . $placeholders . ')';
+            $stmtIns = $conn->prepare($sqlInsertConsulta);
+            if (!$stmtIns) {
+                $conn->rollback();
+                echo json_encode(['success' => false, 'error' => 'No se pudo preparar el registro de consulta']);
+                exit;
+            }
+            $stmtIns->bind_param($insertTypes, ...$insertParams);
             $ok = $stmtIns->execute();
             $nuevaId = $ok ? $stmtIns->insert_id : null;
             $stmtIns->close();
@@ -2010,18 +2996,30 @@ switch ($method) {
         $accion = strtolower(trim((string)($data['accion'] ?? '')));
         $id = $data['id'] ?? null;
         $cotizacion_id = isset($data['cotizacion_id']) ? intval($data['cotizacion_id']) : 0;
-        if (($accion === 'habilitar_anticipado' || $accion === 'revocar_anticipado') && (!$id || intval($id) <= 0) && $cotizacion_id > 0) {
-            $id = consultas_resolver_consulta_explicita_por_cotizacion($conn, $cotizacion_id);
+        $anticipadoModo = '';
+        if (($accion === 'habilitar_anticipado' || $accion === 'revocar_anticipado') && $cotizacion_id > 0) {
+            $objetivoAnticipado = consultas_resolver_objetivo_anticipado_por_cotizacion($conn, $cotizacion_id);
+            if (!($objetivoAnticipado['ok'] ?? false)) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => $objetivoAnticipado['motivo'] ?? 'La cotización no tiene vínculo operativo para habilitación anticipada',
+                    'requiere_vinculo_explicito' => true,
+                ]);
+                exit;
+            }
+            $anticipadoModo = (string)($objetivoAnticipado['modo'] ?? '');
+            $id = (int)($objetivoAnticipado['consulta_id'] ?? 0);
         } elseif ((!$id || intval($id) <= 0) && $cotizacion_id > 0) {
             $id = resolver_consulta_id_por_cotizacion($conn, $cotizacion_id);
         }
 
         if ($accion === 'habilitar_anticipado' || $accion === 'revocar_anticipado') {
             $consultaId = intval($id ?? 0);
-            if ($consultaId <= 0) {
+            $usaVinculoCotizacion = ($anticipadoModo === 'cotizacion');
+            if ($consultaId <= 0 && !$usaVinculoCotizacion) {
                 echo json_encode([
                     'success' => false,
-                    'error' => 'La cotización no tiene vínculo clínico explícito (consulta_id) para gestionar habilitación anticipada',
+                    'error' => 'La cotización no tiene vínculo operativo explícito para gestionar habilitación anticipada',
                     'requiere_vinculo_explicito' => true,
                 ]);
                 exit;
@@ -2037,18 +3035,20 @@ switch ($method) {
             $rolActor = consultas_rol_normalizado($rolSesion ?: 'usuario');
             $nombreActor = consultas_actor_nombre($sessionUsuario);
 
-            $stmtConsulta = $conn->prepare('SELECT id FROM consultas WHERE id = ? LIMIT 1');
-            if (!$stmtConsulta) {
-                echo json_encode(['success' => false, 'error' => 'No se pudo validar la consulta']);
-                exit;
-            }
-            $stmtConsulta->bind_param('i', $consultaId);
-            $stmtConsulta->execute();
-            $consultaExiste = (bool)$stmtConsulta->get_result()->fetch_row();
-            $stmtConsulta->close();
-            if (!$consultaExiste) {
-                echo json_encode(['success' => false, 'error' => 'Consulta no encontrada']);
-                exit;
+            if (!$usaVinculoCotizacion) {
+                $stmtConsulta = $conn->prepare('SELECT id FROM consultas WHERE id = ? LIMIT 1');
+                if (!$stmtConsulta) {
+                    echo json_encode(['success' => false, 'error' => 'No se pudo validar la consulta']);
+                    exit;
+                }
+                $stmtConsulta->bind_param('i', $consultaId);
+                $stmtConsulta->execute();
+                $consultaExiste = (bool)$stmtConsulta->get_result()->fetch_row();
+                $stmtConsulta->close();
+                if (!$consultaExiste) {
+                    echo json_encode(['success' => false, 'error' => 'Consulta no encontrada']);
+                    exit;
+                }
             }
 
             if (!consultas_table_exists($conn, 'consultas_habilitaciones_anticipadas')) {
@@ -2070,17 +3070,24 @@ switch ($method) {
                     $venceHoras = 168;
                 }
 
-                $stmtReemplaza = $conn->prepare("UPDATE consultas_habilitaciones_anticipadas
-                                                SET estado = 'revocado',
-                                                    revocado_por = ?,
-                                                    revocado_rol = ?,
-                                                    revocado_nombre = ?,
-                                                    revocado_en = NOW(),
-                                                    motivo_revocacion = 'Reemplazada por nueva autorización'
-                                                WHERE consulta_id = ?
-                                                  AND estado = 'activo'");
+                $sqlReemplaza = "UPDATE consultas_habilitaciones_anticipadas
+                                 SET estado = 'revocado',
+                                     revocado_por = ?,
+                                     revocado_rol = ?,
+                                     revocado_nombre = ?,
+                                     revocado_en = NOW(),
+                                     motivo_revocacion = 'Reemplazada por nueva autorización'
+                                 WHERE ";
+                if ($usaVinculoCotizacion) {
+                    $sqlReemplaza .= "cotizacion_id = ? AND COALESCE(consulta_id, 0) <= 0 AND estado = 'activo'";
+                } else {
+                    $sqlReemplaza .= "consulta_id = ? AND estado = 'activo'";
+                }
+
+                $stmtReemplaza = $conn->prepare($sqlReemplaza);
                 if ($stmtReemplaza) {
-                    $stmtReemplaza->bind_param('issi', $usuarioIdActor, $rolActor, $nombreActor, $consultaId);
+                    $targetId = $usaVinculoCotizacion ? $cotizacion_id : $consultaId;
+                    $stmtReemplaza->bind_param('issi', $usuarioIdActor, $rolActor, $nombreActor, $targetId);
                     $stmtReemplaza->execute();
                     $stmtReemplaza->close();
                 }
@@ -2092,7 +3099,8 @@ switch ($method) {
                     echo json_encode(['success' => false, 'error' => 'No se pudo registrar habilitación anticipada']);
                     exit;
                 }
-                $stmtIns->bind_param('iisissi', $consultaId, $cotizacion_id, $motivo, $usuarioIdActor, $rolActor, $nombreActor, $venceHoras);
+                $consultaIdPersistir = $usaVinculoCotizacion ? 0 : $consultaId;
+                $stmtIns->bind_param('iisissi', $consultaIdPersistir, $cotizacion_id, $motivo, $usuarioIdActor, $rolActor, $nombreActor, $venceHoras);
                 $okIns = $stmtIns->execute();
                 $stmtIns->close();
                 if (!$okIns) {
@@ -2106,30 +3114,45 @@ switch ($method) {
                     $motivoRevocacion = 'Revocación manual';
                 }
 
-                $stmtRev = $conn->prepare("UPDATE consultas_habilitaciones_anticipadas
-                                          SET estado = 'revocado',
-                                              revocado_por = ?,
-                                              revocado_rol = ?,
-                                              revocado_nombre = ?,
-                                              revocado_en = NOW(),
-                                              motivo_revocacion = ?
-                                          WHERE consulta_id = ?
-                                            AND estado = 'activo'");
+                $sqlRev = "UPDATE consultas_habilitaciones_anticipadas
+                           SET estado = 'revocado',
+                               revocado_por = ?,
+                               revocado_rol = ?,
+                               revocado_nombre = ?,
+                               revocado_en = NOW(),
+                               motivo_revocacion = ?
+                           WHERE ";
+                if ($usaVinculoCotizacion) {
+                    $sqlRev .= "cotizacion_id = ? AND COALESCE(consulta_id, 0) <= 0 AND estado = 'activo'";
+                } else {
+                    $sqlRev .= "consulta_id = ? AND estado = 'activo'";
+                }
+
+                $stmtRev = $conn->prepare($sqlRev);
                 if (!$stmtRev) {
                     echo json_encode(['success' => false, 'error' => 'No se pudo revocar habilitación anticipada']);
                     exit;
                 }
-                $stmtRev->bind_param('isssi', $usuarioIdActor, $rolActor, $nombreActor, $motivoRevocacion, $consultaId);
+                $targetId = $usaVinculoCotizacion ? $cotizacion_id : $consultaId;
+                $stmtRev->bind_param('isssi', $usuarioIdActor, $rolActor, $nombreActor, $motivoRevocacion, $targetId);
                 $stmtRev->execute();
                 $stmtRev->close();
             }
 
-            $hab = consultas_resolver_habilitaciones_por_consulta_ids($conn, [$consultaId]);
-            $estadoOut = $hab[$consultaId] ?? consultas_habilitacion_estado_default($consultaId, $cotizacion_id);
+            if ($usaVinculoCotizacion) {
+                $hab = consultas_resolver_habilitaciones_por_cotizacion_ids($conn, [$cotizacion_id]);
+                $estadoOut = $hab[$cotizacion_id] ?? consultas_habilitacion_estado_default(0, $cotizacion_id);
+            } else {
+                $hab = consultas_resolver_habilitaciones_por_consulta_ids($conn, [$consultaId]);
+                $estadoOut = $hab[$consultaId] ?? consultas_habilitacion_estado_default($consultaId, $cotizacion_id);
+            }
+            $estadoOut['vinculo_anticipado_valido'] = 1;
+            $estadoOut['vinculo_anticipado_modo'] = $usaVinculoCotizacion ? 'cotizacion' : 'consulta';
             echo json_encode([
                 'success' => true,
                 'consulta_id' => $consultaId,
                 'cotizacion_id' => $cotizacion_id,
+                'modo_vinculo' => $usaVinculoCotizacion ? 'cotizacion' : 'consulta',
                 'habilitacion' => $estadoOut,
             ]);
             exit;
@@ -2199,6 +3222,21 @@ switch ($method) {
                 http_response_code(403);
                 echo json_encode(['success' => false, 'error' => 'No autorizado para actualizar esta consulta']);
                 exit;
+            }
+        }
+
+        if ($actualizarEstado) {
+            $estadoNorm = strtolower(trim((string)$estado));
+            if (in_array($estadoNorm, ['completada', 'completado'], true)) {
+                $fechaObjetivo = $actualizarAgenda ? trim((string)$fecha) : trim((string)($ownerRow['fecha'] ?? ''));
+                $hoyLima = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+                if ($fechaObjetivo !== '' && $fechaObjetivo > $hoyLima) {
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'No se puede marcar como completada una consulta con fecha futura',
+                    ]);
+                    exit;
+                }
             }
         }
 

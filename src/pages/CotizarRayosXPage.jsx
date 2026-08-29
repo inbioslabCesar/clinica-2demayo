@@ -7,6 +7,7 @@ import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
+import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
@@ -20,6 +21,7 @@ export default function CotizarRayosXPage() {
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
   const [programacionPorEstudio, setProgramacionPorEstudio] = useState({}); // { [tarifaId]: { fecha, hora } }
+  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
   const [mensaje, setMensaje] = useState("");
   const [preloadedCounts, setPreloadedCounts] = useState({}); // {tarifaId: cantidad}
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
@@ -80,6 +82,21 @@ export default function CotizarRayosXPage() {
     if (!medico) return "";
 
     return `${medico.nombres || medico.nombre || ""} ${medico.apellidos || medico.apellido || ""}`.trim();
+  };
+
+  const getProgramacionSugeridaEstudio = (tarifaId, fechaPreferida = "") => {
+    const tarifa = tarifas.find((t) => Number(t.id) === Number(tarifaId));
+    const medicoId = Number(tarifa?.medico_id || 0);
+    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+    return {
+      fecha: fechaBase,
+      hora: String(sugerida?.hora || getDefaultTime()).slice(0, 5),
+    };
   };
 
   // Filtrar tarifas por búsqueda
@@ -401,9 +418,10 @@ export default function CotizarRayosXPage() {
       const next = {};
       seleccionados.forEach((id) => {
         const key = Number(id);
+        const sugerida = getProgramacionSugeridaEstudio(key, prev[key]?.fecha || "");
         next[key] = {
-          fecha: prev[key]?.fecha || getLimaDate(),
-          hora: prev[key]?.hora || getDefaultTime(),
+          fecha: prev[key]?.fecha || sugerida.fecha,
+          hora: prev[key]?.hora || sugerida.hora,
         };
       });
       return next;
@@ -412,13 +430,47 @@ export default function CotizarRayosXPage() {
 
   const actualizarProgramacion = (estudioId, campo, valor) => {
     const key = Number(estudioId);
+    const sugerida = getProgramacionSugeridaEstudio(key, "");
     setProgramacionPorEstudio((prev) => ({
       ...prev,
       [key]: {
-        ...(prev[key] || { fecha: getLimaDate(), hora: getDefaultTime() }),
+        ...(prev[key] || sugerida),
         [campo]: valor,
       },
     }));
+  };
+
+  const aplicarSiguienteHorarioSugeridoEstudio = (estudioId) => {
+    const key = Number(estudioId);
+    const fechaActual = String(programacionPorEstudio[key]?.fecha || getLimaDate()).slice(0, 10);
+    const horaActual = String(programacionPorEstudio[key]?.hora || "").slice(0, 5);
+    const sugerida = getProgramacionSugeridaEstudio(key, fechaActual);
+    const horaAplicada = getNextSuggestedHoraVisible({
+      horaActual,
+      horaSugerida: sugerida.hora,
+      stepMinutes: 30,
+    });
+    setProgramacionPorEstudio((prev) => ({
+      ...prev,
+      [key]: {
+        fecha: sugerida.fecha,
+        hora: horaAplicada || sugerida.hora,
+      },
+    }));
+
+    const horaFinal = String(horaAplicada || sugerida.hora || "").slice(0, 5);
+    setFeedbackProgramacion((prev) => ({
+      ...prev,
+      [key]: `Hora aplicada: ${horaFinal}`,
+    }));
+    window.setTimeout(() => {
+      setFeedbackProgramacion((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 1500);
   };
   const calcularTotal = () => {
     return seleccionados.reduce((total, tid) => {
@@ -433,6 +485,7 @@ export default function CotizarRayosXPage() {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
       const cantidad = Number(cantidades[tid] || 1);
       const nombreMedico = obtenerNombreMedicoTarifa(tarifa);
+      const programacion = programacionPorEstudio[Number(tid)] || getProgramacionSugeridaEstudio(Number(tid));
       return tarifa ? {
         servicio_tipo: "rayosx",
         servicio_id: tid,
@@ -442,8 +495,8 @@ export default function CotizarRayosXPage() {
         subtotal: tarifa.precio_particular * cantidad,
         medico_id: tarifa.medico_id || "",
         medico_nombre: nombreMedico,
-        fecha_programada: programacionPorEstudio[Number(tid)]?.fecha || getLimaDate(),
-        hora_programada: programacionPorEstudio[Number(tid)]?.hora || getDefaultTime(),
+        fecha_programada: programacion.fecha,
+        hora_programada: programacion.hora,
       } : null;
     }).filter(Boolean);
   };
@@ -497,6 +550,9 @@ export default function CotizarRayosXPage() {
         quantity: Number(d.cantidad || 1),
         unitPrice: Number(d.precio_unitario || 0),
         source: 'rayosx',
+        medicoId: Number(d.medico_id || 0) || null,
+        fechaProgramada: String(d.fecha_programada || ""),
+        horaProgramada: String(d.hora_programada || ""),
       })),
     });
 
@@ -852,6 +908,20 @@ export default function CotizarRayosXPage() {
                           />
                         </label>
                       </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => aplicarSiguienteHorarioSugeridoEstudio(tid)}
+                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                        >
+                          Usar siguiente hora sugerida
+                        </button>
+                      </div>
+                      {feedbackProgramacion[Number(tid)] && (
+                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
+                          {feedbackProgramacion[Number(tid)]}
+                        </div>
+                      )}
                     </li>
                   ) : null;
                 })}

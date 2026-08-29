@@ -610,6 +610,12 @@ if (tipoDescuento === 'porcentaje') {
           const keyGrupo = (conf) => `${Number(conf?.medico_id || 0)}|${String(conf?.fecha_programada || '')}`;
           const keySlot = (slot) => `${String(slot?.fecha_programada || '')}|${String(slot?.hora_programada || '')}`;
 
+          const cotizacionesConflicto = Array.from(new Set(
+            conflictos
+              .map((conf) => Number(conf?.cotizacion_id || 0))
+              .filter((id) => id > 0)
+          ));
+
           const conflictosOrdenados = [...conflictos].sort((a, b) => {
             const ma = Number(a?.medico_id || 0);
             const mb = Number(b?.medico_id || 0);
@@ -625,6 +631,7 @@ if (tipoDescuento === 'porcentaje') {
 
           const resumen = conflictosOrdenados.map((conf) => {
             const desc = String(conf?.descripcion || 'Servicio');
+            const cotId = Number(conf?.cotizacion_id || 0);
             const fecha = String(conf?.fecha_programada || '-');
             const hora = conf?.hora_programada ? String(conf.hora_programada).slice(0, 5) : 'sin hora';
             const sugeridos = Array.isArray(conf?.horarios_sugeridos) ? conf.horarios_sugeridos : [];
@@ -661,16 +668,23 @@ if (tipoDescuento === 'porcentaje') {
             const sugeridosTxt = sugeridos.length > 0
               ? sugeridos.map((s) => `${String(s?.fecha_programada || '')} ${String(s?.hora_label || String(s?.hora_programada || '').slice(0, 5))}`.trim()).join(', ')
               : 'sin sugerencias disponibles';
-            return `• ${desc} (${fecha} ${hora}) → ${sugeridosTxt}`;
+            const cabecera = cotId > 0
+              ? `Cotización #${cotId} · ${desc}`
+              : desc;
+            return `• ${cabecera} (Cita objetivo: ${fecha} ${hora}) → ${sugeridosTxt}`;
           }).join('\n');
+
+          const cotizacionesTxt = cotizacionesConflicto.length > 0
+            ? `Cotizaciones involucradas: ${cotizacionesConflicto.map((id) => `#${id}`).join(', ')}\n\n`
+            : '';
 
           const puedeReprogramar = Object.keys(reprogramacion).length > 0;
           const decision = await Swal.fire({
             icon: 'warning',
             title: 'Conflicto de horario detectado',
             text: puedeReprogramar
-              ? `El médico ya tiene turnos ocupados.\n\n${resumen}\n\n¿Deseas reprogramar automáticamente a la primera hora sugerida y continuar con el cobro?`
-              : `No hay horario asignado/disponible para algunos servicios.\n\n${resumen}`,
+              ? `El médico ya tiene turnos ocupados.\n\n${cotizacionesTxt}${resumen}\n\n¿Deseas reprogramar automáticamente a la primera hora sugerida y continuar con el cobro?`
+              : `No hay horario asignado/disponible para algunos servicios.\n\n${cotizacionesTxt}${resumen}`,
             showCancelButton: puedeReprogramar,
             confirmButtonText: puedeReprogramar ? 'Reprogramar y cobrar' : 'Entendido',
             cancelButtonText: 'Cancelar',

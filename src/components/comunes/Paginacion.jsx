@@ -6,11 +6,13 @@ function Paginacion({
   cambiarPagina,
   elementosPorPagina,
   cambiarElementosPorPagina,
+  defaultElementosPorPagina = 3,
+  opcionesElementosPorPagina = [3, 5, 10, 25],
 }) {
-  // Valor inicial por defecto: 3 filas
+  // Valor inicial por defecto configurable
   React.useEffect(() => {
-    if (elementosPorPagina !== 3) {
-      cambiarElementosPorPagina(3);
+    if (elementosPorPagina !== defaultElementosPorPagina) {
+      cambiarElementosPorPagina(defaultElementosPorPagina);
     }
     // Solo en el primer render
     // eslint-disable-next-line
@@ -27,10 +29,9 @@ function Paginacion({
             onChange={(e) => cambiarElementosPorPagina(parseInt(e.target.value))}
             className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           >
-            <option value={3}>3</option>
-            <option value={5}>5</option>
-            <option value={10}>10</option>
-            <option value={25}>25</option>
+            {opcionesElementosPorPagina.map((op) => (
+              <option key={op} value={op}>{op}</option>
+            ))}
           </select>
         </div>
         {totalPaginas > 1 && (

@@ -282,6 +282,8 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
 }
 
 const STORAGE_KEY = "apoyo_diagnostico_tab";
+const EXAMENES_CACHE_KEY = "hc_lab_examenes_cache_v1";
+const EXAMENES_CACHE_TTL_MS = 10 * 60 * 1000;
 
 export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate, readOnly = false }) {
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
@@ -346,10 +348,36 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
 
   // Cargar lista de exámenes para mapear IDs a nombres
   useEffect(() => {
+    try {
+      const cachedRaw = sessionStorage.getItem(EXAMENES_CACHE_KEY);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        const ts = Number(cached?.ts || 0);
+        const rows = Array.isArray(cached?.data) ? cached.data : [];
+        if (rows.length > 0 && Date.now() - ts < EXAMENES_CACHE_TTL_MS) {
+          setExamenes(rows);
+          return;
+        }
+      }
+    } catch {
+      // Cache invalido: continuar con fetch normal.
+    }
+
     // Obtener catálogo de exámenes con credenciales (cookies de sesión)
     authFetch("api_examenes_laboratorio.php")
       .then((response) => response.json())
-      .then((data) => setExamenes(data.examenes || []))
+      .then((data) => {
+        const rows = Array.isArray(data?.examenes) ? data.examenes : [];
+        setExamenes(rows);
+        try {
+          sessionStorage.setItem(
+            EXAMENES_CACHE_KEY,
+            JSON.stringify({ ts: Date.now(), data: rows })
+          );
+        } catch {
+          // Ignorar errores de storage.
+        }
+      })
       .catch((error) => console.error('Error al obtener exámenes:', error));
   }, []);
 

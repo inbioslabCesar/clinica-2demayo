@@ -87,18 +87,15 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
+  const medicoIdNormalizado = Number.parseInt(String(medicoId || "").trim(), 10) || 0;
+  const medicoIdRespaldo = medicoIdNormalizado > 0 ? medicoIdNormalizado : medicoIdPrefill;
 
   const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal, opts = {}) => {
     if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
 
     const fechaObs = String(opts?.fecha || fecha || "").slice(0, 10);
     const horaObs = String(opts?.hora || hora || "").slice(0, 5);
-    const turnoAntes = Number(opts?.turnoAntes || 0);
-    const turnoAhora = Number(opts?.turnoAhora || 0);
-    const observacionBase =
-      turnoAntes > 0 && turnoAhora > 0
-        ? `Cita reprogramada para ${fechaObs} ${horaObs}. Turno: Antes N°${turnoAntes} -> Ahora N°${turnoAhora}.`
-        : `Cita reprogramada para ${fechaObs} ${horaObs}.`;
+    const observacionBase = `Cita reprogramada para ${fechaObs} ${horaObs}.`;
     const response = await authFetch(`${BASE_URL}api_recordatorios_citas.php`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -356,11 +353,11 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
 
   // Cargar horarios disponibles cuando se selecciona médico y fecha
   useEffect(() => {
-    if (medicoId && fecha) {
+    if (medicoIdRespaldo > 0 && fecha) {
       setCargandoHorarios(true);
 
       const params = new URLSearchParams({
-        medico_id: String(medicoId),
+        medico_id: String(medicoIdRespaldo),
         fecha: String(fecha),
       });
       if (isEditingConsulta && consultaIdNum > 0) {
@@ -388,7 +385,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     } else {
       setHorariosDisponibles([]);
     }
-  }, [medicoId, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
+  }, [medicoIdRespaldo, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
 
   useEffect(() => {
     // Cargar información del paciente
@@ -473,7 +470,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           throw new Error(data?.error || "No se encontró la consulta a editar");
         }
 
-        setMedicoId(String(consulta.medico_id || ""));
+        const medicoConsulta = Number.parseInt(String(consulta.medico_id || "").trim(), 10) || 0;
+        setMedicoId(String(medicoConsulta > 0 ? medicoConsulta : (medicoIdPrefill || "")));
         setFecha(String(consulta.fecha || "").slice(0, 10));
         setHora(String(consulta.hora || "").slice(0, 5));
         setTipoConsulta(consulta.tipo_consulta || "programada");
@@ -485,7 +483,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     };
 
     cargarConsulta();
-  }, [consultaIdNum, isEditingConsulta]);
+  }, [consultaIdNum, isEditingConsulta, medicoIdPrefill]);
 
   useEffect(() => {
     if (isEditingConsulta) return;
@@ -1099,6 +1097,9 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             quantity: 1,
             unitPrice: Number(precio),
             source: "consulta",
+            medicoId: Number(medicoId || 0),
+            fechaProgramada: String(fecha || "").slice(0, 10),
+            horaProgramada: String(hora || "").slice(0, 5),
             consultaMedicoId: Number(medicoId),
             consultaFecha: fecha,
             consultaHora: hora,

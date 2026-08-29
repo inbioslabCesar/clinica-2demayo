@@ -29,6 +29,116 @@ function nombrePaciente(paciente) {
   return [paciente?.nombre, paciente?.apellido].filter(Boolean).join(" ") || "Paciente sin nombre";
 }
 
+function parseIsoDate(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [y, m, d] = raw.split("-").map((v) => Number(v));
+  const date = new Date(y, m - 1, d);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function formatearFechaNacimiento(value) {
+  const date = parseIsoDate(value);
+  if (!date) return "No registrada";
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(date.getFullYear());
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function calcularEdadClinica(fechaNacimientoRaw, fechaReferenciaRaw = null) {
+  const nacimiento = parseIsoDate(fechaNacimientoRaw);
+  if (!nacimiento) {
+    return { dias: null, meses: null, anios: null, mesesResto: null, diasResto: null };
+  }
+
+  const ref = parseIsoDate(fechaReferenciaRaw) || new Date();
+  const hoyInicio = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  const nacimientoInicio = new Date(nacimiento.getFullYear(), nacimiento.getMonth(), nacimiento.getDate());
+
+  if (hoyInicio.getTime() < nacimientoInicio.getTime()) {
+    return { dias: 0, meses: 0, anios: 0, mesesResto: 0, diasResto: 0 };
+  }
+
+  const diffMs = hoyInicio.getTime() - nacimientoInicio.getTime();
+  const dias = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+
+  let meses = (hoyInicio.getFullYear() - nacimientoInicio.getFullYear()) * 12 + (hoyInicio.getMonth() - nacimientoInicio.getMonth());
+  if (hoyInicio.getDate() < nacimientoInicio.getDate()) {
+    meses -= 1;
+  }
+  meses = Math.max(0, meses);
+
+  let anios = hoyInicio.getFullYear() - nacimientoInicio.getFullYear();
+  const noCumplioEsteAnio =
+    hoyInicio.getMonth() < nacimientoInicio.getMonth()
+    || (hoyInicio.getMonth() === nacimientoInicio.getMonth() && hoyInicio.getDate() < nacimientoInicio.getDate());
+  if (noCumplioEsteAnio) {
+    anios -= 1;
+  }
+  anios = Math.max(0, anios);
+
+  let mesesResto = hoyInicio.getMonth() - nacimientoInicio.getMonth();
+  if (hoyInicio.getDate() < nacimientoInicio.getDate()) {
+    mesesResto -= 1;
+  }
+  if (mesesResto < 0) {
+    mesesResto += 12;
+  }
+
+  let diasResto;
+  if (hoyInicio.getDate() >= nacimientoInicio.getDate()) {
+    diasResto = hoyInicio.getDate() - nacimientoInicio.getDate();
+  } else {
+    const diasMesPrevio = new Date(hoyInicio.getFullYear(), hoyInicio.getMonth(), 0).getDate();
+    diasResto = diasMesPrevio - nacimientoInicio.getDate() + hoyInicio.getDate();
+  }
+
+  return {
+    dias,
+    meses,
+    anios,
+    mesesResto: Math.max(0, mesesResto),
+    diasResto: Math.max(0, diasResto),
+  };
+}
+
+function resolverEdadDisplay(paciente) {
+  const formatUnidad = (valor, singular, plural) => `${valor} ${Math.abs(Number(valor)) === 1 ? singular : plural}`;
+  const edad = String(paciente?.edad ?? "").trim();
+  const unidadRaw = String(paciente?.edad_unidad || "").trim();
+  const unidad = unidadRaw.toLowerCase();
+  const { dias, meses, anios, mesesResto, diasResto } = calcularEdadClinica(
+    paciente?.fecha_nacimiento,
+    paciente?.edad_referencia_fecha || null
+  );
+
+  const isRnPorUnidad = unidad.includes("rn") || unidad.includes("reci") || unidad.includes("neo");
+  const isRnPorDias = Number.isFinite(dias) && dias !== null && dias <= 28;
+  const esRn = isRnPorUnidad || isRnPorDias;
+
+  if (esRn && dias !== null && meses !== null) {
+    return `${formatUnidad(dias, "día", "días")} (${formatUnidad(meses, "mes", "meses")})`;
+  }
+
+  if (meses !== null && meses < 12) {
+    return formatUnidad(meses, "mes", "meses");
+  }
+
+  if (anios !== null && anios >= 1) {
+    const mesesMostrar = Number.isFinite(mesesResto) ? Math.max(0, mesesResto) : 0;
+    const diasMostrar = Number.isFinite(diasResto) ? Math.max(0, diasResto) : 0;
+    return `${formatUnidad(anios, "año", "años")} ${formatUnidad(mesesMostrar, "mes", "meses")} ${formatUnidad(diasMostrar, "día", "días")}`;
+  }
+
+  if (edad !== "") {
+    return unidadRaw ? `${edad} ${unidadRaw}` : edad;
+  }
+
+  return "No registrada";
+}
+
 function formatearFechaSolicitud(fecha) {
   if (!fecha) return "Sin fecha";
   const fechaNormalizada = String(fecha).includes("T") ? String(fecha) : String(fecha).replace(" ", "T");
@@ -120,21 +230,6 @@ export default function MisInformesImagenologiaPage({ usuario }) {
   }, [cargarOrdenes]);
 
   useEffect(() => {
-    const recargarSiEstaVisible = () => {
-      if (document.visibilityState === "visible") cargarOrdenes({ automatica: true });
-    };
-    const intervalo = window.setInterval(recargarSiEstaVisible, 30000);
-    window.addEventListener("focus", recargarSiEstaVisible);
-    document.addEventListener("visibilitychange", recargarSiEstaVisible);
-
-    return () => {
-      window.clearInterval(intervalo);
-      window.removeEventListener("focus", recargarSiEstaVisible);
-      document.removeEventListener("visibilitychange", recargarSiEstaVisible);
-    };
-  }, [cargarOrdenes]);
-
-  useEffect(() => {
     const onResize = () => setEsMobileLayout(detectarLayoutMobile());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -175,45 +270,6 @@ export default function MisInformesImagenologiaPage({ usuario }) {
       .toLowerCase()
       .includes(filtro);
   });
-
-  const correlativoFallbackByOrdenId = useMemo(() => {
-    const elegibles = (Array.isArray(ordenesVisibles) ? ordenesVisibles : [])
-      .filter((orden) => Number(orden?.medico_id || 0) > 0)
-      .filter((orden) => ["confirmado", "atendido", "espontaneo", "completado", "pagado"].includes(String(orden?.estado_evento_agenda || "").toLowerCase().trim()))
-      .filter((orden) => String(orden?.fecha_programada || "").trim() !== "")
-      .filter((orden) => String(orden?.hora_programada || "").trim() !== "")
-      .slice()
-      .sort((a, b) => {
-        const keyA = `${Number(a?.medico_id || 0)}|${String(a?.fecha_programada || "")}|${String(a?.hora_programada || "").slice(0, 5)}|${Number(a?.agenda_id || 0)}|${Number(a?.id || 0)}`;
-        const keyB = `${Number(b?.medico_id || 0)}|${String(b?.fecha_programada || "")}|${String(b?.hora_programada || "").slice(0, 5)}|${Number(b?.agenda_id || 0)}|${Number(b?.id || 0)}`;
-        return keyA.localeCompare(keyB);
-      });
-
-    const contador = {};
-    const out = {};
-    for (const orden of elegibles) {
-      const ordenId = Number(orden?.id || 0);
-      if (ordenId <= 0) continue;
-      const key = `${Number(orden?.medico_id || 0)}|${String(orden?.fecha_programada || "")}`;
-      contador[key] = Number(contador[key] || 0) + 1;
-      out[ordenId] = contador[key];
-    }
-    return out;
-  }, [ordenesVisibles]);
-
-  const correlativoByOrdenId = useMemo(() => {
-    const out = {};
-    for (const orden of Array.isArray(ordenesVisibles) ? ordenesVisibles : []) {
-      const ordenId = Number(orden?.id || 0);
-      if (ordenId <= 0) continue;
-      const correlativoOperativo = Number(orden?.correlativo_operativo || 0);
-      const correlativoFallback = Number(correlativoFallbackByOrdenId[ordenId] || 0);
-      out[ordenId] = correlativoOperativo > 0
-        ? correlativoOperativo
-        : correlativoFallback;
-    }
-    return out;
-  }, [correlativoFallbackByOrdenId, ordenesVisibles]);
 
   return (
     <main className="min-h-full bg-slate-50 px-4 py-5 sm:px-6 lg:px-8">
@@ -282,8 +338,6 @@ export default function MisInformesImagenologiaPage({ usuario }) {
               {ordenesVisibles.map((orden) => {
                 const paciente = orden.paciente || {};
                 const tieneConsulta = Number(orden.consulta_id || 0) > 0;
-                const correlativo = Number(correlativoByOrdenId[Number(orden.id || 0)] || 0);
-                const sinProgramacion = String(orden?.fecha_programada || "").trim() === "" || String(orden?.hora_programada || "").trim() === "";
                 const expandida = ordenExpandidaId === orden.id;
                 const puedeGestionar = Boolean(orden.can_upload_archivos) && orden.estado !== "cancelado";
                 const puedeInformar = Boolean(orden.can_edit_informe) && orden.estado !== "cancelado";
@@ -293,12 +347,8 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-slate-900">{nombrePaciente(paciente)}</p>
                         <p className="mt-0.5 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
-                        {correlativo > 0 && (
-                          <p className="mt-1 text-xs font-semibold text-indigo-700">Correlativo día: N° {correlativo}</p>
-                        )}
-                        {correlativo <= 0 && sinProgramacion && (
-                          <p className="mt-1 text-xs font-medium text-amber-700">Sin correlativo operativo (falta programación)</p>
-                        )}
+                        <p className="mt-0.5 text-xs text-slate-500">F. nac: {formatearFechaNacimiento(paciente.fecha_nacimiento)}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">Edad: {resolverEdadDisplay(paciente)}</p>
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
@@ -371,8 +421,6 @@ export default function MisInformesImagenologiaPage({ usuario }) {
             {ordenesVisibles.map((orden) => {
               const paciente = orden.paciente || {};
               const tieneConsulta = Number(orden.consulta_id || 0) > 0;
-              const correlativo = Number(correlativoByOrdenId[Number(orden.id || 0)] || 0);
-              const sinProgramacion = String(orden?.fecha_programada || "").trim() === "" || String(orden?.hora_programada || "").trim() === "";
               const informeAbierto = ordenInformeMobileId === orden.id;
               return (
                 <article key={orden.id} className="border border-slate-200 bg-white p-4 shadow-sm">
@@ -383,12 +431,12 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                         <span className="truncate">{nombrePaciente(paciente)}</span>
                       </div>
                       <p className="mt-1 text-xs text-slate-500">DNI: {paciente.dni || "No registrado"}</p>
+                      <p className="mt-1 text-xs text-slate-500">F. nac: {formatearFechaNacimiento(paciente.fecha_nacimiento)}</p>
+                      <p className="mt-1 text-xs text-slate-500">Edad: {resolverEdadDisplay(paciente)}</p>
                       <p className="mt-2 text-sm font-medium capitalize text-slate-700">{TIPO_LABEL[orden.tipo] || orden.tipo}</p>
                       {(orden.servicios_nombres || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{orden.servicios_nombres.join(" · ")}</p>}
                       <p className="mt-1 text-xs text-slate-500">Programado: {formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
                       <p className="mt-1 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
-                      {correlativo > 0 && <p className="mt-1 text-xs font-semibold text-indigo-700">Correlativo día: N° {correlativo}</p>}
-                      {correlativo <= 0 && sinProgramacion && <p className="mt-1 text-xs font-medium text-amber-700">Sin correlativo operativo (falta programación)</p>}
                     </div>
                     <div className="shrink-0 text-right">
                       <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>

@@ -39,21 +39,61 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   // const totalConvenio = seleccionados.reduce((acc, ex) => acc + (parseFloat(ex.precio_convenio) || 0), 0);
   const [examenes, setExamenes] = useState([]);
   const [examenesDisponibles, setExamenesDisponibles] = useState([]);
+  const [cargandoCatalogo, setCargandoCatalogo] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
   const [cargaAnticipada, setCargaAnticipada] = useState(false);
   const [cotizResult, setCotizResult] = useState(null); // {numero_comprobante, total}
   const [cargandoPreseleccion, setCargandoPreseleccion] = useState(false);
   const [tieneOrdenPendiente, setTieneOrdenPendiente] = useState(false);
+  const [validandoPermiso, setValidandoPermiso] = useState(false);
+  const [puedeEscribirOrden, setPuedeEscribirOrden] = useState(true);
+  const [mensajePermiso, setMensajePermiso] = useState("");
   // Obtener todos los exámenes disponibles para mostrar nombres seleccionados
   useEffect(() => {
+    setCargandoCatalogo(true);
     authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
-      .then(data => setExamenesDisponibles(data.examenes || []));
+      .then(data => setExamenesDisponibles(data.examenes || []))
+      .finally(() => setCargandoCatalogo(false));
   }, []);
 
   useEffect(() => {
     let activo = true;
+
+    async function validarPermisoConsulta() {
+      const cid = Number.parseInt(consultaId, 10);
+      if (!Number.isFinite(cid) || cid <= 0) {
+        if (activo) {
+          setPuedeEscribirOrden(false);
+          setMensajePermiso("Consulta inválida para registrar solicitud.");
+        }
+        return;
+      }
+
+      setValidandoPermiso(true);
+      try {
+        const res = await authFetch(`api_ordenes_laboratorio.php?vista=permiso_consulta&consulta_id=${cid}`);
+        const data = await res.json().catch(() => ({}));
+        if (!activo) return;
+
+        if (!res.ok || !data?.success) {
+          setPuedeEscribirOrden(false);
+          setMensajePermiso(data?.error || 'No se pudo validar permisos para esta consulta.');
+          return;
+        }
+
+        const canWrite = data?.can_write !== false;
+        setPuedeEscribirOrden(canWrite);
+        setMensajePermiso(canWrite ? "" : (data?.error || 'No autorizado para crear órdenes en esta consulta.'));
+      } catch {
+        if (!activo) return;
+        setPuedeEscribirOrden(false);
+        setMensajePermiso('No se pudo validar permisos para esta consulta.');
+      } finally {
+        if (activo) setValidandoPermiso(false);
+      }
+    }
 
     async function hidratarDesdeOrdenPendiente() {
       const cid = Number.parseInt(consultaId, 10);
@@ -61,7 +101,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
 
       setCargandoPreseleccion(true);
       try {
-        const res = await authFetch(`api_ordenes_laboratorio.php?consulta_id=${cid}`);
+        const res = await authFetch(`api_ordenes_laboratorio.php?consulta_id=${cid}&vista=hc_fast`);
         const data = await res.json();
         const ordenes = Array.isArray(data?.ordenes) ? data.ordenes : [];
         const pendientes = ordenes.filter((ord) => String(ord?.estado || 'pendiente').toLowerCase() === 'pendiente');
@@ -94,6 +134,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
       }
     }
 
+    validarPermisoConsulta();
     hidratarDesdeOrdenPendiente();
     return () => {
       activo = false;
@@ -105,7 +146,7 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
   const seleccionados = examenesDisponibles
     .filter((ex) => selectedIds.has(String(ex?.id ?? "")))
     .map((ex, index) => normalizeExam(ex, index));
-  const puedeEnviar = guardando || (examenes.length === 0 && !tieneOrdenPendiente)
+  const puedeEnviar = guardando || validandoPermiso || !puedeEscribirOrden || (examenes.length === 0 && !tieneOrdenPendiente)
     ? false
     : true;
   const totalPublico = seleccionados.reduce((acc, ex) => acc + ex.precioPublico, 0);
@@ -123,8 +164,11 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ consulta_id: consultaId, examenes, carga_anticipada: cargaAnticipada }),
       });
-      
-      const d = await response.json();
+      const d = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(d.error ?? "Error al enviar la orden");
+      }
+
       if (d.success) {
         const modo = String(d.modo || '').toLowerCase();
         const fueConsolidada = modo === 'consolidada' || modo === 'actualizada';
@@ -201,7 +245,18 @@ export default function SolicitudLaboratorio({ consultaId, mostrarPrecios = true
           {cargandoPreseleccion && (
             <p className="text-xs text-emerald-700 mb-2">Cargando exámenes ya solicitados...</p>
           )}
-          <ExamenesSelector selected={examenes} setSelected={setExamenes} />
+          {validandoPermiso && (
+            <p className="text-xs text-amber-700 mb-2">Validando permisos de la consulta...</p>
+          )}
+          {!puedeEscribirOrden && mensajePermiso && (
+            <p className="text-xs text-red-700 mb-2">{mensajePermiso}</p>
+          )}
+          <ExamenesSelector
+            selected={examenes}
+            setSelected={setExamenes}
+            examenesCatalogo={examenesDisponibles}
+            cargandoCatalogo={cargandoCatalogo}
+          />
         </div>
 
         {/* Panel de exámenes seleccionados */}

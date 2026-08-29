@@ -1,10 +1,11 @@
 import { authFetch } from "../utils/apiClient";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 const SERVICE_TYPE_LABELS = {
   consulta: "Consulta",
@@ -44,7 +45,7 @@ function parsePackageMeta(metaRaw) {
     try {
       const parsed = JSON.parse(metaRaw);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-    } catch (_) {
+    } catch {
       return {};
     }
   }
@@ -112,6 +113,19 @@ function getPackageServiceTypes(pkg) {
   return Array.from(setTypes);
 }
 
+function resolvePaqueteMedicoId(pkg) {
+  const items = Array.isArray(pkg?.items) ? pkg.items : [];
+  const medicos = Array.from(
+    new Set(
+      items
+        .map((it) => Number(it?.medico_id || 0))
+        .filter((id) => id > 0)
+    )
+  );
+  if (medicos.length !== 1) return 0;
+  return medicos[0];
+}
+
 function buildDetalleKey(detalle) {
   const tipo = normalizeServiceType(detalle?.servicio_tipo || detalle?.source_type || "");
   const servicioId = Number(detalle?.servicio_id || detalle?.source_id || 0);
@@ -141,6 +155,8 @@ export default function CotizarPaquetesPerfilesPage() {
   const [schemaWarning, setSchemaWarning] = useState(null);
   const [visibleCount, setVisibleCount] = useState(LIST_INITIAL_VISIBLE);
   const [programacionPorPaquete, setProgramacionPorPaquete] = useState({});
+  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
+  const loadPackagesRef = useRef(null);
 
   const sp = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const cotizacionId = Number(sp.get("cotizacion_id") || 0);
@@ -185,6 +201,48 @@ export default function CotizarPaquetesPerfilesPage() {
       fecha_programada: getLimaDate(),
       hora_programada: getDefaultTime(),
     };
+  };
+
+  const aplicarSiguienteHorarioSugeridoPaquete = (paqueteId) => {
+    const pid = Number(paqueteId || 0);
+    const row = rows.find((r) => Number(r.id) === pid);
+    const medicoId = resolvePaqueteMedicoId(row);
+    const actual = getProgramacionPaquete(pid);
+    const fechaBase = String(actual?.fecha_programada || getLimaDate()).slice(0, 10);
+    const horaActual = String(actual?.hora_programada || "").slice(0, 5);
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+    const horaSugerida = String(sugerida?.hora || getDefaultTime()).slice(0, 5);
+    const horaAplicada = getNextSuggestedHoraVisible({
+      horaActual,
+      horaSugerida,
+      stepMinutes: 30,
+    });
+
+    setProgramacionPorPaquete((prev) => ({
+      ...prev,
+      [pid]: {
+        fecha_programada: fechaBase,
+        hora_programada: horaAplicada || horaSugerida,
+      },
+    }));
+
+    const horaFinal = String(horaAplicada || horaSugerida || "").slice(0, 5);
+    setFeedbackProgramacion((prev) => ({
+      ...prev,
+      [pid]: `Hora aplicada: ${horaFinal}`,
+    }));
+    window.setTimeout(() => {
+      setFeedbackProgramacion((prev) => {
+        if (!prev[pid]) return prev;
+        const after = { ...prev };
+        delete after[pid];
+        return after;
+      });
+    }, 1500);
   };
 
   useEffect(() => {
@@ -273,8 +331,28 @@ export default function CotizarPaquetesPerfilesPage() {
   };
 
   useEffect(() => {
+    loadPackagesRef.current = loadPackages;
+  });
+
+  useEffect(() => {
     loadPackages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const reloadIfVisible = () => {
+      if (document.visibilityState && document.visibilityState !== "visible") return;
+      if (typeof loadPackagesRef.current === "function") {
+        loadPackagesRef.current();
+      }
+    };
+
+    window.addEventListener("focus", reloadIfVisible);
+    document.addEventListener("visibilitychange", reloadIfVisible);
+    return () => {
+      window.removeEventListener("focus", reloadIfVisible);
+      document.removeEventListener("visibilitychange", reloadIfVisible);
+    };
   }, []);
 
   const toggleSelected = (id) => {
@@ -769,6 +847,20 @@ export default function CotizarPaquetesPerfilesPage() {
                         />
                       </label>
                     </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => aplicarSiguienteHorarioSugeridoPaquete(row.id)}
+                        className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                      >
+                        Usar siguiente hora sugerida
+                      </button>
+                    </div>
+                    {feedbackProgramacion[Number(row.id)] && (
+                      <div className="text-[11px] text-emerald-700 font-semibold text-right">
+                        {feedbackProgramacion[Number(row.id)]}
+                      </div>
+                    )}
                   </li>
                 );
               })}

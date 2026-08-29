@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function CajaResumenDiario({ resumen }) {
+export default function CajaResumenDiario({ resumen, adminRecepConsolidado = null }) {
   // ...existing code...
   const tipoIngresoLabel = (tipo) => String(tipo || "").replace(/_/g, " ").toUpperCase();
   const hasPositive = (val) => val !== undefined && val !== null && parseFloat(val) > 0;
@@ -20,6 +20,28 @@ export default function CajaResumenDiario({ resumen }) {
   return (
     <div className="bg-gradient-to-br from-purple-50 via-white to-purple-100 border-2 border-purple-200 rounded-2xl p-4 sm:p-8 shadow-xl mb-8 w-full">
       <h2 className="text-2xl sm:text-3xl font-extrabold text-purple-800 mb-4 text-center tracking-tight drop-shadow">Resumen Diario de Caja</h2>
+      {adminRecepConsolidado && (
+        <div className="mb-4 rounded-2xl border border-emerald-300 bg-gradient-to-r from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Vista consolidada admin</div>
+              <div className="text-lg sm:text-xl font-extrabold text-emerald-800">Ingreso total recepcionistas: S/ {Number(adminRecepConsolidado.totalIngresos || 0).toFixed(2)}</div>
+              <div className="text-sm text-slate-600">Ganancia neta recepcionistas: S/ {Number(adminRecepConsolidado.totalGanancia || 0).toFixed(2)}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700">
+                Cajas abiertas: {Number(adminRecepConsolidado.cajasAbiertas || 0)}
+              </span>
+              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700">
+                Recepcionistas activos: {Number(adminRecepConsolidado.usuariosUnicos || 0)}
+              </span>
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
+                Tiempo real: 10s
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="mb-4 text-center">
         <span className="text-base sm:text-lg font-semibold text-blue-700">Monto de apertura de caja:</span>
         <span className="text-lg sm:text-xl font-bold text-blue-900 ml-2">S/ {resumen.monto_apertura ? resumen.monto_apertura.toFixed(2) : "0.00"}</span>

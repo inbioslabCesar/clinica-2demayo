@@ -62,6 +62,7 @@ function hc_templates_normalize_sections($sections) {
                 'options' => [],
                 'break_after' => false,
                 'label' => '',
+                'prefill_text' => '',
             ];
 
             if (is_array($fieldDefault)) {
@@ -100,6 +101,9 @@ function hc_templates_normalize_sections($sections) {
                 if ($rawLabel !== '') {
                     $normalized['label'] = $rawLabel;
                 }
+
+                $rawPrefill = $fieldDefault['prefill_text'] ?? ($fieldDefault['prefillText'] ?? '');
+                $normalized['prefill_text'] = trim((string)$rawPrefill);
             }
 
             $sectionFields[$fKey] = $normalized;

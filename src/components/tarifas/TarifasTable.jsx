@@ -1,6 +1,8 @@
 import React from "react";
 import { formatProfesionalName } from "../../utils/profesionalDisplay";
 
+const formatMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
+
 function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarifa, medicos }) {
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -24,14 +26,10 @@ function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarif
                 </div>
                 <div className="text-sm text-gray-700 mb-1"><span className="font-bold">Médico:</span> {nombreMedico}</div>
                 <div className="text-sm text-gray-700 mb-1"><span className="font-bold">Descripción:</span> {tarifa.descripcion}</div>
-                <div className="flex gap-2 text-xs text-gray-500 mb-1">
-                  <span>Particular: <span className="font-bold text-blue-800">S/ {parseFloat(tarifa.precio_particular).toFixed(2)}</span></span>
-                  {tarifa.precio_seguro && (
-                    <span>Seguro: <span className="font-bold">S/ {parseFloat(tarifa.precio_seguro).toFixed(2)}</span></span>
-                  )}
-                  {tarifa.precio_convenio && (
-                    <span>Convenio: <span className="font-bold">S/ {parseFloat(tarifa.precio_convenio).toFixed(2)}</span></span>
-                  )}
+                <div className="grid grid-cols-1 gap-1 text-xs text-gray-600 mb-1">
+                  <span>Total: <span className="font-bold text-blue-800">{formatMoney(tarifa.precio_particular)}</span></span>
+                  <span>Monto fijo Médico: <span className="font-bold">{formatMoney(tarifa.monto_medico)}</span></span>
+                  <span>Monto fijo Clínica: <span className="font-bold">{formatMoney(tarifa.monto_clinica)}</span></span>
                 </div>
                 <div className="mt-2 flex gap-2 justify-end">
                   <button
@@ -63,9 +61,9 @@ function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarif
                 <th className="hidden sm:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Médico</th>
                 <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Servicio</th>
                 <th className="hidden sm:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
-                <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Particular</th>
-                <th className="hidden lg:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Seguro</th>
-                <th className="hidden lg:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Convenio</th>
+                <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                <th className="hidden lg:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto fijo Médico</th>
+                <th className="hidden lg:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto fijo Clínica</th>
                 <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
               </tr>
             </thead>
@@ -111,21 +109,17 @@ function TarifasTable({ tarifas, obtenerLabelServicio, abrirModal, eliminarTarif
                     </div>
                   </td>
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    <div className="font-medium">S/ {parseFloat(tarifa.precio_particular).toFixed(2)}</div>
+                    <div className="font-medium">{formatMoney(tarifa.precio_particular)}</div>
                     <div className="block lg:hidden text-xs text-gray-500 mt-1">
-                      {tarifa.precio_seguro && (
-                        <div>Seguro: S/ {parseFloat(tarifa.precio_seguro).toFixed(2)}</div>
-                      )}
-                      {tarifa.precio_convenio && (
-                        <div>Convenio: S/ {parseFloat(tarifa.precio_convenio).toFixed(2)}</div>
-                      )}
+                      <div>Médico: {formatMoney(tarifa.monto_medico)}</div>
+                      <div>Clínica: {formatMoney(tarifa.monto_clinica)}</div>
                     </div>
                   </td>
                   <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {tarifa.precio_seguro ? `S/ ${parseFloat(tarifa.precio_seguro).toFixed(2)}` : "-"}
+                    {formatMoney(tarifa.monto_medico)}
                   </td>
                   <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {tarifa.precio_convenio ? `S/ ${parseFloat(tarifa.precio_convenio).toFixed(2)}` : "-"}
+                    {formatMoney(tarifa.monto_clinica)}
                   </td>
                   {/* Estado eliminado */}
                   <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">

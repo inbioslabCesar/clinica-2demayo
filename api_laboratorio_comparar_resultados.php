@@ -62,6 +62,180 @@ function to_nullable_float_cmp($value)
     return is_numeric($text) ? (float)$text : null;
 }
 
+function parse_date_safe_cmp($value)
+{
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+        return ($dt instanceof DateTime) ? $dt : null;
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    $dt = new DateTime();
+    $dt->setTimestamp($ts);
+    return $dt;
+}
+
+function normalize_age_unit_cmp($unit)
+{
+    $u = strtolower(trim((string)$unit));
+    if ($u === '') return 'anios';
+    if (in_array($u, ['anio', 'anios', 'anos', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+    if (in_array($u, ['dia', 'dias', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    return 'anios';
+}
+
+function resolve_age_years_at_date_cmp(array $paciente, $fechaRefRaw)
+{
+    $fechaRef = parse_date_safe_cmp($fechaRefRaw);
+    if (!($fechaRef instanceof DateTime)) {
+        $fechaRef = new DateTime('today');
+    }
+    $fechaRef->setTime(0, 0, 0);
+
+    $fechaNac = parse_date_safe_cmp($paciente['fecha_nacimiento'] ?? null);
+    if ($fechaNac instanceof DateTime) {
+        $fechaNac->setTime(0, 0, 0);
+        if ($fechaNac > $fechaRef) {
+            return null;
+        }
+        $diff = $fechaNac->diff($fechaRef);
+        return ((int)$diff->y) + (((int)$diff->m) / 12) + (((int)$diff->d) / 365.25);
+    }
+
+    $edadBaseRaw = $paciente['edad'] ?? null;
+    if ($edadBaseRaw === null || $edadBaseRaw === '' || !is_numeric($edadBaseRaw)) {
+        return null;
+    }
+
+    $edadBase = max(0, (float)$edadBaseRaw);
+    $unidadBase = normalize_age_unit_cmp($paciente['edad_unidad'] ?? 'anios');
+    if ($unidadBase === 'meses') {
+        $edadBase = $edadBase / 12;
+    } elseif ($unidadBase === 'dias') {
+        $edadBase = $edadBase / 365.25;
+    }
+
+    $fechaBase = parse_date_safe_cmp($paciente['creado_en'] ?? null);
+    if (!($fechaBase instanceof DateTime)) {
+        return $edadBase;
+    }
+
+    $fechaBase->setTime(0, 0, 0);
+    if ($fechaBase > $fechaRef) {
+        return $edadBase;
+    }
+
+    $diff = $fechaBase->diff($fechaRef);
+    $aniosTrans = ((int)$diff->y) + (((int)$diff->m) / 12) + (((int)$diff->d) / 365.25);
+    return $edadBase + max(0, $aniosTrans);
+}
+
+function normalize_result_key_token_cmp($value)
+{
+    $s = strtolower(trim((string)$value));
+    $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+    if ($t !== false) {
+        $s = $t;
+    }
+    $s = preg_replace('/[-_\s]+/', '_', $s);
+    $s = preg_replace('/[^a-z0-9_]/', '', $s);
+    $s = preg_replace('/_+/', '_', $s);
+    return trim((string)$s, '_');
+}
+
+function resolve_result_value_cmp(array $map, $exId, $nombreActual, $codigoInterno = '')
+{
+    $idText = (string)$exId;
+    $nombre = trim((string)$nombreActual);
+    $codigo = trim((string)$codigoInterno);
+
+    $directKeys = [];
+    if ($codigo !== '') $directKeys[] = $idText . '__' . $codigo;
+    if ($nombre !== '') $directKeys[] = $idText . '__' . $nombre;
+
+    $firstDirectMatch = null;
+    foreach ($directKeys as $k) {
+        if (array_key_exists($k, $map)) {
+            if ($firstDirectMatch === null) {
+                $firstDirectMatch = $k;
+            }
+            $raw = $map[$k];
+            if ($raw !== null && trim((string)$raw) !== '') {
+                return $raw;
+            }
+        }
+    }
+
+    $targetTokens = [];
+    if ($codigo !== '') $targetTokens[] = normalize_result_key_token_cmp($codigo);
+    if ($nombre !== '') $targetTokens[] = normalize_result_key_token_cmp($nombre);
+    $targetTokens = array_values(array_unique(array_filter($targetTokens)));
+
+    if (!empty($targetTokens)) {
+        $firstTokenMatch = null;
+        $prefix = $idText . '__';
+        foreach ($map as $k => $v) {
+            $key = (string)$k;
+            if (strpos($key, $prefix) !== 0) continue;
+            $suffix = substr($key, strlen($prefix));
+            $token = normalize_result_key_token_cmp($suffix);
+            if ($token !== '' && in_array($token, $targetTokens, true)) {
+                if ($firstTokenMatch === null) {
+                    $firstTokenMatch = $key;
+                }
+                if ($v !== null && trim((string)$v) !== '') {
+                    return $v;
+                }
+            }
+        }
+        if ($firstTokenMatch !== null) {
+            return $map[$firstTokenMatch];
+        }
+    }
+
+    if ($nombre !== '' && array_key_exists($nombre, $map)) {
+        return $map[$nombre];
+    }
+
+    return $firstDirectMatch !== null ? $map[$firstDirectMatch] : '';
+}
+
+function resolve_exam_id_cmp($examItem)
+{
+    if (is_array($examItem)) {
+        $candidates = [
+            $examItem['id'] ?? null,
+            $examItem['examen_id'] ?? null,
+            $examItem['servicio_id'] ?? null,
+        ];
+        foreach ($candidates as $cand) {
+            $id = is_numeric($cand) ? intval($cand) : 0;
+            if ($id > 0) return $id;
+        }
+        return 0;
+    }
+
+    if (is_object($examItem)) {
+        $candidates = [
+            $examItem->id ?? null,
+            $examItem->examen_id ?? null,
+            $examItem->servicio_id ?? null,
+        ];
+        foreach ($candidates as $cand) {
+            $id = is_numeric($cand) ? intval($cand) : 0;
+            if ($id > 0) return $id;
+        }
+        return 0;
+    }
+
+    return is_numeric($examItem) ? intval($examItem) : 0;
+}
+
 function normalize_sex_cmp($value)
 {
     $raw = strtolower(trim((string)$value));
@@ -243,7 +417,7 @@ function build_trend_svg_cmp($serie)
     return $svg;
 }
 
-$stmtPaciente = $conn->prepare('SELECT id, nombre, apellido, dni, sexo, edad FROM pacientes WHERE id = ? LIMIT 1');
+$stmtPaciente = $conn->prepare('SELECT id, nombre, apellido, dni, sexo, edad, edad_unidad, fecha_nacimiento, creado_en FROM pacientes WHERE id = ? LIMIT 1');
 $stmtPaciente->bind_param('i', $paciente_id);
 $stmtPaciente->execute();
 $resPaciente = $stmtPaciente->get_result();
@@ -256,7 +430,6 @@ if (!$paciente) {
 }
 
 $sexoPaciente = normalize_sex_cmp($paciente['sexo'] ?? '');
-$edadPaciente = to_nullable_float_cmp($paciente['edad'] ?? null);
 
 $sqlOrdenes = "SELECT o.id, o.consulta_id, o.examenes, o.fecha
     FROM ordenes_laboratorio o
@@ -303,11 +476,6 @@ foreach ($ordenes as $orden) {
     $fechaBase = trim((string)($orden['fecha'] ?? ''));
     if ($fechaBase === '') continue;
 
-    $fechaTs = strtotime($fechaBase);
-    if ($cutoffTs !== null && $fechaTs !== false && $fechaTs < $cutoffTs) {
-        continue;
-    }
-
     $stmtResultado = null;
     if (!empty($orden['consulta_id'])) {
         $stmtResultado = $conn->prepare('SELECT resultados, fecha FROM resultados_laboratorio WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
@@ -334,8 +502,15 @@ foreach ($ordenes as $orden) {
     $fechaEvento = trim((string)($resultadoRow['fecha'] ?? ''));
     if ($fechaEvento === '') $fechaEvento = $fechaBase;
 
+    $fechaEventoTs = strtotime($fechaEvento);
+    if ($cutoffTs !== null && $fechaEventoTs !== false && $fechaEventoTs < $cutoffTs) {
+        continue;
+    }
+
+    $edadPacienteEvento = resolve_age_years_at_date_cmp($paciente, $fechaEvento);
+
     foreach ($examenesIds as $examIdRaw) {
-        $examId = intval($examIdRaw);
+        $examId = resolve_exam_id_cmp($examIdRaw);
         if ($examId <= 0) continue;
 
         if (!isset($cacheExamenes[$examId])) {
@@ -371,17 +546,16 @@ foreach ($ordenes as $orden) {
             }
 
             $keyStable = 'exam_' . $examId . '|param_' . norm_key_cmp($nombreExamen) . '_' . norm_key_cmp($nombreParametro);
-            $resultadoKey = $examId . '__' . $nombreParametro;
-            $valorRaw = '';
-            if (array_key_exists($resultadoKey, $resultados)) {
-                $valorRaw = (string)$resultados[$resultadoKey];
-            } elseif (array_key_exists($nombreParametro, $resultados)) {
-                $valorRaw = (string)$resultados[$nombreParametro];
-            }
+            $valorRaw = (string)resolve_result_value_cmp(
+                $resultados,
+                $examId,
+                $nombreParametro,
+                $param['codigo_interno'] ?? ''
+            );
 
             $valorNum = to_nullable_float_cmp($valorRaw);
 
-            $referenciaAplicada = get_applicable_ref_cmp($param['referencias'] ?? [], $sexoPaciente, $edadPaciente);
+            $referenciaAplicada = get_applicable_ref_cmp($param['referencias'] ?? [], $sexoPaciente, $edadPacienteEvento);
             $refText = trim((string)($referenciaAplicada['valor'] ?? ''));
             $refMin = to_nullable_float_cmp($referenciaAplicada['valor_min'] ?? null);
             $refMax = to_nullable_float_cmp($referenciaAplicada['valor_max'] ?? null);

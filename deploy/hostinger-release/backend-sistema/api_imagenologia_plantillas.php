@@ -185,6 +185,34 @@ function img_normalize_secciones(array $sections): array {
     return $clean;
 }
 
+function img_validate_structure_ids(array $sections): string {
+    $sectionIds = [];
+    foreach ($sections as $section) {
+        $sectionId = strtolower(trim((string)($section['id'] ?? '')));
+        if ($sectionId === '') {
+            continue;
+        }
+        if (isset($sectionIds[$sectionId])) {
+            return 'Hay IDs de sección duplicados. Cada sección debe tener un ID técnico único.';
+        }
+        $sectionIds[$sectionId] = true;
+
+        $fieldIds = [];
+        foreach ((array)($section['campos'] ?? []) as $campo) {
+            $fieldId = strtolower(trim((string)($campo['id'] ?? '')));
+            if ($fieldId === '') {
+                continue;
+            }
+            if (isset($fieldIds[$fieldId])) {
+                $sectionNombre = trim((string)($section['nombre'] ?? $sectionId));
+                return 'La sección "' . $sectionNombre . '" tiene IDs de campo duplicados. Corrige los IDs antes de guardar.';
+            }
+            $fieldIds[$fieldId] = true;
+        }
+    }
+    return '';
+}
+
 function img_decode_row(array $row): array {
     $row['nombre'] = img_fix_mojibake_string((string)($row['nombre'] ?? ''));
     $row['descripcion'] = img_fix_mojibake_string((string)($row['descripcion'] ?? ''));
@@ -348,6 +376,13 @@ if ($method === 'POST') {
     if (empty($sections)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'La plantilla debe tener al menos una sección con campos']);
+        exit;
+    }
+
+    $structureError = img_validate_structure_ids($sections);
+    if ($structureError !== '') {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => $structureError]);
         exit;
     }
 

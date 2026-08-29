@@ -1,5 +1,6 @@
 import { BASE_URL } from "../../config/config";
 import { formatColegiatura, formatProfesionalName } from "../../utils/profesionalDisplay";
+import { resolverEdadDisplayClinica } from "../../utils/edadClinica";
 
 const TIPO_IMAGEN_LABEL = {
   rx: "Rayos X",
@@ -54,6 +55,8 @@ export default function ImpresionServiciosSolicitados({
 }) {
   const logoSrc = resolveLogoUrl(configuracionClinica?.logo_url);
   const firmaSolicitante = firmaMedico || medicoInfo?.firma || null;
+  const edadPaciente = resolverEdadDisplayClinica(paciente);
+  const edadPacienteTexto = edadPaciente === "No registrada" ? "-" : edadPaciente;
 
   const rows = (Array.isArray(ordenes) ? ordenes : [])
     .map((orden) => {
@@ -153,7 +156,7 @@ export default function ImpresionServiciosSolicitados({
           <p><strong>Paciente:</strong> {paciente?.nombre || paciente?.nombres || ""} {paciente?.apellido || paciente?.apellidos || ""}</p>
           <div className="grid grid-cols-3 gap-2">
             <p><strong>DNI:</strong> {paciente?.dni || "-"}</p>
-            <p><strong>Edad:</strong> {paciente?.edad || "-"} años</p>
+            <p><strong>Edad:</strong> {edadPacienteTexto}</p>
             <p><strong>Sexo:</strong> {paciente?.sexo || "-"}</p>
           </div>
         </div>

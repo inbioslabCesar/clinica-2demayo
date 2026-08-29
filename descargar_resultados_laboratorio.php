@@ -315,6 +315,92 @@ function normalize_tipo_parametro_pdf($value)
     return preg_replace('/[^a-z]/', '', $tipo);
 }
 
+function pdf_parse_date_safe($value)
+{
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+        return ($dt instanceof DateTime) ? $dt : null;
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    $dt = new DateTime();
+    $dt->setTimestamp($ts);
+    return $dt;
+}
+
+function pdf_normalizar_unidad_edad($unidad)
+{
+    $u = strtolower(trim((string)$unidad));
+    if ($u === '') return 'anios';
+    if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    return 'anios';
+}
+
+function pdf_resolver_edad_actual($fechaNacimientoRaw, $edadBaseRaw, $edadUnidadRaw, $fechaBaseRaw)
+{
+    $hoy = new DateTime('today');
+    $fechaNac = pdf_parse_date_safe($fechaNacimientoRaw);
+
+    if ($fechaNac instanceof DateTime) {
+        $fechaNac->setTime(0, 0, 0);
+        if ($fechaNac <= $hoy) {
+            $diff = $fechaNac->diff($hoy);
+            $dias = max(0, (int)$diff->days);
+            $meses = max(0, ((int)$diff->y * 12) + (int)$diff->m);
+            $anios = max(0, (int)$diff->y);
+
+            if ($dias <= 28) return ['edad' => $dias, 'edad_unidad' => 'dias'];
+            if ($meses < 12) return ['edad' => $meses, 'edad_unidad' => 'meses'];
+            return ['edad' => $anios, 'edad_unidad' => 'años'];
+        }
+    }
+
+    if ($edadBaseRaw === null || $edadBaseRaw === '' || !is_numeric($edadBaseRaw)) {
+        return ['edad' => '', 'edad_unidad' => 'años'];
+    }
+
+    $edadBase = max(0, (int)$edadBaseRaw);
+    $unidadBase = pdf_normalizar_unidad_edad($edadUnidadRaw);
+    $fechaBase = pdf_parse_date_safe($fechaBaseRaw);
+    if (!($fechaBase instanceof DateTime)) {
+        return ['edad' => $edadBase, 'edad_unidad' => $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias')];
+    }
+
+    $fechaBase->setTime(0, 0, 0);
+    if ($fechaBase > $hoy) {
+        return ['edad' => $edadBase, 'edad_unidad' => $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias')];
+    }
+
+    $diffRef = $fechaBase->diff($hoy);
+    $aniosTrans = max(0, (int)$diffRef->y);
+    $mesesTrans = max(0, ((int)$diffRef->y * 12) + (int)$diffRef->m);
+    $diasTrans = max(0, (int)$diffRef->days);
+
+    if ($unidadBase === 'dias') {
+        $totalDias = $edadBase + $diasTrans;
+        if ($totalDias <= 28) {
+            return ['edad' => $totalDias, 'edad_unidad' => 'dias'];
+        }
+        return ['edad' => (int)floor($totalDias / 30), 'edad_unidad' => 'meses'];
+    }
+
+    if ($unidadBase === 'meses') {
+        $totalMeses = $edadBase + $mesesTrans;
+        if ($totalMeses < 12) {
+            return ['edad' => $totalMeses, 'edad_unidad' => 'meses'];
+        }
+        return ['edad' => (int)floor($totalMeses / 12), 'edad_unidad' => 'años'];
+    }
+
+    return ['edad' => $edadBase + $aniosTrans, 'edad_unidad' => 'años'];
+}
+
 $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInterno = '') {
     $idText = (string)$exId;
     $nombre = trim((string)$nombreActual);
@@ -577,7 +663,7 @@ if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
     $pac_data = null;
 
     if (!empty($row['orden_id'])) {
-        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
+        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad, p.creado_en,
                                 o.consulta_id, c.medico_id,
                                 CASE WHEN o.consulta_id IS NOT NULL THEN 'Médico' ELSE 'Particular' END as tipo_solicitud
                          FROM pacientes p
@@ -592,7 +678,7 @@ if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
     }
 
     if (!$pac_data && !empty($row['consulta_id'])) {
-        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
+        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad, p.creado_en,
                                 c.id as consulta_id, c.medico_id,
                                 'Médico' as tipo_solicitud
                          FROM consultas c
@@ -610,8 +696,14 @@ if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
         $historia_clinica = $pac_data['historia_clinica'] ?? '';
         $fecha_nacimiento = $pac_data['fecha_nacimiento'] ?? '';
         $sexo = $pac_data['sexo'] ?? '';
-        $edad = $pac_data['edad'] ?? '';
-        $edad_unidad = $pac_data['edad_unidad'] ?? 'años';
+        $edadResuelta = pdf_resolver_edad_actual(
+            $pac_data['fecha_nacimiento'] ?? '',
+            $pac_data['edad'] ?? '',
+            $pac_data['edad_unidad'] ?? 'años',
+            $pac_data['creado_en'] ?? ''
+        );
+        $edad = $edadResuelta['edad'];
+        $edad_unidad = $edadResuelta['edad_unidad'];
         $tipo_solicitud = $pac_data['tipo_solicitud'] ?? '';
 
         if (!empty($pac_data['medico_id'])) {
@@ -636,9 +728,14 @@ $isProduction = (
 
 $logo_paths = [];
 $logo_config_value = '';
+// Debug trace fields for production diagnosis
+$logo_selected_key = '';
+$logo_selected_path = '';
+$logo_selected_exists = false;
 foreach (['logo_laboratorio_url', 'logo_resultados_laboratorio_url', 'logo_resultados_url', 'logo_url'] as $logo_key) {
     if (!empty($clinica_config[$logo_key])) {
         $logo_config_value = (string)$clinica_config[$logo_key];
+        $logo_selected_key = $logo_key;
         break;
     }
 }
@@ -675,7 +772,12 @@ $logo_html_header = '<div style="display:block;width:' . $logo_size_pdf . 'px;te
     . h($clinica_config['nombre_clinica'] ?? 'Mi Clínica')
     . '</div>';
 foreach ($logo_paths as $logo_path) {
+    if ($logo_selected_path === '') {
+        $logo_selected_path = (string)$logo_path;
+    }
     if (!file_exists($logo_path)) continue;
+    $logo_selected_path = (string)$logo_path;
+    $logo_selected_exists = true;
     $logo_data = base64_encode(file_get_contents($logo_path));
     $logo_ext = strtolower((string)pathinfo($logo_path, PATHINFO_EXTENSION));
     $logo_mime = 'image/png';
@@ -687,6 +789,19 @@ foreach ($logo_paths as $logo_path) {
         . '</div>';
     break;
 }
+
+// Log one-line diagnostics for logo resolution in PDF generation.
+$pdfLogoDebug = [
+    'resultado_id' => intval($row['id'] ?? 0),
+    'config_id' => intval($clinica_config['id'] ?? 0),
+    'selected_key' => $logo_selected_key,
+    'logo_config_value' => $logo_config_value,
+    'selected_path' => $logo_selected_path,
+    'selected_exists' => $logo_selected_exists ? 1 : 0,
+    'is_production_host' => $isProduction ? 1 : 0,
+    'host' => (string)($_SERVER['HTTP_HOST'] ?? ''),
+];
+@error_log('pdf_lab_logo_debug ' . json_encode($pdfLogoDebug, JSON_UNESCAPED_UNICODE));
 
 // Construir contenido de resultados
 $hayFueraRango = false;
@@ -923,7 +1038,7 @@ $headerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, 
     . '<div style="font-size:10.8px;"><span style="font-weight:600;">Paciente:</span> ' . h($paciente_nombre) . '</div>'
     . ($paciente_dni ? '<div style="font-size:10.8px;"><span style="font-weight:600;">DNI:</span> ' . h($paciente_dni) . '</div>' : '')
     . ($historia_clinica ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Historia Clínica:</span> ' . h($historia_clinica) . '</div>' : '')
-    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Edad:</span> ' . h($edad ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
+    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Edad:</span> ' . h(($edad !== '' && $edad !== null) ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
     . '</td>'
     . '<td width="50%" style="vertical-align:top;line-height:1.17;font-size:10.8px;">'
     . ($sexo ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Sexo:</span> ' . h($sexo) . '</div>' : '')

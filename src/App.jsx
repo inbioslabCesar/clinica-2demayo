@@ -45,6 +45,9 @@ const MedicoConsultasPage = lazy(() =>
 const MisInformesImagenologiaPage = lazy(() =>
   import("./pages/MisInformesImagenologiaPage.jsx")
 );
+const MisProcedimientosPage = lazy(() =>
+  import("./pages/MisProcedimientosPage.jsx")
+);
 const MedicosPage = lazy(() => import("./pages/MedicosPage.jsx"));
 const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
@@ -819,6 +822,17 @@ function App() {
                         rolesPermitidos={["medico"]}
                       >
                         <MisInformesImagenologiaPage usuario={usuario} />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/mis-procedimientos"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <MisProcedimientosPage />
                       </ProtectedRoute>
                     }
                   />

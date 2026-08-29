@@ -1000,12 +1000,7 @@ switch ($method) {
                 echo json_encode(['success' => false, 'error' => 'No autorizado para crear órdenes sin consulta asociada']);
                 exit;
             }
-            $stmtOwnerConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
-            $stmtOwnerConsulta->bind_param('i', $consulta_id);
-            $stmtOwnerConsulta->execute();
-            $ownerConsulta = $stmtOwnerConsulta->get_result()->fetch_assoc();
-            $stmtOwnerConsulta->close();
-            if (!$ownerConsulta || intval($ownerConsulta['medico_id']) !== $medicoSesionId) {
+            if (!ol_medico_tiene_acceso_consulta($conn, $consulta_id, $medicoSesionId, 'write')) {
                 http_response_code(403);
                 echo json_encode(['success' => false, 'error' => 'No autorizado para crear órdenes en consultas de otro médico']);
                 exit;
@@ -1442,6 +1437,50 @@ switch ($method) {
         $filtro_fecha_desde = isset($_GET['filtro_fecha_desde']) ? trim((string)$_GET['filtro_fecha_desde']) : '';
         $filtro_fecha_hasta = isset($_GET['filtro_fecha_hasta']) ? trim((string)$_GET['filtro_fecha_hasta']) : '';
         $filtro_busqueda = isset($_GET['filtro_busqueda']) ? trim((string)$_GET['filtro_busqueda']) : '';
+
+        if ($vista === 'permiso_consulta') {
+            if (!$consulta_id || $consulta_id <= 0) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'consulta_id es requerido']);
+                break;
+            }
+
+            $stmtConsulta = $conn->prepare('SELECT id FROM consultas WHERE id = ? LIMIT 1');
+            if (!$stmtConsulta) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'No se pudo validar la consulta']);
+                break;
+            }
+
+            $stmtConsulta->bind_param('i', $consulta_id);
+            $stmtConsulta->execute();
+            $rowConsulta = $stmtConsulta->get_result()->fetch_assoc();
+            $stmtConsulta->close();
+
+            if (!$rowConsulta) {
+                http_response_code(404);
+                echo json_encode(['success' => false, 'error' => 'Consulta no encontrada']);
+                break;
+            }
+
+            $canRead = true;
+            $canWrite = true;
+            if ($esSesionMedico) {
+                $canRead = ol_medico_tiene_acceso_consulta($conn, $consulta_id, $medicoSesionId, 'read');
+                $canWrite = ol_medico_tiene_acceso_consulta($conn, $consulta_id, $medicoSesionId, 'write');
+            }
+
+            echo json_encode([
+                'success' => true,
+                'consulta_id' => $consulta_id,
+                'is_medico_session' => $esSesionMedico,
+                'can_read' => $canRead,
+                'can_write' => $canWrite,
+                'error' => $canWrite ? null : 'No autorizado para crear órdenes en consultas de otro médico',
+            ]);
+            break;
+        }
+
         // En endpoints por consulta, el médico debe ser dueño de la consulta solicitada.
         // Esto evita exposición cruzada y permite relajar filtros por fila cuando la orden
         // heredada no tiene medico resoluble por joins.

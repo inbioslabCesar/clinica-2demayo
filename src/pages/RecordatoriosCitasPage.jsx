@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
@@ -15,6 +15,7 @@ const ESTADOS_GESTION = [
 ];
 
 const ORDER_STORAGE_KEY = "recordatorios_citas_orden_v1";
+const ROWS_STORAGE_KEY = "recordatorios_citas_rows_v1";
 
 function estadoBadgeClasses(estado) {
   switch (estado) {
@@ -115,6 +116,44 @@ function estadoLabel(estado) {
     default:
       return "Pendiente";
   }
+}
+
+function colaEstadoLabel(estado) {
+  const t = String(estado || "").toLowerCase().trim();
+  if (t === "llego") return "Llegó";
+  if (t === "en_sala") return "En sala";
+  if (t === "llamando") return "Llamando";
+  if (t === "en_atencion") return "En atención";
+  if (t === "retirado") return "Retirado";
+  return "Pendiente";
+}
+
+function colaEstadoBadge(estado) {
+  const t = String(estado || "").toLowerCase().trim();
+  if (t === "en_sala") return "bg-rose-100 text-rose-700 border-rose-200";
+  if (t === "llamando") return "bg-amber-100 text-amber-700 border-amber-200";
+  if (t === "en_atencion") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  if (t === "llego") return "bg-sky-100 text-sky-700 border-sky-200";
+  if (t === "retirado") return "bg-slate-200 text-slate-700 border-slate-300";
+  return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+function colaPrioridadLabel(prioridad) {
+  const p = String(prioridad || "").toLowerCase().trim();
+  if (p === "adulto_mayor") return "Adulto mayor";
+  if (p === "nino") return "Niño";
+  if (p === "embarazada") return "Embarazada";
+  if (p === "urgente") return "Urgente";
+  return "Normal";
+}
+
+function colaPrioridadBadge(prioridad) {
+  const p = String(prioridad || "").toLowerCase().trim();
+  if (p === "urgente") return "bg-rose-100 text-rose-700 border-rose-200";
+  if (p === "embarazada") return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
+  if (p === "nino") return "bg-cyan-100 text-cyan-700 border-cyan-200";
+  if (p === "adulto_mayor") return "bg-orange-100 text-orange-700 border-orange-200";
+  return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
 
@@ -540,6 +579,15 @@ export default function RecordatoriosCitasPage() {
     }
   })();
 
+  const initialRowsPerPage = (() => {
+    try {
+      const stored = Number(window.localStorage.getItem(ROWS_STORAGE_KEY) || 10);
+      return [10, 20, 30, 50].includes(stored) ? stored : 10;
+    } catch {
+      return 10;
+    }
+  })();
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -560,7 +608,7 @@ export default function RecordatoriosCitasPage() {
   const [detalleCotizacionCache, setDetalleCotizacionCache] = useState({});
   const [detalleCotizacionLoading, setDetalleCotizacionLoading] = useState({});
   const [page, setPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [rowsPerPage, setRowsPerPage] = useState(initialRowsPerPage);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [statsGlobal, setStatsGlobal] = useState({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
@@ -573,6 +621,8 @@ export default function RecordatoriosCitasPage() {
   const [agendaMedicoLoading, setAgendaMedicoLoading] = useState(false);
   const [agendaMedicoError, setAgendaMedicoError] = useState("");
   const [agendaMedicoData, setAgendaMedicoData] = useState(null);
+  const skipFirstPaginationFetchRef = useRef(true);
+  const skipNextPaginationFetchRef = useRef(false);
   const usandoVistaUnificada = tipoRecordatorio === "todos";
   const usaPaginacionCliente = usandoVistaUnificada;
 
@@ -767,15 +817,26 @@ export default function RecordatoriosCitasPage() {
 
   useEffect(() => {
     if (usaPaginacionCliente) return;
+    if (skipFirstPaginationFetchRef.current) {
+      skipFirstPaginationFetchRef.current = false;
+      return;
+    }
+    if (skipNextPaginationFetchRef.current) {
+      skipNextPaginationFetchRef.current = false;
+      return;
+    }
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, rowsPerPage, usaPaginacionCliente]);
 
   useEffect(() => {
+    if (!usaPaginacionCliente && page !== 1) {
+      skipNextPaginationFetchRef.current = true;
+    }
     setPage(1);
     setDetalleExpandedRows({});
     setDetalleTipoFiltroRows({});
-  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio, usaPaginacionCliente, page]);
 
   useEffect(() => {
     if (!usaPaginacionCliente) return;
@@ -789,6 +850,14 @@ export default function RecordatoriosCitasPage() {
       // Si localStorage no está disponible, se conserva el comportamiento en memoria.
     }
   }, [ordenCitas]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ROWS_STORAGE_KEY, String(rowsPerPage));
+    } catch {
+      // Si localStorage no está disponible, se conserva el comportamiento en memoria.
+    }
+  }, [rowsPerPage]);
 
   const pendientesUrgentes = useMemo(
     () => items.filter((item) => {
@@ -989,41 +1058,6 @@ export default function RecordatoriosCitasPage() {
 
     return enriched;
   }, [itemsVista, ordenCitas]);
-
-  const correlativoByRowKey = useMemo(() => {
-    const out = {};
-    const elegiblesDinamicos = itemsPriorizados
-      .filter((item) => Number(item?.medico_id || 0) > 0 && String(item?.fecha || '').trim() !== '')
-      .filter((item) => String(item?.estado_consulta || '').toLowerCase() !== 'cancelada')
-      .filter((item) => {
-        const rowKey = String(item?._rowKey || '');
-        if (!rowKey) return false;
-        const estable = Number(item?.correlativo_estable || 0);
-        if (estable > 0) {
-          out[rowKey] = estable;
-          return false;
-        }
-        return true;
-      })
-      .slice()
-      .sort((a, b) => {
-        const prioridadA = String(a?.origen_consulta || '') === 'agenda_servicio' ? 0 : 1;
-        const prioridadB = String(b?.origen_consulta || '') === 'agenda_servicio' ? 0 : 1;
-        const keyA = `${Number(a?.medico_id || 0)}|${String(a?.fecha || '')}|${String(a?.hora || '').slice(0, 5)}|${prioridadA}|${Number(a?.id || 0)}`;
-        const keyB = `${Number(b?.medico_id || 0)}|${String(b?.fecha || '')}|${String(b?.hora || '').slice(0, 5)}|${prioridadB}|${Number(b?.id || 0)}`;
-        return keyA.localeCompare(keyB);
-      });
-
-    const contador = {};
-    for (const item of elegiblesDinamicos) {
-      const rowKey = String(item?._rowKey || '');
-      if (!rowKey) continue;
-      const key = `${Number(item?.medico_id || 0)}|${String(item?.fecha || '')}`;
-      contador[key] = Number(contador[key] || 0) + 1;
-      out[rowKey] = contador[key];
-    }
-    return out;
-  }, [itemsPriorizados]);
 
   const resumenPrioridad = useMemo(() => ({
     critico: Number(prioridadGlobal.critico || 0),
@@ -1370,6 +1404,84 @@ export default function RecordatoriosCitasPage() {
       return true;
     } catch (err) {
       setError(err.message || "No se pudo reprogramar los servicios");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const actualizarColaMedico = async (item, cambios = {}) => {
+    const esAgenda = esRecordatorioAgendaServicio(item);
+    const consultaId = esAgenda ? Number(item?.consulta_id_ref || 0) : Number(item?.id || 0);
+    const cotizacionId = Number(item?.cotizacion_id || 0);
+    const medicoId = Number(item?.medico_id || 0);
+    const fecha = String(item?.fecha || "").slice(0, 10);
+    if (medicoId <= 0 || !fecha) {
+      setError("No se pudo actualizar cola: falta médico o fecha.");
+      return false;
+    }
+
+    const payload = {
+      action: "actualizar_cola_medico",
+      consulta_id: consultaId,
+      cotizacion_id: cotizacionId,
+      medico_id: medicoId,
+      fecha,
+      estado_cola: String(cambios?.estado_cola || item?.cola_estado || "pendiente"),
+      prioridad_cola: String(cambios?.prioridad_cola || item?.cola_prioridad || "normal"),
+      prioridad_detalle: String(cambios?.prioridad_detalle || item?.cola_prioridad_detalle || ""),
+      es_siguiente: Number(cambios?.es_siguiente ?? item?.cola_es_siguiente ?? 0) === 1 ? 1 : 0,
+    };
+
+    setSavingId(`cola-${String(item?._rowKey || item?.id || "")}`);
+    setMensaje("");
+    setError("");
+    try {
+      const res = await authFetch(`api_recordatorios_citas.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo actualizar cola médica");
+      }
+
+      const cola = data?.cola || {};
+      setItems((prev) => prev.map((row) => {
+        const rowEsAgenda = esRecordatorioAgendaServicio(row);
+        const rowConsultaId = rowEsAgenda ? Number(row?.consulta_id_ref || 0) : Number(row?.id || 0);
+        const rowCotId = Number(row?.cotizacion_id || 0);
+        const mismoRegistro = (consultaId > 0 && rowConsultaId === consultaId)
+          || (consultaId <= 0 && cotizacionId > 0 && rowCotId === cotizacionId);
+
+        const mismoMedicoFecha = Number(row?.medico_id || 0) === medicoId
+          && String(row?.fecha || "").slice(0, 10) === fecha;
+
+        if (!mismoRegistro && !(cola.es_siguiente === 1 && mismoMedicoFecha)) {
+          return row;
+        }
+
+        if (!mismoRegistro && cola.es_siguiente === 1 && mismoMedicoFecha) {
+          return { ...row, cola_es_siguiente: 0 };
+        }
+
+        return {
+          ...row,
+          cola_source_key: String(cola.source_key || ""),
+          cola_estado: String(cola.estado_cola || "pendiente"),
+          cola_correlativo: Number(cola.correlativo_cola || 0),
+          cola_es_siguiente: Number(cola.es_siguiente || 0),
+          cola_prioridad: String(cola.prioridad_cola || "normal"),
+          cola_prioridad_detalle: String(cola.prioridad_detalle || ""),
+          cola_updated_at: new Date().toISOString().slice(0, 19).replace("T", " "),
+        };
+      }));
+
+      setMensaje("Cola médica actualizada.");
+      return true;
+    } catch (err) {
+      setError(err?.message || "No se pudo actualizar cola médica");
       return false;
     } finally {
       setSavingId(null);
@@ -1837,7 +1949,6 @@ export default function RecordatoriosCitasPage() {
               ) : (
                 itemsPaginados.map((item) => {
                   const diasRestantes = item.diasRestantes;
-                  const correlativoVisible = Number(correlativoByRowKey[item._rowKey] || 0);
                   const esHcProxima = esConsultaHcProxima(item);
                   const esFaltaCancelar = esRecordatorioFaltaCancelar(item);
                   const esControl = Number(item?.es_control || 0) === 1;
@@ -1867,6 +1978,11 @@ export default function RecordatoriosCitasPage() {
                   const detalleItemsFiltrados = filtroDetalleActivo === "todos"
                     ? detalleItems
                     : detalleItems.filter((det) => String(det?.tipo_label || "") === filtroDetalleActivo);
+                  const colaEstado = String(item?.cola_estado || "pendiente").toLowerCase();
+                  const colaCorrelativo = Number(item?.cola_correlativo || 0);
+                  const colaEsSiguiente = Number(item?.cola_es_siguiente || 0) === 1;
+                  const colaPrioridad = String(item?.cola_prioridad || "normal").toLowerCase();
+                  const colaSavingKey = `cola-${String(item?._rowKey || item?.id || "")}`;
                   const referenciaOrigen = String(item?.origen_consulta || "") === "agenda_servicio"
                     ? `Ref agenda #${Number(item?.id || 0)}`
                     : `Ref consulta #${Number(item?.id || 0)}`;
@@ -1874,11 +1990,6 @@ export default function RecordatoriosCitasPage() {
                     <Fragment key={item._rowKey}>
                       <tr id={`rc-row-${item._rowKey}`} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
                         <td className="p-3">
-                          {correlativoVisible > 0 && (
-                            <div className="mt-1 inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                              N° {correlativoVisible}
-                            </div>
-                          )}
                           <div className="mt-1 text-[11px] text-slate-500">{referenciaOrigen}</div>
                           <div className="mt-1">
                             {esFaltaCancelar ? (
@@ -1979,6 +2090,19 @@ export default function RecordatoriosCitasPage() {
                           )}
                           <div className="mt-1 text-xs text-slate-500">
                             Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaEstadoBadge(colaEstado)}`}>
+                              {colaCorrelativo > 0 ? `N-${colaCorrelativo} · ` : ""}{colaEstadoLabel(colaEstado)}
+                            </span>
+                            {colaEsSiguiente && (
+                              <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                                Siguiente
+                              </span>
+                            )}
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaPrioridadBadge(colaPrioridad)}`}>
+                              {colaPrioridadLabel(colaPrioridad)}
+                            </span>
                           </div>
                           {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
                             <div className="mt-1">
@@ -2089,6 +2213,9 @@ export default function RecordatoriosCitasPage() {
                                         const params = new URLSearchParams({
                                           paciente_id: String(Number(item.paciente_id || 0)),
                                           consulta_id: String(Number(item.id || 0)),
+                                          medico_id: String(Number(item.medico_id || 0)),
+                                          fecha: String(item.fecha || "").slice(0, 10),
+                                          hora: String(item.hora || "").slice(0, 5),
                                           origen: "recordatorios",
                                           accion: "reprogramar",
                                           back_to: "/recordatorios-citas",
@@ -2102,6 +2229,67 @@ export default function RecordatoriosCitasPage() {
                                     </button>
                                   </>
                                 )}
+                              </>
+                            )}
+
+                            {!esFaltaCancelar && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { estado_cola: "en_sala" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                >
+                                  En sala
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { es_siguiente: 1, estado_cola: colaEstado === "pendiente" ? "llego" : colaEstado })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                >
+                                  Siguiente
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { estado_cola: "en_atencion", es_siguiente: 0 })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                >
+                                  En atención
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "adulto_mayor" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 hover:bg-orange-100"
+                                >
+                                  Adulto mayor
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "nino" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                                >
+                                  Niño
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "embarazada" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                >
+                                  Embarazada
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => actualizarColaMedico(item, { prioridad_cola: "normal", es_siguiente: 0, estado_cola: "pendiente" })}
+                                  disabled={savingId === colaSavingKey}
+                                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                                >
+                                  Reset cola
+                                </button>
                               </>
                             )}
                           </div>
