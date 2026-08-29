@@ -92,6 +92,56 @@ function buildFallbackSectionsFromContenido(contenido = {}) {
   });
 }
 
+function makeUniqueFieldId(baseId, usedIds, fallbackPrefix = 'campo') {
+  const normalizedBase = String(baseId || '').trim();
+  let candidate = normalizedBase !== '' ? normalizedBase : `${fallbackPrefix}_1`;
+  let counter = 2;
+  while (usedIds.has(candidate.toLowerCase())) {
+    candidate = `${normalizedBase || fallbackPrefix}_${counter}`;
+    counter += 1;
+  }
+  usedIds.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function normalizeTemplateFieldIds(template) {
+  if (!template || typeof template !== 'object') return template;
+  const copy = {
+    ...template,
+    estructura_json: template?.estructura_json && typeof template.estructura_json === 'object'
+      ? { ...template.estructura_json }
+      : template?.estructura_json,
+  };
+
+  const sections = Array.isArray(copy?.estructura_json?.sections)
+    ? copy.estructura_json.sections
+    : null;
+
+  if (!sections) return copy;
+
+  copy.estructura_json = {
+    ...copy.estructura_json,
+    sections: sections.map((section, sectionIndex) => {
+      if (!section || typeof section !== 'object') return section;
+      const usedIds = new Set();
+      const fallbackPrefix = `campo_${sectionIndex + 1}`;
+      const campos = Array.isArray(section.campos) ? section.campos : [];
+      return {
+        ...section,
+        campos: campos.map((campo) => {
+          if (!campo || typeof campo !== 'object') return campo;
+          return {
+            ...campo,
+            id: makeUniqueFieldId(campo.id, usedIds, fallbackPrefix),
+          };
+        })
+      };
+    })
+  };
+
+  return copy;
+}
+
 function normalizeTipoPlantilla(tipo) {
   const t = String(tipo || '').trim().toLowerCase();
   if (t === 'rx' || t === 'rayos_x' || t === 'rayos x') return 'rayosx';
@@ -284,13 +334,14 @@ export default function ModalInformeImagenologia({
         });
 
         if (dataPlant.success && Array.isArray(dataPlant.plantillas) && dataPlant.plantillas.length > 0) {
-          const filtradasPorTipo = dataPlant.plantillas.filter(
+          const plantillasNormalizadas = dataPlant.plantillas.map((p) => normalizeTemplateFieldIds(p));
+          const filtradasPorTipo = plantillasNormalizadas.filter(
             (p) => normalizeTipoPlantilla(p?.tipo_examen) === tipoPlantilla
           );
-          plantillasDisponibles = filtradasPorTipo.length > 0 ? filtradasPorTipo : dataPlant.plantillas;
+          plantillasDisponibles = filtradasPorTipo.length > 0 ? filtradasPorTipo : plantillasNormalizadas;
 
           // Si hay un informe existente con plantilla guardada, usarla; sino la primera activa
-          const plantillaInforme = dataInf?.informe?.plantilla_json;
+          const plantillaInforme = normalizeTemplateFieldIds(dataInf?.informe?.plantilla_json);
           const matchPlantilla = resolveTemplateFromReport(plantillasDisponibles, plantillaInforme);
           const matchContexto = resolveTemplateByContext(plantillasDisponibles, {
             orden: ordenActual,
@@ -304,9 +355,10 @@ export default function ModalInformeImagenologia({
             const resAll = await authFetch(`api_imagenologia_plantillas.php?tipo=${tipoPlantilla}`);
             const dataAll = await resAll.json();
             if (dataAll?.success && Array.isArray(dataAll.plantillas)) {
+              const plantillasNormalizadas = dataAll.plantillas.map((p) => normalizeTemplateFieldIds(p));
               if (dataAll.plantillas.length > 0) {
-                plantillasDisponibles = dataAll.plantillas;
-                const plantillaInforme = dataInf?.informe?.plantilla_json;
+                plantillasDisponibles = plantillasNormalizadas;
+                const plantillaInforme = normalizeTemplateFieldIds(dataInf?.informe?.plantilla_json);
                 plantillaFinal =
                   resolveTemplateFromReport(plantillasDisponibles, plantillaInforme)
                   || resolveTemplateByContext(plantillasDisponibles, {
@@ -322,7 +374,7 @@ export default function ModalInformeImagenologia({
         }
 
         if (!plantillaFinal) {
-          plantillaFinal = createSyntheticTemplate(tipoPlantilla || 'ecografia');
+          plantillaFinal = normalizeTemplateFieldIds(createSyntheticTemplate(tipoPlantilla || 'ecografia'));
           plantillasDisponibles = [plantillaFinal];
         }
 
