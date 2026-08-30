@@ -349,26 +349,14 @@ function resolverAnulacionDesdeHC(row, servicios = []) {
 function resolverSolicitudDesdeHC(row) {
   const referencia = String(row?.referencia_origen || "").trim();
   const observaciones = String(row?.observaciones || "").trim();
-  const referenciaLower = referencia.toLowerCase();
-  const observacionesLower = observaciones.toLowerCase();
-
-  const marcaReferencia =
-    referenciaLower.includes("hc consulta")
-    || referenciaLower.includes("desde hc")
-    || referenciaLower.includes("historia clinica")
-    || referenciaLower.includes("historia clínica");
-
-  const marcaObservacion =
-    observacionesLower.includes("desde consulta #")
-    || observacionesLower.includes("procedimientos desde consulta #")
-    || observacionesLower.includes("solicitud hc");
+  const marcaSolicitudTexto = tieneMarcaSolicitudHCDesdeTexto(row);
 
   const consultaOrigenConfiable = extraerConsultaOrigenIdConfiable(row);
   const servicios = parseServiciosTipos(row?.servicios_tipos || "");
   const esConsultaPura = servicios.length === 1 && servicios.includes("consulta");
   const marcaVinculoConfiableNoConsulta = consultaOrigenConfiable > 0 && !esConsultaPura;
 
-  if (!marcaReferencia && !marcaObservacion && !marcaVinculoConfiableNoConsulta) {
+  if (!marcaSolicitudTexto && !marcaVinculoConfiableNoConsulta) {
     return { activa: false, detalle: "" };
   }
 
@@ -380,15 +368,19 @@ function resolverSolicitudDesdeHC(row) {
   return { activa: true, detalle };
 }
 
-function extraerConsultaOrigenId(row) {
-  const directo = Number(row?.consulta_ref_id || 0);
-  if (directo > 0) return directo;
+function tieneMarcaSolicitudHCDesdeTexto(row) {
+  const referenciaLower = String(row?.referencia_origen || "").toLowerCase().trim();
+  const observacionesLower = String(row?.observaciones || "").toLowerCase().trim();
 
-  const referencia = String(row?.referencia_origen || "").trim();
-  const observaciones = String(row?.observaciones || "").trim();
-  const baseTexto = `${referencia} ${observaciones}`.trim();
-  const match = baseTexto.match(/consulta\s*#\s*(\d+)/i);
-  return match?.[1] ? Number(match[1]) : 0;
+  return (
+    referenciaLower.includes("hc consulta")
+    || referenciaLower.includes("desde hc")
+    || referenciaLower.includes("historia clinica")
+    || referenciaLower.includes("historia clínica")
+    || observacionesLower.includes("desde consulta #")
+    || observacionesLower.includes("procedimientos desde consulta #")
+    || observacionesLower.includes("solicitud hc")
+  );
 }
 
 function extraerConsultaOrigenIdExplicita(row) {
@@ -421,12 +413,30 @@ function extraerConsultaOrigenIdConfiable(row) {
     return consultaRefId;
   }
 
+  // Históricos: permitir vínculo cuando existe marca textual de solicitud desde HC.
+  if (tieneMarcaSolicitudHCDesdeTexto(row)) {
+    return consultaRefId;
+  }
+
   return 0;
 }
 
 function parseCotizacionTimestamp(value) {
   const raw = String(value || "").trim();
   if (!raw) return Number.NaN;
+
+  const ymdhms = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (ymdhms) {
+    const year = Number(ymdhms[1]);
+    const month = Number(ymdhms[2]);
+    const day = Number(ymdhms[3]);
+    const hour = Number(ymdhms[4]);
+    const minute = Number(ymdhms[5]);
+    const second = Number(ymdhms[6] || 0);
+    const tsLocal = new Date(year, month - 1, day, hour, minute, second).getTime();
+    return Number.isNaN(tsLocal) ? Number.NaN : tsLocal;
+  }
+
   const ts = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));
   return Number.isNaN(ts) ? Number.NaN : ts;
 }
@@ -436,8 +446,10 @@ function parseConsultaRefDayTimestamp(value) {
   if (!raw) return Number.NaN;
   const ymd = raw.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return Number.NaN;
-  const ts = Date.parse(`${ymd}T00:00:00`);
-  return Number.isNaN(ts) ? Number.NaN : ts;
+
+  const [year, month, day] = ymd.split("-").map((v) => Number(v));
+  const tsLocal = new Date(year, month - 1, day, 0, 0, 0).getTime();
+  return Number.isNaN(tsLocal) ? Number.NaN : tsLocal;
 }
 
 function origenConsultaNoFuturo(row) {
