@@ -479,6 +479,9 @@ function hydrateUsuario(rawUsuario) {
 }
 
 function App() {
+  const authRecoveryInFlight = React.useRef(false);
+  const authRecoveryLastTs = React.useRef(0);
+
   const clearClientSessionState = () => {
     sessionStorage.removeItem("usuario");
     sessionStorage.removeItem("medico");
@@ -554,6 +557,7 @@ function App() {
       try {
         const r = await authFetch("api_auth_status.php", {
           cache: "no-store",
+          __skipAuthEvent: true,
         });
 
         if (!r.ok) {
@@ -629,6 +633,79 @@ function App() {
       activo = false;
     };
   }, [authRetryNonce]);
+
+  useEffect(() => {
+    const handlePageShow = () => {
+      const hasClientSession = Boolean(sessionStorage.getItem("usuario") || sessionStorage.getItem("medico"));
+      if (!hasClientSession) return;
+      hadSessionOnMount.current = true;
+      setAuthRetryNonce((prev) => prev + 1);
+    };
+
+    const handleUnauthorized = async () => {
+      const hasClientSession = Boolean(sessionStorage.getItem("usuario") || sessionStorage.getItem("medico"));
+      if (!hasClientSession) return;
+
+      const now = Date.now();
+      if (now - authRecoveryLastTs.current < 800) return;
+      if (authRecoveryInFlight.current) return;
+
+      authRecoveryLastTs.current = now;
+      authRecoveryInFlight.current = true;
+      try {
+        const r = await authFetch("api_auth_status.php", {
+          cache: "no-store",
+          __skipAuthEvent: true,
+        });
+
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) {
+            hadSessionOnMount.current = false;
+            clearClientSessionState();
+            setUsuario(null);
+            setAuthBootstrap({ phase: "idle", detail: "", checks: null });
+          }
+          return;
+        }
+
+        const data = await r.json().catch(() => null);
+        const autenticado = Boolean(data?.success) && Boolean(data?.authenticated);
+        if (!autenticado) {
+          hadSessionOnMount.current = false;
+          clearClientSessionState();
+          setUsuario(null);
+          setAuthBootstrap({ phase: "idle", detail: "", checks: null });
+          return;
+        }
+
+        hadSessionOnMount.current = true;
+        const usuarioFromBackend = data?.usuario && typeof data.usuario === "object"
+          ? data.usuario
+          : {
+              id: data?.usuario_id ?? null,
+              nombre: data?.nombre ?? "",
+              rol: data?.rol ?? "",
+              usuario: typeof data?.usuario === "string" ? data.usuario : "",
+              permisos: Array.isArray(data?.permisos) ? data.permisos : [],
+            };
+
+        setUsuario(hydrateUsuario(usuarioFromBackend));
+        setAuthBootstrap({ phase: "ok", detail: "", checks: null });
+      } catch {
+        // Si falla la red en este punto, mantener el estado actual y dejar que los flujos
+        // de reintento existentes (infra_error/retry) manejen la recuperacion.
+      } finally {
+        authRecoveryInFlight.current = false;
+      }
+    };
+
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("auth-response-unauthorized", handleUnauthorized);
+    return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("auth-response-unauthorized", handleUnauthorized);
+    };
+  }, []);
 
   useEffect(() => {
     // Si cambia el usuario, sincronizar sessionStorage

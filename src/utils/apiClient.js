@@ -19,16 +19,29 @@ export function resolveAppUrl(path) {
 }
 
 export function authFetch(path, init = {}) {
-  const method = String(init.method || "GET").toUpperCase();
+  const { __skipAuthEvent = false, ...restInit } = init || {};
+  const method = String(restInit.method || "GET").toUpperCase();
   const isRead = method === "GET" || method === "HEAD";
+  const url = resolveUrl(path);
   const merged = {
     credentials: "include",
-    ...init,
+    ...restInit,
   };
 
   if (isRead && typeof merged.cache === "undefined") {
     merged.cache = "no-store";
   }
 
-  return fetch(resolveUrl(path), merged);
+  return fetch(url, merged).then((response) => {
+    if (!__skipAuthEvent && (response.status === 401 || response.status === 403) && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("auth-response-unauthorized", {
+        detail: {
+          status: response.status,
+          url: response.url || url,
+          method,
+        },
+      }));
+    }
+    return response;
+  });
 }
