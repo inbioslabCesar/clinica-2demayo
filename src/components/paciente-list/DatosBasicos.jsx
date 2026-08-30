@@ -1,6 +1,21 @@
 import React from "react";
 
-function DatosBasicos({ form, handleChange }) {
+function DatosBasicos({ form, handleChange, dniLookup = { status: "idle", message: "" } }) {
+  const mostrarEstadoDni = String(form?.tipo_documento || "").toLowerCase() === "dni" && String(form?.dni || "").trim().length >= 8;
+  const estado = String(dniLookup?.status || "idle");
+  const mensaje = String(dniLookup?.message || "").trim();
+
+  const estadoClassName =
+    estado === "duplicate"
+      ? "mt-2 rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700"
+      : estado === "external"
+      ? "mt-2 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
+      : estado === "checking"
+      ? "mt-2 rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700"
+      : estado === "not_found"
+      ? "mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700"
+      : "mt-2 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700";
+
   return (
     <div className="bg-white rounded-lg p-4 border border-blue-300">
       <h3 className="text-lg font-semibold text-blue-800 mb-3 flex items-center gap-2">
@@ -26,6 +41,9 @@ function DatosBasicos({ form, handleChange }) {
               : "DNI Provisional"}
           </label>
           <input name="dni" value={form.dni} onChange={handleChange} placeholder={form.tipo_documento === "dni" ? "Documento de identidad (8 dígitos)" : form.tipo_documento === "carnet_extranjeria" ? "Carnet de extranjería (12 dígitos)" : "Se genera automáticamente"} className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" autoFocus disabled={form.tipo_documento === "sin_documento"} />
+          {mostrarEstadoDni && mensaje && (
+            <div className={estadoClassName}>{mensaje}</div>
+          )}
         </div>
         {/* Historia clínica */}
         <div>

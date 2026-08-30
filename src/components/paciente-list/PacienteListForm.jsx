@@ -66,6 +66,15 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
     });
   }, [initialData]);
   const [error, setError] = useState("");
+  const [dniLookup, setDniLookup] = useState({
+    status: "idle", // idle | checking | duplicate | external | not_found | error
+    message: "",
+    paciente: null,
+  });
+  const dniLookupTimerRef = useRef(null);
+  const dniLookupAbortRef = useRef(null);
+  const nombreApellidoTouchedRef = useRef({ nombre: false, apellido: false });
+
   useEffect(() => {
     if (form.edad_unidad === "años" && form.edad && Number(form.edad) > 150) {
       setError("La edad no puede superar los 150 años.");
@@ -74,6 +83,109 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
     }
   }, [form.edad, form.edad_unidad]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    nombreApellidoTouchedRef.current = { nombre: false, apellido: false };
+    setDniLookup({ status: "idle", message: "", paciente: null });
+  }, [initialData]);
+
+  useEffect(() => {
+    const tipoDocumento = String(form.tipo_documento || "").toLowerCase();
+    const dni = String(form.dni || "").trim();
+
+    clearTimeout(dniLookupTimerRef.current);
+    dniLookupAbortRef.current?.abort();
+
+    if (tipoDocumento !== "dni") {
+      setDniLookup({ status: "idle", message: "", paciente: null });
+      return;
+    }
+
+    if (!/^\d{8}$/.test(dni)) {
+      setDniLookup({ status: "idle", message: "", paciente: null });
+      return;
+    }
+
+    dniLookupTimerRef.current = setTimeout(async () => {
+      const dniConsultado = dni;
+      const controller = new AbortController();
+      dniLookupAbortRef.current = controller;
+      setDniLookup({ status: "checking", message: "Verificando DNI...", paciente: null });
+
+      try {
+        const res = await authFetch("api_pacientes_buscar.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ tipo: "dni", valor: dniConsultado }),
+        });
+        const data = await res.json().catch(() => null);
+
+        if (!data) {
+          setDniLookup({ status: "error", message: "No se pudo verificar el DNI.", paciente: null });
+          return;
+        }
+
+        if (data.success && Array.isArray(data.pacientes) && data.pacientes.length > 0) {
+          const encontrado = data.pacientes[0];
+          const mismoPaciente = Number(form?.id || 0) > 0 && Number(encontrado?.id || 0) === Number(form.id);
+
+          if (mismoPaciente) {
+            setDniLookup({ status: "idle", message: "", paciente: null });
+          } else {
+            setDniLookup({
+              status: "duplicate",
+              message: "Este DNI ya existe en la base local. Usa el paciente registrado.",
+              paciente: encontrado,
+            });
+          }
+          return;
+        }
+
+        const sugerenciaExterna = data?.fuente === "externa" && data?.sugerencia_externa
+          ? data.sugerencia_externa
+          : null;
+
+        if (sugerenciaExterna) {
+          setDniLookup({
+            status: "external",
+            message: "DNI no existe en la base local. Nombres sugeridos desde RENIEC.",
+            paciente: null,
+          });
+
+          setForm((prev) => {
+            if (String(prev.tipo_documento || "").toLowerCase() !== "dni") return prev;
+            if (String(prev.dni || "").trim() !== dniConsultado) return prev;
+
+            const next = { ...prev };
+            if (!nombreApellidoTouchedRef.current.nombre && !String(prev.nombre || "").trim()) {
+              next.nombre = String(sugerenciaExterna?.nombre || "").trim();
+            }
+            if (!nombreApellidoTouchedRef.current.apellido && !String(prev.apellido || "").trim()) {
+              next.apellido = String(sugerenciaExterna?.apellido || "").trim();
+            }
+            return next;
+          });
+          return;
+        }
+
+        setDniLookup({
+          status: "not_found",
+          message: "DNI no encontrado en base local ni RENIEC. Completa datos manualmente.",
+          paciente: null,
+        });
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+        setDniLookup({ status: "error", message: "No se pudo verificar el DNI.", paciente: null });
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(dniLookupTimerRef.current);
+      dniLookupAbortRef.current?.abort();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.dni, form.tipo_documento, form.id]);
 
   const guardarPacienteFallback = async (pacientePayload) => {
     try {
@@ -94,6 +206,9 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === "nombre" || name === "apellido") {
+      nombreApellidoTouchedRef.current[name] = true;
+    }
     if (name === "tipo_documento") {
       setForm({
         ...form,
@@ -214,6 +329,20 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
           setError("El DNI debe tener exactamente 8 dígitos.");
           return;
         }
+
+        if (dniLookup.status === "duplicate") {
+          const p = dniLookup.paciente;
+          const nombreDup = `${String(p?.nombre || "").trim()} ${String(p?.apellido || "").trim()}`.trim();
+          const hcDup = String(p?.historia_clinica || "").trim();
+          setError("El DNI ingresado ya está registrado en el sistema.");
+          Swal.fire({
+            icon: "warning",
+            title: "DNI ya registrado",
+            html: `<div style='font-size:1.05em'><b>${nombreDup || "Paciente existente"}</b>${hcDup ? `<br>HC: ${hcDup}` : ""}</div>`,
+            confirmButtonText: "Aceptar",
+          });
+          return;
+        }
       } else if (formToSend.tipo_documento === "carnet_extranjeria") {
         if (!/^\d{12}$/.test(formToSend.dni)) {
           setError("El Carnet de extranjería debe tener exactamente 12 dígitos.");
@@ -328,7 +457,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
         className="flex flex-col space-y-4 bg-blue-50 p-4 rounded border border-blue-200 h-full w-full overflow-y-auto"
         style={{ minHeight: '60vh', maxHeight: '70vh' }}
       >
-        <DatosBasicos form={form} handleChange={handleChange} />
+        <DatosBasicos form={form} handleChange={handleChange} dniLookup={dniLookup} />
         <DatosEdad form={form} handleChange={handleChange} />
         <DatosAdicionales
           form={form}
@@ -343,7 +472,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
             type="submit"
             ref={submitBtnRef}
             className="w-full bg-purple-800 hover:bg-purple-900 text-white rounded-lg px-4 py-3 font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-            disabled={loading}
+            disabled={loading || dniLookup.status === "checking"}
           >
             {loading ? (
               <div className="flex items-center justify-center gap-2">
@@ -370,6 +499,8 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
               </div>
             ) : form.id ? (
               "Actualizar Paciente"
+            ) : dniLookup.status === "checking" ? (
+              "Verificando DNI..."
             ) : (
               "Registrar Paciente"
             )}

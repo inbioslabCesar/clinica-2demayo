@@ -17,6 +17,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
   const [resultados, setResultados] = useState([]);
   const [buscando, setBuscando] = useState(false);
   const [noEncontrado, setNoEncontrado] = useState(false);
+  const [sugerenciaExterna, setSugerenciaExterna] = useState(null);
 
   const normalizeText = (value) => String(value || "")
     .toLowerCase()
@@ -30,6 +31,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
     if (!busqueda.trim()) return;
     setBuscando(true);
     setResultados([]);
+    setSugerenciaExterna(null);
     try {
       const res = await authFetch('api_pacientes_buscar.php', {
         method: 'POST',
@@ -39,6 +41,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
       const data = await res.json();
       if (data.success && Array.isArray(data.pacientes) && data.pacientes.length > 0) {
         setResultados(data.pacientes);
+        setSugerenciaExterna(null);
         const esBusquedaNombre = String(tipo || "").toLowerCase() === "nombre";
         const buscadoNormalizado = normalizeText(busqueda);
         const existeCoincidenciaExactaNombre = esBusquedaNombre
@@ -65,15 +68,22 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
       } else {
         setResultados([]);
         setNoEncontrado(true);
+        const externa = data?.fuente === "externa" && data?.sugerencia_externa
+          ? data.sugerencia_externa
+          : null;
+        setSugerenciaExterna(externa);
         if (onNoEncontrado) {
           onNoEncontrado({
             tipo,
             valor: String(busqueda || "").trim(),
+            sugerencia_externa: externa,
+            proveedor_externo: data?.proveedor_externo || null,
           });
         }
       }
     } catch {
       setResultados([]);
+      setSugerenciaExterna(null);
       if (onNoEncontrado) {
         onNoEncontrado({
           tipo,
@@ -88,11 +98,13 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
   const handleInputChange = (e) => {
   setBusqueda(e.target.value);
   setNoEncontrado(false);
+  setSugerenciaExterna(null);
   if (onNuevaBusqueda) onNuevaBusqueda();
   };
   const handleTipoChange = (e) => {
   setTipo(e.target.value);
   setNoEncontrado(false);
+  setSugerenciaExterna(null);
   if (onNuevaBusqueda) onNuevaBusqueda();
   };
 
@@ -100,6 +112,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
     setBusqueda("");
     setResultados([]);
     setNoEncontrado(false);
+    setSugerenciaExterna(null);
     if (onNuevaBusqueda) onNuevaBusqueda();
   };
 
@@ -186,7 +199,9 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
 
       {noEncontrado && (
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
-          Paciente no encontrado. Puedes registrarlo en el siguiente paso.
+          {sugerenciaExterna
+            ? "Paciente no encontrado en base local. Encontramos datos en RENIEC/SUNAT para prellenar el registro."
+            : "Paciente no encontrado. Puedes registrarlo en el siguiente paso."}
         </div>
       )}
     </div>

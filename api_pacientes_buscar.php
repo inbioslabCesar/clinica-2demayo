@@ -2,6 +2,108 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function pacientes_buscar_ends_with(string $haystack, string $needle): bool {
+    if ($needle === '') return true;
+    $hayLen = strlen($haystack);
+    $needLen = strlen($needle);
+    if ($needLen > $hayLen) return false;
+    return substr($haystack, -$needLen) === $needle;
+}
+
+function pacientes_buscar_resolver_token_externo(): string {
+    $candidates = [
+        'APISPERU_TOKEN',
+        'APIS_PERU_TOKEN',
+        'DNIRUC_TOKEN',
+    ];
+
+    foreach ($candidates as $key) {
+        $value = trim((string)(getenv($key) ?: ($_ENV[$key] ?? '')));
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+function pacientes_buscar_consulta_dni_externa(string $dni): array {
+    if (!preg_match('/^\d{8}$/', $dni)) {
+        return ['found' => false, 'error' => 'DNI inválido para consulta externa'];
+    }
+
+    $token = pacientes_buscar_resolver_token_externo();
+    if ($token === '') {
+        return ['found' => false, 'error' => 'Token externo no configurado'];
+    }
+
+    $baseUrl = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? 'https://dniruc.apisperu.com/api/v1')));
+    if ($baseUrl === '') {
+        $baseUrl = 'https://dniruc.apisperu.com/api/v1';
+    }
+    if (pacientes_buscar_ends_with($baseUrl, '/')) {
+        $baseUrl = rtrim($baseUrl, '/');
+    }
+
+    $url = $baseUrl . '/dni/' . rawurlencode($dni) . '?token=' . rawurlencode($token);
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 6,
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_HTTPHEADER => [
+            'Accept: application/json',
+        ],
+    ]);
+
+    $body = curl_exec($ch);
+    $curlErr = curl_error($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($body === false) {
+        return ['found' => false, 'error' => $curlErr !== '' ? $curlErr : 'Error de red en consulta externa'];
+    }
+
+    $decoded = json_decode($body, true);
+    if (!is_array($decoded)) {
+        return ['found' => false, 'error' => 'Respuesta externa inválida'];
+    }
+
+    if ($httpCode >= 400) {
+        $message = trim((string)($decoded['message'] ?? $decoded['error'] ?? 'Servicio externo no disponible'));
+        return ['found' => false, 'error' => $message !== '' ? $message : 'Servicio externo no disponible'];
+    }
+
+    $nombres = trim((string)($decoded['nombres'] ?? ''));
+    $apellidoPaterno = trim((string)($decoded['apellidoPaterno'] ?? $decoded['apellido_paterno'] ?? ''));
+    $apellidoMaterno = trim((string)($decoded['apellidoMaterno'] ?? $decoded['apellido_materno'] ?? ''));
+    $apellidos = trim($apellidoPaterno . ' ' . $apellidoMaterno);
+
+    if ($nombres === '' && $apellidos === '') {
+        return ['found' => false, 'error' => 'Documento no encontrado en servicio externo'];
+    }
+
+    return [
+        'found' => true,
+        'provider' => 'apis_peru',
+        'sugerencia' => [
+            'tipo_documento' => 'dni',
+            'dni' => $dni,
+            'nombre' => $nombres,
+            'apellido' => $apellidos,
+            'nombres' => $nombres,
+            'apellido_paterno' => $apellidoPaterno,
+            'apellido_materno' => $apellidoMaterno,
+            'fuente' => 'apis_peru',
+        ],
+    ];
+}
+
 function pacientes_buscar_table_exists($conn, string $table): bool {
     $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
     if (!$stmt) return false;
@@ -164,9 +266,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pacientes = $res->fetch_all(MYSQLI_ASSOC);
     $pacientes = cargar_acompanantes_busqueda($conn, $pacientes);
     if ($pacientes && count($pacientes) > 0) {
-        echo json_encode(['success' => true, 'pacientes' => $pacientes]);
+        echo json_encode([
+            'success' => true,
+            'pacientes' => $pacientes,
+            'fuente' => 'local',
+        ]);
     } else {
-        echo json_encode(['success' => false, 'error' => 'Paciente no encontrado']);
+        $consultaExterna = null;
+        if ($tipo === 'dni' && preg_match('/^\d{8}$/', $valor)) {
+            $consultaExterna = pacientes_buscar_consulta_dni_externa($valor);
+        }
+
+        $payload = [
+            'success' => false,
+            'error' => 'Paciente no encontrado',
+            'fuente' => 'none',
+        ];
+
+        if (is_array($consultaExterna) && !empty($consultaExterna['found'])) {
+            $payload['fuente'] = 'externa';
+            $payload['sugerencia_externa'] = $consultaExterna['sugerencia'];
+            $payload['proveedor_externo'] = $consultaExterna['provider'] ?? 'apis_peru';
+            $payload['error'] = 'Paciente no encontrado en base local, pero existe en consulta externa';
+        } elseif (is_array($consultaExterna) && !empty($consultaExterna['error'])) {
+            $payload['detalle_externo'] = (string)$consultaExterna['error'];
+        }
+
+        echo json_encode($payload);
     }
     $stmt->close();
     exit;

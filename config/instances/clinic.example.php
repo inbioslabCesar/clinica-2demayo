@@ -13,5 +13,7 @@ return [
     'DB_NAME' => 'u330560936_clinicas_bd',
     'DB_USER' => 'u330560936_clinicas',
     'DB_PASS' => '41950361Cesar$',
+    'APISPERU_TOKEN' => 'PON_AQUI_TU_TOKEN_APISPERU',
+    'APISPERU_BASE_URL' => 'https://dniruc.apisperu.com/api/v1',
 ];
 

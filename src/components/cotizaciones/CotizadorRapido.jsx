@@ -8,9 +8,18 @@ export default function CotizadorRapido() {
   const [query, setQuery] = useState("");
   const [estado, setEstado] = useState("idle"); // idle | searching | found | not_found
   const [paciente, setPaciente] = useState(null);
+  const [sugerenciaExterna, setSugerenciaExterna] = useState(null);
   const debounceRef = useRef(null);
   const abortRef = useRef(null);
   const inputRef = useRef(null);
+
+  const resolverTipoBusqueda = (valor) => {
+    const texto = String(valor || "").trim();
+    if (/^HC\d+$/i.test(texto)) return "historia";
+    if (/^\d{8}$/.test(texto)) return "dni";
+    if (/^\d+$/.test(texto)) return "nombre";
+    return "nombre";
+  };
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -18,6 +27,7 @@ export default function CotizadorRapido() {
     if (!trimmed) {
       setEstado("idle");
       setPaciente(null);
+      setSugerenciaExterna(null);
       return;
     }
 
@@ -29,18 +39,28 @@ export default function CotizadorRapido() {
 
       setEstado("searching");
       setPaciente(null);
+      setSugerenciaExterna(null);
 
       try {
-        const res = await authFetch(
-          `api_pacientes.php?busqueda=${encodeURIComponent(trimmed)}&limit=1`,
-          { credentials: "include", signal: controller.signal }
-        );
+        const tipo = resolverTipoBusqueda(trimmed);
+        const res = await authFetch("api_pacientes_buscar.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          signal: controller.signal,
+          body: JSON.stringify({ tipo, valor: trimmed }),
+        });
         const data = await res.json();
         const found = data?.pacientes?.[0] || null;
         if (found) {
           setPaciente(found);
+          setSugerenciaExterna(null);
           setEstado("found");
         } else {
+          const externa = data?.fuente === "externa" && data?.sugerencia_externa
+            ? data.sugerencia_externa
+            : null;
+          setSugerenciaExterna(externa);
           setEstado("not_found");
         }
       } catch (err) {
@@ -57,13 +77,24 @@ export default function CotizadorRapido() {
   };
 
   const handleRegistrar = () => {
-    navigate("/pacientes", { state: { prefillDni: query.trim(), openModal: true } });
+    const queryLimpio = String(query || "").trim();
+    const tipoDocFallback = "dni";
+    navigate("/pacientes", {
+      state: {
+        prefillDni: String(sugerenciaExterna?.dni || queryLimpio || "").trim(),
+        prefillNombre: String(sugerenciaExterna?.nombre || "").trim(),
+        prefillApellido: String(sugerenciaExterna?.apellido || "").trim(),
+        prefillTipoDocumento: String(sugerenciaExterna?.tipo_documento || tipoDocFallback).trim() || tipoDocFallback,
+        openModal: true,
+      },
+    });
   };
 
   const handleLimpiar = () => {
     setQuery("");
     setEstado("idle");
     setPaciente(null);
+    setSugerenciaExterna(null);
     inputRef.current?.focus();
   };
 
@@ -127,7 +158,9 @@ export default function CotizadorRapido() {
       {estado === "not_found" && (
         <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
           <p className="flex-1 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Paciente no encontrado para <b>"{query.trim()}"</b>
+            {sugerenciaExterna
+              ? <>No existe en base local para <b>"{query.trim()}"</b>, pero encontramos datos externos para prellenar registro.</>
+              : <>Paciente no encontrado para <b>"{query.trim()}"</b></>}
           </p>
           <button
             onClick={handleRegistrar}

@@ -141,8 +141,9 @@ function PacienteList() {
       setEditData({
         id: undefined,
         dni: location.state.prefillDni,
-        nombre: "",
-        apellido: "",
+        tipo_documento: String(location.state?.prefillTipoDocumento || "dni").trim() || "dni",
+        nombre: String(location.state?.prefillNombre || "").trim(),
+        apellido: String(location.state?.prefillApellido || "").trim(),
         historia_clinica: "",
         fecha_nacimiento: "",
         edad: "",

@@ -37,12 +37,22 @@ function RecepcionModulo({ onPacienteRegistrado }) {
   const handleNoEncontrado = (payload = {}) => {
     const tipoBusqueda = String(payload?.tipo || "").toLowerCase();
     const valorBusqueda = String(payload?.valor || "").trim();
+    const sugerenciaExterna = payload?.sugerencia_externa && typeof payload.sugerencia_externa === "object"
+      ? payload.sugerencia_externa
+      : null;
     const esDocumento = tipoBusqueda === "dni" || tipoBusqueda === "carnet_extranjeria";
     const dniSugerido = esDocumento ? valorBusqueda : "";
     const tipoDocumentoSugerido = tipoBusqueda === "carnet_extranjeria" ? "carnet_extranjeria" : "dni";
     const nombreApellidoSugerido = tipoBusqueda === "nombre" ? parseNombreApellido(valorBusqueda) : { nombre: "", apellido: "" };
 
-    if (dniSugerido) {
+    if (sugerenciaExterna) {
+      setRegistroInicial({
+        dni: String(sugerenciaExterna?.dni || dniSugerido || "").trim(),
+        tipo_documento: String(sugerenciaExterna?.tipo_documento || tipoDocumentoSugerido || "dni").trim() || "dni",
+        nombre: String(sugerenciaExterna?.nombre || "").trim(),
+        apellido: String(sugerenciaExterna?.apellido || "").trim(),
+      });
+    } else if (dniSugerido) {
       setRegistroInicial({ dni: dniSugerido, tipo_documento: tipoDocumentoSugerido });
     } else if (tipoBusqueda === "nombre" && (nombreApellidoSugerido.nombre || nombreApellidoSugerido.apellido)) {
       setRegistroInicial({
@@ -55,6 +65,7 @@ function RecepcionModulo({ onPacienteRegistrado }) {
     setPacienteNoEncontrado({
       tipo: tipoBusqueda,
       valor: valorBusqueda,
+      sugerencia_externa: sugerenciaExterna,
     });
     setShowRegistro(true);
   };
