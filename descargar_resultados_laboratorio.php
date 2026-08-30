@@ -41,6 +41,10 @@ if ($debugJson) {
     exit;
 }
 
+$debugLogoFlag = strtolower(trim((string)(getenv('LAB_PDF_LOGO_DEBUG') ?: '')));
+$debugPdfLogo = (isset($_GET['debug_logo']) && (string)$_GET['debug_logo'] === '1')
+    || in_array($debugLogoFlag, ['1', 'true', 'yes', 'on'], true);
+
 $orden = null;
 if (!empty($row['orden_id'])) {
     $stmt = $conn->prepare('SELECT * FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
@@ -728,7 +732,6 @@ $isProduction = (
 
 $logo_paths = [];
 $logo_config_value = '';
-// Debug trace fields for production diagnosis
 $logo_selected_key = '';
 $logo_selected_path = '';
 $logo_selected_exists = false;
@@ -790,18 +793,19 @@ foreach ($logo_paths as $logo_path) {
     break;
 }
 
-// Log one-line diagnostics for logo resolution in PDF generation.
-$pdfLogoDebug = [
-    'resultado_id' => intval($row['id'] ?? 0),
-    'config_id' => intval($clinica_config['id'] ?? 0),
-    'selected_key' => $logo_selected_key,
-    'logo_config_value' => $logo_config_value,
-    'selected_path' => $logo_selected_path,
-    'selected_exists' => $logo_selected_exists ? 1 : 0,
-    'is_production_host' => $isProduction ? 1 : 0,
-    'host' => (string)($_SERVER['HTTP_HOST'] ?? ''),
-];
-@error_log('pdf_lab_logo_debug ' . json_encode($pdfLogoDebug, JSON_UNESCAPED_UNICODE));
+if ($debugPdfLogo) {
+    $pdfLogoDebug = [
+        'resultado_id' => intval($row['id'] ?? 0),
+        'config_id' => intval($clinica_config['id'] ?? 0),
+        'selected_key' => $logo_selected_key,
+        'logo_config_value' => $logo_config_value,
+        'selected_path' => $logo_selected_path,
+        'selected_exists' => $logo_selected_exists ? 1 : 0,
+        'is_production_host' => $isProduction ? 1 : 0,
+        'host' => (string)($_SERVER['HTTP_HOST'] ?? ''),
+    ];
+    @error_log('pdf_lab_logo_debug ' . json_encode($pdfLogoDebug, JSON_UNESCAPED_UNICODE));
+}
 
 // Construir contenido de resultados
 $hayFueraRango = false;
