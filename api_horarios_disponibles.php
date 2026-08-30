@@ -4,26 +4,43 @@ require_once __DIR__ . '/config.php';
 
 if (!function_exists('hdisp_table_exists')) {
     function hdisp_table_exists(mysqli $conn, string $table): bool {
+        static $cache = [];
+        if (isset($cache[$table])) {
+            return $cache[$table];
+        }
         $stmt = $conn->prepare('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1');
-        if (!$stmt) return false;
+        if (!$stmt) {
+            $cache[$table] = false;
+            return false;
+        }
         $stmt->bind_param('s', $table);
         $stmt->execute();
         $res = $stmt->get_result();
         $ok = (bool)($res && $res->num_rows > 0);
         $stmt->close();
+        $cache[$table] = $ok;
         return $ok;
     }
 }
 
 if (!function_exists('hdisp_column_exists')) {
     function hdisp_column_exists(mysqli $conn, string $table, string $column): bool {
+        static $cache = [];
+        $key = $table . '::' . $column;
+        if (isset($cache[$key])) {
+            return $cache[$key];
+        }
         $stmt = $conn->prepare('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1');
-        if (!$stmt) return false;
+        if (!$stmt) {
+            $cache[$key] = false;
+            return false;
+        }
         $stmt->bind_param('ss', $table, $column);
         $stmt->execute();
         $res = $stmt->get_result();
         $ok = (bool)($res && $res->num_rows > 0);
         $stmt->close();
+        $cache[$key] = $ok;
         return $ok;
     }
 }

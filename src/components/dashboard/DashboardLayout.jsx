@@ -1,7 +1,7 @@
 import { Icon } from '@fluentui/react';
 import Footer from "../comunes/Footer";
 import { useState, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { BASE_URL, fetchConfigSingleton } from "../../config/config";
 import SidebarMedico from "../sidebar/SidebarMedico";
 import SidebarEnfermero from "../sidebar/SidebarEnfermero";
@@ -11,6 +11,7 @@ import SidebarRecepcionista from "../sidebar/SidebarRecepcionista";
 import SidebarAdmin from "../sidebar/SidebarAdmin";
 import QuoteCartPanel from "../cotizacion/QuoteCartPanel";
 import AsistenteChatGlobal from "../asistente/AsistenteChatGlobal";
+import { useQuoteCart } from "../../context/QuoteCartContext";
 
 const BRAND_STORAGE_KEY = "clinica_brand_cache";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -392,12 +393,15 @@ function Navbar({ usuario, onMenu, logoSrc, clinicName, logoSize, logoIsWide }) 
 // useEffect is already imported above via react import where needed
 
 function DashboardLayout({ usuario, onLogout, children }) {
+  const location = useLocation();
+  const { cart, clearCart } = useQuoteCart();
   const cachedBrand = readBrandCache();
   const hasFreshBrandCache = Boolean(
     (cachedBrand.nombre || cachedBrand.logo_url || cachedBrand.logo_size_sistema) &&
     (Date.now() - Number(cachedBrand.updated_at || 0)) < BRAND_CACHE_TTL_MS
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [cartDesktopVisible, setCartDesktopVisible] = useState(false);
   const [logoSrc, setLogoSrc] = useState(
     resolveLogoUrl(cachedBrand.logo_url || "", cachedBrand.updated_at || Date.now())
   );
@@ -407,6 +411,8 @@ function DashboardLayout({ usuario, onLogout, children }) {
   const [logoIsWide, setLogoIsWide] = useState(true);
   const systemLogoSize = resolveSystemLogoSize(logoSizeSistema);
   const effectiveLogoIsWide = logoShapeSistema === 'wide' ? true : logoShapeSistema === 'round' ? false : logoIsWide;
+  const pathname = String(location?.pathname || "").trim();
+  const isDashboardRoute = pathname === "/" || pathname === "/dashboard";
 
   useEffect(() => {
     let mounted = true;
@@ -526,6 +532,14 @@ function DashboardLayout({ usuario, onLogout, children }) {
     };
   }, [sidebarOpen]);
 
+  useEffect(() => {
+    // Regla operativa: el carrito solo vive en Dashboard de recepción.
+    if (isDashboardRoute) return;
+    if (Array.isArray(cart?.items) && cart.items.length > 0) {
+      clearCart();
+    }
+  }, [isDashboardRoute, cart?.items, clearCart]);
+
   return (
     <div className="min-h-screen flex flex-col bg-blue-50 overflow-x-hidden">
       {/* Navbar at the top */}
@@ -542,9 +556,9 @@ function DashboardLayout({ usuario, onLogout, children }) {
           logoSize={systemLogoSize}
           logoIsWide={effectiveLogoIsWide}
         />
-        <main className="flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto">
+        <main className={`flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto transition-[padding] duration-200 ${isDashboardRoute && cartDesktopVisible ? "xl:pr-[22rem]" : ""}`}>
           {children}
-          <QuoteCartPanel />
+          {isDashboardRoute ? <QuoteCartPanel onDesktopVisibilityChange={setCartDesktopVisible} /> : null}
         </main>
       </div>
       {/* Footer at the bottom */}

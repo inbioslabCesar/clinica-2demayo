@@ -353,6 +353,24 @@ if ($method === 'OPTIONS') {
 
 switch ($method) {
     case 'GET':
+        $modo = strtolower(trim((string)($_GET['modo'] ?? '')));
+        if ($modo === 'cotizador' || $modo === 'ligero') {
+            $sqlLite = "SELECT id, nombre, precio_publico FROM examenes_laboratorio WHERE activo = 1 ORDER BY nombre";
+            $resLite = $conn->query($sqlLite);
+            $examenesLite = [];
+            if ($resLite) {
+                while ($row = $resLite->fetch_assoc()) {
+                    $examenesLite[] = [
+                        'id' => (int)($row['id'] ?? 0),
+                        'nombre' => (string)($row['nombre'] ?? ''),
+                        'precio_publico' => (float)($row['precio_publico'] ?? 0),
+                    ];
+                }
+            }
+            echo json_encode(["success" => true, "examenes" => $examenesLite]);
+            break;
+        }
+
         // Listar todos los exámenes activos
         $sql = "SELECT * FROM examenes_laboratorio WHERE activo = 1 ORDER BY nombre";
         $result = $conn->query($sql);

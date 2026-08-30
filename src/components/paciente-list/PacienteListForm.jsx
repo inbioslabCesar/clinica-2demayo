@@ -8,7 +8,7 @@ import DatosEdad from "./DatosEdad.jsx";
 import DatosAdicionales from "./DatosAdicionales.jsx";
 import DatosContacto from "./DatosContacto.jsx";
 
-function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente }) {
+function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente, postSaveBackTo = "" }) {
   const MySwal = withReactContent(Swal);
   const [form, setForm] = useState({
     id: initialData.id || undefined,
@@ -379,15 +379,23 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
       const result = await guardar(formToSend);
 
       if (result.success) {
-        if (typeof onRegistroExitoso === "function") {
-          onRegistroExitoso(result.paciente);
-        }
-        Swal.fire({
+        const canBackToAtenciones = Boolean(form.id) && String(postSaveBackTo || "").startsWith("/");
+        const successResult = await Swal.fire({
           icon: "success",
           title: form.id ? "Paciente actualizado" : "Paciente registrado",
           html: `<b>Historia Clínica:</b> ${result.paciente?.historia_clinica || '-'}`,
-          confirmButtonText: "Aceptar"
+          confirmButtonText: canBackToAtenciones ? "Quedar en Pacientes" : "Aceptar",
+          showDenyButton: canBackToAtenciones,
+          denyButtonText: "Volver a Atenciones incompletas",
         });
+
+        if (typeof onRegistroExitoso === "function") {
+          onRegistroExitoso(result.paciente, {
+            redirectTo: canBackToAtenciones && successResult.isDenied
+              ? String(postSaveBackTo || "")
+              : "",
+          });
+        }
       } else {
         setError(result.error || "Error al guardar paciente");
         Swal.fire({

@@ -93,12 +93,21 @@ function formatProgramacionItem(fecha, hora) {
   return `Programado: ${fechaFmt}${h ? ` ${h}` : ""}`;
 }
 
+function limpiarSoloDigitos(value) {
+  return String(value || "").replace(/\D+/g, "").trim();
+}
+
+function esErrorSinDisponibilidad(err) {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("no hay disponibilidad registrada");
+}
+
 const XL_BREAKPOINT = 1280;
 
-export default function QuoteCartPanel() {
+export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { cart, total, count, removeItem, updateQuantity, clearCart } = useQuoteCart();
+  const { cart, total, count, removeItem, updateQuantity, clearCart, setPatient } = useQuoteCart();
   const [desktopOpen, setDesktopOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isDesktopViewport, setIsDesktopViewport] = useState(
@@ -185,6 +194,17 @@ export default function QuoteCartPanel() {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [mobileOpen]);
 
+  useEffect(() => {
+    const callback = typeof onDesktopVisibilityChange === "function" ? onDesktopVisibilityChange : null;
+    if (!callback) return undefined;
+
+    const visible = Boolean(hasItems && isDesktopViewport && desktopOpen);
+    callback(visible);
+    return () => {
+      callback(false);
+    };
+  }, [onDesktopVisibilityChange, hasItems, isDesktopViewport, desktopOpen]);
+
   const renderDerivacionInfo = (it) => {
     const esLab = String(it.serviceType || "").toLowerCase() === "laboratorio";
     if (!esLab || !it.derivado) return null;
@@ -206,18 +226,38 @@ export default function QuoteCartPanel() {
 
   const crearConsultaDesdeCarrito = async (item, overrides = {}) => {
     const tipoConsultaItem = String(item?.consultaTipoConsulta || "programada").toLowerCase();
-    const esReservaSinTurno = tipoConsultaItem === "reservada_sin_turno";
+    const esReservaSinTurno = Boolean(overrides?.forzarReservaSinTurno) || tipoConsultaItem === "reservada_sin_turno";
     const tipoConsultaPersistible = esReservaSinTurno ? "programada" : (item.consultaTipoConsulta || "programada");
     const origenCreacion = esReservaSinTurno ? "reservada_sin_turno" : "cotizador";
-    const fechaConsulta = String(overrides?.consultaFecha || item?.consultaFecha || "").slice(0, 10);
-    const horaConsulta = String(overrides?.consultaHora || item?.consultaHora || "").slice(0, 5);
+    const medicoConsultaId = Number(item?.consultaMedicoId || item?.medicoId || item?.medico_id || 0);
+    const fechaConsulta = String(
+      overrides?.consultaFecha
+      || item?.consultaFecha
+      || item?.fechaProgramada
+      || item?.fecha_programada
+      || getLimaDate()
+      || ""
+    ).slice(0, 10);
+    const horaConsulta = String(
+      overrides?.consultaHora
+      || item?.consultaHora
+      || item?.horaProgramada
+      || item?.hora_programada
+      || getLimaTime()
+      || ""
+    ).slice(0, 5);
+
+    const pacienteIdConsulta = Number(overrides?.pacienteId || cart.patientId || 0);
+    if (pacienteIdConsulta <= 0 || medicoConsultaId <= 0 || !fechaConsulta || !horaConsulta) {
+      throw new Error("No se pudo preparar la consulta programada: faltan paciente, medico, fecha u hora");
+    }
 
     const res = await authFetch("api_consultas.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        paciente_id: Number(cart.patientId),
-        medico_id: Number(item.consultaMedicoId),
+        paciente_id: pacienteIdConsulta,
+        medico_id: medicoConsultaId,
         fecha: fechaConsulta,
         hora: horaConsulta,
         tipo_consulta: tipoConsultaPersistible,
@@ -362,8 +402,12 @@ export default function QuoteCartPanel() {
 
   const registrarCotizacionCarrito = async (irACobro = false) => {
     if (saving) return;
-    const pacienteRegistradoId = Number(cart.patientId || 0);
-    const pacienteNombre = String(cart.patientName || '').trim() || 'Particular';
+
+    // En móvil, cerrar el panel del carrito antes de abrir modales de registro/cobro.
+    if (!isDesktopViewport && mobileOpen) {
+      setMobileOpen(false);
+    }
+
     if (cart.items.length === 0) {
       await Swal.fire("Atencion", "El carrito no tiene paciente o items validos.", "info");
       return;
@@ -438,10 +482,156 @@ export default function QuoteCartPanel() {
     }
 
     try {
+      let pacienteRegistradoId = Number(cart.patientId || 0);
+      let pacienteNombreParaPayload = String(cart.patientName || '').trim() || 'Particular';
+      const dniLookupCache = {
+        dni: "",
+        paciente: null,
+      };
+
+      if (irACobro && pacienteRegistradoId <= 0) {
+        const registro = await Swal.fire({
+          title: "Registro minimo para cobro",
+          html: `
+            <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+              <div>Para continuar con el cobro, registra datos minimos del paciente.</div>
+              <input id="swal-dni" class="swal2-input" placeholder="DNI (8 digitos)" maxlength="8" />
+              <input id="swal-nombre" class="swal2-input" placeholder="Nombres" />
+              <input id="swal-apellido" class="swal2-input" placeholder="Apellidos" />
+              <input id="swal-telefono" class="swal2-input" placeholder="Celular (opcional)" />
+            </div>
+          `,
+          focusConfirm: false,
+          showCancelButton: true,
+          confirmButtonText: "Registrar y continuar",
+          cancelButtonText: "Cancelar",
+          didOpen: async () => {
+            const dniInput = document.getElementById("swal-dni");
+            const nombreInput = document.getElementById("swal-nombre");
+            const apellidoInput = document.getElementById("swal-apellido");
+            const telefonoInput = document.getElementById("swal-telefono");
+
+            if (dniInput) {
+              dniInput.value = limpiarSoloDigitos(cart?.patientName);
+            }
+
+            const autocompletarDni = async () => {
+              const dni = limpiarSoloDigitos(dniInput?.value || "");
+              if (!/^\d{8}$/.test(dni)) return;
+
+              try {
+                const res = await authFetch("api_pacientes_buscar.php", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ tipo: "dni", valor: dni }),
+                });
+                const data = await res.json();
+
+                if (data?.success && Array.isArray(data?.pacientes) && data.pacientes.length > 0) {
+                  const p = data.pacientes[0];
+                  dniLookupCache.dni = dni;
+                  dniLookupCache.paciente = p;
+                  if (nombreInput) nombreInput.value = String(p?.nombre || "");
+                  if (apellidoInput) apellidoInput.value = String(p?.apellido || "");
+                  if (telefonoInput) telefonoInput.value = String(p?.telefono || "");
+                  return;
+                }
+
+                dniLookupCache.dni = dni;
+                dniLookupCache.paciente = null;
+
+                const s = data?.sugerencia_externa;
+                if (s) {
+                  if (nombreInput && !String(nombreInput.value || "").trim()) nombreInput.value = String(s?.nombre || "");
+                  if (apellidoInput && !String(apellidoInput.value || "").trim()) apellidoInput.value = String(s?.apellido || "");
+                }
+              } catch {
+                dniLookupCache.dni = "";
+                dniLookupCache.paciente = null;
+                // Silencioso: el operador puede continuar manualmente.
+              }
+            };
+
+            dniInput?.addEventListener("blur", autocompletarDni);
+          },
+          preConfirm: () => {
+            const dni = limpiarSoloDigitos(document.getElementById("swal-dni")?.value || "");
+            const nombre = String(document.getElementById("swal-nombre")?.value || "").trim();
+            const apellido = String(document.getElementById("swal-apellido")?.value || "").trim();
+            const telefono = limpiarSoloDigitos(document.getElementById("swal-telefono")?.value || "");
+
+            if (!/^\d{8}$/.test(dni)) {
+              Swal.showValidationMessage("Ingresa un DNI valido de 8 digitos");
+              return false;
+            }
+            if (!nombre) {
+              Swal.showValidationMessage("Ingresa nombres");
+              return false;
+            }
+            if (!apellido) {
+              Swal.showValidationMessage("Ingresa apellidos");
+              return false;
+            }
+            return { dni, nombre, apellido, telefono };
+          },
+        });
+
+        if (!registro.isConfirmed || !registro.value) {
+          return;
+        }
+
+        const { dni, nombre, apellido, telefono } = registro.value;
+
+        let pacienteExistente = null;
+        if (dniLookupCache.dni === dni && dniLookupCache.paciente?.id) {
+          pacienteExistente = dniLookupCache.paciente;
+        } else {
+          const buscarExistente = await authFetch("api_pacientes_buscar.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tipo: "dni", valor: dni }),
+          });
+          const dataExistente = await buscarExistente.json();
+          pacienteExistente = dataExistente?.success && Array.isArray(dataExistente?.pacientes)
+            ? dataExistente.pacientes[0]
+            : null;
+        }
+
+        if (pacienteExistente?.id) {
+          pacienteRegistradoId = Number(pacienteExistente.id || 0);
+          pacienteNombreParaPayload = `${String(pacienteExistente.nombre || "").trim()} ${String(pacienteExistente.apellido || "").trim()}`.trim() || pacienteNombreParaPayload;
+        } else {
+          const crearPaciente = await authFetch("api_pacientes.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              dni,
+              nombre: String(nombre || "").toUpperCase(),
+              apellido: String(apellido || "").toUpperCase(),
+              telefono: telefono || null,
+              procedencia: "VENTANILLA EXPRESS",
+              tipo_seguro: "PENDIENTE_COMPLETAR",
+            }),
+          });
+          const dataPaciente = await crearPaciente.json();
+          if (!dataPaciente?.success || !dataPaciente?.paciente?.id) {
+            throw new Error(dataPaciente?.error || "No se pudo completar el registro minimo del paciente");
+          }
+
+          pacienteRegistradoId = Number(dataPaciente.paciente.id || 0);
+          pacienteNombreParaPayload = `${String(dataPaciente.paciente.nombre || "").trim()} ${String(dataPaciente.paciente.apellido || "").trim()}`.trim() || pacienteNombreParaPayload;
+        }
+
+        // Una vez regularizado, el carrito deja de ser "Particular" y adopta el paciente real.
+        if (pacienteRegistradoId > 0) {
+          setPatient(pacienteRegistradoId, pacienteNombreParaPayload);
+        }
+      }
+
       const resumenServicios = Array.from(new Set(detalles.map((d) => String(d.servicio_tipo || "otros"))));
       const confirm = await Swal.fire({
         title: irACobro ? "Registrar y cobrar cotización" : "Registrar nueva cotización",
-        text: `${pacienteRegistradoId > 0 ? `Paciente #${pacienteRegistradoId}` : pacienteNombre} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}`,
+        text: `${pacienteRegistradoId > 0 ? `Paciente #${pacienteRegistradoId}` : pacienteNombreParaPayload} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}`,
         icon: "question",
         showCancelButton: true,
         confirmButtonText: irACobro ? "Registrar y cobrar" : "Registrar cotización",
@@ -458,7 +648,9 @@ export default function QuoteCartPanel() {
       const usarProgramacionGlobal = aplicarProgramacionGlobal && Boolean(fechaGlobal) && Boolean(horaGlobal);
       const esPacienteTemporal = pacienteRegistradoId <= 0;
 
-      // Auto-crear consultas pendientes para items de tipo consulta que aún no tienen consulta_id
+      // Auto-crear consultas pendientes para items de tipo consulta que aún no tienen consulta_id.
+      // Se resuelve en paralelo para evitar latencia acumulada cuando hay múltiples consultas.
+      const consultasPendientesCrear = [];
       for (let i = 0; i < detalles.length; i++) {
         const d = detalles[i];
         const cartItem = cart.items[i];
@@ -472,20 +664,24 @@ export default function QuoteCartPanel() {
           ? horaGlobal
           : String(cartItem?.consultaHora || "").slice(0, 5));
 
+        const medicoConsultaItem = Number(cartItem?.consultaMedicoId || cartItem?.medicoId || cartItem?.medico_id || d?.medico_id || 0);
         if (
           String(d.servicio_tipo).toLowerCase() === "consulta" &&
           !esPacienteTemporal &&
           !d.consulta_id &&
-          cartItem?.consultaMedicoId &&
+          medicoConsultaItem > 0 &&
           consultaFechaFinal &&
           consultaHoraFinal
         ) {
-          const consultaId = await crearConsultaDesdeCarrito(cartItem, {
-            consultaFecha: consultaFechaFinal,
-            consultaHora: consultaHoraFinal,
+          consultasPendientesCrear.push({
+            idx: i,
+            cartItem: {
+              ...(cartItem || {}),
+              consultaMedicoId: medicoConsultaItem,
+            },
+            consultaFechaFinal,
+            consultaHoraFinal,
           });
-          detalles[i].consulta_id = consultaId;
-          detalles[i].medico_id = Number(cartItem.consultaMedicoId);
         }
 
         if (String(d.servicio_tipo).toLowerCase() === "consulta") {
@@ -500,10 +696,48 @@ export default function QuoteCartPanel() {
           }
           detalles[i].consulta_id = Number(detalles[i].consulta_id || cartItem?.consultaId || 0);
           detalles[i].medico_id = Number(detalles[i].medico_id || cartItem?.consultaMedicoId || 0);
+        }
+      }
 
-          if (!esPacienteTemporal && Number(detalles[i].consulta_id || 0) <= 0) {
-            throw new Error("La consulta del carrito no tiene una atencion vinculada. Vuelve a agregar la consulta antes de registrar la cotizacion.");
-          }
+      if (consultasPendientesCrear.length > 0) {
+        const resultadosConsultas = await Promise.all(
+          consultasPendientesCrear.map(async (it) => {
+            let consultaId;
+            try {
+              consultaId = await crearConsultaDesdeCarrito(it.cartItem, {
+                pacienteId: pacienteRegistradoId,
+                consultaFecha: it.consultaFechaFinal,
+                consultaHora: it.consultaHoraFinal,
+              });
+            } catch (err) {
+              // Regla operativa solicitada: si no hay disponibilidad, conservar hora de cotización y continuar.
+              if (!esErrorSinDisponibilidad(err)) {
+                throw err;
+              }
+              consultaId = await crearConsultaDesdeCarrito(it.cartItem, {
+                pacienteId: pacienteRegistradoId,
+                consultaFecha: it.consultaFechaFinal,
+                consultaHora: it.consultaHoraFinal,
+                forzarReservaSinTurno: true,
+              });
+            }
+            return { idx: it.idx, consultaId, medicoId: Number(it.cartItem?.consultaMedicoId || 0) };
+          })
+        );
+
+        for (const r of resultadosConsultas) {
+          if (!Number.isFinite(r?.idx)) continue;
+          const idx = Number(r.idx);
+          detalles[idx].consulta_id = Number(r.consultaId || 0);
+          detalles[idx].medico_id = Number(r.medicoId || detalles[idx].medico_id || 0);
+        }
+      }
+
+      for (let i = 0; i < detalles.length; i++) {
+        const d = detalles[i];
+        if (String(d?.servicio_tipo || "").toLowerCase() !== "consulta") continue;
+        if (!esPacienteTemporal && Number(d?.consulta_id || 0) <= 0) {
+          throw new Error("La consulta del carrito no tiene una atencion vinculada. Vuelve a agregar la consulta antes de registrar la cotizacion.");
         }
       }
 
@@ -532,10 +766,11 @@ export default function QuoteCartPanel() {
         const esCotizacionInformativa = pacienteRegistradoId <= 0;
         payload = {
           paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : 0,
-          paciente_nombre: pacienteNombre,
+          paciente_nombre: pacienteNombreParaPayload,
           paciente_dni: esCotizacionInformativa ? "-" : undefined,
           modo_cotizacion: esCotizacionInformativa ? "informativa" : undefined,
           solo_ticket: esCotizacionInformativa ? 1 : undefined,
+          vencimiento_horas: esCotizacionInformativa ? 6 : undefined,
           total: Number(total || 0),
           detalles,
           observaciones: esCotizacionInformativa
@@ -731,11 +966,13 @@ export default function QuoteCartPanel() {
               <div className="text-xs text-white/90">{cart.patientName || `Paciente #${cart.patientId || ""}`}</div>
             </div>
             <button
-              className="text-white/90 hover:text-white text-sm"
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-white/40 bg-white/15 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-white/25"
               onClick={() => setDesktopOpen(false)}
               title="Ocultar carrito"
             >
-              -
+              <span aria-hidden="true">◀</span>
+              <span>Ocultar</span>
             </button>
           </div>
           {renderCartBody()}
@@ -744,15 +981,16 @@ export default function QuoteCartPanel() {
         <button
           type="button"
           onClick={() => setDesktopOpen(true)}
-          className="hidden xl:flex fixed right-0 top-40 z-40 items-center gap-2 rounded-l-xl border border-r-0 border-indigo-300 bg-indigo-600 px-3 py-3 text-white shadow-lg hover:bg-indigo-700"
+          className="hidden xl:flex fixed right-0 top-56 z-40 items-center gap-2 rounded-l-xl border border-r-0 border-indigo-300 bg-indigo-600 px-4 py-3 text-white shadow-lg hover:bg-indigo-700"
           title="Mostrar carrito"
         >
-          <span className="text-sm font-semibold">Carrito</span>
+          <span aria-hidden="true" className="text-base">◀</span>
+          <span className="text-sm font-semibold">Ver carrito</span>
           <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{count}</span>
         </button>
       )}
 
-      <div className="xl:hidden fixed bottom-4 left-3 right-24 sm:right-4 z-[10010]">
+      <div className="xl:hidden fixed bottom-4 left-3 right-24 sm:right-4 z-30">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -771,7 +1009,7 @@ export default function QuoteCartPanel() {
       </div>
 
       {mobileOpen && (
-        <div className="xl:hidden fixed inset-0 z-[10020]">
+        <div className="xl:hidden fixed inset-0 z-40">
           <button
             type="button"
             className="absolute inset-0 bg-black/45"

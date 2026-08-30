@@ -1,4 +1,5 @@
 import React, { memo } from "react";
+import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../../utils/pacienteRegistroEstado";
 
 const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, onCotizarPaciente, cotizarLabel = "Cotizar", sortBy, sortDir, handleSort, page, setPage, totalPages }) {
   return (
@@ -18,7 +19,12 @@ const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar,
         <tbody>
           {(pacientes || []).map(p => {
             const contratoEstado = Number(p?.contrato_activo || 0);
-          const tieneContrato = contratoEstado > 0;
+            const tieneContrato = contratoEstado > 0;
+            const registroEval = evaluarRegistroPaciente(p);
+            const registroIncompleto = registroEval.incompleto;
+            const registroTooltip = textoMotivosRegistroIncompleto(registroEval.motivos);
+            const tipoSeguroRaw = String(p?.tipo_seguro || "").trim();
+            const tipoSeguroNormalizado = tipoSeguroRaw.toUpperCase() === "PENDIENTE_COMPLETAR" ? "" : tipoSeguroRaw;
             return (
             <tr key={p.id} className="hover:bg-blue-50">
               <td className="border px-2 py-1">{p.historia_clinica}</td>
@@ -26,7 +32,13 @@ const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar,
               <td className="border px-2 py-1">{p.apellido}</td>
               <td className="border px-2 py-1">{p.edad !== null ? p.edad : '-'} </td>
               <td className="border px-2 py-1">{p.dni}</td>
-              <td className="border px-2 py-1">{p.tipo_seguro || '-'}</td>
+              <td className="border px-2 py-1">
+                {registroIncompleto ? (
+                  <span className="inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800" title={registroTooltip}>
+                    Registro incompleto
+                  </span>
+                ) : (tipoSeguroNormalizado || '-')}
+              </td>
               <td className="border py-1">
                 <div className="flex gap-1">
                   <button onClick={() => onEditar(p)} className="bg-yellow-400 text-white px-1 py-1 rounded text-xs hover:bg-yellow-500">Editar</button>

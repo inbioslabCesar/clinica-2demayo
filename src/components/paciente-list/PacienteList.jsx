@@ -71,6 +71,7 @@ function PacienteList() {
   // Modal y edición
   const [modalOpen, setModalOpen] = useState(false);
   const [editData, setEditData] = useState(null);
+  const [postSaveBackTo, setPostSaveBackTo] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -164,6 +165,42 @@ function PacienteList() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const pacienteId = Number(location.state?.openEditPacienteId || 0);
+    if (pacienteId <= 0) return;
+
+    const backToState = String(location.state?.backTo || "").trim();
+    const backTo = backToState.startsWith("/") ? backToState : "/cotizaciones?filtro_hc=solo_incompleto";
+    setPostSaveBackTo(backTo);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch(`api_pacientes.php?id=${pacienteId}`, { cache: "no-store" });
+        const data = await res.json();
+        const paciente = data?.success ? data?.paciente : null;
+
+        if (!cancelled && paciente?.id) {
+          setEditData({ ...paciente });
+          setModalOpen(true);
+        }
+      } catch {
+        if (!cancelled) {
+          Swal.fire({ icon: "warning", title: "Paciente no encontrado", text: "No se pudo abrir la ficha del paciente seleccionado." });
+        }
+      } finally {
+        if (!cancelled) {
+          navigate("/pacientes", { replace: true, state: {} });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.openEditPacienteId]);
   // Ordenamiento de columnas
   const [sortBy, setSortBy] = useState("id");
   const [sortDir, setSortDir] = useState("desc");
@@ -177,6 +214,7 @@ function PacienteList() {
     setPage(1);
   };
   const handleAgregar = () => {
+    setPostSaveBackTo("");
     setEditData({
       id: undefined,
       dni: "",
@@ -199,17 +237,42 @@ function PacienteList() {
     setModalOpen(true);
   };
   const handleEditar = useCallback((paciente) => {
+    setPostSaveBackTo("");
     setEditData({ ...paciente });
     setModalOpen(true);
   }, []);
-  const handleRegistroExitoso = useCallback(() => {
+  const handleRegistroExitoso = useCallback((_, options = {}) => {
     setModalOpen(false);
     setEditData(null);
+    setPostSaveBackTo("");
     recargarPacientes(); // Recarga los datos desde el backend tras editar/crear
+    const redirectTo = String(options?.redirectTo || "").trim();
+    if (redirectTo.startsWith("/")) {
+      navigate(redirectTo);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recargarPacientes]);
+  }, [navigate, recargarPacientes]);
 
   const handleEliminar = useCallback(async (paciente) => {
+    const nombre = `${String(paciente?.nombre || "").trim()} ${String(paciente?.apellido || "").trim()}`.trim() || "Paciente";
+    const historia = String(paciente?.historia_clinica || "").trim();
+    const dni = String(paciente?.dni || "").trim();
+
+    const confirm = await Swal.fire({
+      icon: "warning",
+      title: "Confirmar eliminación",
+      html: `¿Estás seguro de eliminar a <b>${nombre}</b>?${historia ? `<br>HC: <b>${historia}</b>` : ""}${dni ? `<br>DNI: <b>${dni}</b>` : ""}<br><br>Esta acción no se puede deshacer.`,
+      showCancelButton: true,
+      confirmButtonText: "Sí, eliminar",
+      cancelButtonText: "Cancelar",
+      confirmButtonColor: "#dc2626",
+      reverseButtons: true,
+    });
+
+    if (!confirm.isConfirmed) {
+      return;
+    }
+
     await eliminarPaciente(paciente);
     recargarPacientes(); // Recarga los datos desde el backend tras eliminar
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -370,6 +433,7 @@ function PacienteList() {
           initialData={editData || {}}
           onRegistroExitoso={handleRegistroExitoso}
           guardarPaciente={guardarPaciente}
+          postSaveBackTo={postSaveBackTo}
         />
       </PacienteListModal>
     </div>

@@ -3,6 +3,7 @@ import PacienteListSearch from "../paciente-list/PacienteListSearch.jsx";
 import PacienteListResumen from "../paciente-list/PacienteListResumen.jsx";
 import ServiciosSelector from "../comunes/ServiciosSelector.jsx";
 import PacienteForm from "../paciente-list/PacienteListForm.jsx";
+import CotizadorExpressPanel from "./CotizadorExpressPanel.jsx";
 
 
 function RecepcionModulo({ onPacienteRegistrado }) {
@@ -101,6 +102,8 @@ function RecepcionModulo({ onPacienteRegistrado }) {
 
   return (
     <div className="space-y-6">
+      <CotizadorExpressPanel />
+
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-slate-800">Flujo de Cotizacion Rapida</h3>

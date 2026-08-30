@@ -6,9 +6,10 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
-import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter } from "react-icons/fi";
+import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter, FiMessageCircle } from "react-icons/fi";
 import { authFetch } from "../utils/apiClient";
 import { BASE_URL } from "../config/config";
+import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../utils/pacienteRegistroEstado";
 
 const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -204,7 +205,7 @@ function escapeHtml(value) {
 function getVencimientoMeta(row) {
   const fechaVencimiento = String(row?.fecha_vencimiento || "").trim();
   const estado = String(row?.estado || "").toLowerCase();
-  if (!fechaVencimiento || !["pendiente", "parcial"].includes(estado)) return null;
+  if (!fechaVencimiento || !["pendiente", "parcial", "informativo"].includes(estado)) return null;
 
   const vencimiento = new Date(fechaVencimiento);
   if (Number.isNaN(vencimiento.getTime())) return null;
@@ -213,7 +214,7 @@ function getVencimientoMeta(row) {
   if (ahora.getTime() > vencimiento.getTime()) {
     return {
       vencida: true,
-      label: "Vencida",
+      label: estado === "informativo" ? "Info vencida" : "Vencida",
       detail: `Venció: ${formatDateTime(fechaVencimiento)}`,
       className: "bg-red-100 text-red-700",
     };
@@ -223,7 +224,7 @@ function getVencimientoMeta(row) {
   if (mismoDia) {
     return {
       vencida: false,
-      label: "Vence hoy",
+      label: estado === "informativo" ? "Info vence hoy" : "Vence hoy",
       detail: `Vence: ${formatDateTime(fechaVencimiento)}`,
       className: "bg-amber-100 text-amber-700",
     };
@@ -231,10 +232,18 @@ function getVencimientoMeta(row) {
 
   return {
     vencida: false,
-    label: "Vigente",
+    label: estado === "informativo" ? "Info vigente" : "Vigente",
     detail: `Vence: ${formatDateTime(fechaVencimiento)}`,
     className: "bg-emerald-100 text-emerald-700",
   };
+}
+
+function normalizePhoneForWa(value) {
+  const digits = String(value || "").replace(/\D+/g, "").trim();
+  if (!digits) return "";
+  if (digits.startsWith("51") && digits.length >= 11) return digits;
+  if (digits.length === 9) return `51${digits}`;
+  return digits;
 }
 
 function getUltimoPagoMeta(ultimoPagoAt) {
@@ -552,12 +561,18 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
   const estadoRow = String(row.estado || "").toLowerCase();
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
   const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
   const esParticular = Number(row.paciente_id || 0) <= 0;
+  const registroEval = useMemo(() => evaluarRegistroPaciente(row), [row]);
+  const registroIncompleto = Boolean(Number(row?.registro_incompleto || 0) === 1 || registroEval.incompleto);
+  const registroIncompletoTooltip = useMemo(
+    () => textoMotivosRegistroIncompleto(registroEval.motivos),
+    [registroEval.motivos]
+  );
   const profesionalCabeceraRaw = String(row.profesional_cabecera || "").trim();
   const responsableClinico = String(row.responsable_clinico || profesionalCabeceraRaw || "").trim();
   const responsableLaboratorio = String(row.responsable_laboratorio || "").trim();
@@ -698,6 +713,11 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
           {esParticular && (
             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-100 text-orange-700">
               Particular
+            </span>
+          )}
+          {registroIncompleto && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800" title={registroIncompletoTooltip}>
+              Registro incompleto
             </span>
           )}
         </div>
@@ -888,6 +908,14 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               <FiPrinter className="text-sm" />
             </button>
           )}
+          <button
+            onClick={() => onSendWhatsApp(row)}
+            className={`${ACTION_BTN_BASE} bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200`}
+            title="Enviar resumen por WhatsApp"
+            aria-label="Enviar resumen por WhatsApp"
+          >
+            <FiMessageCircle className="text-sm" />
+          </button>
           {puedeAbrirLaboratorio && (
             <button
               onClick={() => onNavigate(laboratorioUrl)}
@@ -927,6 +955,22 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               aria-label="Cobrar"
             >
               <FiDollarSign className="text-sm" />
+            </button>
+          )}
+          {registroIncompleto && Number(row.paciente_id || 0) > 0 && (
+            <button
+              onClick={() => onNavigate("/pacientes", {
+                state: {
+                  openEditPacienteId: Number(row.paciente_id || 0),
+                  backTo: "/cotizaciones?filtro_hc=solo_incompleto",
+                  sourceCotizacionId: Number(row.id || 0),
+                },
+              })}
+              className={`${ACTION_BTN_BASE} bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200`}
+              title="Completar ficha de paciente"
+              aria-label="Completar ficha de paciente"
+            >
+              <span className="text-[10px] font-bold">Ficha</span>
             </button>
           )}
           {canAutorizarAnticipado && (estadoRow === "pendiente" || estadoRow === "parcial") && (
@@ -1114,6 +1158,9 @@ export default function CotizacionesPage() {
         params.set("fecha_inicio", filtrosAplicados.fechaInicio);
         params.set("fecha_fin", filtrosAplicados.fechaFin);
       }
+      if (filtroSolicitudHC === "solo_incompleto") {
+        params.set("registro_incompleto", "1");
+      }
 
       const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
         cache: "no-store",
@@ -1138,7 +1185,7 @@ export default function CotizacionesPage() {
         setLoading(false);
       }
     }
-  }, [cargarEstadosAnticipados, filtrosAplicados, limit, page]);
+  }, [cargarEstadosAnticipados, filtroSolicitudHC, filtrosAplicados, limit, page]);
 
   const toggleAnticipado = useCallback(async (row) => {
     const cotizacionId = Number(row?.id || 0);
@@ -1371,8 +1418,17 @@ export default function CotizacionesPage() {
 
   const rowsVisibles = useMemo(() => {
     const base = Array.isArray(rows) ? rows : [];
-    if (filtroSolicitudHC !== "solo_hc") return base;
-    return base.filter((row) => resolverSolicitudDesdeHC(row).activa);
+    if (filtroSolicitudHC === "solo_hc") {
+      return base.filter((row) => resolverSolicitudDesdeHC(row).activa);
+    }
+    if (filtroSolicitudHC === "solo_incompleto") {
+      return base.filter((row) => {
+        const apiFlag = Number(row?.registro_incompleto || 0) === 1;
+        if (apiFlag) return true;
+        return evaluarRegistroPaciente(row).incompleto;
+      });
+    }
+    return base;
   }, [rows, filtroSolicitudHC]);
 
   const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rows), [rows]);
@@ -1946,6 +2002,74 @@ export default function CotizacionesPage() {
     }
   }, [clinicBrand]);
 
+  const compartirPorWhatsApp = useCallback(async (row) => {
+    try {
+      const cotizacionId = Number(row?.id || 0);
+      if (cotizacionId <= 0) return;
+
+      const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!data?.success || !data?.cotizacion) {
+        throw new Error(data?.error || "No se pudo obtener la cotizacion");
+      }
+
+      const cot = data.cotizacion;
+      const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+      const serviciosTxt = detalles.length > 0
+        ? detalles.map((d) => `- ${String(d?.descripcion || "Servicio")} x${Number(d?.cantidad || 1)} = S/ ${Number(d?.subtotal || 0).toFixed(2)}`).join("\n")
+        : "- Sin items";
+      const total = Number(cot?.total || row?.total || 0).toFixed(2);
+      const vence = String(cot?.fecha_vencimiento || row?.fecha_vencimiento || "").trim();
+      const paciente = `${String(row?.nombre || "").trim()} ${String(row?.apellido || "").trim()}`.trim() || "Particular";
+      const numero = String(cot?.numero_comprobante || row?.numero_comprobante || `Q${String(cotizacionId).padStart(6, "0")}`);
+      const resumenBase = [
+        `${clinicBrand.nombre || "CLINICA"}`,
+        `Cotizacion ${numero}`,
+        `Paciente: ${paciente}`,
+        `Detalles:`,
+        serviciosTxt,
+        `Total: S/ ${total}`,
+        vence ? `Vigencia: ${formatDateTime(vence)}` : "",
+      ].filter(Boolean).join("\n");
+
+      const { value: numeroDestinoRaw } = await Swal.fire({
+        title: "Compartir por WhatsApp",
+        input: "text",
+        inputLabel: "Numero destino (opcional)",
+        inputPlaceholder: "Ej: 987654321 o 51987654321",
+        inputValue: String(row?.telefono || "").trim(),
+        showCancelButton: true,
+        confirmButtonText: "Abrir WhatsApp",
+        cancelButtonText: "Copiar resumen",
+      });
+
+      const numeroDestino = normalizePhoneForWa(numeroDestinoRaw || row?.telefono || "");
+      const pdfUrl = `${String(BASE_URL || "").replace(/\/+$/, "")}/api_cotizacion_ticket_pdf.php?cotizacion_id=${cotizacionId}`;
+      const mensaje = `${resumenBase}\n\nPDF: ${pdfUrl}`;
+
+      if (!numeroDestino) {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(resumenBase);
+        }
+        await Swal.fire("Resumen copiado", "No se indico numero. Se copio el resumen para pegar en WhatsApp.", "success");
+        return;
+      }
+
+      const waUrl = `https://wa.me/${numeroDestino}?text=${encodeURIComponent(mensaje)}`;
+      const opened = window.open(waUrl, "_blank");
+      if (!opened) {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(mensaje);
+        }
+        await Swal.fire("Atencion", "No se pudo abrir WhatsApp. Se copio el texto al portapapeles.", "warning");
+      }
+    } catch (error) {
+      Swal.fire("Error", error?.message || "No se pudo compartir por WhatsApp", "error");
+    }
+  }, [clinicBrand]);
+
   useEffect(() => {
     const sp = new URLSearchParams(location.search);
     const accion = String(sp.get("accion") || "").toLowerCase();
@@ -2049,6 +2173,7 @@ export default function CotizacionesPage() {
           >
             <option value="todas">Solicitud: Todas</option>
             <option value="solo_hc">Solicitud: Solo desde HC</option>
+            <option value="solo_incompleto">Solo registro incompleto</option>
           </select>
         </div>
 
@@ -2217,6 +2342,7 @@ export default function CotizacionesPage() {
                     onAnular={anularCotizacion}
                     onNavigate={navigate}
                     onPrintTicket={imprimirTicketDirecto}
+                    onSendWhatsApp={compartirPorWhatsApp}
                     onToggleAnticipado={toggleAnticipado}
                     badgeEstado={badgeEstado}
                     labelEstado={labelEstado}
