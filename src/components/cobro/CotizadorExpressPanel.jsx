@@ -545,6 +545,7 @@ export default function CotizadorExpressPanel() {
           <ul className="divide-y divide-slate-100">
             {filtered.map((row) => {
               const hasMedico = Number(row.medicoId || 0) > 0;
+              const esConsulta = String(row.serviceType || "").toLowerCase() === "consulta";
               return (
                 <li key={row.key} className="p-2.5">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -558,22 +559,23 @@ export default function CotizadorExpressPanel() {
                     <div className="text-right">
                       <div className="text-sm font-bold text-emerald-700">S/ {Number(row.unitPrice || 0).toFixed(2)}</div>
                       <div className="mt-1 flex gap-1 justify-end">
-                        {hasMedico && (
+                        {hasMedico && esConsulta ? (
                           <button
                             type="button"
                             onClick={() => seleccionarHorario(row)}
-                            className="rounded border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                            className="rounded bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700"
                           >
                             Elegir horario
                           </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => agregarItem(row)}
+                            className="rounded bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                          >
+                            Agregar
+                          </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => agregarItem(row)}
-                          className="rounded bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
-                        >
-                          Agregar
-                        </button>
                       </div>
                     </div>
                   </div>
