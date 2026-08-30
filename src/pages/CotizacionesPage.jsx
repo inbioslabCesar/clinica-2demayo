@@ -414,6 +414,13 @@ function extraerConsultaOrigenIdConfiable(row) {
     return consultaRefId;
   }
 
+  // En cotizaciones directas mixtas (consulta + otros servicios),
+  // consulta_ref_id suele ser válido aunque no llegue metadata auxiliar.
+  const servicios = parseServiciosTipos(row?.servicios_tipos || "");
+  if (servicios.includes("consulta")) {
+    return consultaRefId;
+  }
+
   return 0;
 }
 
@@ -452,30 +459,27 @@ function parseServiciosTipos(rawValue) {
 function construirRelacionPorCotizacion(rows) {
   const lista = Array.isArray(rows) ? rows : [];
   const grupos = new Map();
-  const solicitudesActivas = [];
 
   lista.forEach((row) => {
     const cotizacionId = Number(row?.id || 0);
     const consultaOrigenId = extraerConsultaOrigenIdConfiable(row);
     if (cotizacionId <= 0 || consultaOrigenId <= 0) return;
-    if (!origenConsultaNoFuturo(row)) return;
+
+    const servicios = parseServiciosTipos(row?.servicios_tipos || "");
+    const origenExplicito = extraerConsultaOrigenIdExplicita(row) > 0;
+    const requiereGuardiaNoFuturo = !servicios.includes("consulta") && !origenExplicito;
+    if (requiereGuardiaNoFuturo && !origenConsultaNoFuturo(row)) return;
 
     if (!grupos.has(consultaOrigenId)) {
       grupos.set(consultaOrigenId, []);
     }
 
-    const servicios = parseServiciosTipos(row?.servicios_tipos || "");
     const fechaTs = parseCotizacionTimestamp(row?.fecha);
     grupos.get(consultaOrigenId).push({
       cotizacionId,
       servicios,
       fechaTs,
     });
-
-    const solicitud = resolverSolicitudDesdeHC(row);
-    if (solicitud.activa) {
-      solicitudesActivas.push({ cotizacionId, consultaOrigenId });
-    }
   });
 
   const out = {};
@@ -500,14 +504,19 @@ function construirRelacionPorCotizacion(rows) {
     basePorConsulta.set(consultaOrigenId, baseCotizacionId);
   });
 
-  solicitudesActivas.forEach(({ cotizacionId, consultaOrigenId }) => {
+  grupos.forEach((items, consultaOrigenId) => {
     const baseCotizacionId = Number(basePorConsulta.get(consultaOrigenId) || 0);
-    if (cotizacionId <= 0 || baseCotizacionId <= 0) return;
-    out[cotizacionId] = {
-      consultaOrigenId,
-      baseCotizacionId,
-      tipo: cotizacionId === baseCotizacionId ? "base" : "derivada",
-    };
+    if (baseCotizacionId <= 0 || !Array.isArray(items)) return;
+
+    items.forEach((item) => {
+      const cotizacionId = Number(item?.cotizacionId || 0);
+      if (cotizacionId <= 0) return;
+      out[cotizacionId] = {
+        consultaOrigenId,
+        baseCotizacionId,
+        tipo: cotizacionId === baseCotizacionId ? "base" : "derivada",
+      };
+    });
   });
 
   return out;
