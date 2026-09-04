@@ -413,6 +413,20 @@ function DashboardLayout({ usuario, onLogout, children }) {
   const effectiveLogoIsWide = logoShapeSistema === 'wide' ? true : logoShapeSistema === 'round' ? false : logoIsWide;
   const pathname = String(location?.pathname || "").trim();
   const isDashboardRoute = pathname === "/" || pathname === "/dashboard";
+  const isCotizacionOperativaRoute = (
+    pathname === "/pacientes"
+    || pathname === "/seleccionar-servicio"
+    || pathname === "/agendar-consulta"
+    || pathname === "/cotizaciones"
+    || pathname.startsWith("/cotizar-laboratorio/")
+    || pathname.startsWith("/cotizar-farmacia/")
+    || pathname.startsWith("/cotizar-rayosx/")
+    || pathname.startsWith("/cotizar-ecografia/")
+    || pathname.startsWith("/cotizar-procedimientos/")
+    || pathname.startsWith("/cotizar-paquetes-perfiles/")
+    || pathname.startsWith("/cotizar-operacion/")
+  );
+  const cartEnabledRoute = isDashboardRoute || isCotizacionOperativaRoute;
 
   useEffect(() => {
     let mounted = true;
@@ -533,12 +547,12 @@ function DashboardLayout({ usuario, onLogout, children }) {
   }, [sidebarOpen]);
 
   useEffect(() => {
-    // Regla operativa: el carrito solo vive en Dashboard de recepción.
-    if (isDashboardRoute) return;
+    // Mantener carrito en rutas operativas de cotización de recepción.
+    if (cartEnabledRoute) return;
     if (Array.isArray(cart?.items) && cart.items.length > 0) {
       clearCart();
     }
-  }, [isDashboardRoute, cart?.items, clearCart]);
+  }, [cartEnabledRoute, cart?.items, clearCart]);
 
   return (
     <div className="min-h-screen flex flex-col bg-blue-50 overflow-x-hidden">
@@ -556,9 +570,9 @@ function DashboardLayout({ usuario, onLogout, children }) {
           logoSize={systemLogoSize}
           logoIsWide={effectiveLogoIsWide}
         />
-        <main className={`flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto transition-[padding] duration-200 ${isDashboardRoute && cartDesktopVisible ? "xl:pr-[22rem]" : ""}`}>
+        <main className={`flex-1 px-2 sm:px-4 md:px-8 min-w-0 max-w-full overflow-x-auto transition-[padding] duration-200 ${cartEnabledRoute && cartDesktopVisible ? "xl:pr-[22rem]" : ""}`}>
           {children}
-          {isDashboardRoute ? <QuoteCartPanel onDesktopVisibilityChange={setCartDesktopVisible} /> : null}
+          {cartEnabledRoute ? <QuoteCartPanel onDesktopVisibilityChange={setCartDesktopVisible} /> : null}
         </main>
       </div>
       {/* Footer at the bottom */}

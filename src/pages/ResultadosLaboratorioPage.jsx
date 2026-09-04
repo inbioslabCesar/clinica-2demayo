@@ -49,14 +49,12 @@ export default function ResultadosLaboratorioPage() {
           setError("");
         } else {
           setError(resLab.error || "No hay resultados");
-          setDocumentosExternos([]);
         }
         setOrdenesConsulta(Array.isArray(resOrdenes?.ordenes) ? resOrdenes.ordenes : []);
       })
       .catch(() => {
         if (!isMounted) return;
         setError("Error al cargar resultados");
-        setDocumentosExternos([]);
       })
       .finally(() => {
         if (isMounted) setLoading(false);

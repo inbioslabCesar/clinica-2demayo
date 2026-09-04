@@ -2,6 +2,9 @@
 require_once __DIR__ . '/init_api.php';
 // --- Verificación de sesión ---
 require_once __DIR__ . '/auth_check.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/HcTemplateResolver.php';
 $tphPath = __DIR__ . '/tratamientos_programacion_helper.php';

@@ -848,6 +848,7 @@ if ($method === 'GET') {
     $perPage = rc_parse_positive_int($_GET['per_page'] ?? 0, 0);
     $usarPaginacion = ($page > 0 && $perPage > 0);
     if ($usarPaginacion && $perPage > 100) $perPage = 100;
+    $pacienteIdFiltro = (int)($_GET['paciente_id'] ?? 0);
 
     $estadoGestion = trim((string)($_GET['estado_gestion'] ?? ''));
     $busqueda = trim((string)($_GET['busqueda'] ?? ''));
@@ -925,6 +926,12 @@ if ($method === 'GET') {
             $params[] = $like;
             $params[] = $like;
             $params[] = $like;
+        }
+
+        if ($pacienteIdFiltro > 0) {
+            $where[] = 'c.paciente_id = ?';
+            $types .= 'i';
+            $params[] = $pacienteIdFiltro;
         }
 
         $whereSql = ' WHERE ' . implode(' AND ', $where);
@@ -1156,6 +1163,12 @@ if ($method === 'GET') {
         $params[] = $like;
         $params[] = $like;
         $params[] = $like;
+    }
+
+    if ($pacienteIdFiltro > 0) {
+        $where[] = 'c.paciente_id = ?';
+        $types .= 'i';
+        $params[] = $pacienteIdFiltro;
     }
 
     $whereSql = ' WHERE ' . implode(' AND ', $where);

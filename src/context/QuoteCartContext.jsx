@@ -70,10 +70,11 @@ export function QuoteCartProvider({ children }) {
       return {
         patientId: parsed.patientId === 0 ? 0 : (parsed.patientId || null),
         patientName: parsed.patientName || "",
+        patientDni: parsed.patientDni || "",
         items,
       };
     }
-    return { patientId: null, patientName: "", items: [] };
+    return { patientId: null, patientName: "", patientDni: "", items: [] };
   });
 
   useEffect(() => {
@@ -81,13 +82,13 @@ export function QuoteCartProvider({ children }) {
   }, [cart]);
 
   const clearCart = useCallback(() => {
-    setCart({ patientId: null, patientName: "", items: [] });
+    setCart({ patientId: null, patientName: "", patientDni: "", items: [] });
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("quote-cart-cleared"));
     }
   }, []);
 
-  const setPatient = useCallback((patientId, patientName) => {
+  const setPatient = useCallback((patientId, patientName, patientDni = "") => {
     const numericPatientId = Number(patientId);
     const normalizedPatientId = Number.isFinite(numericPatientId) && numericPatientId >= 0
       ? numericPatientId
@@ -96,6 +97,7 @@ export function QuoteCartProvider({ children }) {
       ...prev,
       patientId: normalizedPatientId,
       patientName: String(patientName || "").trim(),
+      patientDni: String(patientDni || prev.patientDni || "").trim(),
     }));
   }, []);
 
@@ -103,6 +105,7 @@ export function QuoteCartProvider({ children }) {
     const {
       patientId,
       patientName,
+      patientDni,
       items,
     } = payload || {};
 
@@ -111,6 +114,7 @@ export function QuoteCartProvider({ children }) {
       ? numericPatientId
       : null;
     const normalizedPatientName = String(patientName || "").trim();
+    const normalizedPatientDni = String(patientDni || "").trim();
 
     if (normalizedPatientId === null || !Array.isArray(items) || items.length === 0) return;
 
@@ -178,6 +182,7 @@ export function QuoteCartProvider({ children }) {
       return {
         patientId: normalizedPatientId,
         patientName: normalizedPatientName || prev.patientName || "",
+        patientDni: normalizedPatientDni || prev.patientDni || "",
         items: Array.from(map.values()),
       };
     });

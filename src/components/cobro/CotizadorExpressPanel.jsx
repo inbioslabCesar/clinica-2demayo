@@ -37,6 +37,57 @@ function normalizeServiceType(value) {
   return base || "otros";
 }
 
+function parsePackageMeta(metaRaw) {
+  if (metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)) return metaRaw;
+  if (typeof metaRaw === "string" && metaRaw.trim()) {
+    try {
+      const parsed = JSON.parse(metaRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function buildPackageComponents(pkg) {
+  const items = Array.isArray(pkg?.items) ? pkg.items : [];
+  const meta = parsePackageMeta(pkg?.meta);
+  const montoClinicaFijo = Number(meta?.reparto_campana?.monto_clinica_fijo || 0);
+
+  return items
+    .map((it) => {
+      const sourceType = normalizeServiceType(it?.source_type || it?.servicio_tipo || "procedimiento");
+      const sourceId = Number(it?.source_id || it?.servicio_id || 0);
+      const cantidad = Math.max(1, Number(it?.cantidad || 1));
+      const precio = Number(it?.precio_lista_snapshot || it?.precio_unitario || 0);
+      const subtotalBase = Number(it?.subtotal_snapshot || (precio * cantidad));
+      return {
+        source_type: sourceType,
+        source_id: sourceId,
+        examen_version_id: Number(it?.examen_version_id || 0) || null,
+        servicio_tipo: sourceType,
+        servicio_id: sourceId,
+        descripcion_snapshot: String(it?.descripcion_snapshot || it?.descripcion || "Item"),
+        descripcion: String(it?.descripcion_snapshot || it?.descripcion || "Item"),
+        cantidad,
+        precio_lista_snapshot: precio,
+        precio_unitario: precio,
+        subtotal_snapshot: Number(subtotalBase.toFixed(2)),
+        subtotal: Number(subtotalBase.toFixed(2)),
+        es_derivado: Boolean(it?.es_derivado),
+        derivado: Boolean(it?.es_derivado),
+        laboratorio_referencia: String(it?.laboratorio_referencia || ""),
+        tipo_derivacion: String(it?.tipo_derivacion || ""),
+        valor_derivacion: Number(it?.valor_derivacion || 0),
+        medico_id: Number(it?.medico_id || 0) || null,
+        honorario_regla: it?.honorario_regla || null,
+        paquete_monto_clinica_fijo: montoClinicaFijo > 0 ? Number(montoClinicaFijo.toFixed(2)) : null,
+      };
+    })
+    .filter((it) => it.servicio_id > 0 || String(it.descripcion || "").trim() !== "");
+}
+
 function normalizeHourHm(value) {
   const txt = String(value || "").trim();
   const match = txt.match(/^(\d{1,2}):(\d{2})/);
@@ -89,12 +140,14 @@ export default function CotizadorExpressPanel() {
     Promise.all([
       authFetch("api_tarifas.php", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ success: false })),
       authFetch("api_examenes_laboratorio.php?modo=cotizador", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ success: false })),
+      authFetch("api_paquetes_perfiles.php?accion=activos&limit=80&include_items=1", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ success: false })),
     ])
-      .then(([tarifasData, examenesData]) => {
+      .then(([tarifasData, examenesData, paquetesData]) => {
         if (!active) return;
 
         const tarifas = Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : [];
         const examenes = Array.isArray(examenesData?.examenes) ? examenesData.examenes : [];
+        const paquetes = Array.isArray(paquetesData?.rows) ? paquetesData.rows : [];
 
         const serviciosTarifas = tarifas
           .filter((t) => Number(t?.activo || 0) === 1)
@@ -122,7 +175,28 @@ export default function CotizadorExpressPanel() {
           medicoEspecialidad: "",
         }));
 
-        setRows([...serviciosTarifas, ...serviciosLab]);
+        const serviciosPaquetes = paquetes.map((p) => {
+          const componentes = buildPackageComponents(p);
+          const medicos = Array.from(new Set(componentes.map((c) => Number(c?.medico_id || 0)).filter((id) => id > 0)));
+          const medicoUnico = medicos.length === 1 ? medicos[0] : 0;
+          return {
+            key: `pkg-${p.id}`,
+            source: "paquete",
+            serviceType: String(p?.tipo || "paquete").toLowerCase() === "perfil" ? "perfil" : "paquete",
+            serviceId: Number(p?.id || 0),
+            description: String(p?.nombre || "Paquete/Perfil"),
+            unitPrice: Number(p?.precio_global_venta || 0),
+            medicoId: medicoUnico,
+            medicoNombre: "",
+            medicoEspecialidad: "",
+            packageId: Number(p?.id || 0),
+            packageCode: String(p?.codigo || ""),
+            packageType: String(p?.tipo || "paquete"),
+            componentes,
+          };
+        });
+
+        setRows([...serviciosTarifas, ...serviciosLab, ...serviciosPaquetes]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -189,7 +263,7 @@ export default function CotizadorExpressPanel() {
     if (!q) return combinedRows.slice(0, 120);
     return combinedRows
       .filter((r) => {
-        const txt = `${r.description} ${r.serviceType} ${r.medicoNombre} ${r.medicoEspecialidad}`.toLowerCase();
+        const txt = `${r.description} ${r.serviceType} ${r.medicoNombre} ${r.medicoEspecialidad} ${r.packageCode || ""}`.toLowerCase();
         return txt.includes(q);
       })
       .slice(0, 120);
@@ -257,6 +331,8 @@ export default function CotizadorExpressPanel() {
   const seleccionarHorario = async (row) => {
     const medicoId = Number(row?.medicoId || 0);
     if (medicoId <= 0) return;
+    const esConsulta = String(row?.serviceType || "").toLowerCase() === "consulta";
+    const etiquetaServicio = esConsulta ? "consulta" : "servicio";
 
     const fetchDisponibilidad = async (fecha) => {
       const res = await authFetch(`api_horarios_disponibles.php?medico_id=${medicoId}&fecha=${encodeURIComponent(fecha)}`);
@@ -278,7 +354,7 @@ export default function CotizadorExpressPanel() {
       let fechaSeleccionada = String(fechaAgenda || hoy).slice(0, 10);
 
       const picked = await Swal.fire({
-        title: "Elegir fecha y horario de consulta",
+        title: `Elegir fecha y horario de ${etiquetaServicio}`,
         html: `
           <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
             <div><b>Servicio:</b> ${String(row?.description || "Consulta")}</div>
@@ -422,17 +498,20 @@ export default function CotizadorExpressPanel() {
   const agregarItem = (row, opts = {}) => {
     const patientId = Number(identityResolved?.patientId || 0);
     const patientName = String(identityResolved?.patientName || "Particular").trim() || "Particular";
+    const patientDni = String(identityResolved?.dni || "").trim();
     const hasMedico = Number(row?.medicoId || 0) > 0;
     const esConsulta = String(row?.serviceType || "").toLowerCase() === "consulta";
 
-    if (hasMedico && esConsulta && !normalizeHourHm(opts?.horaProgramada || "")) {
+    // Todo servicio con médico debe elegir un horario explícito para evitar
+    // que quede con la hora de creación de la cotización por defecto.
+    if (hasMedico && !normalizeHourHm(opts?.horaProgramada || "")) {
       seleccionarHorario(row);
       return;
     }
 
     const fechaProgramada = hasMedico ? String(opts?.fechaProgramada || fechaAgenda || "").slice(0, 10) : "";
     const horaProgramada = hasMedico
-      ? normalizeHourHm(opts?.horaProgramada || getLimaTime()) || String(getLimaTime() || "").slice(0, 5)
+      ? normalizeHourHm(opts?.horaProgramada || "") || ""
       : "";
 
     if (cart?.items?.length > 0 && Number(cart?.patientId || 0) !== patientId) {
@@ -441,14 +520,15 @@ export default function CotizadorExpressPanel() {
     }
 
     if (patientId > 0) {
-      setPatient(patientId, patientName);
+      setPatient(patientId, patientName, patientDni);
     } else {
-      setPatient(0, patientName);
+      setPatient(0, patientName, patientDni);
     }
 
     addItems({
       patientId,
       patientName,
+      patientDni,
       items: [
         {
           serviceType: row.serviceType,
@@ -467,6 +547,11 @@ export default function CotizadorExpressPanel() {
           consultaTipoConsulta: row.serviceType === "consulta"
             ? String(opts?.consultaTipoConsulta || "programada")
             : "",
+          packageId: Number(row.packageId || 0) || null,
+          packageCode: String(row.packageCode || ""),
+          packageType: String(row.packageType || ""),
+          componentes: Array.isArray(row.componentes) ? row.componentes : [],
+          cotizacionId: Number(row.cotizacionId || 0) || null,
         },
       ],
     });
@@ -545,7 +630,7 @@ export default function CotizadorExpressPanel() {
           <ul className="divide-y divide-slate-100">
             {filtered.map((row) => {
               const hasMedico = Number(row.medicoId || 0) > 0;
-              const esConsulta = String(row.serviceType || "").toLowerCase() === "consulta";
+                const esConsulta = String(row.serviceType || "").toLowerCase() === "consulta";
               return (
                 <li key={row.key} className="p-2.5">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -559,7 +644,7 @@ export default function CotizadorExpressPanel() {
                     <div className="text-right">
                       <div className="text-sm font-bold text-emerald-700">S/ {Number(row.unitPrice || 0).toFixed(2)}</div>
                       <div className="mt-1 flex gap-1 justify-end">
-                        {hasMedico && esConsulta ? (
+                        {hasMedico ? (
                           <button
                             type="button"
                             onClick={() => seleccionarHorario(row)}

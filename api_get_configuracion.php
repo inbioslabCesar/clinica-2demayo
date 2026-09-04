@@ -26,9 +26,18 @@ try {
         'contacto_emergencias'=> "ALTER TABLE configuracion_clinica ADD COLUMN contacto_emergencias VARCHAR(100) DEFAULT NULL",
     ];
     foreach ($late_columns as $col => $sql) {
-        $exists = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
-        if (!$exists->fetch()) {
-            $pdo->exec($sql);
+        try {
+            $exists = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
+            if (!$exists || !$exists->fetch()) {
+                $pdo->exec($sql);
+            }
+        } catch (Throwable $e) {
+            $msg = strtolower((string)$e->getMessage());
+            if (strpos($msg, 'duplicate column name') !== false || strpos($msg, '42s21') !== false) {
+                continue;
+            }
+            // No bloquear una API de lectura por una migración tardía puntual.
+            continue;
         }
     }
 

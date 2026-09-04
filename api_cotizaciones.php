@@ -5836,6 +5836,7 @@ function resumen_diario($conn) {
     respond(['success' => true, 'resumen' => $rows]);
 }
 
+try {
 switch ($method) {
     case 'POST': {
         $data = input_json();
@@ -6145,6 +6146,7 @@ switch ($method) {
         $metodosPagoListaPorCotizacion = [];
 
         if (!empty($idsPagina)) {
+            try {
             $placeholders = implode(',', array_fill(0, count($idsPagina), '?'));
             $typesIds = str_repeat('i', count($idsPagina));
 
@@ -6626,6 +6628,10 @@ switch ($method) {
                 }
             }
             unset($cotRow);
+            } catch (Throwable $enrichmentError) {
+                error_log('[api_cotizaciones] enrichment warning: ' . $enrichmentError->getMessage());
+                // Mantener listado base para no romper UI cuando una instancia tiene esquema parcial.
+            }
         }
 
         foreach ($cotizaciones as &$cotizacion) {
@@ -6666,6 +6672,9 @@ switch ($method) {
             $whereSql
         ";
         $stmtCount = $conn->prepare($sqlCount);
+        if (!$stmtCount) {
+            respond(['success' => false, 'error' => 'No se pudo preparar conteo de cotizaciones'], 500);
+        }
         if (strlen($types) > 0) {
             $stmtCount->bind_param($types, ...$params);
         }
@@ -6684,5 +6693,13 @@ switch ($method) {
 
     default:
         respond(['success' => false, 'error' => 'Método no permitido'], 405);
+}
+} catch (Throwable $fatalError) {
+    error_log('[api_cotizaciones] fatal: ' . $fatalError->getMessage());
+    respond([
+        'success' => false,
+        'error' => 'Error interno en cotizaciones',
+        'detail' => (getenv('APP_ENV') === 'production' ? null : $fatalError->getMessage()),
+    ], 500);
 }
 ?>

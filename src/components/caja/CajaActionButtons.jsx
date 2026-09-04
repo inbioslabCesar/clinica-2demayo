@@ -4,46 +4,74 @@ import { useNavigate } from "react-router-dom";
 export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal, onCorregirApertura }) {
   const navigate = useNavigate();
   const userRole = usuario?.rol || sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
+
+  const baseBtn = "w-full rounded-2xl px-4 py-3 text-left font-semibold text-white shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl";
+
   return (
-    <div className="mb-6 flex flex-col sm:flex-row justify-center items-center gap-3 sm:gap-4 w-full">
-      {!cajaAbierta && usuario && (
-        <button
-          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-blue-600 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          onClick={() => setShowModal(true)}
-        >
-          Abrir Caja
-        </button>
-      )}
-      {cajaAbierta && usuario && (
-        <button
-          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-red-500 via-red-600 to-red-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-red-600 hover:to-red-800 focus:outline-none focus:ring-2 focus:ring-red-400"
-          onClick={() => navigate("/contabilidad/cerrar-caja")}
-        >
-          Cerrar Caja
-        </button>
-      )}
-      {cajaAbierta && usuario && (
-        <button
-          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-amber-600 hover:to-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
-          onClick={() => onCorregirApertura && onCorregirApertura()}
-        >
-          Corregir Apertura
-        </button>
-      )}
-      <button
-        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-orange-400 via-orange-500 to-orange-600 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-orange-500 hover:to-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-400"
-        onClick={() => navigate("/contabilidad/egresos")}
-      >
-        Ir a Egresos
-      </button>
-      {userRole === 'administrador' && (
-        <button
-          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 via-purple-600 to-purple-700 text-white font-semibold px-6 py-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 hover:from-purple-600 hover:to-purple-800 focus:outline-none focus:ring-2 focus:ring-purple-400"
-          onClick={() => navigate("/admin/dashboard-estadisticas")}
-        >
-          📊 Dashboard Estadístico
-        </button>
-      )}
+    <div className="w-full space-y-3">
+      <div>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Caja</div>
+        <div className="grid grid-cols-1 gap-2">
+          {!cajaAbierta && usuario && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-cyan-600 to-blue-700`}
+              onClick={() => setShowModal(true)}
+            >
+              <div className="text-xs text-cyan-100">Operación principal</div>
+              <div className="text-sm">Abrir caja</div>
+            </button>
+          )}
+          {cajaAbierta && usuario && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-rose-600 to-red-700`}
+              onClick={() => navigate("/contabilidad/cerrar-caja")}
+            >
+              <div className="text-xs text-rose-100">Operación principal</div>
+              <div className="text-sm">Cerrar caja y cuadrar</div>
+            </button>
+          )}
+          {cajaAbierta && usuario && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-amber-500 to-orange-600`}
+              onClick={() => onCorregirApertura && onCorregirApertura()}
+            >
+              <div className="text-xs text-amber-100">Ajuste operativo</div>
+              <div className="text-sm">Corregir apertura</div>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Navegación</div>
+        <div className="grid grid-cols-1 gap-2">
+          <button
+            className={`${baseBtn} bg-gradient-to-r from-orange-500 to-amber-600`}
+            onClick={() => navigate("/contabilidad/egresos")}
+          >
+            <div className="text-xs text-orange-100">Finanzas</div>
+            <div className="text-sm">Ir a egresos</div>
+          </button>
+          {userRole === 'administrador' && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-slate-600 to-slate-700`}
+              onClick={() => navigate("/reabrir-caja")}
+            >
+              <div className="text-xs text-slate-100">Auditoría</div>
+              <div className="text-sm">Historial y reaperturas</div>
+            </button>
+          )}
+          {userRole === 'administrador' && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-violet-600 to-fuchsia-700`}
+              onClick={() => navigate("/admin/dashboard-estadisticas")}
+            >
+              <div className="text-xs text-violet-100">Analítica</div>
+              <div className="text-sm">Dashboard estadístico</div>
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

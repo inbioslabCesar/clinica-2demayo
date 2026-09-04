@@ -485,6 +485,7 @@ export default function CerrarCajaView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           monto_contado: montoContado,
+          monto_virtual_contado: montoVirtualContado,
           observaciones,
           total_yape,
           total_plin,

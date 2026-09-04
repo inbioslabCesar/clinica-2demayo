@@ -184,9 +184,6 @@ export default function CotizarLaboratorioPage() {
       setLoading(false);
       // Eliminado log de depuración de tarifas y examenes
     }).catch(() => {
-      setExamenes([]);
-      setTarifas([]);
-      setRanking([]);
       setLoading(false);
       setMensaje("No se pudo cargar información del cotizador. Intenta nuevamente.");
     });

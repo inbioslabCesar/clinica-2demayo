@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once 'config.php';
+require_once __DIR__ . '/caja_autocierre.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -23,11 +24,18 @@ try {
         exit;
     }
 
+    caja_auto_cerrar_vencidas($pdo);
+
     $fechaDesde = isset($_GET['fecha_desde']) ? trim((string)$_GET['fecha_desde']) : '';
     $fechaHasta = isset($_GET['fecha_hasta']) ? trim((string)$_GET['fecha_hasta']) : '';
     $usuarioIdFiltro = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : 0;
     $turnoFiltro = isset($_GET['turno']) ? trim((string)$_GET['turno']) : '';
-    $limite = isset($_GET['limite']) ? max(1, min(5000, (int)$_GET['limite'])) : 300;
+    $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+    $perPage = isset($_GET['per_page']) ? max(1, min(200, (int)$_GET['per_page'])) : 10;
+    $limiteLegacy = isset($_GET['limite']) ? max(1, min(5000, (int)$_GET['limite'])) : null;
+    if ($limiteLegacy !== null && !isset($_GET['per_page'])) {
+        $perPage = min(200, $limiteLegacy);
+    }
 
     $fechaRegex = '/^\d{4}-\d{2}-\d{2}$/';
     if ($fechaDesde !== '' && !preg_match($fechaRegex, $fechaDesde)) {
@@ -72,10 +80,39 @@ try {
         $columnaSeguro('egreso_honorarios'),
         $columnaSeguro('egreso_lab_ref'),
         $columnaSeguro('egreso_operativo'),
+        $columnaSeguro('virtual_contado'),
+        $columnaSeguro('diferencia_virtual'),
+        $columnaSeguro('cierre_automatico'),
+        $columnaSeguro('cierre_pendiente_cuadre'),
         $columnaSeguro('total_egresos'),
         $columnaSeguro('ganancia_dia'),
         $columnaSeguro('monto_contado'),
     ];
+
+    $where = [
+        "c.estado = 'cerrada'",
+        'c.fecha >= ?',
+        'c.fecha <= ?',
+    ];
+    $paramsBase = [$fechaDesde, $fechaHasta];
+    if ($usuarioIdFiltro > 0) {
+        $where[] = 'c.usuario_id = ?';
+        $paramsBase[] = $usuarioIdFiltro;
+    }
+    if ($turnoFiltro !== '') {
+        $where[] = 'c.turno = ?';
+        $paramsBase[] = $turnoFiltro;
+    }
+    $whereSql = implode(' AND ', $where);
+
+    $stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM cajas c WHERE {$whereSql}");
+    $stmtTotal->execute($paramsBase);
+    $totalRegistros = (int)$stmtTotal->fetchColumn();
+    $totalPaginas = max(1, (int)ceil($totalRegistros / max(1, $perPage)));
+    if ($page > $totalPaginas) {
+        $page = $totalPaginas;
+    }
+    $offset = ($page - 1) * $perPage;
 
     $sql = "SELECT 
         c.id,
@@ -91,24 +128,12 @@ try {
         " . implode(",\n        ", $selectExtras) . "
         FROM cajas c
         LEFT JOIN usuarios u ON c.usuario_id = u.id
-        WHERE c.estado = 'cerrada'
-          AND c.fecha >= ?
-          AND c.fecha <= ?";
-
-    $params = [$fechaDesde, $fechaHasta];
-    if ($usuarioIdFiltro > 0) {
-        $sql .= " AND c.usuario_id = ?";
-        $params[] = $usuarioIdFiltro;
-    }
-    if ($turnoFiltro !== '') {
-        $sql .= " AND c.turno = ?";
-        $params[] = $turnoFiltro;
-    }
-    $sql .= " ORDER BY c.fecha DESC, c.hora_cierre DESC LIMIT ?";
-    $params[] = $limite;
+        WHERE {$whereSql}
+        ORDER BY c.fecha DESC, c.hora_cierre DESC, c.id DESC
+        LIMIT {$perPage} OFFSET {$offset}";
 
     $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
+    $stmt->execute($paramsBase);
     $cajas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $sqlResumen = "SELECT
@@ -121,27 +146,100 @@ try {
         COALESCE(SUM(" . (isset($columnasCajas['total_plin']) ? "c.total_plin" : "0") . "), 0) AS total_plin,
         COALESCE(SUM(" . (isset($columnasCajas['total_tarjetas']) ? "c.total_tarjetas" : "0") . "), 0) AS total_tarjetas,
         COALESCE(SUM(" . (isset($columnasCajas['total_transferencias']) ? "c.total_transferencias" : "0") . "), 0) AS total_transferencias,
+        COALESCE(SUM(" . (isset($columnasCajas['virtual_contado']) ? "c.virtual_contado" : "0") . "), 0) AS virtual_contado,
+        COALESCE(SUM(" . (isset($columnasCajas['diferencia_virtual']) ? "c.diferencia_virtual" : "0") . "), 0) AS diferencia_virtual,
         COALESCE(SUM(" . (isset($columnasCajas['total_egresos']) ? "c.total_egresos" : "0") . "), 0) AS total_egresos,
         COALESCE(SUM(" . (isset($columnasCajas['ganancia_dia']) ? "c.ganancia_dia" : "0") . "), 0) AS ganancia_dia
         FROM cajas c
-        WHERE c.estado = 'cerrada'
-          AND c.fecha >= ?
-          AND c.fecha <= ?";
-
-    $paramsResumen = [$fechaDesde, $fechaHasta];
-    if ($usuarioIdFiltro > 0) {
-        $sqlResumen .= " AND c.usuario_id = ?";
-        $paramsResumen[] = $usuarioIdFiltro;
-    }
-    if ($turnoFiltro !== '') {
-        $sqlResumen .= " AND c.turno = ?";
-        $paramsResumen[] = $turnoFiltro;
-    }
-    $sqlResumen .= " GROUP BY c.fecha ORDER BY c.fecha DESC";
+        WHERE {$whereSql}
+        GROUP BY c.fecha
+        ORDER BY c.fecha DESC";
 
     $stmtResumen = $pdo->prepare($sqlResumen);
-    $stmtResumen->execute($paramsResumen);
+    $stmtResumen->execute($paramsBase);
     $resumenDiario = $stmtResumen->fetchAll(PDO::FETCH_ASSOC);
+
+    $exprPendiente = isset($columnasCajas['cierre_pendiente_cuadre']) ? 'COALESCE(c.cierre_pendiente_cuadre, 0)' : '0';
+    $exprMontoContado = isset($columnasCajas['monto_contado']) ? 'c.monto_contado' : 'NULL';
+    $exprVirtualContado = isset($columnasCajas['virtual_contado']) ? 'c.virtual_contado' : 'NULL';
+    $exprDiferenciaVirtual = isset($columnasCajas['diferencia_virtual']) ? 'c.diferencia_virtual' : 'NULL';
+    $exprTotalYape = isset($columnasCajas['total_yape']) ? 'c.total_yape' : '0';
+    $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'c.total_plin' : '0';
+    $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'c.total_tarjetas' : '0';
+    $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'c.total_transferencias' : '0';
+
+    $sqlResumenRealDiario = "SELECT
+        c.fecha,
+        COUNT(*) AS total_cajas,
+        SUM(CASE WHEN {$exprPendiente} = 1 THEN 1 ELSE 0 END) AS cajas_pendientes_cuadre,
+        SUM(CASE WHEN {$exprPendiente} = 0 THEN 1 ELSE 0 END) AS cajas_regularizadas,
+        COALESCE(SUM(CASE
+            WHEN {$exprPendiente} = 0 AND {$exprMontoContado} IS NOT NULL THEN COALESCE({$exprMontoContado}, 0)
+            ELSE 0
+        END), 0) AS efectivo_real_contado,
+        COALESCE(SUM(CASE
+            WHEN {$exprPendiente} = 0 AND {$exprMontoContado} IS NOT NULL AND c.diferencia IS NOT NULL THEN COALESCE({$exprMontoContado}, 0) - COALESCE(c.diferencia, 0)
+            ELSE 0
+        END), 0) AS efectivo_esperado_regularizado,
+        COALESCE(SUM(CASE
+            WHEN {$exprPendiente} = 0 THEN COALESCE({$exprTotalYape}, 0) + COALESCE({$exprTotalPlin}, 0) + COALESCE({$exprTotalTarjetas}, 0) + COALESCE({$exprTotalTransferencias}, 0)
+            ELSE 0
+        END), 0) AS virtual_cobrado_regularizado,
+        COALESCE(SUM(CASE
+            WHEN {$exprPendiente} = 0 AND {$exprVirtualContado} IS NOT NULL THEN COALESCE({$exprVirtualContado}, 0)
+            ELSE 0
+        END), 0) AS virtual_real_contado,
+        COALESCE(SUM(CASE
+            WHEN {$exprPendiente} = 0 AND {$exprDiferenciaVirtual} IS NOT NULL THEN COALESCE({$exprDiferenciaVirtual}, 0)
+            ELSE 0
+        END), 0) AS diferencia_virtual_regularizada,
+        COALESCE(SUM(CASE
+            WHEN {$exprPendiente} = 0 AND c.diferencia IS NOT NULL THEN COALESCE(c.diferencia, 0)
+            ELSE 0
+        END), 0) AS diferencia_efectivo_regularizada
+        FROM cajas c
+        WHERE {$whereSql}
+        GROUP BY c.fecha
+        ORDER BY c.fecha DESC";
+
+    $stmtResumenRealDiario = $pdo->prepare($sqlResumenRealDiario);
+    $stmtResumenRealDiario->execute($paramsBase);
+    $resumenCierreRealDiario = $stmtResumenRealDiario->fetchAll(PDO::FETCH_ASSOC);
+
+    $indicadores = [
+        'total_cajas' => 0,
+        'total_pendientes_cuadre' => 0,
+        'total_regularizadas' => 0,
+        'efectivo_real_total' => 0.0,
+        'efectivo_esperado_total' => 0.0,
+        'diferencia_efectivo_total' => 0.0,
+        'virtual_cobrado_total' => 0.0,
+        'virtual_real_total' => 0.0,
+        'diferencia_virtual_total' => 0.0,
+    ];
+
+    foreach ($resumenCierreRealDiario as &$filaReal) {
+        $filaReal['total_cajas'] = (int)($filaReal['total_cajas'] ?? 0);
+        $filaReal['cajas_pendientes_cuadre'] = (int)($filaReal['cajas_pendientes_cuadre'] ?? 0);
+        $filaReal['cajas_regularizadas'] = (int)($filaReal['cajas_regularizadas'] ?? 0);
+        $filaReal['efectivo_real_contado'] = (float)($filaReal['efectivo_real_contado'] ?? 0);
+        $filaReal['efectivo_esperado_regularizado'] = (float)($filaReal['efectivo_esperado_regularizado'] ?? 0);
+        $filaReal['virtual_cobrado_regularizado'] = (float)($filaReal['virtual_cobrado_regularizado'] ?? 0);
+        $filaReal['virtual_real_contado'] = (float)($filaReal['virtual_real_contado'] ?? 0);
+        $filaReal['diferencia_virtual_regularizada'] = (float)($filaReal['diferencia_virtual_regularizada'] ?? 0);
+        $filaReal['diferencia_efectivo_regularizada'] = (float)($filaReal['diferencia_efectivo_regularizada'] ?? 0);
+
+        $indicadores['total_cajas'] += $filaReal['total_cajas'];
+        $indicadores['total_pendientes_cuadre'] += $filaReal['cajas_pendientes_cuadre'];
+        $indicadores['total_regularizadas'] += $filaReal['cajas_regularizadas'];
+        $indicadores['efectivo_real_total'] += $filaReal['efectivo_real_contado'];
+        $indicadores['efectivo_esperado_total'] += $filaReal['efectivo_esperado_regularizado'];
+        $indicadores['diferencia_efectivo_total'] += $filaReal['diferencia_efectivo_regularizada'];
+        $indicadores['virtual_cobrado_total'] += $filaReal['virtual_cobrado_regularizado'];
+        $indicadores['virtual_real_total'] += $filaReal['virtual_real_contado'];
+        $indicadores['diferencia_virtual_total'] += $filaReal['diferencia_virtual_regularizada'];
+    }
+    unset($filaReal);
 
     $stmtUsuarios = $pdo->prepare("SELECT DISTINCT c.usuario_id AS id, COALESCE(u.nombre, CONCAT('Usuario #', c.usuario_id)) AS nombre FROM cajas c LEFT JOIN usuarios u ON u.id = c.usuario_id WHERE c.estado = 'cerrada' AND c.fecha >= ? AND c.fecha <= ? ORDER BY nombre ASC");
     $stmtUsuarios->execute([$fechaDesde, $fechaHasta]);
@@ -174,11 +272,23 @@ try {
             'fecha_hasta' => $fechaHasta,
             'usuario_id' => $usuarioIdFiltro,
             'turno' => $turnoFiltro,
-            'limite' => $limite,
+            'page' => $page,
+            'per_page' => $perPage,
+            'limite' => $limiteLegacy,
         ],
+        'paginacion' => [
+            'page' => $page,
+            'per_page' => $perPage,
+            'total' => $totalRegistros,
+            'total_pages' => $totalPaginas,
+            'from' => $totalRegistros > 0 ? ($offset + 1) : 0,
+            'to' => min($offset + $perPage, $totalRegistros),
+        ],
+        'indicadores' => $indicadores,
         'usuarios_disponibles' => $usuariosDisponibles,
         'turnos_disponibles' => $turnosDisponibles,
         'resumen_diario' => $resumenDiario,
+        'resumen_cierre_real_diario' => $resumenCierreRealDiario,
         'cajas_cerradas' => $cajas,
         'historial_reaperturas' => $reaperturas
     ]);

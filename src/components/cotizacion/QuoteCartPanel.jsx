@@ -311,8 +311,12 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         && horaGlobal
         && !consultaProgramada
       ) {
-        detalle.fecha_programada = fechaGlobal;
-        detalle.hora_programada = horaGlobal;
+        if (!String(detalle.fecha_programada || "").trim()) {
+          detalle.fecha_programada = fechaGlobal;
+        }
+        if (!String(detalle.hora_programada || "").trim()) {
+          detalle.hora_programada = horaGlobal;
+        }
       }
 
       if (esConsulta) {
@@ -490,100 +494,115 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       };
 
       if (irACobro && pacienteRegistradoId <= 0) {
-        const registro = await Swal.fire({
-          title: "Registro minimo para cobro",
-          html: `
-            <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
-              <div>Para continuar con el cobro, registra datos minimos del paciente.</div>
-              <input id="swal-dni" class="swal2-input" placeholder="DNI (8 digitos)" maxlength="8" />
-              <input id="swal-nombre" class="swal2-input" placeholder="Nombres" />
-              <input id="swal-apellido" class="swal2-input" placeholder="Apellidos" />
-              <input id="swal-telefono" class="swal2-input" placeholder="Celular (opcional)" />
-            </div>
-          `,
-          focusConfirm: false,
-          showCancelButton: true,
-          confirmButtonText: "Registrar y continuar",
-          cancelButtonText: "Cancelar",
-          didOpen: async () => {
-            const dniInput = document.getElementById("swal-dni");
-            const nombreInput = document.getElementById("swal-nombre");
-            const apellidoInput = document.getElementById("swal-apellido");
-            const telefonoInput = document.getElementById("swal-telefono");
+        const dniInicial = limpiarSoloDigitos(cart?.patientDni || "");
+        let dni = dniInicial;
+        let nombre = "";
+        let apellido = "";
+        let telefono = "";
 
-            if (dniInput) {
-              dniInput.value = limpiarSoloDigitos(cart?.patientName);
-            }
+        if (!/^\d{8}$/.test(dniInicial)) {
+          const registro = await Swal.fire({
+            title: "Registro minimo para cobro",
+            html: `
+              <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+                <div>Para continuar con el cobro, registra datos minimos del paciente.</div>
+                <input id="swal-dni" class="swal2-input" placeholder="DNI (8 digitos)" maxlength="8" />
+                <input id="swal-nombre" class="swal2-input" placeholder="Nombres" />
+                <input id="swal-apellido" class="swal2-input" placeholder="Apellidos" />
+                <input id="swal-telefono" class="swal2-input" placeholder="Celular (opcional)" />
+              </div>
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: "Registrar y continuar",
+            cancelButtonText: "Cancelar",
+            didOpen: async () => {
+              const dniInput = document.getElementById("swal-dni");
+              const nombreInput = document.getElementById("swal-nombre");
+              const apellidoInput = document.getElementById("swal-apellido");
+              const telefonoInput = document.getElementById("swal-telefono");
 
-            const autocompletarDni = async () => {
-              const dni = limpiarSoloDigitos(dniInput?.value || "");
-              if (!/^\d{8}$/.test(dni)) return;
-
-              try {
-                const res = await authFetch("api_pacientes_buscar.php", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ tipo: "dni", valor: dni }),
-                });
-                const data = await res.json();
-
-                if (data?.success && Array.isArray(data?.pacientes) && data.pacientes.length > 0) {
-                  const p = data.pacientes[0];
-                  dniLookupCache.dni = dni;
-                  dniLookupCache.paciente = p;
-                  if (nombreInput) nombreInput.value = String(p?.nombre || "");
-                  if (apellidoInput) apellidoInput.value = String(p?.apellido || "");
-                  if (telefonoInput) telefonoInput.value = String(p?.telefono || "");
-                  return;
-                }
-
-                dniLookupCache.dni = dni;
-                dniLookupCache.paciente = null;
-
-                const s = data?.sugerencia_externa;
-                if (s) {
-                  if (nombreInput && !String(nombreInput.value || "").trim()) nombreInput.value = String(s?.nombre || "");
-                  if (apellidoInput && !String(apellidoInput.value || "").trim()) apellidoInput.value = String(s?.apellido || "");
-                }
-              } catch {
-                dniLookupCache.dni = "";
-                dniLookupCache.paciente = null;
-                // Silencioso: el operador puede continuar manualmente.
+              if (dniInput) {
+                dniInput.value = limpiarSoloDigitos(cart?.patientDni || cart?.patientName);
               }
-            };
 
-            dniInput?.addEventListener("blur", autocompletarDni);
-          },
-          preConfirm: () => {
-            const dni = limpiarSoloDigitos(document.getElementById("swal-dni")?.value || "");
-            const nombre = String(document.getElementById("swal-nombre")?.value || "").trim();
-            const apellido = String(document.getElementById("swal-apellido")?.value || "").trim();
-            const telefono = limpiarSoloDigitos(document.getElementById("swal-telefono")?.value || "");
+              const autocompletarDni = async () => {
+                const dniInputValue = limpiarSoloDigitos(dniInput?.value || "");
+                if (!/^\d{8}$/.test(dniInputValue)) return;
 
-            if (!/^\d{8}$/.test(dni)) {
-              Swal.showValidationMessage("Ingresa un DNI valido de 8 digitos");
-              return false;
-            }
-            if (!nombre) {
-              Swal.showValidationMessage("Ingresa nombres");
-              return false;
-            }
-            if (!apellido) {
-              Swal.showValidationMessage("Ingresa apellidos");
-              return false;
-            }
-            return { dni, nombre, apellido, telefono };
-          },
-        });
+                try {
+                  const res = await authFetch("api_pacientes_buscar.php", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ tipo: "dni", valor: dniInputValue }),
+                  });
+                  const data = await res.json();
 
-        if (!registro.isConfirmed || !registro.value) {
-          return;
+                  if (data?.success && Array.isArray(data?.pacientes) && data.pacientes.length > 0) {
+                    const p = data.pacientes[0];
+                    dniLookupCache.dni = dniInputValue;
+                    dniLookupCache.paciente = p;
+                    if (nombreInput) nombreInput.value = String(p?.nombre || "");
+                    if (apellidoInput) apellidoInput.value = String(p?.apellido || "");
+                    if (telefonoInput) telefonoInput.value = String(p?.telefono || "");
+                    return;
+                  }
+
+                  dniLookupCache.dni = dniInputValue;
+                  dniLookupCache.paciente = null;
+
+                  const s = data?.sugerencia_externa;
+                  if (s) {
+                    if (nombreInput && !String(nombreInput.value || "").trim()) nombreInput.value = String(s?.nombre || "");
+                    if (apellidoInput && !String(apellidoInput.value || "").trim()) apellidoInput.value = String(s?.apellido || "");
+                  }
+                } catch {
+                  dniLookupCache.dni = "";
+                  dniLookupCache.paciente = null;
+                }
+              };
+
+              dniInput?.addEventListener("blur", autocompletarDni);
+            },
+            preConfirm: () => {
+              const dniInputValue = limpiarSoloDigitos(document.getElementById("swal-dni")?.value || "");
+              const nombreInputValue = String(document.getElementById("swal-nombre")?.value || "").trim();
+              const apellidoInputValue = String(document.getElementById("swal-apellido")?.value || "").trim();
+              const telefonoInputValue = limpiarSoloDigitos(document.getElementById("swal-telefono")?.value || "");
+
+              if (!/^\d{8}$/.test(dniInputValue)) {
+                Swal.showValidationMessage("Ingresa un DNI valido de 8 digitos");
+                return false;
+              }
+              if (!nombreInputValue) {
+                Swal.showValidationMessage("Ingresa nombres");
+                return false;
+              }
+              if (!apellidoInputValue) {
+                Swal.showValidationMessage("Ingresa apellidos");
+                return false;
+              }
+              return {
+                dni: dniInputValue,
+                nombre: nombreInputValue,
+                apellido: apellidoInputValue,
+                telefono: telefonoInputValue,
+              };
+            },
+          });
+
+          if (!registro.isConfirmed || !registro.value) {
+            return;
+          }
+
+          dni = registro.value.dni;
+          nombre = registro.value.nombre;
+          apellido = registro.value.apellido;
+          telefono = registro.value.telefono;
         }
 
-        const { dni, nombre, apellido, telefono } = registro.value;
-
         let pacienteExistente = null;
-        if (dniLookupCache.dni === dni && dniLookupCache.paciente?.id) {
+        if (/^\d{8}$/.test(dniInicial) && dniInicial === dniLookupCache.dni && dniLookupCache.paciente?.id) {
           pacienteExistente = dniLookupCache.paciente;
         } else {
           const buscarExistente = await authFetch("api_pacientes_buscar.php", {
@@ -600,7 +619,18 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         if (pacienteExistente?.id) {
           pacienteRegistradoId = Number(pacienteExistente.id || 0);
           pacienteNombreParaPayload = `${String(pacienteExistente.nombre || "").trim()} ${String(pacienteExistente.apellido || "").trim()}`.trim() || pacienteNombreParaPayload;
+          dni = limpiarSoloDigitos(pacienteExistente?.dni || dni);
         } else {
+          if (!nombre || !apellido) {
+            const sugerencia = dniLookupCache.dni === dni ? dniLookupCache.paciente : null;
+            const suggestedNombre = String(sugerencia?.nombre || "").trim();
+            const suggestedApellido = String(sugerencia?.apellido || "").trim();
+            const tokensNombre = String(cart?.patientName || "").trim().split(/\s+/).filter(Boolean);
+
+            nombre = nombre || suggestedNombre || tokensNombre[0] || "PACIENTE";
+            apellido = apellido || suggestedApellido || tokensNombre.slice(1).join(" ") || "TEMPORAL";
+          }
+
           const crearPaciente = await authFetch("api_pacientes.php", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -624,7 +654,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
 
         // Una vez regularizado, el carrito deja de ser "Particular" y adopta el paciente real.
         if (pacienteRegistradoId > 0) {
-          setPatient(pacienteRegistradoId, pacienteNombreParaPayload);
+          setPatient(pacienteRegistradoId, pacienteNombreParaPayload, dni);
         }
       }
 

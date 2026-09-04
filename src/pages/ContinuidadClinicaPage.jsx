@@ -126,7 +126,7 @@ export default function ContinuidadClinicaPage() {
         : [];
       setDoctors(parsed);
     } catch {
-      setDoctors([]);
+      // Mantener médicos ya cargados si hay error transitorio.
     } finally {
       setDoctorsLoading(false);
     }
@@ -150,7 +150,6 @@ export default function ContinuidadClinicaPage() {
 
       setRows(Array.isArray(json.data) ? json.data : []);
     } catch (err) {
-      setRows([]);
       Swal.fire("Error", String(err?.message || err), "error");
     } finally {
       setLoading(false);

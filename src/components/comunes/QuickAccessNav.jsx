@@ -39,6 +39,7 @@ const LINK_CATALOG = {
 export default function QuickAccessNav({
   keys = ["pacientes", "recordatorios", "reporteCaja"],
   className = "mb-4",
+  variant = "default",
 }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -64,8 +65,10 @@ export default function QuickAccessNav({
 
   if (quickLinks.length === 0) return null;
 
+  const isModern = variant === "modern";
+
   return (
-    <div className={`${className} grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2`}>
+    <div className={`${className} grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4`}>
       {quickLinks.map((item) => {
         const IconComp = item.icon;
         return (
@@ -73,14 +76,31 @@ export default function QuickAccessNav({
             key={item.to}
             type="button"
             onClick={() => navigate(item.to)}
-            className="w-full text-left px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 transition-all duration-200 flex items-center gap-2"
+            className={isModern
+              ? "group relative w-full overflow-hidden rounded-2xl border border-cyan-100 bg-gradient-to-br from-white to-cyan-50 px-3 py-3 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
+              : "w-full text-left px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 transition-all duration-200 flex items-center gap-2"
+            }
             style={{
               color: "var(--color-primary-dark)",
               borderColor: "var(--color-primary-light)",
             }}
           >
-            <IconComp className="text-base" />
-            <span className="font-medium text-sm">{item.label}</span>
+            {isModern ? (
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-100 text-cyan-700 transition-colors group-hover:bg-cyan-200">
+                  <IconComp className="text-base" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Acceso rápido</div>
+                  <span className="text-sm font-bold text-slate-800">{item.label}</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <IconComp className="text-base" />
+                <span className="font-medium text-sm">{item.label}</span>
+              </>
+            )}
           </button>
         );
       })}

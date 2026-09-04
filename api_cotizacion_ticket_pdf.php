@@ -1,6 +1,5 @@
 <?php
 require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/vendor/autoload.php';
 
 use Mpdf\Mpdf;
@@ -139,7 +138,117 @@ function resolve_logo_src($rawLogo)
     return $rawLogo;
 }
 
+function ensure_share_token_table($conn)
+{
+    if (!table_exists_local($conn, 'cotizacion_pdf_share_tokens')) {
+        $conn->query("CREATE TABLE cotizacion_pdf_share_tokens (
+            id INT NOT NULL AUTO_INCREMENT,
+            cotizacion_id INT NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            max_uses INT NOT NULL DEFAULT 20,
+            used_count INT NOT NULL DEFAULT 0,
+            last_used_at DATETIME NULL,
+            revoked_at DATETIME NULL,
+            created_by_user_id INT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_token_hash (token_hash),
+            KEY idx_cotizacion_id (cotizacion_id),
+            KEY idx_expires_at (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+}
+
+function validar_token_compartido_pdf($conn, $tokenRaw)
+{
+    $token = trim((string)$tokenRaw);
+    if ($token === '' || !preg_match('/^[A-Fa-f0-9]{32,128}$/', $token)) {
+        return [false, 'Token invalido.', null];
+    }
+
+    ensure_share_token_table($conn);
+    $tokenHash = hash('sha256', $token);
+
+    $stmt = $conn->prepare('SELECT id, cotizacion_id, expires_at, max_uses, used_count, revoked_at FROM cotizacion_pdf_share_tokens WHERE token_hash = ? LIMIT 1');
+    if (!$stmt) {
+        return [false, 'No se pudo validar token.', null];
+    }
+    $stmt->bind_param('s', $tokenHash);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row) {
+        return [false, 'Enlace no encontrado.', null];
+    }
+
+    if (!empty($row['revoked_at'])) {
+        return [false, 'Enlace revocado.', null];
+    }
+
+    $expTs = strtotime((string)($row['expires_at'] ?? ''));
+    if ($expTs !== false && $expTs < time()) {
+        return [false, 'Enlace vencido.', null];
+    }
+
+    $maxUses = max(1, (int)($row['max_uses'] ?? 1));
+    $usedCount = max(0, (int)($row['used_count'] ?? 0));
+    if ($usedCount >= $maxUses) {
+        return [false, 'Enlace sin usos disponibles.', null];
+    }
+
+    $tokenId = (int)($row['id'] ?? 0);
+    if ($tokenId > 0) {
+        $stmtUp = $conn->prepare('UPDATE cotizacion_pdf_share_tokens SET used_count = used_count + 1, last_used_at = NOW() WHERE id = ?');
+        if ($stmtUp) {
+            $stmtUp->bind_param('i', $tokenId);
+            $stmtUp->execute();
+            $stmtUp->close();
+        }
+    }
+
+    return [true, '', (int)($row['cotizacion_id'] ?? 0)];
+}
+
+$tokenCompartido = trim((string)($_GET['share_token'] ?? ''));
+if ($tokenCompartido === '') {
+    $pathInfo = trim((string)($_SERVER['PATH_INFO'] ?? ''));
+    if ($pathInfo !== '') {
+        $pathToken = trim($pathInfo, '/');
+        if (preg_match('/^[A-Fa-f0-9]{32,128}$/', $pathToken)) {
+            $tokenCompartido = $pathToken;
+        }
+    }
+}
+if ($tokenCompartido === '') {
+    $uri = (string)($_SERVER['REQUEST_URI'] ?? '');
+    if ($uri !== '') {
+        $path = parse_url($uri, PHP_URL_PATH);
+        if (is_string($path) && preg_match('#api_cotizacion_ticket_pdf\.php/([A-Fa-f0-9]{32,128})#', $path, $m)) {
+            $tokenCompartido = $m[1];
+        }
+    }
+}
+$accesoPorToken = false;
 $cotizacionId = isset($_GET['cotizacion_id']) ? (int)$_GET['cotizacion_id'] : 0;
+
+if ($tokenCompartido !== '') {
+    list($okToken, $tokenErr, $cotizacionTokenId) = validar_token_compartido_pdf($conn, $tokenCompartido);
+    if (!$okToken) {
+        fail_plain($tokenErr !== '' ? $tokenErr : 'No autorizado.', 403);
+    }
+    if ($cotizacionId > 0 && $cotizacionTokenId > 0 && $cotizacionId !== $cotizacionTokenId) {
+        fail_plain('Enlace no corresponde a la cotizacion solicitada.', 403);
+    }
+    $cotizacionId = $cotizacionTokenId;
+    $accesoPorToken = true;
+}
+
+if (!$accesoPorToken) {
+    require_once __DIR__ . '/auth_check.php';
+}
+
 if ($cotizacionId <= 0) {
     fail_plain('Cotizacion no valida.', 400);
 }

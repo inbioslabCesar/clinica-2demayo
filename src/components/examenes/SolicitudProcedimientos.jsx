@@ -12,7 +12,7 @@ const ESTADO_BADGE = {
   cancelado:  "bg-red-100 text-red-600",
 };
 
-export default function SolicitudProcedimientos({ consultaId }) {
+export default function SolicitudProcedimientos({ consultaId, readOnly = false }) {
   const [catalogo, setCatalogo] = useState([]);
   const [seleccionados, setSeleccionados] = useState([]);
   const [buscar, setBuscar] = useState("");
@@ -158,13 +158,21 @@ export default function SolicitudProcedimientos({ consultaId }) {
     <div className="space-y-4">
 
       {/* ── Botón principal ── */}
-      <button
-        type="button"
-        onClick={abrirPanel}
-        className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 transition text-sm font-semibold"
-      >
-        🛠️ Solicitar procedimiento
-      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          onClick={abrirPanel}
+          className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 transition text-sm font-semibold"
+        >
+          🛠️ Solicitar procedimiento
+        </button>
+      )}
+
+      {readOnly && (
+        <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Modo solo lectura: puedes revisar solicitudes de procedimientos, pero no editar.
+        </div>
+      )}
 
       {/* ── Panel de selección (colapsable) ── */}
       {panelAbierto && (

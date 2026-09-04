@@ -86,7 +86,6 @@ function LiquidacionHonorariosPage() {
       }
     } catch (err) {
       console.error('Error al cargar médicos:', err);
-      setMedicos([]);
     }
   };
 
@@ -113,17 +112,9 @@ function LiquidacionHonorariosPage() {
         setTotalRegistros(Number(data.total || 0));
       } else {
         console.warn('Error en respuesta de honorarios:', data);
-        setHonorarios([]);
-        setResumen({});
-        setTotalPages(1);
-        setTotalRegistros(0);
       }
     } catch (err) {
       console.error('Error al cargar honorarios:', err);
-      setHonorarios([]);
-      setResumen({});
-      setTotalPages(1);
-      setTotalRegistros(0);
     } finally {
       setLoading(false);
     }

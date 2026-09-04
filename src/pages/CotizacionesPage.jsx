@@ -1074,6 +1074,7 @@ export default function CotizacionesPage() {
   const autoAnularRef = useRef(false);
   const abortRef = useRef(null);
   const anticipadoFetchIdRef = useRef(0);
+  const anticipadoIdsKeyRef = useRef("");
   const consultaCorrelativoCacheRef = useRef(new Map());
   const consultaCorrelativoFechaCacheRef = useRef(new Map());
   const imagenCorrelativoCacheRef = useRef(new Map());
@@ -1132,15 +1133,23 @@ export default function CotizacionesPage() {
   const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
 
 
-  const cargarEstadosAnticipados = useCallback(async (rowsInput) => {
+  const cargarEstadosAnticipados = useCallback(async (rowsInput, options = {}) => {
+    const force = Boolean(options?.force);
     const fetchId = ++anticipadoFetchIdRef.current;
     const ids = Array.from(new Set((rowsInput || []).map((row) => Number(row?.id || 0)).filter((id) => id > 0)));
+    const idsKey = ids.join(",");
     if (ids.length === 0) {
       if (fetchId !== anticipadoFetchIdRef.current) return;
+      anticipadoIdsKeyRef.current = "";
       setAnticipadoByCotizacion({});
       setCanAutorizarAnticipado(false);
       return;
     }
+    if (!force && idsKey === anticipadoIdsKeyRef.current) {
+      return;
+    }
+
+    anticipadoIdsKeyRef.current = idsKey;
 
     try {
       const res = await authFetch(`api_consultas.php?vista=anticipada&cotizacion_ids=${ids.join(',')}&_t=${Date.now()}`, {
@@ -1263,7 +1272,7 @@ export default function CotizacionesPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo actualizar habilitación anticipada');
       }
-      await cargarEstadosAnticipados(rows);
+      await cargarEstadosAnticipados(rows, { force: true });
       await Swal.fire('Listo', activo ? 'Habilitación anticipada revocada' : 'Habilitación anticipada activada', 'success');
     } catch (error) {
       await Swal.fire('Error', error?.message || 'No se pudo actualizar habilitación anticipada', 'error');
@@ -1511,14 +1520,47 @@ export default function CotizacionesPage() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
+  useEffect(() => {
+    const nextQ = String(qInput || "");
+    const appliedQ = String(filtrosAplicados.q || "");
+    if (nextQ === appliedQ) return undefined;
+
+    const trimmed = nextQ.trim();
+    if (trimmed !== "" && trimmed.length < 3) return undefined;
+
+    const timer = setTimeout(() => {
+      setPage(1);
+      setFiltrosAplicados((prev) => {
+        if (String(prev.q || "") === nextQ) return prev;
+        return {
+          ...prev,
+          q: nextQ,
+        };
+      });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [qInput, filtrosAplicados.q]);
+
   const filtrar = () => {
-    setPage(1);
-    setFiltrosAplicados({
+    const next = {
       q: qInput,
       estado: estadoInput,
       fechaInicio: fechaInicioInput,
       fechaFin: fechaFinInput,
-    });
+    };
+
+    const unchanged = (
+      String(filtrosAplicados.q || "") === String(next.q || "")
+      && String(filtrosAplicados.estado || "") === String(next.estado || "")
+      && String(filtrosAplicados.fechaInicio || "") === String(next.fechaInicio || "")
+      && String(filtrosAplicados.fechaFin || "") === String(next.fechaFin || "")
+    );
+
+    if (page !== 1) setPage(1);
+    if (!unchanged) {
+      setFiltrosAplicados(next);
+    }
   };
 
   const aplicarRangoDias = (dias) => {
@@ -2028,6 +2070,19 @@ export default function CotizacionesPage() {
       const cotizacionId = Number(row?.id || 0);
       if (cotizacionId <= 0) return;
 
+      const resShare = await authFetch("api_cotizacion_whatsapp_link.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cotizacion_id: cotizacionId, ttl_hours: 24, max_uses: 20 }),
+      });
+      const dataShare = await resShare.json();
+      if (!dataShare?.success || !dataShare?.pdf_url) {
+        throw new Error(dataShare?.error || "No se pudo crear enlace de PDF para compartir");
+      }
+      const pdfUrl = String(dataShare.pdf_url || "").trim();
+      const pdfUrlFallback = String(dataShare.pdf_url_fallback || "").trim();
+      const venceToken = String(dataShare.expires_at || "").trim();
+
       const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
         cache: "no-store",
       });
@@ -2053,6 +2108,7 @@ export default function CotizacionesPage() {
         serviciosTxt,
         `Total: S/ ${total}`,
         vence ? `Vigencia: ${formatDateTime(vence)}` : "",
+        venceToken ? `Enlace PDF valido hasta: ${formatDateTime(venceToken)}` : "",
       ].filter(Boolean).join("\n");
 
       const { value: numeroDestinoRaw } = await Swal.fire({
@@ -2067,8 +2123,10 @@ export default function CotizacionesPage() {
       });
 
       const numeroDestino = normalizePhoneForWa(numeroDestinoRaw || row?.telefono || "");
-      const pdfUrl = `${String(BASE_URL || "").replace(/\/+$/, "")}/api_cotizacion_ticket_pdf.php?cotizacion_id=${cotizacionId}`;
-      const mensaje = `${resumenBase}\n\nPDF: ${pdfUrl}`;
+      const bloquePdf = pdfUrlFallback && pdfUrlFallback !== pdfUrl
+        ? `${pdfUrl}\n${pdfUrlFallback}`
+        : pdfUrl;
+      const mensaje = `${resumenBase}\n\nPDF:\n${bloquePdf}`;
 
       if (!numeroDestino) {
         if (navigator?.clipboard?.writeText) {

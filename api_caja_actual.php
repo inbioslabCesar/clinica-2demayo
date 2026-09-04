@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/caja_autocierre.php';
 
 try {
     // Verificar autenticación
@@ -10,6 +11,8 @@ try {
         echo json_encode(['success' => false, 'error' => 'No autenticado']);
         exit;
     }
+
+    caja_auto_cerrar_vencidas($pdo);
 
     // Obtener caja abierta actual
     $sql = "SELECT c.*, u.nombre as usuario_nombre 
