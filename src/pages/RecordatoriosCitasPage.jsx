@@ -51,6 +51,14 @@ function formatFechaHora(fecha, hora) {
   return `${formatFecha(fecha)} ${hh || ""}`.trim();
 }
 
+function normalizePhoneForWa(value) {
+  const digits = String(value || "").replace(/\D+/g, "").trim();
+  if (!digits) return "";
+  if (digits.startsWith("51") && digits.length >= 11) return digits;
+  if (digits.length === 9) return `51${digits}`;
+  return digits;
+}
+
 function getLimaDateYmd() {
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -599,6 +607,7 @@ export default function RecordatoriosCitasPage() {
   const [origenConsulta, setOrigenConsulta] = useState("");
   const [tipoRecordatorio, setTipoRecordatorio] = useState("citas");
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaInput, setBusquedaInput] = useState("");
   const [soloSinGestion, setSoloSinGestion] = useState(false);
   const [vistaRapida, setVistaRapida] = useState("todas");
   const [ordenCitas, setOrdenCitas] = useState(initialOrdenCitas);
@@ -621,6 +630,8 @@ export default function RecordatoriosCitasPage() {
   const [agendaMedicoLoading, setAgendaMedicoLoading] = useState(false);
   const [agendaMedicoError, setAgendaMedicoError] = useState("");
   const [agendaMedicoData, setAgendaMedicoData] = useState(null);
+  const [pacienteFoco, setPacienteFoco] = useState(null);
+  const [nombreClinicaRemitente, setNombreClinicaRemitente] = useState("MI CLINICA");
   const skipFirstPaginationFetchRef = useRef(true);
   const skipNextPaginationFetchRef = useRef(false);
   const usandoVistaUnificada = tipoRecordatorio === "todos";
@@ -639,6 +650,9 @@ export default function RecordatoriosCitasPage() {
           solo_sin_gestion: soloSinGestion ? "1" : "0",
           _t: String(Date.now()),
         };
+        if (Number(pacienteFoco?.id || 0) > 0) {
+          base.paciente_id = String(Number(pacienteFoco.id));
+        }
 
         const citasParams = new URLSearchParams({ ...base, tipo_recordatorio: "citas" });
         const faltasParams = new URLSearchParams({ ...base, tipo_recordatorio: "falta_cancelar" });
@@ -689,6 +703,9 @@ export default function RecordatoriosCitasPage() {
         solo_sin_gestion: soloSinGestion ? "1" : "0",
         _t: String(Date.now()),
       });
+      if (Number(pacienteFoco?.id || 0) > 0) {
+        params.set("paciente_id", String(Number(pacienteFoco.id)));
+      }
       if (!usaPaginacionCliente) {
         params.set("page", String(page));
         params.set("per_page", String(rowsPerPage));
@@ -743,6 +760,36 @@ export default function RecordatoriosCitasPage() {
       setMedicosCatalogo(activos);
     } catch {
       setMedicosCatalogo([]);
+    }
+  };
+
+  const cargarNombreClinicaRemitente = async () => {
+    try {
+      const res = await authFetch("api_get_configuracion.php", { method: "GET", cache: "no-store" });
+      const data = await res.json();
+      const cfg = data?.data || data?.configuracion || {};
+      const nombre = String(cfg?.nombre_clinica || cfg?.nombre || "").trim();
+      if (nombre) {
+        setNombreClinicaRemitente(nombre);
+        return;
+      }
+    } catch {
+      // Si falla el endpoint, intenta resolver desde cache local.
+    }
+
+    try {
+      const raw =
+        window.localStorage.getItem("public_brand_cache") ||
+        window.sessionStorage.getItem("public_brand_cache") ||
+        "";
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const nombreCache = String(parsed?.nombre || "").trim();
+      if (nombreCache) {
+        setNombreClinicaRemitente(nombreCache);
+      }
+    } catch {
+      // Mantiene fallback por defecto.
     }
   };
 
@@ -803,10 +850,27 @@ export default function RecordatoriosCitasPage() {
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dias, estadoGestion, origenConsulta, soloSinGestion, tipoRecordatorio]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, tipoRecordatorio, pacienteFoco, busqueda]);
+
+  useEffect(() => {
+    const next = String(busquedaInput || "");
+    const current = String(busqueda || "");
+    if (next === current) return undefined;
+
+    const trimmed = next.trim();
+    if (trimmed !== "" && trimmed.length < 3) return undefined;
+
+    const timer = setTimeout(() => {
+      if (page !== 1) setPage(1);
+      setBusqueda(next);
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [busquedaInput, busqueda, page]);
 
   useEffect(() => {
     cargarMedicos();
+    cargarNombreClinicaRemitente();
   }, []);
 
   useEffect(() => {
@@ -836,7 +900,7 @@ export default function RecordatoriosCitasPage() {
     setPage(1);
     setDetalleExpandedRows({});
     setDetalleTipoFiltroRows({});
-  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio, usaPaginacionCliente, page]);
+  }, [dias, estadoGestion, origenConsulta, soloSinGestion, busqueda, vistaRapida, rowsPerPage, tipoRecordatorio, usaPaginacionCliente]);
 
   useEffect(() => {
     if (!usaPaginacionCliente) return;
@@ -995,6 +1059,107 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const construirMensajeRecordatorioCita = (item) => {
+    const remitente = String(nombreClinicaRemitente || "MI CLINICA").trim().toUpperCase() || "MI CLINICA";
+    const paciente = `${String(item?.paciente_nombre || "").trim()} ${String(item?.paciente_apellido || "").trim()}`.trim() || "paciente";
+    const servicio = String(tipoServicioLabel(item) || "consulta").trim();
+    const fechaTxt = formatFecha(item?.fecha || "");
+    const horaTxt = String(item?.hora || "").slice(0, 5) || "";
+    const dias = diasParaCita(item?.fecha || "");
+    const medico = `${String(item?.medico_nombre || "").trim()} ${String(item?.medico_apellido || "").trim()}`.trim();
+
+    let cuando = `el ${fechaTxt}`;
+    if (dias === 0) cuando = "el día de hoy";
+    if (dias === 1) cuando = "mañana";
+
+    const citaLinea = horaTxt
+      ? `Le recordamos su cita ${cuando} a las ${horaTxt}`
+      : `Le recordamos su cita ${cuando}`;
+
+    const medicoLinea = medico && medico !== "-" ? ` con ${medico}` : "";
+
+    return [
+      remitente,
+      `Hola ${paciente},`,
+      `${citaLinea} para ${servicio}${medicoLinea}.`,
+      "Por favor, confirmar su asistencia respondiendo a este mensaje.",
+      "Gracias.",
+    ].join("\n");
+  };
+
+  const enviarRecordatorioWhatsApp = async (item) => {
+    const telefonoRaw = String(item?.paciente_telefono || "").trim();
+    const telefono = normalizePhoneForWa(telefonoRaw);
+    if (!telefono) {
+      await Swal.fire("Sin teléfono", "Este paciente no tiene teléfono válido para WhatsApp.", "warning");
+      return;
+    }
+
+    const mensajeWa = construirMensajeRecordatorioCita(item);
+    const waUrl = `https://wa.me/${telefono}?text=${encodeURIComponent(mensajeWa)}`;
+    const opened = window.open(waUrl, "_blank");
+
+    if (!opened) {
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(mensajeWa);
+          await Swal.fire("Atención", "No se pudo abrir WhatsApp automáticamente. Se copió el mensaje para pegar manualmente.", "warning");
+        }
+      } catch {
+        await Swal.fire("Atención", "No se pudo abrir WhatsApp automáticamente.", "warning");
+      }
+      return;
+    }
+
+    const { isConfirmed } = await Swal.fire({
+      title: "¿Marcar como contactado?",
+      text: "Si el mensaje ya fue enviado, puedes actualizar la gestión para mantener trazabilidad.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Sí, marcar",
+      cancelButtonText: "Omitir",
+    });
+
+    if (!isConfirmed) return;
+
+    if (esRecordatorioAgendaServicio(item)) {
+      await guardarGestionAgenda(item, "contactado");
+    } else {
+      await guardarGestion(item, "contactado");
+    }
+  };
+
+  const enfocarPacienteRecordatorio = (cita) => {
+    const pacienteId = Number(cita?.paciente_id || 0);
+    if (pacienteId <= 0) return;
+
+    const nombre = String(cita?.paciente_nombre || "").trim();
+    const foco = { id: pacienteId, nombre };
+
+    const matchLocal = itemsPriorizados.find((it) => Number(it?.paciente_id || 0) === pacienteId) || null;
+    setPacienteFoco(foco);
+    setTipoRecordatorio("citas");
+    setVistaRapida("todas");
+    setSoloSinGestion(false);
+    setPage(1);
+
+    if (matchLocal?._rowKey) {
+      setFilaActivaId(matchLocal._rowKey);
+      window.setTimeout(() => {
+        const el = document.getElementById(`rc-row-${matchLocal._rowKey}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 80);
+    }
+  };
+
+  const limpiarFocoPaciente = () => {
+    setPacienteFoco(null);
+    setFilaActivaId(null);
+    setPage(1);
+  };
+
   const itemsVista = useMemo(() => {
     const base = agruparRecordatoriosAgendaServicio(items);
     if (vistaRapida === "criticos") {
@@ -1100,6 +1265,21 @@ export default function RecordatoriosCitasPage() {
     const start = (pageVista - 1) * rowsPerPage;
     return itemsPriorizados.slice(start, start + rowsPerPage);
   }, [itemsPriorizados, pageVista, rowsPerPage, usaPaginacionCliente]);
+
+  useEffect(() => {
+    const pacienteId = Number(pacienteFoco?.id || 0);
+    if (pacienteId <= 0) return;
+    const target = itemsPriorizados.find((it) => Number(it?.paciente_id || 0) === pacienteId) || null;
+    if (!target?._rowKey) return;
+
+    setFilaActivaId(target._rowKey);
+    window.setTimeout(() => {
+      const el = document.getElementById(`rc-row-${target._rowKey}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 90);
+  }, [itemsPriorizados, pacienteFoco]);
 
   useEffect(() => {
     if (page > totalPagesVista) {
@@ -1511,6 +1691,17 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const aplicarBusqueda = () => {
+    const next = String(busquedaInput || "");
+    const unchanged = next === String(busqueda || "");
+    if (page !== 1) setPage(1);
+    if (!unchanged) {
+      setBusqueda(next);
+      return;
+    }
+    cargar();
+  };
+
   return (
     <div className="min-h-screen p-4 sm:p-6" style={{ background: "linear-gradient(145deg, #f8fafc, #eef2ff)" }}>
       <div className="mx-auto max-w-7xl space-y-5">
@@ -1596,8 +1787,8 @@ export default function RecordatoriosCitasPage() {
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Busqueda</label>
               <input
                 className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
+                value={busquedaInput}
+                onChange={(e) => setBusquedaInput(e.target.value)}
                 placeholder="Paciente, medico, DNI, telefono o ID"
               />
             </div>
@@ -1617,7 +1808,7 @@ export default function RecordatoriosCitasPage() {
             <div className="flex items-end gap-2">
               <button
                 type="button"
-                onClick={cargar}
+                onClick={aplicarBusqueda}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 Buscar
@@ -1818,7 +2009,20 @@ export default function RecordatoriosCitasPage() {
                         citasDisponibilidadFiltradas.map((cita) => (
                           <tr key={`${cita.origen}-${cita.id}`} className="border-t border-indigo-50">
                             <td className="p-2 font-semibold text-indigo-800">{horaHm(cita.hora)}</td>
-                            <td className="p-2 text-slate-700">{cita.paciente_nombre || "-"}</td>
+                            <td className="p-2 text-slate-700">
+                              {Number(cita?.paciente_id || 0) > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => enfocarPacienteRecordatorio(cita)}
+                                  className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
+                                  title="Ir al recordatorio de este paciente"
+                                >
+                                  {cita.paciente_nombre || "-"}
+                                </button>
+                              ) : (
+                                <span>{cita.paciente_nombre || "-"}</span>
+                              )}
+                            </td>
                             <td className="p-2 text-slate-700">{cita.detalle || cita.servicio || "-"}</td>
                             <td className="p-2 text-slate-600">{cita.origen === "agenda_servicio" ? "Agenda" : "Consulta"}</td>
                             <td className="p-2 text-slate-600">{cita.estado || "-"}</td>
@@ -1922,6 +2126,20 @@ export default function RecordatoriosCitasPage() {
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {Number(pacienteFoco?.id || 0) > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 bg-indigo-50 px-4 py-2 text-xs text-indigo-900">
+              <span>
+                Mostrando recordatorios del paciente: <strong>{pacienteFoco?.nombre || `#${Number(pacienteFoco?.id || 0)}`}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={limpiarFocoPaciente}
+                className="rounded-md border border-indigo-300 bg-white px-2.5 py-1 font-semibold text-indigo-700 hover:bg-indigo-100"
+              >
+                Limpiar foco paciente
+              </button>
+            </div>
+          )}
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
@@ -2130,6 +2348,15 @@ export default function RecordatoriosCitasPage() {
                               )
                             ) : (
                               <>
+                                <button
+                                  type="button"
+                                  onClick={() => enviarRecordatorioWhatsApp(item)}
+                                  disabled={!String(item?.paciente_telefono || "").trim() || String(item?.estado_gestion || "").toLowerCase() === "cancelado" || consultaAtendidaEnHC(item)}
+                                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title={!String(item?.paciente_telefono || "").trim() ? "Paciente sin teléfono" : "Enviar recordatorio por WhatsApp"}
+                                >
+                                  WhatsApp
+                                </button>
                                 {puedeRegistrarCobro && (
                                   <button
                                     type="button"

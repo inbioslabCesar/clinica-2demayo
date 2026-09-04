@@ -1767,7 +1767,7 @@ function optimizar_horario_bloque_atencion($conn, $cotizacionId = 0, $bloqueId =
 
 function obtener_cotizacion($conn, $cotizacionId) {
     $stmt = $conn->prepare("
-        SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica,
+        SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica, p.telefono, p.tipo_seguro,
                COALESCE(u.nombre, 'Sistema') as usuario_nombre,
                COALESCE(u.rol, '') as usuario_rol
         FROM cotizaciones c
@@ -5836,6 +5836,7 @@ function resumen_diario($conn) {
     respond(['success' => true, 'resumen' => $rows]);
 }
 
+try {
 switch ($method) {
     case 'POST': {
         $data = input_json();
@@ -5975,6 +5976,7 @@ switch ($method) {
         $fechaInicio = $_GET['fecha_inicio'] ?? null;
         $fechaFin = $_GET['fecha_fin'] ?? null;
         $estado = $_GET['estado'] ?? null;
+        $soloRegistroIncompleto = isset($_GET['registro_incompleto']) && (string)$_GET['registro_incompleto'] === '1';
         $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : null;
         $q = trim((string)($_GET['q'] ?? ''));
         $includeDetalles = isset($_GET['include_detalles']) && (string)$_GET['include_detalles'] === '1';
@@ -5987,6 +5989,10 @@ switch ($method) {
         $hasLabCotizacion = column_exists($conn, 'ordenes_laboratorio', 'cotizacion_id');
         $hasCotizacionMovimientos = table_exists($conn, 'cotizacion_movimientos');
         $hasCotizacionMovimientosCreatedAt = $hasCotizacionMovimientos && column_exists($conn, 'cotizacion_movimientos', 'created_at');
+        $registroIncompletoExpr = "(p.id IS NOT NULL"
+            . " AND (p.fecha_nacimiento IS NULL OR CAST(p.fecha_nacimiento AS CHAR) = '0000-00-00' OR TRIM(CAST(p.fecha_nacimiento AS CHAR)) = '')"
+            . " AND (p.edad IS NULL OR TRIM(CAST(p.edad AS CHAR)) = '')"
+            . ")";
 
         $where = [];
         $types = '';
@@ -6018,6 +6024,9 @@ switch ($method) {
             $where[] = "c.usuario_id = ?";
             $types .= 'i';
             $params[] = $usuarioId;
+        }
+        if ($soloRegistroIncompleto) {
+            $where[] = $registroIncompletoExpr;
         }
         if ($q !== '') {
             $like = "%$q%";
@@ -6073,6 +6082,12 @@ switch ($method) {
                 p.apellido,
                 p.dni,
                 p.historia_clinica,
+                p.telefono,
+                p.tipo_seguro,
+                p.sexo,
+                p.fecha_nacimiento,
+                p.edad,
+                $registroIncompletoExpr AS registro_incompleto,
                 {$selectResponsableFarmacia}
                 COALESCE(u.nombre, 'Sistema') as usuario_nombre,
                 COALESCE(u.rol, '') as usuario_rol
@@ -6131,6 +6146,7 @@ switch ($method) {
         $metodosPagoListaPorCotizacion = [];
 
         if (!empty($idsPagina)) {
+            try {
             $placeholders = implode(',', array_fill(0, count($idsPagina), '?'));
             $typesIds = str_repeat('i', count($idsPagina));
 
@@ -6612,6 +6628,10 @@ switch ($method) {
                 }
             }
             unset($cotRow);
+            } catch (Throwable $enrichmentError) {
+                error_log('[api_cotizaciones] enrichment warning: ' . $enrichmentError->getMessage());
+                // Mantener listado base para no romper UI cuando una instancia tiene esquema parcial.
+            }
         }
 
         foreach ($cotizaciones as &$cotizacion) {
@@ -6652,6 +6672,9 @@ switch ($method) {
             $whereSql
         ";
         $stmtCount = $conn->prepare($sqlCount);
+        if (!$stmtCount) {
+            respond(['success' => false, 'error' => 'No se pudo preparar conteo de cotizaciones'], 500);
+        }
         if (strlen($types) > 0) {
             $stmtCount->bind_param($types, ...$params);
         }
@@ -6670,5 +6693,13 @@ switch ($method) {
 
     default:
         respond(['success' => false, 'error' => 'Método no permitido'], 405);
+}
+} catch (Throwable $fatalError) {
+    error_log('[api_cotizaciones] fatal: ' . $fatalError->getMessage());
+    respond([
+        'success' => false,
+        'error' => 'Error interno en cotizaciones',
+        'detail' => (getenv('APP_ENV') === 'production' ? null : $fatalError->getMessage()),
+    ], 500);
 }
 ?>

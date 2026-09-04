@@ -11,6 +11,14 @@ const VISTA_LABEL = {
   todos: "Todos",
 };
 
+function getTodayYmdLocal() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function nombrePaciente(item) {
   return [item?.paciente_nombre, item?.paciente_apellido].filter(Boolean).join(" ").trim() || "Paciente sin nombre";
 }
@@ -54,11 +62,36 @@ function claseEstadoAtencion(estado) {
   return "bg-slate-100 text-slate-700";
 }
 
+function colaEstadoLabel(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (v === "en_sala") return "En sala";
+  if (v === "llego") return "Llegó";
+  if (v === "llamando") return "Llamando";
+  if (v === "en_atencion") return "En atención";
+  if (v === "retirado") return "Retirado";
+  return "Pendiente";
+}
+
+function colaEstadoBadge(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (v === "en_sala") return "bg-rose-100 text-rose-700";
+  if (v === "llego") return "bg-amber-100 text-amber-700";
+  if (v === "llamando") return "bg-indigo-100 text-indigo-700";
+  if (v === "en_atencion") return "bg-emerald-100 text-emerald-700";
+  if (v === "retirado") return "bg-slate-100 text-slate-600";
+  return "bg-slate-100 text-slate-600";
+}
+
 export default function MisProcedimientosPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filtroPago, setFiltroPago] = useState("pagadas");
+  const [searchDebounced, setSearchDebounced] = useState("");
+  const [filtroPago, setFiltroPago] = useState("solo_pagadas");
+  const [filtroEstado, setFiltroEstado] = useState("activas");
+  const [filtroSemaforo, setFiltroSemaforo] = useState("todas");
+  const [fechaDesde, setFechaDesde] = useState(getTodayYmdLocal);
+  const [fechaHasta, setFechaHasta] = useState(getTodayYmdLocal);
   const [vista, setVista] = useState("pendientes");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
@@ -72,10 +105,14 @@ export default function MisProcedimientosPage() {
       const params = new URLSearchParams({
         page: String(page),
         limit: String(limit),
-        filtro_pago: filtroPago,
+        filtro_pago_panel: filtroPago,
+        estado_panel: filtroEstado,
+        semaforo_panel: filtroSemaforo,
+        fecha_desde: fechaDesde,
+        fecha_hasta: fechaHasta,
         vista,
       });
-      const q = search.trim();
+      const q = searchDebounced.trim();
       if (q) params.set("search", q);
 
       const res = await authFetch(`api_medico_procedimientos.php?${params.toString()}`);
@@ -92,7 +129,15 @@ export default function MisProcedimientosPage() {
     } finally {
       setLoading(false);
     }
-  }, [filtroPago, limit, page, search, vista]);
+  }, [fechaDesde, fechaHasta, filtroEstado, filtroPago, filtroSemaforo, limit, page, searchDebounced, vista]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setSearchDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
 
   const actualizarEstadoAtencion = useCallback(async (item, siguienteEstado) => {
     const detalleId = Number(item?.detalle_id || 0);
@@ -183,8 +228,8 @@ export default function MisProcedimientosPage() {
           </article>
         </section>
 
-        <section className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
+        <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap gap-2">
             {Object.entries(VISTA_LABEL).map(([key, label]) => (
               <button
                 key={key}
@@ -196,50 +241,124 @@ export default function MisProcedimientosPage() {
               </button>
             ))}
           </div>
-        </section>
 
-        <section className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => { setFiltroPago("pagadas"); setPage(1); }}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${filtroPago === "pagadas" ? "bg-cyan-700 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
-            >
-              Solo pagadas
-            </button>
-            <button
-              type="button"
-              onClick={() => { setFiltroPago("todas"); setPage(1); }}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${filtroPago === "todas" ? "bg-cyan-700 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
-            >
-              Todas
-            </button>
-            <button
-              type="button"
-              onClick={() => { setFiltroPago("no_pagadas"); setPage(1); }}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${filtroPago === "no_pagadas" ? "bg-cyan-700 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
-            >
-              No pagadas
-            </button>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-700">Búsqueda general</label>
+              <input
+                value={search}
+                onChange={(e) => {
+                  const value = String(e.target.value || "");
+                  const hasSearch = value.trim() !== "";
+                  setSearch(value);
+                  if (hasSearch) {
+                    setFiltroEstado("todas");
+                    setFiltroPago("todas");
+                    setFiltroSemaforo("todas");
+                    setVista("todos");
+                  }
+                }}
+                placeholder="Buscar por paciente, DNI, HC o procedimiento"
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Desde</label>
+              <input
+                type="date"
+                value={fechaDesde}
+                onChange={(e) => { setFechaDesde(e.target.value); setPage(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Hasta</label>
+              <input
+                type="date"
+                value={fechaHasta}
+                onChange={(e) => { setFechaHasta(e.target.value); setPage(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Estado de lista</label>
+              <select
+                value={filtroEstado}
+                onChange={(e) => { setFiltroEstado(e.target.value); setPage(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              >
+                <option value="activas">Activas (por defecto)</option>
+                <option value="pendientes">Solo pendientes</option>
+                <option value="completadas">Solo atendidas</option>
+                <option value="canceladas_excluidas">No realizadas</option>
+                <option value="todas">Todas</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Pago de atención</label>
+              <select
+                value={filtroPago}
+                onChange={(e) => { setFiltroPago(e.target.value); setPage(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              >
+                <option value="solo_pagadas">Solo pagadas</option>
+                <option value="solo_no_pagadas">Solo no pagadas</option>
+                <option value="todas">Pagadas y no pagadas</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Semáforo</label>
+              <select
+                value={filtroSemaforo}
+                onChange={(e) => { setFiltroSemaforo(e.target.value); setPage(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              >
+                <option value="todas">Todas</option>
+                <option value="proxima">Solo Próxima</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Filas por página</label>
+              <select
+                value={limit}
+                onChange={(e) => { setLimit(Number(e.target.value) || 15); setPage(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              >
+                <option value={10}>10 filas</option>
+                <option value={15}>15 filas</option>
+                <option value={25}>25 filas</option>
+                <option value={50}>50 filas</option>
+              </select>
+            </div>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-            <input
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              placeholder="Buscar por paciente, DNI, HC o procedimiento"
-              className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600 sm:w-96"
-            />
-            <select
-              value={limit}
-              onChange={(e) => { setLimit(Number(e.target.value) || 15); setPage(1); }}
-              className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
-            >
-              <option value={10}>10 filas</option>
-              <option value={15}>15 filas</option>
-              <option value={25}>25 filas</option>
-              <option value={50}>50 filas</option>
-            </select>
-          </div>
+
+          {(search || fechaDesde || fechaHasta) && (
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  const hoy = getTodayYmdLocal();
+                  setSearch("");
+                  setFiltroEstado("activas");
+                  setFiltroPago("solo_pagadas");
+                  setFiltroSemaforo("todas");
+                  setFechaDesde(hoy);
+                  setFechaHasta(hoy);
+                  setVista("pendientes");
+                  setPage(1);
+                }}
+                className="rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          )}
         </section>
 
         {loading ? (
@@ -279,7 +398,7 @@ export default function MisProcedimientosPage() {
                         <p className="text-xs text-slate-500">ID servicio: {Number(it.servicio_id || 0) || "-"}</p>
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-700">
-                        {formatearFecha(it.fecha_consulta || it.fecha_cotizacion, it.hora_consulta || "")}
+                        {formatearFecha(it.fecha_programada || it.fecha_consulta || it.fecha_cotizacion, it.hora_programada || it.hora_consulta || "")}
                       </td>
                       <td className="px-4 py-3">
                         {Number(it.consulta_id || 0) > 0 ? (
@@ -295,6 +414,17 @@ export default function MisProcedimientosPage() {
                         <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${claseEstadoAtencion(it.estado_atencion)}`}>
                           {String(it.estado_atencion || "pendiente").replace("_", " ")}
                         </span>
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${colaEstadoBadge(it.cola_estado)}`}>
+                            {Number(it.cola_correlativo || 0) > 0 ? `N-${Number(it.cola_correlativo)} · ` : ""}
+                            {colaEstadoLabel(it.cola_estado)}
+                          </span>
+                          {Number(it.cola_es_siguiente || 0) === 1 && (
+                            <span className="inline-flex rounded-full bg-indigo-100 px-2 py-1 text-xs font-semibold text-indigo-700">
+                              Siguiente
+                            </span>
+                          )}
+                        </div>
                         {String(it.atendido_en || "").trim() && (
                           <p className="mt-1 text-[11px] text-slate-500">{formatearFecha(it.atendido_en)}</p>
                         )}

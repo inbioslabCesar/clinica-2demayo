@@ -109,6 +109,8 @@ export default function CobrarCotizacionPage() {
           apellido: "",
           dni: String(cotBase?.dni || "").trim(),
           historia_clinica: String(cotBase?.historia_clinica || "").trim(),
+          telefono: String(cotBase?.telefono || "").trim(),
+          tipo_seguro: String(cotBase?.tipo_seguro || "").trim(),
         };
 
         const total = cotizacionesCargadas.reduce((acc, item) => acc + Number(item?.total || 0), 0);
@@ -354,6 +356,7 @@ export default function CobrarCotizacionPage() {
   }, [detallesCobro]);
 
   const estado = String(cotizacion?.estado || "").toLowerCase();
+  const pacienteRegistroIncompleto = String(paciente?.tipo_seguro || "").trim().toUpperCase() === "PENDIENTE_COMPLETAR";
   const esCotizacionInformativa = useMemo(() => {
     const tieneMarcador = (value) => String(value || "").toUpperCase().includes("[COTIZACION_INFORMATIVA]");
     if (estado === "informativo") return true;
@@ -579,6 +582,11 @@ export default function CobrarCotizacionPage() {
         <div><b>{esCobroUnificado ? "Atenciones" : "Atención"}:</b> {cotizacionIds.map((id) => `#${id}`).join(", ")}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
         <div><b>Saldo actual:</b> S/ {Number(saldoPendiente).toFixed(2)}</div>
+        {pacienteRegistroIncompleto && (
+          <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+            Paciente con registro mínimo pendiente de completar. El cobro puede continuar, pero recepción debe completar la ficha luego.
+          </div>
+        )}
         <div className="mt-2 text-xs text-gray-700">
           El sistema aplica el pago automáticamente de forma secuencial sobre los servicios pendientes{esCobroUnificado ? " del grupo seleccionado" : ""}.
         </div>

@@ -19,7 +19,6 @@ function ensure_medicos_profesional_columns_tarifas($conn) {
     }
 }
 
-ensure_medicos_profesional_columns_tarifas($conn);
 // Función para obtener los tipos de servicio
 function getTiposServicio() {
     return [
@@ -31,6 +30,80 @@ function getTiposServicio() {
         'procedimientos' => 'Procedimientos Médicos',
         'operacion' => 'Operaciones/Cirugías Mayores'
     ];
+}
+
+function obtenerTarifasServiciosGestionables($conn, $tipo = '') {
+    $serviciosGestionables = ['consulta', 'rayosx', 'ecografia', 'operacion', 'procedimientos'];
+    $tipo = trim((string)$tipo);
+
+    $checkColumn = $conn->query("SHOW COLUMNS FROM tarifas LIKE 'medico_id'");
+    $hasMedicoId = $checkColumn && $checkColumn->num_rows > 0;
+
+    $placeholders = implode(',', array_fill(0, count($serviciosGestionables), '?'));
+    $types = str_repeat('s', count($serviciosGestionables));
+    $params = $serviciosGestionables;
+
+    $sql = $hasMedicoId
+        ? "SELECT t.id, t.servicio_tipo, t.descripcion, t.precio_particular, t.precio_seguro, t.precio_convenio, t.activo,
+                  t.medico_id,
+                  m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad as medico_especialidad,
+                  m.tipo_profesional as medico_tipo_profesional, m.abreviatura_profesional as medico_abreviatura_profesional,
+                  m.colegio_sigla as medico_colegio_sigla, m.nro_colegiatura as medico_nro_colegiatura,
+                  t.porcentaje_medico, t.porcentaje_clinica, t.monto_medico, t.monto_clinica
+           FROM tarifas t
+           LEFT JOIN medicos m ON t.medico_id = m.id
+           WHERE t.activo = 1 AND t.servicio_tipo IN ($placeholders)"
+        : "SELECT t.id, t.servicio_tipo, t.descripcion, t.precio_particular, t.precio_seguro, t.precio_convenio, t.activo,
+                  NULL as medico_id,
+                  NULL as medico_nombre, NULL as medico_apellido, NULL as medico_especialidad,
+                  NULL as medico_tipo_profesional, NULL as medico_abreviatura_profesional,
+                  NULL as medico_colegio_sigla, NULL as medico_nro_colegiatura,
+                  t.porcentaje_medico, t.porcentaje_clinica, t.monto_medico, t.monto_clinica
+           FROM tarifas t
+           WHERE t.activo = 1 AND t.servicio_tipo IN ($placeholders)";
+
+    if ($tipo !== '' && in_array($tipo, $serviciosGestionables, true)) {
+        $sql .= " AND t.servicio_tipo = ?";
+        $types .= 's';
+        $params[] = $tipo;
+    }
+
+    $sql .= " ORDER BY t.servicio_tipo, t.medico_id, t.descripcion";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return [];
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $tarifas = [];
+
+    while ($row = $result->fetch_assoc()) {
+        $tarifas[] = [
+            'id' => $row['id'],
+            'servicio_tipo' => $row['servicio_tipo'],
+            'descripcion' => $row['descripcion'],
+            'precio_particular' => floatval($row['precio_particular']),
+            'precio_seguro' => $row['precio_seguro'] ? floatval($row['precio_seguro']) : null,
+            'precio_convenio' => $row['precio_convenio'] ? floatval($row['precio_convenio']) : null,
+            'activo' => intval($row['activo']),
+            'medico_id' => $row['medico_id'],
+            'medico_nombre' => $row['medico_nombre'],
+            'medico_apellido' => $row['medico_apellido'],
+            'medico_especialidad' => $row['medico_especialidad'],
+            'medico_tipo_profesional' => $row['medico_tipo_profesional'],
+            'medico_abreviatura_profesional' => $row['medico_abreviatura_profesional'],
+            'medico_colegio_sigla' => $row['medico_colegio_sigla'],
+            'medico_nro_colegiatura' => $row['medico_nro_colegiatura'],
+            'porcentaje_medico' => isset($row['porcentaje_medico']) ? floatval($row['porcentaje_medico']) : null,
+            'porcentaje_clinica' => isset($row['porcentaje_clinica']) ? floatval($row['porcentaje_clinica']) : null,
+            'monto_medico' => isset($row['monto_medico']) ? floatval($row['monto_medico']) : null,
+            'monto_clinica' => isset($row['monto_clinica']) ? floatval($row['monto_clinica']) : null,
+            'fuente' => 'tarifas'
+        ];
+    }
+
+    $stmt->close();
+    return $tarifas;
 }
 
 // Función para obtener tarifas incluyendo medicamentos y exámenes existentes
@@ -129,28 +202,16 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 switch($method) {
     case 'GET':
+        // En lectura evitamos lógica de alteración de esquema para no penalizar rutas críticas.
         // Si hay filtro por tipo de servicio
         $tipo = $_GET['servicio_tipo'] ?? $_GET['tipo'] ?? '';
-        
-        // Servicios médicos gestionables
-        $serviciosGestionables = [
-            'consulta', 'rayosx', 'ecografia', 'operacion', 'procedimientos'
-        ];
-        $tarifas = obtenerTodasLasTarifas($conn);
-        if ($tipo) {
-            $tarifasFiltradas = array_filter($tarifas, function($tarifa) use ($tipo, $serviciosGestionables) {
-                return $tarifa['servicio_tipo'] === $tipo && in_array($tarifa['servicio_tipo'], $serviciosGestionables);
-            });
-            echo json_encode(['success' => true, 'tarifas' => array_values($tarifasFiltradas)]);
-        } else {
-            $tarifasFiltradas = array_filter($tarifas, function($tarifa) use ($serviciosGestionables) {
-                return in_array($tarifa['servicio_tipo'], $serviciosGestionables);
-            });
-            echo json_encode(['success' => true, 'tarifas' => array_values($tarifasFiltradas)]);
-        }
+
+        $tarifas = obtenerTarifasServiciosGestionables($conn, $tipo);
+        echo json_encode(['success' => true, 'tarifas' => array_values($tarifas)]);
         break;
         
     case 'POST':
+        ensure_medicos_profesional_columns_tarifas($conn);
         // Crear nueva tarifa (solo servicios médicos)
         $data = json_decode(file_get_contents('php://input'), true);
         
@@ -199,6 +260,7 @@ switch($method) {
         break;
         
     case 'PUT':
+        ensure_medicos_profesional_columns_tarifas($conn);
         // Actualizar tarifa (solo servicios médicos)
         $data = json_decode(file_get_contents('php://input'), true);
         

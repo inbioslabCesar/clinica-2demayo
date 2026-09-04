@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 
 require_once 'db.php';
+require_once __DIR__ . '/caja_autocierre.php';
 
 try {
     // Verificar si el usuario está autenticado
@@ -11,6 +12,7 @@ try {
     }
 
     $usuario_id = intval($_SESSION['usuario']['id']);
+    caja_auto_cerrar_vencidas($pdo);
     $fecha_hoy = date('Y-m-d');
     error_log("[DEBUG] api_caja_estado.php - fecha_hoy: $fecha_hoy, usuario_id: $usuario_id");
 

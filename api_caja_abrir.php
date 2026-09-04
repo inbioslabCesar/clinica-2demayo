@@ -7,12 +7,50 @@ function normalizar_turno($turno)
 {
     $t = strtolower(trim((string)$turno));
     if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
-        return 'mañana';
+        return 'manana';
     }
     if ($t === 'tarde' || $t === 'noche') {
         return $t;
     }
     return '';
+}
+
+function resolver_turno_para_db($pdo, $turnoCanonico)
+{
+    $turnoCanonico = strtolower(trim((string)$turnoCanonico));
+    if (!in_array($turnoCanonico, ['manana', 'tarde', 'noche'], true)) {
+        return '';
+    }
+
+    try {
+        $stmt = $pdo->query("SHOW COLUMNS FROM cajas LIKE 'turno'");
+        $col = $stmt ? $stmt->fetch(PDO::FETCH_ASSOC) : null;
+        $columnType = strtolower(trim((string)($col['Type'] ?? '')));
+        if ($columnType !== '' && strpos($columnType, 'enum(') === 0) {
+            preg_match_all("/'([^']+)'/", $columnType, $matches);
+            $enumValues = $matches[1] ?? [];
+            if (!empty($enumValues)) {
+                $candidatos = [
+                    'manana' => ['manana', 'mañana', 'maã±ana', 'maÃ±ana'],
+                    'tarde' => ['tarde'],
+                    'noche' => ['noche'],
+                ][$turnoCanonico];
+
+                foreach ($candidatos as $cand) {
+                    if (in_array(strtolower($cand), $enumValues, true)) {
+                        return $cand;
+                    }
+                }
+
+                // Si no hubo match exacto, devolver el valor canónico y dejar que BD valide.
+                return $turnoCanonico;
+            }
+        }
+    } catch (Throwable $e) {
+        // Fallback silencioso al valor canónico cuando no se puede leer metadata.
+    }
+
+    return $turnoCanonico;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -35,6 +73,7 @@ try {
     $monto_apertura = floatval($input['monto_apertura'] ?? 0);
     $observaciones = trim($input['observaciones'] ?? '');
     $turno = normalizar_turno($input['turno'] ?? '');
+    $turnoDb = resolver_turno_para_db($pdo, $turno);
     $traspasoId = (int)($input['traspaso_id'] ?? 0);
 
     if ($traspasoId > 0) {
@@ -65,6 +104,10 @@ try {
         echo json_encode(['success' => false, 'error' => 'Turno inválido. Use mañana, tarde o noche']);
         exit;
     }
+    if ($turnoDb === '') {
+        echo json_encode(['success' => false, 'error' => 'No se pudo resolver el turno para esta base de datos']);
+        exit;
+    }
 
     // Crear nueva caja (sin restricción por fecha ni hora)
     $stmt = $pdo->prepare("
@@ -89,7 +132,7 @@ try {
         $monto_apertura,
         $hora_actual,
         $observaciones,
-        $turno
+        $turnoDb
     ]);
 
     $caja_id = $pdo->lastInsertId();

@@ -1195,12 +1195,16 @@ function HistoriaClinicaPage() {
           setConfiguracionClinica(data.data);
         }
       })
-      .catch(() => setConfiguracionClinica(null));
+      .catch(() => {
+        // Mantener la última configuración válida si falla la recarga.
+      });
   }, []);
   useEffect(() => {
     let cancelled = false;
 
     const cargarMedicoDesdeConsulta = async () => {
+      const cacheKey = consultaId ? `hc_medico_cache_${consultaId}` : null;
+
       if (!consultaId) {
         if (!cancelled) {
           setMedicoInfo(null);
@@ -1245,6 +1249,14 @@ function HistoriaClinicaPage() {
             setMedicoInfo(medicoConsulta);
             setFirmaMedico(medicoConsulta.firma || null);
             setFechaConsulta(fechaRaw);
+
+            if (cacheKey) {
+              try {
+                sessionStorage.setItem(cacheKey, JSON.stringify(medicoConsulta));
+              } catch {
+                // Ignore storage errors.
+              }
+            }
           }
           return;
         }
@@ -1252,17 +1264,28 @@ function HistoriaClinicaPage() {
         // Fallback below to session data when query fails.
       }
 
-      const medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
-      if (!cancelled) {
-        setConsultaActual(null);
-        if (medicoSession) {
-          setMedicoInfo(medicoSession);
-          setFirmaMedico(medicoSession.firma || null);
-        } else {
-          setMedicoInfo(null);
-          setFirmaMedico(null);
+      let medicoDesdeCache = null;
+      if (cacheKey) {
+        try {
+          medicoDesdeCache = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+        } catch {
+          medicoDesdeCache = null;
         }
-        setFechaConsulta("");
+      }
+
+      let medicoSession = null;
+      try {
+        medicoSession = JSON.parse(sessionStorage.getItem('medico') || 'null');
+      } catch {
+        medicoSession = null;
+      }
+
+      const fallbackMedico = medicoDesdeCache || medicoSession;
+      if (!cancelled) {
+        if (fallbackMedico) {
+          setMedicoInfo(fallbackMedico);
+          setFirmaMedico(fallbackMedico.firma || null);
+        }
       }
     };
 

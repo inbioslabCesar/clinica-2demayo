@@ -1,4 +1,5 @@
 import React, { memo } from "react";
+import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../../utils/pacienteRegistroEstado";
 
 const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, onCotizarPaciente, cotizarLabel = "Cotizar", page, setPage, totalPages }) {
   return (
@@ -7,6 +8,11 @@ const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar,
         {(pacientes || []).map(p => {
           const contratoEstado = Number(p?.contrato_activo || 0);
           const tieneContrato = contratoEstado > 0;
+          const registroEval = evaluarRegistroPaciente(p);
+          const registroIncompleto = registroEval.incompleto;
+          const registroTooltip = textoMotivosRegistroIncompleto(registroEval.motivos);
+          const tipoSeguroRaw = String(p?.tipo_seguro || "").trim();
+          const tipoSeguroNormalizado = tipoSeguroRaw.toUpperCase() === "PENDIENTE_COMPLETAR" ? "" : tipoSeguroRaw;
           return (
           <div key={p.id} className="bg-gradient-to-br from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
             {/* Header con HC y acciones */}
@@ -15,7 +21,7 @@ const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar,
                 <div className="text-lg font-bold text-purple-800">HC: {p.historia_clinica}</div>
                 <div className="text-sm text-gray-600">DNI: {p.dni}</div>
               </div>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap justify-end gap-1 max-w-[220px]">
                 <button onClick={() => onEditar(p)} className="bg-yellow-400 hover:bg-yellow-500 text-white p-2 rounded-full transition-colors" title="Editar paciente">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -28,19 +34,23 @@ const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar,
                 </button>
                 <button
                   onClick={() => (onCotizarPaciente ? onCotizarPaciente(p) : onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`))}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-full transition-colors"
+                  className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-2 rounded-lg transition-colors"
                   title={cotizarLabel === "Agendar" ? "Seleccionar y agendar consulta" : "Cotizar / seleccionar servicio"}
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
-                    <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor">Q</text>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h6m-6 4h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" />
                   </svg>
+                  <span className="text-[11px] font-semibold leading-none">Cotizar</span>
                 </button>
-                <button onClick={() => onNavigate(`/consumo-paciente/${p.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full transition-colors" title="Ver consumo total">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
-                    <text x="12" y="16" textAnchor="middle" fontSize="10" fill="currentColor">C</text>
+                <button
+                  onClick={() => onNavigate(`/consumo-paciente/${p.id}`)}
+                  className="inline-flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white px-2.5 py-2 rounded-lg transition-colors"
+                  title="Ver consumo total"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h3v7H5v-7zm5-5h3v12h-3V7zm5 3h3v9h-3v-9z" />
                   </svg>
+                  <span className="text-[11px] font-semibold leading-none">Consumo</span>
                 </button>
                 {tieneContrato && (
                   <button onClick={() => onNavigate(`/estado-cuenta/${p.id}`)} className={contratoEstado === 2 ? "bg-emerald-600 hover:bg-emerald-700 text-white p-2 rounded-full transition-colors" : "bg-slate-500 hover:bg-slate-600 text-white p-2 rounded-full transition-colors"} title={contratoEstado === 2 ? "Estado de cuenta (contrato vigente)" : "Estado de cuenta (historial)"}>
@@ -65,12 +75,19 @@ const PacienteListCards = memo(function PacienteListCards({ pacientes, onEditar,
                   {p.edad !== null ? `${p.edad} años` : 'Edad no registrada'}
                 </span>
               </div>
-              {p.tipo_seguro && (
+              {(tipoSeguroNormalizado || registroIncompleto) && (
                 <div className="flex items-center gap-2">
                   <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
-                  <span className="text-sm text-green-700 font-medium">{p.tipo_seguro}</span>
+                  <span className={`text-sm font-medium ${registroIncompleto ? "text-amber-700" : "text-green-700"}`}>
+                    {registroIncompleto ? "Registro incompleto" : tipoSeguroNormalizado}
+                  </span>
+                </div>
+              )}
+              {registroIncompleto && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800" title={registroTooltip}>
+                  {registroTooltip}
                 </div>
               )}
               {(p.telefono || p.email) && (

@@ -288,17 +288,6 @@ const EXAMENES_CACHE_TTL_MS = 10 * 60 * 1000;
 export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate, readOnly = false }) {
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
   const navigate = useNavigate();
-  const rolActual = React.useMemo(() => {
-    try {
-      const rawUsuario = sessionStorage.getItem("usuario");
-      const rawMedico = sessionStorage.getItem("medico");
-      const payload = rawUsuario ? JSON.parse(rawUsuario) : (rawMedico ? JSON.parse(rawMedico) : null);
-      return String(payload?.rol || "").toLowerCase();
-    } catch {
-      return "";
-    }
-  }, []);
-  const debeBloquearProcedimientos = rolActual === "administrador" || rolActual === "recepcionista";
 
   const cambiarTab = (t) => {
     sessionStorage.setItem(STORAGE_KEY, t);
@@ -330,19 +319,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
     navigate(path);
   }, [flushDraftIfNeeded, navigate, readOnly]);
 
-  useEffect(() => {
-    if (tab === "procedimientos" && debeBloquearProcedimientos) {
-      flushDraftIfNeeded();
-      cambiarTab("laboratorio");
-    }
-  }, [tab, debeBloquearProcedimientos, flushDraftIfNeeded]);
-
   const abrirTabProcedimientos = () => {
-    if (readOnly || debeBloquearProcedimientos) {
-      flushDraftIfNeeded();
-      cambiarTab("laboratorio");
-      return;
-    }
     cambiarTab("procedimientos");
   };
 
@@ -501,8 +478,7 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
         </button>
         <button type="button" onClick={abrirTabProcedimientos}
-          disabled={readOnly}
-          className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"} ${readOnly ? "opacity-50 cursor-not-allowed" : ""}`}>
+          className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🛠️ <span className="hidden sm:inline">Procedimientos</span><span className="sm:hidden">Proc</span>
         </button>
       </div>
@@ -620,8 +596,8 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
         {tab === "tomografia" && (
           <PanelImagen tipo="tomografia" label="Tomografía" emoji="🔬" color="amber" consultaId={consultaId} navigateWithDraft={navigateWithDraft} pacienteId={pacienteId} medicoNombre={medicoNombre} readOnly={readOnly} />
         )}
-        {tab === "procedimientos" && !readOnly && (
-          <SolicitudProcedimientos consultaId={consultaId} />
+        {tab === "procedimientos" && (
+          <SolicitudProcedimientos consultaId={consultaId} readOnly={readOnly} />
         )}
       </div>
     </div>

@@ -304,6 +304,35 @@ function pacientes_set_edad_row(array &$row): void {
     $row['edad_referencia_fecha'] = $fechaRef->format('Y-m-d');
 }
 
+function pacientes_tiene_edad_o_fecha_nacimiento(array $row): bool {
+    $fecha = trim((string)($row['fecha_nacimiento'] ?? ''));
+    if ($fecha !== '' && $fecha !== '0000-00-00') {
+        return true;
+    }
+
+    if (!isset($row['edad']) || $row['edad'] === null) {
+        return false;
+    }
+
+    $edadRaw = trim((string)$row['edad']);
+    if ($edadRaw === '') {
+        return false;
+    }
+
+    return is_numeric($edadRaw);
+}
+
+function pacientes_normalizar_tipo_seguro_visual(array &$row): void {
+    $tipoSeguro = strtoupper(trim((string)($row['tipo_seguro'] ?? '')));
+    if ($tipoSeguro !== 'PENDIENTE_COMPLETAR') {
+        return;
+    }
+
+    if (pacientes_tiene_edad_o_fecha_nacimiento($row)) {
+        $row['tipo_seguro'] = '';
+    }
+}
+
 // Función para generar el próximo número de historia clínica
 function generarProximaHistoriaClinica($conn) {
     // Obtener el último número de HC de la base de datos
@@ -583,6 +612,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $pacientes = [];
     while ($row = $result->fetch_assoc()) {
         pacientes_set_edad_row($row);
+        pacientes_normalizar_tipo_seguro_visual($row);
         $row['acompanantes'] = obtener_acompanantes_paciente($conn, (int)$row['id']);
         $pacientes[] = $row;
     }

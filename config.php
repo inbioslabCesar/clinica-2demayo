@@ -28,21 +28,130 @@ if (!defined('ASISTENTE_KB_PASSWORD')) define('ASISTENTE_KB_PASSWORD', (string)(
 
 $dbSessionTimeZone = '-05:00'; // Hora oficial de Lima (sin DST)
 
-$mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
-if ($mysqli->connect_errno) {
-    http_response_code(500);
-    $payload = ['error' => 'Error de conexión a la base de datos'];
+$dbConnectMaxAttempts = max(1, (int)(getenv('DB_CONNECT_RETRIES') ?: '5'));
+$dbConnectBaseDelayUs = max(0, (int)(getenv('DB_CONNECT_RETRY_DELAY_US') ?: '220000'));
+
+if (!function_exists('db_connect_error_retryable')) {
+    function db_connect_error_retryable($code, string $message): bool {
+        $intCode = (int)$code;
+        if (in_array($intCode, [1040, 1203, 1205, 2002, 2003, 2006, 2013], true)) {
+            return true;
+        }
+
+        $msg = strtolower(trim($message));
+        if ($msg === '') {
+            return false;
+        }
+
+        $signals = [
+            'operation not permitted',
+            'too many connections',
+            'server has gone away',
+            'lost connection',
+            'connection refused',
+            'resource temporarily unavailable',
+            "can't connect",
+            'temporarily unavailable',
+            'timeout',
+            'timed out',
+        ];
+        foreach ($signals as $needle) {
+            if (strpos($msg, $needle) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+$mysqli = null;
+$mysqliException = null;
+$mysqliConnectErrno = 0;
+$mysqliConnectError = '';
+
+for ($attempt = 1; $attempt <= $dbConnectMaxAttempts; $attempt++) {
+    $mysqli = null;
+    $mysqliException = null;
+    $mysqliConnectErrno = 0;
+    $mysqliConnectError = '';
+
+    try {
+        $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+        if ($mysqli && !$mysqli->connect_errno) {
+            break;
+        }
+        $mysqliConnectErrno = (int)($mysqli ? $mysqli->connect_errno : 0);
+        $mysqliConnectError = (string)($mysqli ? $mysqli->connect_error : '');
+    } catch (Throwable $e) {
+        $mysqliException = $e;
+        $mysqliConnectError = $e->getMessage();
+    }
+
+    $retryable = db_connect_error_retryable($mysqliConnectErrno, $mysqliConnectError);
+    if ($mysqliException) {
+        $retryable = db_connect_error_retryable($mysqliException->getCode(), $mysqliException->getMessage());
+    }
+
+    if ($attempt >= $dbConnectMaxAttempts || !$retryable) {
+        break;
+    }
+
+    usleep($dbConnectBaseDelayUs * $attempt);
+}
+
+if ($mysqliException) {
+    if (function_exists('api_log_server_error')) {
+        api_log_server_error('db-mysqli-exception', $mysqliException->getMessage(), $mysqliException->getFile(), (int)$mysqliException->getLine());
+    }
+
+    $payload = [];
     if (function_exists('api_debug_enabled') && api_debug_enabled()) {
         $payload['debug'] = [
             'db_host' => DB_HOST,
             'db_name' => DB_NAME,
             'db_user' => DB_USER,
-            'connect_errno' => $mysqli->connect_errno,
-            'connect_error' => $mysqli->connect_error,
+            'exception_class' => get_class($mysqliException),
+            'exception_message' => $mysqliException->getMessage(),
+            'attempts' => $dbConnectMaxAttempts,
             'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
         ];
     }
-    echo json_encode($payload);
+
+    if (function_exists('api_emit_error')) {
+        api_emit_error('Error de conexión a la base de datos', 500, $payload);
+    } else {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión a la base de datos'], $payload));
+    }
+    exit;
+}
+
+if (!$mysqli || $mysqli->connect_errno) {
+    if (function_exists('api_log_server_error')) {
+        api_log_server_error('db-mysqli', (string)($mysqli ? $mysqli->connect_error : $mysqliConnectError), __FILE__, __LINE__);
+    }
+
+    $payload = [];
+    if (function_exists('api_debug_enabled') && api_debug_enabled()) {
+        $payload['debug'] = [
+            'db_host' => DB_HOST,
+            'db_name' => DB_NAME,
+            'db_user' => DB_USER,
+            'connect_errno' => $mysqli ? $mysqli->connect_errno : $mysqliConnectErrno,
+            'connect_error' => $mysqli ? $mysqli->connect_error : $mysqliConnectError,
+            'attempts' => $dbConnectMaxAttempts,
+            'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
+        ];
+    }
+
+    if (function_exists('api_emit_error')) {
+        api_emit_error('Error de conexión a la base de datos', 500, $payload);
+    } else {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión a la base de datos'], $payload));
+    }
     exit;
 }
 $mysqli->set_charset('utf8mb4');
@@ -55,17 +164,37 @@ $skipPdoInit = defined('SKIP_PDO_INIT') && SKIP_PDO_INIT;
 $pdo = null;
 
 if (!$skipPdoInit) {
-    try {
-        $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
-        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES => false,
-        ]);
-        $pdo->exec("SET time_zone = '{$dbSessionTimeZone}'");
-    } catch (PDOException $e) {
-        http_response_code(500);
-        $payload = ['error' => 'Error de conexión PDO a la base de datos'];
+    $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
+    $pdoException = null;
+
+    for ($attempt = 1; $attempt <= $dbConnectMaxAttempts; $attempt++) {
+        $pdo = null;
+        $pdoException = null;
+
+        try {
+            $pdo = new PDO($dsn, DB_USER, DB_PASS, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            $pdo->exec("SET time_zone = '{$dbSessionTimeZone}'");
+            break;
+        } catch (PDOException $e) {
+            $pdoException = $e;
+            if ($attempt >= $dbConnectMaxAttempts || !db_connect_error_retryable($e->getCode(), $e->getMessage())) {
+                break;
+            }
+            usleep($dbConnectBaseDelayUs * $attempt);
+        }
+    }
+
+    if (!$pdo) {
+        $e = $pdoException instanceof PDOException ? $pdoException : new PDOException('No se pudo establecer conexión PDO');
+        if (function_exists('api_log_server_error')) {
+            api_log_server_error('db-pdo', $e->getMessage(), __FILE__, __LINE__);
+        }
+
+        $payload = [];
         if (function_exists('api_debug_enabled') && api_debug_enabled()) {
             $payload['debug'] = [
                 'db_host' => DB_HOST,
@@ -73,10 +202,18 @@ if (!$skipPdoInit) {
                 'db_user' => DB_USER,
                 'pdo_code' => $e->getCode(),
                 'pdo_message' => $e->getMessage(),
+                'attempts' => $dbConnectMaxAttempts,
                 'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
             ];
         }
-        echo json_encode($payload);
+
+        if (function_exists('api_emit_error')) {
+            api_emit_error('Error de conexión PDO a la base de datos', 500, $payload);
+        } else {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión PDO a la base de datos'], $payload));
+        }
         exit;
     }
 }

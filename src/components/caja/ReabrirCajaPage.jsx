@@ -10,6 +10,18 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 const ReabrirCajaPage = () => {
 	const [cajasCerradas, setCajasCerradas] = useState([]);
 	const [resumenDiario, setResumenDiario] = useState([]);
+	const [resumenCierreRealDiario, setResumenCierreRealDiario] = useState([]);
+	const [indicadores, setIndicadores] = useState({
+		total_cajas: 0,
+		total_pendientes_cuadre: 0,
+		total_regularizadas: 0,
+		efectivo_real_total: 0,
+		efectivo_esperado_total: 0,
+		diferencia_efectivo_total: 0,
+		virtual_cobrado_total: 0,
+		virtual_real_total: 0,
+		diferencia_virtual_total: 0,
+	});
 	const [historialReaperturas, setHistorialReaperturas] = useState([]);
 	const [activeTab, setActiveTab] = useState('cajas');
 	const navigate = useNavigate();
@@ -18,8 +30,9 @@ const ReabrirCajaPage = () => {
 	const [showModal, setShowModal] = useState(false);
 	const [cajaSeleccionada, setCajaSeleccionada] = useState(null);
 	const [motivo, setMotivo] = useState('');
-	const [rowsPerPage, setRowsPerPage] = useState(3);
+	const [rowsPerPage, setRowsPerPage] = useState(10);
 	const [page, setPage] = useState(1);
+	const [paginacion, setPaginacion] = useState({ page: 1, per_page: 10, total: 0, total_pages: 1, from: 0, to: 0 });
 	const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().slice(0, 10));
 	const [fechaDesde, setFechaDesde] = useState(() => {
 		const now = new Date();
@@ -36,30 +49,41 @@ const ReabrirCajaPage = () => {
 		cargarDatos();
 	}, []);
 
-	const cargarDatos = async (filtros = {
+	const construirFiltrosActuales = () => ({
 		fecha_desde: fechaDesde,
 		fecha_hasta: fechaHasta,
 		usuario_id: usuarioIdFiltro,
 		turno: turnoFiltro,
-	}) => {
+	});
+
+	const cargarDatos = async ({ filtros, pageParam, perPageParam } = {}) => {
+		const filtrosFinales = filtros || construirFiltrosActuales();
+		const pageFinal = pageParam || page;
+		const perPageFinal = perPageParam || rowsPerPage;
 		try {
 			setLoading(true);
 			const params = new URLSearchParams();
-			if (filtros.fecha_desde) params.set('fecha_desde', filtros.fecha_desde);
-			if (filtros.fecha_hasta) params.set('fecha_hasta', filtros.fecha_hasta);
-			if (filtros.usuario_id) params.set('usuario_id', filtros.usuario_id);
-			if (filtros.turno) params.set('turno', filtros.turno);
-			params.set('limite', '2000');
+			if (filtrosFinales.fecha_desde) params.set('fecha_desde', filtrosFinales.fecha_desde);
+			if (filtrosFinales.fecha_hasta) params.set('fecha_hasta', filtrosFinales.fecha_hasta);
+			if (filtrosFinales.usuario_id) params.set('usuario_id', filtrosFinales.usuario_id);
+			if (filtrosFinales.turno) params.set('turno', filtrosFinales.turno);
+			params.set('page', String(pageFinal));
+			params.set('per_page', String(perPageFinal));
 			const response = await authFetch(`api_cajas_cerradas.php?${params.toString()}`);
 			if (response.ok) {
 				const data = await response.json();
 				if (data.success) {
 					setCajasCerradas(data.cajas_cerradas);
 					setResumenDiario(Array.isArray(data.resumen_diario) ? data.resumen_diario : []);
+					setResumenCierreRealDiario(Array.isArray(data.resumen_cierre_real_diario) ? data.resumen_cierre_real_diario : []);
+					setIndicadores(data.indicadores || {});
 					setHistorialReaperturas(data.historial_reaperturas);
 					setUsuariosDisponibles(Array.isArray(data.usuarios_disponibles) ? data.usuarios_disponibles : []);
 					setTurnosDisponibles(Array.isArray(data.turnos_disponibles) ? data.turnos_disponibles : []);
-					setPage(1);
+					const pag = data.paginacion || { page: pageFinal, per_page: perPageFinal, total: 0, total_pages: 1, from: 0, to: 0 };
+					setPaginacion(pag);
+					setPage(Number(pag.page || pageFinal));
+					setRowsPerPage(Number(pag.per_page || perPageFinal));
 				}
 			}
 		} catch (error) {
@@ -71,15 +95,32 @@ const ReabrirCajaPage = () => {
 
 	const userRole = sessionStorage.getItem('user_role') || localStorage.getItem('user_role') || 'recepcionista';
 
-	// Acciones de paginación y reapertura
-	const handleReabrir = (cajaOrAction) => {
-		if (cajaOrAction === 'prev') setPage(page > 1 ? page - 1 : 1);
-		else if (cajaOrAction === 'next') setPage(page < Math.ceil(cajasCerradas.length / rowsPerPage) ? page + 1 : page);
-		else {
-			setCajaSeleccionada(cajaOrAction);
-			setMotivo('');
-			setShowModal(true);
-		}
+	const handleReabrir = (caja) => {
+		setCajaSeleccionada(caja);
+		setMotivo('');
+		setShowModal(true);
+	};
+
+	const handlePrevPage = () => {
+		if (page <= 1) return;
+		cargarDatos({ pageParam: page - 1 });
+	};
+
+	const handleNextPage = () => {
+		if (page >= (paginacion.total_pages || 1)) return;
+		cargarDatos({ pageParam: page + 1 });
+	};
+
+	const handleGoToPage = (targetPage) => {
+		const safePage = Math.max(1, Math.min(Number(targetPage) || 1, paginacion.total_pages || 1));
+		if (safePage === page) return;
+		cargarDatos({ pageParam: safePage });
+	};
+
+	const handleRowsPerPageChange = (nextRows) => {
+		setRowsPerPage(nextRows);
+		setPage(1);
+		cargarDatos({ pageParam: 1, perPageParam: nextRows });
 	};
 
 	const handleCloseModal = () => {
@@ -99,7 +140,7 @@ const ReabrirCajaPage = () => {
 			if (response.ok) {
 				const data = await response.json();
 				if (data.success) {
-					cargarDatos();
+					cargarDatos({ pageParam: page });
 					setShowModal(false);
 				}
 			}
@@ -117,11 +158,15 @@ const ReabrirCajaPage = () => {
 			return;
 		}
 		setErrorFiltros('');
+		setPage(1);
 		cargarDatos({
-			fecha_desde: fechaDesde,
-			fecha_hasta: fechaHasta,
-			usuario_id: usuarioIdFiltro,
-			turno: turnoFiltro,
+			filtros: {
+				fecha_desde: fechaDesde,
+				fecha_hasta: fechaHasta,
+				usuario_id: usuarioIdFiltro,
+				turno: turnoFiltro,
+			},
+			pageParam: 1,
 		});
 	};
 
@@ -135,7 +180,8 @@ const ReabrirCajaPage = () => {
 		setUsuarioIdFiltro('');
 		setTurnoFiltro('');
 		setErrorFiltros('');
-		cargarDatos({ fecha_desde: desde, fecha_hasta: hasta, usuario_id: '', turno: '' });
+		setPage(1);
+		cargarDatos({ filtros: { fecha_desde: desde, fecha_hasta: hasta, usuario_id: '', turno: '' }, pageParam: 1 });
 	};
 
 	const columnasExport = [
@@ -168,7 +214,7 @@ const ReabrirCajaPage = () => {
 		{ key: 'ganancia_dia', label: 'Ganancia Día' },
 	];
 
-	const filasExport = cajasCerradas.map((caja) => ({
+	const filasExportActual = cajasCerradas.map((caja) => ({
 		fecha: caja.fecha || '',
 		usuario_nombre: caja.usuario_nombre || '-',
 		turno: caja.turno || '-',
@@ -198,12 +244,53 @@ const ReabrirCajaPage = () => {
 		ganancia_dia: Number(fila.ganancia_dia || 0).toFixed(2),
 	}));
 
-	const handleExportExcel = () => {
+	const cargarCajasParaExport = async () => {
+		const filtros = construirFiltrosActuales();
+		const acumulado = [];
+		let paginaActual = 1;
+		let totalPaginas = 1;
+		do {
+			const params = new URLSearchParams();
+			if (filtros.fecha_desde) params.set('fecha_desde', filtros.fecha_desde);
+			if (filtros.fecha_hasta) params.set('fecha_hasta', filtros.fecha_hasta);
+			if (filtros.usuario_id) params.set('usuario_id', filtros.usuario_id);
+			if (filtros.turno) params.set('turno', filtros.turno);
+			params.set('page', String(paginaActual));
+			params.set('per_page', '200');
+			const response = await authFetch(`api_cajas_cerradas.php?${params.toString()}`);
+			if (!response.ok) break;
+			const data = await response.json();
+			if (!data.success) break;
+			acumulado.push(...(Array.isArray(data.cajas_cerradas) ? data.cajas_cerradas : []));
+			totalPaginas = Number(data.paginacion?.total_pages || 1);
+			paginaActual += 1;
+		} while (paginaActual <= totalPaginas && paginaActual <= 100);
+
+		return acumulado.map((caja) => ({
+			fecha: caja.fecha || '',
+			usuario_nombre: caja.usuario_nombre || '-',
+			turno: caja.turno || '-',
+			observaciones_cierre: String(caja.observaciones_cierre || '').trim() || 'Sin observaciones',
+			monto_cierre: Number(caja.monto_cierre || 0).toFixed(2),
+			diferencia: Number(caja.diferencia || 0).toFixed(2),
+			total_efectivo: Number(caja.total_efectivo || 0).toFixed(2),
+			total_yape: Number(caja.total_yape || 0).toFixed(2),
+			total_plin: Number(caja.total_plin || 0).toFixed(2),
+			total_tarjetas: Number(caja.total_tarjetas || 0).toFixed(2),
+			total_transferencias: Number(caja.total_transferencias || 0).toFixed(2),
+			total_egresos: Number(caja.total_egresos || 0).toFixed(2),
+			ganancia_dia: Number(caja.ganancia_dia || 0).toFixed(2),
+		}));
+	};
+
+	const handleExportExcel = async () => {
+		const filasExport = await cargarCajasParaExport();
 		if (!filasExport.length) return;
 		exportToExcel(filasExport, columnasExport, `cajas-cerradas-${fechaDesde}-a-${fechaHasta}.xlsx`);
 	};
 
-	const handleExportPdf = () => {
+	const handleExportPdf = async () => {
+		const filasExport = await cargarCajasParaExport();
 		if (!filasExport.length) return;
 		exportToPDF(filasExport, columnasExport, `cajas-cerradas-${fechaDesde}-a-${fechaHasta}.pdf`);
 	};
@@ -218,7 +305,7 @@ const ReabrirCajaPage = () => {
 		exportToPDF(filasResumenExport, columnasResumenExport, `resumen-cajas-${fechaDesde}-a-${fechaHasta}.pdf`);
 	};
 
-	const canExportDetalle = filasExport.length > 0;
+	const canExportDetalle = filasExportActual.length > 0 || (paginacion.total || 0) > 0;
 	const canExportResumen = filasResumenExport.length > 0;
 
 	return (
@@ -355,15 +442,21 @@ const ReabrirCajaPage = () => {
 							) : null}
 						</div>
 						<div className="w-full flex flex-col items-end mb-4">
-							<RowsSelector rowsPerPage={rowsPerPage} setRowsPerPage={setRowsPerPage} setPage={setPage} />
+							<RowsSelector rowsPerPage={rowsPerPage} onChangeRows={handleRowsPerPageChange} />
 						</div>
 						<CajasCerradasTable
 							cajas={cajasCerradas}
 							resumenDiario={resumenDiario}
+							resumenCierreRealDiario={resumenCierreRealDiario}
+							indicadores={indicadores}
+							paginacion={paginacion}
 							page={page}
 							rowsPerPage={rowsPerPage}
 							userRole={userRole}
 							onReabrir={handleReabrir}
+							onPrevPage={handlePrevPage}
+							onNextPage={handleNextPage}
+							onGoToPage={handleGoToPage}
 							fechaDesde={fechaDesde}
 							fechaHasta={fechaHasta}
 						/>

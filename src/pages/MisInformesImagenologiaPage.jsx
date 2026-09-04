@@ -12,6 +12,14 @@ function detectarLayoutMobile() {
   return window.innerWidth < 768;
 }
 
+function getTodayYmdLocal() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 const TIPO_LABEL = {
   todos: "Todos",
   ecografia: "Ecografías",
@@ -183,11 +191,37 @@ function formatearFechaProgramada(fecha, hora) {
   return `${dd}/${mm}/${yyyy} ${String(hour12).padStart(2, "0")}:${minute} ${ampm}`;
 }
 
+function colaEstadoLabel(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (v === "en_sala") return "En sala";
+  if (v === "llego") return "Llegó";
+  if (v === "llamando") return "Llamando";
+  if (v === "en_atencion") return "En atención";
+  if (v === "retirado") return "Retirado";
+  return "Pendiente";
+}
+
+function colaEstadoBadge(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (v === "en_sala") return "border-rose-200 bg-rose-100 text-rose-700";
+  if (v === "llego") return "border-amber-200 bg-amber-100 text-amber-700";
+  if (v === "llamando") return "border-indigo-200 bg-indigo-100 text-indigo-700";
+  if (v === "en_atencion") return "border-emerald-200 bg-emerald-100 text-emerald-700";
+  if (v === "retirado") return "border-slate-200 bg-slate-100 text-slate-600";
+  return "border-slate-200 bg-slate-100 text-slate-600";
+}
+
 export default function MisInformesImagenologiaPage({ usuario }) {
   const navigate = useNavigate();
   const [ordenes, setOrdenes] = useState([]);
   const [tipo, setTipo] = useState("todos");
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaDebounced, setBusquedaDebounced] = useState("");
+  const [fechaDesde, setFechaDesde] = useState(getTodayYmdLocal);
+  const [fechaHasta, setFechaHasta] = useState(getTodayYmdLocal);
+  const [filtroEstado, setFiltroEstado] = useState("activas");
+  const [filtroPago, setFiltroPago] = useState("solo_pagadas");
+  const [filtroSemaforo, setFiltroSemaforo] = useState("todas");
   const [pagina, setPagina] = useState(1);
   const [filasPorPagina, setFilasPorPagina] = useState(10);
   const [paginacion, setPaginacion] = useState({ page: 1, limit: 10, total: 0, total_pages: 1 });
@@ -212,18 +246,50 @@ export default function MisInformesImagenologiaPage({ usuario }) {
 
     setLoading(true);
     try {
-      const response = await authFetch(`api_ordenes_imagen.php?medico_id=${medicoId}&tipo=${tipo}&page=${pagina}&limit=${filasPorPagina}`);
+      const params = new URLSearchParams({
+        medico_id: String(medicoId),
+        tipo,
+        page: String(pagina),
+        limit: String(filasPorPagina),
+      });
+      if (busquedaDebounced.trim()) params.set("search", busquedaDebounced.trim());
+      if (fechaDesde) params.set("fecha_desde", fechaDesde);
+      if (fechaHasta) params.set("fecha_hasta", fechaHasta);
+      if (filtroEstado) params.set("estado_panel", filtroEstado);
+      if (filtroPago) params.set("filtro_pago_panel", filtroPago);
+      if (filtroSemaforo) params.set("semaforo_panel", filtroSemaforo);
+
+      const response = await authFetch(`api_ordenes_imagen.php?${params.toString()}`);
       const data = await response.json();
       if (!data.success) throw new Error(data.error || "No se pudieron cargar las órdenes");
       setOrdenes(Array.isArray(data.ordenes) ? data.ordenes : []);
       setPaginacion(data.pagination || { page: 1, limit: 10, total: 0, total_pages: 1 });
     } catch (error) {
-      setOrdenes([]);
       Swal.fire("Error", error.message || "No se pudieron cargar las órdenes de imagenología.", "error");
     } finally {
       setLoading(false);
     }
-  }, [edicionInformeActiva, filasPorPagina, medicoId, pagina, tipo]);
+  }, [
+    busquedaDebounced,
+    edicionInformeActiva,
+    fechaDesde,
+    fechaHasta,
+    filasPorPagina,
+    filtroEstado,
+    filtroPago,
+    filtroSemaforo,
+    medicoId,
+    pagina,
+    tipo,
+  ]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setBusquedaDebounced(busqueda.trim());
+      setPagina(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [busqueda]);
 
   useEffect(() => {
     cargarOrdenes({ automatica: true });
@@ -260,16 +326,7 @@ export default function MisInformesImagenologiaPage({ usuario }) {
     }
   };
 
-  const filtro = busqueda.trim().toLowerCase();
-  const ordenesVisibles = ordenes.filter((orden) => {
-    if (!filtro) return true;
-    const paciente = orden.paciente || {};
-    return [paciente.nombre, paciente.dni, orden.indicaciones, ...(orden.servicios_nombres || [])]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(filtro);
-  });
+  const ordenesVisibles = useMemo(() => ordenes, [ordenes]);
 
   return (
     <main className="min-h-full bg-slate-50 px-4 py-5 sm:px-6 lg:px-8">
@@ -291,8 +348,8 @@ export default function MisInformesImagenologiaPage({ usuario }) {
           </button>
         </header>
 
-        <section className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Tipo de estudio">
+        <section className="mb-5 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Tipo de estudio">
             {Object.entries(TIPO_LABEL).map(([key, label]) => (
               <button
                 key={key}
@@ -306,12 +363,124 @@ export default function MisInformesImagenologiaPage({ usuario }) {
               </button>
             ))}
           </div>
-          <input
-            value={busqueda}
-            onChange={(event) => setBusqueda(event.target.value)}
-            placeholder="Buscar por paciente, DNI o estudio"
-            className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600 sm:max-w-sm"
-          />
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-700">Búsqueda general</label>
+              <input
+                value={busqueda}
+                onChange={(event) => {
+                  const value = String(event.target.value || "");
+                  const hasSearch = value.trim() !== "";
+                  setBusqueda(value);
+                  if (hasSearch) {
+                    setFiltroEstado("todas");
+                    setFiltroPago("todas");
+                    setFiltroSemaforo("todas");
+                  }
+                }}
+                placeholder="Buscar por paciente, DNI o estudio"
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              />
+              {busqueda.trim() !== "" && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Al buscar por texto, Estado, Pago y Semáforo cambian a "Todas" para no ocultar coincidencias.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Desde</label>
+              <input
+                type="date"
+                value={fechaDesde}
+                onChange={(event) => { setFechaDesde(event.target.value); setPagina(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Hasta</label>
+              <input
+                type="date"
+                value={fechaHasta}
+                onChange={(event) => { setFechaHasta(event.target.value); setPagina(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Estado de lista</label>
+              <select
+                value={filtroEstado}
+                onChange={(event) => {
+                  const nextEstado = event.target.value;
+                  setFiltroEstado(nextEstado);
+                  if (nextEstado === "canceladas_excluidas") {
+                    setFiltroPago("todas");
+                  }
+                  setPagina(1);
+                }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              >
+                <option value="activas">Activas (por defecto)</option>
+                <option value="pendientes">Solo pendientes</option>
+                <option value="completadas">Solo completadas</option>
+                <option value="canceladas_excluidas">Canceladas / eliminadas</option>
+                <option value="todas">Todas</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Pago de atención</label>
+              <select
+                value={filtroPago}
+                onChange={(event) => { setFiltroPago(event.target.value); setPagina(1); }}
+                disabled={filtroEstado === "canceladas_excluidas"}
+                className={`h-10 w-full rounded-md border px-3 text-sm outline-none focus:border-cyan-600 ${filtroEstado === "canceladas_excluidas" ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500" : "border-slate-300 bg-white text-slate-800"}`}
+              >
+                <option value="solo_pagadas">Solo pagadas (por defecto)</option>
+                <option value="solo_no_pagadas">Solo no pagadas</option>
+                <option value="todas">Pagadas y no pagadas</option>
+              </select>
+              {filtroEstado === "canceladas_excluidas" && (
+                <p className="mt-1 text-[11px] text-slate-500">Para canceladas/eliminadas se muestra todo sin filtrar por pago.</p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Semáforo</label>
+              <select
+                value={filtroSemaforo}
+                onChange={(event) => { setFiltroSemaforo(event.target.value); setPagina(1); }}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-600"
+              >
+                <option value="todas">Todas</option>
+                <option value="proxima">Solo Próxima</option>
+              </select>
+            </div>
+          </div>
+
+          {(busqueda || fechaDesde || fechaHasta) && (
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  const hoy = getTodayYmdLocal();
+                  setBusqueda("");
+                  setFechaDesde(hoy);
+                  setFechaHasta(hoy);
+                  setFiltroEstado("activas");
+                  setFiltroPago("solo_pagadas");
+                  setFiltroSemaforo("todas");
+                  setPagina(1);
+                }}
+                className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-slate-100 px-3 text-sm font-medium text-slate-700 hover:bg-slate-200"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          )}
         </section>
 
         {loading ? (
@@ -357,6 +526,17 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       <div className="min-w-0">
                         <p className="text-xs text-slate-700">{formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
                         <p className="mt-0.5 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaEstadoBadge(orden.cola_estado)}`}>
+                            {Number(orden.cola_correlativo || 0) > 0 ? `N-${Number(orden.cola_correlativo)} · ` : ""}
+                            {colaEstadoLabel(orden.cola_estado)}
+                          </span>
+                          {Number(orden.cola_es_siguiente || 0) === 1 && (
+                            <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                              Siguiente
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <span className="text-xs text-slate-600">{tieneConsulta ? "Consulta" : "Atención directa"}</span>
                       <span className="text-xs font-medium text-slate-700">{orden.archivos?.length || 0}</span>
@@ -437,6 +617,17 @@ export default function MisInformesImagenologiaPage({ usuario }) {
                       {(orden.servicios_nombres || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{orden.servicios_nombres.join(" · ")}</p>}
                       <p className="mt-1 text-xs text-slate-500">Programado: {formatearFechaProgramada(orden.fecha_programada, orden.hora_programada)}</p>
                       <p className="mt-1 text-xs text-slate-500">Solicitado: {formatearFechaSolicitud(orden.fecha)}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaEstadoBadge(orden.cola_estado)}`}>
+                          {Number(orden.cola_correlativo || 0) > 0 ? `N-${Number(orden.cola_correlativo)} · ` : ""}
+                          {colaEstadoLabel(orden.cola_estado)}
+                        </span>
+                        {Number(orden.cola_es_siguiente || 0) === 1 && (
+                          <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                            Siguiente
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="shrink-0 text-right">
                       <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${orden.estado === "cancelado" ? "bg-red-100 text-red-700" : orden.estado === "completado" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>

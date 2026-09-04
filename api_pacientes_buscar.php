@@ -10,6 +10,44 @@ function pacientes_buscar_ends_with(string $haystack, string $needle): bool {
     return substr($haystack, -$needLen) === $needle;
 }
 
+function pacientes_buscar_cache_dir(): string {
+    return __DIR__ . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'api-cache';
+}
+
+function pacientes_buscar_cache_file_for_dni(string $dni): string {
+    $safe = preg_replace('/[^0-9]/', '', $dni);
+    return pacientes_buscar_cache_dir() . DIRECTORY_SEPARATOR . 'reniec_dni_' . $safe . '.json';
+}
+
+function pacientes_buscar_cache_read_dni(string $dni, int $ttlSeconds = 86400): ?array {
+    $path = pacientes_buscar_cache_file_for_dni($dni);
+    if (!is_file($path)) return null;
+
+    $mtime = @filemtime($path);
+    if (!is_int($mtime) || $mtime <= 0) return null;
+    if ((time() - $mtime) > $ttlSeconds) return null;
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || $raw === '') return null;
+    $data = json_decode($raw, true);
+    if (!is_array($data)) return null;
+
+    return $data;
+}
+
+function pacientes_buscar_cache_write_dni(string $dni, array $payload): void {
+    $dir = pacientes_buscar_cache_dir();
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+    if (!is_dir($dir)) return;
+
+    $path = pacientes_buscar_cache_file_for_dni($dni);
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($json) || $json === '') return;
+    @file_put_contents($path, $json, LOCK_EX);
+}
+
 function pacientes_buscar_resolver_token_externo(): string {
     $candidates = [
         'APISPERU_TOKEN',
@@ -37,6 +75,11 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         return ['found' => false, 'error' => 'Token externo no configurado'];
     }
 
+    $cached = pacientes_buscar_cache_read_dni($dni, 86400);
+    if (is_array($cached) && !empty($cached['found'])) {
+        return $cached;
+    }
+
     $baseUrl = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? 'https://dniruc.apisperu.com/api/v1')));
     if ($baseUrl === '') {
         $baseUrl = 'https://dniruc.apisperu.com/api/v1';
@@ -51,14 +94,19 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
     curl_setopt_array($ch, [
         CURLOPT_URL => $url,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 6,
-        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT => 4,
+        CURLOPT_CONNECTTIMEOUT => 2,
         CURLOPT_FOLLOWLOCATION => false,
         CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_DNS_CACHE_TIMEOUT => 300,
         CURLOPT_HTTPHEADER => [
             'Accept: application/json',
         ],
     ]);
+
+    if (defined('CURL_IPRESOLVE_V4')) {
+        curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+    }
 
     $body = curl_exec($ch);
     $curlErr = curl_error($ch);
@@ -88,7 +136,7 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         return ['found' => false, 'error' => 'Documento no encontrado en servicio externo'];
     }
 
-    return [
+    $out = [
         'found' => true,
         'provider' => 'apis_peru',
         'sugerencia' => [
@@ -102,6 +150,9 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
             'fuente' => 'apis_peru',
         ],
     ];
+
+    pacientes_buscar_cache_write_dni($dni, $out);
+    return $out;
 }
 
 function pacientes_buscar_table_exists($conn, string $table): bool {

@@ -485,6 +485,7 @@ function App() {
   const clearClientSessionState = () => {
     sessionStorage.removeItem("usuario");
     sessionStorage.removeItem("medico");
+    sessionStorage.removeItem("quote_cart_v1");
     localStorage.removeItem("enfermero_panel_tab");
   };
 

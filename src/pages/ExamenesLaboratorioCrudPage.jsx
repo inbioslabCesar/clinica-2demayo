@@ -118,7 +118,6 @@ export default function ExamenesLaboratorioCrudPage() {
       if (data?.success) {
         setExamenes(Array.isArray(data.examenes) ? data.examenes : []);
       } else {
-        setExamenes([]);
         setMsg("❌ " + (data?.error || "No se pudo cargar el catálogo de exámenes"));
         setMsgType("error");
       }
@@ -130,9 +129,6 @@ export default function ExamenesLaboratorioCrudPage() {
       } else {
         setMsg("❌ Error de conexión al cargar exámenes");
         setMsgType("error");
-      }
-      if (reqId === fetchReqIdRef.current) {
-        setExamenes([]);
       }
     } finally {
       clearTimeout(timeoutId);

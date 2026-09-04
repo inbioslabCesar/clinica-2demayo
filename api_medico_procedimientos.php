@@ -84,6 +84,85 @@ function mp_normalize_estado_atencion(string $raw): string
     return 'pendiente';
 }
 
+function mp_attach_cola_medico(mysqli $conn, array &$items): void
+{
+    if (empty($items)) return;
+    if (!mp_table_exists($conn, 'recordatorios_cola_medico')) return;
+
+    $consultaIds = [];
+    $cotizacionIds = [];
+    foreach ($items as $it) {
+        $cid = (int)($it['consulta_id'] ?? 0);
+        $cot = (int)($it['cotizacion_id'] ?? 0);
+        if ($cid > 0) $consultaIds[$cid] = $cid;
+        if ($cot > 0) $cotizacionIds[$cot] = $cot;
+    }
+
+    $consultaIds = array_values($consultaIds);
+    $cotizacionIds = array_values($cotizacionIds);
+    if (empty($consultaIds) && empty($cotizacionIds)) return;
+
+    $where = [];
+    $types = '';
+    $params = [];
+    if (!empty($consultaIds)) {
+        $where[] = 'consulta_id IN (' . implode(',', array_fill(0, count($consultaIds), '?')) . ')';
+        $types .= str_repeat('i', count($consultaIds));
+        foreach ($consultaIds as $id) $params[] = $id;
+    }
+    if (!empty($cotizacionIds)) {
+        $where[] = 'cotizacion_id IN (' . implode(',', array_fill(0, count($cotizacionIds), '?')) . ')';
+        $types .= str_repeat('i', count($cotizacionIds));
+        foreach ($cotizacionIds as $id) $params[] = $id;
+    }
+
+    $sql = 'SELECT consulta_id, cotizacion_id, estado_cola, correlativo_cola, es_siguiente, prioridad_cola, prioridad_detalle'
+        . ' FROM recordatorios_cola_medico WHERE ' . implode(' OR ', $where);
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return;
+    if ($types !== '') {
+        $stmt->bind_param($types, ...$params);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $byConsulta = [];
+    $byCotizacion = [];
+    while ($row = $res->fetch_assoc()) {
+        $normalized = [
+            'cola_estado' => (string)($row['estado_cola'] ?? 'pendiente'),
+            'cola_correlativo' => (int)($row['correlativo_cola'] ?? 0),
+            'cola_es_siguiente' => (int)($row['es_siguiente'] ?? 0),
+            'cola_prioridad' => (string)($row['prioridad_cola'] ?? 'normal'),
+            'cola_prioridad_detalle' => (string)($row['prioridad_detalle'] ?? ''),
+        ];
+
+        $cid = (int)($row['consulta_id'] ?? 0);
+        $cot = (int)($row['cotizacion_id'] ?? 0);
+        if ($cid > 0) $byConsulta[$cid] = $normalized;
+        if ($cot > 0) $byCotizacion[$cot] = $normalized;
+    }
+    $stmt->close();
+
+    foreach ($items as &$it) {
+        $cid = (int)($it['consulta_id'] ?? 0);
+        $cot = (int)($it['cotizacion_id'] ?? 0);
+        $cola = null;
+        if ($cid > 0 && isset($byConsulta[$cid])) {
+            $cola = $byConsulta[$cid];
+        } elseif ($cot > 0 && isset($byCotizacion[$cot])) {
+            $cola = $byCotizacion[$cot];
+        }
+
+        $it['cola_estado'] = (string)($cola['cola_estado'] ?? 'pendiente');
+        $it['cola_correlativo'] = (int)($cola['cola_correlativo'] ?? 0);
+        $it['cola_es_siguiente'] = (int)($cola['cola_es_siguiente'] ?? 0);
+        $it['cola_prioridad'] = (string)($cola['cola_prioridad'] ?? 'normal');
+        $it['cola_prioridad_detalle'] = (string)($cola['cola_prioridad_detalle'] ?? '');
+    }
+    unset($it);
+}
+
 function mp_sync_agenda_estado_desde_atencion(mysqli $conn, int $detalleId, string $estadoAtencion, int $usuarioId): void
 {
     if ($detalleId <= 0) return;
@@ -279,7 +358,11 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $limit = max(1, min(100, (int)($_GET['limit'] ?? 20)));
 $offset = ($page - 1) * $limit;
 $search = trim((string)($_GET['search'] ?? ''));
-$filtroPago = strtolower(trim((string)($_GET['filtro_pago'] ?? 'pagadas')));
+$filtroPagoPanel = strtolower(trim((string)($_GET['filtro_pago_panel'] ?? '')));
+$filtroPagoLegacy = strtolower(trim((string)($_GET['filtro_pago'] ?? '')));
+$filtroPago = $filtroPagoPanel !== '' ? $filtroPagoPanel : ($filtroPagoLegacy !== '' ? $filtroPagoLegacy : 'solo_pagadas');
+$estadoPanel = strtolower(trim((string)($_GET['estado_panel'] ?? 'activas')));
+$semaforoPanel = strtolower(trim((string)($_GET['semaforo_panel'] ?? 'todas')));
 $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
 $soloHoy = mp_bool_param($_GET['solo_hoy'] ?? null, false);
 if ($vista === '') {
@@ -289,10 +372,55 @@ $fechaRef = trim((string)($_GET['fecha_ref'] ?? date('Y-m-d')));
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaRef)) {
     $fechaRef = date('Y-m-d');
 }
+$fechaDesde = trim((string)($_GET['fecha_desde'] ?? ''));
+$fechaHasta = trim((string)($_GET['fecha_hasta'] ?? ''));
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaDesde)) {
+    $fechaDesde = '';
+}
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaHasta)) {
+    $fechaHasta = '';
+}
 
 $hasCdEstadoItem = mp_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
 $hasCdMedicoId = mp_column_exists($conn, 'cotizaciones_detalle', 'medico_id');
 $hasCdConsultaId = mp_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+$canJoinAgendaProgramada = mp_table_exists($conn, 'agenda_servicios_cotizacion')
+    && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+    && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada');
+$agendaHasHoraProgramada = $canJoinAgendaProgramada
+    && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada');
+
+$joinAgendaProgramada = '';
+$fechaConsultaExpr = 'NULLIF(LEFT(TRIM(CAST(c.fecha AS CHAR)), 10), "")';
+$horaConsultaExpr = 'NULLIF(LEFT(TRIM(CAST(c.hora AS CHAR)), 5), "")';
+$fechaCotExpr = 'NULLIF(LEFT(TRIM(CAST(ct.fecha AS CHAR)), 10), "")';
+$horaCotExpr = 'NULLIF(SUBSTRING(TRIM(CAST(ct.fecha AS CHAR)), 12, 5), "")';
+
+$fechaOperativaExpr = "COALESCE({$fechaConsultaExpr}, {$fechaCotExpr})";
+$horaOperativaExpr = "COALESCE({$horaConsultaExpr}, {$horaCotExpr})";
+if ($canJoinAgendaProgramada) {
+    $selectHoraAgenda = $agendaHasHoraProgramada
+        ? ', MIN(COALESCE(ag.hora_programada, "")) AS hora_programada_agenda'
+        : ', "" AS hora_programada_agenda';
+    $joinAgendaProgramada = ' LEFT JOIN ('
+        . ' SELECT ag.cotizacion_detalle_id, MIN(ag.fecha_programada) AS fecha_programada_agenda' . $selectHoraAgenda
+        . ' FROM agenda_servicios_cotizacion ag'
+        . ' WHERE ag.cotizacion_detalle_id IS NOT NULL'
+        . '   AND ag.cotizacion_detalle_id > 0'
+        . ' GROUP BY ag.cotizacion_detalle_id'
+        . ' ) agp ON agp.cotizacion_detalle_id = cd.id';
+
+    $fechaAgendaExpr = 'NULLIF(LEFT(TRIM(CAST(agp.fecha_programada_agenda AS CHAR)), 10), "")';
+    $horaAgendaExpr = $agendaHasHoraProgramada
+        ? 'NULLIF(LEFT(TRIM(CAST(agp.hora_programada_agenda AS CHAR)), 5), "")'
+        : '""';
+
+    $fechaOperativaExpr = "COALESCE({$fechaAgendaExpr}, {$fechaConsultaExpr}, {$fechaCotExpr})";
+    $horaOperativaExpr = $agendaHasHoraProgramada
+        ? "COALESCE({$horaAgendaExpr}, {$horaConsultaExpr}, {$horaCotExpr})"
+        : "COALESCE({$horaConsultaExpr}, {$horaCotExpr})";
+}
+    $fechaOperativaKeyExpr = "NULLIF(LEFT(COALESCE({$fechaOperativaExpr}, ''), 10), '')";
 
 $where = [];
 $params = [];
@@ -316,21 +444,61 @@ if ($hasCdMedicoId) {
     $types .= 'i';
 }
 
-if ($filtroPago === 'pagadas') {
+if (in_array($filtroPago, ['solo_pagadas', 'pagadas'], true)) {
     $where[] = "LOWER(TRIM(COALESCE(ct.estado, ''))) IN ('pagado', 'pagada', 'control')";
-} elseif ($filtroPago === 'no_pagadas') {
+} elseif (in_array($filtroPago, ['solo_no_pagadas', 'no_pagadas'], true)) {
     $where[] = "LOWER(TRIM(COALESCE(ct.estado, ''))) NOT IN ('pagado', 'pagada', 'control')";
 }
 
+switch ($estadoPanel) {
+    case 'pendientes':
+        $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) IN ('pendiente', 'en_proceso')";
+        break;
+    case 'completadas':
+        $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) = 'atendido'";
+        break;
+    case 'canceladas_excluidas':
+        $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) = 'no_realizado'";
+        break;
+    case 'todas':
+        break;
+    case 'activas':
+    default:
+        $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) IN ('pendiente', 'en_proceso')";
+        break;
+}
+
 if ($vista === 'hoy') {
-    $where[] = '(COALESCE(c.fecha, DATE(ct.fecha)) = ? OR DATE(ct.fecha) = ?)';
+    $where[] = "{$fechaOperativaKeyExpr} = ?";
     $params[] = $fechaRef;
-    $params[] = $fechaRef;
-    $types .= 'ss';
+    $types .= 's';
 } elseif ($vista === 'atendidos') {
     $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) = 'atendido'";
 } elseif ($vista === 'pendientes') {
     $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) IN ('pendiente', 'en_proceso')";
+}
+
+if ($fechaDesde !== '') {
+    $where[] = "{$fechaOperativaKeyExpr} >= ?";
+    $params[] = $fechaDesde;
+    $types .= 's';
+}
+if ($fechaHasta !== '') {
+    $where[] = "{$fechaOperativaKeyExpr} <= ?";
+    $params[] = $fechaHasta;
+    $types .= 's';
+}
+
+if ($semaforoPanel === 'proxima' && mp_table_exists($conn, 'recordatorios_cola_medico')) {
+    $where[] = "EXISTS (
+        SELECT 1
+        FROM recordatorios_cola_medico rcm
+        WHERE rcm.es_siguiente = 1
+          AND (
+              (COALESCE(cd.consulta_id, 0) > 0 AND rcm.consulta_id = cd.consulta_id)
+              OR (COALESCE(cd.cotizacion_id, 0) > 0 AND rcm.cotizacion_id = cd.cotizacion_id)
+          )
+    )";
 }
 
 if ($search !== '') {
@@ -351,7 +519,8 @@ $fromSql = ' FROM cotizaciones_detalle cd '
     . 'INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id '
     . 'LEFT JOIN procedimientos_atenciones pa ON pa.cotizacion_detalle_id = cd.id '
     . 'LEFT JOIN consultas c ON c.id = cd.consulta_id '
-    . 'LEFT JOIN pacientes p ON p.id = COALESCE(c.paciente_id, ct.paciente_id)';
+    . 'LEFT JOIN pacientes p ON p.id = COALESCE(c.paciente_id, ct.paciente_id)'
+    . $joinAgendaProgramada;
 
 $countSql = 'SELECT COUNT(*) AS total' . $fromSql . $whereSql;
 $stmtCount = $conn->prepare($countSql);
@@ -387,11 +556,13 @@ $selectSql = 'SELECT '
     . 'ct.fecha AS fecha_cotizacion, '
     . 'c.fecha AS fecha_consulta, '
     . 'c.hora AS hora_consulta, '
+    . ($canJoinAgendaProgramada ? 'COALESCE(agp.fecha_programada_agenda, "") AS fecha_programada, ' : '"" AS fecha_programada, ')
+    . ($agendaHasHoraProgramada ? 'COALESCE(agp.hora_programada_agenda, "") AS hora_programada, ' : '"" AS hora_programada, ')
     . 'COALESCE(c.estado, "") AS estado_consulta, '
     . 'p.id AS paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, p.dni, p.historia_clinica '
     . $fromSql
     . $whereSql
-    . ' ORDER BY COALESCE(c.fecha, DATE(ct.fecha)) DESC, COALESCE(c.hora, TIME(ct.fecha)) DESC, cd.id DESC '
+    . " ORDER BY {$fechaOperativaKeyExpr} DESC, {$horaOperativaExpr} DESC, cd.id DESC "
     . ' LIMIT ? OFFSET ?';
 
 $stmt = $conn->prepare($selectSql);
@@ -432,6 +603,8 @@ while ($row = $res->fetch_assoc()) {
         'fecha_cotizacion' => (string)($row['fecha_cotizacion'] ?? ''),
         'fecha_consulta' => (string)($row['fecha_consulta'] ?? ''),
         'hora_consulta' => (string)($row['hora_consulta'] ?? ''),
+        'fecha_programada' => (string)($row['fecha_programada'] ?? ''),
+        'hora_programada' => (string)($row['hora_programada'] ?? ''),
         'estado_consulta' => (string)($row['estado_consulta'] ?? ''),
         'paciente_id' => (int)($row['paciente_id'] ?? 0),
         'paciente_nombre' => (string)($row['paciente_nombre'] ?? ''),
@@ -506,6 +679,8 @@ if (!empty($items)
     }
 }
 
+mp_attach_cola_medico($conn, $items);
+
 $statsPagadas = 0;
 $statsNoPagadas = 0;
 $statsSinConsulta = 0;
@@ -548,5 +723,10 @@ echo json_encode([
     'filtros' => [
         'vista' => $vista,
         'fecha_ref' => $fechaRef,
+        'fecha_desde' => $fechaDesde,
+        'fecha_hasta' => $fechaHasta,
+        'estado_panel' => $estadoPanel,
+        'filtro_pago_panel' => $filtroPago,
+        'semaforo_panel' => $semaforoPanel,
     ],
 ]);

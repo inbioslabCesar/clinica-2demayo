@@ -6,9 +6,10 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
-import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter } from "react-icons/fi";
+import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter, FiMessageCircle } from "react-icons/fi";
 import { authFetch } from "../utils/apiClient";
 import { BASE_URL } from "../config/config";
+import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../utils/pacienteRegistroEstado";
 
 const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -204,7 +205,7 @@ function escapeHtml(value) {
 function getVencimientoMeta(row) {
   const fechaVencimiento = String(row?.fecha_vencimiento || "").trim();
   const estado = String(row?.estado || "").toLowerCase();
-  if (!fechaVencimiento || !["pendiente", "parcial"].includes(estado)) return null;
+  if (!fechaVencimiento || !["pendiente", "parcial", "informativo"].includes(estado)) return null;
 
   const vencimiento = new Date(fechaVencimiento);
   if (Number.isNaN(vencimiento.getTime())) return null;
@@ -213,7 +214,7 @@ function getVencimientoMeta(row) {
   if (ahora.getTime() > vencimiento.getTime()) {
     return {
       vencida: true,
-      label: "Vencida",
+      label: estado === "informativo" ? "Info vencida" : "Vencida",
       detail: `Venció: ${formatDateTime(fechaVencimiento)}`,
       className: "bg-red-100 text-red-700",
     };
@@ -223,7 +224,7 @@ function getVencimientoMeta(row) {
   if (mismoDia) {
     return {
       vencida: false,
-      label: "Vence hoy",
+      label: estado === "informativo" ? "Info vence hoy" : "Vence hoy",
       detail: `Vence: ${formatDateTime(fechaVencimiento)}`,
       className: "bg-amber-100 text-amber-700",
     };
@@ -231,10 +232,18 @@ function getVencimientoMeta(row) {
 
   return {
     vencida: false,
-    label: "Vigente",
+    label: estado === "informativo" ? "Info vigente" : "Vigente",
     detail: `Vence: ${formatDateTime(fechaVencimiento)}`,
     className: "bg-emerald-100 text-emerald-700",
   };
+}
+
+function normalizePhoneForWa(value) {
+  const digits = String(value || "").replace(/\D+/g, "").trim();
+  if (!digits) return "";
+  if (digits.startsWith("51") && digits.length >= 11) return digits;
+  if (digits.length === 9) return `51${digits}`;
+  return digits;
 }
 
 function getUltimoPagoMeta(ultimoPagoAt) {
@@ -340,26 +349,14 @@ function resolverAnulacionDesdeHC(row, servicios = []) {
 function resolverSolicitudDesdeHC(row) {
   const referencia = String(row?.referencia_origen || "").trim();
   const observaciones = String(row?.observaciones || "").trim();
-  const referenciaLower = referencia.toLowerCase();
-  const observacionesLower = observaciones.toLowerCase();
-
-  const marcaReferencia =
-    referenciaLower.includes("hc consulta")
-    || referenciaLower.includes("desde hc")
-    || referenciaLower.includes("historia clinica")
-    || referenciaLower.includes("historia clínica");
-
-  const marcaObservacion =
-    observacionesLower.includes("desde consulta #")
-    || observacionesLower.includes("procedimientos desde consulta #")
-    || observacionesLower.includes("solicitud hc");
+  const marcaSolicitudTexto = tieneMarcaSolicitudHCDesdeTexto(row);
 
   const consultaOrigenConfiable = extraerConsultaOrigenIdConfiable(row);
   const servicios = parseServiciosTipos(row?.servicios_tipos || "");
   const esConsultaPura = servicios.length === 1 && servicios.includes("consulta");
   const marcaVinculoConfiableNoConsulta = consultaOrigenConfiable > 0 && !esConsultaPura;
 
-  if (!marcaReferencia && !marcaObservacion && !marcaVinculoConfiableNoConsulta) {
+  if (!marcaSolicitudTexto && !marcaVinculoConfiableNoConsulta) {
     return { activa: false, detalle: "" };
   }
 
@@ -371,15 +368,19 @@ function resolverSolicitudDesdeHC(row) {
   return { activa: true, detalle };
 }
 
-function extraerConsultaOrigenId(row) {
-  const directo = Number(row?.consulta_ref_id || 0);
-  if (directo > 0) return directo;
+function tieneMarcaSolicitudHCDesdeTexto(row) {
+  const referenciaLower = String(row?.referencia_origen || "").toLowerCase().trim();
+  const observacionesLower = String(row?.observaciones || "").toLowerCase().trim();
 
-  const referencia = String(row?.referencia_origen || "").trim();
-  const observaciones = String(row?.observaciones || "").trim();
-  const baseTexto = `${referencia} ${observaciones}`.trim();
-  const match = baseTexto.match(/consulta\s*#\s*(\d+)/i);
-  return match?.[1] ? Number(match[1]) : 0;
+  return (
+    referenciaLower.includes("hc consulta")
+    || referenciaLower.includes("desde hc")
+    || referenciaLower.includes("historia clinica")
+    || referenciaLower.includes("historia clínica")
+    || observacionesLower.includes("desde consulta #")
+    || observacionesLower.includes("procedimientos desde consulta #")
+    || observacionesLower.includes("solicitud hc")
+  );
 }
 
 function extraerConsultaOrigenIdExplicita(row) {
@@ -405,12 +406,37 @@ function extraerConsultaOrigenIdConfiable(row) {
     return consultaRefId;
   }
 
+  // En cotizaciones directas mixtas (consulta + otros servicios),
+  // consulta_ref_id suele ser válido aunque no llegue metadata auxiliar.
+  const servicios = parseServiciosTipos(row?.servicios_tipos || "");
+  if (servicios.includes("consulta")) {
+    return consultaRefId;
+  }
+
+  // Históricos: permitir vínculo cuando existe marca textual de solicitud desde HC.
+  if (tieneMarcaSolicitudHCDesdeTexto(row)) {
+    return consultaRefId;
+  }
+
   return 0;
 }
 
 function parseCotizacionTimestamp(value) {
   const raw = String(value || "").trim();
   if (!raw) return Number.NaN;
+
+  const ymdhms = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (ymdhms) {
+    const year = Number(ymdhms[1]);
+    const month = Number(ymdhms[2]);
+    const day = Number(ymdhms[3]);
+    const hour = Number(ymdhms[4]);
+    const minute = Number(ymdhms[5]);
+    const second = Number(ymdhms[6] || 0);
+    const tsLocal = new Date(year, month - 1, day, hour, minute, second).getTime();
+    return Number.isNaN(tsLocal) ? Number.NaN : tsLocal;
+  }
+
   const ts = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T"));
   return Number.isNaN(ts) ? Number.NaN : ts;
 }
@@ -420,8 +446,10 @@ function parseConsultaRefDayTimestamp(value) {
   if (!raw) return Number.NaN;
   const ymd = raw.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return Number.NaN;
-  const ts = Date.parse(`${ymd}T00:00:00`);
-  return Number.isNaN(ts) ? Number.NaN : ts;
+
+  const [year, month, day] = ymd.split("-").map((v) => Number(v));
+  const tsLocal = new Date(year, month - 1, day, 0, 0, 0).getTime();
+  return Number.isNaN(tsLocal) ? Number.NaN : tsLocal;
 }
 
 function origenConsultaNoFuturo(row) {
@@ -443,30 +471,27 @@ function parseServiciosTipos(rawValue) {
 function construirRelacionPorCotizacion(rows) {
   const lista = Array.isArray(rows) ? rows : [];
   const grupos = new Map();
-  const solicitudesActivas = [];
 
   lista.forEach((row) => {
     const cotizacionId = Number(row?.id || 0);
     const consultaOrigenId = extraerConsultaOrigenIdConfiable(row);
     if (cotizacionId <= 0 || consultaOrigenId <= 0) return;
-    if (!origenConsultaNoFuturo(row)) return;
+
+    const servicios = parseServiciosTipos(row?.servicios_tipos || "");
+    const origenExplicito = extraerConsultaOrigenIdExplicita(row) > 0;
+    const requiereGuardiaNoFuturo = !servicios.includes("consulta") && !origenExplicito;
+    if (requiereGuardiaNoFuturo && !origenConsultaNoFuturo(row)) return;
 
     if (!grupos.has(consultaOrigenId)) {
       grupos.set(consultaOrigenId, []);
     }
 
-    const servicios = parseServiciosTipos(row?.servicios_tipos || "");
     const fechaTs = parseCotizacionTimestamp(row?.fecha);
     grupos.get(consultaOrigenId).push({
       cotizacionId,
       servicios,
       fechaTs,
     });
-
-    const solicitud = resolverSolicitudDesdeHC(row);
-    if (solicitud.activa) {
-      solicitudesActivas.push({ cotizacionId, consultaOrigenId });
-    }
   });
 
   const out = {};
@@ -491,14 +516,19 @@ function construirRelacionPorCotizacion(rows) {
     basePorConsulta.set(consultaOrigenId, baseCotizacionId);
   });
 
-  solicitudesActivas.forEach(({ cotizacionId, consultaOrigenId }) => {
+  grupos.forEach((items, consultaOrigenId) => {
     const baseCotizacionId = Number(basePorConsulta.get(consultaOrigenId) || 0);
-    if (cotizacionId <= 0 || baseCotizacionId <= 0) return;
-    out[cotizacionId] = {
-      consultaOrigenId,
-      baseCotizacionId,
-      tipo: cotizacionId === baseCotizacionId ? "base" : "derivada",
-    };
+    if (baseCotizacionId <= 0 || !Array.isArray(items)) return;
+
+    items.forEach((item) => {
+      const cotizacionId = Number(item?.cotizacionId || 0);
+      if (cotizacionId <= 0) return;
+      out[cotizacionId] = {
+        consultaOrigenId,
+        baseCotizacionId,
+        tipo: cotizacionId === baseCotizacionId ? "base" : "derivada",
+      };
+    });
   });
 
   return out;
@@ -552,12 +582,18 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
   const estadoRow = String(row.estado || "").toLowerCase();
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
   const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
   const esParticular = Number(row.paciente_id || 0) <= 0;
+  const registroEval = useMemo(() => evaluarRegistroPaciente(row), [row]);
+  const registroIncompleto = Boolean(Number(row?.registro_incompleto || 0) === 1 || registroEval.incompleto);
+  const registroIncompletoTooltip = useMemo(
+    () => textoMotivosRegistroIncompleto(registroEval.motivos),
+    [registroEval.motivos]
+  );
   const profesionalCabeceraRaw = String(row.profesional_cabecera || "").trim();
   const responsableClinico = String(row.responsable_clinico || profesionalCabeceraRaw || "").trim();
   const responsableLaboratorio = String(row.responsable_laboratorio || "").trim();
@@ -698,6 +734,11 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
           {esParticular && (
             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-100 text-orange-700">
               Particular
+            </span>
+          )}
+          {registroIncompleto && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800" title={registroIncompletoTooltip}>
+              Registro incompleto
             </span>
           )}
         </div>
@@ -888,6 +929,14 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               <FiPrinter className="text-sm" />
             </button>
           )}
+          <button
+            onClick={() => onSendWhatsApp(row)}
+            className={`${ACTION_BTN_BASE} bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200`}
+            title="Enviar resumen por WhatsApp"
+            aria-label="Enviar resumen por WhatsApp"
+          >
+            <FiMessageCircle className="text-sm" />
+          </button>
           {puedeAbrirLaboratorio && (
             <button
               onClick={() => onNavigate(laboratorioUrl)}
@@ -927,6 +976,22 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               aria-label="Cobrar"
             >
               <FiDollarSign className="text-sm" />
+            </button>
+          )}
+          {registroIncompleto && Number(row.paciente_id || 0) > 0 && (
+            <button
+              onClick={() => onNavigate("/pacientes", {
+                state: {
+                  openEditPacienteId: Number(row.paciente_id || 0),
+                  backTo: "/cotizaciones?filtro_hc=solo_incompleto",
+                  sourceCotizacionId: Number(row.id || 0),
+                },
+              })}
+              className={`${ACTION_BTN_BASE} bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200`}
+              title="Completar ficha de paciente"
+              aria-label="Completar ficha de paciente"
+            >
+              <span className="text-[10px] font-bold">Ficha</span>
             </button>
           )}
           {canAutorizarAnticipado && (estadoRow === "pendiente" || estadoRow === "parcial") && (
@@ -1009,6 +1074,7 @@ export default function CotizacionesPage() {
   const autoAnularRef = useRef(false);
   const abortRef = useRef(null);
   const anticipadoFetchIdRef = useRef(0);
+  const anticipadoIdsKeyRef = useRef("");
   const consultaCorrelativoCacheRef = useRef(new Map());
   const consultaCorrelativoFechaCacheRef = useRef(new Map());
   const imagenCorrelativoCacheRef = useRef(new Map());
@@ -1067,15 +1133,23 @@ export default function CotizacionesPage() {
   const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
 
 
-  const cargarEstadosAnticipados = useCallback(async (rowsInput) => {
+  const cargarEstadosAnticipados = useCallback(async (rowsInput, options = {}) => {
+    const force = Boolean(options?.force);
     const fetchId = ++anticipadoFetchIdRef.current;
     const ids = Array.from(new Set((rowsInput || []).map((row) => Number(row?.id || 0)).filter((id) => id > 0)));
+    const idsKey = ids.join(",");
     if (ids.length === 0) {
       if (fetchId !== anticipadoFetchIdRef.current) return;
+      anticipadoIdsKeyRef.current = "";
       setAnticipadoByCotizacion({});
       setCanAutorizarAnticipado(false);
       return;
     }
+    if (!force && idsKey === anticipadoIdsKeyRef.current) {
+      return;
+    }
+
+    anticipadoIdsKeyRef.current = idsKey;
 
     try {
       const res = await authFetch(`api_consultas.php?vista=anticipada&cotizacion_ids=${ids.join(',')}&_t=${Date.now()}`, {
@@ -1114,6 +1188,9 @@ export default function CotizacionesPage() {
         params.set("fecha_inicio", filtrosAplicados.fechaInicio);
         params.set("fecha_fin", filtrosAplicados.fechaFin);
       }
+      if (filtroSolicitudHC === "solo_incompleto") {
+        params.set("registro_incompleto", "1");
+      }
 
       const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
         cache: "no-store",
@@ -1138,7 +1215,7 @@ export default function CotizacionesPage() {
         setLoading(false);
       }
     }
-  }, [cargarEstadosAnticipados, filtrosAplicados, limit, page]);
+  }, [cargarEstadosAnticipados, filtroSolicitudHC, filtrosAplicados, limit, page]);
 
   const toggleAnticipado = useCallback(async (row) => {
     const cotizacionId = Number(row?.id || 0);
@@ -1195,7 +1272,7 @@ export default function CotizacionesPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo actualizar habilitación anticipada');
       }
-      await cargarEstadosAnticipados(rows);
+      await cargarEstadosAnticipados(rows, { force: true });
       await Swal.fire('Listo', activo ? 'Habilitación anticipada revocada' : 'Habilitación anticipada activada', 'success');
     } catch (error) {
       await Swal.fire('Error', error?.message || 'No se pudo actualizar habilitación anticipada', 'error');
@@ -1371,8 +1448,17 @@ export default function CotizacionesPage() {
 
   const rowsVisibles = useMemo(() => {
     const base = Array.isArray(rows) ? rows : [];
-    if (filtroSolicitudHC !== "solo_hc") return base;
-    return base.filter((row) => resolverSolicitudDesdeHC(row).activa);
+    if (filtroSolicitudHC === "solo_hc") {
+      return base.filter((row) => resolverSolicitudDesdeHC(row).activa);
+    }
+    if (filtroSolicitudHC === "solo_incompleto") {
+      return base.filter((row) => {
+        const apiFlag = Number(row?.registro_incompleto || 0) === 1;
+        if (apiFlag) return true;
+        return evaluarRegistroPaciente(row).incompleto;
+      });
+    }
+    return base;
   }, [rows, filtroSolicitudHC]);
 
   const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rows), [rows]);
@@ -1434,14 +1520,47 @@ export default function CotizacionesPage() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
+  useEffect(() => {
+    const nextQ = String(qInput || "");
+    const appliedQ = String(filtrosAplicados.q || "");
+    if (nextQ === appliedQ) return undefined;
+
+    const trimmed = nextQ.trim();
+    if (trimmed !== "" && trimmed.length < 3) return undefined;
+
+    const timer = setTimeout(() => {
+      setPage(1);
+      setFiltrosAplicados((prev) => {
+        if (String(prev.q || "") === nextQ) return prev;
+        return {
+          ...prev,
+          q: nextQ,
+        };
+      });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [qInput, filtrosAplicados.q]);
+
   const filtrar = () => {
-    setPage(1);
-    setFiltrosAplicados({
+    const next = {
       q: qInput,
       estado: estadoInput,
       fechaInicio: fechaInicioInput,
       fechaFin: fechaFinInput,
-    });
+    };
+
+    const unchanged = (
+      String(filtrosAplicados.q || "") === String(next.q || "")
+      && String(filtrosAplicados.estado || "") === String(next.estado || "")
+      && String(filtrosAplicados.fechaInicio || "") === String(next.fechaInicio || "")
+      && String(filtrosAplicados.fechaFin || "") === String(next.fechaFin || "")
+    );
+
+    if (page !== 1) setPage(1);
+    if (!unchanged) {
+      setFiltrosAplicados(next);
+    }
   };
 
   const aplicarRangoDias = (dias) => {
@@ -1946,6 +2065,90 @@ export default function CotizacionesPage() {
     }
   }, [clinicBrand]);
 
+  const compartirPorWhatsApp = useCallback(async (row) => {
+    try {
+      const cotizacionId = Number(row?.id || 0);
+      if (cotizacionId <= 0) return;
+
+      const resShare = await authFetch("api_cotizacion_whatsapp_link.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cotizacion_id: cotizacionId, ttl_hours: 24, max_uses: 20 }),
+      });
+      const dataShare = await resShare.json();
+      if (!dataShare?.success || !dataShare?.pdf_url) {
+        throw new Error(dataShare?.error || "No se pudo crear enlace de PDF para compartir");
+      }
+      const pdfUrl = String(dataShare.pdf_url || "").trim();
+      const pdfUrlFallback = String(dataShare.pdf_url_fallback || "").trim();
+      const venceToken = String(dataShare.expires_at || "").trim();
+
+      const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!data?.success || !data?.cotizacion) {
+        throw new Error(data?.error || "No se pudo obtener la cotizacion");
+      }
+
+      const cot = data.cotizacion;
+      const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+      const serviciosTxt = detalles.length > 0
+        ? detalles.map((d) => `- ${String(d?.descripcion || "Servicio")} x${Number(d?.cantidad || 1)} = S/ ${Number(d?.subtotal || 0).toFixed(2)}`).join("\n")
+        : "- Sin items";
+      const total = Number(cot?.total || row?.total || 0).toFixed(2);
+      const vence = String(cot?.fecha_vencimiento || row?.fecha_vencimiento || "").trim();
+      const paciente = `${String(row?.nombre || "").trim()} ${String(row?.apellido || "").trim()}`.trim() || "Particular";
+      const numero = String(cot?.numero_comprobante || row?.numero_comprobante || `Q${String(cotizacionId).padStart(6, "0")}`);
+      const resumenBase = [
+        `${clinicBrand.nombre || "CLINICA"}`,
+        `Cotizacion ${numero}`,
+        `Paciente: ${paciente}`,
+        `Detalles:`,
+        serviciosTxt,
+        `Total: S/ ${total}`,
+        vence ? `Vigencia: ${formatDateTime(vence)}` : "",
+        venceToken ? `Enlace PDF valido hasta: ${formatDateTime(venceToken)}` : "",
+      ].filter(Boolean).join("\n");
+
+      const { value: numeroDestinoRaw } = await Swal.fire({
+        title: "Compartir por WhatsApp",
+        input: "text",
+        inputLabel: "Numero destino (opcional)",
+        inputPlaceholder: "Ej: 987654321 o 51987654321",
+        inputValue: String(row?.telefono || "").trim(),
+        showCancelButton: true,
+        confirmButtonText: "Abrir WhatsApp",
+        cancelButtonText: "Copiar resumen",
+      });
+
+      const numeroDestino = normalizePhoneForWa(numeroDestinoRaw || row?.telefono || "");
+      const bloquePdf = pdfUrlFallback && pdfUrlFallback !== pdfUrl
+        ? `${pdfUrl}\n${pdfUrlFallback}`
+        : pdfUrl;
+      const mensaje = `${resumenBase}\n\nPDF:\n${bloquePdf}`;
+
+      if (!numeroDestino) {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(resumenBase);
+        }
+        await Swal.fire("Resumen copiado", "No se indico numero. Se copio el resumen para pegar en WhatsApp.", "success");
+        return;
+      }
+
+      const waUrl = `https://wa.me/${numeroDestino}?text=${encodeURIComponent(mensaje)}`;
+      const opened = window.open(waUrl, "_blank");
+      if (!opened) {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(mensaje);
+        }
+        await Swal.fire("Atencion", "No se pudo abrir WhatsApp. Se copio el texto al portapapeles.", "warning");
+      }
+    } catch (error) {
+      Swal.fire("Error", error?.message || "No se pudo compartir por WhatsApp", "error");
+    }
+  }, [clinicBrand]);
+
   useEffect(() => {
     const sp = new URLSearchParams(location.search);
     const accion = String(sp.get("accion") || "").toLowerCase();
@@ -2049,6 +2252,7 @@ export default function CotizacionesPage() {
           >
             <option value="todas">Solicitud: Todas</option>
             <option value="solo_hc">Solicitud: Solo desde HC</option>
+            <option value="solo_incompleto">Solo registro incompleto</option>
           </select>
         </div>
 
@@ -2217,6 +2421,7 @@ export default function CotizacionesPage() {
                     onAnular={anularCotizacion}
                     onNavigate={navigate}
                     onPrintTicket={imprimirTicketDirecto}
+                    onSendWhatsApp={compartirPorWhatsApp}
                     onToggleAnticipado={toggleAnticipado}
                     badgeEstado={badgeEstado}
                     labelEstado={labelEstado}

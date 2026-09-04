@@ -1,6 +1,9 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 $method = $_SERVER['REQUEST_METHOD'];

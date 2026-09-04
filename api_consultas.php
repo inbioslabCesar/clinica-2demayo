@@ -2305,18 +2305,18 @@ switch ($method) {
         }
 
         $hasDetalleEstadoItemFiltro = columna_existe_local($conn, 'cotizaciones_detalle', 'estado_item');
-        $existsConsultaEliminadaSql = 'EXISTS ('
-            . 'SELECT 1 FROM cotizaciones_detalle cdx '
+        $consultaDetalleEstadoVigenteSql = '('
+            . 'SELECT LOWER(TRIM(COALESCE(cdx.estado_item, "activo"))) '
+            . 'FROM cotizaciones_detalle cdx '
+            . 'INNER JOIN cotizaciones cdx_cot ON cdx_cot.id = cdx.cotizacion_id '
             . 'WHERE cdx.consulta_id = consultas.id '
             . '  AND LOWER(TRIM(COALESCE(cdx.servicio_tipo, ""))) = "consulta" '
-            . '  AND LOWER(TRIM(COALESCE(cdx.estado_item, "activo"))) = "eliminado"'
+            . '  AND LOWER(TRIM(COALESCE(cdx_cot.estado, ""))) NOT IN ("anulado", "anulada") '
+            . 'ORDER BY cdx.id DESC '
+            . 'LIMIT 1'
             . ')';
-        $notExistsConsultaEliminadaSql = 'NOT EXISTS ('
-            . 'SELECT 1 FROM cotizaciones_detalle cdx '
-            . 'WHERE cdx.consulta_id = consultas.id '
-            . '  AND LOWER(TRIM(COALESCE(cdx.servicio_tipo, ""))) = "consulta" '
-            . '  AND LOWER(TRIM(COALESCE(cdx.estado_item, "activo"))) = "eliminado"'
-            . ')';
+        $existsConsultaEliminadaSql = '(COALESCE(' . $consultaDetalleEstadoVigenteSql . ', "activo") = "eliminado")';
+        $notExistsConsultaEliminadaSql = '(COALESCE(' . $consultaDetalleEstadoVigenteSql . ', "activo") <> "eliminado")';
 
         $whereDetallePagoActivo = $hasDetalleEstadoItemFiltro
             ? ' AND LOWER(TRIM(COALESCE(cdp.estado_item, "activo"))) <> "eliminado"'

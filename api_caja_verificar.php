@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/caja_autocierre.php';
 
 try {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -34,6 +35,8 @@ try {
         ]);
         exit;
     }
+
+    caja_auto_cerrar_vencidas($pdo);
 
     $fechaHoy = date('Y-m-d');
 

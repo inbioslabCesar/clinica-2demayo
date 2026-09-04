@@ -1398,6 +1398,87 @@ if (!function_exists('oi_programacion_ordenes_map')) {
     }
 }
 
+if (!function_exists('oi_attach_cola_medico_ordenes')) {
+    function oi_attach_cola_medico_ordenes(mysqli $conn, array &$rowsBase): void {
+        if (empty($rowsBase)) return;
+        if (!oi_table_exists($conn, 'recordatorios_cola_medico')) return;
+
+        $consultaIds = [];
+        $cotizacionIds = [];
+        foreach ($rowsBase as $row) {
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+            if ($consultaId > 0) $consultaIds[$consultaId] = $consultaId;
+            if ($cotizacionId > 0) $cotizacionIds[$cotizacionId] = $cotizacionId;
+        }
+
+        $consultaIds = array_values($consultaIds);
+        $cotizacionIds = array_values($cotizacionIds);
+        if (empty($consultaIds) && empty($cotizacionIds)) return;
+
+        $where = [];
+        $types = '';
+        $params = [];
+        if (!empty($consultaIds)) {
+            $where[] = 'consulta_id IN (' . implode(',', array_fill(0, count($consultaIds), '?')) . ')';
+            $types .= str_repeat('i', count($consultaIds));
+            foreach ($consultaIds as $id) $params[] = $id;
+        }
+        if (!empty($cotizacionIds)) {
+            $where[] = 'cotizacion_id IN (' . implode(',', array_fill(0, count($cotizacionIds), '?')) . ')';
+            $types .= str_repeat('i', count($cotizacionIds));
+            foreach ($cotizacionIds as $id) $params[] = $id;
+        }
+
+        $sql = 'SELECT consulta_id, cotizacion_id, estado_cola, correlativo_cola, es_siguiente, prioridad_cola, prioridad_detalle'
+            . ' FROM recordatorios_cola_medico WHERE ' . implode(' OR ', $where);
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return;
+        if ($types !== '') {
+            $stmt->bind_param($types, ...$params);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $byConsulta = [];
+        $byCotizacion = [];
+        while ($row = $res->fetch_assoc()) {
+            $normalized = [
+                'cola_estado' => (string)($row['estado_cola'] ?? 'pendiente'),
+                'cola_correlativo' => (int)($row['correlativo_cola'] ?? 0),
+                'cola_es_siguiente' => (int)($row['es_siguiente'] ?? 0),
+                'cola_prioridad' => (string)($row['prioridad_cola'] ?? 'normal'),
+                'cola_prioridad_detalle' => (string)($row['prioridad_detalle'] ?? ''),
+            ];
+
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+            if ($consultaId > 0) $byConsulta[$consultaId] = $normalized;
+            if ($cotizacionId > 0) $byCotizacion[$cotizacionId] = $normalized;
+        }
+        $stmt->close();
+
+        foreach ($rowsBase as &$row) {
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+
+            $cola = null;
+            if ($consultaId > 0 && isset($byConsulta[$consultaId])) {
+                $cola = $byConsulta[$consultaId];
+            } elseif ($cotizacionId > 0 && isset($byCotizacion[$cotizacionId])) {
+                $cola = $byCotizacion[$cotizacionId];
+            }
+
+            $row['cola_estado'] = (string)($cola['cola_estado'] ?? 'pendiente');
+            $row['cola_correlativo'] = (int)($cola['cola_correlativo'] ?? 0);
+            $row['cola_es_siguiente'] = (int)($cola['cola_es_siguiente'] ?? 0);
+            $row['cola_prioridad'] = (string)($cola['cola_prioridad'] ?? 'normal');
+            $row['cola_prioridad_detalle'] = (string)($cola['cola_prioridad_detalle'] ?? '');
+        }
+        unset($row);
+    }
+}
+
 // ─── Download ────────────────────────────────────────────────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'download') {
     $archivo_id = (int)($_GET['archivo_id'] ?? 0);
@@ -1450,6 +1531,12 @@ if ($method === 'GET') {
     $medico_id   = (int)($_GET['medico_id'] ?? 0);
     $orden_id    = (int)($_GET['orden_id'] ?? 0);
     $tipo        = trim($_GET['tipo'] ?? '');
+    $search      = trim((string)($_GET['search'] ?? ''));
+    $fecha_desde = trim((string)($_GET['fecha_desde'] ?? ''));
+    $fecha_hasta = trim((string)($_GET['fecha_hasta'] ?? ''));
+    $estado_panel = strtolower(trim((string)($_GET['estado_panel'] ?? 'activas')));
+    $filtro_pago_panel = strtolower(trim((string)($_GET['filtro_pago_panel'] ?? 'solo_pagadas')));
+    $semaforo_panel = strtolower(trim((string)($_GET['semaforo_panel'] ?? 'todas')));
     $pagina      = max(1, (int)($_GET['page'] ?? 1));
     $limite      = min(50, max(5, (int)($_GET['limit'] ?? 10)));
     $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
@@ -1690,6 +1777,145 @@ if ($method === 'GET') {
             $tipoSeguro = $conn->real_escape_string($tipo);
             $wheresTipo = " AND oi.tipo = '$tipoSeguro'";
         }
+
+        $whereEstadoPanel = '';
+        switch ($estado_panel) {
+            case 'pendientes':
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) = 'pendiente'";
+                break;
+            case 'completadas':
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) IN ('completado', 'completada')";
+                break;
+            case 'canceladas_excluidas':
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) IN ('cancelado', 'cancelada', 'anulado', 'anulada', 'eliminado')";
+                break;
+            case 'todas':
+                $whereEstadoPanel = '';
+                break;
+            case 'activas':
+            default:
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) NOT IN ('cancelado', 'cancelada', 'anulado', 'anulada', 'eliminado')";
+                break;
+        }
+
+        $wherePagoPanel = '';
+        if ($estado_panel !== 'canceladas_excluidas') {
+            switch ($filtro_pago_panel) {
+                case 'solo_no_pagadas':
+                    $wherePagoPanel = " AND (
+                        oi.cotizacion_id IS NULL
+                        OR oi.cotizacion_id <= 0
+                        OR NOT EXISTS (
+                            SELECT 1
+                            FROM cotizaciones c_pago
+                            WHERE c_pago.id = oi.cotizacion_id
+                              AND LOWER(TRIM(COALESCE(c_pago.estado, ''))) IN ('pagado', 'pagada', 'control')
+                        )
+                    )";
+                    break;
+                case 'todas':
+                    $wherePagoPanel = '';
+                    break;
+                case 'solo_pagadas':
+                default:
+                    $wherePagoPanel = " AND (
+                        oi.cotizacion_id IS NULL
+                        OR oi.cotizacion_id <= 0
+                        OR EXISTS (
+                            SELECT 1
+                            FROM cotizaciones c_pago
+                            WHERE c_pago.id = oi.cotizacion_id
+                              AND LOWER(TRIM(COALESCE(c_pago.estado, ''))) IN ('pagado', 'pagada', 'control')
+                        )
+                    )";
+                    break;
+            }
+        }
+
+        $agendaTipoMatchExpr = "(
+                                                (oi.tipo = 'rx' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) IN ('rayosx', 'rayos_x', 'rayos x', 'rx'))
+                                                OR (oi.tipo = 'ecografia' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) = 'ecografia')
+                                                OR (oi.tipo = 'tomografia' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) = 'tomografia')
+                                            )";
+
+        $canUsarFechaAgenda = oi_table_exists($conn, 'agenda_servicios_cotizacion')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada');
+
+        $fechaOperativaExpr = $canUsarFechaAgenda
+            ? "COALESCE((
+                    SELECT MIN(a.fecha_programada)
+                    FROM agenda_servicios_cotizacion a
+                    WHERE a.cotizacion_id = oi.cotizacion_id
+                      AND a.medico_id = $medico_id
+                      AND {$agendaTipoMatchExpr}
+                ), (
+                    SELECT c2.fecha
+                    FROM consultas c2
+                    WHERE c2.id = oi.consulta_id
+                    LIMIT 1
+                ), DATE(oi.fecha))"
+            : "COALESCE((
+                    SELECT c2.fecha
+                    FROM consultas c2
+                    WHERE c2.id = oi.consulta_id
+                    LIMIT 1
+                ), DATE(oi.fecha))";
+
+        $whereSemaforoPanel = '';
+        if ($semaforo_panel === 'proxima' && oi_table_exists($conn, 'recordatorios_cola_medico')) {
+            $whereSemaforoPanel = " AND EXISTS (
+                SELECT 1
+                FROM recordatorios_cola_medico rcm
+                WHERE rcm.es_siguiente = 1
+                  AND (
+                    (oi.consulta_id > 0 AND rcm.consulta_id = oi.consulta_id)
+                    OR (oi.cotizacion_id > 0 AND rcm.cotizacion_id = oi.cotizacion_id)
+                  )
+            )";
+        }
+
+        $whereFechaPanel = '';
+        if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $fecha_desde)) {
+            $fechaDesdeSafe = $conn->real_escape_string($fecha_desde);
+            $whereFechaPanel .= " AND DATE({$fechaOperativaExpr}) >= '$fechaDesdeSafe'";
+        }
+        if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $fecha_hasta)) {
+            $fechaHastaSafe = $conn->real_escape_string($fecha_hasta);
+            $whereFechaPanel .= " AND DATE({$fechaOperativaExpr}) <= '$fechaHastaSafe'";
+        }
+
+        $whereBusquedaPanel = '';
+        if ($search !== '') {
+            $searchLike = '%' . $conn->real_escape_string($search) . '%';
+            $whereBusquedaPanel = " AND (
+                oi.indicaciones LIKE '$searchLike'
+                OR EXISTS (
+                    SELECT 1
+                    FROM pacientes p
+                    WHERE p.id = oi.paciente_id
+                      AND (
+                        p.nombre LIKE '$searchLike'
+                        OR p.apellido LIKE '$searchLike'
+                        OR CONCAT(TRIM(COALESCE(p.nombre, '')), ' ', TRIM(COALESCE(p.apellido, ''))) LIKE '$searchLike'
+                        OR p.dni LIKE '$searchLike'
+                        OR p.historia_clinica LIKE '$searchLike'
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM cotizaciones_detalle cd_bus
+                    WHERE cd_bus.cotizacion_id = oi.cotizacion_id
+                      AND (
+                        cd_bus.descripcion LIKE '$searchLike'
+                        OR cd_bus.servicio_nombre LIKE '$searchLike'
+                      )
+                )
+            )";
+        }
+
         $whereCotizacionVigente = " AND (
             oi.cotizacion_id IS NULL
             OR oi.cotizacion_id <= 0
@@ -1700,26 +1926,22 @@ if ($method === 'GET') {
                   AND LOWER(TRIM(COALESCE(c.estado, ''))) NOT IN ('anulada', 'cancelada')
             )
         )";
-                $whereMedico = "(
+        $whereMedico = "(
                         oi.medico_id = $medico_id
                         OR EXISTS (
                                 SELECT 1
                                 FROM agenda_servicios_cotizacion a
                                 WHERE a.cotizacion_id = oi.cotizacion_id
                                     AND a.medico_id = $medico_id
-                                    AND (
-                                                (oi.tipo = 'rx' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) IN ('rayosx', 'rayos_x', 'rayos x', 'rx'))
-                                                OR (oi.tipo = 'ecografia' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) = 'ecografia')
-                                                OR (oi.tipo = 'tomografia' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) = 'tomografia')
-                                            )
+                        AND {$agendaTipoMatchExpr}
                         )
-                    ) $wheresTipo $whereCotizacionVigente";
+                            ) $wheresTipo $whereCotizacionVigente $whereEstadoPanel $wherePagoPanel $whereSemaforoPanel $whereFechaPanel $whereBusquedaPanel";
         $totalRes = $conn->query("SELECT COUNT(*) AS total FROM ordenes_imagen oi WHERE $whereMedico");
         $total = (int)(($totalRes ? $totalRes->fetch_assoc() : [])['total'] ?? 0);
         $totalPaginas = max(1, (int)ceil($total / $limite));
         $pagina = min($pagina, $totalPaginas);
         $offset = ($pagina - 1) * $limite;
-        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY oi.fecha DESC LIMIT $limite OFFSET $offset");
+        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY DATE({$fechaOperativaExpr}) DESC, oi.fecha DESC LIMIT $limite OFFSET $offset");
         $rowsBase = [];
         $orderIds = [];
         $pacienteIds = [];
@@ -1778,6 +2000,7 @@ if ($method === 'GET') {
         }
 
         $programacionMap = oi_programacion_ordenes_map($conn, $rowsBase);
+        oi_attach_cola_medico_ordenes($conn, $rowsBase);
 
         $rows = [];
         foreach ($rowsBase as $r) {
@@ -1807,6 +2030,15 @@ if ($method === 'GET') {
                 'limit' => $limite,
                 'total' => $total,
                 'total_pages' => $totalPaginas,
+            ],
+            'filtros' => [
+                'tipo' => $tipo,
+                'search' => $search,
+                'fecha_desde' => $fecha_desde,
+                'fecha_hasta' => $fecha_hasta,
+                'estado_panel' => $estado_panel,
+                'filtro_pago_panel' => $filtro_pago_panel,
+                'semaforo_panel' => $semaforo_panel,
             ],
         ]);
 

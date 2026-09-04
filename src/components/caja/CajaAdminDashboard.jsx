@@ -96,7 +96,58 @@ export default function CajaAdminDashboard() {
     };
   }, [cajasRecepcionistas]);
 
+  const controlRealRecepcion = useMemo(() => {
+    const cajasPendientesRegularizacion = cajasRecepcionistas.filter((caja) => {
+      const estado = String(caja?.estado || "").toLowerCase();
+      return estado === "cerrada" && Number(caja?.cierre_pendiente_cuadre || 0) === 1;
+    });
+
+    const cajasCerradas = cajasRecepcionistas.filter((caja) => {
+      const estado = String(caja?.estado || "").toLowerCase();
+      return estado === "cerrada" && Number(caja?.control_real_disponible || 0) === 1 && Number(caja?.cierre_pendiente_cuadre || 0) !== 1;
+    });
+
+    const cajasConCuadreEfectivo = cajasCerradas.filter((caja) => Math.abs(Number(caja?.diferencia || 0)) < 0.01).length;
+    const cajasConVirtualRegistrado = cajasCerradas.filter((caja) => caja?.diferencia_virtual_cierre !== null && caja?.diferencia_virtual_cierre !== undefined).length;
+    const cajasConCuadreVirtual = cajasCerradas.filter((caja) => {
+      const dv = caja?.diferencia_virtual_cierre;
+      return dv !== null && dv !== undefined && Math.abs(Number(dv || 0)) < 0.01;
+    }).length;
+    const diferenciaEfectivoTotal = cajasCerradas.reduce((acc, caja) => acc + Number(caja?.diferencia || 0), 0);
+    const diferenciaVirtualTotal = cajasCerradas.reduce((acc, caja) => {
+      const dv = caja?.diferencia_virtual_cierre;
+      return acc + (dv === null || dv === undefined ? 0 : Number(dv || 0));
+    }, 0);
+    const efectivoEsperadoTotal = cajasCerradas.reduce((acc, caja) => acc + Number(caja?.efectivo_esperado_cierre || 0), 0);
+    const efectivoContadoTotal = cajasCerradas.reduce((acc, caja) => acc + Number(caja?.monto_contado || 0), 0);
+    const virtualCobradoTotal = cajasCerradas.reduce((acc, caja) => acc + Number(caja?.virtual_cobrado_cierre || 0), 0);
+    const virtualContadoTotal = cajasCerradas.reduce((acc, caja) => {
+      const vc = caja?.virtual_contado_cierre;
+      return acc + (vc === null || vc === undefined ? 0 : Number(vc || 0));
+    }, 0);
+
+    return {
+      cajasCerradas: cajasCerradas.length,
+      cajasPendientesRegularizacion: cajasPendientesRegularizacion.length,
+      cajasConCuadreEfectivo,
+      cajasConVirtualRegistrado,
+      cajasConCuadreVirtual,
+      diferenciaEfectivoTotal,
+      diferenciaVirtualTotal,
+      efectivoEsperadoTotal,
+      efectivoContadoTotal,
+      virtualCobradoTotal,
+      virtualContadoTotal,
+    };
+  }, [cajasRecepcionistas]);
+
   const esAdmin = String(usuario?.rol || "").toLowerCase() === "administrador";
+  const estadoCajaTexto = cajaAbierta ? "Caja abierta" : "Caja cerrada";
+  const estadoCajaClass = cajaAbierta
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : "border-slate-200 bg-slate-100 text-slate-700";
+  const cajasSinCuadreEfectivo = Math.max(0, Number(controlRealRecepcion?.cajasCerradas || 0) - Number(controlRealRecepcion?.cajasConCuadreEfectivo || 0));
+  const cajasPendienteCuadreTotal = cajasSinCuadreEfectivo + Number(controlRealRecepcion?.cajasPendientesRegularizacion || 0);
 
   if (loading)
     return <div className="p-8 text-center">Cargando resumen...</div>;
@@ -104,47 +155,78 @@ export default function CajaAdminDashboard() {
   if (!resumen) return null;
 
   return (
-    <div className="max-w-7xl mx-auto p-2 sm:p-8 bg-white rounded-xl shadow-lg">
-      <div className="flex flex-col gap-4">
-        <div className="w-full flex flex-col sm:flex-row sm:justify-between gap-2 sm:gap-4">
+    <div className="mx-auto w-full max-w-7xl">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="h-fit rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-lg xl:sticky xl:top-4">
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Estado actual</div>
+            <div className={`mt-2 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${estadoCajaClass}`}>{estadoCajaTexto}</div>
+            <div className="mt-2 text-xs text-slate-600">Responsable: {cajaActual?.usuario_nombre || usuario?.nombre || "Sin asignar"}</div>
+          </div>
+
           <CajaActionButtons
             cajaAbierta={cajaAbierta}
             usuario={usuario}
             setShowModal={setShowModal}
             onCorregirApertura={() => setShowCorregirAperturaModal(true)}
           />
-        </div>
-        <Modal open={showModal} onClose={() => setShowModal(false)}>
-          <div className="p-2 sm:p-4">
-            <h3 className="text-lg font-bold text-blue-800 mb-4">Apertura de Caja</h3>
-            <AperturaCajaForm
-              usuario={usuario}
-              onApertura={async () => {
-                setShowModal(false);
-                await fetchResumen();
-              }}
+        </aside>
+
+        <main className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-100 p-3 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Ingresos recep.</div>
+              <div className="mt-1 text-2xl font-black text-cyan-900">S/ {Number(consolidadoRecepcion.totalIngresos || 0).toFixed(2)}</div>
+            </div>
+            <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-100 p-3 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Ganancia recep.</div>
+              <div className="mt-1 text-2xl font-black text-emerald-900">S/ {Number(consolidadoRecepcion.totalGanancia || 0).toFixed(2)}</div>
+            </div>
+            <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-100 p-3 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Cajas cerradas</div>
+              <div className="mt-1 text-2xl font-black text-violet-900">{Number(controlRealRecepcion.cajasCerradas || 0)}</div>
+            </div>
+            <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-orange-100 p-3 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Pendiente de cuadre</div>
+              <div className="mt-1 text-2xl font-black text-rose-900">{cajasPendienteCuadreTotal}</div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg sm:p-4">
+            <CajaResumenDiario
+              resumen={resumen}
+              adminRecepConsolidado={esAdmin ? consolidadoRecepcion : null}
+              adminControlRealConsolidado={esAdmin ? controlRealRecepcion : null}
             />
           </div>
-        </Modal>
-        <div className="w-full">
-          <CajaResumenDiario
-            resumen={resumen}
-            adminRecepConsolidado={esAdmin ? consolidadoRecepcion : null}
+
+          {esAdmin && (
+            <div className="rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg sm:p-4">
+              <CajaRecepcionistasResumen cajasRecep={cajasRecepcionistas} />
+            </div>
+          )}
+        </main>
+      </div>
+
+      <Modal open={showModal} onClose={() => setShowModal(false)}>
+        <div className="p-2 sm:p-4">
+          <h3 className="text-lg font-bold text-blue-800 mb-4">Apertura de Caja</h3>
+          <AperturaCajaForm
+            usuario={usuario}
+            onApertura={async () => {
+              setShowModal(false);
+              await fetchResumen();
+            }}
           />
         </div>
-        <ModalCorregirApertura
-          open={showCorregirAperturaModal}
-          cajaActual={cajaActual}
-          usuario={usuario}
-          onClose={() => setShowCorregirAperturaModal(false)}
-          onUpdated={fetchResumen}
-        />
-        {esAdmin && (
-          <div className="w-full">
-            <CajaRecepcionistasResumen cajasRecep={cajasRecepcionistas} />
-          </div>
-        )}
-      </div>
+      </Modal>
+      <ModalCorregirApertura
+        open={showCorregirAperturaModal}
+        cajaActual={cajaActual}
+        usuario={usuario}
+        onClose={() => setShowCorregirAperturaModal(false)}
+        onUpdated={fetchResumen}
+      />
     </div>
   );
 }

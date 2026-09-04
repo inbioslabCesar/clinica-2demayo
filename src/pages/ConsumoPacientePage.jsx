@@ -28,15 +28,36 @@ export default function ConsumoPacientePage() {
   useEffect(() => { setPage(1); }, [itemsPerPage]);
 
   useEffect(() => {
-  authFetch(`api_consumos_paciente.php?paciente_id=${pacienteId}`)
+    const cacheKey = `consumo_paciente_cache_${pacienteId}`;
+    authFetch(`api_consumos_paciente.php?paciente_id=${pacienteId}`)
       .then(res => res.json())
       .then(data => {
-        if (data.success) setConsumo(data);
-        else setError(data.error || "Error al cargar consumo");
+        if (data.success) {
+          setConsumo(data);
+          setError("");
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify(data));
+          } catch {
+            // Ignorar fallas de almacenamiento local.
+          }
+        } else {
+          setError(data.error || "Error al cargar consumo");
+        }
         setLoading(false);
       })
       .catch(() => {
-        setError("Error de conexión con el servidor");
+        try {
+          const raw = sessionStorage.getItem(cacheKey);
+          const cached = raw ? JSON.parse(raw) : null;
+          if (cached && typeof cached === 'object') {
+            setConsumo(cached);
+            setError("Conexión inestable: mostrando la última información disponible.");
+          } else {
+            setError("Error de conexión con el servidor");
+          }
+        } catch {
+          setError("Error de conexión con el servidor");
+        }
         setLoading(false);
       });
   }, [pacienteId]);
