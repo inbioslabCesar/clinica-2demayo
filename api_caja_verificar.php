@@ -62,10 +62,15 @@ try {
         'caja' => $caja,
     ]);
 } catch (Throwable $e) {
+    if (function_exists('api_log_server_error')) {
+        api_log_server_error('api-caja-verificar', $e->getMessage(), $e->getFile(), (int)$e->getLine());
+    }
+
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'error' => 'Error interno del servidor',
+        'request_id' => function_exists('api_request_id') ? api_request_id() : null,
         'caja_abierta' => false,
     ]);
 }

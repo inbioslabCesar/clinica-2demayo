@@ -9,21 +9,13 @@ if (!isset($_SESSION['usuario'])) {
     echo json_encode([
         'success' => false,
         'error' => 'No autenticado',
-        'debug' => [
-            'PHPSESSID' => $_COOKIE['PHPSESSID'] ?? null,
-            'session_save_path' => ini_get('session.save_path'),
-            'session_id' => session_id(),
-            'session' => $_SESSION
-        ]
+        'request_id' => function_exists('api_request_id') ? api_request_id() : null,
     ]);
     exit();
 }
 
 $usuario = $_SESSION['usuario'];
-caja_auto_cerrar_vencidas($pdo);
-error_log('Usuario: ' . print_r($usuario, true));
 $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
-error_log('Fecha: ' . $fecha);
 
 // Calcular rango de fecha para el día
 $inicioDia = $fecha . ' 00:00:00';
@@ -33,13 +25,14 @@ $finDia = date('Y-m-d', strtotime($fecha . ' +1 day')) . ' 00:00:00';
 $egreso_honorarios = 0.0;
 
 try {
+    caja_auto_cerrar_vencidas($pdo);
+
     // El encabezado resume exclusivamente la caja abierta actual. Las cajas cerradas
     // siguen disponibles en cajas_resumen, pero no se mezclan con una caja nueva.
     $stmtCaja = $pdo->prepare('SELECT id, monto_apertura, estado, hora_apertura FROM cajas WHERE fecha >= ? AND fecha < ? AND usuario_id = ? AND estado = "abierta" ORDER BY created_at DESC LIMIT 1');
     $stmtCaja->execute([$inicioDia, $finDia, $usuario['id']]);
     $caja_row = $stmtCaja->fetch(PDO::FETCH_ASSOC) ?: null;
     $caja_id_actual = $caja_row ? (int)$caja_row['id'] : 0;
-    error_log('Caja actual: ' . $caja_id_actual);
 
     $egreso_operativo = 0.0;
     $egreso_lab_ref = 0.0;
@@ -50,7 +43,6 @@ try {
     $egresos_por_metodo = ['efectivo' => 0.0, 'yape' => 0.0, 'plin' => 0.0, 'tarjeta' => 0.0, 'transferencia' => 0.0];
     $egresos_externos = 0.0;
     $total_contratos_abono = 0.0;
-    $debug_lab_ref_movs = [];
 
     if ($caja_id_actual > 0) {
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
@@ -64,11 +56,6 @@ try {
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
         $stmt->execute([$caja_id_actual]);
         $egreso_lab_ref = floatval($stmt->fetchColumn());
-
-        $stmt = $pdo->prepare('SELECT * FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
-        $stmt->execute([$caja_id_actual]);
-        $debug_lab_ref_movs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ?');
         $stmt->execute([$caja_id_actual]);
         $total = floatval($stmt->fetchColumn());
@@ -241,10 +228,6 @@ try {
             $stmtOperativo->execute([$caja['id']]);
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
-            // DEBUG: Obtener los egresos operativos por caja
-            $stmtDebugOperativo = $pdo->prepare('SELECT * FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
-            $stmtDebugOperativo->execute([$caja['id']]);
-            $caja['debug_egresos_operativos'] = $stmtDebugOperativo->fetchAll(PDO::FETCH_ASSOC);
             // Ganancia por caja
             $caja['ganancia_dia'] = floatval($caja['total_caja']) - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
             // Ingresos por tipo de pago por caja
@@ -302,15 +285,23 @@ try {
         'total_contratos_abono' => $total_contratos_abono,
         'egreso_honorarios' => $egreso_honorarios,
         'egreso_lab_ref' => $egreso_lab_ref,
-        'debug_lab_ref_movs' => $debug_lab_ref_movs,
         'egreso_operativo' => $egreso_operativo,
         'ganancia_dia' => $ganancia_dia,
         'cajas_resumen' => $cajas_resumen,
         'caja_abierta' => $caja_abierta
     ));
-} catch (Exception $e) {
-    error_log('Error en api_resumen_diario.php: ' . $e->getMessage());
+} catch (Throwable $e) {
+    if (function_exists('api_log_server_error')) {
+        api_log_server_error('api-resumen-diario', $e->getMessage(), $e->getFile(), (int)$e->getLine());
+    } else {
+        error_log('Error en api_resumen_diario.php: ' . $e->getMessage());
+    }
+
     http_response_code(500);
-    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Error interno del servidor',
+        'request_id' => function_exists('api_request_id') ? api_request_id() : null,
+    ]);
     exit();
 }
