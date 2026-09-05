@@ -4,6 +4,54 @@ require_once __DIR__ . '/init_api.php';
 
 require_once __DIR__ . '/config.php';
 
+function fecha_hoy_lima_egreso()
+{
+    return date('Y-m-d');
+}
+
+function hora_actual_lima_egreso()
+{
+    return date('H:i:s');
+}
+
+function fecha_valida_egreso($fecha)
+{
+    if (!is_string($fecha)) {
+        return null;
+    }
+    $valor = trim($fecha);
+    if ($valor === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $valor)) {
+        return null;
+    }
+    $dt = DateTime::createFromFormat('Y-m-d', $valor, new DateTimeZone('America/Lima'));
+    if (!$dt || $dt->format('Y-m-d') !== $valor) {
+        return null;
+    }
+    return $valor;
+}
+
+function hora_valida_egreso($hora)
+{
+    if (!is_string($hora)) {
+        return null;
+    }
+    $valor = trim($hora);
+    if ($valor === '') {
+        return null;
+    }
+    if (preg_match('/^\d{2}:\d{2}$/', $valor)) {
+        $valor .= ':00';
+    }
+    if (!preg_match('/^\d{2}:\d{2}:\d{2}$/', $valor)) {
+        return null;
+    }
+    $dt = DateTime::createFromFormat('H:i:s', $valor, new DateTimeZone('America/Lima'));
+    if (!$dt || $dt->format('H:i:s') !== $valor) {
+        return null;
+    }
+    return $valor;
+}
+
 function normalizar_turno_egreso($turno)
 {
     $t = strtolower(trim((string)$turno));
@@ -29,21 +77,25 @@ if ($method === 'POST') {
     $usuario_id = $_SESSION['usuario']['id'] ?? null;
     $turno = normalizar_turno_egreso($input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana'));
     $estado = $input['estado'] ?? 'pagado';
+    $fecha = fecha_valida_egreso($input['fecha'] ?? null) ?? fecha_hoy_lima_egreso();
+    $hora = hora_valida_egreso($input['hora'] ?? null) ?? hora_actual_lima_egreso();
+
     // Si no se envía caja_id, buscar la caja abierta del usuario en el día y asignar siempre para egreso operativo
-    $fecha_actual = $input['fecha'] ?? date('Y-m-d');
     $usuario_id_actual = $_SESSION['usuario']['id'] ?? null;
     if (empty($input['caja_id']) || $tipo_egreso === 'operativo') {
-        $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
-        $stmtCaja->execute([$fecha_actual, $usuario_id_actual]);
+        $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE usuario_id = ? AND estado = "abierta" ORDER BY created_at DESC LIMIT 1');
+        $stmtCaja->execute([$usuario_id_actual]);
         $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
+        if (!$cajaRow) {
+            $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+            $stmtCaja->execute([$fecha, $usuario_id_actual]);
+            $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
+        }
         $caja_id = $cajaRow ? $cajaRow['id'] : null;
     } else {
         $caja_id = $input['caja_id'];
     }
     $observaciones = $input['observaciones'] ?? '';
-    $fecha = $input['fecha'] ?? date('Y-m-d');
-    date_default_timezone_set('America/Lima');
-    $hora = $input['hora'] ?? date('H:i:s');
 
     $tipo = $input['tipo'] ?? 'operativo';
     $concepto = $input['concepto'] ?? $descripcion;
@@ -85,9 +137,11 @@ if ($method === 'PUT') {
         exit;
     }
     $input = json_decode(file_get_contents('php://input'), true);
+    $fecha = fecha_valida_egreso($input['fecha'] ?? null) ?? fecha_hoy_lima_egreso();
+    $hora = hora_valida_egreso($input['hora'] ?? null) ?? hora_actual_lima_egreso();
     $stmt = $pdo->prepare("UPDATE egresos SET fecha=?, tipo_egreso=?, categoria=?, descripcion=?, monto=?, metodo_pago=?, turno=?, estado=?, caja_id=?, observaciones=?, hora=? WHERE id=?");
     $ok = $stmt->execute([
-        $input['fecha'] ?? date('Y-m-d'),
+        $fecha,
         $input['tipo_egreso'] ?? '',
         $input['categoria'] ?? '',
         $input['descripcion'] ?? '',
@@ -97,7 +151,7 @@ if ($method === 'PUT') {
         $input['estado'] ?? 'pagado',
         empty($input['caja_id']) ? null : $input['caja_id'],
         $input['observaciones'] ?? '',
-        $input['hora'] ?? date('H:i:s'),
+        $hora,
         $id
     ]);
     if ($ok) {
@@ -110,8 +164,8 @@ if ($method === 'PUT') {
 
 if ($method === 'GET') {
     // Listar egresos por fecha (por defecto, día actual) y mostrar nombre del usuario
-    $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
-    $stmt = $pdo->prepare("SELECT e.*, u.nombre as usuario_nombre FROM egresos e LEFT JOIN usuarios u ON e.usuario_id = u.id WHERE DATE(e.created_at) = ? ORDER BY e.created_at DESC");
+    $fecha = fecha_valida_egreso($_GET['fecha'] ?? null) ?? fecha_hoy_lima_egreso();
+    $stmt = $pdo->prepare("SELECT e.*, u.nombre as usuario_nombre FROM egresos e LEFT JOIN usuarios u ON e.usuario_id = u.id WHERE DATE(COALESCE(NULLIF(e.fecha, ''), DATE(e.created_at))) = ? ORDER BY COALESCE(NULLIF(e.fecha, ''), DATE(e.created_at)) DESC, COALESCE(NULLIF(e.hora, ''), TIME(e.created_at)) DESC, e.created_at DESC");
     $stmt->execute([$fecha]);
     $egresos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     echo json_encode(["success" => true, "egresos" => $egresos]);

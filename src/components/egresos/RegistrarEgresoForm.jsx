@@ -1,26 +1,56 @@
 import React from "react";
 
-export default function RegistrarEgresoForm({ form, onChange, onSubmit, loading, editId }) {
+const CATEGORIA_LABELS = {
+  pasaje: "Pasaje",
+  servicios: "Pago de servicios",
+  sueldo: "Pago de sueldo",
+  otros: "Otros",
+};
+
+export default function RegistrarEgresoForm({
+  form,
+  onChange,
+  onSubmit,
+  loading,
+  editId,
+  categoriaSugerida,
+  isCategoriaManual,
+  onUseCategoriaSugerida,
+}) {
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-3">
       <input name="monto" type="number" required placeholder="Monto" value={form.monto} onChange={onChange}
         className="w-full px-4 py-2 rounded border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-gray-50 text-gray-800 placeholder-gray-400 transition" />
       <input name="descripcion" required placeholder="Descripción" value={form.descripcion} onChange={onChange}
         className="w-full px-4 py-2 rounded border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-gray-50 text-gray-800 placeholder-gray-400 transition" />
-      <select name="categoria" required value={form.categoria} onChange={onChange}
+      <select name="categoria" value={form.categoria} onChange={onChange}
         className="w-full px-4 py-2 rounded border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-gray-50 text-gray-800 transition">
-        <option value="">Categoría</option>
+        <option value="">Categoría sugerida automática</option>
         <option value="pasaje">Pasaje</option>
         <option value="servicios">Pago de servicios</option>
         <option value="sueldo">Pago de sueldo</option>
         <option value="otros">Otros</option>
       </select>
-      <select name="tipo_egreso" required value={form.tipo_egreso} onChange={onChange}
-        className="w-full px-4 py-2 rounded border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-gray-50 text-gray-800 transition">
-        <option value="">Tipo de Egreso</option>
-        <option value="operativo">Operativo</option>
-        <option value="otros">Otros</option>
-      </select>
+      {!!categoriaSugerida && (
+        <div className="flex items-center justify-between gap-2 text-xs sm:text-sm text-gray-600">
+          <span>
+            Categoría sugerida: <strong>{CATEGORIA_LABELS[categoriaSugerida] || "Otros"}</strong>
+            {isCategoriaManual ? " (manual activa)" : " (automática)"}
+          </span>
+          {isCategoriaManual && (
+            <button
+              type="button"
+              onClick={onUseCategoriaSugerida}
+              className="px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold"
+            >
+              Usar sugerida
+            </button>
+          )}
+        </div>
+      )}
+      <div className="w-full px-4 py-2 rounded border border-blue-200 bg-blue-50 text-blue-800 text-sm">
+        Tipo de egreso: <strong>{form.tipo_egreso === "otros" ? "Otros" : "Operativo"}</strong> (automático según categoría)
+      </div>
       <select name="turno" required value={form.turno} onChange={onChange}
         className="w-full px-4 py-2 rounded border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-gray-50 text-gray-800 transition">
         <option value="">Turno</option>
