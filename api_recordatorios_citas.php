@@ -864,6 +864,11 @@ if ($method === 'GET') {
         && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'turno_original');
     $hasRasTurnoVigente = rc_table_exists($conn, 'recordatorios_agenda_servicios')
         && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'turno_vigente');
+    $hasRecordatoriosAgendaServicios = rc_table_exists($conn, 'recordatorios_agenda_servicios');
+    $hasRasEstado = $hasRecordatoriosAgendaServicios && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'estado');
+    $hasRasObservacion = $hasRecordatoriosAgendaServicios && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'observacion');
+    $hasRasIntentos = $hasRecordatoriosAgendaServicios && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'intentos');
+    $hasRasFechaUltimoContacto = $hasRecordatoriosAgendaServicios && rc_column_exists($conn, 'recordatorios_agenda_servicios', 'fecha_ultimo_contacto');
     if ($hasRcTurnoOriginal && $hasRcTurnoVigente) {
         $selectCorrelativoConsulta = 'COALESCE(NULLIF(rc.turno_vigente, 0), NULLIF(rc.turno_original, 0), ' . ($hasConsultasCorrelativoDia ? 'COALESCE(c.correlativo_dia_medico, 0)' : '0') . ')';
         $selectCorrelativoConsultaOriginal = 'COALESCE(NULLIF(rc.turno_original, 0), ' . ($hasConsultasCorrelativoDia ? 'COALESCE(c.correlativo_dia_medico, 0)' : '0') . ')';
@@ -882,6 +887,14 @@ if ($method === 'GET') {
         $selectCorrelativoAgenda = '0';
     }
     $selectCorrelativoAgendaOriginal = $hasRasTurnoOriginal ? 'COALESCE(ras.turno_original, 0)' : '0';
+    $selectRasEstadoAgenda = $hasRasEstado ? 'ras.estado' : "'pendiente'";
+    $selectRasObservacionAgenda = $hasRasObservacion ? 'ras.observacion' : "''";
+    $selectRasIntentosAgenda = $hasRasIntentos ? 'ras.intentos' : '0';
+    $selectRasFechaUltimoAgenda = $hasRasFechaUltimoContacto ? 'ras.fecha_ultimo_contacto' : 'NULL';
+    $selectRasTurnoVigenteRawAgenda = $hasRasTurnoVigente ? 'COALESCE(ras.turno_vigente, 0)' : '0';
+    $joinRasAgenda = $hasRecordatoriosAgendaServicios
+        ? 'LEFT JOIN recordatorios_agenda_servicios ras ON ras.cotizacion_id = a.cotizacion_id'
+        : '';
 
     if ($tipoRecordatorio === 'falta_cancelar') {
         if (!rc_table_exists($conn, 'cotizaciones') || !rc_table_exists($conn, 'pacientes') || !rc_table_exists($conn, 'cotizaciones_detalle')) {
@@ -1413,11 +1426,11 @@ if ($method === 'GET') {
                 p.telefono AS paciente_telefono,
                 COALESCE(m.nombre, md.nombre, mt.nombre, '') AS medico_nombre,
                 COALESCE(m.apellido, md.apellido, mt.apellido, '') AS medico_apellido,
-                ras.estado AS ras_estado,
-                ras.observacion AS ras_observacion,
-                ras.intentos AS ras_intentos,
-                ras.fecha_ultimo_contacto AS ras_fecha_ultimo_contacto,
-                COALESCE(ras.turno_vigente, 0) AS correlativo_vigente_raw,
+                {$selectRasEstadoAgenda} AS ras_estado,
+                {$selectRasObservacionAgenda} AS ras_observacion,
+                {$selectRasIntentosAgenda} AS ras_intentos,
+                {$selectRasFechaUltimoAgenda} AS ras_fecha_ultimo_contacto,
+                {$selectRasTurnoVigenteRawAgenda} AS correlativo_vigente_raw,
                 {$selectCorrelativoAgenda} AS correlativo_estable,
                 {$selectCorrelativoAgendaOriginal} AS correlativo_original
             FROM agenda_servicios_cotizacion a
@@ -1436,7 +1449,7 @@ if ($method === 'GET') {
             LEFT JOIN medicos md ON md.id = cd.medico_id
             LEFT JOIN medicos mt ON mt.id = t.medico_id
             LEFT JOIN cotizaciones cot ON cot.id = a.cotizacion_id
-            LEFT JOIN recordatorios_agenda_servicios ras ON ras.cotizacion_id = a.cotizacion_id
+            {$joinRasAgenda}
             WHERE " . implode(' AND ', $agendaWhere) . "
             ORDER BY a.fecha_programada ASC, a.hora_programada ASC, a.id ASC";
 

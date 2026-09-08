@@ -319,6 +319,24 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         }
       }
 
+      // Si el item es paquete/perfil, propagar fecha/hora al componente que no tenga programación propia.
+      if (Array.isArray(detalle.componentes) && detalle.componentes.length > 0) {
+        const fechaBase = String(detalle.fecha_programada || "").slice(0, 10);
+        const horaBase = String(detalle.hora_programada || "").slice(0, 5);
+        if (fechaBase || horaBase) {
+          detalle.componentes = detalle.componentes.map((comp) => {
+            if (!comp || typeof comp !== "object") return comp;
+            const fechaComp = String(comp.fecha_programada || comp.fechaProgramada || "").slice(0, 10);
+            const horaComp = String(comp.hora_programada || comp.horaProgramada || "").slice(0, 5);
+            return {
+              ...comp,
+              fecha_programada: fechaComp || fechaBase,
+              hora_programada: horaComp || horaBase,
+            };
+          });
+        }
+      }
+
       if (esConsulta) {
         detalle.medico_id = Number(it.consultaMedicoId || 0);
         detalle.consulta_id = Number(it.consultaId || 0);

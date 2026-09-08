@@ -652,6 +652,14 @@ if (!function_exists('ol_normalize_examenes_ids')) {
     }
 }
 
+if (!function_exists('ol_is_laboratorio_operador_role')) {
+    function ol_is_laboratorio_operador_role($rol)
+    {
+        $role = strtolower(trim((string)$rol));
+        return in_array($role, ['laboratorista', 'tecnologo', 'tecnólogo'], true);
+    }
+}
+
 if (!function_exists('ol_decode_valores_referenciales_snapshot')) {
     function ol_decode_valores_referenciales_snapshot($raw)
     {
@@ -963,6 +971,15 @@ switch ($method) {
         $data = json_decode(file_get_contents('php://input'), true);
         $accion = strtolower(trim((string)($data['action'] ?? '')));
         if (in_array($accion, ['actualizar_examen', 'refresh_examen', 'refrescar_examen'], true)) {
+            if (!ol_is_laboratorio_operador_role($rolSesion)) {
+                http_response_code(403);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Solo el tecnologo/laboratorista del modulo de laboratorio puede actualizar examenes.'
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
             $ordenId = isset($data['orden_id']) && is_numeric($data['orden_id']) ? intval($data['orden_id']) : 0;
             $examenId = isset($data['examen_id']) && is_numeric($data['examen_id']) ? intval($data['examen_id']) : 0;
 
@@ -1431,8 +1448,12 @@ switch ($method) {
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
         $filtro_alerta = isset($_GET['filtro_alerta']) ? strtolower(trim((string)$_GET['filtro_alerta'])) : '';
         $resumen_alertas = isset($_GET['resumen_alertas']) && intval($_GET['resumen_alertas']) === 1;
+        $resumen_panel = isset($_GET['resumen_panel']) && intval($_GET['resumen_panel']) === 1;
+        $listado_ligero = isset($_GET['light']) && intval($_GET['light']) === 1;
         $usePagination = isset($_GET['paginated']) && intval($_GET['paginated']) === 1;
         $solo_visibles_panel = isset($_GET['solo_visibles_panel']) && intval($_GET['solo_visibles_panel']) === 1;
+        $orden_id = isset($_GET['orden_id']) ? intval($_GET['orden_id']) : 0;
+        $cotizacion_id_filtro = isset($_GET['cotizacion_id']) ? intval($_GET['cotizacion_id']) : 0;
         $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
         $limit = isset($_GET['limit']) ? max(1, intval($_GET['limit'])) : 10;
         $limit = min($limit, 50);
@@ -1610,6 +1631,75 @@ switch ($method) {
             break;
         }
 
+        if ($resumen_panel) {
+            $sqlResumenPanel = "SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN o.estado = 'pendiente' THEN 1 ELSE 0 END) AS pendientes,
+                    SUM(CASE WHEN o.estado = 'completado' THEN 1 ELSE 0 END) AS completadas,
+                    SUM(CASE WHEN DATE(o.fecha) = CURDATE() THEN 1 ELSE 0 END) AS hoy
+                FROM ordenes_laboratorio o
+                WHERE 1=1";
+            $paramsResumen = [];
+            $typesResumen = '';
+
+            if ($estado) {
+                $sqlResumenPanel .= ' AND o.estado = ?';
+                $paramsResumen[] = $estado;
+                $typesResumen .= 's';
+            }
+            if ($solo_visibles_panel && !$estado) {
+                $sqlResumenPanel .= " AND o.estado <> 'cancelada'";
+            }
+            if ($consulta_id) {
+                $sqlResumenPanel .= ' AND o.consulta_id = ?';
+                $paramsResumen[] = $consulta_id;
+                $typesResumen .= 'i';
+            }
+            if ($orden_id > 0) {
+                $sqlResumenPanel .= ' AND o.id = ?';
+                $paramsResumen[] = $orden_id;
+                $typesResumen .= 'i';
+            }
+            if ($cotizacion_id_filtro > 0) {
+                $sqlResumenPanel .= ' AND o.cotizacion_id = ?';
+                $paramsResumen[] = $cotizacion_id_filtro;
+                $typesResumen .= 'i';
+            }
+            if ($filtro_fecha_desde !== '') {
+                $sqlResumenPanel .= ' AND DATE(o.fecha) >= ?';
+                $paramsResumen[] = $filtro_fecha_desde;
+                $typesResumen .= 's';
+            }
+            if ($filtro_fecha_hasta !== '') {
+                $sqlResumenPanel .= ' AND DATE(o.fecha) <= ?';
+                $paramsResumen[] = $filtro_fecha_hasta;
+                $typesResumen .= 's';
+            }
+
+            $stmtResumenPanel = $conn->prepare($sqlResumenPanel);
+            if (!$stmtResumenPanel) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'No se pudo calcular el resumen del panel']);
+                break;
+            }
+            if (!empty($paramsResumen)) {
+                $stmtResumenPanel->bind_param($typesResumen, ...$paramsResumen);
+            }
+            $stmtResumenPanel->execute();
+            $resumenRow = $stmtResumenPanel->get_result()->fetch_assoc();
+            $stmtResumenPanel->close();
+
+            ol_log_slow_request($requestStartedAt, 'GET', 'resumen_panel');
+            echo json_encode([
+                'success' => true,
+                'total' => intval($resumenRow['total'] ?? 0),
+                'pendientes' => intval($resumenRow['pendientes'] ?? 0),
+                'completadas' => intval($resumenRow['completadas'] ?? 0),
+                'hoy' => intval($resumenRow['hoy'] ?? 0),
+            ]);
+            break;
+        }
+
         // Verificar si cotizaciones_detalle tiene columna derivado
         $hasDerivadoCol = false;
         $hasDerivadoCol = ol_column_exists($conn, 'cotizaciones_detalle', 'derivado');
@@ -1655,10 +1745,23 @@ switch ($method) {
             $params[] = $estado;
             $types .= 's';
         }
+        if ($solo_visibles_panel && !$estado) {
+            $sql .= " AND o.estado <> 'cancelada'";
+        }
         if ($consulta_id) {
             // Regla estricta HC: solo órdenes ligadas explícitamente a la consulta actual.
             $sql .= ' AND o.consulta_id = ?';
             $params[] = $consulta_id;
+            $types .= 'i';
+        }
+        if ($orden_id > 0) {
+            $sql .= ' AND o.id = ?';
+            $params[] = $orden_id;
+            $types .= 'i';
+        }
+        if ($cotizacion_id_filtro > 0) {
+            $sql .= ' AND o.cotizacion_id = ?';
+            $params[] = $cotizacion_id_filtro;
             $types .= 'i';
         }
         if ($esSesionMedico && $consulta_id) {
@@ -1738,8 +1841,17 @@ switch ($method) {
         if ($estado) {
             $sqlCount .= ' AND o.estado = ?';
         }
+        if ($solo_visibles_panel && !$estado) {
+            $sqlCount .= " AND o.estado <> 'cancelada'";
+        }
         if ($consulta_id) {
             $sqlCount .= ' AND o.consulta_id = ?';
+        }
+        if ($orden_id > 0) {
+            $sqlCount .= ' AND o.id = ?';
+        }
+        if ($cotizacion_id_filtro > 0) {
+            $sqlCount .= ' AND o.cotizacion_id = ?';
         }
         if ($esSesionMedico && $consulta_id) {
             $sqlCount .= ' AND COALESCE('
@@ -1815,6 +1927,277 @@ switch ($method) {
         $stmt->execute();
         $res = $stmt->get_result();
         $rowsBase = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+        $stmt->close();
+
+        if ($resumen_alertas) {
+            $allOrderIds = [];
+            $examIdsByOrder = [];
+            foreach ($rowsBase as $rowBase) {
+                $orderId = intval($rowBase['id'] ?? 0);
+                if ($orderId <= 0) {
+                    continue;
+                }
+                $allOrderIds[] = $orderId;
+                $decodedExam = json_decode((string)($rowBase['examenes'] ?? '[]'), true);
+                $examIdsByOrder[$orderId] = ol_normalize_examenes_ids(is_array($decodedExam) ? $decodedExam : []);
+            }
+
+            $resultadoPorOrden = [];
+            $allOrderIds = array_values(array_unique($allOrderIds));
+            if (!empty($allOrderIds)) {
+                $placeholders = implode(',', array_fill(0, count($allOrderIds), '?'));
+                $sqlResultados = "SELECT orden_id, resultados, fecha FROM resultados_laboratorio WHERE orden_id IN ($placeholders) ORDER BY orden_id ASC, id DESC";
+                $stmtResultados = $conn->prepare($sqlResultados);
+                if ($stmtResultados) {
+                    $stmtResultados->bind_param(str_repeat('i', count($allOrderIds)), ...$allOrderIds);
+                    $stmtResultados->execute();
+                    $rowsResultados = $stmtResultados->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtResultados->close();
+
+                    foreach ($rowsResultados as $rr) {
+                        $oid = intval($rr['orden_id'] ?? 0);
+                        if ($oid > 0 && !isset($resultadoPorOrden[$oid])) {
+                            $resultadoPorOrden[$oid] = $rr;
+                        }
+                    }
+                }
+            }
+
+            $totalesAlertas = [
+                'vencido' => 0,
+                'por_vencer' => 0,
+                'en_tiempo' => 0,
+                'total' => 0,
+            ];
+
+            foreach ($rowsBase as $rowBase) {
+                $orderId = intval($rowBase['id'] ?? 0);
+                if ($orderId <= 0) {
+                    continue;
+                }
+                $resultadoRow = $resultadoPorOrden[$orderId] ?? null;
+                $resultadosJson = null;
+                if ($resultadoRow && isset($resultadoRow['resultados'])) {
+                    $decoded = json_decode((string)$resultadoRow['resultados'], true);
+                    $resultadosJson = is_array($decoded) ? $decoded : null;
+                }
+                $baseTs = pick_alarm_base_ts($resultadoRow, $rowBase['fecha'] ?? null);
+                $alarmSummary = calculate_alarm_summary($resultadosJson, $examIdsByOrder[$orderId] ?? [], $baseTs);
+                $totalesAlertas['vencido'] += intval($alarmSummary['alerta_vencido'] ?? 0);
+                $totalesAlertas['por_vencer'] += intval($alarmSummary['alerta_por_vencer'] ?? 0);
+                $totalesAlertas['en_tiempo'] += intval($alarmSummary['alerta_en_tiempo'] ?? 0);
+            }
+
+            $totalesAlertas['total'] = intval($totalesAlertas['vencido']) + intval($totalesAlertas['por_vencer']) + intval($totalesAlertas['en_tiempo']);
+            ol_log_slow_request($requestStartedAt, 'GET', 'resumen_alertas');
+            echo json_encode($totalesAlertas);
+            exit;
+        }
+
+        if ($listado_ligero) {
+            $allOrderIds = [];
+            $allExamIds = [];
+            foreach ($rowsBase as $rowBase) {
+                $orderId = intval($rowBase['id'] ?? 0);
+                if ($orderId > 0) {
+                    $allOrderIds[] = $orderId;
+                }
+                $rawExam = json_decode((string)($rowBase['examenes'] ?? '[]'), true);
+                if (is_array($rawExam)) {
+                    foreach ($rawExam as $itExam) {
+                        $eidExam = is_array($itExam) && isset($itExam['id']) ? intval($itExam['id']) : intval($itExam);
+                        if ($eidExam > 0) {
+                            $allExamIds[] = $eidExam;
+                        }
+                    }
+                }
+            }
+
+            $allExamIds = array_values(array_unique($allExamIds));
+            $catalogoLigero = [];
+            if (!empty($allExamIds)) {
+                $phExam = implode(',', array_fill(0, count($allExamIds), '?'));
+                $sqlExamLight = "SELECT id, nombre, valores_referenciales FROM examenes_laboratorio WHERE id IN ($phExam)";
+                $stmtExamLight = $conn->prepare($sqlExamLight);
+                if ($stmtExamLight) {
+                    $stmtExamLight->bind_param(str_repeat('i', count($allExamIds)), ...$allExamIds);
+                    $stmtExamLight->execute();
+                    $rowsExamLight = $stmtExamLight->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtExamLight->close();
+                    foreach ($rowsExamLight as $rx) {
+                        $eid = intval($rx['id'] ?? 0);
+                        if ($eid <= 0) {
+                            continue;
+                        }
+                        $refs = decode_valores_referenciales_any($rx['valores_referenciales'] ?? []);
+                        $catalogoLigero[$eid] = [
+                            'nombre' => trim((string)($rx['nombre'] ?? '')),
+                            'valores_referenciales' => is_array($refs) ? $refs : [],
+                        ];
+                    }
+                }
+            }
+
+            $resultadoPorOrden = [];
+            $allOrderIds = array_values(array_unique($allOrderIds));
+            if (!empty($allOrderIds)) {
+                $placeholders = implode(',', array_fill(0, count($allOrderIds), '?'));
+                $sqlResultados = "SELECT orden_id, resultados, fecha FROM resultados_laboratorio WHERE orden_id IN ($placeholders) ORDER BY orden_id ASC, id DESC";
+                $stmtResultados = $conn->prepare($sqlResultados);
+                if ($stmtResultados) {
+                    $stmtResultados->bind_param(str_repeat('i', count($allOrderIds)), ...$allOrderIds);
+                    $stmtResultados->execute();
+                    $rowsResultados = $stmtResultados->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtResultados->close();
+                    foreach ($rowsResultados as $rr) {
+                        $oid = intval($rr['orden_id'] ?? 0);
+                        if ($oid > 0 && !isset($resultadoPorOrden[$oid])) {
+                            $resultadoPorOrden[$oid] = $rr;
+                        }
+                    }
+                }
+            }
+
+            $ordenesLigero = [];
+            foreach ($rowsBase as $row) {
+                $orderId = intval($row['id'] ?? 0);
+                $rawExamenes = json_decode((string)($row['examenes'] ?? '[]'), true);
+                if (!is_array($rawExamenes)) {
+                    $rawExamenes = [];
+                }
+
+                $examIds = [];
+                $examenesSalida = [];
+                $detalleProgreso = [];
+                foreach ($rawExamenes as $it) {
+                    $eid = is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it);
+                    if ($eid <= 0) {
+                        continue;
+                    }
+                    if (!in_array($eid, $examIds, true)) {
+                        $examIds[] = $eid;
+                    }
+
+                    $nombre = '';
+                    $descripcion = '';
+                    $valoresRefs = [];
+                    if (is_array($it)) {
+                        $nombre = trim((string)($it['snapshot_nombre'] ?? $it['descripcion_snapshot'] ?? $it['nombre'] ?? $it['descripcion'] ?? ''));
+                        $descripcion = trim((string)($it['descripcion_snapshot'] ?? $it['descripcion'] ?? $it['nombre'] ?? ''));
+                        if (isset($it['snapshot_json']) && is_array($it['snapshot_json'])) {
+                            $snap = $it['snapshot_json'];
+                            if ($nombre === '') {
+                                $nombre = trim((string)($snap['nombre'] ?? $snap['descripcion'] ?? ''));
+                            }
+                            if ($descripcion === '') {
+                                $descripcion = trim((string)($snap['descripcion'] ?? $snap['nombre'] ?? ''));
+                            }
+                            if (isset($snap['valores_referenciales']) && is_array($snap['valores_referenciales'])) {
+                                $valoresRefs = $snap['valores_referenciales'];
+                            }
+                        }
+                        if (empty($valoresRefs) && isset($it['valores_referenciales']) && is_array($it['valores_referenciales'])) {
+                            $valoresRefs = $it['valores_referenciales'];
+                        }
+                    }
+
+                    if ($nombre === '') {
+                        $nombre = trim((string)($catalogoLigero[$eid]['nombre'] ?? ''));
+                    }
+                    if ($nombre === '') {
+                        $nombre = 'Examen ' . $eid;
+                    }
+                    if ($descripcion === '') {
+                        $descripcion = $nombre;
+                    }
+
+                    $examenesSalida[] = [
+                        'id' => $eid,
+                        'nombre' => $nombre,
+                        'descripcion' => $descripcion,
+                    ];
+
+                    if (!empty($valoresRefs)) {
+                        $detalleProgreso[] = [
+                            'id' => $eid,
+                            'valores_referenciales' => $valoresRefs,
+                        ];
+                    } elseif (!empty($catalogoLigero[$eid]['valores_referenciales'])) {
+                        $detalleProgreso[] = [
+                            'id' => $eid,
+                            'valores_referenciales' => $catalogoLigero[$eid]['valores_referenciales'],
+                        ];
+                    }
+                }
+
+                $resultadoRow = $resultadoPorOrden[$orderId] ?? null;
+                $resultadosJson = null;
+                if ($resultadoRow && isset($resultadoRow['resultados'])) {
+                    $decoded = json_decode((string)$resultadoRow['resultados'], true);
+                    $resultadosJson = is_array($decoded) ? $decoded : null;
+                }
+
+                $baseTs = pick_alarm_base_ts($resultadoRow, $row['fecha'] ?? null);
+                $alarmSummary = calculate_alarm_summary($resultadosJson, $examIds, $baseTs);
+                $progressSummary = calculate_exam_progress_summary($resultadosJson, $examIds, $detalleProgreso);
+
+                $row['examenes'] = $examenesSalida;
+                $row['alarmas_activas'] = $alarmSummary['alarmas_activas'];
+                $row['alarmas_vencidas'] = $alarmSummary['alarmas_vencidas'];
+                $row['alarmas_vencidas_detalle'] = $alarmSummary['alarmas_vencidas_detalle'];
+                $row['alerta_estado'] = $alarmSummary['alerta_estado'];
+                $row['alerta_vencido'] = $alarmSummary['alerta_vencido'];
+                $row['alerta_por_vencer'] = $alarmSummary['alerta_por_vencer'];
+                $row['alerta_en_tiempo'] = $alarmSummary['alerta_en_tiempo'];
+                $row['alerta_total'] = $alarmSummary['alerta_total'];
+                $row['analisis_totales'] = $progressSummary['total'];
+                $row['analisis_completos'] = $progressSummary['completos'];
+                $row['progreso_porcentaje'] = $progressSummary['porcentaje'];
+
+                if (($row['estado'] ?? '') !== 'cancelada' && $progressSummary['total'] > 0) {
+                    $row['estado_visual'] = $progressSummary['completos'] >= $progressSummary['total'] ? 'completado' : 'pendiente';
+                } else {
+                    $row['estado_visual'] = $row['estado'];
+                }
+
+                if ($filtro_alerta !== '' && in_array($filtro_alerta, ['vencido', 'por_vencer', 'en_tiempo'], true)) {
+                    if ($filtro_alerta === 'vencido' && intval($row['alerta_vencido']) <= 0) {
+                        continue;
+                    }
+                    if ($filtro_alerta === 'por_vencer' && intval($row['alerta_por_vencer']) <= 0) {
+                        continue;
+                    }
+                    if ($filtro_alerta === 'en_tiempo' && intval($row['alerta_en_tiempo']) <= 0) {
+                        continue;
+                    }
+                }
+
+                $row['tiene_derivados'] = !empty($row['tiene_derivados']);
+
+                $cotizacionId = intval($row['cotizacion_id'] ?? 0);
+                $origen = $cotizacionId > 0 ? 'cotizacion' : 'manual_consulta';
+                $registradoPor = trim((string)($row['cotizacion_usuario_nombre'] ?? ''));
+                if ($registradoPor === '') {
+                    $registradoPor = trim((string)($row['medico_nombre'] ?? '') . ' ' . (string)($row['medico_apellido'] ?? ''));
+                }
+                $row['origen_solicitud'] = $origen;
+                $row['registrado_por'] = $registradoPor;
+
+                $ordenesLigero[] = $row;
+            }
+
+            $payloadLight = ['success' => true, 'ordenes' => $ordenesLigero];
+            if ($usePagination) {
+                $payloadLight['total'] = $totalRegistros;
+                $payloadLight['page'] = $page;
+                $payloadLight['limit'] = $limit;
+            }
+
+            ol_log_slow_request($requestStartedAt, 'GET', 'listado_light');
+            echo json_encode($payloadLight);
+            exit;
+        }
+
         $ordenes = [];
         $totales_alertas = [
             'vencido' => 0,
@@ -1841,7 +2224,9 @@ switch ($method) {
                             : (isset($it['titulo']) && trim($it['titulo']) !== '' ? $it['titulo'] : $fallbackNombre);
                         $item['metodologia'] = isset($it['metodologia']) ? $it['metodologia'] : '';
                         $item['unidad'] = isset($it['unidad']) ? $it['unidad'] : '';
+                        $item['codigo_interno'] = isset($it['codigo_interno']) ? trim((string)$it['codigo_interno']) : '';
                         $item['opciones'] = (isset($it['opciones']) && is_array($it['opciones'])) ? $it['opciones'] : [];
+                        $item['texto_por_defecto'] = isset($it['texto_por_defecto']) ? trim((string)$it['texto_por_defecto']) : '';
                         $item['referencias'] = [];
                         if (isset($it['referencias']) && is_array($it['referencias'])) {
                             foreach ($it['referencias'] as $r) {
@@ -1850,7 +2235,7 @@ switch ($method) {
                                     'valor' => $r['valor'] ?? '',
                                     'valor_min' => $r['valor_min'] ?? '',
                                     'valor_max' => $r['valor_max'] ?? '',
-                                    'desc' => $r['desc'] ?? '',
+                                    'desc' => $r['desc'] ?? ($r['descripcion'] ?? ''),
                                     'sexo' => $r['sexo'] ?? 'cualquiera',
                                     'edad_min' => $r['edad_min'] ?? '',
                                     'edad_max' => $r['edad_max'] ?? ''
@@ -2216,8 +2601,6 @@ switch ($method) {
 
             $ordenes[] = $row;
         }
-        $stmt->close();
-
         $totales_alertas['total'] = intval($totales_alertas['vencido']) + intval($totales_alertas['por_vencer']) + intval($totales_alertas['en_tiempo']);
         if ($resumen_alertas) {
             ol_log_slow_request($requestStartedAt, 'GET', 'resumen_alertas');

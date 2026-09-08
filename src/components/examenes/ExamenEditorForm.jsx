@@ -85,7 +85,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
       referencias: Array.isArray(it.referencias)
         ? it.referencias.map((ref) => ({
           valor: ref?.valor || '',
-          desc: ref?.desc || '',
+          desc: ref?.desc || ref?.descripcion || '',
           valor_min: ref?.valor_min || '',
           valor_max: ref?.valor_max || '',
           sexo: ref?.sexo || 'cualquiera',
@@ -109,7 +109,9 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
   const [highlightedRow, setHighlightedRow] = useState(null);
   const [draggedIndex, setDraggedIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [activeFormulaIdx, setActiveFormulaIdx] = useState(null);
   const rowRefs = useRef([]);
+  const formulaInputRefs = useRef({});
 
   const commitItems = (nextItems) => {
     const reindexed = nextItems.map((item, index) => ({
@@ -123,7 +125,15 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
   // Sincronizar items con initialData cuando cambie (por ejemplo, al editar otro examen)
   useEffect(() => {
     setItems(normalize(initialData));
+    setActiveFormulaIdx(null);
   }, [initialData]);
+
+  useEffect(() => {
+    if (activeFormulaIdx === null) return;
+    if (activeFormulaIdx < 0 || activeFormulaIdx >= items.length) {
+      setActiveFormulaIdx(null);
+    }
+  }, [activeFormulaIdx, items.length]);
 
   // Agregar nuevo parámetro o subtítulo
   const addItem = tipo => {
@@ -303,6 +313,84 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
     commitItems(updated);
   };
 
+  const formulaOperators = ['+', '-', '*', '/', '%', '^', '(', ')'];
+
+  const buildTokenFromName = (name, fallbackIdx = 0) => {
+    const base = String(name || '')
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    if (base) return base;
+    return `param_${fallbackIdx + 1}`;
+  };
+
+  const resolveFormulaToken = (paramLike, fallbackIdx = 0) => {
+    const codigo = String(paramLike?.codigo_interno || '').trim();
+    if (codigo) return codigo;
+    const nombre = String(paramLike?.nombre || '').trim();
+    if (nombre) return nombre;
+    return buildTokenFromName(nombre, fallbackIdx);
+  };
+
+  const getFormulaCandidates = (currentIdx) => {
+    return items
+      .map((it, idx) => ({ it, idx }))
+      .filter(({ it, idx }) => {
+        if (idx === currentIdx) return false;
+        const tipo = normalizeTipo(it?.tipo);
+        if (!(tipo === 'Parámetro' || tipo === 'Campo')) return false;
+        return String(it?.nombre || '').trim() !== '';
+      });
+  };
+
+  const setFormulaInputRef = (idx, el) => {
+    if (!el) {
+      delete formulaInputRefs.current[idx];
+      return;
+    }
+    formulaInputRefs.current[idx] = el;
+  };
+
+  const insertFormulaText = (itemIdx, textToInsert) => {
+    const text = String(textToInsert || '');
+    if (!text) return;
+
+    const currentItem = items[itemIdx] || {};
+    const currentFormula = String(currentItem.formula || '');
+    const input = formulaInputRefs.current[itemIdx];
+
+    let nextFormula = '';
+    let nextCursor = 0;
+
+    if (input && typeof input.selectionStart === 'number' && typeof input.selectionEnd === 'number') {
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      nextFormula = currentFormula.slice(0, start) + text + currentFormula.slice(end);
+      nextCursor = start + text.length;
+    } else {
+      const needsSpace = currentFormula.trim() !== '' && !/\s$/.test(currentFormula);
+      const prefix = needsSpace ? ' ' : '';
+      nextFormula = currentFormula + prefix + text;
+      nextCursor = nextFormula.length;
+    }
+
+    handleItemChange(itemIdx, 'formula', nextFormula);
+
+    window.setTimeout(() => {
+      const refreshedInput = formulaInputRefs.current[itemIdx];
+      if (refreshedInput && typeof refreshedInput.focus === 'function') {
+        refreshedInput.focus();
+        if (typeof refreshedInput.setSelectionRange === 'function') {
+          refreshedInput.setSelectionRange(nextCursor, nextCursor);
+        }
+      }
+    }, 0);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex gap-2 mb-2">
@@ -400,7 +488,15 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
               <div className="flex gap-2 mb-2">
                 <input value={item.metodologia} onChange={e => handleItemChange(idx, "metodologia", e.target.value)} placeholder="Metodología" className="border rounded px-2 py-1 flex-1" />
                 <input value={item.unidad} onChange={e => handleItemChange(idx, "unidad", e.target.value)} placeholder="Unidad" className="border rounded px-2 py-1 w-32" />
-                <input value={item.formula} onChange={e => handleItemChange(idx, "formula", e.target.value)} placeholder="Fórmula (opcional)" className="border rounded px-2 py-1 flex-1" />
+                <input
+                  ref={(el) => setFormulaInputRef(idx, el)}
+                  value={item.formula}
+                  onChange={e => handleItemChange(idx, "formula", e.target.value)}
+                  onFocus={() => setActiveFormulaIdx(idx)}
+                  onClick={() => setActiveFormulaIdx(idx)}
+                  placeholder="Fórmula (opcional). Ej: hemoglobina - 1.1"
+                  className="border rounded px-2 py-1 flex-1"
+                />
                 <input
                   type="number"
                   value={item.decimales ?? ''}
@@ -412,6 +508,53 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
                   title="Decimales"
                 />
               </div>
+              {activeFormulaIdx === idx && (
+                <div className="mb-2 rounded border border-indigo-200 bg-indigo-50/60 p-2">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="text-xs font-semibold text-indigo-700">Constructor de fórmula</div>
+                    <button
+                      type="button"
+                      className="text-[11px] text-indigo-700 border border-indigo-300 bg-white hover:bg-indigo-100 rounded px-2 py-0.5"
+                      onClick={() => setActiveFormulaIdx(null)}
+                    >
+                      Ocultar
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-indigo-700 mb-2">Haga clic en parámetros y operadores para armar la expresión sin errores de tipeo.</div>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {getFormulaCandidates(idx).length > 0 ? getFormulaCandidates(idx).map(({ it: refParam, idx: refIdx }) => {
+                      const token = resolveFormulaToken(refParam, refIdx);
+                      const nombre = String(refParam?.nombre || '').trim();
+                      return (
+                        <button
+                          key={`fparam-${idx}-${refIdx}-${token}`}
+                          type="button"
+                          className="text-xs bg-white text-indigo-700 border border-indigo-300 hover:bg-indigo-100 rounded px-2 py-1"
+                          onClick={() => insertFormulaText(idx, token)}
+                          title={`Insertar ${token}`}
+                        >
+                          {nombre}
+                        </button>
+                      );
+                    }) : (
+                      <span className="text-[11px] text-gray-500">Agregue más parámetros o campos para usarlos en fórmulas.</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {formulaOperators.map((op) => (
+                      <button
+                        key={`fop-${idx}-${op}`}
+                        type="button"
+                        className="text-xs bg-slate-800 text-white border border-slate-800 hover:bg-slate-700 rounded px-2 py-1 min-w-[30px]"
+                        onClick={() => insertFormulaText(idx, op)}
+                        title={`Insertar ${op}`}
+                      >
+                        {op}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="mt-2">
                 <b>Opciones predefinidas:</b>
                 <button type="button" className="ml-2 text-indigo-600 text-sm" onClick={() => addOpcion(idx)}>+ Opción</button>

@@ -278,6 +278,13 @@ if ($method === 'PUT') {
     $hasCdMedicoId = mp_column_exists($conn, 'cotizaciones_detalle', 'medico_id');
     $hasCdConsultaId = mp_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
 
+    $medicoSinConsultaAccesoExpr = $hasCdMedicoId
+        ? 'COALESCE(cd.medico_id, 0)'
+        : '0';
+    $medicoResponsableAccesoExpr = $hasCdConsultaId
+        ? ('CASE WHEN COALESCE(cd.consulta_id, 0) > 0 THEN COALESCE(c.medico_id, 0) ELSE ' . $medicoSinConsultaAccesoExpr . ' END')
+        : $medicoSinConsultaAccesoExpr;
+
     $sqlAcceso = 'SELECT cd.id'
         . ' FROM cotizaciones_detalle cd'
         . ' INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
@@ -288,11 +295,7 @@ if ($method === 'PUT') {
     if ($hasCdEstadoItem) {
         $sqlAcceso .= ' AND LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) <> "eliminado"';
     }
-    if ($hasCdMedicoId) {
-        $sqlAcceso .= ' AND (COALESCE(cd.medico_id, 0) = ? OR COALESCE(c.medico_id, 0) = ?)';
-    } else {
-        $sqlAcceso .= ' AND COALESCE(c.medico_id, 0) = ?';
-    }
+    $sqlAcceso .= ' AND ' . $medicoResponsableAccesoExpr . ' = ?';
     $sqlAcceso .= ' LIMIT 1';
 
     $stmtAcceso = $conn->prepare($sqlAcceso);
@@ -301,11 +304,7 @@ if ($method === 'PUT') {
         echo json_encode(['success' => false, 'error' => 'No se pudo validar acceso']);
         exit;
     }
-    if ($hasCdMedicoId) {
-        $stmtAcceso->bind_param('iii', $detalleId, $medicoSesionId, $medicoSesionId);
-    } else {
-        $stmtAcceso->bind_param('ii', $detalleId, $medicoSesionId);
-    }
+    $stmtAcceso->bind_param('ii', $detalleId, $medicoSesionId);
     $stmtAcceso->execute();
     $okRow = $stmtAcceso->get_result()->fetch_assoc();
     $stmtAcceso->close();
@@ -422,6 +421,13 @@ if ($canJoinAgendaProgramada) {
 }
     $fechaOperativaKeyExpr = "NULLIF(LEFT(COALESCE({$fechaOperativaExpr}, ''), 10), '')";
 
+$medicoSinConsultaExpr = $hasCdMedicoId
+    ? 'COALESCE(cd.medico_id, 0)'
+    : '0';
+$medicoResponsableExpr = $hasCdConsultaId
+    ? ('CASE WHEN COALESCE(cd.consulta_id, 0) > 0 THEN COALESCE(c.medico_id, 0) ELSE ' . $medicoSinConsultaExpr . ' END')
+    : $medicoSinConsultaExpr;
+
 $where = [];
 $params = [];
 $types = '';
@@ -433,16 +439,9 @@ if ($hasCdEstadoItem) {
 }
 $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) <> 'cancelado'";
 
-if ($hasCdMedicoId) {
-    $where[] = '(COALESCE(cd.medico_id, 0) = ? OR COALESCE(c.medico_id, 0) = ?)';
-    $params[] = $medicoSesionId;
-    $params[] = $medicoSesionId;
-    $types .= 'ii';
-} else {
-    $where[] = 'COALESCE(c.medico_id, 0) = ?';
-    $params[] = $medicoSesionId;
-    $types .= 'i';
-}
+$where[] = $medicoResponsableExpr . ' = ?';
+$params[] = $medicoSesionId;
+$types .= 'i';
 
 if (in_array($filtroPago, ['solo_pagadas', 'pagadas'], true)) {
     $where[] = "LOWER(TRIM(COALESCE(ct.estado, ''))) IN ('pagado', 'pagada', 'control')";
@@ -490,12 +489,15 @@ if ($fechaHasta !== '') {
 }
 
 if ($semaforoPanel === 'proxima' && mp_table_exists($conn, 'recordatorios_cola_medico')) {
+    $condConsultaSemaforo = $hasCdConsultaId
+        ? '(COALESCE(cd.consulta_id, 0) > 0 AND rcm.consulta_id = cd.consulta_id)'
+        : '0';
     $where[] = "EXISTS (
         SELECT 1
         FROM recordatorios_cola_medico rcm
         WHERE rcm.es_siguiente = 1
           AND (
-              (COALESCE(cd.consulta_id, 0) > 0 AND rcm.consulta_id = cd.consulta_id)
+              {$condConsultaSemaforo}
               OR (COALESCE(cd.cotizacion_id, 0) > 0 AND rcm.cotizacion_id = cd.cotizacion_id)
           )
     )";
@@ -515,10 +517,14 @@ if ($search !== '') {
 
 $whereSql = empty($where) ? '' : (' WHERE ' . implode(' AND ', $where));
 
+$joinConsultaListado = $hasCdConsultaId
+    ? 'LEFT JOIN consultas c ON c.id = cd.consulta_id '
+    : 'LEFT JOIN consultas c ON 1=0 ';
+
 $fromSql = ' FROM cotizaciones_detalle cd '
     . 'INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id '
     . 'LEFT JOIN procedimientos_atenciones pa ON pa.cotizacion_detalle_id = cd.id '
-    . 'LEFT JOIN consultas c ON c.id = cd.consulta_id '
+    . $joinConsultaListado
     . 'LEFT JOIN pacientes p ON p.id = COALESCE(c.paciente_id, ct.paciente_id)'
     . $joinAgendaProgramada;
 
@@ -545,7 +551,7 @@ $selectSql = 'SELECT '
     . 'cd.precio_unitario, '
     . 'cd.subtotal, '
     . ($hasCdConsultaId ? 'cd.consulta_id' : 'NULL AS consulta_id') . ', '
-    . ($hasCdMedicoId ? 'COALESCE(cd.medico_id, c.medico_id, 0) AS medico_id' : 'COALESCE(c.medico_id, 0) AS medico_id') . ', '
+    . $medicoResponsableExpr . ' AS medico_id, '
     . ($hasCdEstadoItem ? 'COALESCE(cd.estado_item, "activo") AS estado_item' : '"activo" AS estado_item') . ', '
     . 'COALESCE(pa.estado, "pendiente") AS estado_atencion, '
     . 'pa.atendido_en AS atendido_en, '

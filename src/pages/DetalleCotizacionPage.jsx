@@ -154,11 +154,55 @@ function construirPagosFallbackDesdeCobros(cotizacion, cobros) {
   return salida.reverse();
 }
 
+function parseGroupIdsFromSearch(search, fallbackId) {
+  const ids = [];
+  const sp = new URLSearchParams(search || "");
+  const raw = String(sp.get("grupo") || "").trim();
+  if (raw) {
+    raw.split(",").forEach((token) => {
+      const id = Number(String(token || "").trim());
+      if (Number.isFinite(id) && id > 0) {
+        ids.push(id);
+      }
+    });
+  }
+
+  const fallback = Number(fallbackId || 0);
+  if (Number.isFinite(fallback) && fallback > 0) {
+    ids.push(fallback);
+  }
+
+  return Array.from(new Set(ids)).sort((a, b) => a - b);
+}
+
+function resolverEstadoGrupoCotizacion(items) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return "pendiente";
+
+  const total = rows.reduce((acc, row) => acc + Number(row?.total || 0), 0);
+  const totalPagado = rows.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
+  const saldo = rows.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
+
+  if (saldo <= 0.00001 && total > 0) return "pagado";
+  if (totalPagado > 0.00001) return "parcial";
+
+  const estados = rows.map((row) => String(row?.estado || "").toLowerCase());
+  if (estados.includes("informativo") && total <= 0.00001) return "informativo";
+  if (estados.length > 0 && estados.every((estado) => estado === "anulada")) return "anulada";
+
+  return "pendiente";
+}
+
 export default function DetalleCotizacionPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { cotizacionId } = useParams();
   const autoTicketShownRef = useRef(false);
+  const grupoIds = useMemo(
+    () => parseGroupIdsFromSearch(location.search, cotizacionId),
+    [location.search, cotizacionId]
+  );
+  const grupoKey = useMemo(() => grupoIds.join(","), [grupoIds]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -194,36 +238,113 @@ export default function DetalleCotizacionPage() {
       setError("");
       try {
         const cacheBuster = Date.now();
-        const resCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
-          cache: "no-store",
-        });
-        const dataCot = await resCot.json();
-        if (!dataCot?.success || !dataCot?.cotizacion) {
-          throw new Error(dataCot?.error || "No se pudo cargar la cotizacion");
+        let cot = null;
+        let pacienteData = null;
+        let pagosCargados = [];
+
+        if (grupoIds.length > 1) {
+          const respuestasCot = await Promise.all(
+            grupoIds.map(async (id) => {
+              const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(id)}&_t=${cacheBuster}`, { cache: "no-store" });
+              const data = await res.json();
+              if (!data?.success || !data?.cotizacion) return null;
+              return data.cotizacion;
+            })
+          );
+
+          const cotizacionesGrupo = respuestasCot.filter(Boolean);
+          if (cotizacionesGrupo.length === 0) {
+            throw new Error("No se pudo cargar el detalle del episodio");
+          }
+
+          const cotizacionBase = cotizacionesGrupo.find((item) => Number(item?.id || 0) === Number(cotizacionId || 0))
+            || cotizacionesGrupo[0];
+
+          const detallesGrupo = cotizacionesGrupo.flatMap((item) => {
+            const detalleList = Array.isArray(item?.detalles) ? item.detalles : [];
+            return detalleList.map((detalle) => ({
+              ...detalle,
+              cotizacion_origen_id: Number(item?.id || 0),
+            }));
+          });
+
+          const respuestasPagos = await Promise.all(
+            cotizacionesGrupo.map(async (item) => {
+              const id = Number(item?.id || 0);
+              const pagosEmbebidos = Array.isArray(item?.pagos) ? item.pagos : [];
+              if (pagosEmbebidos.length > 0) {
+                return pagosEmbebidos.map((pago, idx) => ({
+                  ...pago,
+                  id: `${id}-${pago?.id || idx}`,
+                  cotizacion_origen_id: id,
+                }));
+              }
+
+              const resPagos = await authFetch(`api_cotizaciones.php?accion=pagos&cotizacion_id=${id}&_t=${cacheBuster}`, { cache: "no-store" });
+              const dataPagos = await resPagos.json();
+              const list = dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [];
+              return list.map((pago, idx) => ({
+                ...pago,
+                id: `${id}-${pago?.id || idx}`,
+                cotizacion_origen_id: id,
+              }));
+            })
+          );
+
+          pagosCargados = respuestasPagos.flat().sort((a, b) => {
+            const ta = new Date(a?.created_at || 0).getTime();
+            const tb = new Date(b?.created_at || 0).getTime();
+            if (ta !== tb) return ta - tb;
+            return String(a?.id || "").localeCompare(String(b?.id || ""));
+          });
+
+          const totalGrupo = cotizacionesGrupo.reduce((acc, item) => acc + Number(item?.total || 0), 0);
+          const pagadoGrupo = cotizacionesGrupo.reduce((acc, item) => acc + Number(item?.total_pagado || 0), 0);
+          const saldoGrupo = cotizacionesGrupo.reduce((acc, item) => acc + Number(item?.saldo_pendiente || 0), 0);
+          const estadoGrupo = resolverEstadoGrupoCotizacion(cotizacionesGrupo);
+          const idsGrupo = cotizacionesGrupo.map((item) => Number(item?.id || 0)).filter((id) => id > 0).sort((a, b) => a - b);
+
+          cot = {
+            ...cotizacionBase,
+            vista_grupo: 1,
+            grupo_ids: idsGrupo,
+            total: Number(totalGrupo.toFixed(2)),
+            total_pagado: Number(pagadoGrupo.toFixed(2)),
+            saldo_pendiente: Number(saldoGrupo.toFixed(2)),
+            estado: estadoGrupo,
+            detalles: detallesGrupo,
+          };
+        } else {
+          const resCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
+            cache: "no-store",
+          });
+          const dataCot = await resCot.json();
+          if (!dataCot?.success || !dataCot?.cotizacion) {
+            throw new Error(dataCot?.error || "No se pudo cargar la cotizacion");
+          }
+
+          cot = dataCot.cotizacion;
+          const pagosEmbebidos = Array.isArray(cot?.pagos) ? cot.pagos : null;
+          pagosCargados = Array.isArray(pagosEmbebidos) ? pagosEmbebidos : null;
+          if (!Array.isArray(pagosCargados) || pagosCargados.length === 0) {
+            const resPagos = await authFetch(
+              `api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
+              {
+                cache: "no-store",
+              }
+            );
+            const dataPagos = await resPagos.json();
+            pagosCargados = dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [];
+          }
         }
 
-        const cot = dataCot.cotizacion;
-        const pacienteData = {
+        pacienteData = {
           id: Number(cot?.paciente_id || 0),
           nombre: String(cot?.nombre || ""),
           apellido: String(cot?.apellido || ""),
           dni: String(cot?.dni || ""),
           historia_clinica: String(cot?.historia_clinica || ""),
         };
-
-        const pagosEmbebidos = Array.isArray(cot?.pagos) ? cot.pagos : null;
-
-        let pagosCargados = Array.isArray(pagosEmbebidos) ? pagosEmbebidos : null;
-        if (!Array.isArray(pagosCargados) || pagosCargados.length === 0) {
-          const resPagos = await authFetch(
-            `api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
-            {
-              cache: "no-store",
-            }
-          );
-          const dataPagos = await resPagos.json();
-          pagosCargados = dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [];
-        }
 
         if ((!Array.isArray(pagosCargados) || pagosCargados.length === 0) && pacienteData.id > 0) {
           const resCobros = await authFetch(
@@ -253,7 +374,7 @@ export default function DetalleCotizacionPage() {
     return () => {
       mounted = false;
     };
-  }, [cotizacionId]);
+  }, [cotizacionId, grupoKey, grupoIds]);
 
   useEffect(() => {
     let mounted = true;
@@ -394,7 +515,8 @@ export default function DetalleCotizacionPage() {
   }, [pagos, cotizacion?.pagos]);
 
   const estado = String(cotizacion?.estado || "").toLowerCase();
-  const puedeEditar = estado !== "anulada";
+  const esVistaGrupo = Number(cotizacion?.vista_grupo || 0) === 1;
+  const puedeEditar = !esVistaGrupo && estado !== "anulada";
   const puedeCobrar = (estado === "pendiente" || estado === "parcial") && Number(cotizacion?.saldo_pendiente || 0) > 0;
 
   const escapeHtml = (value) => {
@@ -746,22 +868,33 @@ export default function DetalleCotizacionPage() {
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <div>
-            <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Detalle de Cotizacion #{cotizacion?.id}</h2>
+            <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>
+              {esVistaGrupo ? `Detalle consolidado del episodio #${cotizacion?.id}` : `Detalle de Cotizacion #${cotizacion?.id}`}
+            </h2>
             <div className="text-sm text-gray-600">Fecha: {cotizacion?.fecha || "-"}</div>
+            {esVistaGrupo && Array.isArray(cotizacion?.grupo_ids) && cotizacion.grupo_ids.length > 1 && (
+              <div className="text-xs mt-1 text-indigo-700 font-medium">
+                Grupo episodio: {cotizacion.grupo_ids.map((id) => `#${id}`).join(", ")}
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => navigate("/cotizaciones")} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Volver a Atenciones</button>
-            <button onClick={emitirTicket} className="bg-slate-700 text-white px-4 py-2 rounded hover:bg-slate-800">Emitir ticket</button>
-            <button
-              onClick={() => {
-                const cotizacionPdfId = Number(cotizacion?.id || 0);
-                if (cotizacionPdfId > 0) {
-                  const apiBase = String(BASE_URL || "").replace(/\/+$/, "");
-                  window.open(`${apiBase}/api_cotizacion_ticket_pdf.php?cotizacion_id=${cotizacionPdfId}&_t=${Date.now()}`, "_blank", "noopener");
-                }
-              }}
-              className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
-            >Descargar PDF</button>
+            {!esVistaGrupo && (
+              <button onClick={emitirTicket} className="bg-slate-700 text-white px-4 py-2 rounded hover:bg-slate-800">Emitir ticket</button>
+            )}
+            {!esVistaGrupo && (
+              <button
+                onClick={() => {
+                  const cotizacionPdfId = Number(cotizacion?.id || 0);
+                  if (cotizacionPdfId > 0) {
+                    const apiBase = String(BASE_URL || "").replace(/\/+$/, "");
+                    window.open(`${apiBase}/api_cotizacion_ticket_pdf.php?cotizacion_id=${cotizacionPdfId}&_t=${Date.now()}`, "_blank", "noopener");
+                  }
+                }}
+                className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+              >Descargar PDF</button>
+            )}
             {puedeEditar && (
               <button
                 onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(cotizacion?.paciente_id || 0)}&cotizacion_id=${Number(cotizacion?.id || 0)}&back_to=/cotizaciones&modo=editar`, {
@@ -812,6 +945,12 @@ export default function DetalleCotizacionPage() {
           </div>
         </div>
 
+        {esVistaGrupo && (
+          <div className="mb-4 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+            Vista consolidada del episodio. Los montos, exámenes y pagos incluyen cotización base y adendas del grupo.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
           <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm">
             <div className="text-gray-500">Paciente</div>
@@ -855,6 +994,7 @@ export default function DetalleCotizacionPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-100">
               <tr>
+                {esVistaGrupo && <th className="px-3 py-2 text-left">Cotización</th>}
                 <th className="px-3 py-2 text-left">Servicio</th>
                 <th className="px-3 py-2 text-left">Descripcion</th>
                 <th className="px-3 py-2 text-left">Medico</th>
@@ -866,10 +1006,11 @@ export default function DetalleCotizacionPage() {
             <tbody>
               {detallesConNeto.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-gray-500">Sin items activos en la cotizacion.</td>
+                  <td colSpan={esVistaGrupo ? 7 : 6} className="px-3 py-6 text-center text-gray-500">Sin items activos en la cotizacion.</td>
                 </tr>
               ) : detallesConNeto.map((d, idx) => (
                 <tr key={`${d.servicio_tipo}-${d.servicio_id}-${idx}`} className="border-t">
+                  {esVistaGrupo && <td className="px-3 py-2 whitespace-nowrap">#{Number(d?.cotizacion_origen_id || 0)}</td>}
                   <td className="px-3 py-2">{labelServicio(d.servicio_tipo)}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -913,6 +1054,7 @@ export default function DetalleCotizacionPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
+                {esVistaGrupo && <th className="px-3 py-2 text-left">Cotización</th>}
                 <th className="px-3 py-2 text-left">Fecha</th>
                 <th className="px-3 py-2 text-left">Tipo</th>
                 <th className="px-3 py-2 text-left">Monto</th>
@@ -925,7 +1067,7 @@ export default function DetalleCotizacionPage() {
             <tbody>
               {pagosRender.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-gray-500">No hay pagos registrados para esta cotizacion.</td>
+                  <td colSpan={esVistaGrupo ? 8 : 7} className="px-3 py-6 text-center text-gray-500">No hay pagos registrados para esta cotizacion.</td>
                 </tr>
               ) : pagosRender.map((pago) => {
                 const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
@@ -934,6 +1076,7 @@ export default function DetalleCotizacionPage() {
                 const metodoPago = String(pago?.metodo_pago || "").trim();
                 return (
                   <tr key={pago.id} className="border-t align-top">
+                    {esVistaGrupo && <td className="px-3 py-2 whitespace-nowrap">#{Number(pago?.cotizacion_origen_id || cotizacion?.id || 0)}</td>}
                     <td className="px-3 py-2 whitespace-nowrap">{fecha}</td>
                     <td className="px-3 py-2">{esDescuento ? "Descuento" : "Abono"}</td>
                     <td className={`px-3 py-2 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>

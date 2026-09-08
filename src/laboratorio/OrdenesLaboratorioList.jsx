@@ -30,7 +30,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   const [loading, setLoading] = useState(true);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError] = useState("");
-  const [examenesDisponibles, setExamenesDisponibles] = useState([]);
   const [fechaInicio, setFechaInicio] = useState(() => sessionStorage.getItem(STORAGE_FECHA_INICIO_KEY) || "");
   const [fechaFin, setFechaFin] = useState(() => sessionStorage.getItem(STORAGE_FECHA_FIN_KEY) || "");
   const [busqueda, setBusqueda] = useState(() => sessionStorage.getItem(STORAGE_BUSQUEDA_KEY) || "");
@@ -38,7 +37,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   const [estadoFiltro, setEstadoFiltro] = useState(() => sessionStorage.getItem(STORAGE_ESTADO_KEY) || "");
   const [filtroAlertaEstado, setFiltroAlertaEstado] = useState(() => sessionStorage.getItem(STORAGE_ALERTA_KEY) || "");
   const [resumenAlertas, setResumenAlertas] = useState({ vencido: 0, por_vencer: 0, en_tiempo: 0 });
-  const [catalogoExamenesCargado, setCatalogoExamenesCargado] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -72,37 +70,6 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   }, [filtroAlertaEstado]);
 
   useEffect(() => {
-    // Cargar lista de exámenes disponibles para mapear IDs a nombres
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    authFetch("api_examenes_laboratorio.php", {
-      signal: controller.signal,
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data?.success && Array.isArray(data.examenes)) {
-          setExamenesDisponibles(data.examenes);
-        } else {
-          setExamenesDisponibles([]);
-        }
-      })
-      .catch(() => {
-        // Si falla catálogo no bloqueamos la UI; la lista igual puede renderizar por ID.
-        setExamenesDisponibles([]);
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
-        setCatalogoExamenesCargado(true);
-      });
-
-    return () => {
-      clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, []);
-
-  useEffect(() => {
     setLoading(true);
     setError("");
 
@@ -111,6 +78,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
 
     const params = new URLSearchParams();
     params.set('solo_visibles_panel', '1');
+    params.set('light', '1');
     params.set('paginated', '1');
     params.set('page', String(page + 1));
     params.set('limit', String(rowsPerPage));
@@ -236,8 +204,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       if (ex && typeof ex === 'object') {
         return ex.snapshot_nombre || ex.descripcion_snapshot || ex.nombre || ex.descripcion || `#${ex.id}`;
       }
-      const exObj = examenesDisponibles.find(e => e.id == ex);
-      return exObj ? exObj.nombre : String(ex);
+      return String(ex);
     }).join(", ");
   };
 
@@ -290,7 +257,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   // porque la generación devolvía datos inconsistentes en algunos casos. Las
   // descargas deben realizarse desde los módulos de Administración/Recepción.
 
-  if ((!initialLoaded && loading) || !catalogoExamenesCargado) {
+  if (!initialLoaded && loading) {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="flex items-center gap-3 text-purple-600">

@@ -468,6 +468,94 @@ function parseServiciosTipos(rawValue) {
   ));
 }
 
+function resolverEstadoGrupoCotizacion(items) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return "pendiente";
+
+  const total = rows.reduce((acc, row) => acc + Number(row?.total || 0), 0);
+  const totalPagado = rows.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
+  const saldo = rows.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
+
+  if (saldo <= 0.00001 && total > 0) return "pagado";
+  if (totalPagado > 0.00001) return "parcial";
+
+  const estados = rows.map((row) => String(row?.estado || "").toLowerCase());
+  if (estados.includes("informativo") && total <= 0.00001) return "informativo";
+  if (estados.length > 0 && estados.every((estado) => estado === "anulada")) return "anulada";
+
+  return "pendiente";
+}
+
+function agruparFilasOperativasPorEpisodio(rows) {
+  const source = Array.isArray(rows) ? rows : [];
+  if (source.length === 0) return [];
+
+  const grupos = new Map();
+  source.forEach((row) => {
+    const rowId = Number(row?.id || 0);
+    if (rowId <= 0) return;
+
+    const padre = Number(row?.cotizacion_padre_id || 0);
+    const rootId = padre > 0 ? padre : rowId;
+    if (!grupos.has(rootId)) grupos.set(rootId, []);
+    grupos.get(rootId).push(row);
+  });
+
+  const grouped = [];
+  grupos.forEach((items, rootId) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const conRaiz = items.find((row) => Number(row?.id || 0) === Number(rootId));
+    const base = conRaiz || items.slice().sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0))[0];
+    const idsGrupo = Array.from(new Set(items.map((row) => Number(row?.id || 0)).filter((id) => id > 0))).sort((a, b) => a - b);
+
+    const serviciosUnicos = Array.from(new Set(
+      items
+        .flatMap((row) => String(row?.servicios_tipos || "").split(",").map(normalizarServicioTipo))
+        .filter(Boolean)
+    ));
+
+    const ultimoPago = items
+      .map((row) => String(row?.ultimo_pago_at || "").trim())
+      .filter(Boolean)
+      .sort((a, b) => String(b).localeCompare(String(a)))[0] || "";
+
+    const total = items.reduce((acc, row) => acc + Number(row?.total || 0), 0);
+    const totalPagado = items.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
+    const saldo = items.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
+    const estadoGrupo = resolverEstadoGrupoCotizacion(items);
+    const grupoIncluyePagadas = items.some((row) => ["pagado", "completado", "control", "contrato"].includes(String(row?.estado || "").toLowerCase()));
+
+    grouped.push({
+      ...base,
+      id: Number(base?.id || rootId),
+      episodio_id: Number(rootId),
+      cotizacion_ids_grupo: idsGrupo,
+      adendas_count: Math.max(0, idsGrupo.length - 1),
+      es_grupo_episodio: idsGrupo.length > 1 ? 1 : 0,
+      grupo_incluye_pagadas: grupoIncluyePagadas ? 1 : 0,
+      total,
+      total_pagado: totalPagado,
+      saldo_pendiente: saldo,
+      estado: estadoGrupo,
+      ultimo_pago_at: ultimoPago || base?.ultimo_pago_at || "",
+      servicios_tipos: serviciosUnicos.join(","),
+      pagado_con_descuento: items.some((row) => Number(row?.pagado_con_descuento || 0) === 1) ? 1 : 0,
+      referencia_origen: [
+        String(base?.referencia_origen || "").trim(),
+        idsGrupo.length > 1 ? `Grupo episodio: ${idsGrupo.map((id) => `#${id}`).join(", ")}` : "",
+      ].filter(Boolean).join(" | "),
+    });
+  });
+
+  return grouped.sort((a, b) => {
+    const fa = parseCotizacionTimestamp(a?.fecha);
+    const fb = parseCotizacionTimestamp(b?.fecha);
+    if (Number.isFinite(fa) && Number.isFinite(fb) && fb !== fa) return fb - fa;
+    return Number(b?.episodio_id || b?.id || 0) - Number(a?.episodio_id || a?.id || 0);
+  });
+}
+
 function construirRelacionPorCotizacion(rows) {
   const lista = Array.isArray(rows) ? rows : [];
   const grupos = new Map();
@@ -641,6 +729,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const servicios = useMemo(() => parseServiciosTipos(row.servicios_tipos || ""), [row.servicios_tipos]);
 
   const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
+  const esGrupoEpisodio = Number(row?.es_grupo_episodio || 0) === 1 || Number(row?.adendas_count || 0) > 0;
+  const grupoIncluyePagadas = Number(row?.grupo_incluye_pagadas || 0) === 1;
+  const bloquearEdicionPorGrupoPagado = esGrupoEpisodio && grupoIncluyePagadas;
+  const edicionBloqueada = cotizacionPagada || bloquearEdicionPorGrupoPagado;
   const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
   const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
   const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada && servicios.includes("laboratorio") && Number(row.paciente_id || 0) > 0;
@@ -715,6 +807,9 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
     >
       <td className="px-3 py-2 font-semibold">
         <div>#{row.id}</div>
+        {Number(row?.adendas_count || 0) > 0 && (
+          <div className="text-[11px] text-indigo-700">+{Number(row.adendas_count)} adenda(s)</div>
+        )}
         {numeroComprobante && (
           <div className="text-xs font-mono text-indigo-700">{numeroComprobante}</div>
         )}
@@ -910,15 +1005,23 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => onNavigate(`/cotizaciones/${row.id}/detalle`)}
-            className={ACTION_BTN_BASE}
-            style={THEME_OUTLINE}
-            title="Ver detalle"
-            aria-label="Ver detalle"
-          >
-            <FiEye className="text-sm" />
-          </button>
+          {(() => {
+            const idsGrupo = Array.isArray(row?.cotizacion_ids_grupo)
+              ? row.cotizacion_ids_grupo.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+              : [];
+            const detalleQuery = idsGrupo.length > 1 ? `?grupo=${idsGrupo.join(",")}` : "";
+            return (
+              <button
+                onClick={() => onNavigate(`/cotizaciones/${row.id}/detalle${detalleQuery}`)}
+                className={ACTION_BTN_BASE}
+                style={THEME_OUTLINE}
+                title={idsGrupo.length > 1 ? "Ver detalle consolidado del episodio" : "Ver detalle"}
+                aria-label="Ver detalle"
+              >
+                <FiEye className="text-sm" />
+              </button>
+            );
+          })()}
           {estadoRow === "informativo" && (
             <button
               onClick={() => onPrintTicket(row)}
@@ -1015,10 +1118,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
           )}
           {estadoRow !== "anulada" && (
             <button
-              // TODO: re-enable edit for paid quotations when needed (cotizacionPagada guard below)
-              disabled={cotizacionPagada}
+              // Edicion deshabilitada para cotizaciones pagadas y episodios agrupados con pagos.
+              disabled={edicionBloqueada}
               onClick={() => {
-                if (cotizacionPagada) return;
+                if (edicionBloqueada) return;
                 const pacienteId = Number(row?.paciente_id || 0);
                 const nombre = String(row?.nombre || "").trim();
                 const apellido = String(row?.apellido || "").trim();
@@ -1044,9 +1147,15 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
                   }
                 );
               }}
-              className={`${ACTION_BTN_BASE} ${cotizacionPagada ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50' : ''}`}
-              style={cotizacionPagada ? {} : THEME_OUTLINE}
-              title={cotizacionPagada ? 'No se puede editar una cotización pagada' : 'Editar cotización'}
+              className={`${ACTION_BTN_BASE} ${edicionBloqueada ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50' : ''}`}
+              style={edicionBloqueada ? {} : THEME_OUTLINE}
+              title={
+                cotizacionPagada
+                  ? 'No se puede editar una cotización pagada'
+                  : (bloquearEdicionPorGrupoPagado
+                    ? 'Este episodio agrupado incluye cotizaciones pagadas. Gestiona cambios como adenda desde la atención vigente.'
+                    : 'Editar cotización')
+              }
               aria-label="Editar cotización"
             >
               <FiEdit2 className="text-sm" />
@@ -1283,7 +1392,10 @@ export default function CotizacionesPage() {
     const baseId = Number(row?.id || 0);
     if (baseId <= 0) return;
 
-    let ids = [baseId];
+    let ids = Array.from(new Set((Array.isArray(row?.cotizacion_ids_grupo) ? row.cotizacion_ids_grupo : [baseId])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0)));
+    if (ids.length === 0) ids = [baseId];
     try {
       const res = await authFetch(`api_cotizaciones.php?accion=sugerir_grupo_cobro&cotizacion_id=${baseId}&_t=${Date.now()}`, {
         cache: "no-store",
@@ -1461,7 +1573,9 @@ export default function CotizacionesPage() {
     return base;
   }, [rows, filtroSolicitudHC]);
 
-  const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rows), [rows]);
+  const rowsOperativos = useMemo(() => agruparFilasOperativasPorEpisodio(rowsVisibles), [rowsVisibles]);
+
+  const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rowsOperativos), [rowsOperativos]);
 
   useEffect(() => {
     if (rolReporte === "todos") {
@@ -2204,7 +2318,7 @@ export default function CotizacionesPage() {
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Atenciones</h2>
-          <div className="text-sm text-gray-600">Total registros: <b>{total}</b></div>
+          <div className="text-sm text-gray-600">Total registros: <b>{total}</b> · Filas operativas visibles: <b>{rowsOperativos.length}</b></div>
         </div>
 
         <QuickAccessNav keys={["pacientes", "recordatorios", "reporteCaja"]} />
@@ -2356,11 +2470,11 @@ export default function CotizacionesPage() {
                 <tr>
                   <td colSpan={14} className="px-3 py-8 text-center text-gray-500">Cargando...</td>
                 </tr>
-              ) : rowsVisibles.length === 0 ? (
+              ) : rowsOperativos.length === 0 ? (
                 <tr>
                   <td colSpan={14} className="px-3 py-8 text-center text-gray-500">Sin resultados</td>
                 </tr>
-              ) : rowsVisibles.map((row) => (
+              ) : rowsOperativos.map((row) => (
                 (() => {
                   const serviciosRow = String(row?.servicios_tipos || "")
                     .split(",")
@@ -2415,7 +2529,7 @@ export default function CotizacionesPage() {
                   }
                   return (
                   <CotizacionRow
-                    key={row.id}
+                    key={`${row.id}-${row.episodio_id || row.id}`}
                     row={row}
                     onCobrar={abrirCobro}
                     onAnular={anularCotizacion}

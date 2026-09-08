@@ -12,7 +12,6 @@ function LaboratorioPanelPage() {
   const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const deepLinkResolvedRef = useRef(false);
-  const [examenesDisponibles, setExamenesDisponibles] = useState([]);
   const [resumenPanel, setResumenPanel] = useState({
     total: 0,
     pendientes: 0,
@@ -24,29 +23,23 @@ function LaboratorioPanelPage() {
   const backTo = new URLSearchParams(location.search).get('back_to') || '';
 
   useEffect(() => {
-    authFetch("api_examenes_laboratorio.php", {
-      cache: 'no-store'
-    })
-      .then(res => res.json())
-      .then(data => setExamenesDisponibles(data.examenes || []));
-  }, []);
-
-  useEffect(() => {
     if (activeTab !== 'ordenes') return;
 
-    authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1", {
-      cache: 'no-store'
-    })
-      .then(res => res.json())
-      .then(data => {
-        const ordenes = data?.success && Array.isArray(data.ordenes) ? data.ordenes : [];
-        const hoyTexto = new Date().toDateString();
+    Promise.all([
+      authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1&resumen_panel=1", {
+        cache: 'no-store'
+      }).then(res => res.json()),
+      authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1&resumen_alertas=1", {
+        cache: 'no-store'
+      }).then(res => res.json()),
+    ])
+      .then(([panelData, alertData]) => {
         const resumen = {
-          total: ordenes.length,
-          pendientes: ordenes.filter(o => o.estado === 'pendiente').length,
-          completadas: ordenes.filter(o => o.estado === 'completado').length,
-          hoy: ordenes.filter(o => o.fecha && new Date(o.fecha).toDateString() === hoyTexto).length,
-          vencidas: ordenes.filter(o => Number(o.alarmas_vencidas || 0) > 0).length,
+          total: Number(panelData?.total || 0),
+          pendientes: Number(panelData?.pendientes || 0),
+          completadas: Number(panelData?.completadas || 0),
+          hoy: Number(panelData?.hoy || 0),
+          vencidas: Number(alertData?.vencido || 0),
         };
         setResumenPanel(resumen);
       })
@@ -92,21 +85,33 @@ function LaboratorioPanelPage() {
 
     const resolverDesdeDeepLink = async () => {
       try {
-        const res = await authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1", {
-          cache: 'no-store'
-        });
-        const data = await res.json();
-        const ordenes = data?.success && Array.isArray(data.ordenes) ? data.ordenes : [];
-
         let objetivo = null;
         if (ordenId > 0) {
-          objetivo = ordenes.find((orden) => Number(orden.id) === ordenId) || null;
+          const resById = await authFetch(`api_ordenes_laboratorio.php?light=1&paginated=1&page=1&limit=1&orden_id=${ordenId}`, {
+            cache: 'no-store'
+          });
+          const dataById = await resById.json();
+          if (dataById?.success && Array.isArray(dataById.ordenes) && dataById.ordenes.length > 0) {
+            objetivo = dataById.ordenes[0];
+          }
         }
         if (!objetivo && cotizacionId > 0) {
-          objetivo = ordenes.find((orden) => Number(orden.cotizacion_id || 0) === cotizacionId && orden.estado !== 'cancelada') || null;
+          const resByCot = await authFetch(`api_ordenes_laboratorio.php?solo_visibles_panel=1&light=1&paginated=1&page=1&limit=1&cotizacion_id=${cotizacionId}`, {
+            cache: 'no-store'
+          });
+          const dataByCot = await resByCot.json();
+          if (dataByCot?.success && Array.isArray(dataByCot.ordenes) && dataByCot.ordenes.length > 0) {
+            objetivo = dataByCot.ordenes[0];
+          }
         }
         if (!objetivo && cotizacionId > 0) {
-          objetivo = ordenes.find((orden) => Number(orden.cotizacion_id || 0) === cotizacionId) || null;
+          const resByCotAny = await authFetch(`api_ordenes_laboratorio.php?light=1&paginated=1&page=1&limit=1&cotizacion_id=${cotizacionId}`, {
+            cache: 'no-store'
+          });
+          const dataByCotAny = await resByCotAny.json();
+          if (dataByCotAny?.success && Array.isArray(dataByCotAny.ordenes) && dataByCotAny.ordenes.length > 0) {
+            objetivo = dataByCotAny.ordenes[0];
+          }
         }
 
         if (objetivo) {
@@ -155,7 +160,7 @@ function LaboratorioPanelPage() {
     try {
       const idBusqueda = ordenSeleccionada.id;
       const [resOrdenes, resResultados] = await Promise.all([
-        authFetch("api_ordenes_laboratorio.php?solo_visibles_panel=1", {
+        authFetch(`api_ordenes_laboratorio.php?light=1&paginated=1&page=1&limit=1&orden_id=${idBusqueda}`, {
           cache: 'no-store'
         }),
         authFetch(`api_get_resultados_laboratorio.php?orden_id=${idBusqueda}`, {
@@ -210,9 +215,7 @@ function LaboratorioPanelPage() {
       if (typeof ex === 'object' && ex.nombre) {
         return ex.nombre;
       }
-      // Si ex es un ID, buscar en examenesDisponibles
-      const exObj = examenesDisponibles.find(e => e.id == ex);
-      return exObj ? exObj.nombre : ex;
+      return String(ex);
     }).join(", ");
   };
 

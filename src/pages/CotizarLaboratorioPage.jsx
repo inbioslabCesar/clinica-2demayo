@@ -967,6 +967,29 @@ export default function CotizarLaboratorioPage() {
     return [...detallesNoLaboratorio, ...detallesLaboratorio];
   };
 
+  const construirDetallesAdendaDelta = async (detallesLaboratorio) => {
+    if (!cotizacionId) return detallesLaboratorio;
+
+    const base = cotizacionDetallesOriginales.length > 0
+      ? cotizacionDetallesOriginales
+      : await obtenerDetallesCotizacion(cotizacionId);
+
+    const existentes = new Set(
+      (Array.isArray(base) ? base : [])
+        .filter((d) => {
+          const tipo = String(d?.servicio_tipo || '').toLowerCase().trim();
+          const estadoItem = String(d?.estado_item || 'activo').toLowerCase().trim();
+          return tipo === 'laboratorio' && estadoItem !== 'eliminado';
+        })
+        .map((d) => Number(d?.servicio_id || 0))
+        .filter((id) => id > 0)
+    );
+
+    return (Array.isArray(detallesLaboratorio) ? detallesLaboratorio : []).filter(
+      (d) => !existentes.has(Number(d?.servicio_id || 0))
+    );
+  };
+
   const generarCotizacion = async ({ irACobro = false } = {}) => {
     if (!cotizacionId && seleccionados.length === 0) {
       setMensaje("Selecciona al menos un examen para cotizar.");
@@ -1044,6 +1067,29 @@ export default function CotizarLaboratorioPage() {
 
       const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
       if (!data?.success && cotizacionId && noEditable) {
+        const detallesAdendaDelta = await construirDetallesAdendaDelta(detallesLaboratorio);
+        const repetidos = Math.max(0, detallesLaboratorio.length - detallesAdendaDelta.length);
+
+        if (!detallesAdendaDelta.length) {
+          await Swal.fire({
+            title: 'Sin exámenes nuevos',
+            text: 'Todos los exámenes seleccionados ya existen en esta atención. Si deseas repetir una prueba, registra una nueva cotización.',
+            icon: 'info',
+            confirmButtonText: 'Entendido',
+          });
+          return;
+        }
+
+        if (repetidos > 0) {
+          await Swal.fire({
+            title: 'Exámenes repetidos omitidos',
+            text: `Se omitieron ${repetidos} examen(es) ya registrados en la atención. La adenda incluirá solo exámenes nuevos.`,
+            icon: 'warning',
+            confirmButtonText: 'Continuar',
+          });
+        }
+
+        const totalAdenda = detallesAdendaDelta.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
         const confirmAdenda = await Swal.fire({
           title: 'Cotización ya pagada',
           text: `La cotización #${Number(cotizacionId)} no se puede editar directamente. ¿Deseas crear una adenda nueva con estos cambios?`,
@@ -1059,8 +1105,8 @@ export default function CotizarLaboratorioPage() {
         const payloadAdenda = {
           accion: 'adenda',
           cotizacion_id: Number(cotizacionId),
-          detalles: detallesFinales,
-          total,
+          detalles: detallesAdendaDelta,
+          total: totalAdenda,
           fecha_ref: fechaRef,
           motivo: 'Adenda confirmada por usuario desde cotizador de Laboratorio (cotización pagada)'
         };

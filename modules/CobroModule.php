@@ -1453,67 +1453,241 @@ class CobroModule
             return;
         }
 
+        $resolverRaiz = function ($id) use ($conn) {
+            $actual = (int)$id;
+            if ($actual <= 0 || !self::columnExists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+                return $actual;
+            }
+            $visitados = [];
+            while ($actual > 0) {
+                if (isset($visitados[$actual])) break;
+                $visitados[$actual] = true;
+                $stmt = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+                if (!$stmt) break;
+                $stmt->bind_param('i', $actual);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $padre = (int)($row['cotizacion_padre_id'] ?? 0);
+                if ($padre <= 0 || $padre === $actual) break;
+                $actual = $padre;
+            }
+            return $actual;
+        };
+
+        $resolverCadena = function ($id) use ($conn, $resolverRaiz) {
+            $raiz = (int)$resolverRaiz($id);
+            if ($raiz <= 0 || !self::columnExists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+                return $raiz > 0 ? [$raiz] : [];
+            }
+            $ids = [$raiz => true];
+            $pendientes = [$raiz];
+            while (!empty($pendientes)) {
+                $actual = (int)array_shift($pendientes);
+                $stmt = $conn->prepare('SELECT id FROM cotizaciones WHERE cotizacion_padre_id = ?');
+                if (!$stmt) continue;
+                $stmt->bind_param('i', $actual);
+                $stmt->execute();
+                $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+                foreach ($rows as $row) {
+                    $child = (int)($row['id'] ?? 0);
+                    if ($child <= 0 || isset($ids[$child])) continue;
+                    $ids[$child] = true;
+                    $pendientes[] = $child;
+                }
+            }
+            return array_values(array_map('intval', array_keys($ids)));
+        };
+
+        $rootCotizacionId = (int)$resolverRaiz($cotizacionId);
+        $sourceCotizacionIds = $resolverCadena($cotizacionId);
+        if (empty($sourceCotizacionIds)) {
+            $sourceCotizacionIds = [$cotizacionId];
+        }
+        if ($rootCotizacionId <= 0) {
+            $rootCotizacionId = (int)$cotizacionId;
+        }
+
         $examIds = [];
+        $examPayload = [];
         foreach ((array)$detalles as $det) {
             $tipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
             if ($tipo !== 'laboratorio') continue;
             $sid = (int)($det['servicio_id'] ?? 0);
             if ($sid > 0) $examIds[] = $sid;
         }
+
+        if (self::tableExists($conn, 'cotizaciones_detalle') && !empty($sourceCotizacionIds)) {
+            $ids = array_values(array_unique(array_filter(array_map('intval', (array)$sourceCotizacionIds), function ($id) {
+                return $id > 0;
+            })));
+            if (!empty($ids)) {
+                $hasSnapshotJson = self::columnExists($conn, 'cotizaciones_detalle', 'snapshot_json');
+                $hasExamenVersion = self::columnExists($conn, 'cotizaciones_detalle', 'examen_version_id');
+                $whereEstado = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
+                $selectSnapshot = $hasSnapshotJson ? ', snapshot_json' : '';
+                $selectVersion = $hasExamenVersion ? ', examen_version_id' : '';
+                $ph = implode(',', array_fill(0, count($ids), '?'));
+                $sql = "SELECT servicio_id, descripcion{$selectSnapshot}{$selectVersion}
+                        FROM cotizaciones_detalle
+                        WHERE cotizacion_id IN ({$ph})
+                          AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'{$whereEstado}
+                        ORDER BY cotizacion_id ASC, id ASC";
+                $stmtDet = $conn->prepare($sql);
+                if ($stmtDet) {
+                    $stmtDet->bind_param(str_repeat('i', count($ids)), ...$ids);
+                    $stmtDet->execute();
+                    $rowsDet = $stmtDet->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtDet->close();
+                    foreach ($rowsDet as $rd) {
+                        $sid = (int)($rd['servicio_id'] ?? 0);
+                        if ($sid <= 0 || isset($examPayload[$sid])) continue;
+                        $examIds[] = $sid;
+                        $payload = [
+                            'id' => $sid,
+                            'descripcion' => (string)($rd['descripcion'] ?? ''),
+                            'nombre' => (string)($rd['descripcion'] ?? ''),
+                        ];
+                        if ($hasSnapshotJson && !empty($rd['snapshot_json'])) {
+                            $decoded = json_decode((string)$rd['snapshot_json'], true);
+                            if (is_array($decoded)) {
+                                $payload['snapshot_json'] = $decoded;
+                                if (isset($decoded['valores_referenciales']) && is_array($decoded['valores_referenciales'])) {
+                                    $payload['valores_referenciales'] = $decoded['valores_referenciales'];
+                                }
+                            }
+                        }
+                        $versionId = $hasExamenVersion ? (int)($rd['examen_version_id'] ?? 0) : 0;
+                        if ($versionId <= 0 && isset($payload['snapshot_json']['version_id'])) {
+                            $versionId = (int)$payload['snapshot_json']['version_id'];
+                        }
+                        if ($versionId > 0) {
+                            $payload['examen_version_id'] = $versionId;
+                        }
+                        $examPayload[$sid] = $payload;
+                    }
+                }
+            }
+        }
+
         $examIds = array_values(array_unique($examIds));
         if (empty($examIds)) {
             return;
         }
 
-        $json = json_encode($examIds);
+        $json = json_encode(!empty($examPayload) ? array_values($examPayload) : $examIds, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            $json = json_encode($examIds);
+        }
         $hasCotizacionId = self::columnExists($conn, 'ordenes_laboratorio', 'cotizacion_id');
         $hasConsultaId = self::columnExists($conn, 'ordenes_laboratorio', 'consulta_id');
 
         if ($hasCotizacionId) {
+            $ordenId = 0;
             $stmtChk = $conn->prepare('SELECT id FROM ordenes_laboratorio WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1');
             if ($stmtChk) {
-                $stmtChk->bind_param('i', $cotizacionId);
+                $stmtChk->bind_param('i', $rootCotizacionId);
                 $stmtChk->execute();
                 $exists = $stmtChk->get_result()->fetch_assoc();
                 $stmtChk->close();
                 if ($exists) {
                     $ordenId = (int)($exists['id'] ?? 0);
-                    if ($ordenId > 0) {
-                        if ($hasConsultaId && $consultaId > 0) {
-                            $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
-                            if ($stmtUp) {
-                                $stmtUp->bind_param('siii', $json, $pacienteId, $consultaId, $ordenId);
-                                $stmtUp->execute();
-                                $stmtUp->close();
-                            }
-                        } else {
-                            $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
-                            if ($stmtUp) {
-                                $stmtUp->bind_param('sii', $json, $pacienteId, $ordenId);
-                                $stmtUp->execute();
-                                $stmtUp->close();
-                            }
-                        }
-                    }
-                    return;
                 }
             }
 
-            if ($hasConsultaId && $consultaId > 0) {
+            if ($ordenId <= 0 && count($sourceCotizacionIds) > 1) {
+                $ids = array_values(array_unique(array_filter(array_map('intval', (array)$sourceCotizacionIds), function ($id) {
+                    return $id > 0;
+                })));
+                if (!empty($ids)) {
+                    $ph = implode(',', array_fill(0, count($ids), '?'));
+                    $stmtAny = $conn->prepare("SELECT id FROM ordenes_laboratorio WHERE cotizacion_id IN ({$ph}) ORDER BY id ASC LIMIT 1");
+                    if ($stmtAny) {
+                        $stmtAny->bind_param(str_repeat('i', count($ids)), ...$ids);
+                        $stmtAny->execute();
+                        $rowAny = $stmtAny->get_result()->fetch_assoc();
+                        $stmtAny->close();
+                        if ($rowAny) {
+                            $ordenId = (int)($rowAny['id'] ?? 0);
+                        }
+                    }
+                }
+            }
+
+            if ($ordenId > 0) {
+                if ($hasConsultaId && $consultaId > 0) {
+                    $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET cotizacion_id = ?, examenes = ?, paciente_id = ?, consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                    if ($stmtUp) {
+                        $stmtUp->bind_param('isiii', $rootCotizacionId, $json, $pacienteId, $consultaId, $ordenId);
+                        $stmtUp->execute();
+                        $stmtUp->close();
+                    }
+                } else {
+                    $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET cotizacion_id = ?, examenes = ?, paciente_id = ?, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                    if ($stmtUp) {
+                        $stmtUp->bind_param('isii', $rootCotizacionId, $json, $pacienteId, $ordenId);
+                        $stmtUp->execute();
+                        $stmtUp->close();
+                    }
+                }
+            } elseif ($hasConsultaId && $consultaId > 0) {
                 $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, consulta_id) VALUES (?, ?, ?, ?)');
                 if ($stmtIns) {
-                    $stmtIns->bind_param('isii', $cotizacionId, $json, $pacienteId, $consultaId);
+                    $stmtIns->bind_param('isii', $rootCotizacionId, $json, $pacienteId, $consultaId);
                     $stmtIns->execute();
                     $stmtIns->close();
+                    $ordenId = (int)$conn->insert_id;
                 }
             } else {
                 $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id) VALUES (?, ?, ?)');
                 if ($stmtIns) {
-                    $stmtIns->bind_param('isi', $cotizacionId, $json, $pacienteId);
+                    $stmtIns->bind_param('isi', $rootCotizacionId, $json, $pacienteId);
                     $stmtIns->execute();
                     $stmtIns->close();
+                    $ordenId = (int)$conn->insert_id;
                 }
             }
+
+            if ($ordenId > 0 && count($sourceCotizacionIds) > 1) {
+                $ids = array_values(array_unique(array_filter(array_map('intval', (array)$sourceCotizacionIds), function ($id) {
+                    return $id > 0;
+                })));
+                if (!empty($ids)) {
+                    $ph = implode(',', array_fill(0, count($ids), '?'));
+                    $sqlDup = "SELECT id FROM ordenes_laboratorio WHERE cotizacion_id IN ({$ph}) AND id <> ?";
+                    $stmtDup = $conn->prepare($sqlDup);
+                    if ($stmtDup) {
+                        $types = str_repeat('i', count($ids)) . 'i';
+                        $params = $ids;
+                        $params[] = $ordenId;
+                        $stmtDup->bind_param($types, ...$params);
+                        $stmtDup->execute();
+                        $dupRows = $stmtDup->get_result()->fetch_all(MYSQLI_ASSOC);
+                        $stmtDup->close();
+                        foreach ($dupRows as $dupRow) {
+                            $dupId = (int)($dupRow['id'] ?? 0);
+                            if ($dupId <= 0) continue;
+                            $stmtRes = $conn->prepare('SELECT 1 FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
+                            $tieneResultados = false;
+                            if ($stmtRes) {
+                                $stmtRes->bind_param('i', $dupId);
+                                $stmtRes->execute();
+                                $tieneResultados = (bool)$stmtRes->get_result()->fetch_row();
+                                $stmtRes->close();
+                            }
+                            if ($tieneResultados) continue;
+                            $stmtCan = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = '[]', estado = 'cancelada', cotizacion_id = ? WHERE id = ?");
+                            if ($stmtCan) {
+                                $stmtCan->bind_param('ii', $rootCotizacionId, $dupId);
+                                $stmtCan->execute();
+                                $stmtCan->close();
+                            }
+                        }
+                    }
+                }
+            }
+
             return;
         }
 

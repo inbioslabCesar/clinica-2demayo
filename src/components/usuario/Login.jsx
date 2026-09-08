@@ -9,6 +9,64 @@ import { authFetch } from "../../utils/apiClient";
 const LOGIN_BRAND_CACHE_KEY = 'login_brand_cache_v1';
 const LOGIN_BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
 const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
+const LOGIN_REQUEST_TIMEOUT_MS = Math.max(8000, Number(SECURITY_CONFIG?.requestTimeout || 10000));
+const LOGIN_RETRY_DELAY_MS = 700;
+
+function formatRetryAfter(seconds) {
+  const total = Math.max(0, Number(seconds || 0));
+  if (!Number.isFinite(total) || total <= 0) {
+    return "Demasiados intentos fallidos. Intenta nuevamente en unos minutos.";
+  }
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  if (mins > 0) {
+    return `Demasiados intentos fallidos. Intenta nuevamente en ${mins}m ${secs}s.`;
+  }
+  return `Demasiados intentos fallidos. Intenta nuevamente en ${secs}s.`;
+}
+
+async function postLoginWithTimeout(path, payload) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), LOGIN_REQUEST_TIMEOUT_MS);
+
+  try {
+    const res = await authFetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: Boolean(res.ok && data?.success),
+      status: Number(res.status || 0),
+      data,
+      networkError: false,
+      timeout: false,
+    };
+  } catch (error) {
+    const timeout = error?.name === "AbortError";
+    return {
+      ok: false,
+      status: 0,
+      data: {},
+      networkError: true,
+      timeout,
+    };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 function toAbsoluteLogoUrl(rawLogo) {
   const raw = String(rawLogo || '').trim();
@@ -74,6 +132,7 @@ function Login({ onLogin }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [retryingLogin, setRetryingLogin] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [logoSrc, setLogoSrc] = useState(cachedBrand?.logoSrc || '');
   const [clinicName, setClinicName] = useState(cachedBrand?.clinicName || '');
@@ -228,27 +287,29 @@ function Login({ onLogin }) {
     }
     
     const esEmail = usuario.includes("@") && usuario.includes(".");
-    try {
-      if (esEmail) {
-        // En producción la mayoría de cuentas internas usan email,
-        // por eso intentamos primero usuario normal para evitar doble request.
-        let resUsuario, dataUsuario;
-        try {
-          resUsuario = await authFetch("api_login.php", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ usuario, password }),
-          });
-          dataUsuario = await resUsuario.json();
-        } catch {
-          resUsuario = { ok: false };
-          dataUsuario = {};
-        }
 
-        if (resUsuario.ok && dataUsuario?.success) {
+    const postLoginWithSingleRetry = async (path, payload) => {
+      const first = await postLoginWithTimeout(path, payload);
+      if (!first.networkError) {
+        return first;
+      }
+
+      setRetryingLogin(true);
+      await waitMs(LOGIN_RETRY_DELAY_MS);
+      const second = await postLoginWithTimeout(path, payload);
+      setRetryingLogin(false);
+      return second;
+    };
+
+    try {
+      const credUsuario = { usuario, password };
+      const credMedico = { email: usuario, password };
+
+      if (esEmail) {
+        const loginUsuario = await postLoginWithSingleRetry("api_login.php", credUsuario);
+
+        if (loginUsuario.ok) {
+          const dataUsuario = loginUsuario.data;
           const usuarioNormalizado = {
             ...dataUsuario.usuario,
             permisos: normalizePermisos(dataUsuario?.usuario?.permisos || []),
@@ -265,24 +326,26 @@ function Login({ onLogin }) {
           return;
         }
 
-        // Fallback médico si no autentica como usuario.
-        let resMedico, dataMedico;
-        try {
-          resMedico = await authFetch("api_login_medico.php", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ email: usuario, password }),
-          });
-          dataMedico = await resMedico.json();
-        } catch {
-          resMedico = { ok: false };
-          dataMedico = {};
+        // Solo usar fallback cuando hubo rechazo de credenciales (401),
+        // no cuando hay red lenta, timeout o bloqueo por intentos.
+        if (loginUsuario.status === 429) {
+          setError(formatRetryAfter(loginUsuario.data?.retry_after));
+          return;
+        }
+        if (loginUsuario.networkError) {
+          setError(loginUsuario.timeout
+            ? "La conexión está lenta. Intenta nuevamente."
+            : "Error de conexión con el servidor");
+          return;
+        }
+        if (loginUsuario.status !== 401) {
+          setError(loginUsuario.data?.error || "No se pudo iniciar sesión en este momento");
+          return;
         }
 
-        if (resMedico.ok && dataMedico?.success) {
+        const loginMedico = await postLoginWithSingleRetry("api_login_medico.php", credMedico);
+        if (loginMedico.ok) {
+          const dataMedico = loginMedico.data;
           const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
           sessionStorage.removeItem('usuario');
           sessionStorage.removeItem('user_role');
@@ -291,24 +354,20 @@ function Login({ onLogin }) {
           navigate("/");
           return;
         }
-      } else {
-        // 1. Intentar login como usuario normal
-        let res, data;
-        try {
-          res = await authFetch("api_login.php", {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ usuario, password }),
-          });
-          data = await res.json();
-        } catch {
-          res = { ok: false };
-          data = {};
+        if (loginMedico.status === 429) {
+          setError(formatRetryAfter(loginMedico.data?.retry_after));
+          return;
         }
-        if (res.ok && data.success) {
+        if (loginMedico.networkError) {
+          setError(loginMedico.timeout
+            ? "La conexión está lenta. Intenta nuevamente."
+            : "Error de conexión con el servidor");
+          return;
+        }
+      } else {
+        const loginUsuario = await postLoginWithSingleRetry("api_login.php", credUsuario);
+        if (loginUsuario.ok) {
+          const data = loginUsuario.data;
           const usuarioNormalizado = {
             ...data.usuario,
             permisos: normalizePermisos(data?.usuario?.permisos || []),
@@ -325,23 +384,25 @@ function Login({ onLogin }) {
           navigate("/");
           return;
         }
-        // Si falla, intentar como médico
-        let resMedico, dataMedico;
-        try {
-          resMedico = await authFetch("api_login_medico.php", {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest"
-            },
-            body: JSON.stringify({ email: usuario, password }),
-          });
-          dataMedico = await resMedico.json();
-        } catch {
-          resMedico = { ok: false };
-          dataMedico = {};
+
+        if (loginUsuario.status === 429) {
+          setError(formatRetryAfter(loginUsuario.data?.retry_after));
+          return;
         }
-        if (resMedico.ok && dataMedico.success) {
+        if (loginUsuario.networkError) {
+          setError(loginUsuario.timeout
+            ? "La conexión está lenta. Intenta nuevamente."
+            : "Error de conexión con el servidor");
+          return;
+        }
+        if (loginUsuario.status !== 401) {
+          setError(loginUsuario.data?.error || "No se pudo iniciar sesión en este momento");
+          return;
+        }
+
+        const loginMedico = await postLoginWithSingleRetry("api_login_medico.php", credMedico);
+        if (loginMedico.ok) {
+          const dataMedico = loginMedico.data;
           const medicoConRol = { ...dataMedico.medico, rol: 'medico' };
           sessionStorage.removeItem('usuario');
           sessionStorage.removeItem('user_role');
@@ -350,7 +411,19 @@ function Login({ onLogin }) {
           navigate("/");
           return;
         }
+
+        if (loginMedico.status === 429) {
+          setError(formatRetryAfter(loginMedico.data?.retry_after));
+          return;
+        }
+        if (loginMedico.networkError) {
+          setError(loginMedico.timeout
+            ? "La conexión está lenta. Intenta nuevamente."
+            : "Error de conexión con el servidor");
+          return;
+        }
       }
+
       if (await hydrateFromBackendSession()) {
         return;
       }
@@ -358,6 +431,7 @@ function Login({ onLogin }) {
     } catch {
       setError("Error de conexión con el servidor");
     } finally {
+      setRetryingLogin(false);
       setLoading(false);
     }
   };
@@ -448,7 +522,7 @@ function Login({ onLogin }) {
               {loading ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                  <span>Verificando...</span>
+                  <span>{retryingLogin ? "Reintentando conexión..." : "Verificando..."}</span>
                 </>
               ) : (
                 <>
@@ -467,6 +541,15 @@ function Login({ onLogin }) {
                 <div className="flex items-center justify-center gap-2 text-red-200">
                   <Icon iconName="ErrorBadge" className="text-xl" />
                   <span className="font-medium">{error}</span>
+                </div>
+              </div>
+            )}
+
+            {loading && retryingLogin && (
+              <div className="bg-amber-500/20 backdrop-blur-sm border border-amber-400/30 rounded-2xl p-3 text-center">
+                <div className="flex items-center justify-center gap-2 text-amber-100">
+                  <Icon iconName="Sync" className="text-lg" />
+                  <span className="text-sm font-medium">Conexión inestable, reintentando automáticamente...</span>
                 </div>
               </div>
             )}

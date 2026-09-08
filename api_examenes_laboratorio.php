@@ -105,7 +105,7 @@ function normalize_valores_referenciales($raw) {
                     'valor' => $r['valor'] ?? '',
                     'valor_min' => $r['valor_min'] ?? '',
                     'valor_max' => $r['valor_max'] ?? '',
-                    'desc' => $r['desc'] ?? '',
+                    'desc' => $r['desc'] ?? ($r['descripcion'] ?? ''),
                     'sexo' => $r['sexo'] ?? 'cualquiera',
                     'edad_min' => $r['edad_min'] ?? '',
                     'edad_max' => $r['edad_max'] ?? ''
@@ -408,7 +408,7 @@ switch ($method) {
                             'valor' => $r['valor'] ?? '',
                             'valor_min' => $r['valor_min'] ?? '',
                             'valor_max' => $r['valor_max'] ?? '',
-                            'desc' => $r['desc'] ?? '',
+                            'desc' => $r['desc'] ?? ($r['descripcion'] ?? ''),
                             'sexo' => $r['sexo'] ?? 'cualquiera',
                             'edad_min' => $r['edad_min'] ?? '',
                             'edad_max' => $r['edad_max'] ?? ''

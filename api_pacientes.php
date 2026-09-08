@@ -215,10 +215,62 @@ function pacientes_normalizar_unidad_edad($unidad): string {
     $u = strtolower(trim((string)$unidad));
     if ($u === '') return 'anios';
 
-    if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['anio', 'anios', 'años', 'año', 'aÃ±o', 'aÃ±os', 'year', 'years'], true)) return 'anios';
     if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
-    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    if (in_array($u, ['dia', 'dias', 'días', 'dÃa', 'dÃas', 'day', 'days'], true)) return 'dias';
     return 'anios';
+}
+
+function pacientes_unidad_edad_para_bd($conn, $unidadNormalizada): ?string {
+    static $cache = null;
+
+    $unidad = pacientes_normalizar_unidad_edad($unidadNormalizada);
+    if ($unidad === '') return null;
+
+    if ($cache === null) {
+        $cache = [
+            'is_enum' => false,
+            'options' => [],
+            'by_normalized' => [],
+        ];
+
+        $stmt = $conn->prepare("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pacientes' AND COLUMN_NAME = 'edad_unidad' LIMIT 1");
+        if ($stmt) {
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            $columnType = strtolower(trim((string)($row['COLUMN_TYPE'] ?? '')));
+            if (strpos($columnType, 'enum(') === 0) {
+                $cache['is_enum'] = true;
+                $inside = substr($columnType, 5, -1);
+                $options = str_getcsv($inside, ',', "'", '\\');
+                foreach ((array)$options as $opt) {
+                    $value = trim((string)$opt);
+                    if ($value === '') continue;
+                    $cache['options'][] = $value;
+                    $norm = pacientes_normalizar_unidad_edad($value);
+                    if (!isset($cache['by_normalized'][$norm])) {
+                        $cache['by_normalized'][$norm] = $value;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!$cache['is_enum']) {
+        return $unidad;
+    }
+
+    if (isset($cache['by_normalized'][$unidad])) {
+        return $cache['by_normalized'][$unidad];
+    }
+
+    if (!empty($cache['options'])) {
+        return (string)$cache['options'][0];
+    }
+
+    return $unidad;
 }
 
 function pacientes_set_edad_row(array &$row): void {
@@ -424,7 +476,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     $fecha_nacimiento = isset($data['fecha_nacimiento']) && $data['fecha_nacimiento'] !== '' ? $data['fecha_nacimiento'] : null;
     $edad = $data['edad'] ?? null;
-    $edad_unidad = $data['edad_unidad'] ?? null;
+    if ($edad === '' || $edad === false) {
+        $edad = null;
+    } elseif ($edad !== null) {
+        $edad = max(0, (int)$edad);
+    }
+
+    $edadUnidadInput = $data['edad_unidad'] ?? null;
+    $edad_unidad = $edad !== null
+        ? pacientes_unidad_edad_para_bd($conn, $edadUnidadInput)
+        : null;
     $procedencia = $data['procedencia'] ?? null;
     $tipo_seguro = $data['tipo_seguro'] ?? null;
     $sexo = $data['sexo'] ?? 'M';

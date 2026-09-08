@@ -3,6 +3,21 @@ import { authFetch } from "../../utils/apiClient";
 
 export default function ResultadosLaboratorio({ resultadosLab }) {
   const [examenes, setExamenes] = useState([]);
+  const isMetaResultKey = (key) => {
+    const k = String(key || "");
+    return (
+      k.endsWith("__imprimir_examen") ||
+      k.endsWith("__alarma_activa") ||
+      k.endsWith("__alarma_dias") ||
+      k.endsWith("__seccion_categoria") ||
+      k.endsWith("__seccion_titulo") ||
+      k.endsWith("__seccion_alineacion") ||
+      k.endsWith("__seccion_color_texto") ||
+      k.includes("__param_validado__") ||
+      k.includes("__param_validado_at__") ||
+      k.includes("__param_validado_por__")
+    );
+  };
   useEffect(() => {
     authFetch("api_examenes_laboratorio.php")
       .then(res => res.json())
@@ -47,7 +62,7 @@ export default function ResultadosLaboratorio({ resultadosLab }) {
             
             {res.resultados && typeof res.resultados === "object" ? (
               <div className="space-y-2">
-                {Object.entries(res.resultados).map(([ex, val]) => (
+                {Object.entries(res.resultados).filter(([ex]) => !isMetaResultKey(ex)).map(([ex, val]) => (
                   <div key={ex} className="flex items-start gap-3 p-2 bg-green-25 rounded-md border-l-4 border-green-400">
                     <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
                     <div className="flex-1">

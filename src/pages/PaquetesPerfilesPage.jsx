@@ -143,6 +143,35 @@ function formatHonorarioValor(item) {
   return "Config. normal";
 }
 
+function normalizeDraftItem(rawItem) {
+  const base = rawItem && typeof rawItem === "object" ? rawItem : {};
+  const reglaBase = base.honorario_regla && typeof base.honorario_regla === "object" ? base.honorario_regla : {};
+  return {
+    ...EMPTY_ITEM,
+    ...base,
+    source_type: String(base.source_type || EMPTY_ITEM.source_type),
+    source_id: base.source_id ?? "",
+    medico_id: base.medico_id ?? "",
+    medico_nombre_snapshot: base.medico_nombre_snapshot ?? "",
+    descripcion_snapshot: base.descripcion_snapshot ?? "",
+    cantidad: base.cantidad ?? 1,
+    precio_lista_snapshot: base.precio_lista_snapshot ?? "",
+    subtotal_snapshot: base.subtotal_snapshot ?? 0,
+    es_derivado: !!base.es_derivado,
+    laboratorio_referencia: base.laboratorio_referencia ?? "",
+    tipo_derivacion: base.tipo_derivacion ?? "",
+    valor_derivacion: base.valor_derivacion ?? "",
+    honorario_regla: {
+      ...EMPTY_ITEM.honorario_regla,
+      ...reglaBase,
+      modo_honorario: reglaBase.modo_honorario || "usar_configuracion_medico",
+      monto_fijo_medico: reglaBase.monto_fijo_medico ?? "",
+      porcentaje_medico: reglaBase.porcentaje_medico ?? "",
+      observaciones: reglaBase.observaciones ?? "",
+    },
+  };
+}
+
 export default function PaquetesPerfilesPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -239,14 +268,7 @@ export default function PaquetesPerfilesPage() {
         vigencia_hasta: p.vigencia_hasta || "",
         meta,
         items: Array.isArray(p.items)
-          ? p.items.map((it) => ({
-              ...EMPTY_ITEM,
-              ...it,
-              honorario_regla: {
-                ...EMPTY_ITEM.honorario_regla,
-                ...(it.honorario_regla || {}),
-              },
-            }))
+          ? p.items.map((it) => normalizeDraftItem(it))
           : [],
       });
       setEditingItemIndex(null);
@@ -328,14 +350,7 @@ export default function PaquetesPerfilesPage() {
   const editItem = (idx) => {
     const base = form.items[idx];
     if (!base) return;
-    setItemDraft({
-      ...EMPTY_ITEM,
-      ...base,
-      honorario_regla: {
-        ...EMPTY_ITEM.honorario_regla,
-        ...(base.honorario_regla || {}),
-      },
-    });
+    setItemDraft(normalizeDraftItem(base));
     setEditingItemIndex(idx);
     setCatalogResults([]);
     setCatalogQ("");

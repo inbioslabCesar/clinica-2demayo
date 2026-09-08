@@ -28,7 +28,10 @@ export default function ResultadosLaboratorioPage() {
       k.endsWith("__seccion_categoria") ||
       k.endsWith("__seccion_titulo") ||
       k.endsWith("__seccion_alineacion") ||
-      k.endsWith("__seccion_color_texto")
+      k.endsWith("__seccion_color_texto") ||
+      k.includes("__param_validado__") ||
+      k.includes("__param_validado_at__") ||
+      k.includes("__param_validado_por__")
     );
   };
 

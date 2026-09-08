@@ -18,9 +18,20 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const [docExternos, setDocExternos] = useState([]);
   const [descargandoResultado, setDescargandoResultado] = useState(false);
   const [actualizandoExamenId, setActualizandoExamenId] = useState(null);
+  const [validando, setValidando] = useState(false);
 
   const pacienteId = orden?.paciente_id_ref || orden?.paciente_id;
   const resultadoId = Number(orden?.resultado_id || 0);
+  const rolSesion = (() => {
+    try {
+      const usuario = JSON.parse(sessionStorage.getItem("usuario") || "{}");
+      return String(usuario?.rol || '').trim().toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const puedeOperarResultados = ['laboratorista', 'tecnologo', 'tecnólogo'].includes(rolSesion);
+  const puedeValidar = puedeOperarResultados;
 
   const resolverUrlDescarga = (rawUrl) => {
     const raw = String(rawUrl || '').trim();
@@ -105,6 +116,11 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
   const handleActualizarExamen = async (examId, examLabel) => {
     if (!orden?.id || !examId) return;
+    if (!puedeOperarResultados) {
+      setMsgType("error");
+      setMsg("❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede actualizar examenes");
+      return;
+    }
 
     const nombre = String(examLabel || `examen ${examId}`).trim();
     const confirmado = window.confirm(
@@ -146,9 +162,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     <button
       type="button"
       onClick={() => handleActualizarExamen(examId, examLabel)}
-      disabled={actualizandoExamenId === examId || guardando || descargandoResultado}
+      disabled={!puedeOperarResultados || actualizandoExamenId === examId || guardando || descargandoResultado}
       className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
-      title="Actualizar solo este examen con la definición actual del catálogo"
+      title={!puedeOperarResultados ? 'Solo laboratorista/tecnologo puede actualizar examenes' : 'Actualizar solo este examen con la definición actual del catálogo'}
     >
       {actualizandoExamenId === examId ? '⏳ Actualizando...' : '↻ Actualizar examen'}
     </button>
@@ -359,6 +375,10 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       if (keyText.endsWith('__seccion_titulo')) return false;
       if (keyText.endsWith('__seccion_alineacion')) return false;
       if (keyText.endsWith('__seccion_color_texto')) return false;
+      if (keyText.includes('__param_imprimir__')) return false;
+      if (keyText.includes('__param_validado__')) return false;
+      if (keyText.includes('__param_validado_at__')) return false;
+      if (keyText.includes('__param_validado_por__')) return false;
       const raw = source[key];
       return raw !== null && raw !== undefined && String(raw).trim() !== '';
     });
@@ -379,8 +399,17 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
   const getDefaultOptionValue = (options) => {
     if (!Array.isArray(options)) return '';
+
     const defaultOption = options.find((option) => option && typeof option === 'object' && !!option.por_defecto);
-    return getOptionLabel(defaultOption);
+    const explicitDefault = getOptionLabel(defaultOption);
+    if (explicitDefault !== '') return explicitDefault;
+
+    for (const option of options) {
+      const candidate = getOptionLabel(option);
+      if (candidate !== '') return candidate;
+    }
+
+    return '';
   };
 
   const getDefaultTextValue = (param) => String(param?.texto_por_defecto ?? '').trim();
@@ -448,6 +477,11 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
   const sectionTitleKey = (examId) => `${examId}__seccion_titulo`;
   const sectionAlignKey = (examId) => `${examId}__seccion_alineacion`;
   const sectionColorKey = (examId) => `${examId}__seccion_color_texto`;
+  const isParamRenderable = (param) => isTipoParametro(param?.tipo) || isTipoCampo(param?.tipo) || isTipoTextoLargo(param?.tipo);
+  const paramTokenForMeta = (param) => normalizeParamToken(String(param?.codigo_interno || param?.nombre || '').trim());
+  const paramValidatedKey = (examId, param) => `${examId}__param_validado__${paramTokenForMeta(param)}`;
+  const paramValidatedAtKey = (examId, param) => `${examId}__param_validado_at__${paramTokenForMeta(param)}`;
+  const paramValidatedByKey = (examId, param) => `${examId}__param_validado_por__${paramTokenForMeta(param)}`;
 
   const getExamSectionCategory = (examId, source = resultados) => String(source[sectionCategoryKey(examId)] ?? '').trim();
   const getExamSectionTitle = (examId, source = resultados) => String(source[sectionTitleKey(examId)] ?? '');
@@ -459,6 +493,73 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     const raw = String(source[sectionColorKey(examId)] ?? '').trim();
     return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : '#1f2937';
   };
+
+  const parseBoolFlag = (raw, defaultValue = false) => {
+    if (raw === undefined || raw === null || raw === '') return defaultValue;
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw === 1;
+    const normalized = String(raw).trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'si' || normalized === 'sí';
+  };
+
+  const isParamValidated = (examId, param, source = resultados) => {
+    const token = paramTokenForMeta(param);
+    if (!token) return false;
+    return parseBoolFlag(source[paramValidatedKey(examId, param)], false);
+  };
+
+  const formatValidationDateTime = (raw) => {
+    const text = String(raw || '').trim();
+    if (!text) return '';
+    const normalized = text.replace(' ', 'T');
+    const dt = new Date(normalized);
+    if (Number.isNaN(dt.getTime())) return text;
+
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  };
+
+  const getExamValidationSummary = (examId, paramsList, source = resultados) => {
+    const items = (Array.isArray(paramsList) ? paramsList : [])
+      .filter((param) => {
+        if (!param || typeof param !== 'object' || !isParamRenderable(param)) return false;
+        const nombre = String(param.nombre || '').trim();
+        return nombre !== '';
+      });
+
+    if (items.length === 0) {
+      return { total: 0, validated: 0, percent: 0, latestAt: '' };
+    }
+
+    let validated = 0;
+    let latestAtTs = 0;
+    let latestAtRaw = '';
+
+    items.forEach((param) => {
+      const token = paramTokenForMeta(param);
+      if (!token) return;
+
+      if (!parseBoolFlag(source[paramValidatedKey(examId, param)], false)) return;
+
+      validated += 1;
+      const rawAt = String(source[paramValidatedAtKey(examId, param)] || '').trim();
+      if (!rawAt) return;
+      const ts = Date.parse(rawAt.replace(' ', 'T'));
+      if (!Number.isNaN(ts) && ts >= latestAtTs) {
+        latestAtTs = ts;
+        latestAtRaw = rawAt;
+      }
+    });
+
+    const percent = items.length > 0 ? Math.round((validated / items.length) * 100) : 0;
+    return {
+      total: items.length,
+      validated,
+      percent,
+      latestAt: formatValidationDateTime(latestAtRaw),
+    };
+  };
+
 
   const handleSectionCategoryChange = (examId, value) => {
     setResultados(prev => ({
@@ -604,7 +705,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
         if (Array.isArray(paramsList) && paramsList.length > 0) {
           paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-            if (!(isTipoParametro(param.tipo) || isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo))) return;
+            if (!isParamRenderable(param)) return;
             const nombre = String(param.nombre || '').trim();
             if (!nombre) return;
 
@@ -617,6 +718,19 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
               const codeKey = `${id}__${codigo}`;
               if (!Object.prototype.hasOwnProperty.call(preloaded, codeKey)) {
                 preloaded[codeKey] = valueResolved;
+              }
+            }
+
+            const token = paramTokenForMeta(param);
+            if (token) {
+              if (!Object.prototype.hasOwnProperty.call(preloaded, paramValidatedKey(id, param))) {
+                preloaded[paramValidatedKey(id, param)] = 0;
+              }
+              if (!Object.prototype.hasOwnProperty.call(preloaded, paramValidatedAtKey(id, param))) {
+                preloaded[paramValidatedAtKey(id, param)] = '';
+              }
+              if (!Object.prototype.hasOwnProperty.call(preloaded, paramValidatedByKey(id, param))) {
+                preloaded[paramValidatedByKey(id, param)] = '';
               }
             }
           });
@@ -650,10 +764,16 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
         if (paramsList.length > 0) {
           paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-            if ((isTipoParametro(param.tipo) || isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo)) && param.nombre && param.nombre.trim() !== "") {
+            if (isParamRenderable(param) && param.nombre && param.nombre.trim() !== "") {
               res[`${id}__${param.nombre}`] = "";
               if (param.codigo_interno && String(param.codigo_interno).trim() !== '') {
                 res[`${id}__${param.codigo_interno}`] = "";
+              }
+              const token = paramTokenForMeta(param);
+              if (token) {
+                res[paramValidatedKey(id, param)] = 0;
+                res[paramValidatedAtKey(id, param)] = '';
+                res[paramValidatedByKey(id, param)] = '';
               }
             }
           });
@@ -761,16 +881,40 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     return String(numVal);
   }
 
+  function registerFormulaValueAliases(target, name, value) {
+    if (!target || typeof target !== 'object') return;
+    const raw = String(name || '');
+    if (!raw) return;
+
+    target[raw] = value;
+
+    const trimmed = raw.trim();
+    if (trimmed && trimmed !== raw) {
+      target[trimmed] = value;
+    }
+
+    const singleSpaced = trimmed.replace(/\s+/g, ' ');
+    if (singleSpaced && singleSpaced !== trimmed) {
+      target[singleSpaced] = value;
+    }
+  }
+
   function evalFormula(formula, valoresPorNombre, decimales = null) {
     if (!formula) return "";
-    let expr = formula;
+    let expr = String(formula)
+      .replace(/[−–—]/g, '-')
+      .replace(/[×xX]/g, '*')
+      .replace(/[÷]/g, '/');
+
     const nombres = Object.keys(valoresPorNombre).sort((a, b) => b.length - a.length);
+    let hadReplacement = false;
+
     nombres.forEach(nombre => {
       const rawVal = valoresPorNombre[nombre];
       const numVal = normalizeNumber(rawVal);
       // Escapar el nombre para usar en RegExp
       const safeName = nombre.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(safeName, 'g');
+      const regex = new RegExp(safeName, 'gi');
       if (!regex.test(expr)) {
         return;
       }
@@ -778,8 +922,44 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         expr = "";
         return;
       }
+      hadReplacement = true;
       expr = expr.replace(regex, numVal);
     });
+
+    if (!hadReplacement) {
+      // Compatibilidad: admitir token normalizado (codigo_interno) aunque cambie mayúsculas/acentos.
+      const normalizeToken = (value) => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+      const byToken = {};
+      Object.keys(valoresPorNombre).forEach((k) => {
+        const token = normalizeToken(k);
+        if (!token || Object.prototype.hasOwnProperty.call(byToken, token)) return;
+        byToken[token] = valoresPorNombre[k];
+      });
+
+      Object.keys(byToken).sort((a, b) => b.length - a.length).forEach((token) => {
+        const rawVal = byToken[token];
+        const numVal = normalizeNumber(rawVal);
+        const safeToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regexToken = new RegExp(safeToken, 'gi');
+        if (!regexToken.test(expr)) return;
+        if (!Number.isFinite(numVal)) {
+          expr = '';
+          return;
+        }
+        hadReplacement = true;
+        expr = expr.replace(regexToken, numVal);
+      });
+    }
+
     if (!expr || expr.trim() === "") return "";
     try {
       // Evaluador aritmetico seguro para formulas numericas basicas.
@@ -802,6 +982,72 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       return "";
     }
   }
+
+  useEffect(() => {
+    if (!examenesDisponibles || examenesDisponibles.length === 0) return;
+
+    const examenesArray = getExamItemsSource();
+    if (!Array.isArray(examenesArray) || examenesArray.length === 0) return;
+
+    const updates = {};
+    let hasUpdates = false;
+
+    examenesArray.forEach(exItem => {
+      const id = getExamenId(exItem);
+      const paramsList = getEffectiveParamsListForExam(id);
+      if (!Array.isArray(paramsList) || paramsList.length === 0) return;
+
+      const valoresPorNombre = {};
+      paramsList.forEach((param) => {
+        if (!isTipoParametro(param.tipo) || !param.nombre || param.nombre.trim() === '') return;
+        const v = getResultValueForParam(resultados, id, param, '');
+        registerFormulaValueAliases(valoresPorNombre, param.nombre, v);
+        if (param.codigo_interno && String(param.codigo_interno).trim() !== '') {
+          registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, v);
+        }
+      });
+
+      const maxFormulaPasses = Math.max(3, paramsList.length + 1);
+      for (let iter = 0; iter < maxFormulaPasses; iter++) {
+        paramsList.forEach((param) => {
+          if (!isTipoParametro(param.tipo) || !param.nombre || param.nombre.trim() === '') return;
+          if (!param.formula || String(param.formula).trim() === '') return;
+          const computed = evalFormula(param.formula, valoresPorNombre, param.decimales);
+          registerFormulaValueAliases(valoresPorNombre, param.nombre, computed);
+          if (param.codigo_interno && String(param.codigo_interno).trim() !== '') {
+            registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, computed);
+          }
+        });
+      }
+
+      paramsList.forEach((param) => {
+        if (!isTipoParametro(param.tipo) || !param.nombre || param.nombre.trim() === '') return;
+        if (!param.formula || String(param.formula).trim() === '') return;
+
+        const computed = valoresPorNombre[param.nombre] ?? '';
+        const byNameKey = `${id}__${param.nombre}`;
+        const byNameCurrent = resultados[byNameKey] ?? '';
+
+        if (String(byNameCurrent ?? '') !== String(computed ?? '')) {
+          updates[byNameKey] = computed;
+          hasUpdates = true;
+        }
+
+        if (param.codigo_interno && String(param.codigo_interno).trim() !== '') {
+          const byCodeKey = `${id}__${param.codigo_interno}`;
+          const byCodeCurrent = resultados[byCodeKey] ?? '';
+          if (String(byCodeCurrent ?? '') !== String(computed ?? '')) {
+            updates[byCodeKey] = computed;
+            hasUpdates = true;
+          }
+        }
+      });
+    });
+
+    if (hasUpdates) {
+      setResultados((prev) => ({ ...prev, ...updates }));
+    }
+  }, [resultados, examenesDisponibles, orden?.id, orden?.examenes, examenesOrdenados]);
 
   // Extrae min/max desde un texto de referencia (p.ej. "2.5-5.8", "2,5 – 5,8", "entre 2.5 y 5.8").
   function parseMinMaxFromText(texto) {
@@ -932,6 +1178,11 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!puedeOperarResultados) {
+      setMsgType("error");
+      setMsg("❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede guardar resultados");
+      return;
+    }
     setGuardando(true);
     setMsg("");
 
@@ -963,9 +1214,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
           (exObj && exObj.tiempo_resultado) || (exOrdenDetalle && exOrdenDetalle.tiempo_resultado) || ''
         );
         const defaultOptionValue = (options) => {
-          if (!Array.isArray(options)) return '';
-          const selected = options.find((option) => option && typeof option === 'object' && !!option.por_defecto);
-          return getOptionLabel(selected);
+          return getDefaultOptionValue(options);
         };
         const defaultTextValue = (param) => getDefaultTextValue(param);
 
@@ -989,9 +1238,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         } else {
           resultadosToSend[alarmDaysKey(id)] = '';
         }
-        const paramsList = (exObj && Array.isArray(exObj.valores_referenciales) && exObj.valores_referenciales.length > 0)
-          ? exObj.valores_referenciales
-          : (exOrdenDetalle && Array.isArray(exOrdenDetalle.valores_referenciales) ? exOrdenDetalle.valores_referenciales : []);
+        const paramsList = getEffectiveParamsListForExam(id);
         if (!Array.isArray(paramsList) || paramsList.length === 0) return;
         // construir mapa de valores por nombre para esta iteración (usar los valores ya calculados o ingresados)
         const valoresPorNombre = {};
@@ -1002,9 +1249,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             const defaultValue = defaultOptionValue(opcionesParam);
             if ((currentValue === null || currentValue === undefined || String(currentValue).trim() === '') && defaultValue !== '') {
               resultadosToSend[`${id}__${param.nombre}`] = defaultValue;
-              valoresPorNombre[param.nombre] = defaultValue;
+              registerFormulaValueAliases(valoresPorNombre, param.nombre, defaultValue);
               if (param.codigo_interno && param.codigo_interno.trim() !== "") {
-                valoresPorNombre[param.codigo_interno] = defaultValue;
+                registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, defaultValue);
               }
             }
           }
@@ -1014,9 +1261,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             const defaultText = defaultTextValue(param);
             if ((currentValue === null || currentValue === undefined || String(currentValue).trim() === '') && defaultText !== '') {
               resultadosToSend[`${id}__${param.nombre}`] = defaultText;
-              valoresPorNombre[param.nombre] = defaultText;
+              registerFormulaValueAliases(valoresPorNombre, param.nombre, defaultText);
               if (param.codigo_interno && param.codigo_interno.trim() !== "") {
-                valoresPorNombre[param.codigo_interno] = defaultText;
+                registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, defaultText);
               }
             }
           }
@@ -1029,28 +1276,33 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             if (vFinal !== '' && (v === null || v === undefined || String(v).trim() === '')) {
               resultadosToSend[`${id}__${param.nombre}`] = vFinal;
             }
-            valoresPorNombre[param.nombre] = vFinal;
+            registerFormulaValueAliases(valoresPorNombre, param.nombre, vFinal);
             // Registrar también por codigo_interno (clave inmutable) para que fórmulas sobrevivan renombrados
             if (param.codigo_interno && param.codigo_interno.trim() !== "") {
-              valoresPorNombre[param.codigo_interno] = vFinal;
+              registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, vFinal);
             }
           }
         });
-        // evaluar y almacenar fórmulas
-        paramsList.filter(p => p && typeof p === 'object').forEach(param => {
-          if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
-            if (param.formula && param.formula.trim() !== "") {
-              const computed = evalFormula(param.formula, valoresPorNombre, param.decimales);
-              // actualizar tanto el mapa local como el objeto a enviar
-              const val = computed === null || computed === undefined ? "" : computed;
-              valoresPorNombre[param.nombre] = val;
-              if (param.codigo_interno && param.codigo_interno.trim() !== "") {
-                valoresPorNombre[param.codigo_interno] = val;
-                resultadosToSend[`${id}__${param.codigo_interno}`] = val;
-              }
-              resultadosToSend[`${id}__${param.nombre}`] = val;
+        // Evaluar formulas en multiples pasadas para soportar dependencias entre campos calculados.
+        const formulaParams = paramsList.filter(p => p && typeof p === 'object' && isTipoParametro(p.tipo) && p.nombre && p.nombre.trim() !== "" && p.formula && p.formula.trim() !== "");
+        const formulaPasses = Math.max(3, formulaParams.length + 1);
+        for (let pass = 0; pass < formulaPasses; pass++) {
+          formulaParams.forEach(param => {
+            const computed = evalFormula(param.formula, valoresPorNombre, param.decimales);
+            const val = computed === null || computed === undefined ? "" : computed;
+            registerFormulaValueAliases(valoresPorNombre, param.nombre, val);
+            if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+              registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, val);
             }
+          });
+        }
+
+        formulaParams.forEach(param => {
+          const val = valoresPorNombre[param.nombre] ?? "";
+          if (param.codigo_interno && param.codigo_interno.trim() !== "") {
+            resultadosToSend[`${id}__${param.codigo_interno}`] = val;
           }
+          resultadosToSend[`${id}__${param.nombre}`] = val;
         });
       });
 
@@ -1085,6 +1337,162 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       setMsgType("error");
     } finally {
       setGuardando(false);
+    }
+  };
+
+  const collectValidableTokensForExam = (examId, paramsList, source = resultados) => {
+    const tokens = [];
+    (Array.isArray(paramsList) ? paramsList : []).forEach((param) => {
+      if (!param || typeof param !== 'object' || !isParamRenderable(param)) return;
+      const nombre = String(param.nombre || '').trim();
+      if (!nombre) return;
+
+      const token = paramTokenForMeta(param);
+      if (!token) return;
+
+      let value = getResultValueForParam(source, examId, param, '');
+      if (!hasMeaningfulValue(value) && (isTipoTextoLargo(param.tipo) || isTipoCampo(param.tipo) || isTipoParametro(param.tipo))) {
+        const defaultText = getDefaultTextValue(param);
+        if (hasMeaningfulValue(defaultText)) {
+          value = defaultText;
+        } else {
+          const defaultOption = getDefaultOptionValue(param.opciones);
+          if (hasMeaningfulValue(defaultOption)) {
+            value = defaultOption;
+          }
+        }
+      }
+
+      if (!hasMeaningfulValue(value)) return;
+      tokens.push(token);
+    });
+    return Array.from(new Set(tokens));
+  };
+
+  const validarParametrosExamen = async (examId, paramsList, examName = '') => {
+    if (!orden?.id) return;
+    if (!puedeValidar) {
+      setMsgType('error');
+      setMsg('❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede validar resultados');
+      return;
+    }
+    if (resultadoId <= 0) {
+      setMsgType('error');
+      setMsg('❌ Guarde resultados antes de validar parámetros');
+      return;
+    }
+
+    const tokens = collectValidableTokensForExam(examId, paramsList, resultados);
+    if (tokens.length === 0) {
+      setMsgType('error');
+      setMsg('❌ No hay parámetros con valor para validar en esta sección');
+      return;
+    }
+
+    setValidando(true);
+    setMsg('');
+    try {
+      const res = await authFetch('api_resultados_laboratorio.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'validar_parametros',
+          orden_id: orden.id,
+          consulta_id: orden.consulta_id || null,
+          exam_id: examId,
+          parametros: tokens,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'No se pudo validar la sección');
+      }
+
+      if (data?.resultados && typeof data.resultados === 'object') {
+        setResultados((prev) => ({ ...prev, ...data.resultados }));
+      }
+      setMsgType('success');
+      setMsg(`✅ Se validaron ${data?.validados || tokens.length} parámetro(s) de ${examName || `examen ${examId}`}`);
+      if (typeof onGuardado === 'function') {
+        onGuardado({ success: true, estado: data?.estado || 'pendiente', resultado_id: data?.resultado_id || null });
+      }
+    } catch (e) {
+      setMsgType('error');
+      setMsg('❌ ' + (e?.message || 'No se pudo validar la sección'));
+    } finally {
+      setValidando(false);
+    }
+  };
+
+  const handleValidarResultados = async () => {
+    if (!orden?.id) return;
+    if (!puedeValidar) {
+      setMsgType('error');
+      setMsg('❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede validar resultados');
+      return;
+    }
+    if (resultadoId <= 0) {
+      setMsgType('error');
+      setMsg('❌ Guarde resultados antes de validar parámetros');
+      return;
+    }
+
+    const examenesArray = getExamItemsSource();
+    const tokensByExam = [];
+    examenesArray.forEach((exItem) => {
+      const examId = getExamenId(exItem);
+      const paramsList = getEffectiveParamsListForExam(examId);
+      const tokens = collectValidableTokensForExam(examId, paramsList, resultados);
+      if (tokens.length > 0) {
+        tokensByExam.push({ examId, tokens });
+      }
+    });
+
+    if (tokensByExam.length === 0) {
+      setMsgType('error');
+      setMsg('❌ No hay parámetros con valor para validar');
+      return;
+    }
+
+    setValidando(true);
+    setMsg('');
+    try {
+      let totalValidados = 0;
+      let latestData = null;
+      for (const item of tokensByExam) {
+        const res = await authFetch('api_resultados_laboratorio.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'validar_parametros',
+            orden_id: orden.id,
+            consulta_id: orden.consulta_id || null,
+            exam_id: item.examId,
+            parametros: item.tokens,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.error || `No se pudo validar el examen ${item.examId}`);
+        }
+        totalValidados += Number(data?.validados || 0);
+        latestData = data;
+        if (data?.resultados && typeof data.resultados === 'object') {
+          setResultados((prev) => ({ ...prev, ...data.resultados }));
+        }
+      }
+
+      setMsgType('success');
+      setMsg(`✅ Validación completada: ${totalValidados} parámetro(s) validado(s)`);
+      if (typeof onGuardado === 'function') {
+        onGuardado({ success: true, estado: latestData?.estado || 'pendiente', resultado_id: latestData?.resultado_id || null });
+      }
+    } catch (e) {
+      setMsgType('error');
+      setMsg('❌ ' + (e?.message || 'No se pudo validar'));
+    } finally {
+      setValidando(false);
     }
   };
 
@@ -1553,13 +1961,14 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                   paramsList.filter(p => p && typeof p === 'object').forEach(param => {
                     if (isTipoParametro(param.tipo) && param.nombre && param.nombre.trim() !== "") {
                       const v = getResultValueForParam(resultados, id, param, '');
-                      valoresPorNombre[param.nombre] = v;
+                      registerFormulaValueAliases(valoresPorNombre, param.nombre, v);
                       if (param.codigo_interno && param.codigo_interno.trim() !== "") {
-                        valoresPorNombre[param.codigo_interno] = v;
+                        registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, v);
                       }
                     }
                   });
                   const examName = (exOrdenDetalle && (exOrdenDetalle.snapshot_nombre || exOrdenDetalle.descripcion_snapshot || exOrdenDetalle.nombre || exOrdenDetalle.descripcion)) || (exObjResolved && exObjResolved.nombre) || `Examen ${id}`;
+                  const examValidation = getExamValidationSummary(id, paramsList, resultados);
 
                   return (
                     <div
@@ -1578,6 +1987,18 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                           <div>
                             <h4 className="text-base sm:text-lg font-bold text-gray-900">{examName}</h4>
                             <p className="text-sm text-gray-600">Complete todos los parámetros requeridos</p>
+                            {(examValidation.percent > 0 || examValidation.latestAt) && (
+                              <div className="mt-1 flex flex-wrap items-center gap-2">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs font-semibold">
+                                  {examValidation.percent}%
+                                </span>
+                                {examValidation.latestAt && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs font-semibold">
+                                    Validado {examValidation.latestAt}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
@@ -1613,6 +2034,15 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             </button>
                           </div>
                           {renderActualizarExamenButton(id, examName)}
+                          <button
+                            type="button"
+                            onClick={() => validarParametrosExamen(id, paramsList, examName)}
+                            disabled={!puedeValidar || validando || guardando || resultadoId <= 0}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={!puedeValidar ? 'Solo laboratorista/tecnologo puede validar' : (resultadoId <= 0 ? 'Guarde resultados antes de validar' : 'Validar parametros con valor de esta seccion')}
+                          >
+                            {validando ? '⏳ Validando...' : '✅ Validar sección'}
+                          </button>
                           <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2">
                             <input
                               type="checkbox"
@@ -1688,7 +2118,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             return (
                               <div key={`text-${idx}-${param.nombre}`} className="md:col-span-2 space-y-2">
                                 <label className="block text-sm font-semibold text-gray-700">
-                                  {param.nombre}
+                                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                                    <span>{param.nombre}</span>
+                                  </div>
                                 </label>
                                 <textarea
                                   name={`${id}__${param.nombre}`}
@@ -1761,12 +2193,28 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             
                             if (tieneFormula) {
                               valor = evalFormula(param.formula, valoresPorNombre, param.decimales);
+                              // Permite que otros campos calculados en cascada usen este valor en el mismo render.
+                              registerFormulaValueAliases(valoresPorNombre, param.nombre, valor);
+                              if (param.codigo_interno && String(param.codigo_interno).trim() !== '') {
+                                registerFormulaValueAliases(valoresPorNombre, param.codigo_interno, valor);
+                              }
                             }
                             
                             if (typeof valor === 'number' && isNaN(valor)) valor = "";
                             if (valor === undefined || valor === null) valor = "";
 
                             const { fueraDeRango, min, max, referenciaAplicada } = getParameterStatus(param, valor);
+                            const hasAnyBaseValueForFormula = Object.entries(valoresPorNombre).some(([k, v]) => {
+                              const key = String(k || '');
+                              if (!key) return false;
+                              if (key === String(param.nombre || '').trim()) return false;
+                              if (key === String(param.codigo_interno || '').trim()) return false;
+                              return v !== null && v !== undefined && String(v).trim() !== '';
+                            });
+                            const formulaConError = !!tieneFormula
+                              && String(param.formula || '').trim() !== ''
+                              && String(valor || '').trim() === ''
+                              && hasAnyBaseValueForFormula;
                             // Texto de referencia a mostrar: soporta rango (min/max) o valor textual
                             let referenciaTexto = null;
                             if (min !== null || max !== null) {
@@ -1791,6 +2239,11 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                                     <span className="text-xs text-blue-600 font-normal">
                                       Fórmula: {param.formula}
                                     </span>
+                                  )}
+                                  {formulaConError && (
+                                    <div className="text-xs text-amber-700 mt-1">
+                                      No se pudo evaluar la fórmula. Verifique nombres de parámetros y operadores.
+                                    </div>
                                   )}
                                   {referenciaTexto && (
                                     <div className="text-xs text-gray-500 mt-1">{referenciaTexto}</div>
@@ -2004,8 +2457,9 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
           </button>
           <button 
             type="submit" 
-            disabled={guardando}
+            disabled={guardando || !puedeOperarResultados}
             className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            title={!puedeOperarResultados ? 'Solo laboratorista/tecnologo puede guardar resultados' : 'Guardar resultados'}
           >
             {guardando ? (
               <span className="flex items-center gap-2">
@@ -2019,7 +2473,32 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
               </span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={handleValidarResultados}
+            disabled={!puedeValidar || validando || guardando || resultadoId <= 0}
+            className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            title={!puedeValidar ? 'Solo laboratorista/tecnologo puede validar' : (resultadoId <= 0 ? 'Guarde resultados antes de validar' : 'Validar resultados de la orden')}
+          >
+            {validando ? (
+              <span className="flex items-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                Validando...
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <span>✅</span>
+                Validar Resultados
+              </span>
+            )}
+          </button>
         </div>
+
+        {!puedeOperarResultados && (
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Guardado y validacion estan restringidos al tecnologo/laboratorista del modulo de laboratorio.
+          </div>
+        )}
 
         {/* Mensaje de estado */}
         {msg && (
