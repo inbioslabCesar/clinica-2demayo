@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch } from "../utils/apiClient";
 
 const DEFAULT_TEMPLATE_OPTIONS = [
@@ -316,6 +316,24 @@ export default function PlantillasHCPage() {
   const hcFixedTemplateOptions = useMemo(() => {
     return (templateOptions || []).filter((item) => item.id && item.id !== 'default');
   }, [templateOptions]);
+
+  const templateNameById = useMemo(() => {
+    const map = new Map();
+    (templateOptions || []).forEach((item) => {
+      const id = String(item?.id || '').trim();
+      if (!id) return;
+      const visibleName = String(item?.nombre || id).trim() || id;
+      map.set(id, visibleName);
+    });
+    return map;
+  }, [templateOptions]);
+
+  const formatTemplateChoiceLabel = useCallback((idValue) => {
+    const id = String(idValue || '').trim();
+    if (!id) return 'Automatico por especialidad';
+    const visibleName = String(templateNameById.get(id) || id).trim() || id;
+    return `${visibleName} (${id})`;
+  }, [templateNameById]);
 
   const setStatusMessage = (text, type = "info") => {
     setMessage(text);
@@ -709,7 +727,7 @@ export default function PlantillasHCPage() {
     }
 
     const modeText = selectedConfigId
-      ? `Plantilla fija: ${selectedConfigId}`
+      ? `Plantilla fija: ${formatTemplateChoiceLabel(selectedConfigId)}`
       : 'Automático por especialidad';
     const confirmed = window.confirm(
       `Se aplicará esta configuración para nuevas consultas del sistema:\n\n${modeText}\n\n¿Deseas continuar?`
@@ -843,7 +861,7 @@ export default function PlantillasHCPage() {
                           >
                             <span className="font-medium">
                               {hcTemplateSingleIdDraft
-                                ? `Plantilla fija: ${hcTemplateSingleIdDraft}`
+                                ? `Plantilla fija: ${formatTemplateChoiceLabel(hcTemplateSingleIdDraft)}`
                                 : 'Automatico por especialidad'}
                             </span>
                             <span className="float-right text-emerald-700">▾</span>
@@ -885,7 +903,7 @@ export default function PlantillasHCPage() {
                           {savingConfig
                             ? 'Guardando configuracion...'
                             : hcTemplateSingleIdDraft
-                              ? `Se aplicara siempre: ${hcTemplateSingleIdDraft}`
+                              ? `Se aplicara siempre: ${formatTemplateChoiceLabel(hcTemplateSingleIdDraft)}`
                               : 'Se aplicara automaticamente por especialidad'}
                           {hcTemplateSingleIdDraft !== hcTemplateSingleId
                             ? ' (cambio pendiente: presiona Aplicar uso en el sistema)'

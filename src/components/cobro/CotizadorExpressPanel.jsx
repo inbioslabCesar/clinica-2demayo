@@ -421,7 +421,7 @@ export default function CotizadorExpressPanel() {
                     manualHoraInput.value = "09:00";
                   }
                 } else {
-                  select.innerHTML = horasLibres.map((h) => `<option value=\"${h}\">${h}</option>`).join("");
+                  select.innerHTML = horasLibres.map((h) => `<option value="${h}">${h}</option>`).join("");
                   select.value = horasLibres[0];
                   select.disabled = false;
                   if (manualWrap) manualWrap.style.display = "none";

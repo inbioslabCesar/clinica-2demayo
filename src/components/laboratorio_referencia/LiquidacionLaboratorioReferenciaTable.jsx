@@ -1,5 +1,33 @@
 import React from "react";
 
+function formatMonto(m) {
+  return `S/ ${Number(m || 0).toFixed(2)}`;
+}
+
+function labelMontoTipo(m) {
+  const tipo = String(m?.tipo || "").toLowerCase();
+  const montoLiquidacion = Number(m?.monto_liquidacion ?? m?.monto ?? 0);
+  const porcentaje = Number(m?.porcentaje_derivacion || 0);
+  const subtotal = Number(m?.subtotal_cotizacion || 0);
+
+  if (tipo === "porcentaje") {
+    if (porcentaje > 0) {
+      return `${porcentaje.toFixed(2)} % (${formatMonto(montoLiquidacion)})`;
+    }
+    return formatMonto(montoLiquidacion);
+  }
+
+  if (tipo === "monto") {
+    return formatMonto(montoLiquidacion);
+  }
+
+  if (subtotal > 0 && montoLiquidacion > 0) {
+    return `${formatMonto(montoLiquidacion)} (base ${formatMonto(subtotal)})`;
+  }
+
+  return formatMonto(montoLiquidacion);
+}
+
 
 export default function LiquidacionLaboratorioReferenciaTable({ movimientos, paginated, onVerDetalles, onMarcarPagado }) {
   return (
@@ -22,7 +50,7 @@ export default function LiquidacionLaboratorioReferenciaTable({ movimientos, pag
               </div>
               <div className="flex gap-2 text-xs text-gray-500 mb-1">
                 <span>Tipo: {m.tipo === 'monto' ? 'Monto fijo' : 'Porcentaje'}</span>
-                <span>Monto: {m.tipo === 'monto' ? `S/ ${parseFloat(m.monto).toFixed(2)}` : `${parseFloat(m.monto).toFixed(2)} %`}</span>
+                <span>Monto: {labelMontoTipo(m)}</span>
               </div>
               <div className="flex gap-2 text-xs text-gray-500 mb-1">
                 <span>Usuario Cobro: {m.cobrado_por || '-'}</span>
@@ -81,7 +109,7 @@ export default function LiquidacionLaboratorioReferenciaTable({ movimientos, pag
                 <td className="px-2 py-2 border-b border-gray-100 break-words max-w-[120px]">{m.fecha}</td>
                 <td className="px-2 py-2 border-b border-gray-100 break-words max-w-[120px]">{m.laboratorio}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.tipo === 'monto' ? 'Monto fijo' : 'Porcentaje'}</td>
-                <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.tipo === 'monto' ? `S/ ${parseFloat(m.monto).toFixed(2)}` : `${parseFloat(m.monto).toFixed(2)} %`}</td>
+                <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{labelMontoTipo(m)}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.cobrado_por || '-'}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.turno_cobro || '-'}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.hora_cobro || '-'}</td>

@@ -191,7 +191,8 @@ try {
                 'usuario_id_param' => $usuario_id,
                 'turno_param' => ($caja_abierta['turno'] ?? null),
                 'honorario_movimiento_id' => $mov_id,
-                'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id)
+                'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id),
+                'fecha_hora_param' => ($cobro['fecha_cobro'] ?? null)
             ];
             CajaModule::registrarIngreso($conn, $params_individual);
         }

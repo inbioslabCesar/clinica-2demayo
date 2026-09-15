@@ -1,10 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import legacy from '@vitejs/plugin-legacy'
 
 export default defineConfig({
   root: 'public-site',
   base: './',
-  plugins: [react()],
+  plugins: [
+    react(),
+    legacy({
+      targets: ['defaults', 'not IE 11', 'Chrome >= 88'],
+      modernPolyfills: true,
+    }),
+  ],
   cacheDir: 'node_modules/.vite-public',
   server: {
     host: '127.0.0.1',

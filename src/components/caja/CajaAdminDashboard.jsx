@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import Swal from "sweetalert2";
 
 import { authFetch } from "../../utils/apiClient";
 import AperturaCajaForm from "./AperturaCajaForm";
@@ -149,6 +150,79 @@ export default function CajaAdminDashboard() {
   const cajasSinCuadreEfectivo = Math.max(0, Number(controlRealRecepcion?.cajasCerradas || 0) - Number(controlRealRecepcion?.cajasConCuadreEfectivo || 0));
   const cajasPendienteCuadreTotal = cajasSinCuadreEfectivo + Number(controlRealRecepcion?.cajasPendientesRegularizacion || 0);
 
+  const handleRegularizarTraspasos = async () => {
+    try {
+      const data = await authFetch("api_caja_traspasos.php?scope=admin_pendientes", { cache: "no-store" }).then((r) => r.json());
+      if (!data?.success) {
+        await Swal.fire("No se pudo cargar", data?.error || "Intenta nuevamente.", "error");
+        return;
+      }
+
+      const pendientes = Array.isArray(data.pendientes) ? data.pendientes : [];
+      if (pendientes.length === 0) {
+        await Swal.fire("Sin pendientes", "No hay traspasos pendientes por regularizar.", "info");
+        return;
+      }
+
+      const opciones = pendientes.reduce((acc, traspaso) => {
+        const id = Number(traspaso.id || 0);
+        if (!id) return acc;
+        const recibe = String(traspaso.recibe_nombre || `Usuario #${traspaso.usuario_recibe_id || "?"}`);
+        const entrega = String(traspaso.entrega_nombre || `Usuario #${traspaso.usuario_entrega_id || "?"}`);
+        const monto = Number(traspaso.monto || 0).toFixed(2);
+        const fecha = String(traspaso.fecha_entrega || "").slice(0, 16).replace("T", " ");
+        const flagCajaAbierta = Number(traspaso.caja_abierta_destino_id || 0) > 0 ? " | Caja abierta" : "";
+        acc[id] = `${recibe} recibe S/ ${monto} de ${entrega} (${fecha})${flagCajaAbierta}`;
+        return acc;
+      }, {});
+
+      const seleccion = await Swal.fire({
+        title: "Regularizar traspaso pendiente",
+        text: "Selecciona el traspaso que quieres marcar como recibido.",
+        input: "select",
+        inputOptions: opciones,
+        inputPlaceholder: "Selecciona traspaso",
+        showCancelButton: true,
+        confirmButtonText: "Regularizar",
+        cancelButtonText: "Cancelar",
+        inputValidator: (value) => (value ? undefined : "Selecciona un traspaso."),
+      });
+      if (!seleccion.isConfirmed) return;
+
+      const confirmar = await Swal.fire({
+        title: "Confirmar regularización",
+        text: "Esta acción marcará el traspaso como recibido de forma manual.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Sí, regularizar",
+        cancelButtonText: "No",
+      });
+      if (!confirmar.isConfirmed) return;
+
+      const payload = {
+        action: "regularizar_pendiente_admin",
+        traspaso_id: Number(seleccion.value || 0),
+      };
+
+      const resultado = await authFetch("api_caja_traspasos.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).then((r) => r.json());
+
+      if (!resultado?.success) {
+        await Swal.fire("No se pudo regularizar", resultado?.error || "Intenta nuevamente.", "error");
+        return;
+      }
+
+      await Swal.fire("Regularizado", resultado?.message || "Traspaso regularizado correctamente.", "success");
+      await fetchResumen({ silent: true });
+      window.dispatchEvent(new CustomEvent("caja-apertura-realizada"));
+    } catch {
+      await Swal.fire("Error", "No se pudo completar la regularización.", "error");
+    }
+  };
+
   if (loading)
     return <div className="p-8 text-center">Cargando resumen...</div>;
   if (error) return <div className="p-8 text-center text-red-600">{error}</div>;
@@ -169,6 +243,7 @@ export default function CajaAdminDashboard() {
             usuario={usuario}
             setShowModal={setShowModal}
             onCorregirApertura={() => setShowCorregirAperturaModal(true)}
+            onRegularizarTraspasos={handleRegularizarTraspasos}
           />
         </aside>
 

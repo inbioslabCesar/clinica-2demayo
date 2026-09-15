@@ -32,6 +32,7 @@ const HC_PREVIAS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HC_PREVIAS_UI_STORAGE_PREFIX = "hc_previas_ui_v1";
 const HC_DRAFT_STORAGE_PREFIX = "hc_draft_v1";
 const HC_DRAFT_TTL_MS = 72 * 60 * 60 * 1000;
+const HC_PROXIMA_DISP_CACHE_TTL_MS = 90 * 1000;
 
 function buildDraftStorageKey(consultaId, pacienteId) {
   const consulta = String(consultaId || "").trim();
@@ -210,6 +211,46 @@ function normalizeHistoriaData(rawDatos) {
   };
 }
 
+function getLimaDateYmd() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const year = parts.find((p) => p.type === "year")?.value || "0000";
+  const month = parts.find((p) => p.type === "month")?.value || "01";
+  const day = parts.find((p) => p.type === "day")?.value || "01";
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeHoraHm(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+
+  const hh = String(Math.max(0, Math.min(23, Number(match[1]) || 0))).padStart(2, "0");
+  const mm = String(Math.max(0, Math.min(59, Number(match[2]) || 0))).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function normalizeHoraHms(value) {
+  const hm = normalizeHoraHm(value);
+  return hm ? `${hm}:00` : "";
+}
+
+function dedupeSortHorasHms(values) {
+  const set = new Set();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = normalizeHoraHms(value);
+    if (normalized) set.add(normalized);
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
 function enforceManualProximaSelection(hcData) {
   const base = hcData && typeof hcData === "object" ? hcData : {};
   const proxima = base?.proxima_cita;
@@ -266,6 +307,7 @@ function HistoriaClinicaPage() {
   const [configuracionClinica, setConfiguracionClinica] = useState(null);
   const [firmaMedico, setFirmaMedico] = useState(null);
   const [resultadosLab, setResultadosLab] = useState([]);
+  const [documentosExternosLabCount, setDocumentosExternosLabCount] = useState(0);
   const [ordenesLab, setOrdenesLab] = useState([]);
   const [ordenesImagenPrint, setOrdenesImagenPrint] = useState([]);
   const [ordenesProcedimientosPrint, setOrdenesProcedimientosPrint] = useState([]);
@@ -399,12 +441,19 @@ function HistoriaClinicaPage() {
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
-        if (data.success && data.resultados) setResultadosLab(data.resultados);
-        else setResultadosLab([]);
+        if (data.success && data.resultados) {
+          setResultadosLab(data.resultados);
+          const totalDocs = Number(data.total_documentos_externos || 0);
+          setDocumentosExternosLabCount(Number.isFinite(totalDocs) && totalDocs > 0 ? totalDocs : 0);
+        } else {
+          setResultadosLab([]);
+          setDocumentosExternosLabCount(0);
+        }
       })
       .catch(() => {
         if (cancelled) return;
         setResultadosLab([]);
+        setDocumentosExternosLabCount(0);
       });
 
     authFetch(`api_ordenes_laboratorio.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
@@ -693,6 +742,10 @@ function HistoriaClinicaPage() {
   });
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
+  const [proximaDisponibilidadLoading, setProximaDisponibilidadLoading] = useState(false);
+  const [proximaDisponibilidadError, setProximaDisponibilidadError] = useState("");
+  const [proximaDisponibilidad, setProximaDisponibilidad] = useState(null);
+  const [proximaDispKey, setProximaDispKey] = useState("");
   const [mostrarModalGuardado, setMostrarModalGuardado] = useState(false);
   const [mensajeModalGuardado, setMensajeModalGuardado] = useState("");
   const [draftHydrated, setDraftHydrated] = useState(false);
@@ -703,7 +756,14 @@ function HistoriaClinicaPage() {
   const [hcTemplateResolution, setHcTemplateResolution] = useState(null);
   const hcRef = useRef(hc);
   const diagnosticosRef = useRef(diagnosticos);
+  const proximaDispCacheRef = useRef(new Map());
+  const proximaDispRequestSeqRef = useRef(0);
   const bloqueoGuardadoActivo = Date.now() < bloqueoGuardadoHasta;
+  const fechaMinProxima = useMemo(() => getLimaDateYmd(), []);
+  const proximaMedicoId = Number(medicoInfo?.id || consultaActual?.medico_id || 0);
+  const proximaFecha = String(hc?.proxima_cita?.fecha || "").trim();
+  const proximaHora = String(hc?.proxima_cita?.hora || "").trim();
+  const proximaProgramar = Boolean(hc?.proxima_cita?.programar);
   const draftKey = useMemo(() => buildDraftStorageKey(consultaId, pacienteId), [consultaId, pacienteId]);
 
   const hcTemplateDebug = useMemo(() => {
@@ -876,6 +936,150 @@ function HistoriaClinicaPage() {
     return () => window.clearTimeout(timer);
   }, [clearDraft, currentSnapshot, draftHydrated, draftKey, persistDraftNow, readOnly, serverSnapshot]);
 
+  const cargarDisponibilidadProxima = useCallback(async ({ force = false } = {}) => {
+    if (!proximaProgramar) {
+      setProximaDisponibilidad(null);
+      setProximaDisponibilidadError("");
+      setProximaDispKey("");
+      return;
+    }
+
+    if (proximaMedicoId <= 0 || !proximaFecha) {
+      setProximaDisponibilidad(null);
+      setProximaDisponibilidadError("");
+      setProximaDispKey("");
+      return;
+    }
+
+    const cacheKey = `${proximaMedicoId}|${proximaFecha}`;
+    const cached = proximaDispCacheRef.current.get(cacheKey);
+    if (!force && cached && (Date.now() - Number(cached.at || 0)) <= HC_PROXIMA_DISP_CACHE_TTL_MS) {
+      setProximaDisponibilidad(cached.data || null);
+      setProximaDisponibilidadError("");
+      setProximaDispKey(cacheKey);
+      return;
+    }
+
+    const seq = ++proximaDispRequestSeqRef.current;
+    setProximaDisponibilidadLoading(true);
+    setProximaDisponibilidadError("");
+
+    try {
+      const paramsVista = new URLSearchParams({
+        vista: "disponibilidad",
+        medico_id: String(proximaMedicoId),
+        solo_activas: "1",
+        fecha_desde: proximaFecha,
+        fecha_hasta: proximaFecha,
+        _t: String(Date.now()),
+      });
+      const paramsDisp = new URLSearchParams({
+        medico_id: String(proximaMedicoId),
+        fecha: proximaFecha,
+      });
+
+      const [resVista, resDisp] = await Promise.all([
+        authFetch(`api_consultas.php?${paramsVista.toString()}`),
+        authFetch(`api_horarios_disponibles.php?${paramsDisp.toString()}`),
+      ]);
+
+      const [dataVista, dataDisp] = await Promise.all([resVista.json(), resDisp.json()]);
+      if (!dataVista?.success) {
+        throw new Error(dataVista?.error || "No se pudo consultar las citas del médico.");
+      }
+
+      const citas = (Array.isArray(dataVista?.consultas) ? dataVista.consultas : []).map((row) => ({
+        id: Number(row?.id || 0),
+        hora: String(row?.hora || ""),
+        estado: String(row?.estado || ""),
+      }));
+      const horasOcupadas = dedupeSortHorasHms(Array.isArray(dataDisp?.horarios_ocupados) ? dataDisp.horarios_ocupados : []);
+      const ocupadasSet = new Set(horasOcupadas);
+      const horasLibresRaw = (dataDisp?.success && Array.isArray(dataDisp?.horarios_disponibles))
+        ? dataDisp.horarios_disponibles.map((h) => h?.hora)
+        : [];
+      const horasLibres = dedupeSortHorasHms(horasLibresRaw).filter((hora) => !ocupadasSet.has(hora));
+
+      const payload = {
+        medico_id: proximaMedicoId,
+        fecha: proximaFecha,
+        citas,
+        horas_ocupadas: horasOcupadas,
+        horas_libres: horasLibres,
+      };
+
+      if (seq !== proximaDispRequestSeqRef.current) return;
+
+      proximaDispCacheRef.current.set(cacheKey, {
+        at: Date.now(),
+        data: payload,
+      });
+      setProximaDisponibilidad(payload);
+      setProximaDispKey(cacheKey);
+    } catch (err) {
+      if (seq !== proximaDispRequestSeqRef.current) return;
+      setProximaDisponibilidad(null);
+      setProximaDisponibilidadError(err?.message || "No se pudo consultar disponibilidad.");
+      setProximaDispKey("");
+    } finally {
+      if (seq === proximaDispRequestSeqRef.current) {
+        setProximaDisponibilidadLoading(false);
+      }
+    }
+  }, [proximaFecha, proximaMedicoId, proximaProgramar]);
+
+  const seleccionarHoraLibreProxima = useCallback((horaRaw) => {
+    const hm = normalizeHoraHm(horaRaw);
+    if (!hm) return;
+
+    setHc((current) => ({
+      ...current,
+      proxima_cita: {
+        ...DEFAULT_PROXIMA_CITA,
+        ...(current.proxima_cita || {}),
+        programar: true,
+        hora: hm,
+        medico_id: String(proximaMedicoId > 0 ? proximaMedicoId : (current.proxima_cita?.medico_id || "")),
+      },
+    }));
+
+    setMsg((prev) => {
+      const fechaTexto = String(proximaFecha || "").trim();
+      if (!fechaTexto) return prev;
+      return `Próxima cita preparada para ${fechaTexto} ${hm}. Guarda la HC para agendar.`;
+    });
+  }, [proximaFecha, proximaMedicoId]);
+
+  const proximaHoraOcupada = useMemo(() => {
+    if (!proximaDisponibilidad || !proximaHora) return false;
+    const horaActual = normalizeHoraHms(proximaHora);
+    if (!horaActual) return false;
+    return (Array.isArray(proximaDisponibilidad?.horas_ocupadas) ? proximaDisponibilidad.horas_ocupadas : []).includes(horaActual);
+  }, [proximaDisponibilidad, proximaHora]);
+
+  useEffect(() => {
+    if (!proximaProgramar) {
+      setProximaDisponibilidad(null);
+      setProximaDisponibilidadError("");
+      setProximaDispKey("");
+      setProximaDisponibilidadLoading(false);
+      return;
+    }
+
+    if (proximaMedicoId <= 0 || !proximaFecha) {
+      setProximaDisponibilidad(null);
+      setProximaDisponibilidadError("");
+      setProximaDispKey("");
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      cargarDisponibilidadProxima();
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [cargarDisponibilidadProxima, proximaFecha, proximaMedicoId, proximaProgramar]);
+
   // Auto-close success modal after 2 seconds
   useEffect(() => {
     if (!mostrarModalGuardado) return;
@@ -922,6 +1126,24 @@ function HistoriaClinicaPage() {
       };
     });
   }, [medicoInfo]);
+
+  useEffect(() => {
+    if (!proximaProgramar || proximaMedicoId <= 0) return;
+    setHc((current) => {
+      const actual = current?.proxima_cita || DEFAULT_PROXIMA_CITA;
+      if (String(actual?.medico_id || "") === String(proximaMedicoId)) {
+        return current;
+      }
+      return {
+        ...current,
+        proxima_cita: {
+          ...DEFAULT_PROXIMA_CITA,
+          ...actual,
+          medico_id: String(proximaMedicoId),
+        },
+      };
+    });
+  }, [proximaMedicoId, proximaProgramar]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1222,6 +1444,27 @@ function HistoriaClinicaPage() {
         const consulta = Array.isArray(data?.consultas) ? data.consultas[0] : null;
 
         if (consulta) {
+          const pacienteConsultaId = Number(consulta.paciente_id || 0);
+          const pacienteRutaId = Number(pacienteId || 0);
+          if (
+            readOnly
+            && pacienteConsultaId > 0
+            && pacienteRutaId > 0
+            && pacienteConsultaId !== pacienteRutaId
+          ) {
+            navigate(
+              `/historia-clinica-lectura/${pacienteConsultaId}/${consultaId}${location.search || ''}`,
+              {
+                replace: true,
+                state: {
+                  ...(navigationState || {}),
+                  hcPacienteMismatchRedirected: true,
+                },
+              }
+            );
+            return;
+          }
+
           const fechaRaw = String(
             consulta.fecha_consulta
             || consulta.fecha
@@ -1294,7 +1537,7 @@ function HistoriaClinicaPage() {
     return () => {
       cancelled = true;
     };
-  }, [consultaId]);
+  }, [consultaId, location.search, navigate, navigationState, pacienteId, readOnly]);
 
   useEffect(() => {
     const consultaIdActual = Number(consultaId || 0);
@@ -2763,6 +3006,13 @@ function HistoriaClinicaPage() {
             setMsg("");
             try {
               const datos = { ...hc, diagnosticos, receta: hc.receta };
+              const medicoSesionId = Number(medicoInfo?.id || consultaActual?.medico_id || 0);
+              if (proxima.programar && medicoSesionId > 0) {
+                datos.proxima_cita = {
+                  ...proxima,
+                  medico_id: String(medicoSesionId),
+                };
+              }
               if (!proxima.programar) {
                 delete datos.proxima_cita;
               }
@@ -2893,6 +3143,7 @@ function HistoriaClinicaPage() {
               consultaId={consultaId}
               pacienteId={pacienteId}
               resultadosLab={resultadosLab}
+              documentosExternosLabCount={documentosExternosLabCount}
               ordenesLab={ordenesLab}
               onBeforeNavigate={persistDraftNow}
               readOnly={readOnly}
@@ -3122,6 +3373,7 @@ function HistoriaClinicaPage() {
                         ...DEFAULT_PROXIMA_CITA,
                         ...(current.proxima_cita || {}),
                         programar: e.target.checked,
+                        fecha: current.proxima_cita?.fecha || fechaMinProxima,
                         medico_id: (current.proxima_cita?.medico_id || (medicoInfo?.id ? String(medicoInfo.id) : "")),
                       },
                     }))
@@ -3179,7 +3431,7 @@ function HistoriaClinicaPage() {
                         type="date"
                         className="w-full border rounded-lg px-3 py-2"
                         value={hc.proxima_cita?.fecha || ""}
-                        min={new Date().toISOString().slice(0, 10)}
+                        min={fechaMinProxima}
                         onChange={(e) =>
                           setHc((current) => ({
                             ...current,
@@ -3221,6 +3473,97 @@ function HistoriaClinicaPage() {
                       />
                     </div>
                   </div>
+
+                  <div className="rounded-xl border border-cyan-200 bg-cyan-50/70 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-cyan-900">Disponibilidad del médico logueado</p>
+                        <p className="text-xs text-cyan-800">
+                          Solo se consulta la agenda del profesional asignado a esta HC en la fecha seleccionada.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => cargarDisponibilidadProxima({ force: true })}
+                        disabled={readOnly || proximaDisponibilidadLoading || proximaMedicoId <= 0 || !proximaFecha}
+                        className="rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-900 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {proximaDisponibilidadLoading ? "Consultando..." : "Actualizar disponibilidad"}
+                      </button>
+                    </div>
+
+                    {proximaDisponibilidadError && (
+                      <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                        {proximaDisponibilidadError}
+                      </div>
+                    )}
+
+                    {proximaDisponibilidad && proximaDispKey === `${proximaMedicoId}|${proximaFecha}` && (
+                      <>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full border border-cyan-300 bg-white px-2.5 py-1 font-semibold text-cyan-900">
+                            Programadas: {Number(proximaDisponibilidad?.citas?.length || 0)}
+                          </span>
+                          <span className="rounded-full border border-emerald-300 bg-white px-2.5 py-1 font-semibold text-emerald-700">
+                            Libres: {Number(proximaDisponibilidad?.horas_libres?.length || 0)}
+                          </span>
+                          <span className="rounded-full border border-rose-300 bg-white px-2.5 py-1 font-semibold text-rose-700">
+                            Ocupadas: {Number(proximaDisponibilidad?.horas_ocupadas?.length || 0)}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">Horas libres</div>
+                            {Array.isArray(proximaDisponibilidad?.horas_libres) && proximaDisponibilidad.horas_libres.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {proximaDisponibilidad.horas_libres.map((hora) => {
+                                  const hm = normalizeHoraHm(hora);
+                                  return (
+                                    <button
+                                      key={`hc-prox-libre-${hora}`}
+                                      type="button"
+                                      onClick={() => seleccionarHoraLibreProxima(hm)}
+                                      className="rounded-full border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                      title="Seleccionar hora libre"
+                                    >
+                                      {hm}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-emerald-700">No hay horas libres para esta fecha.</div>
+                            )}
+                          </div>
+
+                          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-700">Horas ocupadas</div>
+                            {Array.isArray(proximaDisponibilidad?.horas_ocupadas) && proximaDisponibilidad.horas_ocupadas.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {proximaDisponibilidad.horas_ocupadas.map((hora) => (
+                                  <span
+                                    key={`hc-prox-ocupada-${hora}`}
+                                    className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700"
+                                  >
+                                    {normalizeHoraHm(hora)}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-rose-700">No hay horas ocupadas para esta fecha.</div>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {proximaHoraOcupada && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      La hora seleccionada aparece ocupada actualmente. Elige una hora libre para evitar conflictos al guardar.
+                    </div>
+                  )}
 
                   {Array.isArray(hc.proxima_cita?.historial) && hc.proxima_cita.historial.length > 0 && (
                     <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">

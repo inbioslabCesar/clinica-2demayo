@@ -2021,7 +2021,10 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
         $pacienteIdCotizacion = (int)($rowPac['paciente_id'] ?? 0);
     }
 
-    $fechaValidacion = $fechaRef ?: date('Y-m-d');
+    $fechaValidacionBase = cotizacion_normalizar_fecha_ymd((string)$fechaRef);
+    if ($fechaValidacionBase === '') {
+        $fechaValidacionBase = date('Y-m-d');
+    }
     $contextoBaseCotizacion = resolver_contexto_clinico_base_cotizacion($conn, (int)$cotizacionId);
     $medicoPorConsultaCache = [];
 
@@ -2041,6 +2044,8 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
         $tipoDeriv = isset($detalle['tipo_derivacion']) ? (string)$detalle['tipo_derivacion'] : '';
         $valorDeriv = isset($detalle['valor_derivacion']) ? (float)$detalle['valor_derivacion'] : 0;
         $labRef = isset($detalle['laboratorio_referencia']) ? (string)$detalle['laboratorio_referencia'] : '';
+        $fechaDetalleProgramada = cotizacion_normalizar_fecha_ymd($detalle['fecha_programada'] ?? $detalle['fecha'] ?? '');
+        $fechaValidacion = $fechaDetalleProgramada !== '' ? $fechaDetalleProgramada : $fechaValidacionBase;
         $snapshotPayload = null;
         if ($hasSnapshotJson) {
             if (strtolower(trim((string)$servicioTipo)) === 'laboratorio') {
@@ -2498,10 +2503,57 @@ function cotizacion_tiene_externos_activos($conn, $cotizacionId) {
     return (int)($row['cnt'] ?? 0) > 0;
 }
 
+function cotizacion_es_control_hc_proxima_pura($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return false;
+    }
+
+    if (!column_exists($conn, 'cotizaciones_detalle', 'consulta_id')
+        || !column_exists($conn, 'consultas', 'es_control')
+        || !column_exists($conn, 'consultas', 'origen_creacion')) {
+        return false;
+    }
+
+    $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND cd.estado_item <> 'eliminado'" : '';
+    $sql = "SELECT
+                SUM(CASE
+                      WHEN LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) = 'consulta'
+                           AND COALESCE(c.es_control, 0) = 1
+                           AND LOWER(TRIM(COALESCE(c.origen_creacion, ''))) = 'hc_proxima'
+                      THEN 1 ELSE 0 END) AS control_items,
+                SUM(CASE
+                      WHEN LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) <> 'consulta'
+                      THEN 1 ELSE 0 END) AS otros_items
+            FROM cotizaciones_detalle cd
+            LEFT JOIN consultas c ON c.id = cd.consulta_id
+            WHERE cd.cotizacion_id = ?{$whereEstado}";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $controlItems = (int)($row['control_items'] ?? 0);
+    $otrosItems = (int)($row['otros_items'] ?? 0);
+    return $controlItems > 0 && $otrosItems === 0;
+}
+
 function resolver_estado_financiero_cotizacion($conn, $cotizacionId, $total, $pagado) {
     $total = max(0.0, round((float)$total, 2));
     $pagado = max(0.0, round((float)$pagado, 2));
     $saldo = max(0.0, round($total - $pagado, 2));
+
+    if (cotizacion_es_control_hc_proxima_pura($conn, (int)$cotizacionId) && $saldo <= 0.00001) {
+        return [
+            'estado' => 'control',
+            'saldo' => 0.0,
+        ];
+    }
 
     if ($total <= 0.00001 && cotizacion_tiene_externos_activos($conn, (int)$cotizacionId)) {
         return [
@@ -5343,14 +5395,16 @@ function registrar_abono_cotizacion($conn, $data) {
         $totalAjustado = max(0, $total - $montoDescuentoAplicado);
         if ($hasSaldoV2) {
             $pagadoNuevo = min($totalAjustado, $pagadoActual + $montoAplicado);
-            $saldoNuevo = max(0, $totalAjustado - $pagadoNuevo);
-            $nuevoEstado = $saldoNuevo <= 0 ? 'pagado' : 'parcial';
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $totalAjustado, $pagadoNuevo);
+            $saldoNuevo = max(0, (float)($finanzas['saldo'] ?? 0));
+            $nuevoEstado = (string)($finanzas['estado'] ?? ($saldoNuevo <= 0 ? 'pagado' : 'parcial'));
             $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
             $stmtUp->bind_param("dddsi", $totalAjustado, $pagadoNuevo, $saldoNuevo, $nuevoEstado, $cotizacionId);
         } else {
             $pagadoNuevo = min($totalAjustado, $montoAplicado);
             $saldoNuevo = max(0, $saldoAnterior - $montoAplicado - $montoDescuentoAplicado);
-            $nuevoEstado = $saldoNuevo <= 0 ? 'pagado' : 'pendiente';
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $totalAjustado, $pagadoNuevo);
+            $nuevoEstado = (string)($finanzas['estado'] ?? ($saldoNuevo <= 0 ? 'pagado' : 'pendiente'));
             $stmtUp = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
             $stmtUp->bind_param("dsi", $totalAjustado, $nuevoEstado, $cotizacionId);
         }
@@ -5478,8 +5532,9 @@ function eliminar_detalle_cotizacion($conn, $data) {
 
         if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
             $pagado = (float)($cot['total_pagado'] ?? 0);
-            $saldo  = max(0, $nuevoTotal - $pagado);
-            $nuevoEstado = $saldo <= 0 ? 'pagado' : ($pagado > 0 ? 'parcial' : 'pendiente');
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $nuevoTotal, $pagado);
+            $saldo = max(0, (float)($finanzas['saldo'] ?? 0));
+            $nuevoEstado = (string)($finanzas['estado'] ?? 'pendiente');
             $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
             $stmtUp->bind_param('ddsi', $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
         } else {
@@ -5532,8 +5587,9 @@ function agregar_detalle_cotizacion($conn, $data) {
 
         if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
             $pagado = (float)($cot['total_pagado'] ?? 0);
-            $saldo  = max(0, $nuevoTotal - $pagado);
-            $nuevoEstado = $saldo <= 0 ? 'pagado' : ($pagado > 0 ? 'parcial' : 'pendiente');
+            $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $nuevoTotal, $pagado);
+            $saldo = max(0, (float)($finanzas['saldo'] ?? 0));
+            $nuevoEstado = (string)($finanzas['estado'] ?? 'pendiente');
             $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
             $stmtUp->bind_param('ddsi', $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
         } else {
@@ -5954,8 +6010,14 @@ function reporte_atenciones_detallado($conn) {
         respond(['success' => false, 'error' => 'Rango de fechas invalido. Use formato YYYY-MM-DD'], 400);
     }
 
+    $hasCotizacionMovimientosCreatedAt = table_exists($conn, 'cotizacion_movimientos') && column_exists($conn, 'cotizacion_movimientos', 'created_at');
+    $subqueryUltimoPagoAt = "(SELECT MAX(cm.created_at) FROM cotizacion_movimientos cm WHERE cm.cotizacion_id = c.id AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ''))) = 'abono' AND COALESCE(cm.monto, 0) > 0)";
+    $fechaOperativaExpr = $hasCotizacionMovimientosCreatedAt
+        ? "COALESCE({$subqueryUltimoPagoAt}, c.fecha)"
+        : 'c.fecha';
+
     $fechaFinExclusiva = (new DateTime($fechaFin))->modify('+1 day')->format('Y-m-d');
-    $where = ["c.fecha >= ? AND c.fecha < ?"];
+    $where = ["{$fechaOperativaExpr} >= ? AND {$fechaOperativaExpr} < ?"];
     $types = 'ss';
     $params = [$fechaInicio, $fechaFinExclusiva];
 
@@ -5999,7 +6061,12 @@ function reporte_atenciones_detallado($conn) {
 
     $whereSql = 'WHERE ' . implode(' AND ', $where);
 
-    $sql = "SELECT c.id, c.fecha, c.paciente_id, c.usuario_id, c.total, c.total_pagado, c.saldo_pendiente, c.estado,
+    $selectUltimoPagoAt = $hasCotizacionMovimientosCreatedAt
+        ? "{$subqueryUltimoPagoAt} AS ultimo_pago_at,"
+        : 'NULL AS ultimo_pago_at,';
+    $selectFechaReporte = "{$fechaOperativaExpr} AS fecha_reporte,";
+
+    $sql = "SELECT c.id, c.fecha, {$selectUltimoPagoAt} {$selectFechaReporte} c.paciente_id, c.usuario_id, c.total, c.total_pagado, c.saldo_pendiente, c.estado,
                    c.observaciones, p.nombre, p.apellido, p.dni, p.historia_clinica,
                    COALESCE(u.nombre, 'Sistema') AS usuario_nombre,
                    COALESCE(u.rol, '') AS usuario_rol
@@ -6125,11 +6192,52 @@ function reporte_atenciones_detallado($conn) {
             $cantidad = (float)($det['cantidad'] ?? 0);
             $precioUnitario = (float)($det['precio_unitario'] ?? 0);
             $subtotal = (float)($det['subtotal_neto'] ?? $det['subtotal'] ?? 0);
+            $paqueteTipo = strtolower(trim((string)($det['paquete_tipo'] ?? '')));
+            $paqueteCodigo = trim((string)($det['paquete_codigo'] ?? ''));
+            $paqueteNombre = trim((string)($det['paquete_nombre'] ?? ''));
+            $paqueteId = isset($det['paquete_id']) ? (int)$det['paquete_id'] : 0;
+
+            if (($paqueteTipo === '' || ($paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0)) && !empty($det['snapshot_json'])) {
+                $snap = is_array($det['snapshot_json']) ? $det['snapshot_json'] : json_decode((string)$det['snapshot_json'], true);
+                if (is_array($snap)) {
+                    if ($paqueteTipo === '') {
+                        $paqueteTipo = strtolower(trim((string)($snap['paquete_tipo'] ?? '')));
+                    }
+                    if ($paqueteCodigo === '') {
+                        $paqueteCodigo = trim((string)($snap['paquete_codigo'] ?? ''));
+                    }
+                    if ($paqueteNombre === '') {
+                        $paqueteNombre = trim((string)($snap['paquete_nombre'] ?? ''));
+                    }
+                    if ($paqueteId <= 0) {
+                        $paqueteId = isset($snap['paquete_id']) ? (int)$snap['paquete_id'] : 0;
+                    }
+                }
+            }
+
+            $paqueteResumen = '';
+            if ($paqueteTipo !== '' || $paqueteCodigo !== '' || $paqueteNombre !== '' || $paqueteId > 0) {
+                $tipoLabel = ($paqueteTipo === 'perfil') ? 'Perfil' : 'Paquete';
+                $nombreVisible = $paqueteNombre;
+                if ($nombreVisible === '' && $paqueteCodigo !== '') {
+                    $nombreVisible = $paqueteCodigo;
+                }
+                if ($nombreVisible === '' && $paqueteId > 0) {
+                    $nombreVisible = $tipoLabel . ' #' . $paqueteId;
+                }
+                $paqueteResumen = $tipoLabel . ': ';
+                if ($paqueteCodigo !== '' && stripos($nombreVisible, $paqueteCodigo) !== 0) {
+                    $paqueteResumen .= $paqueteCodigo . ' - ';
+                }
+                $paqueteResumen .= $nombreVisible;
+            }
 
             if ($expandirMetodosPago) {
                 foreach ($pagosMetodo as $metodo => $montoMetodo) {
                     $detalle[] = [
-                        'fecha' => (string)($cot['fecha'] ?? ''),
+                        'fecha' => (string)($cot['fecha_reporte'] ?? $cot['fecha'] ?? ''),
+                        'fecha_cotizacion' => (string)($cot['fecha'] ?? ''),
+                        'fecha_ultimo_pago' => (string)($cot['ultimo_pago_at'] ?? ''),
                         'cotizacion_id' => $cotizacionId,
                         'estado' => (string)($cot['estado'] ?? ''),
                         'paciente' => $pacienteNombre,
@@ -6139,6 +6247,7 @@ function reporte_atenciones_detallado($conn) {
                         'usuario_responsable' => $usuarioNombre,
                         'servicio_tipo' => $servicioTipo,
                         'servicio_descripcion' => $descripcion,
+                        'paquete_resumen' => $paqueteResumen,
                         'cantidad' => $cantidad,
                         'precio_unitario' => round($precioUnitario, 2),
                         'subtotal_servicio' => round($subtotal, 2),
@@ -6156,7 +6265,9 @@ function reporte_atenciones_detallado($conn) {
                     $metodosLista = $resumenMetodo;
                 }
                 $detalle[] = [
-                    'fecha' => (string)($cot['fecha'] ?? ''),
+                    'fecha' => (string)($cot['fecha_reporte'] ?? $cot['fecha'] ?? ''),
+                    'fecha_cotizacion' => (string)($cot['fecha'] ?? ''),
+                    'fecha_ultimo_pago' => (string)($cot['ultimo_pago_at'] ?? ''),
                     'cotizacion_id' => $cotizacionId,
                     'estado' => (string)($cot['estado'] ?? ''),
                     'paciente' => $pacienteNombre,
@@ -6166,6 +6277,7 @@ function reporte_atenciones_detallado($conn) {
                     'usuario_responsable' => $usuarioNombre,
                     'servicio_tipo' => $servicioTipo,
                     'servicio_descripcion' => $descripcion,
+                    'paquete_resumen' => $paqueteResumen,
                     'cantidad' => $cantidad,
                     'precio_unitario' => round($precioUnitario, 2),
                     'subtotal_servicio' => round($subtotal, 2),
@@ -6528,11 +6640,14 @@ switch ($method) {
         $consultaRefPorCotizacion = [];
         $correlativoConsultaPorCotizacion = [];
         $fechaConsultaPorCotizacion = [];
+        $esHcProximaPorCotizacion = [];
+        $esControlConsultaPorCotizacion = [];
         $correlativosOperativosPorCotizacion = [];
         $origenCobroPorCotizacion = [];
         $contratoResumenPorCotizacion = [];
         $metodoPagoResumenPorCotizacion = [];
         $metodosPagoListaPorCotizacion = [];
+        $paquetesResumenPorCotizacion = [];
 
         if (!empty($idsPagina)) {
             try {
@@ -6609,6 +6724,77 @@ switch ($method) {
                     $cid = (int)($rowSrv['cotizacion_id'] ?? 0);
                     if ($cid > 0) {
                         $serviciosPorCotizacion[$cid] = (string)($rowSrv['servicios_tipos'] ?? '');
+                    }
+                }
+            }
+
+            if (column_exists($conn, 'cotizaciones_detalle', 'snapshot_json')) {
+                $wherePaqueteActivo = $hasEstadoItem
+                    ? " AND (c.estado = 'anulada' OR cd.estado_item <> 'eliminado')"
+                    : '';
+                $sqlPaquetes = "SELECT cd.cotizacion_id, cd.descripcion, cd.snapshot_json
+                                FROM cotizaciones_detalle cd
+                                INNER JOIN cotizaciones c ON c.id = cd.cotizacion_id
+                                WHERE cd.cotizacion_id IN ($placeholders)
+                                  {$wherePaqueteActivo}";
+                $stmtPaquetes = $conn->prepare($sqlPaquetes);
+                if ($stmtPaquetes) {
+                    $stmtPaquetes->bind_param($typesIds, ...$idsPagina);
+                    $stmtPaquetes->execute();
+                    $rowsPaquetes = $stmtPaquetes->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtPaquetes->close();
+
+                    foreach ($rowsPaquetes as $rowPaq) {
+                        $cid = (int)($rowPaq['cotizacion_id'] ?? 0);
+                        if ($cid <= 0) continue;
+
+                        $snapshotRaw = (string)($rowPaq['snapshot_json'] ?? '');
+                        if (trim($snapshotRaw) === '') continue;
+
+                        $snapshot = json_decode($snapshotRaw, true);
+                        if (!is_array($snapshot)) continue;
+
+                        $paqueteTipo = strtolower(trim((string)($snapshot['paquete_tipo'] ?? '')));
+                        $paqueteCodigo = trim((string)($snapshot['paquete_codigo'] ?? ''));
+                        $paqueteNombre = trim((string)($snapshot['paquete_nombre'] ?? ''));
+                        $paqueteId = isset($snapshot['paquete_id']) ? (int)$snapshot['paquete_id'] : 0;
+
+                        if ($paqueteTipo === '' && $paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0) {
+                            continue;
+                        }
+
+                        $tipoLabel = ($paqueteTipo === 'perfil') ? 'Perfil' : 'Paquete';
+                        $nombreVisible = $paqueteNombre;
+                        if ($nombreVisible === '' && $paqueteCodigo !== '') {
+                            $nombreVisible = $paqueteCodigo;
+                        }
+                        if ($nombreVisible === '' && $paqueteId > 0) {
+                            $nombreVisible = $tipoLabel . ' #' . $paqueteId;
+                        }
+                        if ($nombreVisible === '') {
+                            $nombreVisible = trim((string)($rowPaq['descripcion'] ?? ''));
+                        }
+
+                        $label = $tipoLabel . ': ';
+                        if ($paqueteCodigo !== '' && stripos($nombreVisible, $paqueteCodigo) !== 0) {
+                            $label .= $paqueteCodigo . ' - ';
+                        }
+                        $label .= $nombreVisible;
+
+                        $key = strtolower(implode('|', [
+                            $paqueteTipo,
+                            $paqueteCodigo,
+                            $paqueteNombre,
+                            (string)$paqueteId,
+                        ]));
+
+                        if (!isset($paquetesResumenPorCotizacion[$cid])) {
+                            $paquetesResumenPorCotizacion[$cid] = [];
+                        }
+                        if ($key === '') {
+                            $key = strtolower($label);
+                        }
+                        $paquetesResumenPorCotizacion[$cid][$key] = $label;
                     }
                 }
             }
@@ -6789,6 +6975,8 @@ switch ($method) {
                                 $sqlMed = "SELECT cd.cotizacion_id, cd.consulta_id,
                                                                                     " . ($hasConsultaCorrelativoDia ? "con.correlativo_dia_medico" : "0") . " AS correlativo_dia_medico,
                                                                                     " . ($hasConsultaFecha ? "DATE(con.fecha)" : "''") . " AS fecha_consulta,
+                                                                                    LOWER(TRIM(COALESCE(con.origen_creacion, ''))) AS consulta_origen_creacion,
+                                                                                    COALESCE(con.es_control, 0) AS consulta_es_control,
                                                                                     m.nombre, m.apellido
                            FROM cotizaciones_detalle cd
                            INNER JOIN consultas con ON con.id = cd.consulta_id
@@ -6807,7 +6995,16 @@ switch ($method) {
 
                     foreach ($rowsMed as $rowMed) {
                         $cid = (int)($rowMed['cotizacion_id'] ?? 0);
-                        if ($cid <= 0 || isset($medicoSolicitantePorCotizacion[$cid])) continue;
+                        if ($cid <= 0) continue;
+                        $origenConsulta = strtolower(trim((string)($rowMed['consulta_origen_creacion'] ?? '')));
+                        if ($origenConsulta === 'hc_proxima') {
+                            $esHcProximaPorCotizacion[$cid] = 1;
+                        }
+                        if ((int)($rowMed['consulta_es_control'] ?? 0) === 1) {
+                            $esControlConsultaPorCotizacion[$cid] = 1;
+                        }
+
+                        if (isset($medicoSolicitantePorCotizacion[$cid])) continue;
                         $consultaDet = (int)($rowMed['consulta_id'] ?? 0);
                         if ($consultaDet > 0 && !isset($consultaRefPorCotizacion[$cid])) {
                             $consultaRefPorCotizacion[$cid] = $consultaDet;
@@ -6941,6 +7138,10 @@ switch ($method) {
             $cotRow['orden_laboratorio_id'] = $hasLabCotizacion ? ($ordenLaboratorioPorCotizacion[$cid] ?? 0) : 0;
             $cotRow['ordenes_laboratorio_count'] = $hasLabCotizacion ? ($ordenesLaboratorioCountPorCotizacion[$cid] ?? 0) : 0;
             $cotRow['medico_solicitante'] = $medicoSolicitantePorCotizacion[$cid] ?? '';
+            $paquetesLabels = isset($paquetesResumenPorCotizacion[$cid]) && is_array($paquetesResumenPorCotizacion[$cid])
+                ? array_values($paquetesResumenPorCotizacion[$cid])
+                : [];
+            $cotRow['paquetes_resumen'] = implode(' || ', $paquetesLabels);
             $serviciosTokens = array_filter(array_map('trim', explode(',', strtolower((string)($serviciosPorCotizacion[$cid] ?? '')))));
             $tieneServicioConsulta = in_array('consulta', $serviciosTokens, true);
             $tieneServicioLaboratorio = in_array('laboratorio', $serviciosTokens, true);
@@ -7011,11 +7212,22 @@ switch ($method) {
             $cotRow['consulta_ref_id'] = (int)($consultaRefPorCotizacion[$cid] ?? 0);
             $cotRow['consulta_ref_correlativo_dia_medico'] = (int)($correlativoConsultaPorCotizacion[$cid] ?? 0);
             $cotRow['consulta_ref_fecha'] = (string)($fechaConsultaPorCotizacion[$cid] ?? '');
+            $cotRow['es_hc_proxima_programada'] = (int)($esHcProximaPorCotizacion[$cid] ?? 0);
+            $cotRow['consulta_es_control'] = (int)($esControlConsultaPorCotizacion[$cid] ?? 0);
             $cotRow['correlativos_operativos_servicios'] = $correlativosOperativosPorCotizacion[$cid] ?? [];
             $cotRow['origen_cobro_resumen'] = $origenCobroPorCotizacion[$cid] ?? 'regular';
             $cotRow['contratos_ids_resumen'] = $contratoResumenPorCotizacion[$cid] ?? '';
             $cotRow['metodo_pago_resumen'] = $metodoPagoResumenPorCotizacion[$cid] ?? 'sin_pago';
             $cotRow['metodos_pago_resumen'] = $metodosPagoListaPorCotizacion[$cid] ?? '';
+
+            $esControlHcFila = (int)($cotRow['es_hc_proxima_programada'] ?? 0) === 1
+                && (int)($cotRow['consulta_es_control'] ?? 0) === 1;
+            $totalFila = (float)($cotRow['total'] ?? 0);
+            $saldoFila = (float)($cotRow['saldo_pendiente'] ?? 0);
+            $pagadoFila = (float)($cotRow['total_pagado'] ?? 0);
+            if ($esControlHcFila && $totalFila <= 0.00001 && $saldoFila <= 0.00001 && $pagadoFila <= 0.00001) {
+                $cotRow['estado'] = 'control';
+            }
 
             // Si fue una cotizacion originada desde HC y no hay un usuario real que la creo,
             // prevalece el medico solicitante como "Quien cotizo".

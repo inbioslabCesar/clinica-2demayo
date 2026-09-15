@@ -420,6 +420,22 @@ export default function CerrarCajaView() {
     : 0;
 
   const handleCerrarCaja = async () => {
+    const toNumberOrZero = (value) => {
+      const raw = String(value ?? "").trim();
+      if (raw === "") return 0;
+      const n = Number(raw.replace(',', '.'));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const toOptionalNumber = (value) => {
+      const raw = String(value ?? "").trim();
+      if (raw === "") return null;
+      const n = Number(raw.replace(',', '.'));
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const montoContadoPayload = toNumberOrZero(montoContado);
+    const montoVirtualContadoPayload = toOptionalNumber(montoVirtualContado);
+
     // Calcular totales por método de pago
     let total_yape = 0;
     let total_plin = 0;
@@ -484,8 +500,8 @@ export default function CerrarCajaView() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          monto_contado: montoContado,
-          monto_virtual_contado: montoVirtualContado,
+          monto_contado: montoContadoPayload,
+          monto_virtual_contado: montoVirtualContadoPayload,
           observaciones,
           total_yape,
           total_plin,
@@ -500,8 +516,8 @@ export default function CerrarCajaView() {
         mostrarEtiquetaImpresion({
           ...resumen,
           observaciones,
-          monto_contado: montoContado,
-          monto_virtual_contado: montoVirtualContado,
+          monto_contado: montoContadoPayload,
+          monto_virtual_contado: montoVirtualContadoPayload,
           caja_id: data.caja_id,
           fecha: data.fecha || resumen?.fecha || new Date().toISOString().slice(0, 10),
           egreso_electronico: 0,
@@ -653,6 +669,7 @@ export default function CerrarCajaView() {
                 className="border-2 border-green-300 rounded-xl px-4 py-2 mt-2 text-xl text-center font-bold w-full max-w-[160px] focus:ring-2 focus:ring-green-400 bg-white"
                 placeholder="S/ 0.00"
               />
+              <span className="text-xs text-gray-600 mt-2">Si lo dejas vacio, el cierre usara S/ 0.00.</span>
             </div>
             <div className={`flex-1 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg ${diferencia === 0 ? "bg-green-200" : diferencia > 0 ? "bg-blue-100" : "bg-red-100"}`}>
               <span className="text-xs font-semibold mb-1">Diferencia</span>

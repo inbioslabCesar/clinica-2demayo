@@ -1,7 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 
-export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal, onCorregirApertura }) {
+export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal, onCorregirApertura, onRegularizarTraspasos }) {
   const navigate = useNavigate();
   const userRole = usuario?.rol || sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
 
@@ -52,6 +52,15 @@ export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal, 
             <div className="text-xs text-orange-100">Finanzas</div>
             <div className="text-sm">Ir a egresos</div>
           </button>
+          {userRole === 'administrador' && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-teal-600 to-emerald-700`}
+              onClick={() => onRegularizarTraspasos && onRegularizarTraspasos()}
+            >
+              <div className="text-xs text-emerald-100">Auditoría</div>
+              <div className="text-sm">Regularizar traspasos</div>
+            </button>
+          )}
           {userRole === 'administrador' && (
             <button
               className={`${baseBtn} bg-gradient-to-r from-slate-600 to-slate-700`}

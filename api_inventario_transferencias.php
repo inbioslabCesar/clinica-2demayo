@@ -38,13 +38,54 @@ function transfer_get_user_role(): string
     return strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
 }
 
+function transfer_column_exists(mysqli $conn, string $table, string $column): bool
+{
+    $stmt = $conn->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $exists = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (bool)$exists;
+}
+
+function transfer_normalize_role_slug(string $role): string
+{
+    $role = strtolower(trim($role));
+    $role = strtr($role, [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n',
+    ]);
+    $role = preg_replace('/[^a-z0-9]+/', '_', $role);
+    $role = trim((string)$role, '_');
+    return $role;
+}
+
 function transfer_require_write_role(): void
 {
-    $role = transfer_get_user_role();
-    $allowed = ['administrador', 'quimico', 'químico'];
-    if (!in_array($role, $allowed, true)) {
+    $roleSlug = transfer_normalize_role_slug(transfer_get_user_role());
+    $allowed = [
+        'administrador',
+        'quimico',
+        'quimica',
+        'laboratorista',
+        'laboratorio',
+        'profesional_encargado',
+        'encargado_laboratorio',
+        'encargado_de_laboratorio',
+    ];
+    if (!in_array($roleSlug, $allowed, true)) {
         transfer_json_response(['success' => false, 'error' => 'No autorizado para registrar transferencias internas'], 403);
     }
+}
+
+function transfer_to_decimal($value): float
+{
+    if ($value === null) {
+        return 0.0;
+    }
+    return round((float)$value, 4);
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -100,6 +141,11 @@ try {
                 $limit = 200;
             }
 
+            $usuarioNombreExpr = transfer_column_exists($conn, 'usuarios', 'apellido')
+                ? "TRIM(CONCAT(COALESCE(u.nombre,''), ' ', COALESCE(u.apellido,'')))"
+                : "COALESCE(u.nombre,'')";
+            $usuarioGroupBy = transfer_column_exists($conn, 'usuarios', 'apellido') ? ", u.apellido" : "";
+
             $sql = "SELECT
                         t.id,
                         t.origen,
@@ -109,11 +155,11 @@ try {
                         t.fecha_hora,
                         COUNT(td.id) AS items_count,
                         IFNULL(SUM(td.cantidad), 0) AS cantidad_total,
-                        CONCAT(COALESCE(u.nombre,''), ' ', COALESCE(u.apellido,'')) AS usuario_nombre
+                        $usuarioNombreExpr AS usuario_nombre
                     FROM inventario_transferencias t
                     LEFT JOIN inventario_transferencias_detalle td ON td.transferencia_id = t.id
                     LEFT JOIN usuarios u ON u.id = t.usuario_id
-                    GROUP BY t.id, t.origen, t.destino, t.usuario_id, t.observacion, t.fecha_hora, u.nombre, u.apellido
+                    GROUP BY t.id, t.origen, t.destino, t.usuario_id, t.observacion, t.fecha_hora, u.nombre$usuarioGroupBy
                     ORDER BY t.fecha_hora DESC, t.id DESC
                     LIMIT ?";
             $stmt = $conn->prepare($sql);
@@ -123,9 +169,59 @@ try {
 
             $transferencias = [];
             while ($row = $res->fetch_assoc()) {
+                $row['detalles'] = [];
                 $transferencias[] = $row;
             }
             $stmt->close();
+
+            if (!empty($transferencias)) {
+                $stmtDet = $conn->prepare("SELECT
+                        td.transferencia_id,
+                        td.item_id,
+                        td.cantidad,
+                        i.codigo,
+                        i.nombre,
+                        i.unidad_medida,
+                        i.presentacion,
+                        i.factor_presentacion
+                    FROM inventario_transferencias_detalle td
+                    JOIN inventario_items i ON i.id = td.item_id
+                    WHERE td.transferencia_id = ?");
+
+                if ($stmtDet) {
+                    foreach ($transferencias as $idx => $transferencia) {
+                        $transferenciaId = intval($transferencia['id'] ?? 0);
+                        if ($transferenciaId <= 0) {
+                            continue;
+                        }
+                        $stmtDet->bind_param('i', $transferenciaId);
+                        $stmtDet->execute();
+                        $detRes = $stmtDet->get_result();
+                        $detalles = [];
+                        while ($det = $detRes->fetch_assoc()) {
+                            $cantidadBase = transfer_to_decimal($det['cantidad'] ?? 0);
+                            $factorPresentacion = transfer_to_decimal($det['factor_presentacion'] ?? 0);
+                            if ($factorPresentacion <= 0) {
+                                $factorPresentacion = 1.0;
+                            }
+                            $cantidadPresentacion = round($cantidadBase / $factorPresentacion, 4);
+
+                            $detalles[] = [
+                                'item_id' => intval($det['item_id'] ?? 0),
+                                'codigo' => (string)($det['codigo'] ?? ''),
+                                'nombre' => (string)($det['nombre'] ?? ''),
+                                'unidad_medida' => (string)($det['unidad_medida'] ?? ''),
+                                'presentacion' => (string)($det['presentacion'] ?? ''),
+                                'factor_presentacion' => $factorPresentacion,
+                                'cantidad_base' => $cantidadBase,
+                                'cantidad_presentacion' => $cantidadPresentacion,
+                            ];
+                        }
+                        $transferencias[$idx]['detalles'] = $detalles;
+                    }
+                    $stmtDet->close();
+                }
+            }
 
             transfer_json_response([
                 'success' => true,
@@ -137,10 +233,18 @@ try {
             transfer_require_write_role();
             $data = transfer_read_json_body();
 
-            $origen = trim((string)($data['origen'] ?? 'almacen_principal'));
-            $destino = trim((string)($data['destino'] ?? 'laboratorio'));
+            $origen = strtolower(trim((string)($data['origen'] ?? 'almacen_principal')));
+            $destino = strtolower(trim((string)($data['destino'] ?? 'laboratorio')));
             $observacion = trim((string)($data['observacion'] ?? ''));
             $usuarioId = transfer_get_usuario_id();
+
+            $origenesPermitidos = ['almacen_principal', 'almacen'];
+            if (!in_array($origen, $origenesPermitidos, true)) {
+                transfer_json_response(['success' => false, 'error' => 'Origen no válido para transferencia interna.'], 422);
+            }
+            if ($destino !== 'laboratorio') {
+                transfer_json_response(['success' => false, 'error' => 'Destino no válido. Solo se permite laboratorio.'], 422);
+            }
 
             $items = [];
             if (isset($data['items']) && is_array($data['items']) && count($data['items']) > 0) {
@@ -158,13 +262,15 @@ try {
                     continue;
                 }
                 $itemId = intval($it['item_id'] ?? 0);
-                $cantidad = round((float)($it['cantidad'] ?? 0), 4);
-                if ($itemId <= 0 || $cantidad <= 0) {
+                $cantidad = transfer_to_decimal($it['cantidad'] ?? 0);
+                $cantidadPresentacion = transfer_to_decimal($it['cantidad_presentacion'] ?? 0);
+                if ($itemId <= 0 || ($cantidad <= 0 && $cantidadPresentacion <= 0)) {
                     continue;
                 }
                 $itemsNormalizados[] = [
                     'item_id' => $itemId,
                     'cantidad' => $cantidad,
+                    'cantidad_presentacion' => $cantidadPresentacion,
                 ];
             }
 
@@ -185,10 +291,9 @@ try {
 
             $transferenciaId = intval($conn->insert_id);
 
-            $stmtItem = $conn->prepare('SELECT id, codigo, nombre, unidad_medida, activo, controla_stock FROM inventario_items WHERE id = ? LIMIT 1');
-            $stmtStock = $conn->prepare('SELECT IFNULL(SUM(cantidad_actual),0) AS stock_total FROM inventario_lotes WHERE item_id = ? AND cantidad_actual > 0');
+            $stmtItem = $conn->prepare('SELECT id, codigo, nombre, unidad_medida, presentacion, factor_presentacion, activo, controla_stock FROM inventario_items WHERE id = ? LIMIT 1');
             $stmtDetalle = $conn->prepare('INSERT INTO inventario_transferencias_detalle (transferencia_id, item_id, cantidad, created_at) VALUES (?, ?, ?, NOW())');
-            $stmtLotes = $conn->prepare('SELECT id, cantidad_actual FROM inventario_lotes WHERE item_id = ? AND cantidad_actual > 0 ORDER BY (fecha_vencimiento IS NULL) ASC, fecha_vencimiento ASC, id ASC');
+            $stmtLotes = $conn->prepare('SELECT id, cantidad_actual FROM inventario_lotes WHERE item_id = ? AND cantidad_actual > 0 ORDER BY (fecha_vencimiento IS NULL) ASC, fecha_vencimiento ASC, id ASC FOR UPDATE');
             $stmtUpdLote = $conn->prepare('UPDATE inventario_lotes SET cantidad_actual = cantidad_actual - ?, updated_at = NOW() WHERE id = ?');
             $stmtMov = $conn->prepare("INSERT INTO inventario_movimientos (item_id, lote_id, tipo, cantidad, observacion, origen, usuario_id, fecha_hora) VALUES (?, ?, 'salida', ?, ?, 'transferencia_interna', ?, NOW())");
 
@@ -197,7 +302,8 @@ try {
 
             foreach ($itemsNormalizados as $itemTransferencia) {
                 $itemId = intval($itemTransferencia['item_id']);
-                $cantidadSolicitada = round((float)$itemTransferencia['cantidad'], 4);
+                $cantidadSolicitada = transfer_to_decimal($itemTransferencia['cantidad'] ?? 0);
+                $cantidadPresentacion = transfer_to_decimal($itemTransferencia['cantidad_presentacion'] ?? 0);
 
                 $stmtItem->bind_param('i', $itemId);
                 $stmtItem->execute();
@@ -208,11 +314,28 @@ try {
                 }
 
                 $controlaStock = intval($item['controla_stock'] ?? 1) === 1;
+                $factorPresentacion = transfer_to_decimal($item['factor_presentacion'] ?? 0);
+                if ($factorPresentacion <= 0) {
+                    $factorPresentacion = 1.0;
+                }
+
+                if ($cantidadPresentacion > 0) {
+                    $cantidadSolicitada = round($cantidadPresentacion * $factorPresentacion, 4);
+                }
+
+                if ($cantidadSolicitada <= 0) {
+                    throw new RuntimeException('Cantidad inválida para transferencia de item #' . $itemId);
+                }
 
                 if ($controlaStock) {
-                    $stmtStock->bind_param('i', $itemId);
-                    $stmtStock->execute();
-                    $stockTotal = round((float)($stmtStock->get_result()->fetch_assoc()['stock_total'] ?? 0), 4);
+                    $stmtLotes->bind_param('i', $itemId);
+                    $stmtLotes->execute();
+                    $lotes = $stmtLotes->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stockTotal = 0.0;
+                    foreach ($lotes as $loteTmp) {
+                        $stockTotal += round((float)($loteTmp['cantidad_actual'] ?? 0), 4);
+                    }
+                    $stockTotal = round($stockTotal, 4);
 
                     if ($stockTotal + 0.0001 < $cantidadSolicitada) {
                         throw new RuntimeException(
@@ -230,9 +353,6 @@ try {
 
                 if ($controlaStock) {
                     $restante = $cantidadSolicitada;
-                    $stmtLotes->bind_param('i', $itemId);
-                    $stmtLotes->execute();
-                    $lotes = $stmtLotes->get_result()->fetch_all(MYSQLI_ASSOC);
 
                     foreach ($lotes as $lote) {
                         if ($restante <= 0) {
@@ -248,7 +368,9 @@ try {
 
                         $loteId = intval($lote['id']);
                         $stmtUpdLote->bind_param('di', $consumo, $loteId);
-                        $stmtUpdLote->execute();
+                        if (!$stmtUpdLote->execute()) {
+                            throw new RuntimeException('No se pudo actualizar lote de item #' . $itemId);
+                        }
 
                         $obsMov = 'Transferencia interna #' . $transferenciaId;
                         if ($observacion !== '') {
@@ -256,7 +378,9 @@ try {
                         }
 
                         $stmtMov->bind_param('iidsi', $itemId, $loteId, $consumo, $obsMov, $usuarioId);
-                        $stmtMov->execute();
+                        if (!$stmtMov->execute()) {
+                            throw new RuntimeException('No se pudo registrar movimiento de transferencia para item #' . $itemId);
+                        }
 
                         $restante = round($restante - $consumo, 4);
                     }
@@ -272,12 +396,15 @@ try {
                     'codigo' => (string)($item['codigo'] ?? ''),
                     'nombre' => (string)($item['nombre'] ?? ''),
                     'cantidad' => $cantidadSolicitada,
+                    'cantidad_base' => $cantidadSolicitada,
+                    'cantidad_presentacion' => round($cantidadSolicitada / $factorPresentacion, 4),
+                    'factor_presentacion' => $factorPresentacion,
+                    'presentacion' => (string)($item['presentacion'] ?? ''),
                     'unidad_medida' => (string)($item['unidad_medida'] ?? ''),
                 ];
             }
 
             $stmtItem->close();
-            $stmtStock->close();
             $stmtDetalle->close();
             $stmtLotes->close();
             $stmtUpdLote->close();

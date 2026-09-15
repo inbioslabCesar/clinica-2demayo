@@ -1,6 +1,7 @@
 /* eslint-env node */
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import legacy from '@vitejs/plugin-legacy'
 
 const env = globalThis.process?.env ?? {}
 
@@ -11,7 +12,13 @@ const apiProxyTarget = env.CODESPACES
 const sistemaBuildBase = (env.VITE_SISTEMA_BASE || '/sistema/').replace(/\/+$/, '') + '/'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    legacy({
+      targets: ['defaults', 'not IE 11', 'Chrome >= 88'],
+      modernPolyfills: true,
+    }),
+  ],
   // En produccion sistema se sirve bajo /sistema/, usar base absoluta evita pantallas en blanco al refrescar rutas profundas.
   base: env.NODE_ENV === 'production' ? sistemaBuildBase : '/',
   cacheDir: 'node_modules/.vite-sistema',

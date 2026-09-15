@@ -11,6 +11,7 @@ export default function ResultadosLaboratorioPage() {
   const [referenciadosPendientes, setReferenciados] = useState([]);
   const [ordenesConsulta, setOrdenesConsulta] = useState([]);
   const [archivoVisor, setArchivoVisor] = useState(null);
+  const [archivoVisorError, setArchivoVisorError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const returnState = location.state && typeof location.state === 'object' ? location.state : null;
@@ -105,6 +106,113 @@ export default function ResultadosLaboratorioPage() {
       maximumFractionDigits: 6,
     });
   }, [normalizeNumber]);
+
+  const isPdfArchivo = useCallback((archivo) => {
+    const mime = String(archivo?.mime_type || '').toLowerCase();
+    const name = String(archivo?.nombre_original || '').toLowerCase();
+    return mime.includes('pdf') || name.endsWith('.pdf');
+  }, []);
+
+  const resolveArchivoApiPath = useCallback((archivoId) => {
+    const id = Number(archivoId || 0);
+    if (id <= 0) return '';
+    return `api_resultados_laboratorio.php?action=view_archivo&consulta_id=${consultaId}&archivo_id=${id}`;
+  }, [consultaId]);
+
+  const getPreviewSrc = useCallback((archivo) => {
+    if (!archivo) return '';
+    return String(archivo.previewUrl || archivo.url || '');
+  }, []);
+
+  const closeArchivoVisor = useCallback(() => {
+    setArchivoVisor((prev) => {
+      if (prev?.previewUrl && prev.previewUrl.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(prev.previewUrl);
+        } catch (_) {
+          // Ignore revoke errors.
+        }
+      }
+      return null;
+    });
+    setArchivoVisorError('');
+  }, []);
+
+  const openArchivoVisor = useCallback(async (arch) => {
+    if (!arch || !arch.archivo_id) return;
+
+    const apiPath = resolveArchivoApiPath(arch.archivo_id);
+    const previous = archivoVisor;
+    if (previous?.previewUrl && previous.previewUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(previous.previewUrl);
+      } catch (_) {
+        // Ignore revoke errors.
+      }
+    }
+
+    const basePayload = {
+      ...arch,
+      previewUrl: '',
+      sourcePath: apiPath,
+      loadedFromBlob: false,
+    };
+
+    setArchivoVisorError('');
+    setArchivoVisor(basePayload);
+
+    if (!apiPath) {
+      setArchivoVisorError('No se pudo resolver el archivo para vista previa.');
+      setArchivoVisor({
+        ...basePayload,
+        previewUrl: String(arch.url || ''),
+      });
+      return;
+    }
+
+    try {
+      const resp = await authFetch(apiPath);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      setArchivoVisor((prev) => {
+        if (!prev || Number(prev.archivo_id || 0) !== Number(arch.archivo_id || 0)) {
+          URL.revokeObjectURL(blobUrl);
+          return prev;
+        }
+        return {
+          ...prev,
+          previewUrl: blobUrl,
+          mime_type: blob.type || prev.mime_type,
+          loadedFromBlob: true,
+        };
+      });
+    } catch (_) {
+      setArchivoVisorError('No se pudo cargar el archivo autenticado. Mostrando enlace directo.');
+      setArchivoVisor((prev) => {
+        if (!prev || Number(prev.archivo_id || 0) !== Number(arch.archivo_id || 0)) return prev;
+        return {
+          ...prev,
+          previewUrl: String(arch.url || ''),
+          loadedFromBlob: false,
+        };
+      });
+    }
+  }, [archivoVisor, resolveArchivoApiPath]);
+
+  useEffect(() => {
+    return () => {
+      if (archivoVisor?.previewUrl && String(archivoVisor.previewUrl).startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(archivoVisor.previewUrl);
+        } catch (_) {
+          // Ignore revoke errors.
+        }
+      }
+    };
+  }, [archivoVisor]);
 
   // Mapas para nombre y valores de referencia — memoizados para no recalcular en cada render
   const { idToNombre, idToReferencias } = useMemo(() => {
@@ -568,7 +676,7 @@ export default function ResultadosLaboratorioPage() {
                     <button
                       key={arch.archivo_id}
                       type="button"
-                      onClick={() => setArchivoVisor(arch)}
+                      onClick={() => openArchivoVisor(arch)}
                       className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold"
                       title={arch.nombre_original}
                     >
@@ -594,7 +702,7 @@ export default function ResultadosLaboratorioPage() {
               </div>
               <div className="flex items-center gap-2">
                 <a
-                  href={archivoVisor.url}
+                  href={getPreviewSrc(archivoVisor)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs px-3 py-1.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold"
@@ -603,7 +711,7 @@ export default function ResultadosLaboratorioPage() {
                 </a>
                 <button
                   type="button"
-                  onClick={() => setArchivoVisor(null)}
+                  onClick={closeArchivoVisor}
                   className="text-xs px-3 py-1.5 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 font-semibold"
                 >
                   Cerrar
@@ -611,10 +719,23 @@ export default function ResultadosLaboratorioPage() {
               </div>
             </div>
 
+            {archivoVisorError && (
+              <div className="px-4 py-2 text-xs bg-amber-50 text-amber-700 border-b border-amber-200">
+                {archivoVisorError}
+              </div>
+            )}
+
             <div className="flex-1 bg-gray-50">
-              {String(archivoVisor.mime_type || '').startsWith('image/') ? (
+              {!getPreviewSrc(archivoVisor) ? (
+                <div className="w-full h-full flex items-center justify-center text-center p-6">
+                  <div>
+                    <p className="font-semibold text-gray-700 mb-1">Cargando vista previa...</p>
+                    <p className="text-sm text-gray-500">Espera un momento mientras se obtiene el archivo.</p>
+                  </div>
+                </div>
+              ) : String(archivoVisor.mime_type || '').startsWith('image/') ? (
                 <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
-                  <img src={archivoVisor.url} alt={archivoVisor.nombre_original} className="max-w-full max-h-full object-contain rounded border" />
+                  <img src={getPreviewSrc(archivoVisor)} alt={archivoVisor.nombre_original} className="max-w-full max-h-full object-contain rounded border" />
                 </div>
               ) : String(archivoVisor.mime_type || '').includes('dicom') ? (
                 <div className="w-full h-full flex items-center justify-center text-center p-6">
@@ -623,9 +744,22 @@ export default function ResultadosLaboratorioPage() {
                     <p className="text-sm text-gray-500">Puedes abrir el archivo en una pestaña externa para visualizarlo.</p>
                   </div>
                 </div>
+              ) : isPdfArchivo(archivoVisor) ? (
+                <object
+                  data={getPreviewSrc(archivoVisor)}
+                  type="application/pdf"
+                  className="w-full h-full"
+                >
+                  <div className="w-full h-full flex items-center justify-center text-center p-6">
+                    <div>
+                      <p className="font-semibold text-gray-700 mb-1">No se pudo previsualizar el PDF en el visor integrado.</p>
+                      <p className="text-sm text-gray-500">Usa "Abrir en pestaña" para verlo o descargarlo.</p>
+                    </div>
+                  </div>
+                </object>
               ) : (
                 <iframe
-                  src={archivoVisor.url}
+                  src={getPreviewSrc(archivoVisor)}
                   title={archivoVisor.nombre_original}
                   className="w-full h-full border-0"
                 />

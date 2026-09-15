@@ -632,12 +632,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     const esFechaFutura = /^\d{4}-\d{2}-\d{2}$/.test(fechaConsulta)
       ? fechaConsulta > getHoyYmd()
       : false;
-    if ((origen === 'hc_proxima' || hcOrigenId > 0) && esFechaFutura) {
+    const esHcProxima = origen === 'hc_proxima' || hcOrigenId > 0;
+    if (esHcProxima) {
       return {
         visible: true,
-        label: 'HC proxima',
+        label: esFechaFutura ? 'HC proxima' : 'HC proxima (historial)',
         icon: '🧾',
-        className: 'bg-indigo-100 text-indigo-800 border-indigo-200'
+        className: esFechaFutura
+          ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+          : 'bg-violet-100 text-violet-800 border-violet-200'
       };
     }
     return {

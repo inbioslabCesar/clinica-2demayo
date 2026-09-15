@@ -35,10 +35,11 @@ class CajaModule {
             // ...eliminado log de depuración...
         $sql = "INSERT INTO ingresos_diarios (
             caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno, honorario_movimiento_id, cobrado_por, liquidado_por, fecha_liquidacion, fecha_hora
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)";
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))";
         $stmt_ingreso = $conn->prepare($sql);
+        $fechaHoraParam = $params['fecha_hora_param'] ?? null;
         $stmt_ingreso->bind_param(
-            "isssdsisisisiiis",
+            "isssdsisisisiiiss",
             $params['caja_id'],
             $params['tipo_ingreso'],
             $params['area_servicio'],
@@ -54,7 +55,8 @@ class CajaModule {
             $params['honorario_movimiento_id'],
             $params['cobrado_por'],
             $params['liquidado_por'],
-            $params['fecha_liquidacion']
+            $params['fecha_liquidacion'],
+            $fechaHoraParam
         );
         $result = $stmt_ingreso->execute();
             // ...eliminado log de depuración...

@@ -556,6 +556,91 @@ if (!function_exists('is_laboratorio_signer_role')) {
     }
 }
 
+if (!function_exists('rl_role_slug')) {
+    function rl_role_slug($role)
+    {
+        $role = strtolower(trim((string)$role));
+        $role = strtr($role, [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n',
+        ]);
+        $role = preg_replace('/[^a-z0-9]+/', '_', $role);
+        return trim((string)$role, '_');
+    }
+}
+
+if (!function_exists('rl_normalize_session_permissions')) {
+    function rl_normalize_session_permissions($raw)
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $raw = $decoded;
+            } else {
+                $raw = explode(',', $raw);
+            }
+        }
+
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $item) {
+            $perm = trim((string)$item);
+            if ($perm !== '') {
+                $out[$perm] = true;
+            }
+        }
+
+        return array_keys($out);
+    }
+}
+
+if (!function_exists('rl_can_save_resultados')) {
+    function rl_can_save_resultados($sessionUsuario)
+    {
+        $rolSlug = rl_role_slug($sessionUsuario['rol'] ?? '');
+        $allowedRoles = [
+            'laboratorista',
+            'tecnologo',
+            'administrador',
+            'admin',
+            'quimico',
+            'quimica',
+            'laboratorio',
+        ];
+
+        if (in_array($rolSlug, $allowedRoles, true)) {
+            return true;
+        }
+
+        if ($rolSlug !== 'recepcionista') {
+            return false;
+        }
+
+        $permisos = rl_normalize_session_permissions($sessionUsuario['permisos'] ?? []);
+        return in_array('operar_resultados_laboratorio', $permisos, true);
+    }
+}
+
+if (!function_exists('rl_can_validate_resultados')) {
+    function rl_can_validate_resultados($sessionUsuario)
+    {
+        $rolSlug = rl_role_slug($sessionUsuario['rol'] ?? '');
+        $allowedRoles = [
+            'laboratorista',
+            'tecnologo',
+            'administrador',
+            'admin',
+            'quimico',
+            'quimica',
+            'laboratorio',
+        ];
+
+        return in_array($rolSlug, $allowedRoles, true);
+    }
+}
+
 if (!function_exists('is_valid_laboratorio_signer_user_id')) {
     function is_valid_laboratorio_signer_user_id($conn, $userId)
     {
@@ -1060,9 +1145,41 @@ switch ($method) {
 
             $safeName = preg_replace('/[^a-zA-Z0-9._\- ]/', '_', (string)($archivo['nombre_original'] ?? 'archivo'));
             $mimeServe = !empty($archivo['mime_type']) ? (string)$archivo['mime_type'] : 'application/octet-stream';
+            $mimeServeNorm = strtolower(trim($mimeServe));
+            $ext = strtolower((string)pathinfo((string)($archivo['archivo_path'] ?? ''), PATHINFO_EXTENSION));
+
+            // Robust MIME detection for inline preview (PDF/image), even when DB stored octet-stream.
+            if ($mimeServeNorm === '' || $mimeServeNorm === 'application/octet-stream') {
+                if (function_exists('finfo_open')) {
+                    $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+                    if ($finfo) {
+                        $detected = @finfo_file($finfo, (string)$archivo['archivo_path']);
+                        @finfo_close($finfo);
+                        if (is_string($detected) && trim($detected) !== '') {
+                            $mimeServe = trim($detected);
+                            $mimeServeNorm = strtolower($mimeServe);
+                        }
+                    }
+                }
+            }
+
+            if ($mimeServeNorm === '' || $mimeServeNorm === 'application/octet-stream') {
+                if ($ext === 'pdf') {
+                    $mimeServe = 'application/pdf';
+                } elseif (in_array($ext, ['jpg', 'jpeg'], true)) {
+                    $mimeServe = 'image/jpeg';
+                } elseif ($ext === 'png') {
+                    $mimeServe = 'image/png';
+                } elseif ($ext === 'gif') {
+                    $mimeServe = 'image/gif';
+                } elseif ($ext === 'webp') {
+                    $mimeServe = 'image/webp';
+                }
+            }
 
             header('Content-Type: ' . $mimeServe);
             header('Content-Disposition: inline; filename="' . $safeName . '"');
+            header('X-Frame-Options: SAMEORIGIN');
             header('Content-Length: ' . filesize($archivo['archivo_path']));
             header('Cache-Control: private, max-age=3600');
             readfile($archivo['archivo_path']);
@@ -1132,11 +1249,29 @@ switch ($method) {
         }
 
         if ($isHcFast) {
+            $totalDocumentosExternos = 0;
+            $stmtDocsCount = $conn->prepare(
+                'SELECT COUNT(dea.id) AS total
+                 FROM documentos_externos_paciente dep
+                 INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
+                 WHERE LOWER(TRIM(dep.tipo)) = "laboratorio"
+                   AND dep.orden_id IN (SELECT id FROM ordenes_laboratorio WHERE consulta_id = ?)'
+            );
+            if ($stmtDocsCount) {
+                $stmtDocsCount->bind_param('i', $consulta_id);
+                $stmtDocsCount->execute();
+                $rowDocsCount = $stmtDocsCount->get_result()->fetch_assoc();
+                $stmtDocsCount->close();
+                $totalDocumentosExternos = (int)($rowDocsCount['total'] ?? 0);
+            }
+
             echo json_encode([
                 'success' => true,
                 'resultados' => $resultados,
                 'documentos_externos' => [],
                 'examenes_referenciados_pendientes' => [],
+                'total_documentos_externos' => $totalDocumentosExternos,
+                'has_documentos_externos' => $totalDocumentosExternos > 0,
             ]);
             break;
         }
@@ -1244,19 +1379,30 @@ switch ($method) {
         // Guardar resultados de laboratorio
         $data = json_decode(file_get_contents('php://input'), true);
         $action = strtolower(trim((string)($data['action'] ?? '')));
-        $rolSesionNorm = strtolower(trim((string)$rolSesion));
-        if (!is_laboratorio_signer_role($rolSesionNorm)) {
-            http_response_code(403);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Solo el tecnologo/laboratorista del modulo de laboratorio puede guardar o validar resultados.'
-            ]);
-            exit;
+        $isValidationAction = in_array($action, ['validar', 'validar_resultado', 'validar_resultados', 'validar_parametros'], true);
+        if ($isValidationAction) {
+            if (!rl_can_validate_resultados($sessionUsuario ?? [])) {
+                http_response_code(403);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Solo usuarios autorizados de laboratorio o administrador pueden validar resultados.'
+                ]);
+                exit;
+            }
+        } else {
+            if (!rl_can_save_resultados($sessionUsuario ?? [])) {
+                http_response_code(403);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'No autorizado para guardar resultados de laboratorio.'
+                ]);
+                exit;
+            }
         }
         $orden_id = isset($data['orden_id']) && is_numeric($data['orden_id']) ? intval($data['orden_id']) : null;
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
 
-        if (in_array($action, ['validar', 'validar_resultado', 'validar_resultados', 'validar_parametros'], true)) {
+        if ($isValidationAction) {
             $sessionUserId = intval($sessionUsuario['id'] ?? 0);
             if ($sessionUserId <= 0) {
                 http_response_code(403);

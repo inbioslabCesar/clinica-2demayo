@@ -25,6 +25,109 @@ function table_exists_lr($conn, $table) {
     return $res && $res->num_rows > 0;
 }
 
+function resolver_cotizacion_id_liquidacion_lr($conn, array $movimiento, bool $hasCotizacionId, bool $hasCotizacionMovimientos): int {
+    $directo = $hasCotizacionId ? (int)($movimiento['cotizacion_id'] ?? 0) : 0;
+    if ($directo > 0) {
+        return $directo;
+    }
+
+    $cobroId = (int)($movimiento['cobro_id'] ?? 0);
+    if ($cobroId <= 0 || !$hasCotizacionMovimientos) {
+        return 0;
+    }
+
+    $stmt = $conn->prepare("SELECT cotizacion_id FROM cotizacion_movimientos WHERE cobro_id = ? AND cotizacion_id IS NOT NULL AND cotizacion_id > 0 ORDER BY id DESC LIMIT 1");
+    if (!$stmt) {
+        return 0;
+    }
+    $stmt->bind_param('i', $cobroId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    return (int)($row['cotizacion_id'] ?? 0);
+}
+
+function obtener_contexto_derivacion_lr($conn, int $cotizacionId, int $examenId, string $laboratorio = ''): ?array {
+    if ($cotizacionId <= 0 || $examenId <= 0) {
+        return null;
+    }
+
+    $hasEstadoItem = column_exists_lr($conn, 'cotizaciones_detalle', 'estado_item');
+    $hasDerivado = column_exists_lr($conn, 'cotizaciones_detalle', 'derivado');
+    $hasLaboratorioRef = column_exists_lr($conn, 'cotizaciones_detalle', 'laboratorio_referencia');
+    $hasTipoDeriv = column_exists_lr($conn, 'cotizaciones_detalle', 'tipo_derivacion');
+    $hasValorDeriv = column_exists_lr($conn, 'cotizaciones_detalle', 'valor_derivacion');
+
+    $sql = "SELECT COALESCE(SUM(cd.subtotal), 0) AS subtotal";
+    if ($hasTipoDeriv && $hasValorDeriv) {
+        $sql .= ", MAX(CASE WHEN LOWER(COALESCE(cd.tipo_derivacion, '')) = 'porcentaje' THEN cd.valor_derivacion ELSE NULL END) AS porcentaje";
+    } else {
+        $sql .= ", NULL AS porcentaje";
+    }
+    $sql .= " FROM cotizaciones_detalle cd WHERE cd.cotizacion_id = ? AND LOWER(COALESCE(cd.servicio_tipo, '')) = 'laboratorio' AND cd.servicio_id = ?";
+
+    $params = [$cotizacionId, $examenId];
+    $types = 'ii';
+
+    if ($hasEstadoItem) {
+        $sql .= " AND LOWER(COALESCE(cd.estado_item, '')) <> 'eliminado'";
+    }
+    if ($hasDerivado) {
+        $sql .= " AND COALESCE(cd.derivado, 0) = 1";
+    }
+    if ($hasLaboratorioRef && trim($laboratorio) !== '') {
+        $sql .= " AND LOWER(TRIM(COALESCE(cd.laboratorio_referencia, ''))) = LOWER(TRIM(?))";
+        $params[] = $laboratorio;
+        $types .= 's';
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    if (!$row) {
+        return null;
+    }
+
+    return [
+        'subtotal' => (float)($row['subtotal'] ?? 0),
+        'porcentaje' => isset($row['porcentaje']) ? (float)$row['porcentaje'] : null,
+    ];
+}
+
+function resolver_monto_liquidacion_lr($conn, array $movimiento, bool $hasCotizacionId, bool $hasCotizacionMovimientos): array {
+    $tipo = strtolower(trim((string)($movimiento['tipo'] ?? 'monto')));
+    $montoActual = (float)($movimiento['monto'] ?? 0);
+    $examenId = (int)($movimiento['examen_id'] ?? 0);
+    $laboratorio = trim((string)($movimiento['laboratorio'] ?? ''));
+    $cotizacionId = resolver_cotizacion_id_liquidacion_lr($conn, $movimiento, $hasCotizacionId, $hasCotizacionMovimientos);
+
+    $subtotal = null;
+    $porcentaje = null;
+    $montoLiquidar = $montoActual;
+
+    if ($tipo === 'porcentaje' && $cotizacionId > 0 && $examenId > 0) {
+        $ctx = obtener_contexto_derivacion_lr($conn, $cotizacionId, $examenId, $laboratorio);
+        if (is_array($ctx)) {
+            $subtotal = (float)($ctx['subtotal'] ?? 0);
+            $porcentajeValor = $ctx['porcentaje'];
+            if ($porcentajeValor !== null && $porcentajeValor > 0) {
+                $porcentaje = (float)$porcentajeValor;
+                $montoLiquidar = round($subtotal * $porcentaje / 100, 2);
+            }
+        }
+    }
+
+    return [
+        'cotizacion_id' => $cotizacionId,
+        'subtotal' => $subtotal,
+        'porcentaje' => $porcentaje,
+        'monto' => round($montoLiquidar, 2),
+    ];
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 switch($method) {
@@ -49,12 +152,16 @@ switch($method) {
                 }
             }
             // Obtener datos del movimiento de laboratorio para el egreso
+            $hasCotizacionId = column_exists_lr($conn, 'laboratorio_referencia_movimientos', 'cotizacion_id');
+            $hasCotizacionMovimientos = table_exists_lr($conn, 'cotizacion_movimientos');
+
             $stmtMovimiento = $conn->prepare("SELECT * FROM laboratorio_referencia_movimientos WHERE id = ?");
             $stmtMovimiento->bind_param("i", $data['id']);
             $stmtMovimiento->execute();
             $resMovimiento = $stmtMovimiento->get_result();
             if ($resMovimiento && $resMovimiento->num_rows > 0) {
                 $movimiento = $resMovimiento->fetch_assoc();
+                $liquidacion = resolver_monto_liquidacion_lr($conn, $movimiento, $hasCotizacionId, $hasCotizacionMovimientos);
                 
                 // Actualizar estado a pagado
                 $stmt = $conn->prepare("UPDATE laboratorio_referencia_movimientos SET estado = 'pagado', liquidado_por = ?, turno_liquidacion = ?, hora_liquidacion = CURTIME(), caja_id = COALESCE(caja_id, ?) WHERE id = ?");
@@ -62,7 +169,7 @@ switch($method) {
                 $stmt->execute();
                 
                 // Registrar egreso en tabla egresos
-                $monto = floatval($movimiento['monto']);
+                $monto = (float)($liquidacion['monto'] ?? 0);
                 $laboratorio = $conn->real_escape_string($movimiento['laboratorio']);
                 $fecha = date('Y-m-d');
                 $descripcion = "Liquidación laboratorio referencia: $laboratorio ID {$data['id']}";
@@ -73,7 +180,13 @@ switch($method) {
                 )";
                 $conn->query($sqlEgreso);
                 
-                echo json_encode(['success' => true]);
+                echo json_encode([
+                    'success' => true,
+                    'monto_liquidado' => round($monto, 2),
+                    'cotizacion_id' => (int)($liquidacion['cotizacion_id'] ?? 0),
+                    'subtotal_cotizacion' => isset($liquidacion['subtotal']) && $liquidacion['subtotal'] !== null ? round((float)$liquidacion['subtotal'], 2) : null,
+                    'porcentaje_derivacion' => isset($liquidacion['porcentaje']) && $liquidacion['porcentaje'] !== null ? (float)$liquidacion['porcentaje'] : null,
+                ]);
             } else {
                 echo json_encode(['success' => false, 'error' => 'Movimiento de laboratorio no encontrado']);
             }
@@ -84,9 +197,15 @@ switch($method) {
             echo json_encode(['success' => false, 'error' => 'Datos incompletos']);
             break;
         }
+        $hasCotizacionId = column_exists_lr($conn, 'laboratorio_referencia_movimientos', 'cotizacion_id');
         $caja_id = $data['caja_id'] ?? null;
-        $stmt = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, caja_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
+        if ($hasCotizacionId) {
+            $stmt = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, cotizacion_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, caja_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
+        } else {
+            $stmt = $conn->prepare("INSERT INTO laboratorio_referencia_movimientos (cobro_id, examen_id, laboratorio, monto, tipo, estado, paciente_id, caja_id, fecha, hora, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?)");
+        }
         $cobro_id_val = (int)$data['cobro_id'];
+        $cotizacion_id_val = (int)($data['cotizacion_id'] ?? 0);
         $examen_id_val = (int)$data['examen_id'];
         $laboratorio_val = (string)$data['laboratorio'];
         $monto_val = (float)$data['monto'];
@@ -94,7 +213,11 @@ switch($method) {
         $estado_val = (string)$data['estado'];
         $paciente_id_val = (int)($data['paciente_id'] ?? 0);
         $observaciones_val = (string)($data['observaciones'] ?? '');
-        $stmt->bind_param("iisdssiis", $cobro_id_val, $examen_id_val, $laboratorio_val, $monto_val, $tipo_val, $estado_val, $paciente_id_val, $caja_id, $observaciones_val);
+        if ($hasCotizacionId) {
+            $stmt->bind_param("iiisdssiis", $cobro_id_val, $cotizacion_id_val, $examen_id_val, $laboratorio_val, $monto_val, $tipo_val, $estado_val, $paciente_id_val, $caja_id, $observaciones_val);
+        } else {
+            $stmt->bind_param("iisdssiis", $cobro_id_val, $examen_id_val, $laboratorio_val, $monto_val, $tipo_val, $estado_val, $paciente_id_val, $caja_id, $observaciones_val);
+        }
         $stmt->execute();
         echo json_encode(['success' => true, 'id' => $conn->insert_id]);
         break;
@@ -174,12 +297,24 @@ switch($method) {
         $result = $stmt->get_result();
         $movimientos = [];
         while ($row = $result->fetch_assoc()) {
+            $liquidacion = resolver_monto_liquidacion_lr($conn, $row, $hasCotizacionId, $hasCotizacionMovimientos);
             // Mostrar el nombre del usuario en vez del ID (para cobro y liquidación)
             if (isset($row['turno_cobro_resuelto'])) {
                 $row['turno_cobro'] = $row['turno_cobro_resuelto'];
             }
+            $row['laboratorio_referencia'] = trim((string)($row['laboratorio_referencia'] ?? '')) !== ''
+                ? $row['laboratorio_referencia']
+                : ($row['laboratorio'] ?? '');
             $row['cobrado_por'] = $row['nombre_cobrado_por'] ?? $row['cobrado_por'];
             $row['liquidado_por'] = $row['nombre_liquidado_por'] ?? $row['liquidado_por'] ?? null;
+            $row['cotizacion_id_resuelta'] = (int)($liquidacion['cotizacion_id'] ?? 0);
+            $row['monto_liquidacion'] = round((float)($liquidacion['monto'] ?? 0), 2);
+            $row['subtotal_cotizacion'] = isset($liquidacion['subtotal']) && $liquidacion['subtotal'] !== null
+                ? round((float)$liquidacion['subtotal'], 2)
+                : null;
+            $row['porcentaje_derivacion'] = isset($liquidacion['porcentaje']) && $liquidacion['porcentaje'] !== null
+                ? (float)$liquidacion['porcentaje']
+                : null;
             unset($row['turno_cobro_resuelto']);
             unset($row['nombre_cobrado_por']);
             unset($row['nombre_liquidado_por']);

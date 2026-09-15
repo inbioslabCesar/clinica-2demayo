@@ -30,8 +30,28 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       return '';
     }
   })();
-  const puedeOperarResultados = ['laboratorista', 'tecnologo', 'tecnólogo'].includes(rolSesion);
-  const puedeValidar = puedeOperarResultados;
+  const permisosSesion = (() => {
+    try {
+      const usuario = JSON.parse(sessionStorage.getItem("usuario") || "{}");
+      const raw = usuario?.permisos;
+      if (Array.isArray(raw)) return raw.map((p) => String(p || '').trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim() !== '') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed.map((p) => String(p || '').trim()).filter(Boolean);
+        } catch {
+          return raw.split(',').map((p) => String(p || '').trim()).filter(Boolean);
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  })();
+  const rolesClinicosOAdmin = ['laboratorista', 'tecnologo', 'tecnólogo', 'quimico', 'químico', 'admin', 'administrador'];
+  const recepcionPuedeLlenar = rolSesion === 'recepcionista' && permisosSesion.includes('operar_resultados_laboratorio');
+  const puedeOperarResultados = rolesClinicosOAdmin.includes(rolSesion) || recepcionPuedeLlenar;
+  const puedeValidar = rolesClinicosOAdmin.includes(rolSesion);
 
   const resolverUrlDescarga = (rawUrl) => {
     const raw = String(rawUrl || '').trim();
@@ -118,7 +138,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     if (!orden?.id || !examId) return;
     if (!puedeOperarResultados) {
       setMsgType("error");
-      setMsg("❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede actualizar examenes");
+      setMsg("❌ Solo laboratorio, administrador o recepcionista con privilegio pueden actualizar examenes");
       return;
     }
 
@@ -164,7 +184,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       onClick={() => handleActualizarExamen(examId, examLabel)}
       disabled={!puedeOperarResultados || actualizandoExamenId === examId || guardando || descargandoResultado}
       className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
-      title={!puedeOperarResultados ? 'Solo laboratorista/tecnologo puede actualizar examenes' : 'Actualizar solo este examen con la definición actual del catálogo'}
+      title={!puedeOperarResultados ? 'Solo laboratorio, administrador o recepcionista con privilegio pueden actualizar examenes' : 'Actualizar solo este examen con la definición actual del catálogo'}
     >
       {actualizandoExamenId === examId ? '⏳ Actualizando...' : '↻ Actualizar examen'}
     </button>
@@ -1094,6 +1114,57 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     return value !== undefined && value !== null && String(value).trim() !== "";
   }
 
+  const waitMs = (ms) => new Promise((resolve) => {
+    window.setTimeout(resolve, Math.max(0, Number(ms) || 0));
+  });
+
+  const postLabApiWithRetry = async (payload, retries = 2) => {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await authFetch('api_resultados_laboratorio.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data?.success) {
+          return { res, data };
+        }
+
+        const isRetryableStatus = [408, 429, 500, 502, 503, 504].includes(Number(res.status || 0));
+        const message = String(data?.error || '').toLowerCase();
+        const isRetryableMessage = message.includes('timeout') || message.includes('tempor') || message.includes('conex');
+        if (attempt < retries && (isRetryableStatus || isRetryableMessage)) {
+          await waitMs(600 * (attempt + 1));
+          continue;
+        }
+
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      } catch (error) {
+        lastError = error;
+        if (attempt < retries) {
+          await waitMs(600 * (attempt + 1));
+          continue;
+        }
+      }
+    }
+
+    throw lastError || new Error('Error de conexión');
+  };
+
+  const notifyGuardadoSafe = (payload) => {
+    if (typeof onGuardado !== 'function') return;
+    try {
+      onGuardado(payload);
+    } catch (error) {
+      console.error('Error no fatal en onGuardado de laboratorio:', error);
+      setMsgType('error');
+      setMsg('⚠️ Se guardó la información, pero falló la actualización de la vista. Recargue la pantalla.');
+    }
+  };
+
   const handleChange = (e) => {
     const fieldName = String(e?.target?.name || '');
     const fieldValue = e?.target?.value ?? '';
@@ -1180,7 +1251,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     e.preventDefault();
     if (!puedeOperarResultados) {
       setMsgType("error");
-      setMsg("❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede guardar resultados");
+      setMsg("❌ Solo laboratorio, administrador o recepcionista con privilegio pueden guardar resultados");
       return;
     }
     setGuardando(true);
@@ -1306,34 +1377,30 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
         });
       });
 
-      const res = await authFetch("api_resultados_laboratorio.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orden_id: orden.id,
-          consulta_id: orden.consulta_id || null,
-          tipo_examen: "varios",
-          examenes_ordenados: examenesArray
-            .map(getExamenId)
-            .map(id => parseInt(id, 10))
-            .filter(id => Number.isFinite(id) && id > 0),
-          resultados: resultadosToSend,
-        }),
-      });
-      const data = await res.json();
+      const { data } = await postLabApiWithRetry({
+        orden_id: orden.id,
+        consulta_id: orden.consulta_id || null,
+        tipo_examen: "varios",
+        examenes_ordenados: examenesArray
+          .map(getExamenId)
+          .map(id => parseInt(id, 10))
+          .filter(id => Number.isFinite(id) && id > 0),
+        resultados: resultadosToSend,
+      }, 2);
       
       if (data.success) {
         setMsg("✅ Resultados guardados correctamente");
         setMsgType("success");
         setTimeout(() => {
-          onGuardado && onGuardado(data);
+          notifyGuardadoSafe(data);
         }, 1000);
       } else {
         setMsg("❌ " + (data.error || "Error al guardar"));
         setMsgType("error");
       }
-    } catch {
-      setMsg("❌ Error de conexión");
+    } catch (error) {
+      const detalle = String(error?.message || '').trim();
+      setMsg(`❌ ${detalle || 'Error de conexión'}`);
       setMsgType("error");
     } finally {
       setGuardando(false);
@@ -1373,7 +1440,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     if (!orden?.id) return;
     if (!puedeValidar) {
       setMsgType('error');
-      setMsg('❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede validar resultados');
+      setMsg('❌ Solo usuarios autorizados de laboratorio o administrador pueden validar resultados');
       return;
     }
     if (resultadoId <= 0) {
@@ -1392,31 +1459,20 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     setValidando(true);
     setMsg('');
     try {
-      const res = await authFetch('api_resultados_laboratorio.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'validar_parametros',
-          orden_id: orden.id,
-          consulta_id: orden.consulta_id || null,
-          exam_id: examId,
-          parametros: tokens,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'No se pudo validar la sección');
-      }
+      const { data } = await postLabApiWithRetry({
+        action: 'validar_parametros',
+        orden_id: orden.id,
+        consulta_id: orden.consulta_id || null,
+        exam_id: examId,
+        parametros: tokens,
+      }, 2);
 
       if (data?.resultados && typeof data.resultados === 'object') {
         setResultados((prev) => ({ ...prev, ...data.resultados }));
       }
       setMsgType('success');
       setMsg(`✅ Se validaron ${data?.validados || tokens.length} parámetro(s) de ${examName || `examen ${examId}`}`);
-      if (typeof onGuardado === 'function') {
-        onGuardado({ success: true, estado: data?.estado || 'pendiente', resultado_id: data?.resultado_id || null });
-      }
+      notifyGuardadoSafe({ success: true, estado: data?.estado || 'pendiente', resultado_id: data?.resultado_id || null });
     } catch (e) {
       setMsgType('error');
       setMsg('❌ ' + (e?.message || 'No se pudo validar la sección'));
@@ -1429,7 +1485,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     if (!orden?.id) return;
     if (!puedeValidar) {
       setMsgType('error');
-      setMsg('❌ Solo el tecnologo/laboratorista del modulo de laboratorio puede validar resultados');
+      setMsg('❌ Solo usuarios autorizados de laboratorio o administrador pueden validar resultados');
       return;
     }
     if (resultadoId <= 0) {
@@ -1460,34 +1516,55 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     try {
       let totalValidados = 0;
       let latestData = null;
-      for (const item of tokensByExam) {
-        const res = await authFetch('api_resultados_laboratorio.php', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+
+      try {
+        const { data } = await postLabApiWithRetry({
+          action: 'validar_parametros_lote',
+          orden_id: orden.id,
+          consulta_id: orden.consulta_id || null,
+          examenes: tokensByExam.map((item) => ({
+            exam_id: item.examId,
+            parametros: item.tokens,
+          })),
+        }, 2);
+
+        totalValidados = Number(data?.validados || 0);
+        latestData = data;
+        if (data?.resultados && typeof data.resultados === 'object') {
+          setResultados((prev) => ({ ...prev, ...data.resultados }));
+        }
+      } catch (e) {
+        const errText = String(e?.message || '').toLowerCase();
+        const canFallback = errText.includes('accion')
+          || errText.includes('action')
+          || errText.includes('método')
+          || errText.includes('metodo')
+          || errText.includes('faltan datos')
+          || errText.includes('datos requeridos');
+        if (!canFallback) {
+          throw e;
+        }
+
+        // Compatibilidad: si el backend aun no soporta lote, usar modo previo por examen.
+        for (const item of tokensByExam) {
+          const { data } = await postLabApiWithRetry({
             action: 'validar_parametros',
             orden_id: orden.id,
             consulta_id: orden.consulta_id || null,
             exam_id: item.examId,
             parametros: item.tokens,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data?.success) {
-          throw new Error(data?.error || `No se pudo validar el examen ${item.examId}`);
-        }
-        totalValidados += Number(data?.validados || 0);
-        latestData = data;
-        if (data?.resultados && typeof data.resultados === 'object') {
-          setResultados((prev) => ({ ...prev, ...data.resultados }));
+          }, 2);
+          totalValidados += Number(data?.validados || 0);
+          latestData = data;
+          if (data?.resultados && typeof data.resultados === 'object') {
+            setResultados((prev) => ({ ...prev, ...data.resultados }));
+          }
         }
       }
 
       setMsgType('success');
       setMsg(`✅ Validación completada: ${totalValidados} parámetro(s) validado(s)`);
-      if (typeof onGuardado === 'function') {
-        onGuardado({ success: true, estado: latestData?.estado || 'pendiente', resultado_id: latestData?.resultado_id || null });
-      }
+      notifyGuardadoSafe({ success: true, estado: latestData?.estado || 'pendiente', resultado_id: latestData?.resultado_id || null });
     } catch (e) {
       setMsgType('error');
       setMsg('❌ ' + (e?.message || 'No se pudo validar'));
@@ -2039,7 +2116,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
                             onClick={() => validarParametrosExamen(id, paramsList, examName)}
                             disabled={!puedeValidar || validando || guardando || resultadoId <= 0}
                             className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title={!puedeValidar ? 'Solo laboratorista/tecnologo puede validar' : (resultadoId <= 0 ? 'Guarde resultados antes de validar' : 'Validar parametros con valor de esta seccion')}
+                            title={!puedeValidar ? 'Solo usuarios autorizados de laboratorio o administrador pueden validar' : (resultadoId <= 0 ? 'Guarde resultados antes de validar' : 'Validar parametros con valor de esta seccion')}
                           >
                             {validando ? '⏳ Validando...' : '✅ Validar sección'}
                           </button>
@@ -2459,7 +2536,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             type="submit" 
             disabled={guardando || !puedeOperarResultados}
             className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-            title={!puedeOperarResultados ? 'Solo laboratorista/tecnologo puede guardar resultados' : 'Guardar resultados'}
+            title={!puedeOperarResultados ? 'Solo laboratorio, administrador o recepcionista con privilegio pueden guardar resultados' : 'Guardar resultados'}
           >
             {guardando ? (
               <span className="flex items-center gap-2">
@@ -2478,7 +2555,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
             onClick={handleValidarResultados}
             disabled={!puedeValidar || validando || guardando || resultadoId <= 0}
             className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-            title={!puedeValidar ? 'Solo laboratorista/tecnologo puede validar' : (resultadoId <= 0 ? 'Guarde resultados antes de validar' : 'Validar resultados de la orden')}
+            title={!puedeValidar ? 'Solo usuarios autorizados de laboratorio o administrador pueden validar' : (resultadoId <= 0 ? 'Guarde resultados antes de validar' : 'Validar resultados de la orden')}
           >
             {validando ? (
               <span className="flex items-center gap-2">
@@ -2496,7 +2573,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
 
         {!puedeOperarResultados && (
           <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Guardado y validacion estan restringidos al tecnologo/laboratorista del modulo de laboratorio.
+            Guardado esta habilitado para laboratorio, administrador y recepcionista con privilegio. La validacion final queda restringida a laboratorio o administrador.
           </div>
         )}
 

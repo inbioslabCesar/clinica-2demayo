@@ -225,6 +225,7 @@ export default function ExamenesLaboratorioCrudPage() {
       return {
         tipo: it.tipo || 'Parámetro',
         nombre: it.nombre || (it.titulo || '') || `Item ${idx + 1}`,
+        codigo_interno: typeof it.codigo_interno === 'string' ? it.codigo_interno : '',
         metodologia: it.metodologia || '',
         unidad: it.unidad || '',
         opciones,

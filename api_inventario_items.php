@@ -29,11 +29,30 @@ function inventario_items_user_role(): string
     return strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
 }
 
+function inventario_items_role_slug(string $role): string
+{
+    $role = strtolower(trim($role));
+    $role = strtr($role, [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n',
+    ]);
+    $role = preg_replace('/[^a-z0-9]+/', '_', $role);
+    return trim((string)$role, '_');
+}
+
 function inventario_items_require_write_role(): void
 {
-    $role = inventario_items_user_role();
-    $allowed = ['administrador', 'quimico', 'químico'];
-    if (!in_array($role, $allowed, true)) {
+    $roleSlug = inventario_items_role_slug(inventario_items_user_role());
+    $allowed = [
+        'administrador',
+        'quimico',
+        'quimica',
+        'laboratorista',
+        'laboratorio',
+        'profesional_encargado',
+        'encargado_laboratorio',
+        'encargado_de_laboratorio',
+    ];
+    if (!in_array($roleSlug, $allowed, true)) {
         inventario_items_response(['success' => false, 'error' => 'No autorizado para modificar inventario general'], 403);
     }
 }

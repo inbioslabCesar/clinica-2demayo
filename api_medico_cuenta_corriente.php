@@ -3,8 +3,13 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
 function normalizar_turno_cc($turno): string {
-    $t = strtolower(trim((string)$turno));
-    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
+    $map = [
+        'maÃ±ana' => 'mañana',
+        'maã±ana' => 'mañana',
+    ];
+    $normalizado = strtr((string)$turno, $map);
+    $t = strtolower(trim($normalizado));
+    if ($t === 'manana' || $t === 'mañana') {
         return 'mañana';
     }
     if ($t === 'tarde' || $t === 'noche') {

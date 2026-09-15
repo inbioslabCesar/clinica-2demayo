@@ -128,6 +128,31 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
 
   useEffect(() => { cargarOrdenes(); }, [cargarOrdenes]);
 
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      cargarOrdenes();
+    };
+
+    const timerId = window.setInterval(refreshIfVisible, 15000);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+
+    return () => {
+      window.clearInterval(timerId);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+    };
+  }, [cargarOrdenes]);
+
+  const totalAdjuntos = React.useMemo(() => {
+    if (!Array.isArray(ordenes) || ordenes.length === 0) return 0;
+    return ordenes.reduce((acc, ord) => {
+      const count = Array.isArray(ord?.archivos) ? ord.archivos.length : 0;
+      return acc + count;
+    }, 0);
+  }, [ordenes]);
+
   const handleCancelar = async (ordenId) => {
     const res = await authFetch("api_ordenes_imagen.php", {
       method: "POST",
@@ -183,6 +208,15 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
       {loadingOrdenes && <p className="text-xs text-gray-400">Cargando...</p>}
       {!loadingOrdenes && ordenes.length === 0 && (
         <p className="text-sm text-gray-500">No hay solicitudes de {label} para esta consulta.</p>
+      )}
+      {!loadingOrdenes && ordenes.length > 0 && (
+        <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+          <p className="text-xs sm:text-sm text-blue-800 font-medium">
+            {totalAdjuntos > 0
+              ? `Se detectaron ${totalAdjuntos} archivo(s) subido(s) (${label}: PDF, imágenes o DICOM).`
+              : `Aún no hay archivos subidos en ${label}.`}
+          </p>
+        </div>
       )}
       {ordenes.map((ord) => {
         const medicoResponsable = [ord?.medico_responsable_nombre, ord?.medico_responsable_apellido]
@@ -285,8 +319,9 @@ const STORAGE_KEY = "apoyo_diagnostico_tab";
 const EXAMENES_CACHE_KEY = "hc_lab_examenes_cache_v1";
 const EXAMENES_CACHE_TTL_MS = 10 * 60 * 1000;
 
-export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, ordenesLab = [], onBeforeNavigate, readOnly = false }) {
+export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultadosLab, documentosExternosLabCount = 0, ordenesLab = [], onBeforeNavigate, readOnly = false }) {
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
+  const [adjuntosImagenPorTipo, setAdjuntosImagenPorTipo] = useState({ rx: 0, ecografia: 0, tomografia: 0 });
   const navigate = useNavigate();
 
   const cambiarTab = (t) => {
@@ -322,6 +357,62 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   const abrirTabProcedimientos = () => {
     cambiarTab("procedimientos");
   };
+
+  const normalizarTipoImagen = useCallback((tipoRaw, descripcionRaw = "") => {
+    const tipo = String(tipoRaw || "").trim().toLowerCase();
+    if (["rx", "rayosx", "rayos_x", "rayos x"].includes(tipo)) return "rx";
+    if (tipo === "ecografia") return "ecografia";
+    if (tipo === "tomografia") return "tomografia";
+
+    const desc = String(descripcionRaw || "").toLowerCase();
+    if (desc.includes("ecograf")) return "ecografia";
+    if (desc.includes("tomograf") || /(^|\s)tac(\s|$)/i.test(desc)) return "tomografia";
+    if (desc.includes("rayos x") || /(^|\s)rx(\s|$)/i.test(desc)) return "rx";
+    return "";
+  }, []);
+
+  const cargarAdjuntosImagenPorTipo = useCallback(() => {
+    if (!consultaId) return;
+    authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}`)
+      .then((response) => response.json())
+      .then((data) => {
+        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+        const next = { rx: 0, ecografia: 0, tomografia: 0 };
+
+        rows.forEach((o) => {
+          const estado = String(o?.estado || "").trim().toLowerCase();
+          if (estado === "cancelado") return;
+          const tipo = normalizarTipoImagen(o?.tipo, o?.indicaciones || "");
+          if (!tipo || !Object.prototype.hasOwnProperty.call(next, tipo)) return;
+          const archivosCount = Array.isArray(o?.archivos) ? o.archivos.length : 0;
+          next[tipo] += archivosCount;
+        });
+
+        setAdjuntosImagenPorTipo(next);
+      })
+      .catch(() => {
+        // No bloquear UI si falla el refresco de adjuntos.
+      });
+  }, [consultaId, normalizarTipoImagen]);
+
+  useEffect(() => {
+    cargarAdjuntosImagenPorTipo();
+
+    const refreshIfVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      cargarAdjuntosImagenPorTipo();
+    };
+
+    const timerId = window.setInterval(refreshIfVisible, 15000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+
+    return () => {
+      window.clearInterval(timerId);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [cargarAdjuntosImagenPorTipo]);
 
   // Cargar lista de exámenes para mapear IDs a nombres
   useEffect(() => {
@@ -420,8 +511,15 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   }, [ordenesLabOrdenadas]);
 
   const puedeVerResultados = React.useMemo(() => {
-    return hayResultadosRegistrados || hayOrdenesCompletadas;
-  }, [hayResultadosRegistrados, hayOrdenesCompletadas]);
+    const totalDocs = Number(documentosExternosLabCount || 0);
+    const hayDocumentosExternos = Number.isFinite(totalDocs) && totalDocs > 0;
+    return hayResultadosRegistrados || hayOrdenesCompletadas || hayDocumentosExternos;
+  }, [documentosExternosLabCount, hayResultadosRegistrados, hayOrdenesCompletadas]);
+
+  const totalDocumentosExternos = React.useMemo(() => {
+    const total = Number(documentosExternosLabCount || 0);
+    return Number.isFinite(total) && total > 0 ? total : 0;
+  }, [documentosExternosLabCount]);
 
   const resultadosConDatoPorOrden = React.useMemo(() => {
     const map = new Map();
@@ -468,14 +566,29 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
         <button type="button" onClick={() => cambiarTab("rx")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "rx" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           📸 <span className="hidden sm:inline">RX</span>
+          {adjuntosImagenPorTipo.rx > 0 && (
+            <span className="ml-1 inline-flex items-center rounded-full bg-white/90 text-blue-700 px-1.5 py-0.5 text-[10px] font-bold">
+              {adjuntosImagenPorTipo.rx}
+            </span>
+          )}
         </button>
         <button type="button" onClick={() => cambiarTab("ecografia")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "ecografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🫀 <span className="hidden sm:inline">Ecografía</span><span className="sm:hidden">Eco</span>
+          {adjuntosImagenPorTipo.ecografia > 0 && (
+            <span className="ml-1 inline-flex items-center rounded-full bg-white/90 text-blue-700 px-1.5 py-0.5 text-[10px] font-bold">
+              {adjuntosImagenPorTipo.ecografia}
+            </span>
+          )}
         </button>
         <button type="button" onClick={() => cambiarTab("tomografia")}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "tomografia" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
           🔬 <span className="hidden sm:inline">Tomografía</span><span className="sm:hidden">TAC</span>
+          {adjuntosImagenPorTipo.tomografia > 0 && (
+            <span className="ml-1 inline-flex items-center rounded-full bg-white/90 text-blue-700 px-1.5 py-0.5 text-[10px] font-bold">
+              {adjuntosImagenPorTipo.tomografia}
+            </span>
+          )}
         </button>
         <button type="button" onClick={abrirTabProcedimientos}
           className={`px-2 sm:px-3 py-1 rounded-t text-xs sm:text-sm ${tab === "procedimientos" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>
@@ -566,6 +679,13 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base sm:text-lg font-semibold text-green-800">Resultados Disponibles</h3>
                       <p className="text-xs sm:text-sm text-green-600">Los resultados de laboratorio ya están listos</p>
+                      {totalDocumentosExternos > 0 && (
+                        <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1">
+                          <span className="text-[10px] sm:text-xs font-semibold text-blue-700">
+                            PDF/documentos externos subidos: {totalDocumentosExternos}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button

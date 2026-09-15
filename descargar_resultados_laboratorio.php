@@ -936,15 +936,63 @@ if (empty($examenes_detalle)) {
             continue;
         }
 
-        $examStrictValidation = false;
         $examPrefix = $exId . '__';
+        $examStrictValidation = false;
+        $examHasValidatedData = false;
+        $examHasNonMetaValue = false;
         foreach ($resultados_map as $rk => $rv) {
             $rks = (string)$rk;
             if (strpos($rks, $examPrefix) !== 0) continue;
-            if (strpos($rks, '__param_validado__') !== false) {
+
+            $suffix = substr($rks, strlen($examPrefix));
+            if ($suffix === false || $suffix === '') continue;
+
+            if (strpos($suffix, 'param_validado__') === 0) {
                 $examStrictValidation = true;
-                break;
+                if ($pdfBoolFlag($rv, false)) {
+                    $examHasValidatedData = true;
+                }
+                continue;
             }
+
+            if (
+                strpos($suffix, 'param_validado_at__') === 0
+                || strpos($suffix, 'param_validado_por__') === 0
+                || strpos($suffix, 'param_imprimir__') === 0
+            ) {
+                continue;
+            }
+
+            if (
+                $suffix === 'imprimir_examen'
+                || $suffix === 'alarma_activa'
+                || $suffix === 'alarma_dias'
+                || $suffix === 'seccion_categoria'
+                || $suffix === 'seccion_titulo'
+                || $suffix === 'seccion_alineacion'
+                || $suffix === 'seccion_color_texto'
+            ) {
+                continue;
+            }
+
+            if ($rv !== null && trim((string)$rv) !== '') {
+                $examHasNonMetaValue = true;
+            }
+        }
+
+        $rawExamKey = (string)$exId;
+        $rawExamValue = array_key_exists($rawExamKey, $resultados_map) ? $resultados_map[$rawExamKey] : null;
+        $examHasRawValue = $rawExamValue !== null && trim((string)$rawExamValue) !== '';
+        $examHasContent = $examHasNonMetaValue || $examHasRawValue || $examHasValidatedData;
+
+        // Regla de impresion reforzada:
+        // - Si el examen usa validacion por parametro, exigir al menos un parametro validado.
+        // - Si no usa validacion estricta, exigir contenido real para evitar secciones vacias.
+        if ($examStrictValidation && !$examHasValidatedData) {
+            continue;
+        }
+        if (!$examStrictValidation && !$examHasContent) {
+            continue;
         }
 
         $examFechaIngresoFmt = $fechaIngresoFmtGlobal;
@@ -1275,7 +1323,7 @@ if (empty($examenes_detalle)) {
     }
 
     if ($examenesImpresos === 0) {
-        $rowsHtml .= '<tr><td colspan="5" style="padding:8px;text-align:center;color:#6b7280;">No hay exámenes marcados para imprimir.</td></tr>';
+        $rowsHtml .= '<tr><td colspan="5" style="padding:8px;text-align:center;color:#6b7280;">No hay exámenes con resultados listos para imprimir.</td></tr>';
     }
 }
 

@@ -446,6 +446,14 @@ export default function CotizarPaquetesPerfilesPage() {
     });
   };
 
+  const getFechaRefPaquetes = (paquetesSeleccionados) => {
+    const fechas = (Array.isArray(paquetesSeleccionados) ? paquetesSeleccionados : [])
+      .map((it) => String(it?.fechaProgramada || "").slice(0, 10))
+      .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f))
+      .sort();
+    return fechas[0] || getLimaDate();
+  };
+
   const addToCart = () => {
     if (selectedRows.length === 0) {
       Swal.fire("Atencion", "Selecciona al menos un paquete/perfil.", "info");
@@ -485,6 +493,7 @@ export default function CotizarPaquetesPerfilesPage() {
 
     try {
       const paquetesSeleccionados = buildSelectedPackageEntries();
+      const fechaRef = getFechaRefPaquetes(paquetesSeleccionados);
       const detallesPaquete = paquetesSeleccionados.map((it) => ({
         servicio_tipo: it.serviceType,
         servicio_id: it.serviceId,
@@ -562,6 +571,7 @@ export default function CotizarPaquetesPerfilesPage() {
             cotizacion_id: Number(cotizacionId),
             detalles: detallesFinales,
             total: Number(totalFinal.toFixed(2)),
+            fecha_ref: fechaRef,
             motivo: "Edicion desde cotizador de Paquetes/Perfiles",
           }
         : {
@@ -572,6 +582,7 @@ export default function CotizarPaquetesPerfilesPage() {
             solo_ticket: esCotizacionInformativa ? 1 : undefined,
             detalles: detallesFinales,
             total: Number(totalFinal.toFixed(2)),
+            fecha_ref: fechaRef,
             observaciones: esCotizacionInformativa
               ? "Cotización informativa registrada desde cotizador de Paquetes/Perfiles"
               : "Cotizacion registrada desde cotizador de Paquetes/Perfiles",

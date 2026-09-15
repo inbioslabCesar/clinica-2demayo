@@ -212,12 +212,19 @@ function pacientes_parse_date_safe($value): ?DateTime {
 }
 
 function pacientes_normalizar_unidad_edad($unidad): string {
-    $u = strtolower(trim((string)$unidad));
+    $map = [
+        'aÃ±o' => 'año',
+        'aÃ±os' => 'años',
+        'dÃa' => 'día',
+        'dÃas' => 'días',
+    ];
+    $normalizado = strtr((string)$unidad, $map);
+    $u = strtolower(trim($normalizado));
     if ($u === '') return 'anios';
 
-    if (in_array($u, ['anio', 'anios', 'años', 'año', 'aÃ±o', 'aÃ±os', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['anio', 'anios', 'años', 'año', 'year', 'years'], true)) return 'anios';
     if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
-    if (in_array($u, ['dia', 'dias', 'días', 'dÃa', 'dÃas', 'day', 'days'], true)) return 'dias';
+    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
     return 'anios';
 }
 

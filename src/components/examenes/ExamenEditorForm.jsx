@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 const defaultItem = {
   tipo: "Parámetro", // o "Subtítulo"
   nombre: "",
+  codigo_interno: "",
   metodologia: "",
   unidad: "",
   opciones: [],
@@ -78,6 +79,7 @@ export default function ExamenEditorForm({ initialData = [], onChange }) {
     return items.map((it, i) => ({
       tipo: normalizeTipo(it.tipo),
       nombre: typeof it.nombre === 'string' ? it.nombre : (it.titulo || ''),
+      codigo_interno: typeof it.codigo_interno === 'string' ? it.codigo_interno : '',
       metodologia: it.metodologia || '',
       unidad: it.unidad || '',
       opciones: Array.isArray(it.opciones) ? it.opciones.map((op, opIdx) => normalizeOptionItem(op, opIdx)) : [],

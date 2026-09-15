@@ -1340,6 +1340,52 @@ function resolver_consulta_id_por_cotizacion($conn, $cotizacionId) {
         return 0;
     }
 
+    $pacienteIdCot = 0;
+    $fechaCot = '';
+    $estadoCot = '';
+    $stmtCotMeta = $conn->prepare('SELECT paciente_id, fecha, estado FROM cotizaciones WHERE id = ? LIMIT 1');
+    if ($stmtCotMeta) {
+        $stmtCotMeta->bind_param('i', $cotizacionId);
+        $stmtCotMeta->execute();
+        $rowMeta = $stmtCotMeta->get_result()->fetch_assoc();
+        $stmtCotMeta->close();
+        $pacienteIdCot = intval($rowMeta['paciente_id'] ?? 0);
+        $fechaCot = trim((string)($rowMeta['fecha'] ?? ''));
+        $estadoCot = strtolower(trim((string)($rowMeta['estado'] ?? '')));
+    }
+
+    $pertenecePacienteCot = static function($consultaId) use ($conn, $pacienteIdCot) {
+        $consultaId = intval($consultaId);
+        if ($consultaId <= 0) {
+            return false;
+        }
+        if ($pacienteIdCot <= 0) {
+            return true;
+        }
+
+        $stmtChk = $conn->prepare('SELECT paciente_id FROM consultas WHERE id = ? LIMIT 1');
+        if (!$stmtChk) {
+            return false;
+        }
+        $stmtChk->bind_param('i', $consultaId);
+        $stmtChk->execute();
+        $rowChk = $stmtChk->get_result()->fetch_assoc();
+        $stmtChk->close();
+        return intval($rowChk['paciente_id'] ?? 0) === $pacienteIdCot;
+    };
+
+    $medicoIdDetalle = 0;
+    if (columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id')) {
+        $stmtMed = $conn->prepare('SELECT medico_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND medico_id IS NOT NULL AND medico_id > 0 ORDER BY id ASC LIMIT 1');
+        if ($stmtMed) {
+            $stmtMed->bind_param('i', $cotizacionId);
+            $stmtMed->execute();
+            $rowMed = $stmtMed->get_result()->fetch_assoc();
+            $stmtMed->close();
+            $medicoIdDetalle = intval($rowMed['medico_id'] ?? 0);
+        }
+    }
+
     if (columna_existe_local($conn, 'cotizaciones_detalle', 'consulta_id')) {
         $sqlDetalle = 'SELECT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id IS NOT NULL AND consulta_id > 0 ORDER BY id ASC LIMIT 1';
         $stmtDetalle = $conn->prepare($sqlDetalle);
@@ -1349,7 +1395,7 @@ function resolver_consulta_id_por_cotizacion($conn, $cotizacionId) {
             $rowDetalle = $stmtDetalle->get_result()->fetch_assoc();
             $stmtDetalle->close();
             $consultaId = intval($rowDetalle['consulta_id'] ?? 0);
-            if ($consultaId > 0) {
+            if ($consultaId > 0 && $pertenecePacienteCot($consultaId)) {
                 return $consultaId;
             }
         }
@@ -1365,41 +1411,66 @@ function resolver_consulta_id_por_cotizacion($conn, $cotizacionId) {
         $observaciones = trim((string)($rowCot['observaciones'] ?? ''));
         if ($observaciones !== '' && preg_match('/consulta\s*#\s*(\d+)/i', $observaciones, $m)) {
             $consultaId = intval($m[1] ?? 0);
-            if ($consultaId > 0) {
+            if ($consultaId > 0 && $pertenecePacienteCot($consultaId)) {
                 return $consultaId;
             }
         }
     }
 
     // Fallback para cotizaciones antiguas: intentar deducir por paciente + médico + fecha.
-    $pacienteId = 0;
-    $fechaCot = '';
-    $stmtCotMeta = $conn->prepare('SELECT paciente_id, fecha FROM cotizaciones WHERE id = ? LIMIT 1');
-    if ($stmtCotMeta) {
-        $stmtCotMeta->bind_param('i', $cotizacionId);
-        $stmtCotMeta->execute();
-        $rowMeta = $stmtCotMeta->get_result()->fetch_assoc();
-        $stmtCotMeta->close();
-        $pacienteId = intval($rowMeta['paciente_id'] ?? 0);
-        $fechaCot = trim((string)($rowMeta['fecha'] ?? ''));
-    }
+    $pacienteId = $pacienteIdCot;
 
     if ($pacienteId > 0) {
-        $medicoId = 0;
-        if (columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id')) {
-            $stmtMed = $conn->prepare('SELECT medico_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND medico_id IS NOT NULL AND medico_id > 0 ORDER BY id ASC LIMIT 1');
-            if ($stmtMed) {
-                $stmtMed->bind_param('i', $cotizacionId);
-                $stmtMed->execute();
-                $rowMed = $stmtMed->get_result()->fetch_assoc();
-                $stmtMed->close();
-                $medicoId = intval($rowMed['medico_id'] ?? 0);
-            }
-        }
+        $medicoId = $medicoIdDetalle;
 
         $fechaSolo = '';
+        $fechaRef = '';
         if ($fechaCot !== '') {
             $fechaSolo = date('Y-m-d', strtotime($fechaCot));
+            $fechaRef = date('Y-m-d H:i:s', strtotime($fechaCot));
+        }
+
+        // Para cotizaciones de control, priorizar la consulta de próxima cita del mismo paciente.
+        if ($estadoCot === 'control') {
+            if ($medicoId > 0) {
+                $stmtControl = $conn->prepare(
+                    'SELECT id FROM consultas '
+                    . 'WHERE paciente_id = ? AND medico_id = ? AND origen_creacion = "hc_proxima" '
+                    . 'ORDER BY CASE WHEN fecha >= ? THEN 0 ELSE 1 END, '
+                    . 'ABS(TIMESTAMPDIFF(MINUTE, CONCAT(fecha, " ", COALESCE(hora, "00:00:00")), ?)), id DESC LIMIT 1'
+                );
+                if ($stmtControl) {
+                    $fechaOrd = $fechaSolo !== '' ? $fechaSolo : '1900-01-01';
+                    $fechaCmp = $fechaRef !== '' ? $fechaRef : '1900-01-01 00:00:00';
+                    $stmtControl->bind_param('iiss', $pacienteId, $medicoId, $fechaOrd, $fechaCmp);
+                    $stmtControl->execute();
+                    $rowControl = $stmtControl->get_result()->fetch_assoc();
+                    $stmtControl->close();
+                    $consultaId = intval($rowControl['id'] ?? 0);
+                    if ($consultaId > 0) {
+                        return $consultaId;
+                    }
+                }
+            }
+
+            $stmtControl = $conn->prepare(
+                'SELECT id FROM consultas '
+                . 'WHERE paciente_id = ? AND origen_creacion = "hc_proxima" '
+                . 'ORDER BY CASE WHEN fecha >= ? THEN 0 ELSE 1 END, '
+                . 'ABS(TIMESTAMPDIFF(MINUTE, CONCAT(fecha, " ", COALESCE(hora, "00:00:00")), ?)), id DESC LIMIT 1'
+            );
+            if ($stmtControl) {
+                $fechaOrd = $fechaSolo !== '' ? $fechaSolo : '1900-01-01';
+                $fechaCmp = $fechaRef !== '' ? $fechaRef : '1900-01-01 00:00:00';
+                $stmtControl->bind_param('iss', $pacienteId, $fechaOrd, $fechaCmp);
+                $stmtControl->execute();
+                $rowControl = $stmtControl->get_result()->fetch_assoc();
+                $stmtControl->close();
+                $consultaId = intval($rowControl['id'] ?? 0);
+                if ($consultaId > 0) {
+                    return $consultaId;
+                }
+            }
         }
 
         if ($medicoId > 0 && $fechaSolo !== '') {
@@ -1589,6 +1660,156 @@ function obtener_tarifa_consulta_para_medico($conn, $medicoId) {
     return null;
 }
 
+function consulta_es_control_sin_cobro($conn, $consultaId) {
+    $consultaId = intval($consultaId);
+    if ($consultaId <= 0) {
+        return false;
+    }
+
+    if (!columna_existe_local($conn, 'consultas', 'es_control')) {
+        return false;
+    }
+
+    $stmt = $conn->prepare('SELECT COALESCE(es_control, 0) AS es_control FROM consultas WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return intval($row['es_control'] ?? 0) === 1;
+}
+
+function sincronizar_cotizacion_control_por_consulta($conn, $consultaId, $medicoId, $cotizacionIdPreferida = 0) {
+    $consultaId = intval($consultaId);
+    $medicoId = intval($medicoId);
+    $cotizacionId = intval($cotizacionIdPreferida);
+
+    if ($consultaId <= 0) {
+        return ['ok' => false, 'reason' => 'datos_invalidos'];
+    }
+
+    if ($cotizacionId <= 0) {
+        $cotizacionId = resolver_cotizacion_id_por_consulta($conn, $consultaId);
+    }
+    if ($cotizacionId <= 0) {
+        return ['ok' => false, 'reason' => 'cotizacion_no_encontrada'];
+    }
+
+    $detalleId = 0;
+    if (columna_existe_local($conn, 'cotizaciones_detalle', 'consulta_id')) {
+        $stmtDet = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta' ORDER BY id DESC LIMIT 1");
+        if ($stmtDet) {
+            $stmtDet->bind_param('ii', $cotizacionId, $consultaId);
+            $stmtDet->execute();
+            $rowDet = $stmtDet->get_result()->fetch_assoc();
+            $stmtDet->close();
+            $detalleId = intval($rowDet['id'] ?? 0);
+        }
+    }
+
+    if ($detalleId <= 0) {
+        $stmtDet = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta' ORDER BY id DESC LIMIT 1");
+        if ($stmtDet) {
+            $stmtDet->bind_param('i', $cotizacionId);
+            $stmtDet->execute();
+            $rowDet = $stmtDet->get_result()->fetch_assoc();
+            $stmtDet->close();
+            $detalleId = intval($rowDet['id'] ?? 0);
+        }
+    }
+
+    if ($detalleId <= 0) {
+        return ['ok' => false, 'reason' => 'detalle_consulta_no_encontrado'];
+    }
+
+    $sets = [
+        'descripcion = ?',
+        'precio_unitario = 0',
+        'subtotal = 0',
+    ];
+    $types = 's';
+    $params = ['Consulta de control (sin costo)'];
+
+    if (columna_existe_local($conn, 'cotizaciones_detalle', 'medico_id') && $medicoId > 0) {
+        $sets[] = 'medico_id = ?';
+        $types .= 'i';
+        $params[] = $medicoId;
+    }
+
+    if (columna_existe_local($conn, 'cotizaciones_detalle', 'consulta_id')) {
+        $sets[] = 'consulta_id = ?';
+        $types .= 'i';
+        $params[] = $consultaId;
+    }
+
+    $sqlUpdDet = 'UPDATE cotizaciones_detalle SET ' . implode(', ', $sets) . ' WHERE id = ?';
+    $types .= 'i';
+    $params[] = $detalleId;
+
+    $stmtUpdDet = $conn->prepare($sqlUpdDet);
+    if (!$stmtUpdDet) {
+        return ['ok' => false, 'reason' => 'no_prepara_update_detalle_control'];
+    }
+    $stmtUpdDet->bind_param($types, ...$params);
+    $okDet = $stmtUpdDet->execute();
+    $stmtUpdDet->close();
+    if (!$okDet) {
+        return ['ok' => false, 'reason' => 'error_update_detalle_control'];
+    }
+
+    $hasSaldo = columna_existe_local($conn, 'cotizaciones', 'saldo_pendiente');
+    $hasEstado = columna_existe_local($conn, 'cotizaciones', 'estado');
+
+    if ($hasSaldo && $hasEstado) {
+        $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = 0, saldo_pendiente = 0, estado = "CONTROL" WHERE id = ?');
+        if (!$stmtUpdCot) {
+            return ['ok' => false, 'reason' => 'no_prepara_update_cotizacion_control'];
+        }
+        $stmtUpdCot->bind_param('i', $cotizacionId);
+        $okCot = $stmtUpdCot->execute();
+        $stmtUpdCot->close();
+        if (!$okCot) {
+            return ['ok' => false, 'reason' => 'error_update_cotizacion_control'];
+        }
+    } elseif ($hasSaldo) {
+        $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = 0, saldo_pendiente = 0 WHERE id = ?');
+        if (!$stmtUpdCot) {
+            return ['ok' => false, 'reason' => 'no_prepara_update_cotizacion_control'];
+        }
+        $stmtUpdCot->bind_param('i', $cotizacionId);
+        $okCot = $stmtUpdCot->execute();
+        $stmtUpdCot->close();
+        if (!$okCot) {
+            return ['ok' => false, 'reason' => 'error_update_cotizacion_control'];
+        }
+    } else {
+        $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = 0 WHERE id = ?');
+        if (!$stmtUpdCot) {
+            return ['ok' => false, 'reason' => 'no_prepara_update_cotizacion_control'];
+        }
+        $stmtUpdCot->bind_param('i', $cotizacionId);
+        $okCot = $stmtUpdCot->execute();
+        $stmtUpdCot->close();
+        if (!$okCot) {
+            return ['ok' => false, 'reason' => 'error_update_cotizacion_control'];
+        }
+    }
+
+    return [
+        'ok' => true,
+        'mode' => 'control_sin_cobro',
+        'cotizacion_id' => $cotizacionId,
+        'detalle_id' => $detalleId,
+        'precio_consulta' => 0,
+        'total_cotizacion' => 0,
+        'saldo_pendiente' => 0,
+        'estado_cotizacion' => 'CONTROL',
+    ];
+}
+
 function sincronizar_cotizacion_por_consulta($conn, $consultaId, $medicoId, $cotizacionIdPreferida = 0) {
     $consultaId = intval($consultaId);
     $medicoId = intval($medicoId);
@@ -1603,6 +1824,10 @@ function sincronizar_cotizacion_por_consulta($conn, $consultaId, $medicoId, $cot
     }
     if ($cotizacionId <= 0) {
         return ['ok' => false, 'reason' => 'cotizacion_no_encontrada'];
+    }
+
+    if (consulta_es_control_sin_cobro($conn, $consultaId)) {
+        return sincronizar_cotizacion_control_por_consulta($conn, $consultaId, $medicoId, $cotizacionId);
     }
 
     $tarifa = obtener_tarifa_consulta_para_medico($conn, $medicoId);
@@ -2380,7 +2605,8 @@ switch ($method) {
         switch ($semaforo_panel) {
             case 'proxima':
                 $where[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('completada', 'completado', 'cancelada', 'cancelado', 'anulada', 'anulado')";
-                $where[] = 'consultas.fecha > CURDATE()';
+                // "Solo próxima" debe incluir citas futuras y también citas de hoy con hora aún no atendida.
+                $where[] = "(consultas.fecha > CURDATE() OR (consultas.fecha = CURDATE() AND TIME(COALESCE(NULLIF(TRIM(consultas.hora), ''), '00:00:00')) >= CURTIME()))";
                 break;
             case 'todas':
             case '':

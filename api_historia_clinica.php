@@ -1572,6 +1572,36 @@ function hc_programar_proxima_cita($conn, $consultaIdActual, $proximaData, $hcOr
     $estadoFaltaCancelar = hc_estado_proxima_cita($conn);
     $esControl = !empty($proximaData['es_control']) ? 1 : 0;
     $estadoProgramado = $esControl === 1 ? 'pendiente' : $estadoFaltaCancelar;
+
+    // Blindaje: si llega un consulta_id previo en el JSON de HC, verificar que siga
+    // perteneciendo al mismo paciente/cadena antes de actualizarlo.
+    if ($consultaProgramadaId > 0) {
+        $stmtChkProg = $conn->prepare('SELECT id, paciente_id, hc_origen_id, origen_creacion FROM consultas WHERE id = ? LIMIT 1');
+        if ($stmtChkProg) {
+            $stmtChkProg->bind_param('i', $consultaProgramadaId);
+            $stmtChkProg->execute();
+            $progRow = $stmtChkProg->get_result()->fetch_assoc();
+            $stmtChkProg->close();
+
+            $esConfiable = false;
+            if ($progRow) {
+                $pacienteProgramado = (int)($progRow['paciente_id'] ?? 0);
+                $hcOrigenProgramado = (int)($progRow['hc_origen_id'] ?? 0);
+                $origenProgramado = strtolower(trim((string)($progRow['origen_creacion'] ?? '')));
+
+                $mismoPaciente = ($pacienteProgramado > 0 && $pacienteProgramado === $pacienteId);
+                $mismaCadenaHc = ($hcOrigenIdActual > 0 && $hcOrigenProgramado > 0 && $hcOrigenProgramado === $hcOrigenIdActual);
+                $esOrigenHcProxima = ($origenProgramado === 'hc_proxima');
+
+                $esConfiable = $mismoPaciente || ($mismaCadenaHc && $esOrigenHcProxima);
+            }
+
+            if (!$esConfiable) {
+                // Evitar pisar consulta ajena por referencia obsoleta; forzar flujo de búsqueda/creación.
+                $consultaProgramadaId = 0;
+            }
+        }
+    }
     
     if ($consultaProgramadaId > 0) {
         $stmtUpd = $hasEsControlColumn

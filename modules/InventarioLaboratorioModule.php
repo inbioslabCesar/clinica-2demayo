@@ -2,6 +2,32 @@
 
 class InventarioLaboratorioModule
 {
+    private static function normalizarExamenesIdsDesdeOrden($rawExamenes): array
+    {
+        if (is_string($rawExamenes)) {
+            $decoded = json_decode($rawExamenes, true);
+            $rawExamenes = is_array($decoded) ? $decoded : [];
+        }
+
+        if (!is_array($rawExamenes)) {
+            return [];
+        }
+
+        $ids = [];
+        foreach ($rawExamenes as $item) {
+            if (is_array($item) && isset($item['id'])) {
+                $examId = intval($item['id']);
+            } else {
+                $examId = intval($item);
+            }
+            if ($examId > 0) {
+                $ids[$examId] = true;
+            }
+        }
+
+        return array_map('intval', array_keys($ids));
+    }
+
     public static function tablasDisponibles($conn): bool
     {
         $required = [
@@ -39,6 +65,9 @@ class InventarioLaboratorioModule
             'detalles' => [],
             'saltado' => false,
         ];
+        $lockKey = 'inv_consumo_resultado_orden_' . $ordenId;
+        $lockAcquired = false;
+        $transactionStarted = false;
 
         if ($ordenId <= 0) {
             $resumen['saltado'] = true;
@@ -64,121 +93,161 @@ class InventarioLaboratorioModule
             return $resumen;
         }
 
-        $examenesIds = json_decode((string)($orden['examenes'] ?? '[]'), true);
-        if (!is_array($examenesIds) || empty($examenesIds)) {
+        $examenesIds = self::normalizarExamenesIdsDesdeOrden($orden['examenes'] ?? '[]');
+        if (empty($examenesIds)) {
             $resumen['saltado'] = true;
             return $resumen;
         }
 
-        $factores = self::obtenerFactoresPorExamen($conn, intval($orden['cobro_id'] ?? 0), $examenesIds);
-
-        $stmtRecetas = $conn->prepare("SELECT item_id, cantidad_por_prueba FROM inventario_examen_recetas WHERE id_examen = ? AND activo = 1");
-        $stmtYaConsumido = $conn->prepare("SELECT COUNT(*) AS total FROM inventario_consumos_examen WHERE orden_id = ? AND id_examen = ? AND item_id = ? AND origen_evento = 'resultado'");
-        $stmtTransferido = $conn->prepare("SELECT IFNULL(SUM(td.cantidad),0) AS total_transferido
-            FROM inventario_transferencias_detalle td
-            JOIN inventario_transferencias t ON t.id = td.transferencia_id
-            WHERE td.item_id = ? AND t.destino = 'laboratorio'");
-        $stmtConsumido = $conn->prepare("SELECT IFNULL(SUM(cantidad_consumida),0) AS total_consumido
-            FROM inventario_consumos_examen
-            WHERE item_id = ? AND estado = 'aplicado'");
-        $stmtItem = $conn->prepare("SELECT codigo, nombre, unidad_medida FROM inventario_items WHERE id = ? LIMIT 1");
-        $stmtInsert = $conn->prepare("INSERT INTO inventario_consumos_examen
-            (orden_id, cobro_id, consulta_id, paciente_id, id_examen, item_id, cantidad_consumida, origen_evento, estado, usuario_id, observacion, fecha_hora)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'resultado', 'aplicado', ?, ?, NOW())");
-
-        foreach ($examenesIds as $examenIdRaw) {
-            $examenId = intval($examenIdRaw);
-            if ($examenId <= 0) {
-                continue;
-            }
-
-            $factorCantidad = (float)($factores[$examenId] ?? 1);
-            if ($factorCantidad <= 0) {
-                $factorCantidad = 1;
-            }
-
-            $stmtRecetas->bind_param('i', $examenId);
-            $stmtRecetas->execute();
-            $recetas = $stmtRecetas->get_result()->fetch_all(MYSQLI_ASSOC);
-            if (empty($recetas)) {
-                continue;
-            }
-
-            foreach ($recetas as $receta) {
-                $itemId = intval($receta['item_id'] ?? 0);
-                $cantidadBase = (float)($receta['cantidad_por_prueba'] ?? 0);
-                if ($itemId <= 0 || $cantidadBase <= 0) {
-                    continue;
-                }
-
-                $cantidadNecesaria = round($cantidadBase * $factorCantidad, 4);
-                if ($cantidadNecesaria <= 0) {
-                    continue;
-                }
-
-                $stmtYaConsumido->bind_param('iii', $ordenId, $examenId, $itemId);
-                $stmtYaConsumido->execute();
-                $yaConsumido = intval($stmtYaConsumido->get_result()->fetch_assoc()['total'] ?? 0) > 0;
-                if ($yaConsumido) {
-                    continue;
-                }
-
-                $stmtTransferido->bind_param('i', $itemId);
-                $stmtTransferido->execute();
-                $transferido = (float)($stmtTransferido->get_result()->fetch_assoc()['total_transferido'] ?? 0);
-
-                $stmtConsumido->bind_param('i', $itemId);
-                $stmtConsumido->execute();
-                $consumido = (float)($stmtConsumido->get_result()->fetch_assoc()['total_consumido'] ?? 0);
-
-                $saldoInterno = round($transferido - $consumido, 4);
-                if ($saldoInterno + 0.0001 < $cantidadNecesaria) {
-                    $stmtItem->bind_param('i', $itemId);
-                    $stmtItem->execute();
-                    $item = $stmtItem->get_result()->fetch_assoc();
-
-                    $nombreItem = trim(((string)($item['codigo'] ?? '')) . ' ' . ((string)($item['nombre'] ?? '')));
-                    $unidad = (string)($item['unidad_medida'] ?? 'unid');
-                    $resumen['pendientes']++;
-                    $resumen['detalles'][] = 'Stock interno insuficiente para ' . $nombreItem . ' (' . number_format($cantidadNecesaria, 4) . ' ' . $unidad . ' requeridos, ' . number_format($saldoInterno, 4) . ' disponibles).';
-                    continue;
-                }
-
-                $cobroId = isset($orden['cobro_id']) ? intval($orden['cobro_id']) : null;
-                $consultaId = isset($orden['consulta_id']) ? intval($orden['consulta_id']) : null;
-                $pacienteId = isset($orden['paciente_id']) ? intval($orden['paciente_id']) : null;
-                $obs = 'Consumo automático por resultado. Orden ID: ' . $ordenId . ', Examen ID: ' . $examenId;
-                $usuario = $usuarioId && $usuarioId > 0 ? $usuarioId : null;
-
-                $stmtInsert->bind_param(
-                    'iiiiiidis',
-                    $ordenId,
-                    $cobroId,
-                    $consultaId,
-                    $pacienteId,
-                    $examenId,
-                    $itemId,
-                    $cantidadNecesaria,
-                    $usuario,
-                    $obs
-                );
-                $stmtInsert->execute();
-                $resumen['aplicados']++;
-            }
+        $stmtLock = $conn->prepare('SELECT GET_LOCK(?, 10) AS lock_status');
+        if ($stmtLock) {
+            $stmtLock->bind_param('s', $lockKey);
+            $stmtLock->execute();
+            $lockRow = $stmtLock->get_result()->fetch_assoc();
+            $stmtLock->close();
+            $lockAcquired = intval($lockRow['lock_status'] ?? 0) === 1;
         }
 
-        $stmtRecetas->close();
-        $stmtYaConsumido->close();
-        $stmtTransferido->close();
-        $stmtConsumido->close();
-        $stmtItem->close();
-        $stmtInsert->close();
+        if (!$lockAcquired) {
+            $resumen['saltado'] = true;
+            $resumen['detalles'][] = 'No se pudo obtener bloqueo de inventario para la orden. Reintente en unos segundos.';
+            return $resumen;
+        }
+
+        try {
+            $conn->begin_transaction();
+            $transactionStarted = true;
+
+            $factores = self::obtenerFactoresPorExamen($conn, intval($orden['cobro_id'] ?? 0), $examenesIds);
+
+            $stmtRecetas = $conn->prepare("SELECT item_id, cantidad_por_prueba FROM inventario_examen_recetas WHERE id_examen = ? AND activo = 1");
+            $stmtYaConsumido = $conn->prepare("SELECT COUNT(*) AS total FROM inventario_consumos_examen WHERE orden_id = ? AND id_examen = ? AND item_id = ? AND origen_evento = 'resultado'");
+            $stmtTransferido = $conn->prepare("SELECT IFNULL(SUM(td.cantidad),0) AS total_transferido
+                FROM inventario_transferencias_detalle td
+                JOIN inventario_transferencias t ON t.id = td.transferencia_id
+                WHERE td.item_id = ? AND t.destino = 'laboratorio'");
+            $stmtConsumido = $conn->prepare("SELECT IFNULL(SUM(cantidad_consumida),0) AS total_consumido
+                FROM inventario_consumos_examen
+                WHERE item_id = ? AND estado = 'aplicado'");
+            $stmtItem = $conn->prepare("SELECT codigo, nombre, unidad_medida FROM inventario_items WHERE id = ? LIMIT 1");
+            $stmtInsert = $conn->prepare("INSERT INTO inventario_consumos_examen
+                (orden_id, cobro_id, consulta_id, paciente_id, id_examen, item_id, cantidad_consumida, origen_evento, estado, usuario_id, observacion, fecha_hora)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'resultado', 'aplicado', ?, ?, NOW())");
+
+            foreach ($examenesIds as $examenIdRaw) {
+                $examenId = intval($examenIdRaw);
+                if ($examenId <= 0) {
+                    continue;
+                }
+
+                $factorCantidad = (float)($factores[$examenId] ?? 1);
+                if ($factorCantidad <= 0) {
+                    $factorCantidad = 1;
+                }
+
+                $stmtRecetas->bind_param('i', $examenId);
+                $stmtRecetas->execute();
+                $recetas = $stmtRecetas->get_result()->fetch_all(MYSQLI_ASSOC);
+                if (empty($recetas)) {
+                    continue;
+                }
+
+                foreach ($recetas as $receta) {
+                    $itemId = intval($receta['item_id'] ?? 0);
+                    $cantidadBase = (float)($receta['cantidad_por_prueba'] ?? 0);
+                    if ($itemId <= 0 || $cantidadBase <= 0) {
+                        continue;
+                    }
+
+                    $cantidadNecesaria = round($cantidadBase * $factorCantidad, 4);
+                    if ($cantidadNecesaria <= 0) {
+                        continue;
+                    }
+
+                    $stmtYaConsumido->bind_param('iii', $ordenId, $examenId, $itemId);
+                    $stmtYaConsumido->execute();
+                    $yaConsumido = intval($stmtYaConsumido->get_result()->fetch_assoc()['total'] ?? 0) > 0;
+                    if ($yaConsumido) {
+                        continue;
+                    }
+
+                    $stmtTransferido->bind_param('i', $itemId);
+                    $stmtTransferido->execute();
+                    $transferido = (float)($stmtTransferido->get_result()->fetch_assoc()['total_transferido'] ?? 0);
+
+                    $stmtConsumido->bind_param('i', $itemId);
+                    $stmtConsumido->execute();
+                    $consumido = (float)($stmtConsumido->get_result()->fetch_assoc()['total_consumido'] ?? 0);
+
+                    $saldoInterno = round($transferido - $consumido, 4);
+                    if ($saldoInterno + 0.0001 < $cantidadNecesaria) {
+                        $stmtItem->bind_param('i', $itemId);
+                        $stmtItem->execute();
+                        $item = $stmtItem->get_result()->fetch_assoc();
+
+                        $nombreItem = trim(((string)($item['codigo'] ?? '')) . ' ' . ((string)($item['nombre'] ?? '')));
+                        $unidad = (string)($item['unidad_medida'] ?? 'unid');
+                        $resumen['pendientes']++;
+                        $resumen['detalles'][] = 'Stock interno insuficiente para ' . $nombreItem . ' (' . number_format($cantidadNecesaria, 4) . ' ' . $unidad . ' requeridos, ' . number_format($saldoInterno, 4) . ' disponibles).';
+                        continue;
+                    }
+
+                    $cobroId = isset($orden['cobro_id']) ? intval($orden['cobro_id']) : null;
+                    $consultaId = isset($orden['consulta_id']) ? intval($orden['consulta_id']) : null;
+                    $pacienteId = isset($orden['paciente_id']) ? intval($orden['paciente_id']) : null;
+                    $obs = 'Consumo automático por resultado. Orden ID: ' . $ordenId . ', Examen ID: ' . $examenId;
+                    $usuario = $usuarioId && $usuarioId > 0 ? $usuarioId : null;
+
+                    $stmtInsert->bind_param(
+                        'iiiiiidis',
+                        $ordenId,
+                        $cobroId,
+                        $consultaId,
+                        $pacienteId,
+                        $examenId,
+                        $itemId,
+                        $cantidadNecesaria,
+                        $usuario,
+                        $obs
+                    );
+                    if ($stmtInsert->execute()) {
+                        $resumen['aplicados']++;
+                    }
+                }
+            }
+
+            $stmtRecetas->close();
+            $stmtYaConsumido->close();
+            $stmtTransferido->close();
+            $stmtConsumido->close();
+            $stmtItem->close();
+            $stmtInsert->close();
+
+            $conn->commit();
+            $transactionStarted = false;
+        } catch (Throwable $e) {
+            if ($transactionStarted) {
+                $conn->rollback();
+            }
+            $resumen['saltado'] = true;
+            $resumen['detalles'][] = 'No se pudo aplicar consumo automático: ' . $e->getMessage();
+        } finally {
+            if ($lockAcquired) {
+                $stmtUnlock = $conn->prepare('SELECT RELEASE_LOCK(?)');
+                if ($stmtUnlock) {
+                    $stmtUnlock->bind_param('s', $lockKey);
+                    $stmtUnlock->execute();
+                    $stmtUnlock->close();
+                }
+            }
+        }
 
         return $resumen;
     }
 
     private static function obtenerFactoresPorExamen($conn, int $cobroId, array $examenesIds): array
     {
+        $examenesIds = self::normalizarExamenesIdsDesdeOrden($examenesIds);
         $factores = [];
         foreach ($examenesIds as $examId) {
             $examId = intval($examId);
@@ -191,37 +260,43 @@ class InventarioLaboratorioModule
             return $factores;
         }
 
-        $stmtDetalle = $conn->prepare("SELECT descripcion FROM cobros_detalle WHERE cobro_id = ? AND servicio_tipo = 'laboratorio' LIMIT 1");
+        $stmtDetalle = $conn->prepare("SELECT descripcion FROM cobros_detalle WHERE cobro_id = ? AND servicio_tipo = 'laboratorio'");
         $stmtDetalle->bind_param('i', $cobroId);
         $stmtDetalle->execute();
-        $row = $stmtDetalle->get_result()->fetch_assoc();
+        $rows = $stmtDetalle->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmtDetalle->close();
 
-        if (!$row || empty($row['descripcion'])) {
+        if (empty($rows)) {
             return $factores;
         }
 
-        $detalles = json_decode((string)$row['descripcion'], true);
-        if (!is_array($detalles)) {
-            return $factores;
-        }
+        foreach ($rows as $row) {
+            if (empty($row['descripcion'])) {
+                continue;
+            }
 
-        foreach ($detalles as $detalle) {
-            if (!is_array($detalle)) {
+            $detalles = json_decode((string)$row['descripcion'], true);
+            if (!is_array($detalles)) {
                 continue;
             }
-            $servicioId = intval($detalle['servicio_id'] ?? 0);
-            if ($servicioId <= 0) {
-                continue;
+
+            foreach ($detalles as $detalle) {
+                if (!is_array($detalle)) {
+                    continue;
+                }
+                $servicioId = intval($detalle['servicio_id'] ?? 0);
+                if ($servicioId <= 0) {
+                    continue;
+                }
+                $cantidad = (float)($detalle['cantidad'] ?? 1);
+                if ($cantidad <= 0) {
+                    $cantidad = 1;
+                }
+                if (!isset($factores[$servicioId])) {
+                    continue;
+                }
+                $factores[$servicioId] = max((float)$factores[$servicioId], $cantidad);
             }
-            $cantidad = (float)($detalle['cantidad'] ?? 1);
-            if ($cantidad <= 0) {
-                $cantidad = 1;
-            }
-            if (!isset($factores[$servicioId])) {
-                continue;
-            }
-            $factores[$servicioId] = $cantidad;
         }
 
         return $factores;

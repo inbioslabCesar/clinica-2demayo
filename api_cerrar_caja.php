@@ -21,19 +21,62 @@ function caja_columna_existe(PDO $pdo, string $columna): bool {
     }
 }
 
+function caja_tabla_existe(PDO $pdo, string $tabla): bool {
+    static $cache = [];
+    if (array_key_exists($tabla, $cache)) {
+        return $cache[$tabla];
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1");
+        $stmt->execute([$tabla]);
+        $exists = (bool)$stmt->fetchColumn();
+        $cache[$tabla] = $exists;
+        return $exists;
+    } catch (Throwable $e) {
+        $cache[$tabla] = false;
+        return false;
+    }
+}
+
+function caja_intentar_alter_columna(PDO $pdo, string $sqlAlter): void {
+    try {
+        $pdo->exec($sqlAlter);
+    } catch (Throwable $e) {
+        $msg = strtolower((string)$e->getMessage());
+        $code = (string)$e->getCode();
+        if (strpos($msg, 'duplicate column name') !== false || strpos($msg, '42s21') !== false || strpos($code, '42s21') !== false) {
+            return;
+        }
+        throw $e;
+    }
+}
+
 function caja_asegurar_columnas_virtual(PDO $pdo): void {
     if (!caja_columna_existe($pdo, 'virtual_contado')) {
-        $pdo->exec('ALTER TABLE cajas ADD COLUMN virtual_contado DECIMAL(10,2) NULL DEFAULT NULL');
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN virtual_contado DECIMAL(10,2) NULL DEFAULT NULL');
     }
     if (!caja_columna_existe($pdo, 'diferencia_virtual')) {
-        $pdo->exec('ALTER TABLE cajas ADD COLUMN diferencia_virtual DECIMAL(10,2) NULL DEFAULT NULL');
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN diferencia_virtual DECIMAL(10,2) NULL DEFAULT NULL');
     }
     if (!caja_columna_existe($pdo, 'cierre_automatico')) {
-        $pdo->exec('ALTER TABLE cajas ADD COLUMN cierre_automatico TINYINT(1) NOT NULL DEFAULT 0');
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN cierre_automatico TINYINT(1) NOT NULL DEFAULT 0');
     }
     if (!caja_columna_existe($pdo, 'cierre_pendiente_cuadre')) {
-        $pdo->exec('ALTER TABLE cajas ADD COLUMN cierre_pendiente_cuadre TINYINT(1) NOT NULL DEFAULT 0');
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN cierre_pendiente_cuadre TINYINT(1) NOT NULL DEFAULT 0');
     }
+}
+
+function caja_parse_float_opcional($valor, ?float $default = null): ?float {
+    if ($valor === null) return $default;
+    if (is_string($valor)) {
+        $valor = trim($valor);
+        if ($valor === '') return $default;
+        $valor = str_replace(',', '.', $valor);
+    }
+    if (!is_numeric($valor)) {
+        return $default;
+    }
+    return (float)$valor;
 }
 
 
@@ -53,17 +96,16 @@ $fecha = date('Y-m-d');
 
 // Leer datos enviados
 $input = json_decode(file_get_contents('php://input'), true);
-// Leer monto contado, egreso electrónico y observaciones de cierre
-$monto_contado = isset($input['monto_contado']) ? floatval($input['monto_contado']) : null;
-$monto_virtual_contado = null;
-if (is_array($input) && array_key_exists('monto_virtual_contado', $input) && $input['monto_virtual_contado'] !== '' && !is_nan($input['monto_virtual_contado'])) {
-    $monto_virtual_contado = floatval($input['monto_virtual_contado']);
+if (!is_array($input)) {
+    $input = [];
 }
-$egreso_electronico = isset($input['egreso_electronico']) && $input['egreso_electronico'] !== "" && !is_nan($input['egreso_electronico']) ? floatval($input['egreso_electronico']) : 0;
+// Leer monto contado, egreso electrónico y observaciones de cierre
+$monto_contado = caja_parse_float_opcional($input['monto_contado'] ?? '', 0.0);
+$monto_virtual_contado = caja_parse_float_opcional($input['monto_virtual_contado'] ?? null, null);
+$egreso_electronico = caja_parse_float_opcional($input['egreso_electronico'] ?? null, 0.0);
 $observaciones_cierre = isset($input['observaciones']) ? trim($input['observaciones']) : '';
 if ($monto_contado === null) {
-    echo json_encode(['success' => false, 'error' => 'Monto contado no recibido']);
-    exit;
+    $monto_contado = 0.0;
 }
 
 // Buscar la caja abierta del usuario actual
@@ -129,11 +171,14 @@ if ($egreso_honorarios === false || $egreso_honorarios === null) {
     $egreso_honorarios = 0;
 }
 
-$stmt = $pdo->prepare('SELECT SUM(monto) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
-$stmt->execute([$caja_id]);
-$egreso_lab_ref = $stmt->fetchColumn();
-if ($egreso_lab_ref === false || $egreso_lab_ref === null) {
-    $egreso_lab_ref = 0;
+$egreso_lab_ref = 0;
+if (caja_tabla_existe($pdo, 'laboratorio_referencia_movimientos')) {
+    $stmt = $pdo->prepare('SELECT SUM(monto) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
+    $stmt->execute([$caja_id]);
+    $egreso_lab_ref = $stmt->fetchColumn();
+    if ($egreso_lab_ref === false || $egreso_lab_ref === null) {
+        $egreso_lab_ref = 0;
+    }
 }
 
 $stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
@@ -182,30 +227,56 @@ if ($tieneCierrePendienteCuadre) {
     $paramsVirtual[] = 0;
 }
 
-// Actualizar la caja: estado cerrada, guardar monto contado, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
-// Actualizar la caja: estado cerrada, guardar monto contado, egreso electrónico, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
-$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, egreso_electronico = ?, monto_contado = ?, total_egresos = ?, ganancia_dia = ?' . $setVirtualSql . ' WHERE id = ?');
-$paramsUpdate = [
-    $monto_contado,
-    $diferencia,
-    $observaciones_cierre,
-    $total_efectivo,
-    $total_yape,
-    $total_plin,
-    $total_tarjetas,
-    $total_transferencias,
-    floatval($egreso_honorarios),
-    floatval($egreso_lab_ref),
-    floatval($egreso_operativo),
-    $egreso_electronico,
-    $monto_contado,
-    $total_egresos,
-    $ganancia_dia,
+// Actualizar la caja con compatibilidad de esquema: solo columnas existentes.
+$sets = [
+    'estado = "cerrada"',
+    'hora_cierre = NOW()',
 ];
-foreach ($paramsVirtual as $valorVirtual) {
-    $paramsUpdate[] = $valorVirtual;
+$paramsUpdate = [];
+
+$agregarSetSiExiste = function(string $columna, $valor) use (&$sets, &$paramsUpdate, $pdo) {
+    if (caja_columna_existe($pdo, $columna)) {
+        $sets[] = $columna . ' = ?';
+        $paramsUpdate[] = $valor;
+    }
+};
+
+$agregarSetSiExiste('monto_cierre', $monto_contado);
+$agregarSetSiExiste('diferencia', $diferencia);
+$agregarSetSiExiste('observaciones_cierre', $observaciones_cierre);
+$agregarSetSiExiste('total_efectivo', $total_efectivo);
+$agregarSetSiExiste('total_yape', $total_yape);
+$agregarSetSiExiste('total_plin', $total_plin);
+$agregarSetSiExiste('total_tarjetas', $total_tarjetas);
+$agregarSetSiExiste('total_transferencias', $total_transferencias);
+$agregarSetSiExiste('egreso_honorarios', floatval($egreso_honorarios));
+$agregarSetSiExiste('egreso_lab_ref', floatval($egreso_lab_ref));
+$agregarSetSiExiste('egreso_operativo', floatval($egreso_operativo));
+$agregarSetSiExiste('egreso_electronico', $egreso_electronico);
+$agregarSetSiExiste('monto_contado', $monto_contado);
+$agregarSetSiExiste('total_egresos', $total_egresos);
+$agregarSetSiExiste('ganancia_dia', $ganancia_dia);
+
+if ($tieneVirtualContado) {
+    $sets[] = 'virtual_contado = ?';
+    $paramsUpdate[] = $monto_virtual_contado;
 }
+if ($tieneDiferenciaVirtual) {
+    $sets[] = 'diferencia_virtual = ?';
+    $paramsUpdate[] = $diferencia_virtual;
+}
+if ($tieneCierreAutomatico) {
+    $sets[] = 'cierre_automatico = ?';
+    $paramsUpdate[] = 0;
+}
+if ($tieneCierrePendienteCuadre) {
+    $sets[] = 'cierre_pendiente_cuadre = ?';
+    $paramsUpdate[] = 0;
+}
+
+$sqlUpdate = 'UPDATE cajas SET ' . implode(', ', $sets) . ' WHERE id = ?';
 $paramsUpdate[] = $caja_id;
+$stmt = $pdo->prepare($sqlUpdate);
 $stmt->execute($paramsUpdate);
 
 // Opcional: registrar log de cierre

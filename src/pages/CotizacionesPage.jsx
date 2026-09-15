@@ -368,6 +368,24 @@ function resolverSolicitudDesdeHC(row) {
   return { activa: true, detalle };
 }
 
+function esCotizacionHcProximaProgramada(row) {
+  if (Number(row?.es_hc_proxima_programada || 0) === 1) return true;
+
+  const referencia = String(row?.referencia_origen || "").toLowerCase();
+  const observaciones = String(row?.observaciones || "").toLowerCase();
+  const estado = String(row?.estado || "").toLowerCase().trim();
+
+  if (referencia.includes("hc_proxima") || referencia.includes("próxima cita") || referencia.includes("proxima cita")) {
+    return true;
+  }
+
+  if (observaciones.includes("próxima cita") || observaciones.includes("proxima cita")) {
+    return true;
+  }
+
+  return estado === "control" && Number(row?.consulta_es_control || 0) === 1;
+}
+
 function tieneMarcaSolicitudHCDesdeTexto(row) {
   const referenciaLower = String(row?.referencia_origen || "").toLowerCase().trim();
   const observacionesLower = String(row?.observaciones || "").toLowerCase().trim();
@@ -472,16 +490,24 @@ function resolverEstadoGrupoCotizacion(items) {
   const rows = Array.isArray(items) ? items : [];
   if (!rows.length) return "pendiente";
 
+  if (rows.length === 1) {
+    return String(rows[0]?.estado || "pendiente").toLowerCase();
+  }
+
   const total = rows.reduce((acc, row) => acc + Number(row?.total || 0), 0);
   const totalPagado = rows.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
   const saldo = rows.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
-
-  if (saldo <= 0.00001 && total > 0) return "pagado";
-  if (totalPagado > 0.00001) return "parcial";
+  const esControlHc = rows.some((row) => (
+    Number(row?.es_hc_proxima_programada || 0) === 1
+    || Number(row?.consulta_es_control || 0) === 1
+  ));
 
   const estados = rows.map((row) => String(row?.estado || "").toLowerCase());
-  if (estados.includes("informativo") && total <= 0.00001) return "informativo";
   if (estados.length > 0 && estados.every((estado) => estado === "anulada")) return "anulada";
+  if (esControlHc && saldo <= 0.00001 && total <= 0.00001 && totalPagado <= 0.00001) return "control";
+  if (saldo <= 0.00001 && total > 0) return "pagado";
+  if (totalPagado > 0.00001) return "parcial";
+  if (estados.includes("informativo") && total <= 0.00001) return "informativo";
 
   return "pendiente";
 }
@@ -523,6 +549,8 @@ function agruparFilasOperativasPorEpisodio(rows) {
     const total = items.reduce((acc, row) => acc + Number(row?.total || 0), 0);
     const totalPagado = items.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
     const saldo = items.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
+    const esHcProximaProgramada = items.some((row) => Number(row?.es_hc_proxima_programada || 0) === 1) ? 1 : 0;
+    const consultaEsControl = items.some((row) => Number(row?.consulta_es_control || 0) === 1) ? 1 : 0;
     const estadoGrupo = resolverEstadoGrupoCotizacion(items);
     const grupoIncluyePagadas = items.some((row) => ["pagado", "completado", "control", "contrato"].includes(String(row?.estado || "").toLowerCase()));
 
@@ -537,6 +565,8 @@ function agruparFilasOperativasPorEpisodio(rows) {
       total,
       total_pagado: totalPagado,
       saldo_pendiente: saldo,
+      es_hc_proxima_programada: esHcProximaProgramada,
+      consulta_es_control: consultaEsControl,
       estado: estadoGrupo,
       ultimo_pago_at: ultimoPago || base?.ultimo_pago_at || "",
       servicios_tipos: serviciosUnicos.join(","),
@@ -671,7 +701,17 @@ function badgeMetodoPago(row) {
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
 const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
-  const estadoRow = String(row.estado || "").toLowerCase();
+  const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
+  const estadoRow = useMemo(() => {
+    const estadoBase = String(row.estado || "").toLowerCase();
+    const total = Number(row?.total || 0);
+    const saldo = Number(row?.saldo_pendiente || 0);
+    const pagado = Number(row?.total_pagado || 0);
+    if (hcProximaProgramada && total <= 0.00001 && saldo <= 0.00001 && pagado <= 0.00001) {
+      return "control";
+    }
+    return estadoBase;
+  }, [hcProximaProgramada, row?.estado, row?.saldo_pendiente, row?.total, row?.total_pagado]);
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
   const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
@@ -789,6 +829,29 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       }
     }
     if (consultaId > 0) {
+      let consultaPacienteId = 0;
+      try {
+        const resValid = await authFetch(`api_consultas.php?consulta_id=${consultaId}&vista=hc_fast&_t=${Date.now()}`, {
+          cache: 'no-store',
+        });
+        const dataValid = await resValid.json();
+        const consultaValid = Array.isArray(dataValid?.consultas) ? dataValid.consultas[0] : null;
+        consultaPacienteId = Number(consultaValid?.paciente_id || 0);
+      } catch {
+        consultaPacienteId = 0;
+      }
+
+      const pacienteFilaId = Number(row.paciente_id || 0);
+      if (consultaPacienteId > 0 && pacienteFilaId > 0 && consultaPacienteId !== pacienteFilaId) {
+        await Swal.fire({
+          icon: 'warning',
+          title: 'Vínculo clínico inconsistente',
+          text: `La cotización #${Number(row.id)} apunta a una consulta de otro paciente (consulta #${consultaId}). Se bloqueó la apertura para evitar mezclar historias clínicas.`,
+          confirmButtonText: 'Aceptar',
+        });
+        return;
+      }
+
       onNavigate(`/historia-clinica-lectura/${row.paciente_id}/${consultaId}?back_to=/cotizaciones`);
     } else {
       await Swal.fire({
@@ -902,6 +965,11 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
                 : ''}
             </span>
           )}
+          {hcProximaProgramada && (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+              Próxima cita HC
+            </span>
+          )}
           {citaProgramadaTexto && (
             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800">
               {citaProgramadaTexto}
@@ -945,8 +1013,8 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.saldo_pendiente ?? 0).toFixed(2)}</td>
       <td className="px-3 py-2">
         <div className="flex flex-col items-start gap-1">
-          <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(row.estado, row.pagado_con_descuento)}`}>
-            {labelEstado(row)}
+          <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(estadoRow, row.pagado_con_descuento)}`}>
+            {labelEstado({ ...row, estado: estadoRow })}
           </span>
           {vencimientoMeta && (
             <span

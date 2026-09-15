@@ -1,10 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom'
-import HomePage from './pages/HomePage.jsx'
-import HomePageLanding from './pages/HomePageLanding.jsx'
-import ConocenosPage from './pages/ConocenosPage.jsx'
-import ServiciosPage from './pages/ServiciosPage.jsx'
-import OfertasPage from './pages/OfertasPage.jsx'
 import PublicFooter from './components/PublicFooter.jsx'
 import CartToggleButton from './components/ShoppingCart/CartToggleButton.jsx'
 import CartPanel from './components/ShoppingCart/CartPanel.jsx'
@@ -18,6 +13,20 @@ const PUBLIC_BRAND_CACHE_KEY = buildScopedStorageKey('public_brand_cache')
 const PUBLIC_THEME_CACHE_KEY = buildScopedStorageKey('public_theme_cache')
 const PUBLIC_CONFIG_CACHE_KEY = buildScopedStorageKey('public_config_cache')
 const FALLBACK_PUBLIC_LOGO = `${import.meta.env.BASE_URL}2demayo.svg`
+
+const HomePage = lazy(() => import('./pages/HomePage.jsx'))
+const HomePageLanding = lazy(() => import('./pages/HomePageLanding.jsx'))
+const ConocenosPage = lazy(() => import('./pages/ConocenosPage.jsx'))
+const ServiciosPage = lazy(() => import('./pages/ServiciosPage.jsx'))
+const OfertasPage = lazy(() => import('./pages/OfertasPage.jsx'))
+
+function PublicRouteFallback() {
+  return (
+    <div className="w-full max-w-6xl mx-auto px-4 py-12">
+      <div className="rounded-2xl border bg-white/90 p-6 text-slate-700">Cargando contenido...</div>
+    </div>
+  )
+}
 
 function readStorageValue(key) {
   try {
@@ -385,12 +394,14 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
         </div>
 
         <main className="max-w-6xl mx-auto px-4 pt-6 pb-8">
-          <Routes>
-            <Route path="/" element={<HomePage sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
-            <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
-            <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
-            <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
-          </Routes>
+          <Suspense fallback={<PublicRouteFallback />}>
+            <Routes>
+              <Route path="/" element={<HomePage sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
+              <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
+              <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
+              <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
+            </Routes>
+          </Suspense>
         </main>
 
         <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} logoSize={logoSize} />
@@ -507,12 +518,14 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
 
       {/* Content */}
       <main className="pt-28">
-        <Routes>
-          <Route path="/" element={<HomePageLanding sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
-          <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
-          <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
-          <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
-        </Routes>
+        <Suspense fallback={<PublicRouteFallback />}>
+          <Routes>
+            <Route path="/" element={<HomePageLanding sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
+            <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
+            <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
+            <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
+          </Routes>
+        </Suspense>
       </main>
 
       {/* 2-level footer */}

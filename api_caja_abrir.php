@@ -5,8 +5,13 @@ require_once 'db.php';
 
 function normalizar_turno($turno)
 {
-    $t = strtolower(trim((string)$turno));
-    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
+    $map = [
+        'maÃ±ana' => 'mañana',
+        'maã±ana' => 'mañana',
+    ];
+    $normalizado = strtr((string)$turno, $map);
+    $t = strtolower(trim($normalizado));
+    if ($t === 'manana' || $t === 'mañana') {
         return 'manana';
     }
     if ($t === 'tarde' || $t === 'noche') {
@@ -31,7 +36,7 @@ function resolver_turno_para_db($pdo, $turnoCanonico)
             $enumValues = $matches[1] ?? [];
             if (!empty($enumValues)) {
                 $candidatos = [
-                    'manana' => ['manana', 'mañana', 'maã±ana', 'maÃ±ana'],
+                    'manana' => ['manana', 'mañana'],
                     'tarde' => ['tarde'],
                     'noche' => ['noche'],
                 ][$turnoCanonico];

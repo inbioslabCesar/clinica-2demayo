@@ -501,6 +501,31 @@ class CobroModule
         return $ids;
     }
 
+    private static function resolverFechaHoraCobroParaIngreso($conn, $cobroId)
+    {
+        $cobroId = (int)$cobroId;
+        if ($cobroId <= 0) {
+            return null;
+        }
+
+        if (!self::tableExists($conn, 'cobros') || !self::columnExists($conn, 'cobros', 'fecha_cobro')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT fecha_cobro FROM cobros WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return null;
+        }
+
+        $stmt->bind_param('i', $cobroId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $fechaCobro = trim((string)($row['fecha_cobro'] ?? ''));
+        return $fechaCobro !== '' ? $fechaCobro : null;
+    }
+
     private static function construirResumenCobroPorCotizacion($detalles)
     {
         $resumen = [];
@@ -3502,6 +3527,7 @@ class CobroModule
 
             // Registrar cobro principal y detalles
             $cobro_id = self::registrarCobro($conn, $data);
+            $fechaHoraIngresoBase = self::resolverFechaHoraCobroParaIngreso($conn, $cobro_id);
             // Registrar descuento aplicado si corresponde
             self::registrarDescuento($conn, $data, $cobro_id);
             self::registrarCobroCotizaciones(
@@ -3822,7 +3848,8 @@ class CobroModule
                                 'honorario_movimiento_id' => $mov_id,
                                 'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id_param),
                                 'liquidado_por' => $liquidado_por,
-                                'fecha_liquidacion' => $fecha_liquidacion
+                                'fecha_liquidacion' => $fecha_liquidacion,
+                                'fecha_hora_param' => $fechaHoraIngresoBase
                             ];
                             CajaModule::registrarIngreso($conn, $params_individual);
                         } else {

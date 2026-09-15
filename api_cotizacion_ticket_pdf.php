@@ -340,6 +340,15 @@ if (table_exists_local($conn, 'cotizacion_movimientos')) {
     }
 }
 
+$ultimoPagoAt = '';
+foreach ($pagos as $pagoRow) {
+    $tipoMovPago = strtolower(trim((string)($pagoRow['tipo_movimiento'] ?? '')));
+    if ($tipoMovPago === 'abono') {
+        $ultimoPagoAt = trim((string)($pagoRow['created_at'] ?? ''));
+    }
+}
+$ultimoPagoLabel = $ultimoPagoAt !== '' ? format_dt_es($ultimoPagoAt) : 'Sin pagos';
+
 $brand = [
     'nombre_clinica' => 'MI CLINICA',
     'logo_url' => '',
@@ -494,6 +503,7 @@ body { font-family: DejaVu Sans, Arial, sans-serif; color: #111827; font-size: 1
     <div class="meta"><strong>Nro:</strong> ' . h((string)($cot['numero_comprobante'] ?? ('Q' . str_pad((string)$cotizacionId, 6, '0', STR_PAD_LEFT)))) . '</div>
     <div class="meta"><strong>Cotizacion:</strong> #' . (int)$cotizacionId . '</div>
     <div class="meta"><strong>Fecha:</strong> ' . h(format_dt_es($cot['fecha'] ?? '')) . '</div>
+    <div class="meta"><strong>Ultimo pago:</strong> ' . h($ultimoPagoLabel) . '</div>
     <div class="meta"><strong>Paciente:</strong> ' . h($nombrePaciente) . '</div>
     <div class="meta"><strong>DNI:</strong> ' . h($cot['dni'] ?? '-') . '</div>
     <div class="meta"><strong>H.C.:</strong> ' . h($cot['historia_clinica'] ?? '-') . '</div>

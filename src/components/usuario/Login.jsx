@@ -82,9 +82,12 @@ function readCachedBrand() {
     const parsed = JSON.parse(raw);
     const clinicName = String(parsed?.clinicName || '').trim();
     const logoSrc = String(parsed?.logoSrc || '').trim();
+    const logoSizeSistema = String(parsed?.logoSizeSistema || '').trim().toLowerCase();
+    const logoShapeSistema = String(parsed?.logoShapeSistema || 'auto').trim().toLowerCase();
+    const logoRatio = Number(parsed?.logoRatio || 1);
     const ts = Number(parsed?.ts || 0);
     if (!clinicName && !logoSrc) return null;
-    return { clinicName, logoSrc, ts };
+    return { clinicName, logoSrc, logoSizeSistema, logoShapeSistema, logoRatio, ts };
   } catch {
     return null;
   }
@@ -95,6 +98,9 @@ function writeCachedBrand(brand) {
     sessionStorage.setItem(LOGIN_BRAND_CACHE_KEY, JSON.stringify({
       clinicName: String(brand?.clinicName || '').trim(),
       logoSrc: String(brand?.logoSrc || '').trim(),
+      logoSizeSistema: String(brand?.logoSizeSistema || '').trim().toLowerCase(),
+      logoShapeSistema: String(brand?.logoShapeSistema || 'auto').trim().toLowerCase(),
+      logoRatio: Number(brand?.logoRatio || 1),
       ts: Date.now(),
     }));
   } catch {
@@ -105,10 +111,56 @@ function writeCachedBrand(brand) {
 function preloadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve(src);
+    img.onload = () => resolve({
+      src,
+      width: Number(img.naturalWidth || 0),
+      height: Number(img.naturalHeight || 0),
+    });
     img.onerror = reject;
     img.src = src;
   });
+}
+
+function normalizeLogoSize(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['sm', 'md', 'lg', 'xl', 'xxl'].includes(raw)) return raw;
+  return 'md';
+}
+
+function normalizeLogoShape(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'wide' || raw === 'round' || raw === 'auto') return raw;
+  return 'auto';
+}
+
+function resolveLogoUi(sizeValue, shapeValue, ratioValue) {
+  const size = normalizeLogoSize(sizeValue);
+  const shape = normalizeLogoShape(shapeValue);
+  const ratio = Number(ratioValue || 1);
+  const effectiveShape = shape === 'auto' ? (ratio >= 1.35 ? 'wide' : 'round') : shape;
+
+  const roundMap = {
+    sm: 'w-16 h-16',
+    md: 'w-20 h-20',
+    lg: 'w-24 h-24',
+    xl: 'w-28 h-28',
+    xxl: 'w-32 h-32',
+  };
+  const wideMap = {
+    sm: 'w-24 h-14',
+    md: 'w-28 h-16',
+    lg: 'w-32 h-20',
+    xl: 'w-36 h-20',
+    xxl: 'w-40 h-24',
+  };
+
+  const sizeClass = effectiveShape === 'wide' ? wideMap[size] : roundMap[size];
+  const glowClass = effectiveShape === 'wide' ? 'rounded-2xl' : 'rounded-full';
+  const imageClass = effectiveShape === 'wide'
+    ? `relative ${sizeClass} object-contain bg-white/90 rounded-2xl px-3 py-2 shadow-lg ring-2 ring-white/30`
+    : `relative ${sizeClass} object-contain bg-white/90 rounded-full p-3 shadow-lg ring-4 ring-white/30`;
+
+  return { sizeClass, glowClass, imageClass, effectiveShape };
 }
 
 function applyFavicon(iconHref) {
@@ -136,7 +188,12 @@ function Login({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [logoSrc, setLogoSrc] = useState(cachedBrand?.logoSrc || '');
   const [clinicName, setClinicName] = useState(cachedBrand?.clinicName || '');
+  const [logoSizeSistema, setLogoSizeSistema] = useState(normalizeLogoSize(cachedBrand?.logoSizeSistema));
+  const [logoShapeSistema, setLogoShapeSistema] = useState(normalizeLogoShape(cachedBrand?.logoShapeSistema));
+  const [logoRatio, setLogoRatio] = useState(Number(cachedBrand?.logoRatio || 1));
   const navigate = useNavigate();
+
+  const logoUi = resolveLogoUi(logoSizeSistema, logoShapeSistema, logoRatio);
 
   useEffect(() => {
     if (hasFreshCachedBrand) {
@@ -154,9 +211,17 @@ function Login({ onLogin }) {
           setClinicName(configuredName);
         }
 
+        const configuredLogoSize = normalizeLogoSize(cfg.logo_size_sistema);
+        const configuredLogoShape = normalizeLogoShape(cfg.logo_shape_sistema);
+        if (mounted) {
+          setLogoSizeSistema(configuredLogoSize);
+          setLogoShapeSistema(configuredLogoShape);
+        }
+
         const raw = String(cfg.logo_url || '').trim();
         const absolute = toAbsoluteLogoUrl(raw);
         let resolvedLogo = '';
+        let resolvedRatio = 1;
 
         if (absolute) {
           const versionBase = String(cfg.updated_at || cfg.config_updated_at || '').trim();
@@ -166,8 +231,11 @@ function Login({ onLogin }) {
             : absolute;
 
           try {
-            await preloadImage(candidate);
-            resolvedLogo = candidate;
+            const preloaded = await preloadImage(candidate);
+            resolvedLogo = preloaded.src;
+            if (preloaded.width > 0 && preloaded.height > 0) {
+              resolvedRatio = preloaded.width / preloaded.height;
+            }
           } catch {
             resolvedLogo = '';
           }
@@ -175,11 +243,15 @@ function Login({ onLogin }) {
 
         if (mounted) {
           setLogoSrc((prev) => (prev === resolvedLogo ? prev : resolvedLogo));
+          setLogoRatio(resolvedRatio);
         }
 
         writeCachedBrand({
           clinicName: configuredName,
           logoSrc: resolvedLogo,
+          logoSizeSistema: configuredLogoSize,
+          logoShapeSistema: configuredLogoShape,
+          logoRatio: resolvedRatio,
         });
       } catch {
         if (mounted) {
@@ -450,17 +522,17 @@ function Login({ onLogin }) {
         <div className="bg-white/10 backdrop-blur-xl rounded-3xl border border-white/20 shadow-2xl p-8">
           {/* Header */}
           <div className="text-center mb-8">
-            <div className="relative mx-auto w-20 h-20 mb-6">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full blur-lg opacity-60"></div>
+            <div className={`relative mx-auto ${logoUi.sizeClass} mb-6`}>
+              <div className={`absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 ${logoUi.glowClass} blur-lg opacity-60`}></div>
               {logoSrc ? (
                 <img 
                   src={logoSrc}
                   alt="Logo clínica" 
-                  className="relative w-20 h-20 object-contain bg-white/90 rounded-full p-3 shadow-lg ring-4 ring-white/30"
+                  className={logoUi.imageClass}
                   onError={() => setLogoSrc('')}
                 />
               ) : (
-                <div className="relative w-20 h-20 bg-white/90 rounded-full shadow-lg ring-4 ring-white/30 flex items-center justify-center">
+                <div className={`relative ${logoUi.sizeClass} bg-white/90 ${logoUi.effectiveShape === 'wide' ? 'rounded-2xl' : 'rounded-full'} shadow-lg ring-4 ring-white/30 flex items-center justify-center`}>
                   <Icon iconName="Hospital" className="text-3xl text-violet-600" />
                 </div>
               )}

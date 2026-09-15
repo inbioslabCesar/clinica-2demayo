@@ -6,6 +6,7 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_gestion_tarifas", label: "Gestión de Tarifas" },
   { key: "ver_inventario_general", label: "Inventario General" },
   { key: "ver_panel_laboratorio", label: "Panel laboratorio" },
+  { key: "operar_resultados_laboratorio", label: "Llenar resultados laboratorio" },
   { key: "ver_inventario_laboratorio", label: "Inventario laboratorio" },
   { key: "ver_modulo_quimico", label: "Modulo quimico / farmacia" },
   { key: "ver_contabilidad", label: "Contabilidad y reportes" },

@@ -91,6 +91,53 @@ function resolverDescripcionDetalle(detalle) {
   return descripcionBase || "-";
 }
 
+function parseSnapshotJson(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw;
+  }
+  const txt = String(raw || "").trim();
+  if (!txt) return null;
+  try {
+    const parsed = JSON.parse(txt);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function obtenerInfoPaqueteDetalle(detalle) {
+  const snapshot = parseSnapshotJson(detalle?.snapshot_json);
+  const paqueteTipoRaw = String(
+    detalle?.paquete_tipo || snapshot?.paquete_tipo || ""
+  ).trim().toLowerCase();
+  const paqueteCodigo = String(
+    detalle?.paquete_codigo || snapshot?.paquete_codigo || ""
+  ).trim();
+  const paqueteNombre = String(
+    detalle?.paquete_nombre || snapshot?.paquete_nombre || ""
+  ).trim();
+  const paqueteId = Number(detalle?.paquete_id || snapshot?.paquete_id || 0);
+
+  const esPerfil = paqueteTipoRaw === "perfil";
+  const esPaquete = paqueteTipoRaw === "paquete";
+  const tieneMeta = esPerfil || esPaquete || paqueteId > 0 || paqueteCodigo !== "" || paqueteNombre !== "";
+  if (!tieneMeta) return null;
+
+  const tipoLabel = esPerfil ? "Perfil" : "Paquete";
+  let nombreVisible = paqueteNombre;
+  if (!nombreVisible && paqueteCodigo) nombreVisible = paqueteCodigo;
+  if (!nombreVisible && paqueteId > 0) nombreVisible = `${tipoLabel} #${paqueteId}`;
+
+  const codigoVisible = paqueteCodigo && paqueteCodigo !== nombreVisible ? paqueteCodigo : "";
+  return {
+    tipo: esPerfil ? "perfil" : "paquete",
+    tipoLabel,
+    nombre: nombreVisible || tipoLabel,
+    codigo: codigoVisible,
+    clave: `${esPerfil ? "perfil" : "paquete"}:${paqueteId}:${paqueteCodigo}:${nombreVisible}`,
+  };
+}
+
 function clavePagoServicio(tipo, servicioId) {
   return `${normalizarServicio(tipo)}:${Number(servicioId || 0)}`;
 }
@@ -441,6 +488,26 @@ export default function DetalleCotizacionPage() {
       map[tipo].subtotal += Number(d?.subtotal || 0);
     }
     return Object.values(map).sort((a, b) => a.label.localeCompare(b.label));
+  }, [detallesActivos]);
+
+  const resumenPaquetes = useMemo(() => {
+    const map = {};
+    for (const d of detallesActivos) {
+      const infoPaquete = obtenerInfoPaqueteDetalle(d);
+      if (!infoPaquete) continue;
+
+      const key = infoPaquete.clave;
+      if (!map[key]) {
+        map[key] = {
+          ...infoPaquete,
+          items: 0,
+          subtotal: 0,
+        };
+      }
+      map[key].items += 1;
+      map[key].subtotal += Number(d?.subtotal || 0);
+    }
+    return Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre));
   }, [detallesActivos]);
 
   const totalItemsBruto = useMemo(() => {
@@ -980,12 +1047,23 @@ export default function DetalleCotizacionPage() {
           {resumenServicios.length === 0 ? (
             <div className="text-sm text-gray-500">Sin items activos.</div>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {resumenServicios.map((s) => (
-                <span key={s.tipo} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}>
-                  {s.label}: {s.items} item(s) | S/ {Number(s.subtotal || 0).toFixed(2)}
-                </span>
-              ))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {resumenServicios.map((s) => (
+                  <span key={s.tipo} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}>
+                    {s.label}: {s.items} item(s) | S/ {Number(s.subtotal || 0).toFixed(2)}
+                  </span>
+                ))}
+              </div>
+              {resumenPaquetes.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {resumenPaquetes.map((p) => (
+                    <span key={p.clave} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "#bfdbfe", color: "#1e40af" }}>
+                      {p.tipoLabel}: {p.codigo ? `${p.codigo} - ` : ""}{p.nombre} | {p.items} item(s) | S/ {Number(p.subtotal || 0).toFixed(2)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1020,7 +1098,17 @@ export default function DetalleCotizacionPage() {
                         const texto = normalizarServicio(d?.servicio_tipo) === "consulta"
                           ? limpiarDescripcionConsulta(descripcionDetalle)
                           : descripcionDetalle;
-                        return <span>{texto}</span>;
+                        const infoPaquete = obtenerInfoPaqueteDetalle(d);
+                        return (
+                          <>
+                            <span>{texto}</span>
+                            {infoPaquete && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "#eff6ff", color: "#1e40af", borderColor: "#bfdbfe" }}>
+                                {infoPaquete.tipoLabel}: {infoPaquete.codigo ? `${infoPaquete.codigo} - ` : ""}{infoPaquete.nombre}
+                              </span>
+                            )}
+                          </>
+                        );
                       })()}
                       {(Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0) && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap bg-slate-100 text-slate-700 border-slate-200">

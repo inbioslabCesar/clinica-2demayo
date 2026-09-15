@@ -27,7 +27,7 @@ export default function LiquidacionLaboratorioReferenciaPage() {
       .then(res => res.json())
       .then(data => {
         setMovimientos(data.movimientos || []);
-        setLaboratorios(Array.from(new Set((data.movimientos || []).map(m => m.laboratorio_referencia).filter(Boolean))));
+        setLaboratorios(Array.from(new Set((data.movimientos || []).map(m => m.laboratorio_referencia || m.laboratorio).filter(Boolean))));
         setLoading(false);
       });
   };
@@ -51,9 +51,13 @@ export default function LiquidacionLaboratorioReferenciaPage() {
 
   const movimientosFiltrados = movimientos.filter(m => {
     const matchEstado = estadoFilter === "" || m.estado === estadoFilter;
-    const matchLab = laboratorioFilter === "" || m.laboratorio_referencia === laboratorioFilter;
+    const matchLab = laboratorioFilter === "" || (m.laboratorio_referencia || m.laboratorio) === laboratorioFilter;
     return matchEstado && matchLab;
   });
+
+  useEffect(() => {
+    setPage(0);
+  }, [estadoFilter, laboratorioFilter, rowsPerPage]);
 
   // Paginación
   const totalPages = Math.max(1, Math.ceil(movimientosFiltrados.length / rowsPerPage));

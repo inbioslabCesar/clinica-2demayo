@@ -61,21 +61,56 @@ function generar_codigo_interno($nombre, $idx) {
     return $s;
 }
 
+function normalize_codigo_interno_token($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return '';
+
+    $token = mb_strtolower($raw, 'UTF-8');
+    $token = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $token);
+    $token = preg_replace('/[^a-z0-9]+/', '_', (string)$token);
+    $token = trim((string)$token, '_');
+
+    return (string)$token;
+}
+
+function ensure_unique_codigo_interno($baseToken, array &$usedTokens, $fallbackName, $idx) {
+    $token = normalize_codigo_interno_token($baseToken);
+    if ($token === '') {
+        $token = normalize_codigo_interno_token(generar_codigo_interno($fallbackName, $idx));
+    }
+    if ($token === '') {
+        $token = 'param_' . ($idx + 1);
+    }
+
+    $candidate = $token;
+    $suffix = 2;
+    while (isset($usedTokens[$candidate])) {
+        $candidate = $token . '_' . $suffix;
+        $suffix++;
+    }
+
+    $usedTokens[$candidate] = true;
+    return $candidate;
+}
+
 // Helper: normalizar valores_referenciales recibidos desde frontend
 function normalize_valores_referenciales($raw) {
     if (!$raw) return json_encode([] , JSON_UNESCAPED_UNICODE);
     $raw = decode_valores_referenciales_any($raw);
     if (!is_array($raw)) return json_encode([], JSON_UNESCAPED_UNICODE);
     $items = [];
+    $usedCodigos = [];
     foreach ($raw as $idx => $it) {
         if (!is_array($it)) continue;
         $item = [];
         $item['tipo'] = $it['tipo'] ?? 'Parámetro';
         $item['nombre'] = $it['nombre'] ?? ($it['titulo'] ?? ('Item ' . ($idx + 1)));
-        // codigo_interno: preservar si ya existe (inmutable), generar si falta
-        $item['codigo_interno'] = (isset($it['codigo_interno']) && trim((string)$it['codigo_interno']) !== '')
+        // codigo_interno: preservar si existe, pero siempre sanitizar y garantizar unicidad
+        // para evitar colisiones de claves al registrar muchos parámetros.
+        $codigoBase = (isset($it['codigo_interno']) && trim((string)$it['codigo_interno']) !== '')
             ? trim((string)$it['codigo_interno'])
             : generar_codigo_interno($item['nombre'], $idx);
+        $item['codigo_interno'] = ensure_unique_codigo_interno($codigoBase, $usedCodigos, $item['nombre'], $idx);
         $item['metodologia'] = $it['metodologia'] ?? '';
         $item['unidad'] = $it['unidad'] ?? '';
         $item['opciones'] = [];

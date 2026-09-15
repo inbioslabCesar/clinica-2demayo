@@ -47,6 +47,38 @@ class HonorarioModule {
         return 0.0;
     }
 
+    private static function resumirDescripcionFirma($descripcion) {
+        $raw = trim((string)$descripcion);
+        if ($raw === '') {
+            return '';
+        }
+
+        if (stripos($raw, ' | CAMPANA ') !== false) {
+            $segmentos = array_map('trim', explode('|', $raw));
+            $base = trim((string)($segmentos[0] ?? ''));
+            if ($base !== '') {
+                return strtolower($base);
+            }
+        }
+
+        $marcadoresMeta = [
+            ' | Modo:',
+            ' | Medico:',
+            ' | Clinica:',
+            ' | Clinica objetivo:',
+            ' | REPARTO MANUAL COBRO',
+        ];
+
+        foreach ($marcadoresMeta as $meta) {
+            $pos = stripos($raw, $meta);
+            if ($pos !== false) {
+                return strtolower(trim(substr($raw, 0, $pos)));
+            }
+        }
+
+        return strtolower($raw);
+    }
+
     private static function decodificarSnapshotDetalle($detalleConsulta) {
         $snapshot = $detalleConsulta['snapshot_json'] ?? null;
         if (is_array($snapshot)) {
@@ -432,14 +464,29 @@ class HonorarioModule {
         }
 
         // firma_origen identifica el SERVICIO dentro de la cotización, no el cobro individual.
-        // Así, múltiples cobros parciales del mismo servicio usan la misma firma y no generan filas duplicadas.
+        // Evitar descripcion completa porque puede incluir montos variables por abono parcial.
+        $detalleOrigenId = isset($detalleConsulta['cotizacion_detalle_id'])
+            ? (int)$detalleConsulta['cotizacion_detalle_id']
+            : (isset($detalleConsulta['detalle_id']) ? (int)$detalleConsulta['detalle_id'] : 0);
+        $consultaOrigenId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
+        $descripcionFirma = self::resumirDescripcionFirma($descripcion);
+
         $firmaOrigenPartes = [
             $cotizacionId,
             $medicoId,
+            $pacienteId,
             $tarifaId,
             $tipoServicio,
-            trim(strtolower($descripcion))
         ];
+
+        if ($detalleOrigenId > 0) {
+            $firmaOrigenPartes[] = 'detalle:' . $detalleOrigenId;
+        } elseif ($consultaOrigenId > 0) {
+            $firmaOrigenPartes[] = 'consulta:' . $consultaOrigenId;
+        }
+
+        $firmaOrigenPartes[] = 'desc:' . $descripcionFirma;
+
         if ($repartoManualAplicado) {
             $firmaOrigenPartes[] = 'reparto_manual';
             $firmaOrigenPartes[] = $cobroId;

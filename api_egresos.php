@@ -54,8 +54,13 @@ function hora_valida_egreso($hora)
 
 function normalizar_turno_egreso($turno)
 {
-    $t = strtolower(trim((string)$turno));
-    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
+    $map = [
+        'maÃ±ana' => 'mañana',
+        'maã±ana' => 'mañana',
+    ];
+    $normalizado = strtr((string)$turno, $map);
+    $t = strtolower(trim($normalizado));
+    if ($t === 'manana' || $t === 'mañana') {
         return 'mañana';
     }
     if ($t === 'tarde' || $t === 'noche') {
