@@ -607,43 +607,6 @@ export default function DetalleCotizacionPage() {
       ? `${usuarioCotizoNombre} (${usuarioCotizoRol})`
       : usuarioCotizoNombre;
     const numeroComprobante = cotizacion?.numero_comprobante || `Q${String(cotizacion?.id || 0).padStart(6, "0")}`;
-    const logoHtml = clinicBrand.logo
-      ? `<div style="width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:8px;"><img src="${escapeHtml(clinicBrand.logo)}" alt="Logo clinica" style="display:block;margin:0 auto;max-height:64px;max-width:180px;object-fit:contain;" /></div>`
-      : "";
-    const direccionHtml = clinicBrand.direccion
-      ? `<p style="margin:2px 0;text-align:center;">${escapeHtml(clinicBrand.direccion)}</p>`
-      : "";
-    const telefonoHtml = clinicBrand.telefono
-      ? `<p style="margin:2px 0;text-align:center;">Tel: ${escapeHtml(clinicBrand.telefono)}</p>`
-      : "";
-    const celularHtml = clinicBrand.celular
-      ? `<p style="margin:2px 0;text-align:center;">Cel: ${escapeHtml(clinicBrand.celular)}</p>`
-      : "";
-    const rucHtml = clinicBrand.ruc
-      ? `<p style="margin:2px 0;text-align:center;">RUC: ${escapeHtml(clinicBrand.ruc)}</p>`
-      : "";
-
-    const detallesHtml = detallesConNeto.length
-      ? detallesConNeto
-          .map((d) => {
-            const rawDesc = resolverDescripcionDetalle(d);
-            const desc = escapeHtml(rawDesc);
-            const medicoNombre = String(d?.medico_nombre_completo || "").trim();
-            const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
-            const tagExterno = esExterno ? ' [Externo]' : '';
-            // Agrega el médico solo si su nombre no está ya dentro de la descripción
-            const medicoLabel = (medicoNombre && !rawDesc.toLowerCase().includes(medicoNombre.toLowerCase()))
-              ? ` - ${escapeHtml(medicoNombre)}`
-              : "";
-            const cant = Number(d?.cantidad || 1);
-            const descItem = Number(d?.descuento_item || 0);
-            const neto = Number(d?.subtotal_neto || d?.subtotal || 0).toFixed(2);
-            const descuentoTxt = descItem > 0 ? `<span style="color:#b45309;"> (Desc. S/ ${descItem.toFixed(2)})</span>` : "";
-            return `<div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0;"><span>${desc}${tagExterno}${medicoLabel} x${cant}${descuentoTxt}</span><strong>S/ ${neto}</strong></div>`;
-          })
-          .join("")
-      : "<div>Sin items activos</div>";
-
     const sloganHtml = clinicBrand.slogan
       ? `<p style="margin:2px 0;text-align:center;font-style:italic;font-size:11px;${clinicBrand.slogan_color ? 'color:' + escapeHtml(clinicBrand.slogan_color) + ';' : ''}">${escapeHtml(clinicBrand.slogan)}</p>`
       : "";
@@ -1000,7 +963,7 @@ export default function DetalleCotizacionPage() {
                         return;
                       }
                     }
-                  } catch (_) { /* fallback to single */ }
+                  } catch { /* fallback to single */ }
                   navigate(`/cobrar-cotizacion/${cotId}`);
                 }}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
@@ -1093,7 +1056,6 @@ export default function DetalleCotizacionPage() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap">
                       {(() => {
-                        const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
                         const descripcionDetalle = resolverDescripcionDetalle(d);
                         const texto = normalizarServicio(d?.servicio_tipo) === "consulta"
                           ? limpiarDescripcionConsulta(descripcionDetalle)

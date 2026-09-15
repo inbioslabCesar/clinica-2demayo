@@ -7,7 +7,6 @@ import LiquidacionLaboratorioReferenciaModal from "../components/laboratorio_ref
 export default function LiquidacionLaboratorioReferenciaPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalExamenes, setModalExamenes] = useState([]);
-  const [modalMovimiento, setModalMovimiento] = useState(null);
   const [movimientos, setMovimientos] = useState([]);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(3);
@@ -140,7 +139,6 @@ export default function LiquidacionLaboratorioReferenciaPage() {
                 examenes = m.observaciones.split(',').map(e => e.trim());
               }
               setModalExamenes(examenes);
-              setModalMovimiento(m);
               setModalOpen(true);
             }}
             onMarcarPagado={marcarPagado}

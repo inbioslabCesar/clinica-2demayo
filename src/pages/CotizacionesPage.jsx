@@ -65,20 +65,6 @@ function normalizarServicioTipo(value) {
   return base;
 }
 
-function formatServicioCorrelativoLabel(tipoRaw) {
-  const tipo = normalizarServicioTipo(tipoRaw);
-  if (tipo === "consulta") return "Consulta";
-  if (tipo === "ecografia") return "Ecografia";
-  if (tipo === "rayosx") return "Rayos X";
-  if (tipo === "tomografia") return "Tomografia";
-  if (tipo === "procedimiento") return "Procedimiento";
-  if (tipo === "operacion") return "Operacion";
-  if (tipo === "hospitalizacion") return "Hospitalizacion";
-  if (tipo === "imagenologia" || tipo === "imagen") return "Imagenologia";
-  if (!tipo) return "Servicio";
-  return tipo.charAt(0).toUpperCase() + tipo.slice(1);
-}
-
 function formatServicioCorrelativoDetalle(value) {
   const raw = String(value || "").replace(/\s+/g, " ").trim();
   if (!raw) return "";
@@ -174,23 +160,6 @@ async function mapInChunks(items, mapper, chunkSize = 500) {
   }
 
   return out;
-}
-
-async function runWithConcurrency(items, worker, concurrency = 2) {
-  const source = Array.isArray(items) ? items : [];
-  const maxConcurrency = Math.max(1, Number(concurrency) || 1);
-  if (source.length === 0) return;
-
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(maxConcurrency, source.length) }, async () => {
-    while (cursor < source.length) {
-      const current = source[cursor++];
-      // eslint-disable-next-line no-await-in-loop
-      await worker(current);
-    }
-  });
-
-  await Promise.all(runners);
 }
 
 function escapeHtml(value) {
@@ -700,7 +669,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoDia, correlativoLabel, correlativoFechaAtencion, correlativoDetalleTexto, correlativosServicios, relacionSolicitud }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const estadoRow = useMemo(() => {
     const estadoBase = String(row.estado || "").toLowerCase();
@@ -773,7 +742,6 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const grupoIncluyePagadas = Number(row?.grupo_incluye_pagadas || 0) === 1;
   const bloquearEdicionPorGrupoPagado = esGrupoEpisodio && grupoIncluyePagadas;
   const edicionBloqueada = cotizacionPagada || bloquearEdicionPorGrupoPagado;
-  const tieneLaboratorioReferencia = Number(row.tiene_laboratorio_referencia || 0) === 1;
   const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
   const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada && servicios.includes("laboratorio") && Number(row.paciente_id || 0) > 0;
   const puedeAbrirLaboratorio = puedeGestionarLaboratorioDesdeCotizacion || tieneResultadosLaboratorio;
@@ -1252,12 +1220,6 @@ export default function CotizacionesPage() {
   const abortRef = useRef(null);
   const anticipadoFetchIdRef = useRef(0);
   const anticipadoIdsKeyRef = useRef("");
-  const consultaCorrelativoCacheRef = useRef(new Map());
-  const consultaCorrelativoFechaCacheRef = useRef(new Map());
-  const imagenCorrelativoCacheRef = useRef(new Map());
-  const imagenCorrelativoFechaCacheRef = useRef(new Map());
-  const imagenCorrelativoDetalleCacheRef = useRef(new Map());
-
   const initialLimit = (() => {
     try {
       const stored = Number(window.localStorage.getItem(COTIZACIONES_LIMIT_STORAGE_KEY) || 10);
@@ -2552,25 +2514,10 @@ export default function CotizacionesPage() {
                   const incluyeImagen = tieneServicioImagen(serviciosRow);
                   const correlativoConsulta = correlativoByConsultaId[Number(row?.consulta_ref_id || 0)] || null;
                   const correlativoImagen = correlativoImagenByCotizacionId[Number(row?.id || 0)] || null;
-                  const correlativosImagenDetalle = correlativosImagenDetalleByCotizacionId[Number(row?.id || 0)] || [];
                   const correlativoFila = incluyeConsulta ? correlativoConsulta : (incluyeImagen ? correlativoImagen : null);
                   const correlativoFechaAtencion = incluyeConsulta
                     ? (correlativoFechaByConsultaId[Number(row?.consulta_ref_id || 0)] || "")
                     : (incluyeImagen ? (correlativoFechaImagenByCotizacionId[Number(row?.id || 0)] || "") : "");
-                  const correlativoLabel = incluyeConsulta
-                    ? "Correlativo consulta"
-                    : (incluyeImagen ? "Correlativo imagen" : "Correlativo día");
-                  const detalleCorrelativo = (() => {
-                    if (!incluyeImagen || !Array.isArray(correlativosImagenDetalle) || correlativosImagenDetalle.length <= 1) {
-                      return "";
-                    }
-                    const extras = correlativosImagenDetalle.slice(1, 4).map((item) => `N° ${Number(item?.correlativo || 0)}`).filter((txt) => txt !== 'N° 0');
-                    const restantes = Math.max(0, correlativosImagenDetalle.length - 1 - extras.length);
-                    if (extras.length === 0) {
-                      return `+${Math.max(1, correlativosImagenDetalle.length - 1)} correlativos adicionales`;
-                    }
-                    return `Otros: ${extras.join(', ')}${restantes > 0 ? ` +${restantes}` : ''}`;
-                  })();
                   const correlativosServiciosApi = Array.isArray(row?.correlativos_operativos_servicios)
                     ? row.correlativos_operativos_servicios
                     : [];
@@ -2609,10 +2556,7 @@ export default function CotizacionesPage() {
                     labelEstado={labelEstado}
                     anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
                     canAutorizarAnticipado={canAutorizarAnticipado}
-                    correlativoDia={correlativoFila}
-                    correlativoLabel={correlativoLabel}
                     correlativoFechaAtencion={correlativoFechaAtencion}
-                    correlativoDetalleTexto={detalleCorrelativo}
                     correlativosServicios={correlativosServicios}
                     relacionSolicitud={relacionSolicitudByCotizacion[Number(row?.id || 0)] || null}
                   />

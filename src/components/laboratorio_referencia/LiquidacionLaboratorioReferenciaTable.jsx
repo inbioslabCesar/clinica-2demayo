@@ -29,7 +29,7 @@ function labelMontoTipo(m) {
 }
 
 
-export default function LiquidacionLaboratorioReferenciaTable({ movimientos, paginated, onVerDetalles, onMarcarPagado }) {
+export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVerDetalles, onMarcarPagado }) {
   return (
     <div className="w-full">
       {/* Vista tipo card en móvil */}
@@ -37,7 +37,7 @@ export default function LiquidacionLaboratorioReferenciaTable({ movimientos, pag
         <div className="space-y-4">
           {paginated.length === 0 ? (
             <div className="text-center py-8 text-gray-500">No hay movimientos para mostrar.</div>
-          ) : paginated.map((m, idx) => (
+          ) : paginated.map((m) => (
             <div key={m.id} className="rounded-xl shadow-lg border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-blue-100 p-4 flex flex-col gap-2">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-bold text-blue-800 text-lg">{m.laboratorio}</span>
