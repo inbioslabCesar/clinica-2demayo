@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/apiClient";
 
@@ -142,7 +142,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     }
   };
 
-  const cargarResumenEconomico = async (signal) => {
+  const cargarResumenEconomico = useCallback(async (signal) => {
     if (!medicoId) return;
     setLoadingResumenEconomico(true);
     setResumenEconomicoError("");
@@ -168,9 +168,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     } finally {
       setLoadingResumenEconomico(false);
     }
-  };
+  }, [medicoId]);
 
-  const cargarCierreHonorariosHoy = async (signal) => {
+  const cargarCierreHonorariosHoy = useCallback(async (signal) => {
     if (!medicoId) return;
     setLoadingCierreHonorariosHoy(true);
     setCierreHonorariosHoyError("");
@@ -208,9 +208,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     } finally {
       setLoadingCierreHonorariosHoy(false);
     }
-  };
+  }, [medicoId]);
 
-  const cargarConsultas = async (signal) => {
+  const cargarConsultas = useCallback(async (signal) => {
     if (!medicoId) return;
     setLoading(true);
     setMsg("");
@@ -289,7 +289,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     } finally {
       setLoading(false);
     }
-  };
+  }, [busqueda, fechaDesde, fechaHasta, filtroEstado, filtroPago, filtroSemaforo, medicoId, page, rowsPerPage]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -297,7 +297,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     return () => {
       controller.abort();
     };
-  }, [medicoId, page, rowsPerPage, busqueda, fechaDesde, fechaHasta, filtroEstado, filtroPago, filtroSemaforo]);
+  }, [cargarConsultas]);
 
   useEffect(() => {
     if (mode !== "dashboard") {
@@ -312,7 +312,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     return () => {
       controller.abort();
     };
-  }, [medicoId, mode]);
+  }, [cargarCierreHonorariosHoy, cargarResumenEconomico, mode]);
 
   const actualizarEstado = async (id, estado) => {
     setMsg("");
@@ -398,40 +398,6 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   };
 
   // Funciones para colores y iconos de estado
-  const getEstadoColor = (estado) => {
-    switch (estado?.toLowerCase()) {
-      case 'pendiente':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'completada':
-      case 'completado':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'cancelada':
-      case 'cancelado':
-        return 'bg-red-100 text-red-800 border-red-200';
-      case 'en_proceso':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getEstadoIcon = (estado) => {
-    switch (estado?.toLowerCase()) {
-      case 'pendiente':
-        return '⏳ ';
-      case 'completada':
-      case 'completado':
-        return '✅ ';
-      case 'cancelada':
-      case 'cancelado':
-        return '❌ ';
-      case 'en_proceso':
-        return '🔄 ';
-      default:
-        return '📋 ';
-    }
-  };
-
   const getEstadoVisual = (consulta) => {
     const estado = String(consulta?.estado || '').trim().toLowerCase();
     const hcCompletada = estado === 'completada' || estado === 'completado';

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch, resolveAppUrl } from "../utils/apiClient";
 
 function toDateInputValue(date) {
@@ -180,7 +180,7 @@ export default function InventarioLaboratorioPage() {
     };
   }, [itemSeleccionadoTransfer, transferForm.modo_cantidad, transferForm.cantidad_presentacion, transferForm.cantidad, factorPresentacionTransfer]);
 
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -213,9 +213,9 @@ export default function InventarioLaboratorioPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const buildReporteQuery = () => {
+  const buildReporteQuery = useCallback(() => {
     const params = new URLSearchParams();
     params.set("periodo", reportFiltros.periodo || "diario");
     params.set("fecha_inicio", reportFiltros.fecha_inicio);
@@ -227,9 +227,9 @@ export default function InventarioLaboratorioPage() {
       params.set("examen_id", String(Number(reportFiltros.examen_id)));
     }
     return params;
-  };
+  }, [reportFiltros.examen_id, reportFiltros.fecha_fin, reportFiltros.fecha_inicio, reportFiltros.item_id, reportFiltros.periodo]);
 
-  const fetchReporteConsumo = async () => {
+  const fetchReporteConsumo = useCallback(async () => {
     setReportLoading(true);
     try {
       const params = buildReporteQuery();
@@ -254,7 +254,7 @@ export default function InventarioLaboratorioPage() {
     } finally {
       setReportLoading(false);
     }
-  };
+  }, [buildReporteQuery]);
 
   const exportarReporteConsumo = (formato) => {
     const params = buildReporteQuery();
@@ -262,7 +262,7 @@ export default function InventarioLaboratorioPage() {
     window.open(resolveAppUrl(`api_inventario_reportes.php?${params.toString()}`), "_blank", "noopener,noreferrer");
   };
 
-  const fetchKpiDashboard = async () => {
+  const fetchKpiDashboard = useCallback(async () => {
     setKpiLoading(true);
     try {
       const params = new URLSearchParams();
@@ -294,7 +294,7 @@ export default function InventarioLaboratorioPage() {
     } finally {
       setKpiLoading(false);
     }
-  };
+  }, [kpiConfig.umbral_desviacion_pct, kpiConfig.umbral_dias_stock, reportFiltros.fecha_fin, reportFiltros.fecha_inicio]);
 
   const exportarKpiDashboard = (formato) => {
     const params = new URLSearchParams();
@@ -310,7 +310,7 @@ export default function InventarioLaboratorioPage() {
     fetchAll();
     fetchReporteConsumo();
     fetchKpiDashboard();
-  }, []);
+  }, [fetchAll, fetchKpiDashboard, fetchReporteConsumo]);
 
   const resetMensajes = () => {
     setMensaje("");

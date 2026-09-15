@@ -330,7 +330,7 @@ function HistoriaClinicaPage() {
   const [hcAnterior, setHcAnterior] = useState(null);
   const [hcAnteriorError, setHcAnteriorError] = useState("");
   const [hcAnteriorLoading, setHcAnteriorLoading] = useState(false);
-  const [drawerHistorialAbierto, setDrawerHistorialAbierto] = useState(false);
+  const [, setDrawerHistorialAbierto] = useState(false);
   const [mostrarHcAnterior, setMostrarHcAnterior] = useState(false);
   const [tratamientoEstadoHcPrevia, setTratamientoEstadoHcPrevia] = useState({
     loading: false,
@@ -400,11 +400,6 @@ function HistoriaClinicaPage() {
       state: navigationState || undefined,
     });
   }, [location.pathname, location.search, navigate, navigationState]);
-
-  const cerrarDrawerHistorial = useCallback(() => {
-    setDrawerHistorialAbierto(false);
-    clearHistoryRestoreState();
-  }, [clearHistoryRestoreState]);
 
   const clearContinuidadChainCache = useCallback((consultaRef) => {
     const consulta = Number(consultaRef || 0);
@@ -1238,7 +1233,7 @@ function HistoriaClinicaPage() {
     return () => {
       cancelled = true;
     };
-  }, [consultaId, consultaActual?.fecha, consultaActual?.hora, consultaActual?.medico_id, consultaActual?.paciente_id, hc?.proxima_cita, pacienteId]);
+  }, [consultaId, consultaActual?.fecha, consultaActual?.hora, consultaActual?.medico_id, consultaActual?.paciente_id, hc?.proxima_cita, pacienteId, readOnly]);
 
   useEffect(() => {
     if (!pacienteId) return;
