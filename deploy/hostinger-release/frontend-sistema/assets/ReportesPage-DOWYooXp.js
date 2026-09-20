@@ -1,0 +1,1 @@
+import{j as a}from"./vendor-react-Cwes_Ej1.js";import"./vendor-dicom-CDWZXtQe.js";import"./vendor-pkg-scheduler-CoSDG3-6.js";function r(){return a.jsx("div",{className:"max-w-3xl mx-auto p-6",children:"// Página eliminada para nuevo diseño"})}export{r as default};

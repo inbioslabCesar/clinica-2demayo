@@ -157,6 +157,45 @@ function normalizar_clave_pdf(string $texto): string {
     return (string)$texto;
 }
 
+function valor_checkbox_pdf(string $value): string {
+    $token = trim(mb_strtolower($value, 'UTF-8'));
+    if ($token === '') {
+        return '☐';
+    }
+    if (in_array($token, ['1', 'true', 'si', 's', 'x', 'checked', 'marcado'], true)) {
+        return '☑';
+    }
+    return '☐';
+}
+
+function normalizar_ancho_pdf(string $width): string {
+    $token = trim(strtolower($width));
+    if (in_array($token, ['sixth', 'quarter', 'third', 'half', 'full'], true)) {
+        return $token;
+    }
+    return 'full';
+}
+
+function unidades_ancho_pdf(string $width): int {
+    switch (normalizar_ancho_pdf($width)) {
+        case 'sixth':
+            return 2;
+        case 'quarter':
+            return 3;
+        case 'third':
+            return 4;
+        case 'half':
+            return 6;
+        case 'full':
+        default:
+            return 12;
+    }
+}
+
+function porcentaje_ancho_pdf(string $width): float {
+    return (unidades_ancho_pdf($width) / 12) * 100;
+}
+
 function ruta_imagen_para_mpdf(string $archivoPath): string {
     $normalizada = str_replace('\\', '/', trim($archivoPath));
     if ($normalizada === '') {
@@ -397,6 +436,40 @@ $colegiaturaTexto = implode(' - ', $colegiaturaPartes);
 $pacienteDni = trim((string)($informe['dni'] ?? ''));
 $fechaNacimientoTexto = formatear_fecha_pdf_imagenologia($informe['fecha_nacimiento'] ?? '');
 $edadTexto = calcular_edad_pdf_imagenologia($informe);
+$plantillaJson = is_array($informe['plantilla_json'] ?? null) ? (array)$informe['plantilla_json'] : [];
+$pdfLayoutMode = 'normal';
+if (isset($plantillaJson['pdf_layout_mode'])) {
+    $pdfLayoutMode = strtolower(trim((string)$plantillaJson['pdf_layout_mode']));
+} elseif (isset($plantillaJson['estructura_json']) && is_array($plantillaJson['estructura_json'])) {
+    $pdfLayoutMode = strtolower(trim((string)($plantillaJson['estructura_json']['pdf_layout_mode'] ?? 'normal')));
+}
+
+// Compatibilidad con informes antiguos: si el snapshot no trae modo, intentar resolver desde la plantilla actual por ID.
+if ($pdfLayoutMode !== 'compact') {
+    $templateIdFromSnapshot = (int)($plantillaJson['id'] ?? 0);
+    if ($templateIdFromSnapshot > 0) {
+        $stmtTplMode = $mysqli->prepare('SELECT estructura_json FROM imagenologia_plantillas WHERE id = ? LIMIT 1');
+        if ($stmtTplMode) {
+            $stmtTplMode->bind_param('i', $templateIdFromSnapshot);
+            $stmtTplMode->execute();
+            $tplModeRow = $stmtTplMode->get_result()->fetch_assoc();
+            $stmtTplMode->close();
+
+            if ($tplModeRow && !empty($tplModeRow['estructura_json'])) {
+                $tplStruct = json_decode((string)$tplModeRow['estructura_json'], true);
+                if (is_array($tplStruct)) {
+                    $modeFromCurrentTemplate = strtolower(trim((string)($tplStruct['pdf_layout_mode'] ?? 'normal')));
+                    if ($modeFromCurrentTemplate === 'compact') {
+                        $pdfLayoutMode = 'compact';
+                    }
+                }
+            }
+        }
+    }
+}
+
+$isCompactLayout = ($pdfLayoutMode === 'compact');
+$bodyLayoutClass = $isCompactLayout ? 'compact-layout' : 'standard-layout';
 
 $html = '
 <!DOCTYPE html>
@@ -463,11 +536,78 @@ $html = '
         .field-row {
             margin-bottom: 8px;
         }
+        .field-grid-row {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            margin-bottom: 6px;
+        }
+        .field-grid-cell {
+            vertical-align: top;
+            padding-right: 8px;
+        }
         .field-name {
             font-weight: bold;
             color: #1f2937;
             display: block;
             margin-bottom: 2px;
+        }
+        .field-inline {
+            font-size: 11px;
+            line-height: 1.5;
+            margin-top: 2px;
+        }
+        .checkbox-line {
+            font-size: 11px;
+            line-height: 1.4;
+            margin-top: 2px;
+        }
+        .compact-layout .patient-info {
+            padding: 7px;
+            margin: 10px 0;
+            font-size: 10px;
+        }
+        .compact-layout .exam-header {
+            padding: 6px;
+            margin: 10px 0 7px 0;
+            font-size: 11px;
+        }
+        .compact-layout .section {
+            margin: 8px 0;
+        }
+        .compact-layout .section-title {
+            font-size: 12px;
+            padding-bottom: 3px;
+            margin-bottom: 6px;
+            margin-top: 8px;
+        }
+        .compact-layout .content {
+            font-size: 10px;
+            line-height: 1.25;
+            margin-bottom: 3px;
+        }
+        .compact-layout .field-row {
+            margin-bottom: 4px;
+        }
+        .compact-layout .field-grid-row {
+            margin-bottom: 3px;
+        }
+        .compact-layout .field-grid-cell {
+            padding-right: 6px;
+        }
+        .compact-layout .field-name {
+            margin-bottom: 1px;
+            font-size: 10px;
+        }
+        .compact-layout .field-inline {
+            font-size: 10px;
+            line-height: 1.2;
+            margin-top: 1px;
+        }
+        .compact-layout .checkbox-line {
+            font-size: 10px;
+            line-height: 1.2;
+            margin-top: 1px;
         }
         .images-container {
             margin-top: 20px;
@@ -531,24 +671,24 @@ $html = '
             overflow: hidden;
         }
         .signature-section {
-            margin-top: 18px;
+            margin-top: 30px;
             border-top: 1px solid #ccc;
-            padding-top: 8px;
+            padding-top: 15px;
             text-align: center;
-            font-size: 10px;
+            font-size: 11px;
         }
         .signature-line {
-            margin-top: 8px;
+            margin-top: 20px;
             border-top: 1px solid #333;
             width: 250px;
             margin-left: auto;
             margin-right: auto;
-            padding-top: 3px;
+            padding-top: 5px;
         }
         .signature-image {
-            max-width: 170px;
-            max-height: 56px;
-            margin: 0 auto -10px auto;
+            max-width: 180px;
+            max-height: 70px;
+            margin: 0 auto -14px auto;
             display: block;
             object-fit: contain;
             position: relative;
@@ -561,9 +701,27 @@ $html = '
             margin-top: 1px;
         }
         .signature-meta {
-            font-size: 8px;
+            font-size: 10px;
             color: #666;
             line-height: 1.2;
+            margin-top: 4px;
+        }
+        .compact-layout .signature-section {
+            margin-top: 18px;
+            padding-top: 8px;
+            font-size: 10px;
+        }
+        .compact-layout .signature-line {
+            margin-top: 8px;
+            padding-top: 3px;
+        }
+        .compact-layout .signature-image {
+            max-width: 170px;
+            max-height: 56px;
+            margin: 0 auto -10px auto;
+        }
+        .compact-layout .signature-meta {
+            font-size: 8px;
             margin-top: 1px;
         }
         .footer {
@@ -583,7 +741,7 @@ $html = '
         }
     </style>
 </head>
-<body>
+<body class="' . $bodyLayoutClass . '">
 
 <!-- ENCABEZADO -->
 <table style="width: 100%; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 3px solid #0066cc;">
@@ -671,11 +829,21 @@ if (!empty($plantillaSections)) {
 
             if (is_array($sectionContenido)) {
                 $labelMap = [];
+                $typeMap = [];
+                $widthMap = [];
+                $breakAfterMap = [];
                 foreach ((array)($section['campos'] ?? []) as $campo) {
                     $campoId = (string)($campo['id'] ?? '');
                     $campoLabel = (string)($campo['label'] ?? $campoId);
+                    $campoType = strtolower(trim((string)($campo['type'] ?? 'textarea')));
+                    $campoWidth = normalizar_ancho_pdf((string)($campo['width'] ?? 'full'));
+                    $campoBreakAfter = (bool)($campo['break_after'] ?? false);
                     if ($campoId !== '') {
-                        $labelMap[normalizar_clave_pdf($campoId)] = $campoLabel;
+                        $campoKey = normalizar_clave_pdf($campoId);
+                        $labelMap[$campoKey] = $campoLabel;
+                        $typeMap[$campoKey] = $campoType;
+                        $widthMap[$campoKey] = $campoWidth;
+                        $breakAfterMap[$campoKey] = $campoBreakAfter;
                     }
                     if ($campoLabel !== '') {
                         $labelMap[normalizar_clave_pdf($campoLabel)] = $campoLabel;
@@ -716,16 +884,8 @@ if (!empty($plantillaSections)) {
                 }
 
                 foreach ($sectionContenido as $fieldId => $fieldValue) {
-                    if ($fieldValue === null || $fieldValue === '') {
-                        continue;
-                    }
-
                     $fieldIdRaw = (string)$fieldId;
                     if (strpos($fieldIdRaw, '?') !== false) {
-                        continue;
-                    }
-                    $fieldValueRaw = trim((string)$fieldValue);
-                    if ($fieldValueRaw === '') {
                         continue;
                     }
 
@@ -755,15 +915,28 @@ if (!empty($plantillaSections)) {
                         $dedupeKey = md5($fieldIdRaw);
                     }
 
+                    $fieldType = strtolower(trim((string)($typeMap[$dedupeKey] ?? $typeMap[$resolvedKey] ?? '')));
+                    $rawStringValue = trim((string)$fieldValue);
+                    $fieldValueRaw = $fieldType === 'checkbox'
+                        ? valor_checkbox_pdf($rawStringValue)
+                        : $rawStringValue;
+
+                    if ($fieldType !== 'checkbox' && $fieldValueRaw === '') {
+                        continue;
+                    }
+
                     // Si el usuario dejó vacío el campo canónico, no mostrar valores heredados de aliases viejos.
-                    if (isset($emptyLockedKeys[$dedupeKey])) {
+                    if ($fieldType !== 'checkbox' && isset($emptyLockedKeys[$dedupeKey])) {
                         continue;
                     }
 
                     if (!isset($camposRender[$dedupeKey])) {
                         $camposRender[$dedupeKey] = [
                             'label' => $fieldLabel,
-                            'values' => []
+                            'values' => [],
+                            'type' => $fieldType !== '' ? $fieldType : 'text',
+                            'width' => $widthMap[$dedupeKey] ?? $widthMap[$resolvedKey] ?? 'full',
+                            'break_after' => (bool)($breakAfterMap[$dedupeKey] ?? $breakAfterMap[$resolvedKey] ?? false),
                         ];
                         $ordenCampos[] = $dedupeKey;
                     }
@@ -779,6 +952,7 @@ if (!empty($plantillaSections)) {
                     if ($campoTplId === '') {
                         continue;
                     }
+                    $campoTplType = strtolower(trim((string)($campoTpl['type'] ?? 'textarea')));
                     $campoTplLabel = (string)($campoTpl['label'] ?? $campoTplId);
                     $campoTplKey = normalizar_clave_pdf($campoTplId);
                     if ($campoTplKey === '') {
@@ -792,6 +966,19 @@ if (!empty($plantillaSections)) {
                         continue;
                     }
 
+                    if ($campoTplType === 'checkbox') {
+                        $rawCheckbox = trim((string)($sectionContenido[$campoTplId] ?? ''));
+                        $camposRender[$campoTplKey] = [
+                            'label' => $campoTplLabel,
+                            'values' => [valor_checkbox_pdf($rawCheckbox)],
+                            'type' => 'checkbox',
+                            'width' => normalizar_ancho_pdf((string)($campoTpl['width'] ?? 'full')),
+                            'break_after' => (bool)($campoTpl['break_after'] ?? false),
+                        ];
+                        $ordenCampos[] = $campoTplKey;
+                        continue;
+                    }
+
                     $usarFallback = array_key_exists('usar_valor_base_si_vacio', (array)$campoTpl)
                         ? (bool)$campoTpl['usar_valor_base_si_vacio']
                         : true;
@@ -802,18 +989,96 @@ if (!empty($plantillaSections)) {
 
                     $camposRender[$campoTplKey] = [
                         'label' => $campoTplLabel,
-                        'values' => [$valorBase]
+                        'values' => [$valorBase],
+                        'type' => strtolower(trim((string)($campoTpl['type'] ?? 'text'))),
+                        'width' => normalizar_ancho_pdf((string)($campoTpl['width'] ?? 'full')),
+                        'break_after' => (bool)($campoTpl['break_after'] ?? false),
                     ];
                     $ordenCampos[] = $campoTplKey;
                 }
 
-                foreach ($ordenCampos as $campoKey) {
-                    $fieldLabel = (string)$camposRender[$campoKey]['label'];
-                    $fieldValueText = implode("\n", (array)$camposRender[$campoKey]['values']);
-                    $html .= '<div class="field-row">';
-                    $html .= '<span class="field-name">' . htmlspecialchars($fieldLabel) . '</span>';
-                    $html .= '<div class="content">' . nl2br(htmlspecialchars($fieldValueText)) . '</div>';
-                    $html .= '</div>';
+                if ($isCompactLayout) {
+                    $rowItems = [];
+                    $rowUnits = 0;
+                    $flushRow = function () use (&$html, &$rowItems) {
+                        if (empty($rowItems)) {
+                            return;
+                        }
+                        $html .= '<table class="field-grid-row"><tr>';
+                        foreach ($rowItems as $item) {
+                            $cellWidth = number_format(porcentaje_ancho_pdf((string)$item['width']), 2, '.', '');
+                            $html .= '<td class="field-grid-cell" style="width:' . $cellWidth . '%;">';
+                            if (($item['type'] ?? '') === 'checkbox') {
+                                $html .= '<div class="checkbox-line">' . htmlspecialchars((string)$item['label']) . ' ' . htmlspecialchars((string)$item['text']) . '</div>';
+                            } elseif (in_array((string)($item['type'] ?? ''), ['text', 'number'], true)) {
+                                $html .= '<div class="field-inline"><strong>' . htmlspecialchars((string)$item['label']) . ':</strong> ' . nl2br(htmlspecialchars((string)$item['text'])) . '</div>';
+                            } else {
+                                $html .= '<span class="field-name">' . htmlspecialchars((string)$item['label']) . '</span>';
+                                $html .= '<div class="content">' . nl2br(htmlspecialchars((string)$item['text'])) . '</div>';
+                            }
+                            $html .= '</td>';
+                        }
+                        $html .= '</tr></table>';
+                        $rowItems = [];
+                    };
+
+                    foreach ($ordenCampos as $campoKey) {
+                        $meta = (array)($camposRender[$campoKey] ?? []);
+                        if (empty($meta)) {
+                            continue;
+                        }
+
+                        $fieldType = strtolower(trim((string)($meta['type'] ?? 'text')));
+                        $fieldLabel = (string)($meta['label'] ?? 'Campo');
+                        $fieldWidth = normalizar_ancho_pdf((string)($meta['width'] ?? 'full'));
+                        $fieldBreakAfter = (bool)($meta['break_after'] ?? false);
+                        $fieldValueText = implode("\n", (array)($meta['values'] ?? []));
+                        if ($fieldType !== 'checkbox' && trim($fieldValueText) === '') {
+                            continue;
+                        }
+
+                        $fieldUnits = unidades_ancho_pdf($fieldWidth);
+                        if ($rowUnits > 0 && ($rowUnits + $fieldUnits) > 12) {
+                            $flushRow();
+                            $rowUnits = 0;
+                        }
+
+                        $rowItems[] = [
+                            'label' => $fieldLabel,
+                            'text' => $fieldValueText,
+                            'type' => $fieldType,
+                            'width' => $fieldWidth,
+                        ];
+                        $rowUnits += $fieldUnits;
+
+                        if ($fieldBreakAfter || $rowUnits >= 12) {
+                            $flushRow();
+                            $rowUnits = 0;
+                        }
+                    }
+
+                    if (!empty($rowItems)) {
+                        $flushRow();
+                    }
+                } else {
+                    foreach ($ordenCampos as $campoKey) {
+                        $meta = (array)($camposRender[$campoKey] ?? []);
+                        if (empty($meta)) {
+                            continue;
+                        }
+
+                        $fieldType = strtolower(trim((string)($meta['type'] ?? 'text')));
+                        $fieldLabel = (string)($meta['label'] ?? 'Campo');
+                        $fieldValueText = implode("\n", (array)($meta['values'] ?? []));
+                        if ($fieldType !== 'checkbox' && trim($fieldValueText) === '') {
+                            continue;
+                        }
+
+                        $html .= '<div class="field-row">';
+                        $html .= '<span class="field-name">' . htmlspecialchars($fieldLabel) . '</span>';
+                        $html .= '<div class="content">' . nl2br(htmlspecialchars($fieldValueText)) . '</div>';
+                        $html .= '</div>';
+                    }
                 }
             } else {
                 $html .= '<div class="content">' . nl2br(htmlspecialchars((string)$contenido[$sectionId])) . '</div>';

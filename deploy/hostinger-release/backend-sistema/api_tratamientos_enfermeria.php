@@ -89,10 +89,12 @@ function te_resolver_select_contrato($conn) {
     return [$selectOrigen, $selectCostoCero];
 }
 
-function te_reconciliar_desde_hc($conn) {
+function te_reconciliar_desde_hc($conn, $consultaId = 0) {
     // Fallback de consistencia: si por algún motivo no se creó el registro
     // en el guardado de HC, se reconstruye aquí desde historia_clinica.
-    $sql = "INSERT INTO tratamientos_enfermeria
+    $consultaId = (int)$consultaId;
+
+    $sqlBase = "INSERT INTO tratamientos_enfermeria
                 (consulta_id, paciente_id, receta_snapshot, tratamiento_texto, estado, version_num, creado_en)
             SELECT
                 c.id AS consulta_id,
@@ -112,7 +114,19 @@ function te_reconciliar_desde_hc($conn) {
                     OR TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(h.datos, '$.tratamiento')), '')) <> ''
                   )";
 
-    $conn->query($sql);
+    if ($consultaId > 0) {
+        $sql = $sqlBase . ' AND c.id = ?';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return;
+        }
+        $stmt->bind_param('i', $consultaId);
+        $stmt->execute();
+        $stmt->close();
+        return;
+    }
+
+    $conn->query($sqlBase);
 }
 
 function te_stmt_bind_params($stmt, $types, $params) {
@@ -203,10 +217,6 @@ switch ($method) {
             exit;
         }
 
-        tph_ensure_multidia_tables($conn);
-        te_reconciliar_desde_hc($conn);
-        $hasMultidia = te_multidia_disponible($conn);
-
         $id          = isset($_GET['id'])          ? (int)$_GET['id']          : 0;
         $consultaId  = isset($_GET['consulta_id']) ? (int)$_GET['consulta_id'] : 0;
         $pacienteId  = isset($_GET['paciente_id']) ? (int)$_GET['paciente_id'] : 0;
@@ -217,6 +227,16 @@ switch ($method) {
         $perPage     = isset($_GET['per_page'])    ? (int)$_GET['per_page'] : 20;
         $perPage     = max(5, min(100, $perPage));
         $offset      = ($page - 1) * $perPage;
+
+        $skipReconcile = isset($_GET['skip_reconcile'])
+            ? in_array(strtolower(trim((string)$_GET['skip_reconcile'])), ['1', 'true', 'yes', 'si', 'sí', 'on'], true)
+            : false;
+
+        tph_ensure_multidia_tables($conn);
+        if (!$skipReconcile) {
+            te_reconciliar_desde_hc($conn, $consultaId > 0 ? $consultaId : 0);
+        }
+        $hasMultidia = te_multidia_disponible($conn);
 
         // Construir filtro de estado
         $estadosValidos = ['pendiente', 'en_ejecucion', 'completado', 'suspendido'];

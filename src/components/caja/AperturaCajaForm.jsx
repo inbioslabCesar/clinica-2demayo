@@ -15,6 +15,8 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
   const [turno, setTurno] = useState("");
   const [loading, setLoading] = useState(false);
   const [traspasoPendiente, setTraspasoPendiente] = useState(null);
+  const rolUsuario = String(usuario?.rol || "").toLowerCase().trim();
+  const puedeReabrirDirecto = rolUsuario === "administrador" || rolUsuario === "admin";
 
   useEffect(() => {
     authFetch("api_caja_traspasos.php", { cache: "no-store" })
@@ -57,6 +59,45 @@ export default function AperturaCajaForm({ usuario, onApertura }) {
         Swal.fire("Caja abierta", "La caja se abrió correctamente.", "success");
         if (onApertura) onApertura();
       } else {
+        if (data?.requiere_reapertura) {
+          const cajaId = Number(data?.caja_id || 0);
+          const result = await Swal.fire({
+            icon: "warning",
+            title: "Caja del día ya registrada",
+            text: data.error || "Esta caja fue cerrada y debe reabrirse para continuar.",
+            showCancelButton: true,
+            showDenyButton: puedeReabrirDirecto && cajaId > 0,
+            confirmButtonText: "Ir a Reabrir Cajas",
+            denyButtonText: "Reabrir ahora",
+            cancelButtonText: "Cerrar"
+          });
+
+          if (result.isDenied && puedeReabrirDirecto && cajaId > 0) {
+            const reaperturaRes = await authFetch("api_reabrir_caja.php", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                caja_id: cajaId,
+                motivo: "Reapertura desde modal de apertura"
+              })
+            });
+            const reaperturaData = await reaperturaRes.json();
+
+            if (reaperturaData?.success) {
+              window.dispatchEvent(new CustomEvent("caja-apertura-realizada"));
+              await Swal.fire("Caja reabierta", "La caja del día se reabrió correctamente.", "success");
+              if (onApertura) onApertura();
+            } else {
+              Swal.fire("Error", reaperturaData?.error || "No se pudo reabrir la caja.", "error");
+            }
+            return;
+          }
+
+          if (result.isConfirmed) {
+            window.location.href = "/sistema/reabrir-caja";
+          }
+          return;
+        }
         Swal.fire("Error", data.error || "No se pudo abrir la caja", "error");
       }
     } catch (err) {

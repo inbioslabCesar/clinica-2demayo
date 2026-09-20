@@ -114,6 +114,39 @@ try {
         exit;
     }
 
+    // Evitar depender solo del índice único para reportar estados ambiguos en UI.
+    $stmtCajaDia = $pdo->prepare(
+        "SELECT id, estado, fecha, turno, hora_apertura, hora_cierre
+         FROM cajas
+         WHERE DATE(fecha) = ? AND usuario_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1"
+    );
+    $stmtCajaDia->execute([$fecha_hoy, $usuario_id]);
+    $cajaDia = $stmtCajaDia->fetch(PDO::FETCH_ASSOC);
+    if ($cajaDia) {
+        $estadoCajaDia = strtolower(trim((string)($cajaDia['estado'] ?? '')));
+        if ($estadoCajaDia === 'abierta') {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Ya tienes una caja abierta para hoy. Cierra la caja actual antes de abrir otra.',
+                'caja_id' => (int)$cajaDia['id'],
+                'estado_actual' => 'abierta',
+                'requiere_reapertura' => false,
+            ]);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => false,
+            'error' => 'Ya registraste una caja en la fecha actual y se encuentra cerrada. Para continuar, usa Reabrir Cajas sobre ese registro.',
+            'caja_id' => (int)$cajaDia['id'],
+            'estado_actual' => $estadoCajaDia !== '' ? $estadoCajaDia : 'cerrada',
+            'requiere_reapertura' => true,
+        ]);
+        exit;
+    }
+
     // Crear nueva caja (sin restricción por fecha ni hora)
     $stmt = $pdo->prepare("
         INSERT INTO cajas (
@@ -169,9 +202,34 @@ try {
     
     // Manejo específico de error de restricción única
     if (strpos($e->getMessage(), 'Duplicate entry') !== false && strpos($e->getMessage(), 'unique_fecha_usuario') !== false) {
+        $stmtCajaDia = $pdo->prepare(
+            "SELECT id, estado
+             FROM cajas
+             WHERE DATE(fecha) = ? AND usuario_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1"
+        );
+        $stmtCajaDia->execute([$fecha_hoy, $usuario_id]);
+        $cajaDia = $stmtCajaDia->fetch(PDO::FETCH_ASSOC);
+        $estadoCajaDia = strtolower(trim((string)($cajaDia['estado'] ?? '')));
+
+        if ($estadoCajaDia === 'abierta') {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Ya tienes una caja abierta para hoy. Cierra la caja actual antes de abrir otra.',
+                'caja_id' => (int)($cajaDia['id'] ?? 0),
+                'estado_actual' => 'abierta',
+                'requiere_reapertura' => false,
+            ]);
+            exit;
+        }
+
         echo json_encode([
             'success' => false,
-            'error' => 'Ya existe una caja para este usuario en la fecha actual. Para abrir una nueva caja, primero debe cerrar o reabrir la caja existente.'
+            'error' => 'Ya registraste una caja en la fecha actual y se encuentra cerrada. Para continuar, usa Reabrir Cajas sobre ese registro.',
+            'caja_id' => (int)($cajaDia['id'] ?? 0),
+            'estado_actual' => $estadoCajaDia !== '' ? $estadoCajaDia : 'cerrada',
+            'requiere_reapertura' => true,
         ]);
     } else {
         echo json_encode([

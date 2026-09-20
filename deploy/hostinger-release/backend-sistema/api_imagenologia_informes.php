@@ -29,6 +29,11 @@ if (!$usuario || !in_array($rol, ['medico', 'administrador'])) {
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+    // Evita bloqueo en cascada cuando el modal dispara varias lecturas en paralelo.
+    session_write_close();
+}
+
 function normalizar_clave_informe(string $texto): string {
     $texto = trim(mb_strtolower($texto, 'UTF-8'));
     $map = [

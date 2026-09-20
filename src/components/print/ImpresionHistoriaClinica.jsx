@@ -45,6 +45,42 @@ const ImpresionHistoriaClinica = ({
     });
   };
 
+  const esDescripcionCatalogoCie10 = (valor) => {
+    const texto = String(valor || '').trim();
+    return /^OMS ICD-10/i.test(texto);
+  };
+
+  const obtenerCodigoDiagnostico = (diagnostico) => {
+    return String(
+      diagnostico?.codigo
+      || diagnostico?.cie10
+      || diagnostico?.cie10_codigo
+      || ''
+    ).trim();
+  };
+
+  const obtenerNombreDiagnostico = (diagnostico) => {
+    const nombre = String(
+      diagnostico?.nombre
+      || diagnostico?.diagnostico
+      || diagnostico?.cie10_nombre
+      || ''
+    ).trim();
+    if (nombre) return nombre;
+
+    const descripcion = String(
+      diagnostico?.descripcion
+      || diagnostico?.cie10_descripcion
+      || ''
+    ).trim();
+
+    if (!descripcion || esDescripcionCatalogoCie10(descripcion)) {
+      return 'Sin diagnóstico';
+    }
+
+    return descripcion;
+  };
+
   const nombrePaciente = paciente?.nombre || paciente?.nombres || '';
   const apellidoPaciente = paciente?.apellido || paciente?.apellidos || '';
   const edadPaciente = resolverEdadDisplayClinica(paciente);
@@ -555,8 +591,8 @@ const ImpresionHistoriaClinica = ({
             {diagnosticos.map((diagnostico, index) => (
               <div key={index} className="text-gray-900">
                 <span className="font-semibold">{index + 1}.</span>{' '}
-                <span className="font-mono">{diagnostico.codigo || 'S/C'}</span>{' '}
-                <span>- {diagnostico.descripcion || diagnostico.nombre || 'Sin descripción'}</span>
+                <span className="font-mono">{obtenerCodigoDiagnostico(diagnostico) || 'S/C'}</span>{' '}
+                <span>- {obtenerNombreDiagnostico(diagnostico)}</span>
                 <span className="text-gray-600"> ({diagnostico.tipo || 'Principal'})</span>
                 {diagnostico.observaciones && String(diagnostico.observaciones).trim() !== '' && (
                   <span className="text-gray-700"> · Obs: {diagnostico.observaciones}</span>

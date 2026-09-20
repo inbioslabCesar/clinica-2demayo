@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 function auth_status_normalizar_permisos($raw) {
@@ -126,12 +129,27 @@ try {
             'error' => 'Usuario no autenticado'
         ]);
     }
-} catch (Exception $e) {
-    error_log("Error en api_auth_status.php: " . $e->getMessage());
-    echo json_encode([
+} catch (Throwable $e) {
+    if (function_exists('api_log_server_error')) {
+        api_log_server_error('api-auth-status', $e->getMessage(), $e->getFile(), (int)$e->getLine());
+    } else {
+        error_log("Error en api_auth_status.php: " . $e->getMessage());
+    }
+
+    $payload = [
         'success' => false,
         'authenticated' => false,
         'error' => 'Error interno del servidor'
+    ];
+    if (function_exists('api_request_id')) {
+        $payload['request_id'] = api_request_id();
+    }
+
+    echo json_encode([
+        'success' => $payload['success'],
+        'authenticated' => $payload['authenticated'],
+        'error' => $payload['error'],
+        'request_id' => $payload['request_id'] ?? null,
     ]);
 }
 ?>

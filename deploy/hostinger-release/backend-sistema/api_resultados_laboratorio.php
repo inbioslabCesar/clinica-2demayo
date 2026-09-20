@@ -140,6 +140,54 @@ if (!function_exists('rl_str_ends_with')) {
     }
 }
 
+if (!function_exists('normalize_resultado_key_token')) {
+    function normalize_resultado_key_token($value)
+    {
+        $raw = trim((string)$value);
+        if ($raw === '') return '';
+        $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $raw);
+        if ($ascii !== false) {
+            $raw = $ascii;
+        }
+        $raw = strtolower($raw);
+        $raw = preg_replace('/[-\s]+/', '_', $raw);
+        $raw = preg_replace('/[^a-z0-9_]/', '', $raw);
+        $raw = preg_replace('/_+/', '_', $raw);
+        return trim((string)$raw, '_');
+    }
+}
+
+if (!function_exists('rl_is_result_metadata_key')) {
+    function rl_is_result_metadata_key($key)
+    {
+        $key = (string)$key;
+        if ($key === '') return true;
+
+        if (
+            rl_str_ends_with($key, '__alarma_activa')
+            || rl_str_ends_with($key, '__alarma_dias')
+            || rl_str_ends_with($key, '__imprimir_examen')
+            || rl_str_ends_with($key, '__seccion_categoria')
+            || rl_str_ends_with($key, '__seccion_titulo')
+            || rl_str_ends_with($key, '__seccion_alineacion')
+            || rl_str_ends_with($key, '__seccion_color_texto')
+        ) {
+            return true;
+        }
+
+        if (
+            strpos($key, '__param_imprimir__') !== false
+            || strpos($key, '__param_validado__') !== false
+            || strpos($key, '__param_validado_at__') !== false
+            || strpos($key, '__param_validado_por__') !== false
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+}
+
 if (!function_exists('resultados_has_meaningful_values')) {
     function resultados_has_meaningful_values($resultados)
     {
@@ -149,16 +197,7 @@ if (!function_exists('resultados_has_meaningful_values')) {
 
         foreach ($resultados as $k => $v) {
             $key = (string)$k;
-            if (
-                $key === ''
-                || rl_str_ends_with($key, '__alarma_activa')
-                || rl_str_ends_with($key, '__alarma_dias')
-                || rl_str_ends_with($key, '__imprimir_examen')
-                || rl_str_ends_with($key, '__seccion_categoria')
-                || rl_str_ends_with($key, '__seccion_titulo')
-                || rl_str_ends_with($key, '__seccion_alineacion')
-                || rl_str_ends_with($key, '__seccion_color_texto')
-            ) {
+            if (rl_is_result_metadata_key($key)) {
                 continue;
             }
             if (is_result_value_meaningful($v)) {
@@ -200,15 +239,7 @@ if (!function_exists('compact_resultados_aliases')) {
                 continue;
             }
 
-            if (
-                rl_str_ends_with($keyText, '__alarma_activa')
-                || rl_str_ends_with($keyText, '__alarma_dias')
-                || rl_str_ends_with($keyText, '__imprimir_examen')
-                || rl_str_ends_with($keyText, '__seccion_categoria')
-                || rl_str_ends_with($keyText, '__seccion_titulo')
-                || rl_str_ends_with($keyText, '__seccion_alineacion')
-                || rl_str_ends_with($keyText, '__seccion_color_texto')
-            ) {
+            if (rl_is_result_metadata_key($keyText)) {
                 continue;
             }
 
@@ -359,7 +390,7 @@ if (!function_exists('calculate_order_progress')) {
                     if (!$complete) {
                         $prefix = $examId . '__';
                         foreach ($resultados as $k => $v) {
-                            if (strpos((string)$k, $prefix) === 0 && is_result_value_meaningful($v)) {
+                            if (strpos((string)$k, $prefix) === 0 && !rl_is_result_metadata_key($k) && is_result_value_meaningful($v)) {
                                 $complete = true;
                                 break;
                             }
@@ -374,7 +405,7 @@ if (!function_exists('calculate_order_progress')) {
                 if (!$complete) {
                     $prefix = $examId . '__';
                     foreach ($resultados as $k => $v) {
-                        if (strpos((string)$k, $prefix) === 0 && is_result_value_meaningful($v)) {
+                        if (strpos((string)$k, $prefix) === 0 && !rl_is_result_metadata_key($k) && is_result_value_meaningful($v)) {
                             $complete = true;
                             break;
                         }
@@ -520,8 +551,93 @@ if (!function_exists('is_laboratorio_signer_role')) {
     function is_laboratorio_signer_role($rol)
     {
         $role = strtolower(trim((string)$rol));
-        // Solo profesionales del área de laboratorio pueden firmar resultados.
-        return in_array($role, ['laboratorista', 'quimico', 'químico'], true);
+        // Validacion/firma: solo tecnologo/laboratorista del modulo de laboratorio.
+        return in_array($role, ['laboratorista', 'tecnologo', 'tecnólogo'], true);
+    }
+}
+
+if (!function_exists('rl_role_slug')) {
+    function rl_role_slug($role)
+    {
+        $role = strtolower(trim((string)$role));
+        $role = strtr($role, [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n',
+        ]);
+        $role = preg_replace('/[^a-z0-9]+/', '_', $role);
+        return trim((string)$role, '_');
+    }
+}
+
+if (!function_exists('rl_normalize_session_permissions')) {
+    function rl_normalize_session_permissions($raw)
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $raw = $decoded;
+            } else {
+                $raw = explode(',', $raw);
+            }
+        }
+
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $item) {
+            $perm = trim((string)$item);
+            if ($perm !== '') {
+                $out[$perm] = true;
+            }
+        }
+
+        return array_keys($out);
+    }
+}
+
+if (!function_exists('rl_can_save_resultados')) {
+    function rl_can_save_resultados($sessionUsuario)
+    {
+        $rolSlug = rl_role_slug($sessionUsuario['rol'] ?? '');
+        $allowedRoles = [
+            'laboratorista',
+            'tecnologo',
+            'administrador',
+            'admin',
+            'quimico',
+            'quimica',
+            'laboratorio',
+        ];
+
+        if (in_array($rolSlug, $allowedRoles, true)) {
+            return true;
+        }
+
+        if ($rolSlug !== 'recepcionista') {
+            return false;
+        }
+
+        $permisos = rl_normalize_session_permissions($sessionUsuario['permisos'] ?? []);
+        return in_array('operar_resultados_laboratorio', $permisos, true);
+    }
+}
+
+if (!function_exists('rl_can_validate_resultados')) {
+    function rl_can_validate_resultados($sessionUsuario)
+    {
+        $rolSlug = rl_role_slug($sessionUsuario['rol'] ?? '');
+        $allowedRoles = [
+            'laboratorista',
+            'tecnologo',
+            'administrador',
+            'admin',
+            'quimico',
+            'quimica',
+            'laboratorio',
+        ];
+
+        return in_array($rolSlug, $allowedRoles, true);
     }
 }
 
@@ -567,7 +683,7 @@ if (!function_exists('resolve_laboratorio_signer_user_id')) {
         $stmtSigner = $conn->prepare(
             "SELECT id
              FROM usuarios
-             WHERE rol IN ('laboratorista', 'quimico', 'químico')
+                 WHERE rol IN ('laboratorista', 'tecnologo', 'tecnólogo')
              ORDER BY
                 CASE WHEN firma_reportes IS NOT NULL AND TRIM(firma_reportes) <> '' THEN 0 ELSE 1 END,
                 id ASC
@@ -789,6 +905,186 @@ if (!function_exists('rl_medico_tiene_acceso_consulta')) {
     }
 }
 
+if (!function_exists('rl_bool_flag')) {
+    function rl_bool_flag($value, bool $default = false): bool
+    {
+        if ($value === null || $value === '') return $default;
+        if (is_bool($value)) return $value;
+        if (is_numeric($value)) return intval($value) === 1;
+        $v = strtolower(trim((string)$value));
+        return in_array($v, ['1', 'true', 'si', 'sí', 'yes', 'on'], true);
+    }
+}
+
+if (!function_exists('rl_is_validable_param_tipo')) {
+    function rl_is_validable_param_tipo($tipo): bool
+    {
+        $t = strtolower(trim((string)$tipo));
+        return in_array($t, ['', 'parámetro', 'parametro', 'texto largo', 'campo'], true);
+    }
+}
+
+if (!function_exists('rl_find_param_value_key_by_token')) {
+    function rl_find_param_value_key_by_token(array $resultados, int $examId, string $token): string
+    {
+        $token = normalize_resultado_key_token($token);
+        if ($examId <= 0 || $token === '') return '';
+
+        $prefix = $examId . '__';
+        $firstMatch = '';
+        foreach ($resultados as $k => $v) {
+            $key = (string)$k;
+            if (strpos($key, $prefix) !== 0) continue;
+            if (rl_is_result_metadata_key($key)) continue;
+
+            $suffix = substr($key, strlen($prefix));
+            $suffixToken = normalize_resultado_key_token($suffix);
+            if ($suffixToken !== $token) continue;
+
+            if ($firstMatch === '') {
+                $firstMatch = $key;
+            }
+            if (is_result_value_meaningful($v)) {
+                return $key;
+            }
+        }
+
+        return $firstMatch;
+    }
+}
+
+if (!function_exists('rl_order_param_tokens_for_exam')) {
+    function rl_order_param_tokens_for_exam($rawExamenes, int $examId = 0): array
+    {
+        if (is_string($rawExamenes)) {
+            $decoded = json_decode($rawExamenes, true);
+            $rawExamenes = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($rawExamenes)) {
+            return [];
+        }
+
+        $tokensByExam = [];
+        foreach ($rawExamenes as $item) {
+            if (!is_array($item)) continue;
+            $id = intval($item['id'] ?? 0);
+            if ($id <= 0) continue;
+            if ($examId > 0 && $id !== $examId) continue;
+
+            $values = [];
+            if (isset($item['snapshot_json']) && is_array($item['snapshot_json']) && isset($item['snapshot_json']['valores_referenciales']) && is_array($item['snapshot_json']['valores_referenciales'])) {
+                $values = $item['snapshot_json']['valores_referenciales'];
+            } elseif (isset($item['valores_referenciales']) && is_array($item['valores_referenciales'])) {
+                $values = $item['valores_referenciales'];
+            }
+
+            if (!isset($tokensByExam[$id])) {
+                $tokensByExam[$id] = [];
+            }
+
+            foreach ($values as $param) {
+                if (!is_array($param)) continue;
+                if (!rl_is_validable_param_tipo($param['tipo'] ?? 'Parámetro')) continue;
+
+                $codigo = trim((string)($param['codigo_interno'] ?? ''));
+                $nombre = trim((string)($param['nombre'] ?? ''));
+                $base = $codigo !== '' ? $codigo : $nombre;
+                $token = normalize_resultado_key_token($base);
+                if ($token === '') continue;
+                $tokensByExam[$id][$token] = true;
+            }
+        }
+
+        $out = [];
+        foreach ($tokensByExam as $id => $map) {
+            $out[$id] = array_keys($map);
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('rl_find_param_by_token_in_order')) {
+    function rl_find_param_by_token_in_order($rawExamenes, int $examId, string $token): array
+    {
+        $token = normalize_resultado_key_token($token);
+        if ($examId <= 0 || $token === '') {
+            return [];
+        }
+
+        if (is_string($rawExamenes)) {
+            $decoded = json_decode($rawExamenes, true);
+            $rawExamenes = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($rawExamenes)) {
+            return [];
+        }
+
+        foreach ($rawExamenes as $item) {
+            if (!is_array($item)) continue;
+            $id = intval($item['id'] ?? 0);
+            if ($id !== $examId) continue;
+
+            $values = [];
+            if (isset($item['snapshot_json']) && is_array($item['snapshot_json']) && isset($item['snapshot_json']['valores_referenciales']) && is_array($item['snapshot_json']['valores_referenciales'])) {
+                $values = $item['snapshot_json']['valores_referenciales'];
+            } elseif (isset($item['valores_referenciales']) && is_array($item['valores_referenciales'])) {
+                $values = $item['valores_referenciales'];
+            }
+
+            foreach ($values as $param) {
+                if (!is_array($param)) continue;
+                if (!rl_is_validable_param_tipo($param['tipo'] ?? 'Parámetro')) continue;
+                $base = trim((string)($param['codigo_interno'] ?? ''));
+                if ($base === '') {
+                    $base = trim((string)($param['nombre'] ?? ''));
+                }
+                if (normalize_resultado_key_token($base) === $token) {
+                    return $param;
+                }
+            }
+        }
+
+        return [];
+    }
+}
+
+if (!function_exists('rl_param_default_value')) {
+    function rl_param_default_value(array $param): string
+    {
+        $texto = trim((string)($param['texto_por_defecto'] ?? ''));
+        if ($texto !== '') {
+            return $texto;
+        }
+
+        $opciones = $param['opciones'] ?? null;
+        if (!is_array($opciones)) {
+            return '';
+        }
+
+        $fallback = '';
+        foreach ($opciones as $op) {
+            if (is_array($op)) {
+                $candidate = trim((string)($op['valor'] ?? $op['label'] ?? $op['texto'] ?? $op['nombre'] ?? ''));
+                if ($candidate === '') continue;
+                $isDefault = !empty($op['por_defecto']) || !empty($op['default']) || !empty($op['defecto']);
+                if ($isDefault) {
+                    return $candidate;
+                }
+                if ($fallback === '') {
+                    $fallback = $candidate;
+                }
+            } else {
+                $candidate = trim((string)$op);
+                if ($candidate !== '' && $fallback === '') {
+                    $fallback = $candidate;
+                }
+            }
+        }
+
+        return $fallback;
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $sessionMedico = $_SESSION['medico'] ?? null;
@@ -849,9 +1145,41 @@ switch ($method) {
 
             $safeName = preg_replace('/[^a-zA-Z0-9._\- ]/', '_', (string)($archivo['nombre_original'] ?? 'archivo'));
             $mimeServe = !empty($archivo['mime_type']) ? (string)$archivo['mime_type'] : 'application/octet-stream';
+            $mimeServeNorm = strtolower(trim($mimeServe));
+            $ext = strtolower((string)pathinfo((string)($archivo['archivo_path'] ?? ''), PATHINFO_EXTENSION));
+
+            // Robust MIME detection for inline preview (PDF/image), even when DB stored octet-stream.
+            if ($mimeServeNorm === '' || $mimeServeNorm === 'application/octet-stream') {
+                if (function_exists('finfo_open')) {
+                    $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+                    if ($finfo) {
+                        $detected = @finfo_file($finfo, (string)$archivo['archivo_path']);
+                        @finfo_close($finfo);
+                        if (is_string($detected) && trim($detected) !== '') {
+                            $mimeServe = trim($detected);
+                            $mimeServeNorm = strtolower($mimeServe);
+                        }
+                    }
+                }
+            }
+
+            if ($mimeServeNorm === '' || $mimeServeNorm === 'application/octet-stream') {
+                if ($ext === 'pdf') {
+                    $mimeServe = 'application/pdf';
+                } elseif (in_array($ext, ['jpg', 'jpeg'], true)) {
+                    $mimeServe = 'image/jpeg';
+                } elseif ($ext === 'png') {
+                    $mimeServe = 'image/png';
+                } elseif ($ext === 'gif') {
+                    $mimeServe = 'image/gif';
+                } elseif ($ext === 'webp') {
+                    $mimeServe = 'image/webp';
+                }
+            }
 
             header('Content-Type: ' . $mimeServe);
             header('Content-Disposition: inline; filename="' . $safeName . '"');
+            header('X-Frame-Options: SAMEORIGIN');
             header('Content-Length: ' . filesize($archivo['archivo_path']));
             header('Cache-Control: private, max-age=3600');
             readfile($archivo['archivo_path']);
@@ -860,6 +1188,8 @@ switch ($method) {
 
         // Obtener resultados de laboratorio por consulta_id
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
+        $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
+        $isHcFast = ($vista === 'hc_fast');
         if (!$consulta_id) {
             echo json_encode(['success' => false, 'error' => 'Falta consulta_id']);
             exit;
@@ -916,6 +1246,34 @@ switch ($method) {
                 $resultados[] = $row;
             }
             $stmt->close();
+        }
+
+        if ($isHcFast) {
+            $totalDocumentosExternos = 0;
+            $stmtDocsCount = $conn->prepare(
+                'SELECT COUNT(dea.id) AS total
+                 FROM documentos_externos_paciente dep
+                 INNER JOIN documentos_externos_archivos dea ON dea.documento_id = dep.id
+                 WHERE LOWER(TRIM(dep.tipo)) = "laboratorio"
+                   AND dep.orden_id IN (SELECT id FROM ordenes_laboratorio WHERE consulta_id = ?)'
+            );
+            if ($stmtDocsCount) {
+                $stmtDocsCount->bind_param('i', $consulta_id);
+                $stmtDocsCount->execute();
+                $rowDocsCount = $stmtDocsCount->get_result()->fetch_assoc();
+                $stmtDocsCount->close();
+                $totalDocumentosExternos = (int)($rowDocsCount['total'] ?? 0);
+            }
+
+            echo json_encode([
+                'success' => true,
+                'resultados' => $resultados,
+                'documentos_externos' => [],
+                'examenes_referenciados_pendientes' => [],
+                'total_documentos_externos' => $totalDocumentosExternos,
+                'has_documentos_externos' => $totalDocumentosExternos > 0,
+            ]);
+            break;
         }
 
         $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
@@ -1020,8 +1378,271 @@ switch ($method) {
     case 'POST':
         // Guardar resultados de laboratorio
         $data = json_decode(file_get_contents('php://input'), true);
+        $action = strtolower(trim((string)($data['action'] ?? '')));
+        $isValidationAction = in_array($action, ['validar', 'validar_resultado', 'validar_resultados', 'validar_parametros'], true);
+        if ($isValidationAction) {
+            if (!rl_can_validate_resultados($sessionUsuario ?? [])) {
+                http_response_code(403);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Solo usuarios autorizados de laboratorio o administrador pueden validar resultados.'
+                ]);
+                exit;
+            }
+        } else {
+            if (!rl_can_save_resultados($sessionUsuario ?? [])) {
+                http_response_code(403);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'No autorizado para guardar resultados de laboratorio.'
+                ]);
+                exit;
+            }
+        }
         $orden_id = isset($data['orden_id']) && is_numeric($data['orden_id']) ? intval($data['orden_id']) : null;
         $consulta_id = isset($data['consulta_id']) && is_numeric($data['consulta_id']) ? intval($data['consulta_id']) : null;
+
+        if ($isValidationAction) {
+            $sessionUserId = intval($sessionUsuario['id'] ?? 0);
+            if ($sessionUserId <= 0) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado para validar resultados']);
+                exit;
+            }
+
+            $orden = null;
+            if ($orden_id) {
+                $stmtOrden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
+                $stmtOrden->bind_param('i', $orden_id);
+                $stmtOrden->execute();
+                $orden = $stmtOrden->get_result()->fetch_assoc();
+                $stmtOrden->close();
+            }
+
+            if (!$orden && $consulta_id) {
+                $stmtOrden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
+                $stmtOrden->bind_param('i', $consulta_id);
+                $stmtOrden->execute();
+                $orden = $stmtOrden->get_result()->fetch_assoc();
+                $stmtOrden->close();
+            }
+
+            if (!$orden) {
+                echo json_encode(['success' => false, 'error' => 'Orden de laboratorio no encontrada']);
+                exit;
+            }
+
+            if (strtolower(trim((string)($orden['estado'] ?? ''))) === 'cancelada') {
+                echo json_encode(['success' => false, 'error' => 'La orden de laboratorio esta cancelada']);
+                exit;
+            }
+
+            $stmtRes = $conn->prepare('SELECT id, resultados FROM resultados_laboratorio WHERE orden_id = ? ORDER BY id DESC LIMIT 1');
+            $stmtRes->bind_param('i', $orden['id']);
+            $stmtRes->execute();
+            $rowRes = $stmtRes->get_result()->fetch_assoc();
+            $stmtRes->close();
+
+            if (!$rowRes) {
+                echo json_encode(['success' => false, 'error' => 'Primero debe guardar resultados antes de validar']);
+                exit;
+            }
+
+            $resultadosActuales = json_decode((string)($rowRes['resultados'] ?? '{}'), true);
+            if (!resultados_has_meaningful_values(is_array($resultadosActuales) ? $resultadosActuales : [])) {
+                echo json_encode(['success' => false, 'error' => 'No hay resultados con contenido para validar']);
+                exit;
+            }
+
+            if (!is_array($resultadosActuales)) {
+                $resultadosActuales = [];
+            }
+
+            $examIdRequest = isset($data['exam_id']) ? intval($data['exam_id']) : intval($data['examen_id'] ?? 0);
+            $tokensByExam = [];
+
+            if ($action === 'validar_parametros') {
+                if ($examIdRequest <= 0) {
+                    echo json_encode(['success' => false, 'error' => 'Falta exam_id para validar parametros']);
+                    exit;
+                }
+
+                $incomingTokens = is_array($data['parametros'] ?? null) ? $data['parametros'] : [];
+                $normalizedTokens = [];
+                foreach ($incomingTokens as $tok) {
+                    $norm = normalize_resultado_key_token($tok);
+                    if ($norm !== '') {
+                        $normalizedTokens[$norm] = true;
+                    }
+                }
+
+                $tokensByExam[$examIdRequest] = array_keys($normalizedTokens);
+            } else {
+                $tokensByExam = rl_order_param_tokens_for_exam($orden['examenes'] ?? [], 0);
+
+                // Fallback si la orden legacy no trae parametros en snapshot.
+                if (empty($tokensByExam)) {
+                    foreach ($resultadosActuales as $k => $v) {
+                        $key = (string)$k;
+                        if (rl_is_result_metadata_key($key) || strpos($key, '__') === false) {
+                            continue;
+                        }
+                        list($examIdTxt, $suffix) = explode('__', $key, 2);
+                        $eid = intval($examIdTxt);
+                        if ($eid <= 0) continue;
+                        $tok = normalize_resultado_key_token($suffix);
+                        if ($tok === '') continue;
+                        if (!isset($tokensByExam[$eid])) {
+                            $tokensByExam[$eid] = [];
+                        }
+                        $tokensByExam[$eid][$tok] = true;
+                    }
+                    foreach ($tokensByExam as $eid => $tokenMap) {
+                        if (!is_array($tokenMap)) continue;
+                        $tokensByExam[$eid] = array_values(array_keys($tokenMap));
+                    }
+                }
+            }
+
+            $validatedCount = 0;
+            $skippedNoValue = 0;
+            $skippedNoPrint = 0;
+            $validatedKeys = [];
+            foreach ($tokensByExam as $examId => $tokensList) {
+                $eid = intval($examId);
+                if ($eid <= 0 || !is_array($tokensList) || empty($tokensList)) {
+                    continue;
+                }
+
+                foreach ($tokensList as $tokRaw) {
+                    $tok = normalize_resultado_key_token($tokRaw);
+                    if ($tok === '') continue;
+
+                    // Cuando la validacion es por seccion/parametro, confiar en la lista
+                    // enviada por la UI (ya filtrada por "Imprimir") para evitar desfaces
+                    // cuando el usuario cambia toggles y valida antes de guardar.
+                    if ($action !== 'validar_parametros') {
+                        $paramPrintKey = $eid . '__param_imprimir__' . $tok;
+                        $isPrintable = rl_bool_flag($resultadosActuales[$paramPrintKey] ?? 1, true);
+                        if (!$isPrintable) {
+                            $skippedNoPrint++;
+                            continue;
+                        }
+                    }
+
+                    $valueKey = rl_find_param_value_key_by_token($resultadosActuales, $eid, $tok);
+                    $hasValue = $valueKey !== '' && array_key_exists($valueKey, $resultadosActuales) && is_result_value_meaningful($resultadosActuales[$valueKey]);
+
+                    if (!$hasValue) {
+                        $paramDef = rl_find_param_by_token_in_order($orden['examenes'] ?? [], $eid, $tok);
+                        if (!empty($paramDef)) {
+                            $defaultValue = rl_param_default_value($paramDef);
+                            if (is_result_value_meaningful($defaultValue)) {
+                                if ($valueKey === '') {
+                                    $baseKey = trim((string)($paramDef['codigo_interno'] ?? ''));
+                                    if ($baseKey === '') {
+                                        $baseKey = trim((string)($paramDef['nombre'] ?? ''));
+                                    }
+                                    if ($baseKey !== '') {
+                                        $valueKey = $eid . '__' . $baseKey;
+                                    }
+                                }
+                                if ($valueKey !== '') {
+                                    $resultadosActuales[$valueKey] = $defaultValue;
+                                    $hasValue = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!$hasValue) {
+                        $skippedNoValue++;
+                        continue;
+                    }
+
+                    $resultadosActuales[$eid . '__param_validado__' . $tok] = 1;
+                    $resultadosActuales[$eid . '__param_validado_at__' . $tok] = date('Y-m-d H:i:s');
+                    $resultadosActuales[$eid . '__param_validado_por__' . $tok] = $sessionUserId;
+                    $validatedCount++;
+                    $validatedKeys[] = $eid . ':' . $tok;
+                }
+            }
+
+            if ($validatedCount <= 0) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'No hay parametros seleccionados con valor e impresion activa para validar',
+                    'validados' => 0,
+                    'omitidos_sin_valor' => $skippedNoValue,
+                    'omitidos_sin_impresion' => $skippedNoPrint,
+                ]);
+                exit;
+            }
+
+            $resultadosActuales = compact_resultados_aliases($resultadosActuales);
+            $jsonVal = json_encode($resultadosActuales, JSON_UNESCAPED_UNICODE);
+            if ($jsonVal === false) {
+                echo json_encode(['success' => false, 'error' => 'No se pudo serializar la validacion']);
+                exit;
+            }
+
+            $updateSet = ['resultados = ?', 'firmado_por_usuario_id = ?'];
+            $bindTypes = 'si';
+            $bindValues = [$jsonVal, $sessionUserId];
+
+            if (rl_column_exists($conn, 'resultados_laboratorio', 'validado_por_usuario_id')) {
+                $updateSet[] = 'validado_por_usuario_id = ?';
+                $bindTypes .= 'i';
+                $bindValues[] = $sessionUserId;
+            }
+            if (rl_column_exists($conn, 'resultados_laboratorio', 'validado_en')) {
+                $updateSet[] = 'validado_en = NOW()';
+            } elseif (rl_column_exists($conn, 'resultados_laboratorio', 'fecha_validacion')) {
+                $updateSet[] = 'fecha_validacion = NOW()';
+            }
+            if (rl_column_exists($conn, 'resultados_laboratorio', 'estado_validacion')) {
+                $updateSet[] = "estado_validacion = 'validado_area'";
+            }
+
+            $updateSql = 'UPDATE resultados_laboratorio SET ' . implode(', ', $updateSet) . ' WHERE id = ?';
+            $stmtUpdate = $conn->prepare($updateSql);
+            if (!$stmtUpdate) {
+                echo json_encode(['success' => false, 'error' => 'No se pudo preparar la validacion']);
+                exit;
+            }
+            $bindTypes .= 'i';
+            $bindValues[] = intval($rowRes['id']);
+            $stmtUpdate->bind_param($bindTypes, ...$bindValues);
+            $okValidacion = $stmtUpdate->execute();
+            $stmtUpdate->close();
+
+            if (!$okValidacion) {
+                echo json_encode(['success' => false, 'error' => 'No se pudo validar el resultado']);
+                exit;
+            }
+
+            $progress = calculate_order_progress($conn, $resultadosActuales, $orden['examenes'] ?? []);
+            $nuevoEstadoOrden = ($progress['total'] > 0 && $progress['completos'] >= $progress['total']) ? 'completado' : 'pendiente';
+            $stmtEstado = $conn->prepare('UPDATE ordenes_laboratorio SET estado = ? WHERE id = ?');
+            $stmtEstado->bind_param('si', $nuevoEstadoOrden, $orden['id']);
+            $stmtEstado->execute();
+            $stmtEstado->close();
+
+            echo json_encode([
+                'success' => true,
+                'estado' => $nuevoEstadoOrden,
+                'validado' => true,
+                'orden_id' => intval($orden['id']),
+                'resultado_id' => intval($rowRes['id']),
+                'validados' => $validatedCount,
+                'omitidos_sin_valor' => $skippedNoValue,
+                'omitidos_sin_impresion' => $skippedNoPrint,
+                'validated_keys' => $validatedKeys,
+                'resultados' => $resultadosActuales,
+            ]);
+            exit;
+        }
+
         $tipo_examen = $data['tipo_examen'] ?? null;
         $resultados = $data['resultados'] ?? null;
         $examenes_ordenados = isset($data['examenes_ordenados']) && is_array($data['examenes_ordenados'])

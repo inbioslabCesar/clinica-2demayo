@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once 'config.php';
+require_once __DIR__ . '/caja_autocierre.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -89,6 +90,15 @@ try {
             $datosAnteriores
         ]);
 
+        caja_auto_asegurar_columnas($pdo);
+        $setAutocierre = '';
+        if (caja_auto_columna_existe($pdo, 'cierre_automatico')) {
+            $setAutocierre .= ', cierre_automatico = 0';
+        }
+        if (caja_auto_columna_existe($pdo, 'cierre_pendiente_cuadre')) {
+            $setAutocierre .= ', cierre_pendiente_cuadre = 0';
+        }
+
         // Reabrir la caja: cambiar estado a 'abierta'
         $sqlReabrir = "UPDATE cajas SET 
             estado = 'abierta',
@@ -96,6 +106,7 @@ try {
             observaciones_cierre = NULL,
             monto_cierre = NULL,
             diferencia = NULL
+            {$setAutocierre}
             WHERE id = ?";
         $stmtReabrir = $pdo->prepare($sqlReabrir);
         $stmtReabrir->execute([$caja_id]);

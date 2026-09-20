@@ -2,6 +2,82 @@
 require_once __DIR__ . '/init_api.php';
 
 require_once 'config.php';
+require_once __DIR__ . '/caja_autocierre.php';
+
+function caja_columna_existe(PDO $pdo, string $columna): bool {
+    static $cache = [];
+    if (array_key_exists($columna, $cache)) {
+        return $cache[$columna];
+    }
+    try {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM cajas LIKE ?");
+        $stmt->execute([$columna]);
+        $exists = (bool)$stmt->fetch(PDO::FETCH_ASSOC);
+        $cache[$columna] = $exists;
+        return $exists;
+    } catch (Throwable $e) {
+        $cache[$columna] = false;
+        return false;
+    }
+}
+
+function caja_tabla_existe(PDO $pdo, string $tabla): bool {
+    static $cache = [];
+    if (array_key_exists($tabla, $cache)) {
+        return $cache[$tabla];
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1");
+        $stmt->execute([$tabla]);
+        $exists = (bool)$stmt->fetchColumn();
+        $cache[$tabla] = $exists;
+        return $exists;
+    } catch (Throwable $e) {
+        $cache[$tabla] = false;
+        return false;
+    }
+}
+
+function caja_intentar_alter_columna(PDO $pdo, string $sqlAlter): void {
+    try {
+        $pdo->exec($sqlAlter);
+    } catch (Throwable $e) {
+        $msg = strtolower((string)$e->getMessage());
+        $code = (string)$e->getCode();
+        if (strpos($msg, 'duplicate column name') !== false || strpos($msg, '42s21') !== false || strpos($code, '42s21') !== false) {
+            return;
+        }
+        throw $e;
+    }
+}
+
+function caja_asegurar_columnas_virtual(PDO $pdo): void {
+    if (!caja_columna_existe($pdo, 'virtual_contado')) {
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN virtual_contado DECIMAL(10,2) NULL DEFAULT NULL');
+    }
+    if (!caja_columna_existe($pdo, 'diferencia_virtual')) {
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN diferencia_virtual DECIMAL(10,2) NULL DEFAULT NULL');
+    }
+    if (!caja_columna_existe($pdo, 'cierre_automatico')) {
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN cierre_automatico TINYINT(1) NOT NULL DEFAULT 0');
+    }
+    if (!caja_columna_existe($pdo, 'cierre_pendiente_cuadre')) {
+        caja_intentar_alter_columna($pdo, 'ALTER TABLE cajas ADD COLUMN cierre_pendiente_cuadre TINYINT(1) NOT NULL DEFAULT 0');
+    }
+}
+
+function caja_parse_float_opcional($valor, ?float $default = null): ?float {
+    if ($valor === null) return $default;
+    if (is_string($valor)) {
+        $valor = trim($valor);
+        if ($valor === '') return $default;
+        $valor = str_replace(',', '.', $valor);
+    }
+    if (!is_numeric($valor)) {
+        return $default;
+    }
+    return (float)$valor;
+}
 
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -20,13 +96,16 @@ $fecha = date('Y-m-d');
 
 // Leer datos enviados
 $input = json_decode(file_get_contents('php://input'), true);
+if (!is_array($input)) {
+    $input = [];
+}
 // Leer monto contado, egreso electrónico y observaciones de cierre
-$monto_contado = isset($input['monto_contado']) ? floatval($input['monto_contado']) : null;
-$egreso_electronico = isset($input['egreso_electronico']) && $input['egreso_electronico'] !== "" && !is_nan($input['egreso_electronico']) ? floatval($input['egreso_electronico']) : 0;
+$monto_contado = caja_parse_float_opcional($input['monto_contado'] ?? '', 0.0);
+$monto_virtual_contado = caja_parse_float_opcional($input['monto_virtual_contado'] ?? null, null);
+$egreso_electronico = caja_parse_float_opcional($input['egreso_electronico'] ?? null, 0.0);
 $observaciones_cierre = isset($input['observaciones']) ? trim($input['observaciones']) : '';
 if ($monto_contado === null) {
-    echo json_encode(['success' => false, 'error' => 'Monto contado no recibido']);
-    exit;
+    $monto_contado = 0.0;
 }
 
 // Buscar la caja abierta del usuario actual
@@ -63,7 +142,28 @@ $refCA = 'paciente_seguimiento_pagos';
 $stmt->execute([$caja_id, 'contrato_abono', $refCA]);
 $total_contratos_abono = floatval($stmt->fetchColumn());
 
-// Calcular egresos
+// Calcular egresos por método real. Los pagos cubiertos por terceros no reducen el saldo de la clínica.
+$stmtFuente = $pdo->query("SHOW COLUMNS FROM egresos LIKE 'fuente_fondos'");
+$usaFuenteFondos = $stmtFuente && $stmtFuente->fetch(PDO::FETCH_ASSOC);
+$sqlEgresosMetodo = $usaFuenteFondos
+    ? "SELECT metodo_pago, COALESCE(fuente_fondos, 'clinica') AS fuente_fondos, COALESCE(SUM(monto), 0) AS total FROM egresos WHERE caja_id = ? GROUP BY metodo_pago, COALESCE(fuente_fondos, 'clinica')"
+    : "SELECT metodo_pago, 'clinica' AS fuente_fondos, COALESCE(SUM(monto), 0) AS total FROM egresos WHERE caja_id = ? GROUP BY metodo_pago";
+$stmt = $pdo->prepare($sqlEgresosMetodo);
+$stmt->execute([$caja_id]);
+$egresosPorMetodo = ['efectivo' => 0.0, 'yape' => 0.0, 'plin' => 0.0, 'tarjeta' => 0.0, 'transferencia' => 0.0];
+$egresosExternos = 0.0;
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $metodo = strtolower(trim((string)($row['metodo_pago'] ?? 'efectivo')));
+    $monto = (float)($row['total'] ?? 0);
+    if (strtolower(trim((string)($row['fuente_fondos'] ?? 'clinica'))) !== 'clinica') {
+        $egresosExternos += $monto;
+        continue;
+    }
+    if (array_key_exists($metodo, $egresosPorMetodo)) {
+        $egresosPorMetodo[$metodo] += $monto;
+    }
+}
+
 $stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
 $stmt->execute([$caja_id]);
 $egreso_honorarios = $stmt->fetchColumn();
@@ -71,11 +171,14 @@ if ($egreso_honorarios === false || $egreso_honorarios === null) {
     $egreso_honorarios = 0;
 }
 
-$stmt = $pdo->prepare('SELECT SUM(monto) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
-$stmt->execute([$caja_id]);
-$egreso_lab_ref = $stmt->fetchColumn();
-if ($egreso_lab_ref === false || $egreso_lab_ref === null) {
-    $egreso_lab_ref = 0;
+$egreso_lab_ref = 0;
+if (caja_tabla_existe($pdo, 'laboratorio_referencia_movimientos')) {
+    $stmt = $pdo->prepare('SELECT SUM(monto) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
+    $stmt->execute([$caja_id]);
+    $egreso_lab_ref = $stmt->fetchColumn();
+    if ($egreso_lab_ref === false || $egreso_lab_ref === null) {
+        $egreso_lab_ref = 0;
+    }
 }
 
 $stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso NOT IN ("honorario_medico", "laboratorio")');
@@ -86,7 +189,12 @@ if ($egreso_operativo === false || $egreso_operativo === null) {
 }
 
 $total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floatval($egreso_operativo);
-$efectivo_esperado = floatval($total_efectivo) - $total_egresos;
+// Los movimientos históricos de laboratorio de referencia no guardan método, por compatibilidad se consideran efectivo.
+$efectivo_esperado = floatval($caja['monto_apertura']) + floatval($total_efectivo) - $egresosPorMetodo['efectivo'] - floatval($egreso_lab_ref);
+$virtual_cobrado = floatval($total_yape) + floatval($total_plin) + floatval($total_tarjetas) + floatval($total_transferencias);
+$egresos_virtuales_clinica = floatval($egresosPorMetodo['yape']) + floatval($egresosPorMetodo['plin']) + floatval($egresosPorMetodo['tarjeta']) + floatval($egresosPorMetodo['transferencia']);
+$virtual_esperado = $virtual_cobrado - $egresos_virtuales_clinica;
+$diferencia_virtual = $monto_virtual_contado === null ? null : ($monto_virtual_contado - $virtual_esperado);
 $diferencia = $monto_contado - $efectivo_esperado;
 
 // Calcular ingreso total del día (todos los métodos de pago)
@@ -94,27 +202,82 @@ $ingreso_total_dia = floatval($total_efectivo) + floatval($total_yape) + floatva
 // Calcular ganancia neta del día
 $ganancia_dia = $ingreso_total_dia - $total_egresos;
 
-// Actualizar la caja: estado cerrada, guardar monto contado, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
-// Actualizar la caja: estado cerrada, guardar monto contado, egreso electrónico, diferencia, observaciones, totales por método de pago, totales por tipo de egreso y ganancia del día
-$stmt = $pdo->prepare('UPDATE cajas SET estado = "cerrada", monto_cierre = ?, diferencia = ?, hora_cierre = NOW(), observaciones_cierre = ?, total_efectivo = ?, total_yape = ?, total_plin = ?, total_tarjetas = ?, total_transferencias = ?, egreso_honorarios = ?, egreso_lab_ref = ?, egreso_operativo = ?, egreso_electronico = ?, monto_contado = ?, total_egresos = ?, ganancia_dia = ? WHERE id = ?');
-$stmt->execute([
-    $monto_contado,
-    $diferencia,
-    $observaciones_cierre,
-    $total_efectivo,
-    $total_yape,
-    $total_plin,
-    $total_tarjetas,
-    $total_transferencias,
-    floatval($egreso_honorarios),
-    floatval($egreso_lab_ref),
-    floatval($egreso_operativo),
-    $egreso_electronico,
-    $monto_contado,
-    $total_egresos,
-    $ganancia_dia,
-    $caja_id
-]);
+caja_asegurar_columnas_virtual($pdo);
+$tieneVirtualContado = caja_columna_existe($pdo, 'virtual_contado');
+$tieneDiferenciaVirtual = caja_columna_existe($pdo, 'diferencia_virtual');
+$tieneCierreAutomatico = caja_columna_existe($pdo, 'cierre_automatico');
+$tieneCierrePendienteCuadre = caja_columna_existe($pdo, 'cierre_pendiente_cuadre');
+
+$setVirtualSql = '';
+$paramsVirtual = [];
+if ($tieneVirtualContado) {
+    $setVirtualSql .= ', virtual_contado = ?';
+    $paramsVirtual[] = $monto_virtual_contado;
+}
+if ($tieneDiferenciaVirtual) {
+    $setVirtualSql .= ', diferencia_virtual = ?';
+    $paramsVirtual[] = $diferencia_virtual;
+}
+if ($tieneCierreAutomatico) {
+    $setVirtualSql .= ', cierre_automatico = ?';
+    $paramsVirtual[] = 0;
+}
+if ($tieneCierrePendienteCuadre) {
+    $setVirtualSql .= ', cierre_pendiente_cuadre = ?';
+    $paramsVirtual[] = 0;
+}
+
+// Actualizar la caja con compatibilidad de esquema: solo columnas existentes.
+$sets = [
+    'estado = "cerrada"',
+    'hora_cierre = NOW()',
+];
+$paramsUpdate = [];
+
+$agregarSetSiExiste = function(string $columna, $valor) use (&$sets, &$paramsUpdate, $pdo) {
+    if (caja_columna_existe($pdo, $columna)) {
+        $sets[] = $columna . ' = ?';
+        $paramsUpdate[] = $valor;
+    }
+};
+
+$agregarSetSiExiste('monto_cierre', $monto_contado);
+$agregarSetSiExiste('diferencia', $diferencia);
+$agregarSetSiExiste('observaciones_cierre', $observaciones_cierre);
+$agregarSetSiExiste('total_efectivo', $total_efectivo);
+$agregarSetSiExiste('total_yape', $total_yape);
+$agregarSetSiExiste('total_plin', $total_plin);
+$agregarSetSiExiste('total_tarjetas', $total_tarjetas);
+$agregarSetSiExiste('total_transferencias', $total_transferencias);
+$agregarSetSiExiste('egreso_honorarios', floatval($egreso_honorarios));
+$agregarSetSiExiste('egreso_lab_ref', floatval($egreso_lab_ref));
+$agregarSetSiExiste('egreso_operativo', floatval($egreso_operativo));
+$agregarSetSiExiste('egreso_electronico', $egreso_electronico);
+$agregarSetSiExiste('monto_contado', $monto_contado);
+$agregarSetSiExiste('total_egresos', $total_egresos);
+$agregarSetSiExiste('ganancia_dia', $ganancia_dia);
+
+if ($tieneVirtualContado) {
+    $sets[] = 'virtual_contado = ?';
+    $paramsUpdate[] = $monto_virtual_contado;
+}
+if ($tieneDiferenciaVirtual) {
+    $sets[] = 'diferencia_virtual = ?';
+    $paramsUpdate[] = $diferencia_virtual;
+}
+if ($tieneCierreAutomatico) {
+    $sets[] = 'cierre_automatico = ?';
+    $paramsUpdate[] = 0;
+}
+if ($tieneCierrePendienteCuadre) {
+    $sets[] = 'cierre_pendiente_cuadre = ?';
+    $paramsUpdate[] = 0;
+}
+
+$sqlUpdate = 'UPDATE cajas SET ' . implode(', ', $sets) . ' WHERE id = ?';
+$paramsUpdate[] = $caja_id;
+$stmt = $pdo->prepare($sqlUpdate);
+$stmt->execute($paramsUpdate);
 
 // Opcional: registrar log de cierre
 // $stmtLog = $pdo->prepare('INSERT INTO log_cierres_caja (caja_id, usuario_id, fecha, monto_contado, diferencia) VALUES (?, ?, NOW(), ?, ?)');
@@ -136,6 +299,14 @@ echo json_encode([
         'egreso_honorarios' => floatval($egreso_honorarios),
         'egreso_lab_ref' => floatval($egreso_lab_ref),
         'egreso_operativo' => floatval($egreso_operativo),
+        'egresos_por_metodo' => $egresosPorMetodo,
+        'egresos_externos' => $egresosExternos,
+        'efectivo_esperado' => $efectivo_esperado,
+        'virtual_cobrado' => $virtual_cobrado,
+        'egresos_virtuales_clinica' => $egresos_virtuales_clinica,
+        'virtual_esperado' => $virtual_esperado,
+        'virtual_contado' => $monto_virtual_contado,
+        'diferencia_virtual' => $diferencia_virtual,
         'total_egresos' => $total_egresos,
         'total_contratos_abono' => $total_contratos_abono
     ]

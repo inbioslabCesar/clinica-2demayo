@@ -61,21 +61,56 @@ function generar_codigo_interno($nombre, $idx) {
     return $s;
 }
 
+function normalize_codigo_interno_token($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') return '';
+
+    $token = mb_strtolower($raw, 'UTF-8');
+    $token = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $token);
+    $token = preg_replace('/[^a-z0-9]+/', '_', (string)$token);
+    $token = trim((string)$token, '_');
+
+    return (string)$token;
+}
+
+function ensure_unique_codigo_interno($baseToken, array &$usedTokens, $fallbackName, $idx) {
+    $token = normalize_codigo_interno_token($baseToken);
+    if ($token === '') {
+        $token = normalize_codigo_interno_token(generar_codigo_interno($fallbackName, $idx));
+    }
+    if ($token === '') {
+        $token = 'param_' . ($idx + 1);
+    }
+
+    $candidate = $token;
+    $suffix = 2;
+    while (isset($usedTokens[$candidate])) {
+        $candidate = $token . '_' . $suffix;
+        $suffix++;
+    }
+
+    $usedTokens[$candidate] = true;
+    return $candidate;
+}
+
 // Helper: normalizar valores_referenciales recibidos desde frontend
 function normalize_valores_referenciales($raw) {
     if (!$raw) return json_encode([] , JSON_UNESCAPED_UNICODE);
     $raw = decode_valores_referenciales_any($raw);
     if (!is_array($raw)) return json_encode([], JSON_UNESCAPED_UNICODE);
     $items = [];
+    $usedCodigos = [];
     foreach ($raw as $idx => $it) {
         if (!is_array($it)) continue;
         $item = [];
         $item['tipo'] = $it['tipo'] ?? 'Parámetro';
         $item['nombre'] = $it['nombre'] ?? ($it['titulo'] ?? ('Item ' . ($idx + 1)));
-        // codigo_interno: preservar si ya existe (inmutable), generar si falta
-        $item['codigo_interno'] = (isset($it['codigo_interno']) && trim((string)$it['codigo_interno']) !== '')
+        // codigo_interno: preservar si existe, pero siempre sanitizar y garantizar unicidad
+        // para evitar colisiones de claves al registrar muchos parámetros.
+        $codigoBase = (isset($it['codigo_interno']) && trim((string)$it['codigo_interno']) !== '')
             ? trim((string)$it['codigo_interno'])
             : generar_codigo_interno($item['nombre'], $idx);
+        $item['codigo_interno'] = ensure_unique_codigo_interno($codigoBase, $usedCodigos, $item['nombre'], $idx);
         $item['metodologia'] = $it['metodologia'] ?? '';
         $item['unidad'] = $it['unidad'] ?? '';
         $item['opciones'] = [];
@@ -105,7 +140,7 @@ function normalize_valores_referenciales($raw) {
                     'valor' => $r['valor'] ?? '',
                     'valor_min' => $r['valor_min'] ?? '',
                     'valor_max' => $r['valor_max'] ?? '',
-                    'desc' => $r['desc'] ?? '',
+                    'desc' => $r['desc'] ?? ($r['descripcion'] ?? ''),
                     'sexo' => $r['sexo'] ?? 'cualquiera',
                     'edad_min' => $r['edad_min'] ?? '',
                     'edad_max' => $r['edad_max'] ?? ''
@@ -353,6 +388,24 @@ if ($method === 'OPTIONS') {
 
 switch ($method) {
     case 'GET':
+        $modo = strtolower(trim((string)($_GET['modo'] ?? '')));
+        if ($modo === 'cotizador' || $modo === 'ligero') {
+            $sqlLite = "SELECT id, nombre, precio_publico FROM examenes_laboratorio WHERE activo = 1 ORDER BY nombre";
+            $resLite = $conn->query($sqlLite);
+            $examenesLite = [];
+            if ($resLite) {
+                while ($row = $resLite->fetch_assoc()) {
+                    $examenesLite[] = [
+                        'id' => (int)($row['id'] ?? 0),
+                        'nombre' => (string)($row['nombre'] ?? ''),
+                        'precio_publico' => (float)($row['precio_publico'] ?? 0),
+                    ];
+                }
+            }
+            echo json_encode(["success" => true, "examenes" => $examenesLite]);
+            break;
+        }
+
         // Listar todos los exámenes activos
         $sql = "SELECT * FROM examenes_laboratorio WHERE activo = 1 ORDER BY nombre";
         $result = $conn->query($sql);
@@ -390,7 +443,7 @@ switch ($method) {
                             'valor' => $r['valor'] ?? '',
                             'valor_min' => $r['valor_min'] ?? '',
                             'valor_max' => $r['valor_max'] ?? '',
-                            'desc' => $r['desc'] ?? '',
+                            'desc' => $r['desc'] ?? ($r['descripcion'] ?? ''),
                             'sexo' => $r['sexo'] ?? 'cualquiera',
                             'edad_min' => $r['edad_min'] ?? '',
                             'edad_max' => $r['edad_max'] ?? ''

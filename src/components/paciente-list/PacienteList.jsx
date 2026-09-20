@@ -1,7 +1,7 @@
 // Orquesta la vista principal y conecta los componentes
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
-import { BASE_URL } from "../../config/config";
+import { BASE_URL, fetchConfigSingleton } from "../../config/config";
 import { authFetch } from "../../utils/apiClient";
 import Swal from "sweetalert2";
 import usePacientes from "./usePacientes";
@@ -14,6 +14,13 @@ import PacienteListForm from "./PacienteListForm";
 import { exportarExcel, exportarPDF } from "./PacienteListExport";
 
 function PacienteList() {
+  const normalizeSexoDefault = (value) => {
+    const token = String(value || "").trim().toUpperCase();
+    if (token === "F" || token === "FEMENINO") return "F";
+    if (token === "OTRO" || token === "O") return "Otro";
+    return "M";
+  };
+
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Leer estado inicial desde URL
@@ -72,8 +79,34 @@ function PacienteList() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editData, setEditData] = useState(null);
   const [postSaveBackTo, setPostSaveBackTo] = useState("");
+  const [sexoDefaultPaciente, setSexoDefaultPaciente] = useState("M");
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchConfigSingleton();
+        if (cancelled) return;
+        const cfg = (data && data.success && data.data) ? data.data : {};
+        setSexoDefaultPaciente(normalizeSexoDefault(cfg.paciente_sexo_default || "M"));
+      } catch {
+        if (!cancelled) setSexoDefaultPaciente("M");
+      }
+    })();
+
+    const onConfigUpdated = (event) => {
+      const next = event?.detail?.paciente_sexo_default;
+      setSexoDefaultPaciente(normalizeSexoDefault(next || "M"));
+    };
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
 
   const contextoAgendarDesdeDisponibilidad = useMemo(() => {
     const medicoId = Number(searchParams.get("agendar_medico_id") || 0);
@@ -151,7 +184,7 @@ function PacienteList() {
         edad_unidad: "años",
         procedencia: "",
         tipo_seguro: "",
-        sexo: "M",
+        sexo: sexoDefaultPaciente,
         direccion: "",
         telefono: "",
         email: "",
@@ -164,7 +197,7 @@ function PacienteList() {
       navigate("/pacientes", { replace: true, state: {} });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sexoDefaultPaciente]);
 
   useEffect(() => {
     const pacienteId = Number(location.state?.openEditPacienteId || 0);
@@ -226,7 +259,7 @@ function PacienteList() {
       edad_unidad: "años",
       procedencia: "",
       tipo_seguro: "",
-      sexo: "M",
+      sexo: sexoDefaultPaciente,
       direccion: "",
       telefono: "",
       email: "",
@@ -434,6 +467,7 @@ function PacienteList() {
           onRegistroExitoso={handleRegistroExitoso}
           guardarPaciente={guardarPaciente}
           postSaveBackTo={postSaveBackTo}
+          sexoDefault={sexoDefaultPaciente}
         />
       </PacienteListModal>
     </div>

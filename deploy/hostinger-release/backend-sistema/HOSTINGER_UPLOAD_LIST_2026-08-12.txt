@@ -1,0 +1,25 @@
+Subir a Hostinger (solo backend en raiz del proyecto):
+
+api_caja_abrir.php
+api_caja_traspasos.php
+api_cerrar_caja.php
+api_consultas.php
+api_contratos.php
+api_cotizaciones.php
+api_disponibilidad_medicos.php
+api_honorarios_pendientes.php
+api_imagenologia_generar_pdf.php
+api_imagenologia_plantillas.php
+api_liquidar_honorario.php
+api_pagar_honorario_medico.php
+api_paquetes_perfiles.php
+api_resumen_diario.php
+descargar_resultados_laboratorio.php
+modules/CobroModule.php
+modules/HonorarioModule.php
+
+No subir:
+- tmp/
+- scripts temporales (tmp_*.php, check_*.php)
+- deploy/hostinger-release/ (solo espejo local)
+- src/ (frontend, salvo que hagas build/deploy separado)

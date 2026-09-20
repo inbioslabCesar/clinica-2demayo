@@ -2,6 +2,13 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 
+function cfg_normalize_paciente_sexo_default($value): string {
+    $token = strtoupper(trim((string)$value));
+    if ($token === 'F' || $token === 'FEMENINO') return 'F';
+    if ($token === 'OTRO' || $token === 'O') return 'Otro';
+    return 'M';
+}
+
 // Solo permitir método GET para obtener configuración
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     echo json_encode(['error' => 'Método no permitido']);
@@ -24,6 +31,7 @@ try {
         'google_maps_embed'   => "ALTER TABLE configuracion_clinica ADD COLUMN google_maps_embed TEXT DEFAULT NULL",
         'website'             => "ALTER TABLE configuracion_clinica ADD COLUMN website VARCHAR(255) DEFAULT NULL",
         'contacto_emergencias'=> "ALTER TABLE configuracion_clinica ADD COLUMN contacto_emergencias VARCHAR(100) DEFAULT NULL",
+        'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
     ];
     foreach ($late_columns as $col => $sql) {
         try {
@@ -77,8 +85,11 @@ try {
             'caratula_fondo_url' => null,
             'hc_template_mode' => 'auto',
             'hc_template_single_id' => null,
+            'paciente_sexo_default' => 'M',
         ];
     }
+
+    $configuracion['paciente_sexo_default'] = cfg_normalize_paciente_sexo_default($configuracion['paciente_sexo_default'] ?? 'M');
     
     echo json_encode([
         'success' => true,

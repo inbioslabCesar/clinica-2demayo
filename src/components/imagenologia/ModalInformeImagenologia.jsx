@@ -28,6 +28,35 @@ function isEmptyValue(value) {
   return value == null || String(value).trim() === '';
 }
 
+function isCheckboxField(campo = {}) {
+  return String(campo?.type || '').trim().toLowerCase() === 'checkbox';
+}
+
+function isCheckedLike(value) {
+  const token = String(value ?? '').trim().toLowerCase();
+  return ['1', 'true', 'si', 's', 'x', 'checked', 'marcado'].includes(token);
+}
+
+function checkboxStoredValue(checked) {
+  return checked ? '1' : '';
+}
+
+function widthToGridClass(width) {
+  switch (String(width || 'full').trim().toLowerCase()) {
+    case 'sixth':
+      return 'col-span-12 sm:col-span-2';
+    case 'quarter':
+      return 'col-span-12 sm:col-span-3';
+    case 'third':
+      return 'col-span-12 sm:col-span-4';
+    case 'full':
+      return 'col-span-12';
+    case 'half':
+    default:
+      return 'col-span-12 sm:col-span-6';
+  }
+}
+
 function hasAnyContenidoValue(contenido = {}) {
   return Object.values(contenido || {}).some((section) => {
     if (!section || typeof section !== 'object') return false;
@@ -44,6 +73,10 @@ function buildContenidoFromPlantilla(plantilla) {
     next[sectionId] = {};
     (section.campos || []).forEach((campo) => {
       if (!campo?.id) return;
+      if (isCheckboxField(campo)) {
+        next[sectionId][campo.id] = checkboxStoredValue(isCheckedLike(campo.valor_base));
+        return;
+      }
       next[sectionId][campo.id] = campo.valor_base || '';
     });
   });
@@ -60,7 +93,11 @@ function mergeContenidoWithPlantilla(contenidoActual, plantillaNueva) {
     (section.campos || []).forEach((campo) => {
       if (!campo?.id) return;
       if (isEmptyValue(currentSection[campo.id])) {
-        currentSection[campo.id] = campo.valor_base || '';
+        if (isCheckboxField(campo)) {
+          currentSection[campo.id] = checkboxStoredValue(isCheckedLike(campo.valor_base));
+        } else {
+          currentSection[campo.id] = campo.valor_base || '';
+        }
       }
     });
     merged[sectionId] = currentSection;
@@ -74,12 +111,22 @@ function templateSections(plantilla) {
   return [];
 }
 
+function templatePdfLayoutMode(plantilla) {
+  const mode = String(
+    plantilla?.pdf_layout_mode
+    || plantilla?.estructura_json?.pdf_layout_mode
+    || 'normal'
+  ).trim().toLowerCase();
+  return mode === 'compact' ? 'compact' : 'normal';
+}
+
 function buildFallbackSectionsFromContenido(contenido = {}) {
   return Object.entries(contenido || {}).map(([sectionId, sectionData]) => {
     const campos = Object.keys(sectionData || {}).map((fieldId) => ({
       id: fieldId,
       label: fieldId.replace(/_/g, ' '),
       type: 'textarea',
+      width: 'full',
       placeholder: '',
       required: false,
     }));
@@ -504,7 +551,11 @@ export default function ModalInformeImagenologia({
     setGenerandoPdf(true);
     try {
       let informeId = informe?.id || 0;
-      if (dirty || !informeId) {
+      const modoPlantillaActual = templatePdfLayoutMode(plantillaSeleccionada);
+      const modoPlantillaInforme = templatePdfLayoutMode(informe?.plantilla_json || null);
+      const requiereSyncPlantilla = Boolean(informeId) && (modoPlantillaActual !== modoPlantillaInforme);
+
+      if (dirty || !informeId || requiereSyncPlantilla) {
         const response = await authFetch('api_imagenologia_informes.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -730,9 +781,10 @@ export default function ModalInformeImagenologia({
                       {section.nombre}
                     </h3>
 
-                    <div className="space-y-4">
+                    <div className="grid grid-cols-12 gap-3">
                       {section.campos?.map((campo) => (
-                        <div key={campo.id}>
+                        <div key={campo.id} className="contents">
+                        <div className={widthToGridClass(campo.width)}>
                           <label className="block text-sm font-medium mb-1">
                             {campo.label}
                             {campo.required && <span className="text-red-500">*</span>}
@@ -770,6 +822,22 @@ export default function ModalInformeImagenologia({
                               placeholder={campo.placeholder || ''}
                               className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-purple-500 outline-none"
                             />
+                          ) : campo.type === 'checkbox' ? (
+                            <label className="inline-flex items-center gap-2 py-2">
+                              <input
+                                type="checkbox"
+                                checked={isCheckedLike(contenido[section.id]?.[campo.id])}
+                                onChange={(e) =>
+                                  handleFieldChange(
+                                    section.id,
+                                    campo.id,
+                                    checkboxStoredValue(e.target.checked)
+                                  )
+                                }
+                                className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                              />
+                              <span className="text-sm text-gray-700">Si</span>
+                            </label>
                           ) : (
                             <input
                               type="text"
@@ -787,6 +855,8 @@ export default function ModalInformeImagenologia({
                               className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-purple-500 outline-none"
                             />
                           )}
+                        </div>
+                        {campo.break_after ? <div className="col-span-12 h-0" /> : null}
                         </div>
                       ))}
                     </div>

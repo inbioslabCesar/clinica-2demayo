@@ -33,12 +33,54 @@ function ensureUniqueId(baseCandidate, usedIds = new Set()) {
   return candidate;
 }
 
+function normalizeCampoWidth(width) {
+  const token = String(width || "full").trim().toLowerCase();
+  return ["sixth", "quarter", "third", "half", "full"].includes(token) ? token : "full";
+}
+
+function widthToPreviewClass(width) {
+  switch (normalizeCampoWidth(width)) {
+    case "sixth":
+      return "col-span-12 sm:col-span-2";
+    case "quarter":
+      return "col-span-12 sm:col-span-3";
+    case "third":
+      return "col-span-12 sm:col-span-4";
+    case "half":
+      return "col-span-12 sm:col-span-6";
+    case "full":
+    default:
+      return "col-span-12";
+  }
+}
+
+function isCheckedLike(value) {
+  const token = String(value || "").trim().toLowerCase();
+  return ["1", "true", "si", "s", "x", "checked", "marcado"].includes(token);
+}
+
+function previewSampleValue(campo = {}) {
+  const type = String(campo.type || "textarea").trim().toLowerCase();
+  if (type === "checkbox") {
+    return isCheckedLike(campo.valor_base) ? "☑" : "☐";
+  }
+  if (type === "number") {
+    return "0";
+  }
+  if (type === "text") {
+    return campo.placeholder || campo.valor_base || "Texto corto";
+  }
+  return campo.placeholder || campo.valor_base || "Texto largo de ejemplo";
+}
+
 function createCampo(label = "Nuevo campo", usedIds = new Set()) {
   return {
     _id: nextId("c"),
     id: ensureUniqueId(slugify(label), usedIds),
     label,
     type: "textarea",
+    width: "full",
+    break_after: false,
     placeholder: "",
     valor_base: "",
     usar_valor_base_si_vacio: true,
@@ -52,7 +94,12 @@ function createSeccion(nombre = "Nueva sección", usedIds = new Set()) {
 
 function estructuraToBuilder(estructura) {
   const sections = Array.isArray(estructura?.sections) ? estructura.sections : [];
-  return sections.map((s) => ({
+  const pdfLayoutMode = String(estructura?.pdf_layout_mode || "normal").trim().toLowerCase() === "compact"
+    ? "compact"
+    : "normal";
+  return {
+    pdf_layout_mode: pdfLayoutMode,
+    secciones: sections.map((s) => ({
     _id: nextId("s"),
     id: String(s.id || ""),
     nombre: String(s.nombre || ""),
@@ -61,16 +108,23 @@ function estructuraToBuilder(estructura) {
       id: String(c.id || ""),
       label: String(c.label || ""),
       type: String(c.type || "textarea"),
+      width: normalizeCampoWidth(c.width),
+      break_after: Boolean(c.break_after ?? c.breakAfter ?? false),
       placeholder: String(c.placeholder || ""),
       valor_base: String(c.valor_base || ""),
       usar_valor_base_si_vacio: c.usar_valor_base_si_vacio !== false,
       required: Boolean(c.required),
     })),
-  }));
+    })),
+  };
 }
 
-function builderToEstructura(secciones) {
+function builderToEstructura(secciones, pdfLayoutMode = "normal") {
+  const safePdfLayoutMode = String(pdfLayoutMode || "normal").trim().toLowerCase() === "compact"
+    ? "compact"
+    : "normal";
   return {
+    pdf_layout_mode: safePdfLayoutMode,
     sections: secciones.map((s) => ({
       id: s.id || slugify(s.nombre),
       nombre: s.nombre,
@@ -78,6 +132,8 @@ function builderToEstructura(secciones) {
         id: c.id || slugify(c.label),
         label: c.label,
         type: c.type,
+        width: normalizeCampoWidth(c.width),
+        break_after: Boolean(c.break_after ?? c.breakAfter ?? false),
         placeholder: c.placeholder,
         valor_base: c.valor_base,
         usar_valor_base_si_vacio: c.usar_valor_base_si_vacio !== false,
@@ -115,6 +171,7 @@ function emptyForm(tipo = "ecografia") {
     tipo_examen: tipo,
     descripcion: "",
     es_activa: 1,
+    pdf_layout_mode: "normal",
     secciones: [
       createSeccion("Hallazgos"),
       createSeccion("Conclusión"),
@@ -131,6 +188,9 @@ export default function PlantillasImagenologiaPage() {
   const [msg, setMsg]                 = useState("");
   const [msgType, setMsgType]         = useState("info");
   const [form, setForm]               = useState(null);
+  const [showList, setShowList]       = useState(true);
+  const [isMobileListOpen, setIsMobileListOpen] = useState(false);
+  const [searchTerm, setSearchTerm]   = useState("");
 
   const showMsg = (text, type = "info") => {
     setMsg(text);
@@ -161,14 +221,17 @@ export default function PlantillasImagenologiaPage() {
       const data = await res.json();
       if (data.success && data.plantilla) {
         const p = data.plantilla;
+        const parsedBuilder = estructuraToBuilder(p.estructura_json);
         setForm({
           id: p.id,
           nombre: p.nombre,
           tipo_examen: p.tipo_examen,
           descripcion: p.descripcion || "",
           es_activa: Number(p.es_activa ?? 1),
-          secciones: estructuraToBuilder(p.estructura_json),
+          pdf_layout_mode: parsedBuilder.pdf_layout_mode,
+          secciones: parsedBuilder.secciones,
         });
+        setShowList(false);
       } else {
         showMsg(data.error || "Error cargando plantilla", "error");
       }
@@ -180,6 +243,7 @@ export default function PlantillasImagenologiaPage() {
   const handleNueva = () => {
     setMsg("");
     setForm(emptyForm(tipoActivo));
+    setShowList(false);
   };
 
   const handleGuardar = async () => {
@@ -202,7 +266,7 @@ export default function PlantillasImagenologiaPage() {
         tipo_examen: form.tipo_examen,
         descripcion: form.descripcion.trim(),
         es_activa: form.es_activa,
-        estructura_json: builderToEstructura(form.secciones),
+        estructura_json: builderToEstructura(form.secciones, form.pdf_layout_mode),
       };
       const res = await authFetch("api_imagenologia_plantillas.php", {
         method: "POST",
@@ -294,7 +358,80 @@ export default function PlantillasImagenologiaPage() {
     return { ...f, secciones };
   });
 
-  const plantillasFiltradas = plantillas.filter((p) => p.tipo_examen === tipoActivo);
+  const plantillasFiltradas = plantillas.filter((p) => {
+    if (p.tipo_examen !== tipoActivo) return false;
+    const needle = String(searchTerm || "").trim().toLowerCase();
+    if (needle === "") return true;
+    const nombre = String(p.nombre || "").toLowerCase();
+    const descripcion = String(p.descripcion || "").toLowerCase();
+    return nombre.includes(needle) || descripcion.includes(needle);
+  });
+
+  const renderListaPlantillas = ({ compact = false, onAfterAction = null } = {}) => (
+    <div className={compact ? "h-full overflow-y-auto p-4 space-y-3" : "space-y-3"}>
+      <div className="rounded-xl border border-slate-200 bg-white p-2">
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Buscar plantilla por nombre..."
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          handleNueva();
+          if (onAfterAction) onAfterAction();
+        }}
+        className="w-full rounded-xl bg-indigo-600 text-white py-2.5 px-4 text-sm font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2"
+      >
+        <span>+</span> Nueva plantilla
+      </button>
+
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
+          Cargando...
+        </div>
+      ) : plantillasFiltradas.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-400 space-y-2">
+          <div className="text-3xl">{TIPOS.find((t) => t.key === tipoActivo)?.emoji}</div>
+          <p>No hay coincidencias en {TIPOS.find((t) => t.key === tipoActivo)?.label}.</p>
+          <p className="text-xs">Prueba otro término de búsqueda o crea una nueva.</p>
+        </div>
+      ) : (
+        plantillasFiltradas.map((p) => (
+          <div
+            key={p.id}
+            onClick={() => {
+              cargarPlantilla(p.id);
+              if (onAfterAction) onAfterAction();
+            }}
+            className={`rounded-xl border p-4 cursor-pointer transition-all select-none ${
+              form?.id === p.id
+                ? "border-indigo-400 bg-indigo-50 shadow-md"
+                : "border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-sm text-slate-800 truncate">{p.nombre}</p>
+                {p.descripcion && (
+                  <p className="text-xs text-slate-500 mt-0.5 truncate">{p.descripcion}</p>
+                )}
+              </div>
+              <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
+                Number(p.es_activa) ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+              }`}>
+                {Number(p.es_activa) ? "Activa" : "Inactiva"}
+              </span>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
 
   const msgClass = msgType === "error"
     ? "bg-red-50 text-red-700 border-red-200"
@@ -350,60 +487,61 @@ export default function PlantillasImagenologiaPage() {
           </div>
         </div>
 
-        {/* ── Layout dos columnas ─────────────────────────────────────────── */}
-        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setIsMobileListOpen(true)}
+            className="inline-flex lg:hidden rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            Ver plantillas
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowList((v) => !v)}
+            className="hidden lg:inline-flex rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            {showList ? "Ocultar panel" : "Mostrar panel"}
+          </button>
+        </div>
 
-          {/* ── Lista de plantillas ──────────────────────────────────────── */}
-          <div className="space-y-3">
+        {isMobileListOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden">
             <button
               type="button"
-              onClick={handleNueva}
-              className="w-full rounded-xl bg-indigo-600 text-white py-2.5 px-4 text-sm font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2"
-            >
-              <span>+</span> Nueva plantilla
-            </button>
-
-            {loading ? (
-              <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
-                Cargando...
-              </div>
-            ) : plantillasFiltradas.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-400 space-y-2">
-                <div className="text-3xl">{TIPOS.find((t) => t.key === tipoActivo)?.emoji}</div>
-                <p>No hay plantillas de {TIPOS.find((t) => t.key === tipoActivo)?.label}.</p>
-                <p className="text-xs">Crea la primera con el botón de arriba.</p>
-              </div>
-            ) : (
-              plantillasFiltradas.map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => cargarPlantilla(p.id)}
-                  className={`rounded-xl border p-4 cursor-pointer transition-all select-none ${
-                    form?.id === p.id
-                      ? "border-indigo-400 bg-indigo-50 shadow-md"
-                      : "border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm"
-                  }`}
+              aria-label="Cerrar lista"
+              onClick={() => setIsMobileListOpen(false)}
+              className="absolute inset-0 bg-black/40"
+            />
+            <div className="absolute inset-y-0 left-0 w-[92vw] max-w-sm bg-white shadow-2xl border-r border-slate-200">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+                <p className="text-sm font-bold text-slate-800">Plantillas</p>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileListOpen(false)}
+                  className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-sm text-slate-800 truncate">{p.nombre}</p>
-                      {p.descripcion && (
-                        <p className="text-xs text-slate-500 mt-0.5 truncate">{p.descripcion}</p>
-                      )}
-                    </div>
-                    <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
-                      Number(p.es_activa) ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
-                    }`}>
-                      {Number(p.es_activa) ? "Activa" : "Inactiva"}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
+                  Cerrar
+                </button>
+              </div>
+              {renderListaPlantillas({ compact: true, onAfterAction: () => setIsMobileListOpen(false) })}
+            </div>
           </div>
+        )}
+
+        {/* ── Layout ──────────────────────────────────────────────────────── */}
+        <div className="relative">
+          <aside
+            className={`hidden lg:block absolute inset-y-0 left-0 w-[310px] z-10 transition-all duration-300 ${
+              showList ? "translate-x-0 opacity-100" : "-translate-x-[105%] opacity-0 pointer-events-none"
+            }`}
+          >
+            <div className="h-full rounded-2xl border border-slate-200 bg-white shadow-sm overflow-y-auto p-3">
+              {renderListaPlantillas()}
+            </div>
+          </aside>
 
           {/* ── Editor ──────────────────────────────────────────────────── */}
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className={`rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 ${showList ? "lg:ml-[326px]" : "lg:ml-0"}`}>
             {!form ? (
               <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
                 <div className="text-5xl">📋</div>
@@ -484,26 +622,44 @@ export default function PlantillasImagenologiaPage() {
                       placeholder="Descripción breve (opcional)"
                     />
                   </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="flex items-center gap-3 px-3 py-2.5 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={String(form.pdf_layout_mode || "normal") === "compact"}
+                        onChange={(e) => setForm((f) => ({ ...f, pdf_layout_mode: e.target.checked ? "compact" : "normal" }))}
+                        className="w-4 h-4 rounded text-indigo-600"
+                      />
+                      <span className="text-sm text-slate-700">
+                        Usar formato PDF compacto en esta plantilla
+                      </span>
+                    </label>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Si está desactivado, el PDF usa espaciado estándar para no afectar formatos clásicos.
+                    </p>
+                  </div>
                 </div>
 
-                {/* ── Builder de secciones ──────────────────────────────── */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-base font-bold text-slate-800">
-                      Secciones del informe
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={addSeccion}
-                      className="text-sm px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100 transition"
-                    >
-                      + Agregar sección
-                    </button>
-                  </div>
+                <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
+                  {/* ── Builder de secciones ────────────────────────────── */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-base font-bold text-slate-800">
+                        Secciones del informe
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={addSeccion}
+                        className="text-sm px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100 transition"
+                      >
+                        + Agregar sección
+                      </button>
+                    </div>
 
-                  <div className="space-y-4">
-                    {form.secciones.map((sec, sIdx) => (
-                      <div key={sec._id} className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="space-y-4">
+                      {form.secciones.map((sec, sIdx) => (
+                        <div key={sec._id} className="border border-slate-200 rounded-xl overflow-hidden">
                         {/* Header de la sección */}
                         <div className="flex items-center gap-3 bg-slate-50 px-4 py-3 border-b border-slate-200">
                           <div className="flex flex-col gap-0.5">
@@ -608,10 +764,27 @@ export default function PlantillasImagenologiaPage() {
                                     <option value="textarea">Texto largo</option>
                                     <option value="text">Texto corto</option>
                                     <option value="number">Número</option>
+                                    <option value="checkbox">Casilla (marcar)</option>
                                   </select>
                                 </div>
+                                {/* Ancho */}
+                                <div className="col-span-6 sm:col-span-2">
+                                  <label className="block text-xs font-semibold text-slate-500 mb-1">Ancho</label>
+                                  <select
+                                    value={campo.width || "full"}
+                                    onChange={(e) => updateCampo(sec._id, campo._id, { width: e.target.value })}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                                  >
+                                    <option value="sixth">Mini (1/6)</option>
+                                    <option value="quarter">Corto (1/4)</option>
+                                    <option value="third">Medio (1/3)</option>
+                                    <option value="half">Normal (1/2)</option>
+                                    <option value="full">Completo</option>
+                                  </select>
+                                </div>
+
                                 {/* Placeholder */}
-                                <div className="col-span-10 sm:col-span-3">
+                                <div className="col-span-6 sm:col-span-2">
                                   <label className="block text-xs font-semibold text-slate-500 mb-1">Placeholder</label>
                                   <input
                                     type="text"
@@ -629,6 +802,18 @@ export default function PlantillasImagenologiaPage() {
                                       type="checkbox"
                                       checked={campo.required}
                                       onChange={(e) => updateCampo(sec._id, campo._id, { required: e.target.checked })}
+                                      className="w-4 h-4 rounded text-indigo-600"
+                                    />
+                                  </label>
+                                </div>
+
+                                <div className="col-span-4 sm:col-span-1 flex items-end justify-center pb-1">
+                                  <label className="flex flex-col items-center gap-1 cursor-pointer" title="Cortar fila despues de este campo">
+                                    <span className="text-xs font-semibold text-slate-500">Fila</span>
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(campo.break_after)}
+                                      onChange={(e) => updateCampo(sec._id, campo._id, { break_after: e.target.checked })}
                                       className="w-4 h-4 rounded text-indigo-600"
                                     />
                                   </label>
@@ -680,8 +865,81 @@ export default function PlantillasImagenologiaPage() {
                             + Agregar campo
                           </button>
                         </div>
-                      </div>
-                    ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ── Vista previa ────────────────────────────────────── */}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Vista previa
+                    </p>
+                    <h3 className="mt-1 text-base font-bold text-slate-800">Como se vera el formulario</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Se actualiza en tiempo real segun tipo, ancho y saltos de fila.
+                    </p>
+
+                    <div className="mt-4 space-y-3 max-h-[66vh] overflow-auto pr-1">
+                      {form.secciones.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-xs text-slate-500">
+                          Agrega secciones y campos para ver la previsualizacion.
+                        </div>
+                      ) : (
+                        form.secciones.map((sec, secIndex) => (
+                          <div key={`pv_${sec._id}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-800">
+                                {sec.nombre || `Seccion ${secIndex + 1}`}
+                              </p>
+                              <span className="text-[11px] text-slate-500">{(sec.campos || []).length} campo(s)</span>
+                            </div>
+
+                            <div className="grid grid-cols-12 gap-2">
+                              {(sec.campos || []).map((campo, fieldIndex) => (
+                                <div key={`pvf_${campo._id}`} className="contents">
+                                  <div className={widthToPreviewClass(campo.width)}>
+                                    <label className="mb-1 block text-[11px] font-semibold text-slate-700">
+                                      {campo.label || `Campo ${fieldIndex + 1}`}
+                                      {campo.required ? <span className="text-rose-500"> *</span> : null}
+                                    </label>
+
+                                    {String(campo.type || "").toLowerCase() === "checkbox" ? (
+                                      <div className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700">
+                                        {previewSampleValue(campo)} Marcar
+                                      </div>
+                                    ) : String(campo.type || "").toLowerCase() === "number" ? (
+                                      <input
+                                        type="number"
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700"
+                                        value={previewSampleValue(campo)}
+                                        readOnly
+                                      />
+                                    ) : String(campo.type || "").toLowerCase() === "text" ? (
+                                      <input
+                                        type="text"
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700"
+                                        value={previewSampleValue(campo)}
+                                        readOnly
+                                      />
+                                    ) : (
+                                      <textarea
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700"
+                                        rows={2}
+                                        value={previewSampleValue(campo)}
+                                        readOnly
+                                      />
+                                    )}
+                                  </div>
+
+                                  {Boolean(campo.break_after) ? <div className="col-span-12 h-0" /> : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
 

@@ -30,6 +30,13 @@ function cfg_normalize_mode($modeRaw) {
     return in_array($mode, ['auto', 'single'], true) ? $mode : 'auto';
 }
 
+function cfg_normalize_paciente_sexo_default($value): string {
+    $token = strtoupper(trim((string)$value));
+    if ($token === 'F' || $token === 'FEMENINO') return 'F';
+    if ($token === 'OTRO' || $token === 'O') return 'Otro';
+    return 'M';
+}
+
 function cfg_ensure_hc_backup_table($pdo) {
     $pdo->exec("CREATE TABLE IF NOT EXISTS historia_clinica_backups (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -186,6 +193,7 @@ try {
         'caratula_fondo_url' => "ALTER TABLE configuracion_clinica ADD COLUMN caratula_fondo_url VARCHAR(500) DEFAULT NULL",
         'hc_template_mode' => "ALTER TABLE configuracion_clinica ADD COLUMN hc_template_mode VARCHAR(20) DEFAULT 'auto'",
         'hc_template_single_id' => "ALTER TABLE configuracion_clinica ADD COLUMN hc_template_single_id VARCHAR(100) DEFAULT NULL",
+        'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
     ];
     foreach ($autoColumns as $col => $ddl) {
         $chk = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
@@ -230,8 +238,11 @@ try {
                     'caratula_fondo_url' => null,
                     'hc_template_mode' => 'auto',
                     'hc_template_single_id' => null,
+                    'paciente_sexo_default' => 'M',
                 ];
             }
+
+            $configuracion['paciente_sexo_default'] = cfg_normalize_paciente_sexo_default($configuracion['paciente_sexo_default'] ?? 'M');
             
             echo json_encode([
                 'success' => true,
@@ -282,6 +293,7 @@ try {
             if ($hcTemplateSingleId === '') {
                 $hcTemplateSingleId = null;
             }
+            $pacienteSexoDefault = cfg_normalize_paciente_sexo_default($input['paciente_sexo_default'] ?? 'M');
 
             $existingConfig = $pdo->query('SELECT id, hc_template_mode, hc_template_single_id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
             $hasExistingConfig = is_array($existingConfig) && !empty($existingConfig['id']);
@@ -351,7 +363,7 @@ try {
                         slogan = ?, slogan_color = ?,
                         nombre_color = ?, nombre_font_size = ?,
                         logo_size_sistema = ?, logo_size_publico = ?, logo_shape_sistema = ?, caratula_fondo_url = ?,
-                        hc_template_mode = ?, hc_template_single_id = ?,
+                        hc_template_mode = ?, hc_template_single_id = ?, paciente_sexo_default = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = (SELECT id FROM (SELECT id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1) AS temp)
                 ");
@@ -383,7 +395,8 @@ try {
                     $logoShapeSistema,
                     $caratulaFondoUrl,
                     $hcTemplateMode,
-                    $hcTemplateSingleId
+                    $hcTemplateSingleId,
+                    $pacienteSexoDefault
                 ]);
 
                 $pdo->commit();
@@ -400,8 +413,8 @@ try {
                      especialidades, mision, vision, valores, director_general, jefe_enfermeria, contacto_emergencias,
                      celular, google_maps_embed, slogan, slogan_color, nombre_color, nombre_font_size,
                      logo_size_sistema, logo_size_publico, logo_shape_sistema, caratula_fondo_url,
-                     hc_template_mode, hc_template_single_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     hc_template_mode, hc_template_single_id, paciente_sexo_default)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $stmt->execute([
@@ -431,7 +444,8 @@ try {
                     $logoShapeSistema,
                     $caratulaFondoUrl,
                     $hcTemplateMode,
-                    $hcTemplateSingleId
+                    $hcTemplateSingleId,
+                    $pacienteSexoDefault
                 ]);
 
                 $pdo->commit();

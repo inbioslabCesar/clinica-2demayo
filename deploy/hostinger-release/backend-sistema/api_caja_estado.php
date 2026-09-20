@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 
 require_once 'db.php';
+require_once __DIR__ . '/caja_autocierre.php';
 
 try {
     // Verificar si el usuario está autenticado
@@ -11,6 +12,7 @@ try {
     }
 
     $usuario_id = intval($_SESSION['usuario']['id']);
+    caja_auto_cerrar_vencidas($pdo);
     $fecha_hoy = date('Y-m-d');
     error_log("[DEBUG] api_caja_estado.php - fecha_hoy: $fecha_hoy, usuario_id: $usuario_id");
 
@@ -33,6 +35,10 @@ try {
             total_tarjetas,
             total_transferencias,
             total_otros,
+            COALESCE((SELECT SUM(ing.monto) FROM ingresos_diarios ing WHERE ing.caja_id = cajas.id AND LOWER(TRIM(ing.metodo_pago)) = 'efectivo'), 0) AS total_efectivo_rt,
+            COALESCE((SELECT SUM(ing.monto) FROM ingresos_diarios ing WHERE ing.caja_id = cajas.id AND LOWER(TRIM(ing.metodo_pago)) = 'tarjeta'), 0) AS total_tarjetas_rt,
+            COALESCE((SELECT SUM(ing.monto) FROM ingresos_diarios ing WHERE ing.caja_id = cajas.id AND LOWER(TRIM(ing.metodo_pago)) IN ('transferencia','yape','plin')), 0) AS total_transferencias_rt,
+            COALESCE((SELECT SUM(ing.monto) FROM ingresos_diarios ing WHERE ing.caja_id = cajas.id AND LOWER(TRIM(ing.metodo_pago)) NOT IN ('efectivo','tarjeta','transferencia','yape','plin')), 0) AS total_otros_rt,
             (total_efectivo + total_tarjetas + total_transferencias + total_otros) as total_dia,
             observaciones_apertura
         FROM cajas 
@@ -50,6 +56,19 @@ try {
     }
 
     if ($caja) {
+        $caja['total_efectivo'] = round((float)($caja['total_efectivo_rt'] ?? $caja['total_efectivo'] ?? 0), 2);
+        $caja['total_tarjetas'] = round((float)($caja['total_tarjetas_rt'] ?? $caja['total_tarjetas'] ?? 0), 2);
+        $caja['total_transferencias'] = round((float)($caja['total_transferencias_rt'] ?? $caja['total_transferencias'] ?? 0), 2);
+        $caja['total_otros'] = round((float)($caja['total_otros_rt'] ?? $caja['total_otros'] ?? 0), 2);
+        $caja['total_dia'] = round(
+            $caja['total_efectivo'] +
+            $caja['total_tarjetas'] +
+            $caja['total_transferencias'] +
+            $caja['total_otros'],
+            2
+        );
+        unset($caja['total_efectivo_rt'], $caja['total_tarjetas_rt'], $caja['total_transferencias_rt'], $caja['total_otros_rt']);
+
         // Formatear hora de apertura
         $caja['hora_apertura'] = date('H:i', strtotime($caja['hora_apertura']));
         

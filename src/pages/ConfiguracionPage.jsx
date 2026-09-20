@@ -25,6 +25,13 @@ function isValidHexColor(value) {
   return /^#[0-9A-Fa-f]{6}$/.test(String(value || '').trim());
 }
 
+function normalizePacienteSexoDefault(value) {
+  const token = String(value || '').trim().toUpperCase();
+  if (token === 'F' || token === 'FEMENINO') return 'F';
+  if (token === 'OTRO' || token === 'O') return 'Otro';
+  return 'M';
+}
+
 
 
 function ConfiguracionPage() {
@@ -76,6 +83,7 @@ function ConfiguracionPage() {
     caratula_fondo_url: '',
     hc_template_mode: 'auto',
     hc_template_single_id: '',
+    paciente_sexo_default: 'M',
   });
 
   const [loading, setLoading] = useState(false);
@@ -111,6 +119,7 @@ function ConfiguracionPage() {
             incoming.hc_template_mode = 'auto';
             incoming.hc_template_single_id = '';
           }
+          incoming.paciente_sexo_default = normalizePacienteSexoDefault(incoming.paciente_sexo_default || 'M');
           setConfiguracion(prev => ({ ...prev, ...incoming }));
           // mostrar preview si hay logo
           if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
@@ -303,6 +312,7 @@ function ConfiguracionPage() {
                   logo_shape_sistema: payload.logo_shape_sistema || 'auto',
                   hc_template_mode: payload.hc_template_mode || 'auto',
                   hc_template_single_id: payload.hc_template_single_id || '',
+                  paciente_sexo_default: normalizePacienteSexoDefault(payload.paciente_sexo_default || 'M'),
                   updated_at: Date.now()
                 }
               }));
@@ -377,6 +387,7 @@ function ConfiguracionPage() {
                 logo_shape_sistema: configuracion.logo_shape_sistema || 'auto',
                 hc_template_mode: configuracion.hc_template_mode || 'auto',
                 hc_template_single_id: configuracion.hc_template_single_id || '',
+                paciente_sexo_default: normalizePacienteSexoDefault(configuracion.paciente_sexo_default || 'M'),
                 updated_at: Date.now()
               }
             }));
@@ -402,6 +413,7 @@ function ConfiguracionPage() {
         logo_shape_sistema: configuracion.logo_shape_sistema || 'auto',
         hc_template_mode: configuracion.hc_template_mode || 'auto',
         hc_template_single_id: configuracion.hc_template_single_id || '',
+        paciente_sexo_default: normalizePacienteSexoDefault(configuracion.paciente_sexo_default || 'M'),
         updated_at: Date.now()
       }
     }));
@@ -528,6 +540,24 @@ function ConfiguracionPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Sexo por defecto en pacientes
+              </label>
+              <select
+                value={normalizePacienteSexoDefault(configuracion.paciente_sexo_default)}
+                onChange={(e) => manejarCambio('paciente_sexo_default', normalizePacienteSexoDefault(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="M">Masculino</option>
+                <option value="F">Femenino</option>
+                <option value="Otro">Otro</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Solo aplica al valor inicial al registrar pacientes nuevos en esta clínica.
+              </p>
             </div>
 
             <div>

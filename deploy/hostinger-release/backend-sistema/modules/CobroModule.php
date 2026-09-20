@@ -312,6 +312,12 @@ class CobroModule
                 if (!isset($item['paquete_id']) && isset($detalle['paquete_id'])) {
                     $item['paquete_id'] = $detalle['paquete_id'];
                 }
+                if (!isset($item['paquete_codigo']) && isset($detalle['paquete_codigo'])) {
+                    $item['paquete_codigo'] = $detalle['paquete_codigo'];
+                }
+                if (!isset($item['paquete_tipo']) && isset($detalle['paquete_tipo'])) {
+                    $item['paquete_tipo'] = $detalle['paquete_tipo'];
+                }
                 if (!isset($item['paquete_nombre']) && isset($detalle['descripcion'])) {
                     $item['paquete_nombre'] = $detalle['descripcion'];
                 }
@@ -488,9 +494,36 @@ class CobroModule
             }
         }
 
-        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+            return $id > 0;
+        })));
         sort($ids);
         return $ids;
+    }
+
+    private static function resolverFechaHoraCobroParaIngreso($conn, $cobroId)
+    {
+        $cobroId = (int)$cobroId;
+        if ($cobroId <= 0) {
+            return null;
+        }
+
+        if (!self::tableExists($conn, 'cobros') || !self::columnExists($conn, 'cobros', 'fecha_cobro')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT fecha_cobro FROM cobros WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return null;
+        }
+
+        $stmt->bind_param('i', $cobroId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $fechaCobro = trim((string)($row['fecha_cobro'] ?? ''));
+        return $fechaCobro !== '' ? $fechaCobro : null;
     }
 
     private static function construirResumenCobroPorCotizacion($detalles)
@@ -536,7 +569,9 @@ class CobroModule
 
     private static function bloquearCotizacionesParaCobro($conn, $cotizacionIds)
     {
-        $cotizacionIds = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), fn($id) => $id > 0)));
+        $cotizacionIds = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), function ($id) {
+            return $id > 0;
+        })));
         if (empty($cotizacionIds) || !self::tableExists($conn, 'cotizaciones')) {
             return [];
         }
@@ -646,7 +681,9 @@ class CobroModule
 
     private static function cargarDetallesCobros($conn, $cobroIds)
     {
-        $cobroIds = array_values(array_unique(array_filter(array_map('intval', $cobroIds), fn($id) => $id > 0)));
+        $cobroIds = array_values(array_unique(array_filter(array_map('intval', $cobroIds), function ($id) {
+            return $id > 0;
+        })));
         if (empty($cobroIds)) {
             return [];
         }
@@ -1320,8 +1357,9 @@ class CobroModule
         if ($pacienteId <= 0) {
             return $out;
         }
-        $fecha = !empty($cot['fecha']) ? date('Y-m-d', strtotime((string)$cot['fecha'])) : date('Y-m-d');
-        $hora = date('H:i:s');
+        $programacionRef = self::resolverProgramacionReferenciaConsultaCotizacion($conn, $cotizacionId, (string)($cot['fecha'] ?? ''), $detalle);
+        $fecha = (string)($programacionRef['fecha'] ?? date('Y-m-d'));
+        $hora = (string)($programacionRef['hora'] ?? date('H:i:s'));
         $tipoConsulta = 'programada';
 
         if (self::columnExists($conn, 'consultas', 'origen_creacion')) {
@@ -1359,73 +1397,322 @@ class CobroModule
         return $out;
     }
 
+    private static function resolverProgramacionReferenciaConsultaCotizacion($conn, $cotizacionId, $fechaCotizacionRaw = '', $detalleConsulta = [])
+    {
+        $fecha = null;
+        $hora = null;
+
+        if (is_array($detalleConsulta)) {
+            $fecha = self::normalizarFechaProgramadaAgenda(
+                $detalleConsulta['fecha_programada']
+                ?? ($detalleConsulta['fecha_programada_servicio'] ?? null)
+            );
+            $hora = self::normalizarHoraProgramadaAgenda(
+                $detalleConsulta['hora_programada']
+                ?? ($detalleConsulta['hora_programada_servicio'] ?? null)
+            );
+        }
+
+        if (self::tableExists($conn, 'agenda_servicios_cotizacion')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+            $selectHora = self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+                ? 'hora_programada'
+                : 'NULL AS hora_programada';
+            $whereEstado = self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')
+                ? ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+                : '';
+
+            $sqlAgenda = 'SELECT fecha_programada, ' . $selectHora
+                . ' FROM agenda_servicios_cotizacion'
+                . ' WHERE cotizacion_id = ?'
+                . $whereEstado
+                . ' ORDER BY fecha_programada ASC, hora_programada ASC, id ASC LIMIT 1';
+            $stmtAgenda = $conn->prepare($sqlAgenda);
+            if ($stmtAgenda) {
+                $stmtAgenda->bind_param('i', $cotizacionId);
+                $stmtAgenda->execute();
+                $rowAgenda = $stmtAgenda->get_result()->fetch_assoc();
+                $stmtAgenda->close();
+
+                if (is_array($rowAgenda)) {
+                    $fechaAgenda = self::normalizarFechaProgramadaAgenda($rowAgenda['fecha_programada'] ?? null);
+                    $horaAgenda = self::normalizarHoraProgramadaAgenda($rowAgenda['hora_programada'] ?? null);
+                    if ($fechaAgenda !== null) {
+                        $fecha = $fechaAgenda;
+                    }
+                    if ($horaAgenda !== null) {
+                        $hora = $horaAgenda;
+                    }
+                }
+            }
+        }
+
+        if ($fecha === null) {
+            $fecha = !empty($fechaCotizacionRaw)
+                ? self::normalizarFechaProgramadaAgenda($fechaCotizacionRaw)
+                : null;
+        }
+        if ($fecha === null) {
+            $fecha = date('Y-m-d');
+        }
+
+        if ($hora === null) {
+            $hora = !empty($fechaCotizacionRaw)
+                ? self::normalizarHoraProgramadaAgenda($fechaCotizacionRaw)
+                : null;
+        }
+        if ($hora === null) {
+            $hora = date('H:i:s');
+        }
+
+        return [
+            'fecha' => $fecha,
+            'hora' => $hora,
+        ];
+    }
+
     private static function crearOrdenesLaboratorioCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId = 0)
     {
         if (!self::tableExists($conn, 'ordenes_laboratorio')) {
             return;
         }
 
+        $resolverRaiz = function ($id) use ($conn) {
+            $actual = (int)$id;
+            if ($actual <= 0 || !self::columnExists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+                return $actual;
+            }
+            $visitados = [];
+            while ($actual > 0) {
+                if (isset($visitados[$actual])) break;
+                $visitados[$actual] = true;
+                $stmt = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+                if (!$stmt) break;
+                $stmt->bind_param('i', $actual);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $padre = (int)($row['cotizacion_padre_id'] ?? 0);
+                if ($padre <= 0 || $padre === $actual) break;
+                $actual = $padre;
+            }
+            return $actual;
+        };
+
+        $resolverCadena = function ($id) use ($conn, $resolverRaiz) {
+            $raiz = (int)$resolverRaiz($id);
+            if ($raiz <= 0 || !self::columnExists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+                return $raiz > 0 ? [$raiz] : [];
+            }
+            $ids = [$raiz => true];
+            $pendientes = [$raiz];
+            while (!empty($pendientes)) {
+                $actual = (int)array_shift($pendientes);
+                $stmt = $conn->prepare('SELECT id FROM cotizaciones WHERE cotizacion_padre_id = ?');
+                if (!$stmt) continue;
+                $stmt->bind_param('i', $actual);
+                $stmt->execute();
+                $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+                foreach ($rows as $row) {
+                    $child = (int)($row['id'] ?? 0);
+                    if ($child <= 0 || isset($ids[$child])) continue;
+                    $ids[$child] = true;
+                    $pendientes[] = $child;
+                }
+            }
+            return array_values(array_map('intval', array_keys($ids)));
+        };
+
+        $rootCotizacionId = (int)$resolverRaiz($cotizacionId);
+        $sourceCotizacionIds = $resolverCadena($cotizacionId);
+        if (empty($sourceCotizacionIds)) {
+            $sourceCotizacionIds = [$cotizacionId];
+        }
+        if ($rootCotizacionId <= 0) {
+            $rootCotizacionId = (int)$cotizacionId;
+        }
+
         $examIds = [];
+        $examPayload = [];
         foreach ((array)$detalles as $det) {
             $tipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
             if ($tipo !== 'laboratorio') continue;
             $sid = (int)($det['servicio_id'] ?? 0);
             if ($sid > 0) $examIds[] = $sid;
         }
+
+        if (self::tableExists($conn, 'cotizaciones_detalle') && !empty($sourceCotizacionIds)) {
+            $ids = array_values(array_unique(array_filter(array_map('intval', (array)$sourceCotizacionIds), function ($id) {
+                return $id > 0;
+            })));
+            if (!empty($ids)) {
+                $hasSnapshotJson = self::columnExists($conn, 'cotizaciones_detalle', 'snapshot_json');
+                $hasExamenVersion = self::columnExists($conn, 'cotizaciones_detalle', 'examen_version_id');
+                $whereEstado = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
+                $selectSnapshot = $hasSnapshotJson ? ', snapshot_json' : '';
+                $selectVersion = $hasExamenVersion ? ', examen_version_id' : '';
+                $ph = implode(',', array_fill(0, count($ids), '?'));
+                $sql = "SELECT servicio_id, descripcion{$selectSnapshot}{$selectVersion}
+                        FROM cotizaciones_detalle
+                        WHERE cotizacion_id IN ({$ph})
+                          AND LOWER(TRIM(servicio_tipo)) = 'laboratorio'{$whereEstado}
+                        ORDER BY cotizacion_id ASC, id ASC";
+                $stmtDet = $conn->prepare($sql);
+                if ($stmtDet) {
+                    $stmtDet->bind_param(str_repeat('i', count($ids)), ...$ids);
+                    $stmtDet->execute();
+                    $rowsDet = $stmtDet->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtDet->close();
+                    foreach ($rowsDet as $rd) {
+                        $sid = (int)($rd['servicio_id'] ?? 0);
+                        if ($sid <= 0 || isset($examPayload[$sid])) continue;
+                        $examIds[] = $sid;
+                        $payload = [
+                            'id' => $sid,
+                            'descripcion' => (string)($rd['descripcion'] ?? ''),
+                            'nombre' => (string)($rd['descripcion'] ?? ''),
+                        ];
+                        if ($hasSnapshotJson && !empty($rd['snapshot_json'])) {
+                            $decoded = json_decode((string)$rd['snapshot_json'], true);
+                            if (is_array($decoded)) {
+                                $payload['snapshot_json'] = $decoded;
+                                if (isset($decoded['valores_referenciales']) && is_array($decoded['valores_referenciales'])) {
+                                    $payload['valores_referenciales'] = $decoded['valores_referenciales'];
+                                }
+                            }
+                        }
+                        $versionId = $hasExamenVersion ? (int)($rd['examen_version_id'] ?? 0) : 0;
+                        if ($versionId <= 0 && isset($payload['snapshot_json']['version_id'])) {
+                            $versionId = (int)$payload['snapshot_json']['version_id'];
+                        }
+                        if ($versionId > 0) {
+                            $payload['examen_version_id'] = $versionId;
+                        }
+                        $examPayload[$sid] = $payload;
+                    }
+                }
+            }
+        }
+
         $examIds = array_values(array_unique($examIds));
         if (empty($examIds)) {
             return;
         }
 
-        $json = json_encode($examIds);
+        $json = json_encode(!empty($examPayload) ? array_values($examPayload) : $examIds, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            $json = json_encode($examIds);
+        }
         $hasCotizacionId = self::columnExists($conn, 'ordenes_laboratorio', 'cotizacion_id');
         $hasConsultaId = self::columnExists($conn, 'ordenes_laboratorio', 'consulta_id');
 
         if ($hasCotizacionId) {
+            $ordenId = 0;
             $stmtChk = $conn->prepare('SELECT id FROM ordenes_laboratorio WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1');
             if ($stmtChk) {
-                $stmtChk->bind_param('i', $cotizacionId);
+                $stmtChk->bind_param('i', $rootCotizacionId);
                 $stmtChk->execute();
                 $exists = $stmtChk->get_result()->fetch_assoc();
                 $stmtChk->close();
                 if ($exists) {
                     $ordenId = (int)($exists['id'] ?? 0);
-                    if ($ordenId > 0) {
-                        if ($hasConsultaId && $consultaId > 0) {
-                            $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
-                            if ($stmtUp) {
-                                $stmtUp->bind_param('siii', $json, $pacienteId, $consultaId, $ordenId);
-                                $stmtUp->execute();
-                                $stmtUp->close();
-                            }
-                        } else {
-                            $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = ?, paciente_id = ?, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
-                            if ($stmtUp) {
-                                $stmtUp->bind_param('sii', $json, $pacienteId, $ordenId);
-                                $stmtUp->execute();
-                                $stmtUp->close();
-                            }
-                        }
-                    }
-                    return;
                 }
             }
 
-            if ($hasConsultaId && $consultaId > 0) {
+            if ($ordenId <= 0 && count($sourceCotizacionIds) > 1) {
+                $ids = array_values(array_unique(array_filter(array_map('intval', (array)$sourceCotizacionIds), function ($id) {
+                    return $id > 0;
+                })));
+                if (!empty($ids)) {
+                    $ph = implode(',', array_fill(0, count($ids), '?'));
+                    $stmtAny = $conn->prepare("SELECT id FROM ordenes_laboratorio WHERE cotizacion_id IN ({$ph}) ORDER BY id ASC LIMIT 1");
+                    if ($stmtAny) {
+                        $stmtAny->bind_param(str_repeat('i', count($ids)), ...$ids);
+                        $stmtAny->execute();
+                        $rowAny = $stmtAny->get_result()->fetch_assoc();
+                        $stmtAny->close();
+                        if ($rowAny) {
+                            $ordenId = (int)($rowAny['id'] ?? 0);
+                        }
+                    }
+                }
+            }
+
+            if ($ordenId > 0) {
+                if ($hasConsultaId && $consultaId > 0) {
+                    $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET cotizacion_id = ?, examenes = ?, paciente_id = ?, consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                    if ($stmtUp) {
+                        $stmtUp->bind_param('isiii', $rootCotizacionId, $json, $pacienteId, $consultaId, $ordenId);
+                        $stmtUp->execute();
+                        $stmtUp->close();
+                    }
+                } else {
+                    $stmtUp = $conn->prepare("UPDATE ordenes_laboratorio SET cotizacion_id = ?, examenes = ?, paciente_id = ?, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
+                    if ($stmtUp) {
+                        $stmtUp->bind_param('isii', $rootCotizacionId, $json, $pacienteId, $ordenId);
+                        $stmtUp->execute();
+                        $stmtUp->close();
+                    }
+                }
+            } elseif ($hasConsultaId && $consultaId > 0) {
                 $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, consulta_id) VALUES (?, ?, ?, ?)');
                 if ($stmtIns) {
-                    $stmtIns->bind_param('isii', $cotizacionId, $json, $pacienteId, $consultaId);
+                    $stmtIns->bind_param('isii', $rootCotizacionId, $json, $pacienteId, $consultaId);
                     $stmtIns->execute();
                     $stmtIns->close();
+                    $ordenId = (int)$conn->insert_id;
                 }
             } else {
                 $stmtIns = $conn->prepare('INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id) VALUES (?, ?, ?)');
                 if ($stmtIns) {
-                    $stmtIns->bind_param('isi', $cotizacionId, $json, $pacienteId);
+                    $stmtIns->bind_param('isi', $rootCotizacionId, $json, $pacienteId);
                     $stmtIns->execute();
                     $stmtIns->close();
+                    $ordenId = (int)$conn->insert_id;
                 }
             }
+
+            if ($ordenId > 0 && count($sourceCotizacionIds) > 1) {
+                $ids = array_values(array_unique(array_filter(array_map('intval', (array)$sourceCotizacionIds), function ($id) {
+                    return $id > 0;
+                })));
+                if (!empty($ids)) {
+                    $ph = implode(',', array_fill(0, count($ids), '?'));
+                    $sqlDup = "SELECT id FROM ordenes_laboratorio WHERE cotizacion_id IN ({$ph}) AND id <> ?";
+                    $stmtDup = $conn->prepare($sqlDup);
+                    if ($stmtDup) {
+                        $types = str_repeat('i', count($ids)) . 'i';
+                        $params = $ids;
+                        $params[] = $ordenId;
+                        $stmtDup->bind_param($types, ...$params);
+                        $stmtDup->execute();
+                        $dupRows = $stmtDup->get_result()->fetch_all(MYSQLI_ASSOC);
+                        $stmtDup->close();
+                        foreach ($dupRows as $dupRow) {
+                            $dupId = (int)($dupRow['id'] ?? 0);
+                            if ($dupId <= 0) continue;
+                            $stmtRes = $conn->prepare('SELECT 1 FROM resultados_laboratorio WHERE orden_id = ? LIMIT 1');
+                            $tieneResultados = false;
+                            if ($stmtRes) {
+                                $stmtRes->bind_param('i', $dupId);
+                                $stmtRes->execute();
+                                $tieneResultados = (bool)$stmtRes->get_result()->fetch_row();
+                                $stmtRes->close();
+                            }
+                            if ($tieneResultados) continue;
+                            $stmtCan = $conn->prepare("UPDATE ordenes_laboratorio SET examenes = '[]', estado = 'cancelada', cotizacion_id = ? WHERE id = ?");
+                            if ($stmtCan) {
+                                $stmtCan->bind_param('ii', $rootCotizacionId, $dupId);
+                                $stmtCan->execute();
+                                $stmtCan->close();
+                            }
+                        }
+                    }
+                }
+            }
+
             return;
         }
 
@@ -1443,6 +1730,185 @@ class CobroModule
                 $stmtIns->execute();
                 $stmtIns->close();
             }
+        }
+    }
+
+    private static function crearOrdenesProcedimientosCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId = 0, $usuarioId = 0)
+    {
+        if (!self::tableExists($conn, 'ordenes_procedimientos')) {
+            return;
+        }
+
+        $cotizacionId = (int)$cotizacionId;
+        $pacienteId = (int)$pacienteId;
+        $consultaCandidata = (int)$consultaId;
+        if ($cotizacionId <= 0 || $pacienteId <= 0) {
+            return;
+        }
+
+        $procIds = [];
+        foreach ((array)$detalles as $det) {
+            $tipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
+            if (!in_array($tipo, ['procedimiento', 'procedimientos'], true)) {
+                continue;
+            }
+
+            $servicioId = (int)($det['servicio_id'] ?? 0);
+            if ($servicioId > 0) {
+                $procIds[] = $servicioId;
+            }
+
+            if ($consultaCandidata <= 0) {
+                $consultaDet = (int)($det['consulta_id'] ?? 0);
+                if ($consultaDet > 0) {
+                    $consultaCandidata = $consultaDet;
+                }
+            }
+        }
+
+        $procIds = array_values(array_unique(array_filter(array_map('intval', $procIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($procIds)) {
+            return;
+        }
+
+        if ($consultaCandidata <= 0 && self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            $stmtConsulta = $conn->prepare("SELECT consulta_id
+                                            FROM cotizaciones_detalle
+                                            WHERE cotizacion_id = ?
+                                              AND consulta_id IS NOT NULL
+                                              AND consulta_id > 0
+                                            ORDER BY id ASC
+                                            LIMIT 1");
+            if ($stmtConsulta) {
+                $stmtConsulta->bind_param('i', $cotizacionId);
+                $stmtConsulta->execute();
+                $rowConsulta = $stmtConsulta->get_result()->fetch_assoc();
+                $stmtConsulta->close();
+                $consultaCandidata = (int)($rowConsulta['consulta_id'] ?? 0);
+            }
+        }
+
+        if ($consultaCandidata <= 0) {
+            return;
+        }
+
+        $jsonProc = json_encode($procIds, JSON_UNESCAPED_UNICODE);
+        if ($jsonProc === false) {
+            $jsonProc = json_encode($procIds);
+        }
+
+        $hasCotizacionId = self::columnExists($conn, 'ordenes_procedimientos', 'cotizacion_id');
+        $hasPacienteId = self::columnExists($conn, 'ordenes_procedimientos', 'paciente_id');
+        $hasUsuarioId = self::columnExists($conn, 'ordenes_procedimientos', 'usuario_id');
+        $hasUpdatedAt = self::columnExists($conn, 'ordenes_procedimientos', 'updated_at');
+
+        $usuarioSesion = (int)($_SESSION['usuario']['id'] ?? 0);
+        if ($usuarioSesion <= 0) {
+            $usuarioSesion = (int)$usuarioId;
+        }
+
+        $existingId = 0;
+        $existingJson = '[]';
+        if ($hasCotizacionId) {
+            $stmtFind = $conn->prepare('SELECT id, procedimientos_json FROM ordenes_procedimientos WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 1');
+            if ($stmtFind) {
+                $stmtFind->bind_param('i', $cotizacionId);
+                $stmtFind->execute();
+                $rowExist = $stmtFind->get_result()->fetch_assoc();
+                $stmtFind->close();
+                $existingId = (int)($rowExist['id'] ?? 0);
+                $existingJson = (string)($rowExist['procedimientos_json'] ?? '[]');
+            }
+        } else {
+            $stmtFind = $conn->prepare('SELECT id, procedimientos_json FROM ordenes_procedimientos WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
+            if ($stmtFind) {
+                $stmtFind->bind_param('i', $consultaCandidata);
+                $stmtFind->execute();
+                $rowExist = $stmtFind->get_result()->fetch_assoc();
+                $stmtFind->close();
+                $existingId = (int)($rowExist['id'] ?? 0);
+                $existingJson = (string)($rowExist['procedimientos_json'] ?? '[]');
+            }
+        }
+
+        if ($existingId > 0) {
+            $prev = json_decode($existingJson, true);
+            if (!is_array($prev)) {
+                $prev = [];
+            }
+
+            $prevIds = array_values(array_unique(array_filter(array_map('intval', $prev), function ($id) {
+                return $id > 0;
+            })));
+            $finalIds = array_values(array_unique(array_merge($prevIds, $procIds)));
+            $jsonFinal = json_encode($finalIds, JSON_UNESCAPED_UNICODE);
+            if ($jsonFinal === false) {
+                $jsonFinal = json_encode($finalIds);
+            }
+
+            $sets = ['procedimientos_json = ?', 'consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END'];
+            $types = 'si';
+            $params = [$jsonFinal, $consultaCandidata];
+
+            if ($hasPacienteId) {
+                $sets[] = 'paciente_id = CASE WHEN paciente_id IS NULL OR paciente_id = 0 THEN ? ELSE paciente_id END';
+                $types .= 'i';
+                $params[] = $pacienteId;
+            }
+            if ($hasUsuarioId && $usuarioSesion > 0) {
+                $sets[] = 'usuario_id = CASE WHEN usuario_id IS NULL OR usuario_id = 0 THEN ? ELSE usuario_id END';
+                $types .= 'i';
+                $params[] = $usuarioSesion;
+            }
+            if ($hasUpdatedAt) {
+                $sets[] = 'updated_at = NOW()';
+            }
+
+            $types .= 'i';
+            $params[] = $existingId;
+
+            $sqlUpd = 'UPDATE ordenes_procedimientos SET ' . implode(', ', $sets) . ' WHERE id = ?';
+            $stmtUpd = $conn->prepare($sqlUpd);
+            if ($stmtUpd) {
+                $stmtUpd->bind_param($types, ...$params);
+                $stmtUpd->execute();
+                $stmtUpd->close();
+            }
+            return;
+        }
+
+        $cols = ['consulta_id', 'procedimientos_json', 'estado'];
+        $vals = ['?', '?', "'pendiente'"];
+        $types = 'is';
+        $params = [$consultaCandidata, $jsonProc];
+
+        if ($hasPacienteId) {
+            $cols[] = 'paciente_id';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = $pacienteId;
+        }
+        if ($hasCotizacionId) {
+            $cols[] = 'cotizacion_id';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = $cotizacionId;
+        }
+        if ($hasUsuarioId) {
+            $cols[] = 'usuario_id';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = $usuarioSesion > 0 ? $usuarioSesion : 0;
+        }
+
+        $sqlIns = 'INSERT INTO ordenes_procedimientos (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+        $stmtIns = $conn->prepare($sqlIns);
+        if ($stmtIns) {
+            $stmtIns->bind_param($types, ...$params);
+            $stmtIns->execute();
+            $stmtIns->close();
         }
     }
 
@@ -1644,9 +2110,1068 @@ class CobroModule
         $consultaSync = self::asegurarConsultaDesdeCotizacion($conn, $cotizacionId);
         $consultaId = (int)($consultaSync['consulta_id'] ?? 0);
 
+        self::crearOrdenesProcedimientosCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId, (int)$usuarioId);
         self::crearOrdenesLaboratorioCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId);
         self::crearOrdenesImagenCotizacion($conn, $cotizacionId, $pacienteId, $detalles, (int)$usuarioId, $consultaId);
         self::desbloquearConsultasPorCotizacion($conn, $cotizacionId);
+    }
+
+    private static function confirmarAgendaServiciosPorCobro($conn, $cotizacionId, $usuarioId = 0)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        $usuarioId = (int)$usuarioId;
+        if ($cotizacionId <= 0) {
+            return;
+        }
+        if (!self::tableExists($conn, 'agenda_servicios_cotizacion')) {
+            return;
+        }
+        if (!self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')) {
+            return;
+        }
+        if (!self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+            return;
+        }
+
+        $sets = ['estado_evento = "confirmado"'];
+        if (self::columnExists($conn, 'agenda_servicios_cotizacion', 'updated_by')) {
+            $sets[] = 'updated_by = ?';
+        }
+
+        $sql = 'UPDATE agenda_servicios_cotizacion SET ' . implode(', ', $sets)
+            . ' WHERE cotizacion_id = ?'
+            . ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) = "pendiente"';
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return;
+        }
+
+        if (self::columnExists($conn, 'agenda_servicios_cotizacion', 'updated_by')) {
+            $stmt->bind_param('ii', $usuarioId, $cotizacionId);
+        } else {
+            $stmt->bind_param('i', $cotizacionId);
+        }
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private static function normalizarFechaProgramadaAgenda($value)
+    {
+        $raw = trim((string)$value);
+        if ($raw === '') {
+            return null;
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return null;
+        }
+        return date('Y-m-d', $ts);
+    }
+
+    private static function normalizarHoraProgramadaAgenda($value)
+    {
+        $raw = trim((string)$value);
+        if ($raw === '') {
+            return null;
+        }
+        if (preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $raw)) {
+            $parts = explode(':', $raw);
+            return sprintf('%02d:%02d:00', (int)$parts[0], (int)$parts[1]);
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return null;
+        }
+        return date('H:i:s', $ts);
+    }
+
+    private static function servicioTipoEsAgendable($servicioTipo)
+    {
+        $tipo = self::normalizarServicioTipo($servicioTipo);
+        return in_array($tipo, [
+            'ecografia',
+            'rayosx',
+            'tomografia',
+            'procedimiento',
+            'operacion',
+            'hospitalizacion',
+            'laboratorio',
+            'imagen',
+            'imagenologia',
+        ], true);
+    }
+
+    private static function servicioTipoRequiereValidacionHorarioCobro($servicioTipo)
+    {
+        $tipo = self::normalizarServicioTipo($servicioTipo);
+        return in_array($tipo, [
+            'ecografia',
+            'rayosx',
+            'tomografia',
+            'procedimiento',
+            'operacion',
+            'hospitalizacion',
+            'imagen',
+            'imagenologia',
+        ], true);
+    }
+
+    private static function cotizacionProvieneHc($cotizacion)
+    {
+        if (!is_array($cotizacion)) return false;
+
+        $referencia = strtolower(trim((string)($cotizacion['referencia_origen'] ?? '')));
+        $obs = strtolower(trim((string)($cotizacion['observaciones'] ?? '')));
+
+        if ($referencia !== '' && strpos($referencia, 'hc') !== false) {
+            return true;
+        }
+        if ($obs !== '' && (
+            strpos($obs, 'desde consulta #') !== false
+            || strpos($obs, 'hc consulta #') !== false
+            || strpos($obs, 'orden de ') !== false
+        )) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function cotizacionDetalleProvieneHcPorOrdenImagen($conn, $cotizacionId, $detalleId = 0)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        $detalleId = (int)$detalleId;
+        if ($cotizacionId <= 0) {
+            return false;
+        }
+        if (!self::tableExists($conn, 'ordenes_imagen')) {
+            return false;
+        }
+        if (!self::columnExists($conn, 'ordenes_imagen', 'cotizacion_id')) {
+            return false;
+        }
+
+        $cols = [];
+        if (self::columnExists($conn, 'ordenes_imagen', 'consulta_id')) {
+            $cols[] = 'consulta_id';
+        } else {
+            $cols[] = '0 AS consulta_id';
+        }
+        if (self::columnExists($conn, 'ordenes_imagen', 'indicaciones')) {
+            $cols[] = 'indicaciones';
+        } else {
+            $cols[] = '"" AS indicaciones';
+        }
+
+        $sql = 'SELECT ' . implode(', ', $cols)
+            . ' FROM ordenes_imagen WHERE cotizacion_id = ? ORDER BY id DESC LIMIT 5';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $needleDetalle = $detalleId > 0 ? ('detalle #' . $detalleId) : '';
+        $fallback = false;
+        while ($res && ($row = $res->fetch_assoc())) {
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $indicaciones = strtolower(trim((string)($row['indicaciones'] ?? '')));
+            $matchDetalle = $needleDetalle === '' || ($indicaciones !== '' && strpos($indicaciones, $needleDetalle) !== false);
+            $marcaHc = $consultaId > 0
+                || ($indicaciones !== '' && (
+                    strpos($indicaciones, 'desde consulta #') !== false
+                    || strpos($indicaciones, 'hc consulta #') !== false
+                ));
+
+            if ($matchDetalle && $marcaHc) {
+                $stmt->close();
+                return true;
+            }
+
+            if ($marcaHc) {
+                $fallback = true;
+            }
+        }
+
+        $stmt->close();
+        return $fallback;
+    }
+
+    private static function toMinutesFromHm($hora)
+    {
+        $h = trim((string)$hora);
+        if (!preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $h, $m)) {
+            return null;
+        }
+        $hh = (int)$m[1];
+        $mm = (int)$m[2];
+        if ($hh < 0 || $hh > 23 || $mm < 0 || $mm > 59) {
+            return null;
+        }
+        return ($hh * 60) + $mm;
+    }
+
+    private static function toHmFromMinutes($minutes)
+    {
+        $val = max(0, min(1439, (int)$minutes));
+        $hh = (int)floor($val / 60);
+        $mm = $val % 60;
+        return sprintf('%02d:%02d:00', $hh, $mm);
+    }
+
+    private static function resolverHorariosDisponiblesMedicoFecha($conn, $medicoId, $fechaYmd, $horaReferencia = null, $maxSugerencias = 6)
+    {
+        $medicoId = (int)$medicoId;
+        $fechaYmd = trim((string)$fechaYmd);
+        $maxSugerencias = max(1, min(12, (int)$maxSugerencias));
+
+        if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaYmd)) {
+            return [];
+        }
+
+        $ocupadas = [];
+
+        if (self::tableExists($conn, 'consultas')) {
+            $stmtOccC = $conn->prepare('SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
+            if ($stmtOccC) {
+                $stmtOccC->bind_param('is', $medicoId, $fechaYmd);
+                $stmtOccC->execute();
+                $resOccC = $stmtOccC->get_result();
+                while ($resOccC && ($row = $resOccC->fetch_assoc())) {
+                    $horaDb = self::normalizarHoraProgramadaAgenda($row['hora'] ?? null);
+                    if ($horaDb !== null) {
+                        $ocupadas[$horaDb] = true;
+                    }
+                }
+                $stmtOccC->close();
+            }
+        }
+
+        if (self::tableExists($conn, 'agenda_servicios_cotizacion')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+            $stmtOccA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")');
+            if ($stmtOccA) {
+                $stmtOccA->bind_param('is', $medicoId, $fechaYmd);
+                $stmtOccA->execute();
+                $resOccA = $stmtOccA->get_result();
+                while ($resOccA && ($row = $resOccA->fetch_assoc())) {
+                    $horaDb = self::normalizarHoraProgramadaAgenda($row['hora_programada'] ?? null);
+                    if ($horaDb !== null) {
+                        $ocupadas[$horaDb] = true;
+                    }
+                }
+                $stmtOccA->close();
+            }
+        }
+
+        $slots = [];
+        if (self::tableExists($conn, 'disponibilidad_medicos')) {
+            $stmtDisp = $conn->prepare('SELECT hora_inicio, hora_fin FROM disponibilidad_medicos WHERE medico_id = ? AND fecha = ? ORDER BY hora_inicio ASC');
+            if ($stmtDisp) {
+                $stmtDisp->bind_param('is', $medicoId, $fechaYmd);
+                $stmtDisp->execute();
+                $resDisp = $stmtDisp->get_result();
+                while ($resDisp && ($row = $resDisp->fetch_assoc())) {
+                    $ini = self::toMinutesFromHm((string)($row['hora_inicio'] ?? ''));
+                    $fin = self::toMinutesFromHm((string)($row['hora_fin'] ?? ''));
+                    if ($ini === null || $fin === null || $fin <= $ini) continue;
+                    for ($m = $ini; $m < $fin; $m += 30) {
+                        $h = self::toHmFromMinutes($m);
+                        if (!isset($ocupadas[$h])) {
+                            $slots[$h] = true;
+                        }
+                    }
+                }
+                $stmtDisp->close();
+            }
+        }
+
+        if (empty($slots)) {
+            for ($m = (7 * 60); $m <= (20 * 60); $m += 30) {
+                $h = self::toHmFromMinutes($m);
+                if (!isset($ocupadas[$h])) {
+                    $slots[$h] = true;
+                }
+            }
+        }
+
+        $slotList = array_keys($slots);
+        sort($slotList);
+
+        $refMin = self::toMinutesFromHm((string)$horaReferencia);
+        if ($refMin !== null) {
+            usort($slotList, function ($a, $b) use ($refMin) {
+                $ma = self::toMinutesFromHm($a);
+                $mb = self::toMinutesFromHm($b);
+                $da = $ma === null ? 9999 : (($ma >= $refMin) ? ($ma - $refMin) : (1440 + $ma - $refMin));
+                $db = $mb === null ? 9999 : (($mb >= $refMin) ? ($mb - $refMin) : (1440 + $mb - $refMin));
+                if ($da === $db) return strcmp($a, $b);
+                return $da <=> $db;
+            });
+        }
+
+        $out = [];
+        foreach ($slotList as $horaDb) {
+            $out[] = [
+                'fecha_programada' => $fechaYmd,
+                'hora_programada' => $horaDb,
+                'hora_label' => substr($horaDb, 0, 5),
+            ];
+            if (count($out) >= $maxSugerencias) break;
+        }
+
+        return $out;
+    }
+
+    private static function filtrarHorariosPosteriores($sugeridos, $minutosBase)
+    {
+        $base = is_numeric($minutosBase) ? (int)$minutosBase : null;
+        if ($base === null) {
+            return is_array($sugeridos) ? array_values($sugeridos) : [];
+        }
+
+        $out = [];
+        foreach ((array)$sugeridos as $slot) {
+            if (!is_array($slot)) continue;
+            $hora = self::normalizarHoraProgramadaAgenda($slot['hora_programada'] ?? null);
+            $m = self::toMinutesFromHm((string)$hora);
+            if ($m === null || $m <= $base) {
+                continue;
+            }
+            $out[] = [
+                'fecha_programada' => (string)($slot['fecha_programada'] ?? ''),
+                'hora_programada' => $hora,
+                'hora_label' => substr((string)$hora, 0, 5),
+            ];
+        }
+
+        return $out;
+    }
+
+    private static function resolverHoraMaximaOcupadaDia($conn, $medicoId, $fechaYmd, $consultaExcluirId = 0, $agendaExcluirId = 0, $cotizacionExcluirId = 0, $detalleExcluirId = 0)
+    {
+        $medicoId = (int)$medicoId;
+        $consultaExcluirId = (int)$consultaExcluirId;
+        $agendaExcluirId = (int)$agendaExcluirId;
+        $cotizacionExcluirId = (int)$cotizacionExcluirId;
+        $detalleExcluirId = (int)$detalleExcluirId;
+        $fechaYmd = trim((string)$fechaYmd);
+
+        if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaYmd)) {
+            return null;
+        }
+
+        $maxMin = null;
+
+        if (self::tableExists($conn, 'consultas')) {
+            $sqlC = 'SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
+            if ($consultaExcluirId > 0) {
+                $sqlC .= ' AND id <> ?';
+            }
+            $stmtC = $conn->prepare($sqlC);
+            if ($stmtC) {
+                if ($consultaExcluirId > 0) {
+                    $stmtC->bind_param('isi', $medicoId, $fechaYmd, $consultaExcluirId);
+                } else {
+                    $stmtC->bind_param('is', $medicoId, $fechaYmd);
+                }
+                $stmtC->execute();
+                $resC = $stmtC->get_result();
+                while ($resC && ($row = $resC->fetch_assoc())) {
+                    $hora = self::normalizarHoraProgramadaAgenda($row['hora'] ?? null);
+                    $m = self::toMinutesFromHm((string)$hora);
+                    if ($m === null) continue;
+                    $maxMin = ($maxMin === null) ? $m : max($maxMin, $m);
+                }
+                $stmtC->close();
+            }
+        }
+
+        if (self::tableExists($conn, 'agenda_servicios_cotizacion')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+            $sqlA = 'SELECT id, cotizacion_id, cotizacion_detalle_id, hora_programada FROM agenda_servicios_cotizacion'
+                . ' WHERE medico_id = ? AND fecha_programada = ?'
+                . ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")';
+            $stmtA = $conn->prepare($sqlA);
+            if ($stmtA) {
+                $stmtA->bind_param('is', $medicoId, $fechaYmd);
+                $stmtA->execute();
+                $resA = $stmtA->get_result();
+                while ($resA && ($row = $resA->fetch_assoc())) {
+                    $agendaIdRow = (int)($row['id'] ?? 0);
+                    if ($agendaExcluirId > 0 && $agendaIdRow === $agendaExcluirId) {
+                        continue;
+                    }
+                    if ($cotizacionExcluirId > 0 && (int)($row['cotizacion_id'] ?? 0) === $cotizacionExcluirId) {
+                        // Ignorar filas hermanas de la misma cotizacion para evitar
+                        // que un lote multi-servicio se autoinvalide por orden interno.
+                        continue;
+                    }
+                    if ($cotizacionExcluirId > 0 && $detalleExcluirId > 0) {
+                        $mismaCot = (int)($row['cotizacion_id'] ?? 0) === $cotizacionExcluirId;
+                        $mismoDet = (int)($row['cotizacion_detalle_id'] ?? 0) === $detalleExcluirId;
+                        if ($mismaCot && $mismoDet) {
+                            continue;
+                        }
+                    }
+
+                    $hora = self::normalizarHoraProgramadaAgenda($row['hora_programada'] ?? null);
+                    $m = self::toMinutesFromHm((string)$hora);
+                    if ($m === null) continue;
+                    $maxMin = ($maxMin === null) ? $m : max($maxMin, $m);
+                }
+                $stmtA->close();
+            }
+        }
+
+        return $maxMin;
+    }
+
+    private static function resolverProgramacionAgendaDetalle($conn, $cotizacionId, $detalleId)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        $detalleId = (int)$detalleId;
+        if ($cotizacionId <= 0 || $detalleId <= 0) {
+            return ['agenda_id' => 0, 'fecha_programada' => null, 'hora_programada' => null, 'medico_id' => 0];
+        }
+        if (!self::tableExists($conn, 'agenda_servicios_cotizacion')) {
+            return ['agenda_id' => 0, 'fecha_programada' => null, 'hora_programada' => null, 'medico_id' => 0];
+        }
+        if (!self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')) {
+            return ['agenda_id' => 0, 'fecha_programada' => null, 'hora_programada' => null, 'medico_id' => 0];
+        }
+
+        $cols = ['id AS agenda_id', 'fecha_programada'];
+        if (self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')) {
+            $cols[] = 'hora_programada';
+        } else {
+            $cols[] = 'NULL AS hora_programada';
+        }
+        if (self::columnExists($conn, 'agenda_servicios_cotizacion', 'medico_id')) {
+            $cols[] = 'medico_id';
+        } else {
+            $cols[] = '0 AS medico_id';
+        }
+
+        $whereEstado = self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')
+            ? ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+            : '';
+
+        $sql = 'SELECT ' . implode(', ', $cols)
+            . ' FROM agenda_servicios_cotizacion'
+            . ' WHERE cotizacion_id = ? AND cotizacion_detalle_id = ?'
+            . $whereEstado
+            . ' ORDER BY id ASC LIMIT 1';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return ['agenda_id' => 0, 'fecha_programada' => null, 'hora_programada' => null, 'medico_id' => 0];
+        }
+        $stmt->bind_param('ii', $cotizacionId, $detalleId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            return ['agenda_id' => 0, 'fecha_programada' => null, 'hora_programada' => null, 'medico_id' => 0];
+        }
+
+        return [
+            'agenda_id' => (int)($row['agenda_id'] ?? 0),
+            'fecha_programada' => self::normalizarFechaProgramadaAgenda($row['fecha_programada'] ?? null),
+            'hora_programada' => self::normalizarHoraProgramadaAgenda($row['hora_programada'] ?? null),
+            'medico_id' => (int)($row['medico_id'] ?? 0),
+        ];
+    }
+
+    private static function normalizarReprogramacionHorariaPayload($payload)
+    {
+        $out = [];
+        if (!is_array($payload)) return $out;
+
+        foreach ($payload as $key => $row) {
+            $detalleId = (int)$key;
+            if ($detalleId <= 0 || !is_array($row)) continue;
+            $fecha = self::normalizarFechaProgramadaAgenda($row['fecha_programada'] ?? null);
+            $hora = self::normalizarHoraProgramadaAgenda($row['hora_programada'] ?? null);
+            if ($fecha === null || $hora === null) continue;
+            $out[(string)$detalleId] = [
+                'fecha_programada' => $fecha,
+                'hora_programada' => $hora,
+            ];
+        }
+
+        return $out;
+    }
+
+    private static function aplicarReprogramacionHorariaEnDetalles(&$detalles, $reprogramacionMap)
+    {
+        if (!is_array($detalles) || empty($detalles) || !is_array($reprogramacionMap) || empty($reprogramacionMap)) {
+            return;
+        }
+
+        foreach ($detalles as &$detalle) {
+            if (!is_array($detalle)) continue;
+            $detalleId = (int)($detalle['cotizacion_detalle_id'] ?? ($detalle['detalle_id'] ?? 0));
+            if ($detalleId <= 0) continue;
+            $key = (string)$detalleId;
+            if (!isset($reprogramacionMap[$key])) continue;
+            $detalle['fecha_programada'] = $reprogramacionMap[$key]['fecha_programada'];
+            $detalle['hora_programada'] = $reprogramacionMap[$key]['hora_programada'];
+        }
+        unset($detalle);
+    }
+
+    private static function persistirReprogramacionEnCotizacionDetalle($conn, $detalles, $reprogramacionMap)
+    {
+        if (!is_array($detalles) || empty($detalles) || !is_array($reprogramacionMap) || empty($reprogramacionMap)) {
+            return;
+        }
+        if (!self::tableExists($conn, 'cotizaciones_detalle')) {
+            return;
+        }
+
+        $hasFecha = self::columnExists($conn, 'cotizaciones_detalle', 'fecha_programada');
+        $hasHora = self::columnExists($conn, 'cotizaciones_detalle', 'hora_programada');
+        if (!$hasFecha && !$hasHora) {
+            return;
+        }
+
+        $sql = null;
+        if ($hasFecha && $hasHora) {
+            $sql = 'UPDATE cotizaciones_detalle SET fecha_programada = ?, hora_programada = ? WHERE id = ? AND cotizacion_id = ?';
+        } elseif ($hasFecha) {
+            $sql = 'UPDATE cotizaciones_detalle SET fecha_programada = ? WHERE id = ? AND cotizacion_id = ?';
+        } else {
+            $sql = 'UPDATE cotizaciones_detalle SET hora_programada = ? WHERE id = ? AND cotizacion_id = ?';
+        }
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return;
+        }
+
+        foreach ($detalles as $detalle) {
+            if (!is_array($detalle)) continue;
+            $detalleId = (int)($detalle['cotizacion_detalle_id'] ?? ($detalle['detalle_id'] ?? 0));
+            $cotizacionId = (int)($detalle['cotizacion_id'] ?? 0);
+            if ($detalleId <= 0 || $cotizacionId <= 0) continue;
+            $key = (string)$detalleId;
+            if (!isset($reprogramacionMap[$key])) continue;
+            $fecha = $reprogramacionMap[$key]['fecha_programada'];
+            $hora = $reprogramacionMap[$key]['hora_programada'];
+
+            if ($hasFecha && $hasHora) {
+                $stmt->bind_param('ssii', $fecha, $hora, $detalleId, $cotizacionId);
+            } elseif ($hasFecha) {
+                $stmt->bind_param('sii', $fecha, $detalleId, $cotizacionId);
+            } else {
+                $stmt->bind_param('sii', $hora, $detalleId, $cotizacionId);
+            }
+            $stmt->execute();
+        }
+
+        $stmt->close();
+    }
+
+    private static function persistirReprogramacionEnAgendaServicios($conn, $detalles, $reprogramacionMap, $usuarioId = 0)
+    {
+        if (!is_array($detalles) || empty($detalles) || !is_array($reprogramacionMap) || empty($reprogramacionMap)) {
+            return;
+        }
+        if (!self::tableExists($conn, 'agenda_servicios_cotizacion')) {
+            return;
+        }
+        if (!self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+            return;
+        }
+
+        $hasHora = self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada');
+        $hasUpdatedBy = self::columnExists($conn, 'agenda_servicios_cotizacion', 'updated_by');
+        $hasEstado = self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+
+        $sets = ['fecha_programada = ?'];
+        if ($hasHora) {
+            $sets[] = 'hora_programada = ?';
+        }
+        if ($hasUpdatedBy) {
+            $sets[] = 'updated_by = ?';
+        }
+        if ($hasEstado) {
+            $sets[] = 'estado_evento = CASE'
+                . ' WHEN LOWER(TRIM(COALESCE(estado_evento, ""))) IN ("cancelado", "no_asistio", "anulada") THEN estado_evento'
+                . ' ELSE "confirmado" END';
+        }
+
+        $whereEstado = $hasEstado
+            ? ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+            : '';
+
+        $sql = 'UPDATE agenda_servicios_cotizacion SET ' . implode(', ', $sets)
+            . ' WHERE cotizacion_id = ? AND cotizacion_detalle_id = ?'
+            . $whereEstado;
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return;
+        }
+
+        $usuarioId = (int)$usuarioId;
+        foreach ($detalles as $detalle) {
+            if (!is_array($detalle)) continue;
+            $detalleId = (int)($detalle['cotizacion_detalle_id'] ?? ($detalle['detalle_id'] ?? 0));
+            $cotizacionId = (int)($detalle['cotizacion_id'] ?? 0);
+            if ($detalleId <= 0 || $cotizacionId <= 0) continue;
+            $key = (string)$detalleId;
+            if (!isset($reprogramacionMap[$key])) continue;
+
+            $fecha = $reprogramacionMap[$key]['fecha_programada'];
+            $hora = $reprogramacionMap[$key]['hora_programada'];
+
+            if ($hasHora && $hasUpdatedBy) {
+                $stmt->bind_param('ssiii', $fecha, $hora, $usuarioId, $cotizacionId, $detalleId);
+            } elseif ($hasHora) {
+                $stmt->bind_param('ssii', $fecha, $hora, $cotizacionId, $detalleId);
+            } elseif ($hasUpdatedBy) {
+                $stmt->bind_param('siii', $fecha, $usuarioId, $cotizacionId, $detalleId);
+            } else {
+                $stmt->bind_param('sii', $fecha, $cotizacionId, $detalleId);
+            }
+            $stmt->execute();
+        }
+
+        $stmt->close();
+    }
+
+    private static function validarChoquesHorarioAntesCobro($conn, $detalles, $cotizacionesBloqueadas, $reprogramacionMap = [])
+    {
+        $conflictos = [];
+        $cacheMedico = [];
+        $cacheOrigenHc = [];
+
+        foreach ((array)$detalles as $detalle) {
+            if (!is_array($detalle)) continue;
+
+            $servicioTipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
+            if (!self::servicioTipoRequiereValidacionHorarioCobro($servicioTipo)) {
+                continue;
+            }
+
+            $cotizacionId = (int)($detalle['cotizacion_id'] ?? 0);
+            $cotMeta = ($cotizacionId > 0 && isset($cotizacionesBloqueadas[$cotizacionId])) ? $cotizacionesBloqueadas[$cotizacionId] : [];
+            $detalleId = (int)($detalle['cotizacion_detalle_id'] ?? ($detalle['detalle_id'] ?? 0));
+            $keyOrigen = $cotizacionId . '|' . $detalleId;
+            if (!array_key_exists($keyOrigen, $cacheOrigenHc)) {
+                $cacheOrigenHc[$keyOrigen] = (
+                    self::cotizacionProvieneHc($cotMeta)
+                    || (int)($detalle['consulta_id'] ?? 0) > 0
+                    || self::cotizacionDetalleProvieneHcPorOrdenImagen($conn, $cotizacionId, $detalleId)
+                );
+            }
+            $esOrigenHc = (bool)$cacheOrigenHc[$keyOrigen];
+            if (!$esOrigenHc) {
+                continue;
+            }
+
+            $detalleKey = $detalleId > 0 ? (string)$detalleId : '';
+            $override = ($detalleKey !== '' && isset($reprogramacionMap[$detalleKey])) ? $reprogramacionMap[$detalleKey] : null;
+            $agendaMeta = ($cotizacionId > 0 && $detalleId > 0)
+                ? self::resolverProgramacionAgendaDetalle($conn, $cotizacionId, $detalleId)
+                : ['agenda_id' => 0, 'fecha_programada' => null, 'hora_programada' => null, 'medico_id' => 0];
+            $agendaIdActual = (int)($agendaMeta['agenda_id'] ?? 0);
+
+            $consultaId = (int)($detalle['consulta_id'] ?? 0);
+            $medicoId = (int)($detalle['medico_id'] ?? 0);
+            if ($medicoId <= 0) {
+                $medicoId = (int)($agendaMeta['medico_id'] ?? 0);
+            }
+            if ($medicoId <= 0 && $consultaId > 0) {
+                if (!isset($cacheMedico[$consultaId])) {
+                    $cacheMedico[$consultaId] = self::resolverMedicoDesdeConsulta($conn, $consultaId);
+                }
+                $medicoId = (int)$cacheMedico[$consultaId];
+            }
+
+            $fecha = self::normalizarFechaProgramadaAgenda(
+                $override['fecha_programada']
+                ?? ($agendaMeta['fecha_programada'] ?? null)
+                ?? ($detalle['fecha_programada'] ?? ($detalle['fecha_programada_servicio'] ?? null))
+            );
+            if ($fecha === null) {
+                $fecha = self::normalizarFechaProgramadaAgenda($detalle['fecha'] ?? ($cotMeta['fecha'] ?? null));
+            }
+            $hora = self::normalizarHoraProgramadaAgenda(
+                $override['hora_programada']
+                ?? ($agendaMeta['hora_programada'] ?? null)
+                ?? ($detalle['hora_programada'] ?? ($detalle['hora_programada_servicio'] ?? null))
+            );
+            if ($hora === null) {
+                $hora = self::normalizarHoraProgramadaAgenda($detalle['hora'] ?? null);
+            }
+
+            if ($medicoId <= 0 || $fecha === null) {
+                continue;
+            }
+
+            $descripcion = trim((string)($detalle['descripcion'] ?? 'Servicio'));
+            if ($descripcion === '') $descripcion = 'Servicio';
+
+            $sugeridos = self::resolverHorariosDisponiblesMedicoFecha($conn, $medicoId, $fecha, $hora, 6);
+
+            if ($hora === null) {
+                $conflictos[] = [
+                    'tipo' => 'sin_hora',
+                    'detalle_id' => $detalleId,
+                    'cotizacion_id' => $cotizacionId,
+                    'medico_id' => $medicoId,
+                    'servicio_tipo' => $servicioTipo,
+                    'descripcion' => $descripcion,
+                    'fecha_programada' => $fecha,
+                    'hora_programada' => null,
+                    'horarios_sugeridos' => $sugeridos,
+                    'mensaje' => 'La solicitud no tiene hora programada. Selecciona un horario disponible antes de cobrar.',
+                ];
+                continue;
+            }
+
+            $choqueConsultas = false;
+            if (self::tableExists($conn, 'consultas')) {
+                if ($consultaId > 0) {
+                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada") LIMIT 1');
+                    if ($stmtChkC) {
+                        $stmtChkC->bind_param('issi', $medicoId, $fecha, $hora, $consultaId);
+                        $stmtChkC->execute();
+                        $rowChkC = $stmtChkC->get_result()->fetch_assoc();
+                        $stmtChkC->close();
+                        $choqueConsultas = (bool)$rowChkC;
+                    }
+                } else {
+                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada") LIMIT 1');
+                    if ($stmtChkC) {
+                        $stmtChkC->bind_param('iss', $medicoId, $fecha, $hora);
+                        $stmtChkC->execute();
+                        $rowChkC = $stmtChkC->get_result()->fetch_assoc();
+                        $stmtChkC->close();
+                        $choqueConsultas = (bool)$rowChkC;
+                    }
+                }
+            }
+
+            $choqueAgenda = false;
+            if (self::tableExists($conn, 'agenda_servicios_cotizacion')
+                && self::columnExists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+                && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+                && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+                && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+                $sqlAgenda = 'SELECT id, cotizacion_id, cotizacion_detalle_id FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND hora_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")';
+                $stmtChkA = $conn->prepare($sqlAgenda);
+                if ($stmtChkA) {
+                    $stmtChkA->bind_param('iss', $medicoId, $fecha, $hora);
+                    $stmtChkA->execute();
+                    $resChkA = $stmtChkA->get_result();
+                    while ($resChkA && ($rowA = $resChkA->fetch_assoc())) {
+                        $mismaCot = (int)($rowA['cotizacion_id'] ?? 0) === $cotizacionId;
+                        $mismoDet = $detalleId > 0 && (int)($rowA['cotizacion_detalle_id'] ?? 0) === $detalleId;
+                        if ($mismaCot && $mismoDet) {
+                            continue;
+                        }
+                        $choqueAgenda = true;
+                        break;
+                    }
+                    $stmtChkA->close();
+                }
+            }
+
+            if ($choqueConsultas || $choqueAgenda) {
+                $conflictos[] = [
+                    'tipo' => 'ocupado',
+                    'detalle_id' => $detalleId,
+                    'cotizacion_id' => $cotizacionId,
+                    'medico_id' => $medicoId,
+                    'servicio_tipo' => $servicioTipo,
+                    'descripcion' => $descripcion,
+                    'fecha_programada' => $fecha,
+                    'hora_programada' => $hora,
+                    'horarios_sugeridos' => $sugeridos,
+                    'mensaje' => 'El médico ya tiene un servicio en ese turno. Selecciona otro horario disponible.',
+                ];
+                continue;
+            }
+
+            $horaActualMin = self::toMinutesFromHm($hora);
+            $horaMaximaOcupada = self::resolverHoraMaximaOcupadaDia(
+                $conn,
+                $medicoId,
+                $fecha,
+                $consultaId,
+                $agendaIdActual,
+                $cotizacionId,
+                $detalleId
+            );
+
+            if ($horaActualMin !== null && $horaMaximaOcupada !== null && $horaActualMin <= $horaMaximaOcupada) {
+                $sugeridosPosteriores = self::filtrarHorariosPosteriores($sugeridos, $horaMaximaOcupada);
+                if (empty($sugeridosPosteriores)) {
+                    $referenciaPosterior = self::toHmFromMinutes(min(1439, $horaMaximaOcupada + 1));
+                    $sugeridosPosteriores = self::filtrarHorariosPosteriores(
+                        self::resolverHorariosDisponiblesMedicoFecha($conn, $medicoId, $fecha, $referenciaPosterior, 10),
+                        $horaMaximaOcupada
+                    );
+                }
+
+                $conflictos[] = [
+                    'tipo' => 'requiere_reprogramacion',
+                    'detalle_id' => $detalleId,
+                    'cotizacion_id' => $cotizacionId,
+                    'medico_id' => $medicoId,
+                    'servicio_tipo' => $servicioTipo,
+                    'descripcion' => $descripcion,
+                    'fecha_programada' => $fecha,
+                    'hora_programada' => $hora,
+                    'horarios_sugeridos' => $sugeridosPosteriores,
+                    'mensaje' => 'Para mantener el orden operativo del día, reprograme a un horario posterior disponible antes de cobrar.',
+                ];
+            }
+        }
+
+        if (empty($conflictos)) {
+            return ['ok' => true, 'conflictos' => [], 'message' => ''];
+        }
+
+        $partes = [];
+        foreach ($conflictos as $c) {
+            $horaTxt = $c['hora_programada'] ? substr((string)$c['hora_programada'], 0, 5) : 'sin hora';
+            $partes[] = sprintf('%s (%s %s)', (string)($c['descripcion'] ?? 'Servicio'), (string)($c['fecha_programada'] ?? '-'), $horaTxt);
+        }
+
+        return [
+            'ok' => false,
+            'conflictos' => $conflictos,
+            'message' => 'Hay conflictos de horario para: ' . implode('; ', $partes) . '.',
+        ];
+    }
+
+    private static function asegurarAgendaServiciosPorCobro($conn, $cotizacionId, $usuarioId = 0)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        $usuarioId = (int)$usuarioId;
+        if ($cotizacionId <= 0) {
+            return;
+        }
+        if (!self::tableExists($conn, 'agenda_servicios_cotizacion')) {
+            return;
+        }
+        if (!self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'paciente_id')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'titulo_evento')
+            || !self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+            return;
+        }
+
+        if (!self::tableExists($conn, 'cotizaciones')) {
+            return;
+        }
+
+        $stmtCot = $conn->prepare('SELECT paciente_id, fecha FROM cotizaciones WHERE id = ? LIMIT 1');
+        if (!$stmtCot) {
+            return;
+        }
+        $stmtCot->bind_param('i', $cotizacionId);
+        $stmtCot->execute();
+        $cot = $stmtCot->get_result()->fetch_assoc();
+        $stmtCot->close();
+
+        $pacienteId = (int)($cot['paciente_id'] ?? 0);
+        if ($pacienteId <= 0) {
+            return;
+        }
+
+        $fechaCotizacion = self::normalizarFechaProgramadaAgenda($cot['fecha'] ?? null);
+        $horaCotizacion = self::normalizarHoraProgramadaAgenda($cot['fecha'] ?? null);
+
+        $detalles = self::cargarDetallesCotizacionActivos($conn, $cotizacionId);
+        if (empty($detalles)) {
+            return;
+        }
+
+        $usaHora = self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada');
+        $usaEstado = self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+        $usaObs = self::columnExists($conn, 'agenda_servicios_cotizacion', 'observaciones');
+        $usaCreatedBy = self::columnExists($conn, 'agenda_servicios_cotizacion', 'created_by');
+        $usaUpdatedBy = self::columnExists($conn, 'agenda_servicios_cotizacion', 'updated_by');
+        $usaMedico = self::columnExists($conn, 'agenda_servicios_cotizacion', 'medico_id');
+        $usaServicioId = self::columnExists($conn, 'agenda_servicios_cotizacion', 'servicio_id');
+
+        $stmtExiste = $conn->prepare('SELECT id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND cotizacion_detalle_id = ? LIMIT 1');
+        if (!$stmtExiste) {
+            return;
+        }
+
+        $stmtConsulta = null;
+        if (self::tableExists($conn, 'consultas')) {
+            $stmtConsulta = $conn->prepare('SELECT fecha, hora, medico_id FROM consultas WHERE id = ? LIMIT 1');
+        }
+
+        foreach ($detalles as $detalle) {
+            $detalleId = (int)($detalle['id'] ?? 0);
+            if ($detalleId <= 0) {
+                continue;
+            }
+
+            $servicioTipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
+            if (!self::servicioTipoEsAgendable($servicioTipo)) {
+                continue;
+            }
+
+            $stmtExiste->bind_param('ii', $cotizacionId, $detalleId);
+            $stmtExiste->execute();
+            $exists = $stmtExiste->get_result()->fetch_assoc();
+            if ($exists) {
+                continue;
+            }
+
+            $consultaFecha = null;
+            $consultaHora = null;
+            $consultaMedicoId = 0;
+            $consultaId = (int)($detalle['consulta_id'] ?? 0);
+            if ($stmtConsulta && $consultaId > 0) {
+                $stmtConsulta->bind_param('i', $consultaId);
+                $stmtConsulta->execute();
+                $rowConsulta = $stmtConsulta->get_result()->fetch_assoc();
+                $consultaFecha = self::normalizarFechaProgramadaAgenda($rowConsulta['fecha'] ?? null);
+                $consultaHora = self::normalizarHoraProgramadaAgenda($rowConsulta['hora'] ?? null);
+                $consultaMedicoId = (int)($rowConsulta['medico_id'] ?? 0);
+            }
+
+            $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha_programada'] ?? null);
+            if ($fechaProgramada === null) {
+                $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha_programada_servicio'] ?? null);
+            }
+            if ($fechaProgramada === null) {
+                $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha'] ?? null);
+            }
+            if ($fechaProgramada === null) {
+                $fechaProgramada = $consultaFecha ?: $fechaCotizacion;
+            }
+            if ($fechaProgramada === null) {
+                continue;
+            }
+
+            $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora_programada'] ?? null);
+            if ($horaProgramada === null) {
+                $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora_programada_servicio'] ?? null);
+            }
+            if ($horaProgramada === null) {
+                $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora'] ?? null);
+            }
+            if ($horaProgramada === null) {
+                $horaProgramada = $consultaHora ?: $horaCotizacion;
+            }
+
+            $medicoId = (int)($detalle['medico_id'] ?? 0);
+            if ($medicoId <= 0) {
+                $medicoId = $consultaMedicoId;
+            }
+
+            $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : null;
+            $titulo = trim((string)($detalle['descripcion'] ?? ''));
+            if ($titulo === '') {
+                $titulo = 'Servicio programado';
+            }
+
+            $cols = [
+                'cotizacion_id',
+                'cotizacion_detalle_id',
+                'paciente_id',
+            ];
+            $vals = ['?', '?', '?'];
+            $types = 'iii';
+            $params = [$cotizacionId, $detalleId, $pacienteId];
+
+            if ($usaMedico) {
+                $cols[] = 'medico_id';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = $medicoId > 0 ? $medicoId : null;
+            }
+
+            $cols[] = 'servicio_tipo';
+            $vals[] = '?';
+            $types .= 's';
+            $params[] = $servicioTipo;
+
+            if ($usaServicioId) {
+                $cols[] = 'servicio_id';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = ($servicioId && $servicioId > 0) ? $servicioId : null;
+            }
+
+            $cols[] = 'titulo_evento';
+            $vals[] = '?';
+            $types .= 's';
+            $params[] = $titulo;
+
+            $cols[] = 'fecha_programada';
+            $vals[] = '?';
+            $types .= 's';
+            $params[] = $fechaProgramada;
+
+            if ($usaHora) {
+                $cols[] = 'hora_programada';
+                $vals[] = '?';
+                $types .= 's';
+                $params[] = $horaProgramada;
+            }
+            if ($usaEstado) {
+                $cols[] = 'estado_evento';
+                $vals[] = '"pendiente"';
+            }
+            if ($usaObs) {
+                $cols[] = 'observaciones';
+                $vals[] = '?';
+                $types .= 's';
+                $params[] = 'Auto-agendado por cobro de cotizacion pendiente';
+            }
+            if ($usaCreatedBy) {
+                $cols[] = 'created_by';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = $usuarioId;
+            }
+            if ($usaUpdatedBy) {
+                $cols[] = 'updated_by';
+                $vals[] = '?';
+                $types .= 'i';
+                $params[] = $usuarioId;
+            }
+
+            $sql = 'INSERT INTO agenda_servicios_cotizacion (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+            $stmtIns = $conn->prepare($sql);
+            if (!$stmtIns) {
+                continue;
+            }
+            $stmtIns->bind_param($types, ...$params);
+            $stmtIns->execute();
+            $stmtIns->close();
+        }
+
+        $stmtExiste->close();
+        if ($stmtConsulta) {
+            $stmtConsulta->close();
+        }
     }
 
     // Obtener cobros (por paciente, por id, o todos con filtros)
@@ -1931,6 +3456,25 @@ class CobroModule
             // Aplicar descuento proporcional a cada item para mantener consistencia
             // entre caja, honorarios, derivaciones y farmacia.
             $data['detalles'] = self::distribuirDescuentoProporcionalEnDetalles($data['detalles'], $montoDescuento);
+
+            $reprogramacionHorariaMap = self::normalizarReprogramacionHorariaPayload($data['reprogramacion_horaria'] ?? null);
+            if (!empty($reprogramacionHorariaMap)) {
+                self::aplicarReprogramacionHorariaEnDetalles($data['detalles'], $reprogramacionHorariaMap);
+                self::persistirReprogramacionEnCotizacionDetalle($conn, $data['detalles'], $reprogramacionHorariaMap);
+                self::persistirReprogramacionEnAgendaServicios($conn, $data['detalles'], $reprogramacionHorariaMap, (int)$usuarioSesionId);
+            }
+
+            $validacionHoraria = self::validarChoquesHorarioAntesCobro($conn, $data['detalles'], $cotizacionesBloqueadas, $reprogramacionHorariaMap);
+            if (!$validacionHoraria['ok']) {
+                $conn->rollback();
+                return [
+                    'success' => false,
+                    'code' => 'conflicto_horario',
+                    'error' => (string)($validacionHoraria['message'] ?? 'Conflicto de horario detectado.'),
+                    'conflictos' => $validacionHoraria['conflictos'] ?? [],
+                ];
+            }
+
             $resumenPorCotizacion = self::construirResumenCobroPorCotizacion($data['detalles']);
             if (empty($resumenPorCotizacion) && $cotizacionId > 0) {
                 $resumenPorCotizacion[$cotizacionId] = [
@@ -1946,6 +3490,22 @@ class CobroModule
             $data['monto_descuento'] = $montoDescuento;
             $data['total'] = $totalCobro;
             $data['cotizacion_ids'] = $cotizacionIdsFlujo;
+
+            $esAtencionSolidaria = !empty($data['atencion_solidaria']);
+            if ($esAtencionSolidaria) {
+                if ($montoOriginal <= 0 || $montoDescuento < ($montoOriginal - 0.00001) || $totalCobro > 0.00001) {
+                    throw new \Exception('La atención solidaria requiere un descuento total y un cobro final de S/ 0.00.');
+                }
+                if (trim((string)($data['motivo'] ?? '')) === '') {
+                    throw new \Exception('La atención solidaria requiere registrar el motivo de la atención.');
+                }
+                foreach ($data['detalles'] as &$detalleSolidario) {
+                    if (is_array($detalleSolidario)) {
+                        $detalleSolidario['renuncia_honorario_medico'] = true;
+                    }
+                }
+                unset($detalleSolidario);
+            }
             if (empty(trim((string)($data['referencia_origen'] ?? ''))) && !empty($cotizacionesBloqueadas)) {
                 foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
                     $refOrigenCot = trim((string)($cotizacionBloqueada['referencia_origen'] ?? ''));
@@ -1967,6 +3527,7 @@ class CobroModule
 
             // Registrar cobro principal y detalles
             $cobro_id = self::registrarCobro($conn, $data);
+            $fechaHoraIngresoBase = self::resolverFechaHoraCobroParaIngreso($conn, $cobro_id);
             // Registrar descuento aplicado si corresponde
             self::registrarDescuento($conn, $data, $cobro_id);
             self::registrarCobroCotizaciones(
@@ -2257,12 +3818,14 @@ class CobroModule
                                         if (is_array($movimientoHonorario) && isset($movimientoHonorario['success']) && !$movimientoHonorario['success']) {
                                             throw new \Exception($movimientoHonorario['error'] ?? 'No se pudo registrar el movimiento de honorario médico.');
                                         }
-                                        $mov_id = intval($movimientoHonorario);
-                                        if ($mov_id <= 0) {
-                                            throw new \Exception('No se pudo registrar el movimiento de honorario médico.');
+                                        if ($movimientoHonorario !== null) {
+                                            $mov_id = intval($movimientoHonorario);
+                                            if ($mov_id <= 0) {
+                                                throw new \Exception('No se pudo registrar el movimiento de honorario médico.');
+                                            }
+                                            $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id;
+                                            $honorario_movimiento_id = $mov_id;
                                         }
-                                        $data['detalles'][$i]['honorario_movimiento_id'] = $mov_id; // Guardar el id retornado
-                                        $honorario_movimiento_id = $mov_id; // Actualizar honorario_movimiento_id
                                     }
                                 }
                             }
@@ -2285,7 +3848,8 @@ class CobroModule
                                 'honorario_movimiento_id' => $mov_id,
                                 'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id_param),
                                 'liquidado_por' => $liquidado_por,
-                                'fecha_liquidacion' => $fecha_liquidacion
+                                'fecha_liquidacion' => $fecha_liquidacion,
+                                'fecha_hora_param' => $fechaHoraIngresoBase
                             ];
                             CajaModule::registrarIngreso($conn, $params_individual);
                         } else {
@@ -2346,6 +3910,19 @@ class CobroModule
                     (float)($resumenCotizacion['descuento_aplicado'] ?? 0)
                 );
 
+                $stmtEstadoCot = $conn->prepare('SELECT estado FROM cotizaciones WHERE id = ? LIMIT 1');
+                if ($stmtEstadoCot) {
+                    $stmtEstadoCot->bind_param('i', $cotizacionIdSync);
+                    $stmtEstadoCot->execute();
+                    $rowEstadoCot = $stmtEstadoCot->get_result()->fetch_assoc();
+                    $stmtEstadoCot->close();
+                    $estadoCotizacionActual = strtolower(trim((string)($rowEstadoCot['estado'] ?? '')));
+                    if (in_array($estadoCotizacionActual, ['parcial', 'pagado'], true)) {
+                        self::asegurarAgendaServiciosPorCobro($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
+                        self::confirmarAgendaServiciosPorCobro($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
+                    }
+                }
+
                 if (self::cotizacionEstaPagada($conn, $cotizacionIdSync)) {
                     self::sincronizarServiciosClinicosPostPagoCotizacion($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
                     HonorarioModule::consolidarPorCobrarCotizacion($conn, $cotizacionIdSync);
@@ -2382,6 +3959,10 @@ class CobroModule
     public static function registrarCobro($conn, $data)
     {
         $observaciones = $data['observaciones'] ?? '';
+        $esAtencionSolidaria = !empty($data['atencion_solidaria']) ? 1 : 0;
+        if ($esAtencionSolidaria === 1) {
+            $observaciones = trim($observaciones . ' [ATENCION_SOLIDARIA: renuncia de honorario medico]');
+        }
         $referenciaOrigen = trim((string)($data['referencia_origen'] ?? ''));
         if (!$data['paciente_id'] || $data['paciente_id'] === 'null') {
             $nombre_paciente = trim((string)($data['paciente_nombre'] ?? '')) ?: 'Cliente particular';
@@ -2393,7 +3974,14 @@ class CobroModule
         $total_param = $data['total'];
         $tipo_pago_param = $data['tipo_pago'];
         $hasReferenciaOrigen = self::columnExists($conn, 'cobros', 'referencia_origen');
-        if ($hasReferenciaOrigen) {
+        $hasAtencionSolidaria = self::columnExists($conn, 'cobros', 'atencion_solidaria');
+        if ($hasReferenciaOrigen && $hasAtencionSolidaria) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen, atencion_solidaria) VALUES (?, ?, ?, ?, 'pagado', ?, ?, ?)");
+            $stmt->bind_param("iidsssi", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen, $esAtencionSolidaria);
+        } elseif ($hasAtencionSolidaria) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, atencion_solidaria) VALUES (?, ?, ?, ?, 'pagado', ?, ?)");
+            $stmt->bind_param("iidssi", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $esAtencionSolidaria);
+        } elseif ($hasReferenciaOrigen) {
             $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen) VALUES (?, ?, ?, ?, 'pagado', ?, ?)");
             $stmt->bind_param("iidsss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen);
         } else {

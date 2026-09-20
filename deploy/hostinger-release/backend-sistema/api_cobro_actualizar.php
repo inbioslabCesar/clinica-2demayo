@@ -154,18 +154,10 @@ try {
         $total_agregado += $subtotal_item;
 
         // Registrar honorarios si aplica
-        if (in_array($servicio_tipo, ['consulta', 'ecografia', 'rayosx', 'operacion', 'laboratorio', 'procedimiento'])) {
+        if (in_array($servicio_tipo, ['consulta', 'ecografia', 'rayosx', 'operacion', 'procedimiento', 'procedimientos'], true)) {
             // Intentar recuperar tarifa si viene servicio_id
             $tarifa = null;
-            if ($servicio_tipo === 'laboratorio') {
-                $examen_id = $detalleServicio['servicio_id'] ?? null;
-                if ($examen_id) {
-                    $stmt_ex = $conn->prepare("SELECT * FROM examenes_laboratorio WHERE id = ? AND activo = 1 LIMIT 1");
-                    $stmt_ex->bind_param('i', $examen_id);
-                    $stmt_ex->execute();
-                    $tarifa = $stmt_ex->get_result()->fetch_assoc();
-                }
-            } else if ($servicio_tipo === 'procedimiento') {
+            if ($servicio_tipo === 'procedimiento' || $servicio_tipo === 'procedimientos') {
                 $tarifa_id = $detalleServicio['servicio_id'] ?? null;
                 if ($tarifa_id) {
                     $stmt_tar = $conn->prepare("SELECT * FROM tarifas WHERE id = ? AND activo = 1 LIMIT 1");
@@ -199,7 +191,8 @@ try {
                 'usuario_id_param' => $usuario_id,
                 'turno_param' => ($caja_abierta['turno'] ?? null),
                 'honorario_movimiento_id' => $mov_id,
-                'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id)
+                'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id),
+                'fecha_hora_param' => ($cobro['fecha_cobro'] ?? null)
             ];
             CajaModule::registrarIngreso($conn, $params_individual);
         }

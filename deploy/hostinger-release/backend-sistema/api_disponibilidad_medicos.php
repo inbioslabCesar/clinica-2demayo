@@ -13,6 +13,56 @@ function disponibilidad_horario_valido($horaInicio, $horaFin): bool {
     return $inicio < $fin;
 }
 
+function disponibilidad_cache_dir(): string {
+    return __DIR__ . '/tmp/api-cache';
+}
+
+function disponibilidad_cache_file(string $cacheKey): string {
+    return disponibilidad_cache_dir() . '/disp_medicos_' . $cacheKey . '.json';
+}
+
+function disponibilidad_cache_read(string $cacheKey, int $ttlSeconds) {
+    $file = disponibilidad_cache_file($cacheKey);
+    if (!is_file($file)) {
+        return null;
+    }
+
+    $mtime = @filemtime($file);
+    if ($mtime === false || (time() - $mtime) > $ttlSeconds) {
+        return null;
+    }
+
+    $content = @file_get_contents($file);
+    if (!is_string($content) || $content === '') {
+        return null;
+    }
+
+    $payload = json_decode($content, true);
+    return is_array($payload) ? $payload : null;
+}
+
+function disponibilidad_cache_write(string $cacheKey, array $payload): void {
+    $dir = disponibilidad_cache_dir();
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+
+    $file = disponibilidad_cache_file($cacheKey);
+    @file_put_contents($file, json_encode($payload));
+}
+
+function disponibilidad_cache_clear_all(): void {
+    $pattern = disponibilidad_cache_dir() . '/disp_medicos_*.json';
+    $files = glob($pattern);
+    if (!is_array($files)) {
+        return;
+    }
+
+    foreach ($files as $file) {
+        @unlink($file);
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $rolSesion = $sessionUsuario['rol'] ?? null;
@@ -29,6 +79,26 @@ switch ($method) {
     case 'GET':
         // Listar disponibilidad de un médico (por id) o todos
         $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
+        $fecha_desde = isset($_GET['fecha_desde']) ? trim((string)$_GET['fecha_desde']) : '';
+        $fecha_hasta = isset($_GET['fecha_hasta']) ? trim((string)$_GET['fecha_hasta']) : '';
+
+        $fechaRegex = '/^\d{4}-\d{2}-\d{2}$/';
+        if ($fecha_desde !== '' && !preg_match($fechaRegex, $fecha_desde)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'fecha_desde inválida. Formato esperado YYYY-MM-DD']);
+            exit;
+        }
+        if ($fecha_hasta !== '' && !preg_match($fechaRegex, $fecha_hasta)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'fecha_hasta inválida. Formato esperado YYYY-MM-DD']);
+            exit;
+        }
+        if ($fecha_desde !== '' && $fecha_hasta !== '' && $fecha_desde > $fecha_hasta) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'fecha_desde no puede ser mayor a fecha_hasta']);
+            exit;
+        }
+
         if ($esSesionMedico) {
             if ($medico_id && $medico_id !== $medicoSesionId) {
                 http_response_code(403);
@@ -37,14 +107,58 @@ switch ($method) {
             }
             $medico_id = $medicoSesionId;
         }
-        $sql = 'SELECT * FROM disponibilidad_medicos';
+
+        $cacheBypass = isset($_GET['no_cache']) && in_array(strtolower(trim((string)$_GET['no_cache'])), ['1', 'true', 'yes', 'si', 'sí'], true);
+        $cacheTtlSeconds = 45;
+        $cacheFingerprint = [
+            'medico_id' => (int)$medico_id,
+            'fecha_desde' => $fecha_desde,
+            'fecha_hasta' => $fecha_hasta,
+            'rol' => (string)$rolSesion,
+            'medico_sesion_id' => (int)$medicoSesionId,
+        ];
+        $cacheKey = sha1(json_encode($cacheFingerprint));
+
+        if (!$cacheBypass) {
+            $cached = disponibilidad_cache_read($cacheKey, $cacheTtlSeconds);
+            if (is_array($cached)) {
+                echo json_encode($cached);
+                exit;
+            }
+        }
+
+        $sql = 'SELECT id, medico_id, fecha, dia_semana, hora_inicio, hora_fin FROM disponibilidad_medicos';
+        $where = [];
         $params = [];
+        $types = '';
+
         if ($medico_id) {
-            $sql .= ' WHERE medico_id = ?';
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param('i', $medico_id);
-        } else {
-            $stmt = $conn->prepare($sql);
+            $where[] = 'medico_id = ?';
+            $params[] = $medico_id;
+            $types .= 'i';
+        }
+        if ($fecha_desde !== '') {
+            $where[] = 'fecha >= ?';
+            $params[] = $fecha_desde;
+            $types .= 's';
+        }
+        if ($fecha_hasta !== '') {
+            $where[] = 'fecha <= ?';
+            $params[] = $fecha_hasta;
+            $types .= 's';
+        }
+
+        if (!empty($where)) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+        $sql .= ' ORDER BY fecha ASC, hora_inicio ASC';
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new RuntimeException('No se pudo preparar la consulta de disponibilidad');
+        }
+        if ($types !== '') {
+            $stmt->bind_param($types, ...$params);
         }
         $stmt->execute();
         $res = $stmt->get_result();
@@ -52,10 +166,15 @@ switch ($method) {
         while ($row = $res->fetch_assoc()) {
             $rows[] = $row;
         }
-        echo json_encode(['success' => true, 'disponibilidad' => $rows]);
+        $payload = ['success' => true, 'disponibilidad' => $rows];
+        if (!$cacheBypass) {
+            disponibilidad_cache_write($cacheKey, $payload);
+        }
+        echo json_encode($payload);
         $stmt->close();
         break;
     case 'POST':
+        disponibilidad_cache_clear_all();
         $data = json_decode(file_get_contents('php://input'), true);
         $accion = $data['accion'] ?? 'agregar_bloques';
 
@@ -227,6 +346,7 @@ switch ($method) {
         echo json_encode(['success' => $ok]);
         break;
     case 'PUT':
+        disponibilidad_cache_clear_all();
         // Modificar disponibilidad (por id)
         $data = json_decode(file_get_contents('php://input'), true);
         $id = $data['id'] ?? null;
@@ -260,6 +380,7 @@ switch ($method) {
         $stmt->close();
         break;
     case 'DELETE':
+        disponibilidad_cache_clear_all();
         // Eliminar disponibilidad (por id)
         $data = json_decode(file_get_contents('php://input'), true);
         $id = $data['id'] ?? null;

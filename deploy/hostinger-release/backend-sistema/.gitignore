@@ -102,7 +102,11 @@ composer.phar
 *.temp
 *.bak
 _tmp_resultado_*.pdf
+tmp/api-cache/
+tmp_case_*.php
+tmp_db_*.php
 tmp/mpdf/mpdf/ttfontdata/*.json
+tmp/mpdf/mpdf/ttfontdata/
 
 # Deployment archives
 *.zip

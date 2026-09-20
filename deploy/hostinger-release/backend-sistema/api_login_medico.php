@@ -1,6 +1,9 @@
 
 <?php
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_PDO_INIT')) {
+    define('SKIP_PDO_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 const LOGIN_MEDICO_MAX_ATTEMPTS = 5;
@@ -56,27 +59,70 @@ function resolver_select_medico_login($conn): string {
     return implode(', ', $parts);
 }
 
-function resolver_where_medico_login($conn): array {
-    $columns = obtener_columnas_medicos_login($conn);
-    $whereParts = [
-        'LOWER(TRIM(email)) = LOWER(TRIM(?))',
-        'LOWER(TRIM(SUBSTRING_INDEX(email, "@", 1))) = LOWER(TRIM(?))',
-        'TRIM(cmp) = TRIM(?)',
-    ];
-    $types = 'sss';
-    $bindValues = ['identifier', 'identifier', 'identifier'];
-
-    if (!empty($columns['nro_colegiatura'])) {
-        $whereParts[] = 'TRIM(nro_colegiatura) = TRIM(?)';
-        $types .= 's';
-        $bindValues[] = 'identifier';
+function buscar_medico_para_login($conn, string $identifier): ?array {
+    $identifier = trim($identifier);
+    if ($identifier === '') {
+        return null;
     }
 
-    return [
-        'sql' => implode(' OR ', $whereParts),
-        'types' => $types,
-        'bind_values' => $bindValues,
-    ];
+    $selectMedico = resolver_select_medico_login($conn);
+    $columns = obtener_columnas_medicos_login($conn);
+
+    // 1) Exact email match (aprovecha indice unico de email).
+    $stmtEmail = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE email = ? LIMIT 1");
+    if ($stmtEmail) {
+        $stmtEmail->bind_param('s', $identifier);
+        $stmtEmail->execute();
+        $rowEmail = $stmtEmail->get_result()->fetch_assoc();
+        $stmtEmail->close();
+        if ($rowEmail) {
+            return $rowEmail;
+        }
+    }
+
+    // 2) Match por CMP (indice idx_cmp).
+    $stmtCmp = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE cmp = ? LIMIT 1");
+    if ($stmtCmp) {
+        $stmtCmp->bind_param('s', $identifier);
+        $stmtCmp->execute();
+        $rowCmp = $stmtCmp->get_result()->fetch_assoc();
+        $stmtCmp->close();
+        if ($rowCmp) {
+            return $rowCmp;
+        }
+    }
+
+    // 3) Match por nro_colegiatura si existe columna.
+    if (!empty($columns['nro_colegiatura'])) {
+        $stmtColegio = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE nro_colegiatura = ? LIMIT 1");
+        if ($stmtColegio) {
+            $stmtColegio->bind_param('s', $identifier);
+            $stmtColegio->execute();
+            $rowColegio = $stmtColegio->get_result()->fetch_assoc();
+            $stmtColegio->close();
+            if ($rowColegio) {
+                return $rowColegio;
+            }
+        }
+    }
+
+    // 4) Fallback por alias local-part del email: "usuario" -> usuario@dominio.
+    // Usa prefijo indexable (LIKE 'valor@%') en vez de SUBSTRING_INDEX no indexable.
+    if (strpos($identifier, '@') === false) {
+        $prefix = $identifier . '@%';
+        $stmtAlias = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE email LIKE ? LIMIT 1");
+        if ($stmtAlias) {
+            $stmtAlias->bind_param('s', $prefix);
+            $stmtAlias->execute();
+            $rowAlias = $stmtAlias->get_result()->fetch_assoc();
+            $stmtAlias->close();
+            if ($rowAlias) {
+                return $rowAlias;
+            }
+        }
+    }
+
+    return null;
 }
 
 function obtenerRateLimitLoginMedico(string $email): array {
@@ -155,20 +201,7 @@ if ($loginLimit['blocked_until'] > time()) {
     exit;
 }
 
-$selectMedico = resolver_select_medico_login($conn);
-$whereLogin = resolver_where_medico_login($conn);
-$stmt = $conn->prepare("SELECT {$selectMedico} FROM medicos WHERE {$whereLogin['sql']} LIMIT 1");
-
-$bindParams = [];
-foreach ($whereLogin['bind_values'] as $token) {
-    $bindParams[] = $token === 'identifier' ? $email : '';
-}
-
-$stmt->bind_param($whereLogin['types'], ...$bindParams);
-$stmt->execute();
-$result = $stmt->get_result();
-
-if ($row = $result->fetch_assoc()) {
+if ($row = buscar_medico_para_login($conn, $email)) {
     if (password_verify($password, $row['password'])) {
     limpiarRateLimitLoginMedico($email);
     session_regenerate_id(true);

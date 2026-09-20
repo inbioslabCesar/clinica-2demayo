@@ -209,6 +209,108 @@ function pp_validate_item(array $item): array {
     ];
 }
 
+function pp_to_float($value): float {
+    if (is_int($value) || is_float($value)) {
+        return (float)$value;
+    }
+    if (is_string($value)) {
+        $normalized = str_replace(',', '.', trim($value));
+        return is_numeric($normalized) ? (float)$normalized : 0.0;
+    }
+    return 0.0;
+}
+
+function pp_calcular_resumen_reparto_campana(float $precioGlobal, array $items): array {
+    $subtotalLista = 0.0;
+    foreach ($items as $it) {
+        $subtotalLista += max(0.0, pp_to_float($it['subtotal_snapshot'] ?? 0));
+    }
+    $subtotalLista = round($subtotalLista, 2);
+    $objetivo = round(max(0.0, $precioGlobal), 2);
+    $factor = ($subtotalLista > 0.0 && $objetivo > 0.0) ? ($objetivo / $subtotalLista) : 1.0;
+
+    $detalles = [];
+    $sumMedicos = 0.0;
+    $hasIndeterminado = false;
+    $acumulado = 0.0;
+    $lastIdx = count($items) - 1;
+
+    foreach ($items as $idx => $it) {
+        $base = round(max(0.0, pp_to_float($it['subtotal_snapshot'] ?? 0)), 2);
+        if ($objetivo > 0.0) {
+            if ($idx === $lastIdx) {
+                $subtotalCampana = round(max(0.0, $objetivo - $acumulado), 2);
+            } else {
+                $subtotalCampana = round(max(0.0, $base * $factor), 2);
+                $acumulado = round($acumulado + $subtotalCampana, 2);
+            }
+        } else {
+            $subtotalCampana = $base;
+        }
+
+        $regla = is_array($it['honorario_regla'] ?? null) ? $it['honorario_regla'] : [];
+        $modo = strtolower(trim((string)($regla['modo_honorario'] ?? 'usar_configuracion_medico')));
+        $montoMedico = null;
+
+        if ($modo === 'monto_fijo_medico_paquete') {
+            $montoMedico = round(max(0.0, pp_to_float($regla['monto_fijo_medico'] ?? 0)), 2);
+        } elseif ($modo === 'porcentaje_medico_paquete') {
+            $porcentaje = min(max(pp_to_float($regla['porcentaje_medico'] ?? 0), 0.0), 100.0);
+            $montoMedico = round($subtotalCampana * $porcentaje / 100, 2);
+        } else {
+            $hasIndeterminado = true;
+        }
+
+        if ($montoMedico !== null) {
+            $sumMedicos = round($sumMedicos + $montoMedico, 2);
+        }
+
+        $detalles[] = [
+            'descripcion' => (string)($it['descripcion_snapshot'] ?? ''),
+            'modo_honorario' => $modo,
+            'subtotal_campana' => $subtotalCampana,
+            'monto_medico' => $montoMedico,
+            'excede_subtotal' => $montoMedico !== null && $montoMedico > ($subtotalCampana + 0.009),
+        ];
+    }
+
+    return [
+        'subtotal_lista' => $subtotalLista,
+        'precio_global' => $objetivo,
+        'suma_medicos' => $sumMedicos,
+        'monto_clinica_calculado' => round($objetivo - $sumMedicos, 2),
+        'has_indeterminado' => $hasIndeterminado,
+        'detalles' => $detalles,
+    ];
+}
+
+function pp_validar_reparto_campana(float $precioGlobal, array $items, array $meta): void {
+    $montoClinicaFijo = pp_to_float($meta['reparto_campana']['monto_clinica_fijo'] ?? 0);
+    if ($montoClinicaFijo <= 0) {
+        return;
+    }
+
+    $resumen = pp_calcular_resumen_reparto_campana($precioGlobal, $items);
+    if (!empty($resumen['has_indeterminado'])) {
+        throw new InvalidArgumentException('Con monto fijo de clínica, todos los items médicos deben usar monto fijo o porcentaje de paquete.');
+    }
+
+    foreach ($resumen['detalles'] as $det) {
+        if (!empty($det['excede_subtotal'])) {
+            $desc = trim((string)($det['descripcion'] ?? 'Item sin descripcion'));
+            throw new InvalidArgumentException('El monto médico excede el subtotal prorrateado en: ' . $desc);
+        }
+    }
+
+    $diff = round((float)$resumen['monto_clinica_calculado'] - $montoClinicaFijo, 2);
+    if (abs($diff) > 0.01) {
+        throw new InvalidArgumentException(
+            'No cuadra reparto de campaña. Clínica calculada: S/ ' . number_format((float)$resumen['monto_clinica_calculado'], 2, '.', '')
+            . ' | Clínica objetivo: S/ ' . number_format($montoClinicaFijo, 2, '.', '')
+        );
+    }
+}
+
 function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
     $id = (int)($payload['id'] ?? 0);
     $nombre = trim((string)($payload['nombre'] ?? ''));
@@ -221,7 +323,16 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
     $descripcion = trim((string)($payload['descripcion'] ?? ''));
     $vigDesde = isset($payload['vigencia_desde']) && $payload['vigencia_desde'] !== '' ? $payload['vigencia_desde'] : null;
     $vigHasta = isset($payload['vigencia_hasta']) && $payload['vigencia_hasta'] !== '' ? $payload['vigencia_hasta'] : null;
-    $meta = isset($payload['meta']) ? json_encode($payload['meta'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+    $metaArray = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
+    $montoClinicaFijo = pp_to_float($payload['monto_clinica_fijo'] ?? ($metaArray['reparto_campana']['monto_clinica_fijo'] ?? 0));
+    if ($montoClinicaFijo > 0) {
+        if (!isset($metaArray['reparto_campana']) || !is_array($metaArray['reparto_campana'])) {
+            $metaArray['reparto_campana'] = [];
+        }
+        $metaArray['reparto_campana']['monto_clinica_fijo'] = round($montoClinicaFijo, 2);
+        $metaArray['reparto_campana']['validar_cierre'] = true;
+    }
+    $meta = !empty($metaArray) ? json_encode($metaArray, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
     $items = is_array($payload['items'] ?? null) ? $payload['items'] : [];
 
     if ($nombre === '' || $precioGlobal < 0 || empty($items)) {
@@ -232,6 +343,12 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
     if (!in_array($estado, ['borrador', 'activo', 'inactivo', 'archivado'], true)) $estado = 'borrador';
     if (!in_array($modoPrecio, ['fijo_global', 'calculado_componentes'], true)) $modoPrecio = 'fijo_global';
     if ($codigo === '') $codigo = pp_generate_code();
+
+    $itemsNormalizados = [];
+    foreach ($items as $rawItem) {
+        $itemsNormalizados[] = pp_validate_item($rawItem);
+    }
+    pp_validar_reparto_campana($precioGlobal, $itemsNormalizados, $metaArray);
 
     $pdo->beginTransaction();
     try {
@@ -279,8 +396,7 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
         }
 
         $order = 1;
-        foreach ($items as $rawItem) {
-            $it = pp_validate_item($rawItem);
+        foreach ($itemsNormalizados as $it) {
             $stmtItem->execute([
                 $id,
                 $it['item_orden'] > 0 ? $it['item_orden'] : $order,
@@ -400,7 +516,23 @@ try {
             $includeItems = isset($_GET['include_items']) && (string)$_GET['include_items'] === '1';
 
             $params = [];
-            $whereSql = "WHERE p.estado = 'activo'";
+            // Mostrar solo paquetes operativos: activos, con items activos y sin referencias huérfanas/inactivas.
+            $whereSql = "WHERE p.estado = 'activo'"
+                . " AND EXISTS (SELECT 1 FROM paquetes_perfiles_items i_ok WHERE i_ok.paquete_id = p.id AND i_ok.activo = 1)"
+                . " AND NOT EXISTS ("
+                . "   SELECT 1"
+                . "   FROM paquetes_perfiles_items i_bad"
+                . "   WHERE i_bad.paquete_id = p.id"
+                . "     AND i_bad.activo = 1"
+                . "     AND ("
+                . "       (LOWER(i_bad.source_type) IN ('consulta','ecografia','rayosx','procedimiento','procedimientos','operacion','operaciones')"
+                . "          AND (i_bad.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.id = i_bad.source_id AND t.activo = 1)))"
+                . "       OR (LOWER(i_bad.source_type) = 'laboratorio'"
+                . "          AND (i_bad.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM examenes_laboratorio e WHERE e.id = i_bad.source_id AND e.activo = 1)))"
+                . "       OR (LOWER(i_bad.source_type) = 'farmacia'"
+                . "          AND (i_bad.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM medicamentos m WHERE m.id = i_bad.source_id AND m.estado = 'activo')))"
+                . "     )"
+                . " )";
             if ($q !== '') {
                 $whereSql .= " AND (p.nombre LIKE ? OR p.codigo LIKE ?)";
                 $like = '%' . $q . '%';

@@ -29,11 +29,30 @@ function inventario_mov_role(): string
     return strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
 }
 
+function inventario_mov_role_slug(string $role): string
+{
+    $role = strtolower(trim($role));
+    $role = strtr($role, [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n',
+    ]);
+    $role = preg_replace('/[^a-z0-9]+/', '_', $role);
+    return trim((string)$role, '_');
+}
+
 function inventario_mov_require_write_role(): void
 {
-    $role = inventario_mov_role();
-    $allowed = ['administrador', 'quimico', 'químico'];
-    if (!in_array($role, $allowed, true)) {
+    $roleSlug = inventario_mov_role_slug(inventario_mov_role());
+    $allowed = [
+        'administrador',
+        'quimico',
+        'quimica',
+        'laboratorista',
+        'laboratorio',
+        'profesional_encargado',
+        'encargado_laboratorio',
+        'encargado_de_laboratorio',
+    ];
+    if (!in_array($roleSlug, $allowed, true)) {
         inventario_mov_response(['success' => false, 'error' => 'No autorizado para registrar movimientos de almacén general'], 403);
     }
 }
@@ -45,6 +64,19 @@ function inventario_mov_usuario_id(): ?int
     }
     $id = intval($_SESSION['usuario']['id']);
     return $id > 0 ? $id : null;
+}
+
+function inventario_mov_column_exists(mysqli $conn, string $table, string $column): bool
+{
+    $stmt = $conn->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $exists = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (bool)$exists;
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -60,8 +92,12 @@ try {
                 $limit = 500;
             }
 
+            $usuarioExpr = inventario_mov_column_exists($conn, 'usuarios', 'apellido')
+                ? "TRIM(CONCAT(COALESCE(u.nombre,''), ' ', COALESCE(u.apellido,'')))"
+                : "COALESCE(u.nombre,'')";
+
             $stmtMov = $conn->prepare("SELECT m.id, m.tipo, m.cantidad, m.observacion, m.fecha_hora, i.id AS item_id, i.codigo, i.nombre, i.unidad_medida, l.lote_codigo,
-                                              CONCAT(COALESCE(u.nombre,''), ' ', COALESCE(u.apellido,'')) AS usuario
+                                              $usuarioExpr AS usuario
                                        FROM inventario_movimientos m
                                        JOIN inventario_items i ON i.id = m.item_id
                                        LEFT JOIN inventario_lotes l ON l.id = m.lote_id

@@ -41,6 +41,42 @@ const ImpresionRecetaMedicamentos = ({
     });
   };
 
+  const esDescripcionCatalogoCie10 = (valor) => {
+    const texto = String(valor || '').trim();
+    return /^OMS ICD-10/i.test(texto);
+  };
+
+  const obtenerCodigoDiagnostico = (diagnostico) => {
+    return String(
+      diagnostico?.codigo
+      || diagnostico?.cie10
+      || diagnostico?.cie10_codigo
+      || ''
+    ).trim();
+  };
+
+  const obtenerNombreDiagnostico = (diagnostico) => {
+    const nombre = String(
+      diagnostico?.nombre
+      || diagnostico?.diagnostico
+      || diagnostico?.cie10_nombre
+      || ''
+    ).trim();
+    if (nombre) return nombre;
+
+    const descripcion = String(
+      diagnostico?.descripcion
+      || diagnostico?.cie10_descripcion
+      || ''
+    ).trim();
+
+    if (!descripcion || esDescripcionCatalogoCie10(descripcion)) {
+      return 'Sin diagnóstico';
+    }
+
+    return descripcion;
+  };
+
   const diagnosticosArray = Array.isArray(diagnosticos) ? diagnosticos : [];
   const medicamentosArray = Array.isArray(medicamentos) ? medicamentos : [];
   const recomendacionesGenerales = String(recomendaciones || '').trim();
@@ -151,13 +187,17 @@ const ImpresionRecetaMedicamentos = ({
             <section className="mt-1 border border-slate-900 p-1.5">
               <p className="mb-0.5 border-b border-slate-300 text-[11px] font-semibold uppercase">Diagnóstico</p>
               <div className="space-y-0.5 text-[11px] leading-tight">
-                {diagnosticosArray.map((diagnostico, index) => (
-                  <p key={index}>
-                    <span className="font-semibold">{diagnostico.codigo || diagnostico.cie10_codigo || ""}</span>
-                    {(diagnostico.codigo || diagnostico.cie10_codigo) ? " - " : ""}
-                    {diagnostico.descripcion || diagnostico.cie10_descripcion || diagnostico.nombre || ""}
-                  </p>
-                ))}
+                {diagnosticosArray.map((diagnostico, index) => {
+                  const codigoDx = obtenerCodigoDiagnostico(diagnostico);
+                  const nombreDx = obtenerNombreDiagnostico(diagnostico);
+                  return (
+                    <p key={index}>
+                      <span className="font-semibold">{codigoDx}</span>
+                      {codigoDx ? " - " : ""}
+                      {nombreDx}
+                    </p>
+                  );
+                })}
               </div>
             </section>
           )}

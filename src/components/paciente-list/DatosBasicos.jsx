@@ -1,6 +1,12 @@
 import React from "react";
 
-function DatosBasicos({ form, handleChange, dniLookup = { status: "idle", message: "" } }) {
+const SEXO_LABELS = {
+  M: "Masculino",
+  F: "Femenino",
+  Otro: "Otro",
+};
+
+function DatosBasicos({ form, handleChange, dniLookup = { status: "idle", message: "" }, sexoOptions = ["M", "F", "Otro"] }) {
   const mostrarEstadoDni = String(form?.tipo_documento || "").toLowerCase() === "dni" && String(form?.dni || "").trim().length >= 8;
   const estado = String(dniLookup?.status || "idle");
   const mensaje = String(dniLookup?.message || "").trim();
@@ -63,9 +69,9 @@ function DatosBasicos({ form, handleChange, dniLookup = { status: "idle", messag
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Sexo *</label>
           <select name="sexo" value={form.sexo} onChange={handleChange} className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-            <option value="M">Masculino</option>
-            <option value="F">Femenino</option>
-            <option value="Otro">Otro</option>
+            {sexoOptions.map((value) => (
+              <option key={value} value={value}>{SEXO_LABELS[value] || value}</option>
+            ))}
           </select>
         </div>
       </div>

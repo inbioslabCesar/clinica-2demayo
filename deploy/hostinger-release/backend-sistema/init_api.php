@@ -41,40 +41,129 @@ if (!function_exists('api_emit_debug_error')) {
     }
 }
 
-if (api_debug_enabled()) {
-    set_exception_handler(function (Throwable $e) {
-        api_emit_debug_error([
+if (!function_exists('api_request_id')) {
+    function api_request_id(): string
+    {
+        static $requestId = null;
+        if ($requestId !== null) {
+            return $requestId;
+        }
+
+        $headerId = trim((string)($_SERVER['HTTP_X_REQUEST_ID'] ?? ''));
+        if ($headerId !== '') {
+            $requestId = substr(preg_replace('/[^A-Za-z0-9._\-]/', '', $headerId), 0, 64);
+            if ($requestId !== '') {
+                return $requestId;
+            }
+        }
+
+        try {
+            $requestId = bin2hex(random_bytes(8));
+        } catch (Throwable $e) {
+            $requestId = substr(sha1(uniqid('', true)), 0, 16);
+        }
+
+        return $requestId;
+    }
+}
+
+if (!function_exists('api_emit_error')) {
+    function api_emit_error(string $message, int $status = 500, array $extra = []): void
+    {
+        $payload = array_merge([
             'success' => false,
-            'debug' => true,
-            'type' => 'exception',
-            'class' => get_class($e),
-            'message' => $e->getMessage(),
-            'file' => $e->getFile(),
-            'line' => $e->getLine(),
-            'trace' => $e->getTraceAsString(),
-        ], 500);
+            'error' => $message,
+            'request_id' => api_request_id(),
+        ], $extra);
+
+        if (headers_sent()) {
+            echo "\n" . json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            return;
+        }
+
+        http_response_code($status);
+        header('Content-Type: application/json; charset=utf-8');
+        header('X-Request-Id: ' . api_request_id());
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+}
+
+if (!function_exists('api_log_server_error')) {
+    function api_log_server_error(string $kind, string $message, string $file = '', int $line = 0): void
+    {
+        $rid = api_request_id();
+        $path = (string)($_SERVER['REQUEST_URI'] ?? '');
+        $method = (string)($_SERVER['REQUEST_METHOD'] ?? '');
+        $originFile = $file !== '' ? $file : 'unknown';
+        $originLine = $line > 0 ? (string)$line : '0';
+        error_log(sprintf('[API_ERROR][%s][rid:%s][%s %s] %s @ %s:%s', $kind, $rid, $method, $path, $message, $originFile, $originLine));
+    }
+}
+
+if (!defined('API_GLOBAL_ERROR_HANDLERS_REGISTERED')) {
+    define('API_GLOBAL_ERROR_HANDLERS_REGISTERED', true);
+
+    set_exception_handler(function (Throwable $e) {
+        api_log_server_error('exception', $e->getMessage(), $e->getFile(), (int)$e->getLine());
+
+        if (api_debug_enabled()) {
+            api_emit_debug_error([
+                'success' => false,
+                'debug' => true,
+                'type' => 'exception',
+                'class' => get_class($e),
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'request_id' => api_request_id(),
+            ], 500);
+            exit;
+        }
+
+        api_emit_error('Error interno del servidor', 500);
         exit;
     });
 
     set_error_handler(function ($severity, $message, $file, $line) {
+        if (!(error_reporting() & $severity)) {
+            return false;
+        }
         throw new ErrorException($message, 0, $severity, $file, $line);
     });
 
     register_shutdown_function(function () {
         $error = error_get_last();
-        if (!$error) return;
+        if (!$error) {
+            return;
+        }
 
         $fatalTypes = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
-        if (!in_array($error['type'] ?? 0, $fatalTypes, true)) return;
+        if (!in_array($error['type'] ?? 0, $fatalTypes, true)) {
+            return;
+        }
 
-        api_emit_debug_error([
-            'success' => false,
-            'debug' => true,
-            'type' => 'fatal',
-            'message' => (string)($error['message'] ?? 'Fatal error'),
-            'file' => (string)($error['file'] ?? ''),
-            'line' => (int)($error['line'] ?? 0),
-        ], 500);
+        api_log_server_error(
+            'fatal',
+            (string)($error['message'] ?? 'Fatal error'),
+            (string)($error['file'] ?? ''),
+            (int)($error['line'] ?? 0)
+        );
+
+        if (api_debug_enabled()) {
+            api_emit_debug_error([
+                'success' => false,
+                'debug' => true,
+                'type' => 'fatal',
+                'message' => (string)($error['message'] ?? 'Fatal error'),
+                'file' => (string)($error['file'] ?? ''),
+                'line' => (int)($error['line'] ?? 0),
+                'request_id' => api_request_id(),
+            ], 500);
+            return;
+        }
+
+        api_emit_error('Error interno del servidor', 500);
     });
 }
 
@@ -151,6 +240,7 @@ $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins, true)) {
     header('Access-Control-Allow-Origin: ' . $origin);
 }
+header('X-Request-Id: ' . api_request_id());
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
 header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');

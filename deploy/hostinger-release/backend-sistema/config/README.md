@@ -42,6 +42,24 @@ return [
     'DB_NAME' => 'u330560936_clinicas_bd',
     'DB_USER' => 'u330560936_clinicas',
     'DB_PASS' => 'TU_PASSWORD_AQUI',
+   'APISPERU_TOKEN' => 'TU_TOKEN_APISPERU',
+   'APISPERU_BASE_URL' => 'https://dniruc.apisperu.com/api/v1',
+];
+```
+
+## Configuración de consulta externa DNI/RUC
+
+- Puedes definir el token por variables de entorno o en el archivo de instancia.
+- Claves soportadas: APISPERU_TOKEN, APIS_PERU_TOKEN, DNIRUC_TOKEN.
+- URL base opcional: APISPERU_BASE_URL.
+
+Ejemplo mínimo en instancia:
+
+```php
+<?php
+return [
+   'APISPERU_TOKEN' => 'TU_TOKEN_APISPERU',
+   'APISPERU_BASE_URL' => 'https://dniruc.apisperu.com/api/v1',
 ];
 ```
 

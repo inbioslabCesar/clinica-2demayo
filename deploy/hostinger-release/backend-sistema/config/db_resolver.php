@@ -30,7 +30,8 @@ if (!function_exists('db_load_env_file')) {
                 continue;
             }
 
-            if (getenv($key) === false) {
+            $currentEnv = getenv($key);
+            if ($currentEnv === false || $currentEnv === '') {
                 putenv($key . '=' . $value);
             }
 
@@ -122,6 +123,10 @@ if (!function_exists('resolve_db_runtime_config')) {
             'DB_PASS' => getenv('DB_PASS') ?: null,
             'DB_PORT' => getenv('DB_PORT') ?: null,
             'APP_ENV' => getenv('APP_ENV') ?: null,
+            'APISPERU_TOKEN' => getenv('APISPERU_TOKEN') ?: null,
+            'APIS_PERU_TOKEN' => getenv('APIS_PERU_TOKEN') ?: null,
+            'DNIRUC_TOKEN' => getenv('DNIRUC_TOKEN') ?: null,
+            'APISPERU_BASE_URL' => getenv('APISPERU_BASE_URL') ?: null,
         ];
 
         foreach ($envMap as $key => $value) {
@@ -165,6 +170,20 @@ if (!function_exists('resolve_db_runtime_config')) {
             'is_development_host' => $isDevelopmentHost,
             'loaded_file' => $loadedFile,
         ];
+
+        // Export optional external API settings to process environment so API endpoints
+        // can consume them via getenv/$_ENV consistently.
+        foreach (['APISPERU_TOKEN', 'APIS_PERU_TOKEN', 'DNIRUC_TOKEN', 'APISPERU_BASE_URL'] as $k) {
+            if (!array_key_exists($k, $config)) {
+                continue;
+            }
+            $v = trim((string)$config[$k]);
+            if ($v === '') {
+                continue;
+            }
+            putenv($k . '=' . $v);
+            $_ENV[$k] = $v;
+        }
 
         return $config;
     }

@@ -24,6 +24,39 @@ function recetas_read_json_body(): array
     return is_array($data) ? $data : [];
 }
 
+function recetas_user_role(): string
+{
+    return strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
+}
+
+function recetas_role_slug(string $role): string
+{
+    $role = strtolower(trim($role));
+    $role = strtr($role, [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n',
+    ]);
+    $role = preg_replace('/[^a-z0-9]+/', '_', $role);
+    return trim((string)$role, '_');
+}
+
+function recetas_require_write_role(): void
+{
+    $roleSlug = recetas_role_slug(recetas_user_role());
+    $allowed = [
+        'administrador',
+        'quimico',
+        'quimica',
+        'laboratorista',
+        'laboratorio',
+        'profesional_encargado',
+        'encargado_laboratorio',
+        'encargado_de_laboratorio',
+    ];
+    if (!in_array($roleSlug, $allowed, true)) {
+        recetas_json_response(['success' => false, 'error' => 'No autorizado para configurar recetas de laboratorio.'], 403);
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
@@ -97,12 +130,12 @@ try {
                 $stmtEx->close();
 
                 $items = [];
-                $stmtItems = $conn->prepare("SELECT i.id, i.codigo, i.nombre, i.unidad_medida, i.marca, i.presentacion,
+                  $stmtItems = $conn->prepare("SELECT i.id, i.codigo, i.nombre, i.unidad_medida, i.marca, i.presentacion, i.factor_presentacion,
                                                     IFNULL(SUM(l.cantidad_actual), 0) AS stock_almacen
                                              FROM inventario_items i
                                              LEFT JOIN inventario_lotes l ON l.item_id = i.id
                                              WHERE i.activo = 1
-                                             GROUP BY i.id, i.codigo, i.nombre, i.unidad_medida, i.marca, i.presentacion
+                                   GROUP BY i.id, i.codigo, i.nombre, i.unidad_medida, i.marca, i.presentacion, i.factor_presentacion
                                              ORDER BY i.nombre ASC");
                 $stmtItems->execute();
                 $resItems = $stmtItems->get_result();
@@ -121,6 +154,7 @@ try {
             break;
 
         case 'POST':
+            recetas_require_write_role();
             $data = recetas_read_json_body();
 
             $idExamen = intval($data['id_examen'] ?? 0);
@@ -182,25 +216,55 @@ try {
             break;
 
         case 'PUT':
+            recetas_require_write_role();
             $data = recetas_read_json_body();
             $id = intval($data['id'] ?? 0);
             if ($id <= 0) {
                 recetas_json_response(['success' => false, 'error' => 'ID requerido.'], 422);
             }
 
+            $idExamen = intval($data['id_examen'] ?? 0);
+            $itemId = intval($data['item_id'] ?? 0);
             $cantidadPorPrueba = round((float)($data['cantidad_por_prueba'] ?? 0), 4);
             $activo = isset($data['activo']) ? intval($data['activo']) : 1;
             $observacion = trim((string)($data['observacion'] ?? ''));
 
-            if ($cantidadPorPrueba <= 0) {
-                recetas_json_response(['success' => false, 'error' => 'Cantidad por prueba inválida.'], 422);
+            if ($idExamen <= 0 || $itemId <= 0 || $cantidadPorPrueba <= 0) {
+                recetas_json_response(['success' => false, 'error' => 'Examen, ítem y cantidad por prueba son obligatorios.'], 422);
+            }
+
+            $stmtEx = $conn->prepare('SELECT id FROM examenes_laboratorio WHERE id = ? LIMIT 1');
+            $stmtEx->bind_param('i', $idExamen);
+            $stmtEx->execute();
+            $examenValido = $stmtEx->get_result()->fetch_assoc();
+            $stmtEx->close();
+            if (!$examenValido) {
+                recetas_json_response(['success' => false, 'error' => 'Examen no válido.'], 404);
+            }
+
+            $stmtItem = $conn->prepare('SELECT id FROM inventario_items WHERE id = ? LIMIT 1');
+            $stmtItem->bind_param('i', $itemId);
+            $stmtItem->execute();
+            $itemValido = $stmtItem->get_result()->fetch_assoc();
+            $stmtItem->close();
+            if (!$itemValido) {
+                recetas_json_response(['success' => false, 'error' => 'Ítem de inventario no válido.'], 404);
+            }
+
+            $stmtDup = $conn->prepare('SELECT id FROM inventario_examen_recetas WHERE id_examen = ? AND item_id = ? AND id <> ? LIMIT 1');
+            $stmtDup->bind_param('iii', $idExamen, $itemId, $id);
+            $stmtDup->execute();
+            $dup = $stmtDup->get_result()->fetch_assoc();
+            $stmtDup->close();
+            if ($dup) {
+                recetas_json_response(['success' => false, 'error' => 'Ya existe una receta para ese examen con ese ítem.'], 409);
             }
 
             $activo = $activo === 0 ? 0 : 1;
             $obsValue = $observacion !== '' ? $observacion : null;
 
-            $stmtUpd = $conn->prepare('UPDATE inventario_examen_recetas SET cantidad_por_prueba = ?, activo = ?, observacion = ?, updated_at = NOW() WHERE id = ?');
-            $stmtUpd->bind_param('disi', $cantidadPorPrueba, $activo, $obsValue, $id);
+            $stmtUpd = $conn->prepare('UPDATE inventario_examen_recetas SET id_examen = ?, item_id = ?, cantidad_por_prueba = ?, activo = ?, observacion = ?, updated_at = NOW() WHERE id = ?');
+            $stmtUpd->bind_param('iidisi', $idExamen, $itemId, $cantidadPorPrueba, $activo, $obsValue, $id);
             $ok = $stmtUpd->execute();
             $affected = $stmtUpd->affected_rows;
             $stmtUpd->close();
@@ -211,11 +275,12 @@ try {
 
             recetas_json_response([
                 'success' => true,
-                'updated' => $affected >= 0,
+                'updated' => $affected > 0,
             ]);
             break;
 
         case 'DELETE':
+            recetas_require_write_role();
             $data = recetas_read_json_body();
             $id = intval($data['id'] ?? 0);
             if ($id <= 0) {

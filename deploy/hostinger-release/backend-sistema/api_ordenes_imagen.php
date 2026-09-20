@@ -1,10 +1,18 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
 
-$usuario   = $_SESSION['usuario'] ?? $_SESSION['medico'] ?? null;
-$rol       = strtolower(trim((string)($usuario['rol'] ?? '')));
-$usuarioId = intval($usuario['id'] ?? 0);
+$medicoSesion = (isset($_SESSION['medico']) && is_array($_SESSION['medico'])) ? $_SESSION['medico'] : null;
+$usuarioSesion = (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) ? $_SESSION['usuario'] : null;
+
+// Priorizar sesion medica para evitar cruces cuando coexisten ambas sesiones.
+$usuario = $medicoSesion ?? $usuarioSesion;
+$rol = strtolower(trim((string)($usuario['rol'] ?? '')));
+if ($rol === '' && isset($_SESSION['medico_id']) && (int)$_SESSION['medico_id'] > 0) {
+    $rol = 'medico';
+}
+$usuarioId = intval($usuario['id'] ?? ($_SESSION['medico_id'] ?? 0));
 
 $rolesPermitidos = ['administrador', 'recepcionista', 'laboratorista', 'medico'];
 if (!$usuario || !in_array($rol, $rolesPermitidos)) {
@@ -17,55 +25,66 @@ if (!$usuario || !in_array($rol, $rolesPermitidos)) {
 
 header('Content-Type: application/json; charset=utf-8');
 
-// ─── Auto-crear tablas ────────────────────────────────────────────────────────
-$conn->query("
-    CREATE TABLE IF NOT EXISTS ordenes_imagen (
-        id             INT AUTO_INCREMENT PRIMARY KEY,
-        consulta_id    INT NULL,
-        paciente_id    INT NOT NULL,
-        medico_id      INT DEFAULT NULL,
-        tipo           VARCHAR(30) NOT NULL DEFAULT 'rx',
-        indicaciones   TEXT,
-        estado         VARCHAR(20) NOT NULL DEFAULT 'pendiente',
-        fecha          DATETIME DEFAULT CURRENT_TIMESTAMP,
-        solicitado_por INT DEFAULT NULL,
-        cotizacion_id  INT DEFAULT NULL,
-        carga_anticipada TINYINT(1) NOT NULL DEFAULT 0,
-        INDEX idx_oi_consulta (consulta_id),
-        INDEX idx_oi_paciente (paciente_id),
-        INDEX idx_oi_medico (medico_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
+if (!function_exists('oi_ensure_schema')) {
+    function oi_ensure_schema(mysqli $conn): void {
+        static $done = false;
+        if ($done) {
+            return;
+        }
 
-// Migraciones para tablas ya existentes
-$migrImagen = [
-    'medico_id'       => 'ALTER TABLE ordenes_imagen ADD COLUMN medico_id INT DEFAULT NULL',
-    'cotizacion_id'   => 'ALTER TABLE ordenes_imagen ADD COLUMN cotizacion_id INT DEFAULT NULL',
-    'carga_anticipada'=> 'ALTER TABLE ordenes_imagen ADD COLUMN carga_anticipada TINYINT(1) NOT NULL DEFAULT 0',
-];
-foreach ($migrImagen as $col => $sql) {
-    $chk = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE '$col'");
-    if ($chk && $chk->num_rows === 0) $conn->query($sql);
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS ordenes_imagen (
+                id             INT AUTO_INCREMENT PRIMARY KEY,
+                consulta_id    INT NULL,
+                paciente_id    INT NOT NULL,
+                medico_id      INT DEFAULT NULL,
+                tipo           VARCHAR(30) NOT NULL DEFAULT 'rx',
+                indicaciones   TEXT,
+                estado         VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+                fecha          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                solicitado_por INT DEFAULT NULL,
+                cotizacion_id  INT DEFAULT NULL,
+                carga_anticipada TINYINT(1) NOT NULL DEFAULT 0,
+                INDEX idx_oi_consulta (consulta_id),
+                INDEX idx_oi_paciente (paciente_id),
+                INDEX idx_oi_medico (medico_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $migrImagen = [
+            'medico_id' => 'ALTER TABLE ordenes_imagen ADD COLUMN medico_id INT DEFAULT NULL',
+            'cotizacion_id' => 'ALTER TABLE ordenes_imagen ADD COLUMN cotizacion_id INT DEFAULT NULL',
+            'carga_anticipada' => 'ALTER TABLE ordenes_imagen ADD COLUMN carga_anticipada TINYINT(1) NOT NULL DEFAULT 0',
+        ];
+        foreach ($migrImagen as $col => $sql) {
+            $chk = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE '$col'");
+            if ($chk && $chk->num_rows === 0) {
+                $conn->query($sql);
+            }
+        }
+
+        // Una orden de imagen puede originarse en una consulta o venderse directamente.
+        $consultaColumn = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
+        if ($consultaColumn && ($consultaMeta = $consultaColumn->fetch_assoc()) && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) !== 'YES') {
+            $conn->query('ALTER TABLE ordenes_imagen MODIFY consulta_id INT NULL');
+        }
+
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS ordenes_imagen_archivos (
+                id               INT AUTO_INCREMENT PRIMARY KEY,
+                orden_id         INT NOT NULL,
+                nombre_original  VARCHAR(255) NOT NULL DEFAULT '',
+                archivo_path     VARCHAR(500) NOT NULL DEFAULT '',
+                tamano           INT DEFAULT 0,
+                mime_type        VARCHAR(100) DEFAULT NULL,
+                fecha            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_oia_orden (orden_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $done = true;
+    }
 }
-
-// Una orden de imagen puede originarse en una consulta o venderse directamente.
-$consultaColumn = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
-if ($consultaColumn && ($consultaMeta = $consultaColumn->fetch_assoc()) && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) !== 'YES') {
-    $conn->query('ALTER TABLE ordenes_imagen MODIFY consulta_id INT NULL');
-}
-
-$conn->query("
-    CREATE TABLE IF NOT EXISTS ordenes_imagen_archivos (
-        id               INT AUTO_INCREMENT PRIMARY KEY,
-        orden_id         INT NOT NULL,
-        nombre_original  VARCHAR(255) NOT NULL DEFAULT '',
-        archivo_path     VARCHAR(500) NOT NULL DEFAULT '',
-        tamano           INT DEFAULT 0,
-        mime_type        VARCHAR(100) DEFAULT NULL,
-        fecha            DATETIME DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_oia_orden (orden_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
 
 // ─── Helper: construir ruta pública del endpoint actual ──────────────────────
 function getApiEndpointPath(string $fileName = 'api_ordenes_imagen.php'): string {
@@ -124,6 +143,351 @@ if (!function_exists('oi_table_exists')) {
     }
 }
 
+if (!function_exists('oi_parse_date_safe')) {
+    function oi_parse_date_safe($value): ?DateTime {
+        $raw = trim((string)$value);
+        if ($raw === '') return null;
+
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+            $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+            return $dt instanceof DateTime ? $dt : null;
+        }
+
+        $ts = strtotime($raw);
+        if ($ts === false) return null;
+        $dt = new DateTime();
+        $dt->setTimestamp($ts);
+        return $dt;
+    }
+}
+
+if (!function_exists('oi_normalizar_unidad_edad')) {
+    function oi_normalizar_unidad_edad($unidad): string {
+        $u = strtolower(trim((string)$unidad));
+        if ($u === '') return 'anios';
+        if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+        if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+        if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+        return 'anios';
+    }
+}
+
+if (!function_exists('oi_set_edad_row')) {
+    function oi_set_edad_row(array &$row): void {
+        $hoy = new DateTime('today');
+        $fechaNac = oi_parse_date_safe($row['fecha_nacimiento'] ?? null);
+
+        if ($fechaNac instanceof DateTime) {
+            $fechaNac->setTime(0, 0, 0);
+            $diff = $fechaNac->diff($hoy);
+            $dias = (int)$diff->days;
+            $meses = max(0, ((int)$diff->y * 12) + (int)$diff->m);
+            $anios = max(0, (int)$diff->y);
+
+            if ($dias <= 28) {
+                $row['edad'] = $dias;
+                $row['edad_unidad'] = 'dias';
+            } elseif ($meses < 12) {
+                $row['edad'] = $meses;
+                $row['edad_unidad'] = 'meses';
+            } else {
+                $row['edad'] = $anios;
+                $row['edad_unidad'] = 'años';
+            }
+
+            $row['edad_es_estimada'] = 0;
+            $row['edad_fuente'] = 'fecha_nacimiento';
+            $row['edad_referencia_fecha'] = $hoy->format('Y-m-d');
+            return;
+        }
+
+        $edadBase = isset($row['edad']) && $row['edad'] !== '' ? (int)$row['edad'] : null;
+        if ($edadBase === null || $edadBase < 0) {
+            $row['edad'] = null;
+            $row['edad_unidad'] = $row['edad_unidad'] ?? null;
+            $row['edad_es_estimada'] = 0;
+            $row['edad_fuente'] = 'sin_datos';
+            $row['edad_referencia_fecha'] = null;
+            return;
+        }
+
+        $unidadBase = oi_normalizar_unidad_edad($row['edad_unidad'] ?? 'anios');
+        $fechaRef = oi_parse_date_safe($row['creado_en'] ?? null);
+        if (!$fechaRef instanceof DateTime) {
+            $row['edad'] = $edadBase;
+            $row['edad_unidad'] = $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias');
+            $row['edad_es_estimada'] = 1;
+            $row['edad_fuente'] = 'edad_base_sin_fecha_ref';
+            $row['edad_referencia_fecha'] = null;
+            return;
+        }
+
+        $fechaRef->setTime(0, 0, 0);
+        $diffRef = $fechaRef->diff($hoy);
+        $aniosTrans = max(0, (int)$diffRef->y);
+        $mesesTrans = max(0, ((int)$diffRef->y * 12) + (int)$diffRef->m);
+        $diasTrans = max(0, (int)$diffRef->days);
+
+        if ($unidadBase === 'dias') {
+            $totalDias = $edadBase + $diasTrans;
+            if ($totalDias <= 28) {
+                $row['edad'] = $totalDias;
+                $row['edad_unidad'] = 'dias';
+            } else {
+                $row['edad'] = (int)floor($totalDias / 30);
+                $row['edad_unidad'] = 'meses';
+            }
+        } elseif ($unidadBase === 'meses') {
+            $totalMeses = $edadBase + $mesesTrans;
+            if ($totalMeses < 12) {
+                $row['edad'] = $totalMeses;
+                $row['edad_unidad'] = 'meses';
+            } else {
+                $row['edad'] = (int)floor($totalMeses / 12);
+                $row['edad_unidad'] = 'años';
+            }
+        } else {
+            $row['edad'] = $edadBase + $aniosTrans;
+            $row['edad_unidad'] = 'años';
+        }
+
+        $row['edad_es_estimada'] = 1;
+        $row['edad_fuente'] = 'edad_base_progresiva';
+        $row['edad_referencia_fecha'] = $fechaRef->format('Y-m-d');
+    }
+}
+
+if (!function_exists('oi_normalizar_fecha_programada_agenda')) {
+    function oi_normalizar_fecha_programada_agenda($value): ?string {
+        $raw = trim((string)$value);
+        if ($raw === '') return null;
+        $ts = strtotime($raw);
+        if ($ts === false) return null;
+        return date('Y-m-d', $ts);
+    }
+}
+
+if (!function_exists('oi_normalizar_hora_programada_agenda')) {
+    function oi_normalizar_hora_programada_agenda($value): ?string {
+        $raw = trim((string)$value);
+        if ($raw === '') return null;
+        if (preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $raw)) {
+            $parts = explode(':', $raw);
+            return sprintf('%02d:%02d:00', (int)$parts[0], (int)$parts[1]);
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) return null;
+        return date('H:i:s', $ts);
+    }
+}
+
+if (!function_exists('oi_hora_a_minutos')) {
+    function oi_hora_a_minutos(?string $hora): ?int {
+        $h = oi_normalizar_hora_programada_agenda($hora);
+        if ($h === null) return null;
+        if (!preg_match('/^(\d{2}):(\d{2})(:\d{2})?$/', $h, $m)) {
+            return null;
+        }
+        $hh = (int)$m[1];
+        $mm = (int)$m[2];
+        if ($hh < 0 || $hh > 23 || $mm < 0 || $mm > 59) return null;
+        return ($hh * 60) + $mm;
+    }
+}
+
+if (!function_exists('oi_minutos_a_hora')) {
+    function oi_minutos_a_hora(int $minutes): string {
+        $m = max(0, min(1439, $minutes));
+        $hh = (int)floor($m / 60);
+        $mm = $m % 60;
+        return sprintf('%02d:%02d:00', $hh, $mm);
+    }
+}
+
+if (!function_exists('oi_slots_ocupados_medico_fecha')) {
+    function oi_slots_ocupados_medico_fecha(mysqli $conn, int $medicoId, string $fechaYmd): array {
+        $ocupadas = [];
+        if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaYmd)) {
+            return $ocupadas;
+        }
+
+        if (oi_table_exists($conn, 'consultas')) {
+            $stmtC = $conn->prepare('SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
+            if ($stmtC) {
+                $stmtC->bind_param('is', $medicoId, $fechaYmd);
+                $stmtC->execute();
+                $resC = $stmtC->get_result();
+                while ($resC && ($row = $resC->fetch_assoc())) {
+                    $min = oi_hora_a_minutos((string)($row['hora'] ?? ''));
+                    if ($min !== null) $ocupadas[$min] = true;
+                }
+                $stmtC->close();
+            }
+        }
+
+        if (oi_table_exists($conn, 'agenda_servicios_cotizacion')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+            $stmtA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")');
+            if ($stmtA) {
+                $stmtA->bind_param('is', $medicoId, $fechaYmd);
+                $stmtA->execute();
+                $resA = $stmtA->get_result();
+                while ($resA && ($row = $resA->fetch_assoc())) {
+                    $min = oi_hora_a_minutos((string)($row['hora_programada'] ?? ''));
+                    if ($min !== null) $ocupadas[$min] = true;
+                }
+                $stmtA->close();
+            }
+        }
+
+        return $ocupadas;
+    }
+}
+
+if (!function_exists('oi_resolver_hora_libre_secuencial')) {
+    function oi_resolver_hora_libre_secuencial(mysqli $conn, int $medicoId, string $fechaYmd, ?string $horaBase, array $ocupadasLocales = []): ?string {
+        $fecha = oi_normalizar_fecha_programada_agenda($fechaYmd);
+        if ($medicoId <= 0 || $fecha === null) return oi_normalizar_hora_programada_agenda($horaBase);
+
+        $baseMin = oi_hora_a_minutos($horaBase);
+        if ($baseMin === null) $baseMin = (7 * 60);
+        $baseMin = (int)(floor($baseMin / 30) * 30);
+
+        $ocupadas = oi_slots_ocupados_medico_fecha($conn, $medicoId, $fecha);
+        foreach ($ocupadasLocales as $loc) {
+            $mLoc = oi_hora_a_minutos((string)$loc);
+            if ($mLoc !== null) $ocupadas[$mLoc] = true;
+        }
+
+        for ($step = 0; $step < 48; $step++) {
+            $slot = $baseMin + ($step * 30);
+            if ($slot > 1439) break;
+            if (!isset($ocupadas[$slot])) {
+                return oi_minutos_a_hora($slot);
+            }
+        }
+
+        return oi_normalizar_hora_programada_agenda($horaBase) ?: '07:00:00';
+    }
+}
+
+if (!function_exists('oi_agendar_detalle_cotizacion_imagen')) {
+    function oi_agendar_detalle_cotizacion_imagen(
+        mysqli $conn,
+        int $cotizacionId,
+        int $detalleId,
+        int $pacienteId,
+        int $medicoId,
+        string $servicioTipo,
+        int $servicioId,
+        string $titulo,
+        ?string $fechaProgramada,
+        ?string $horaProgramada,
+        int $usuarioId
+    ): void {
+        if ($cotizacionId <= 0 || $detalleId <= 0 || $pacienteId <= 0) return;
+        if ($fechaProgramada === null) return;
+        if (!oi_table_exists($conn, 'agenda_servicios_cotizacion')) return;
+        if (!oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'paciente_id')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'titulo_evento')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+            return;
+        }
+
+        $stmtExiste = $conn->prepare('SELECT id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND cotizacion_detalle_id = ? LIMIT 1');
+        if (!$stmtExiste) return;
+        $stmtExiste->bind_param('ii', $cotizacionId, $detalleId);
+        $stmtExiste->execute();
+        $exists = $stmtExiste->get_result()->fetch_assoc();
+        $stmtExiste->close();
+        if ($exists) return;
+
+        $usaHora = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada');
+        $usaEstado = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento');
+        $usaObs = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'observaciones');
+        $usaCreatedBy = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'created_by');
+        $usaUpdatedBy = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'updated_by');
+        $usaMedico = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id');
+        $usaServicioId = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_id');
+
+        $cols = ['cotizacion_id', 'cotizacion_detalle_id', 'paciente_id'];
+        $vals = ['?', '?', '?'];
+        $types = 'iii';
+        $params = [$cotizacionId, $detalleId, $pacienteId];
+
+        if ($usaMedico) {
+            $cols[] = 'medico_id';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = $medicoId > 0 ? $medicoId : null;
+        }
+
+        $cols[] = 'servicio_tipo';
+        $vals[] = '?';
+        $types .= 's';
+        $params[] = strtolower(trim($servicioTipo));
+
+        if ($usaServicioId) {
+            $cols[] = 'servicio_id';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = $servicioId > 0 ? $servicioId : null;
+        }
+
+        $cols[] = 'titulo_evento';
+        $vals[] = '?';
+        $types .= 's';
+        $params[] = ($titulo !== '' ? $titulo : 'Servicio programado');
+
+        $cols[] = 'fecha_programada';
+        $vals[] = '?';
+        $types .= 's';
+        $params[] = $fechaProgramada;
+
+        if ($usaHora) {
+            $cols[] = 'hora_programada';
+            $vals[] = '?';
+            $types .= 's';
+            $params[] = $horaProgramada;
+        }
+        if ($usaEstado) {
+            $cols[] = 'estado_evento';
+            $vals[] = '"pendiente"';
+        }
+        if ($usaObs) {
+            $cols[] = 'observaciones';
+            $vals[] = '?';
+            $types .= 's';
+            $params[] = 'Programado desde solicitud de imagen en HC';
+        }
+        if ($usaCreatedBy) {
+            $cols[] = 'created_by';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = (int)$usuarioId;
+        }
+        if ($usaUpdatedBy) {
+            $cols[] = 'updated_by';
+            $vals[] = '?';
+            $types .= 'i';
+            $params[] = (int)$usuarioId;
+        }
+
+        $sql = 'INSERT INTO agenda_servicios_cotizacion (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')';
+        $stmtIns = $conn->prepare($sql);
+        if (!$stmtIns) return;
+        $stmtIns->bind_param($types, ...$params);
+        $stmtIns->execute();
+        $stmtIns->close();
+    }
+}
+
 if (!function_exists('oi_cotizacion_tiene_pagos')) {
     function oi_cotizacion_tiene_pagos(mysqli $conn, int $cotizacionId): bool {
         if ($cotizacionId <= 0) return false;
@@ -158,6 +522,174 @@ if (!function_exists('oi_cotizacion_tiene_pagos')) {
         $stmtMov->close();
 
         return (float)($rowMov['total_abonos'] ?? 0) > 0.00001;
+    }
+}
+
+if (!function_exists('oi_cotizacion_tiene_habilitacion_anticipada_activa')) {
+    function oi_cotizacion_tiene_habilitacion_anticipada_activa(mysqli $conn, int $cotizacionId): bool {
+        if ($cotizacionId <= 0) return false;
+        if (!oi_table_exists($conn, 'consultas_habilitaciones_anticipadas')) return false;
+
+        $sql = "SELECT 1
+                FROM consultas_habilitaciones_anticipadas
+                WHERE cotizacion_id = ?
+                  AND estado = 'activo'
+                  AND (vence_en IS NULL OR vence_en >= NOW())
+                ORDER BY id DESC
+                LIMIT 1";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return false;
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $ok = (bool)$stmt->get_result()->fetch_row();
+        $stmt->close();
+        return $ok;
+    }
+}
+
+if (!function_exists('oi_sync_ordenes_imagen_desde_agenda_medico')) {
+    function oi_sync_ordenes_imagen_desde_agenda_medico(mysqli $conn, int $medicoId, int $usuarioId): int {
+        $medicoId = (int)$medicoId;
+        if ($medicoId <= 0) return 0;
+
+        if (!oi_table_exists($conn, 'agenda_servicios_cotizacion')) return 0;
+        if (!oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')) return 0;
+        if (!oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')) return 0;
+        if (!oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id')) return 0;
+        if (!oi_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) return 0;
+
+        $hasCdEstado = oi_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
+        $whereCdEstado = $hasCdEstado ? " AND (cd.estado_item IS NULL OR TRIM(cd.estado_item) <> 'eliminado')" : '';
+
+        $sql = "SELECT a.cotizacion_id,
+                       a.cotizacion_detalle_id,
+                       COALESCE(a.paciente_id, c.paciente_id) AS paciente_id,
+                       COALESCE(cd.consulta_id, 0) AS consulta_id,
+                       COALESCE(a.medico_id, cd.medico_id, 0) AS medico_id,
+              cd.servicio_tipo AS servicio_tipo_cd,
+              a.servicio_tipo AS servicio_tipo_agenda,
+              cd.descripcion AS descripcion_cd,
+              a.titulo_evento AS descripcion_agenda,
+              a.estado_evento AS estado_evento_raw,
+              cd.estado_item AS estado_item_raw
+                FROM agenda_servicios_cotizacion a
+                LEFT JOIN cotizaciones c ON c.id = a.cotizacion_id
+                LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
+                WHERE a.medico_id = ?
+                  AND COALESCE(a.cotizacion_id, 0) > 0
+                  AND COALESCE(a.cotizacion_detalle_id, 0) > 0
+                  {$whereCdEstado}
+                ORDER BY a.id DESC";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return 0;
+        $stmt->bind_param('i', $medicoId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $creadas = 0;
+        while ($row = $res->fetch_assoc()) {
+            $cotizId = (int)($row['cotizacion_id'] ?? 0);
+            $detalleId = (int)($row['cotizacion_detalle_id'] ?? 0);
+            $pacienteId = (int)($row['paciente_id'] ?? 0);
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $medId = (int)($row['medico_id'] ?? 0);
+            $tipoSrv = strtolower(trim((string)($row['servicio_tipo_cd'] ?? '')));
+            if ($tipoSrv === '') {
+                $tipoSrv = strtolower(trim((string)($row['servicio_tipo_agenda'] ?? '')));
+            }
+            $descripcion = trim((string)($row['descripcion_cd'] ?? ''));
+            if ($descripcion === '') {
+                $descripcion = trim((string)($row['descripcion_agenda'] ?? ''));
+            }
+            $estadoEventoRaw = strtolower(trim((string)($row['estado_evento_raw'] ?? 'pendiente')));
+            $estadoItemRaw = strtolower(trim((string)($row['estado_item_raw'] ?? '')));
+
+            if (in_array($estadoEventoRaw, ['cancelado', 'anulada', 'no_asistio'], true)) {
+                continue;
+            }
+            if ($estadoItemRaw === 'eliminado') {
+                continue;
+            }
+            if (!in_array($tipoSrv, ['ecografia', 'rayosx', 'rayos_x', 'rayos x', 'rx', 'tomografia', 'procedimiento', 'procedimientos'], true)) {
+                continue;
+            }
+
+            if ($cotizId <= 0 || $detalleId <= 0 || $pacienteId <= 0 || $medId <= 0) {
+                continue;
+            }
+
+            $tipoOrden = null;
+            if (in_array($tipoSrv, ['rayosx', 'rayos_x', 'rayos x', 'rx'], true)) {
+                $tipoOrden = 'rx';
+            } elseif ($tipoSrv === 'ecografia') {
+                $tipoOrden = 'ecografia';
+            } elseif ($tipoSrv === 'tomografia') {
+                $tipoOrden = 'tomografia';
+            } elseif (in_array($tipoSrv, ['procedimiento', 'procedimientos'], true)) {
+                $descNorm = strtolower($descripcion);
+                if (preg_match('/tomograf|\btac\b/u', $descNorm)) {
+                    $tipoOrden = 'tomografia';
+                } elseif (preg_match('/rayos\s*x|\brx\b/u', $descNorm)) {
+                    $tipoOrden = 'rx';
+                } elseif (preg_match('/ecograf/i', $descNorm)) {
+                    $tipoOrden = 'ecografia';
+                }
+            }
+            if ($tipoOrden === null) {
+                continue;
+            }
+
+            $descFinal = $descripcion !== '' ? $descripcion : strtoupper($tipoOrden);
+            $indicaciones = 'Detalle #' . $detalleId . ' - ' . $descFinal . ' | Orden creada desde cotización #' . $cotizId;
+
+            $stmtExists = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND indicaciones = ? LIMIT 1');
+            if (!$stmtExists) {
+                continue;
+            }
+            $stmtExists->bind_param('is', $cotizId, $indicaciones);
+            $stmtExists->execute();
+            $rowExists = $stmtExists->get_result()->fetch_assoc();
+            $stmtExists->close();
+
+            if ($rowExists) {
+                $ordenId = (int)($rowExists['id'] ?? 0);
+                if ($ordenId > 0) {
+                    $stmtUpd = $conn->prepare('UPDATE ordenes_imagen SET medico_id = ? WHERE id = ? AND (medico_id IS NULL OR medico_id <= 0)');
+                    if ($stmtUpd) {
+                        $stmtUpd->bind_param('ii', $medId, $ordenId);
+                        $stmtUpd->execute();
+                        $stmtUpd->close();
+                    }
+
+                    if (oi_cotizacion_tiene_habilitacion_anticipada_activa($conn, $cotizId)) {
+                        $stmtUpdAnt = $conn->prepare('UPDATE ordenes_imagen SET carga_anticipada = 1 WHERE id = ?');
+                        if ($stmtUpdAnt) {
+                            $stmtUpdAnt->bind_param('i', $ordenId);
+                            $stmtUpdAnt->execute();
+                            $stmtUpdAnt->close();
+                        }
+                    }
+                }
+                continue;
+            }
+
+            $cargaAnticipada = oi_cotizacion_tiene_habilitacion_anticipada_activa($conn, $cotizId) ? 1 : 0;
+            $consultaIdIns = $consultaId > 0 ? $consultaId : null;
+            $stmtIns = $conn->prepare("INSERT INTO ordenes_imagen (consulta_id, paciente_id, medico_id, tipo, indicaciones, estado, solicitado_por, cotizacion_id, carga_anticipada)
+                                       VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?)");
+            if (!$stmtIns) {
+                continue;
+            }
+            $stmtIns->bind_param('iiissiii', $consultaIdIns, $pacienteId, $medId, $tipoOrden, $indicaciones, $usuarioId, $cotizId, $cargaAnticipada);
+            if ($stmtIns->execute()) {
+                $creadas++;
+            }
+            $stmtIns->close();
+        }
+        $stmt->close();
+
+        return $creadas;
     }
 }
 
@@ -243,16 +775,17 @@ if (!function_exists('resolverMedicoResponsableOrdenImagen')) {
         $medicoId = (int)($orden['medico_id'] ?? 0);
         $consultaId = (int)($orden['consulta_id'] ?? 0);
         $cotizId = (int)($orden['cotizacion_id'] ?? 0);
+        $detalleServicioId = 0;
+        $detalleTokenId = 0;
 
         if ($medicoId <= 0 && $cotizId > 0) {
-            $detalleTokenId = 0;
             $indicaciones = (string)($orden['indicaciones'] ?? '');
             if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
                 $detalleTokenId = (int)($m[1] ?? 0);
             }
 
             if ($detalleTokenId > 0) {
-                $stmtDet = $conn->prepare('SELECT medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND id = ? LIMIT 1');
+                $stmtDet = $conn->prepare('SELECT medico_id, consulta_id, servicio_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND id = ? LIMIT 1');
                 if ($stmtDet) {
                     $stmtDet->bind_param('ii', $cotizId, $detalleTokenId);
                     $stmtDet->execute();
@@ -262,7 +795,47 @@ if (!function_exists('resolverMedicoResponsableOrdenImagen')) {
                     if ($consultaId <= 0) {
                         $consultaId = (int)($rowDet['consulta_id'] ?? 0);
                     }
+                    $detalleServicioId = (int)($rowDet['servicio_id'] ?? 0);
                 }
+            }
+        }
+
+        if ($medicoId <= 0
+            && $cotizId > 0
+            && $detalleTokenId > 0
+            && oi_table_exists($conn, 'agenda_servicios_cotizacion')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id')) {
+            $stmtAg = $conn->prepare('SELECT medico_id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND cotizacion_detalle_id = ? AND medico_id > 0 ORDER BY id ASC LIMIT 1');
+            if ($stmtAg) {
+                $stmtAg->bind_param('ii', $cotizId, $detalleTokenId);
+                $stmtAg->execute();
+                $rowAg = $stmtAg->get_result()->fetch_assoc();
+                $stmtAg->close();
+                $medicoId = (int)($rowAg['medico_id'] ?? 0);
+            }
+        }
+
+        if ($medicoId <= 0 && $detalleServicioId > 0) {
+            $stmtTar = $conn->prepare('SELECT medico_id FROM tarifas WHERE id = ? LIMIT 1');
+            if ($stmtTar) {
+                $stmtTar->bind_param('i', $detalleServicioId);
+                $stmtTar->execute();
+                $rowTar = $stmtTar->get_result()->fetch_assoc();
+                $stmtTar->close();
+                $medicoId = (int)($rowTar['medico_id'] ?? 0);
+            }
+        }
+
+        if ($medicoId <= 0 && $consultaId > 0) {
+            $stmtCons = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+            if ($stmtCons) {
+                $stmtCons->bind_param('i', $consultaId);
+                $stmtCons->execute();
+                $rowCons = $stmtCons->get_result()->fetch_assoc();
+                $stmtCons->close();
+                $medicoId = (int)($rowCons['medico_id'] ?? 0);
             }
         }
 
@@ -435,8 +1008,6 @@ if (!function_exists('usuarioPuedeVerOrdenImagen')) {
 
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
-    global $rol, $usuarioId;
-
     $oid     = (int)$orden['id'];
     $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
     $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
@@ -467,6 +1038,12 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
             'fecha'           => $a['fecha'],
         ];
     }
+    completarMetadatosOrdenImagen($conn, $orden);
+}
+
+function completarMetadatosOrdenImagen(mysqli $conn, array &$orden): void {
+    global $rol, $usuarioId;
+
     // Enriquecer con medico responsable, estado de la cotización y nombres de servicios
     $medInfo = resolverMedicoResponsableOrdenImagen($conn, $orden);
     $orden['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
@@ -524,6 +1101,384 @@ function adjuntarArchivos(mysqli $conn, array &$orden): void {
     }
 }
 
+function obtenerArchivosOrdenesMap(mysqli $conn, array $ordenIds): array {
+    $ids = [];
+    foreach ($ordenIds as $id) {
+        $idInt = (int)$id;
+        if ($idInt > 0) {
+            $ids[] = $idInt;
+        }
+    }
+    $ids = array_values(array_unique($ids));
+    if (empty($ids)) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "SELECT * FROM ordenes_imagen_archivos WHERE orden_id IN ($placeholders) ORDER BY orden_id ASC, fecha ASC";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $map = [];
+    while ($row = $res->fetch_assoc()) {
+        $oid = (int)($row['orden_id'] ?? 0);
+        if ($oid <= 0) {
+            continue;
+        }
+        if (!isset($map[$oid])) {
+            $map[$oid] = [];
+        }
+        $map[$oid][] = $row;
+    }
+    $stmt->close();
+
+    return $map;
+}
+
+if (!function_exists('oi_extraer_detalle_token_id')) {
+    function oi_extraer_detalle_token_id(string $indicaciones): int {
+        if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+            return (int)($m[1] ?? 0);
+        }
+        return 0;
+    }
+}
+
+if (!function_exists('oi_extraer_unidad_token')) {
+    function oi_extraer_unidad_token(string $indicaciones): int {
+        if ($indicaciones !== '' && preg_match('/unidad\s*(\d+)\s*\/\s*(\d+)/i', $indicaciones, $m)) {
+            return max(0, (int)($m[1] ?? 0));
+        }
+        return 0;
+    }
+}
+
+if (!function_exists('oi_tipo_orden_equivale_agenda')) {
+    function oi_tipo_orden_equivale_agenda(string $tipoOrden, string $tipoAgenda): bool {
+        $orden = strtolower(trim($tipoOrden));
+        $agenda = strtolower(trim($tipoAgenda));
+        if ($orden === '' || $agenda === '') {
+            return false;
+        }
+        if ($orden === $agenda) {
+            return true;
+        }
+        if ($orden === 'rx' && in_array($agenda, ['rayosx', 'rayos_x', 'rayos x', 'rx'], true)) {
+            return true;
+        }
+        return false;
+    }
+}
+
+if (!function_exists('oi_programacion_ordenes_map')) {
+    function oi_programacion_ordenes_map(mysqli $conn, array $rowsBase): array {
+        if (!oi_table_exists($conn, 'agenda_servicios_cotizacion')) {
+            return [];
+        }
+        if (
+            !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+            || !oi_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')
+        ) {
+            return [];
+        }
+
+        $ordenesMeta = [];
+        $cotizacionIds = [];
+        foreach ($rowsBase as $row) {
+            $ordenId = (int)($row['id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+            if ($ordenId <= 0 || $cotizacionId <= 0) {
+                continue;
+            }
+            $ordenesMeta[$ordenId] = [
+                'cotizacion_id' => $cotizacionId,
+                'medico_id' => (int)($row['medico_id'] ?? 0),
+                'tipo' => (string)($row['tipo'] ?? ''),
+                'detalle_token_id' => oi_extraer_detalle_token_id((string)($row['indicaciones'] ?? '')),
+                'unidad_token' => oi_extraer_unidad_token((string)($row['indicaciones'] ?? '')),
+            ];
+            $cotizacionIds[] = $cotizacionId;
+        }
+
+        $cotizacionIds = array_values(array_unique($cotizacionIds));
+        if (empty($cotizacionIds)) {
+            return [];
+        }
+
+        $cotEstadoMap = [];
+        $hasCotizacionesEstado = oi_table_exists($conn, 'cotizaciones') && oi_column_exists($conn, 'cotizaciones', 'estado');
+        if ($hasCotizacionesEstado) {
+            $placeholdersCot = implode(',', array_fill(0, count($cotizacionIds), '?'));
+            $sqlCotEstado = "SELECT id, LOWER(TRIM(COALESCE(estado, ''))) AS estado FROM cotizaciones WHERE id IN ($placeholdersCot)";
+            $stmtCotEstado = $conn->prepare($sqlCotEstado);
+            if ($stmtCotEstado) {
+                $stmtCotEstado->bind_param(str_repeat('i', count($cotizacionIds)), ...$cotizacionIds);
+                $stmtCotEstado->execute();
+                $resCotEstado = $stmtCotEstado->get_result();
+                while ($resCotEstado && ($rowCot = $resCotEstado->fetch_assoc())) {
+                    $cotEstadoMap[(int)($rowCot['id'] ?? 0)] = (string)($rowCot['estado'] ?? '');
+                }
+                $stmtCotEstado->close();
+            }
+
+                        // Backfill incremental: si la cotizacion ya equivale a cobro confirmado,
+                        // el evento pendiente pasa a confirmado para estabilizar el consecutivo operativo.
+            $sqlBackfill = "UPDATE agenda_servicios_cotizacion a
+                            INNER JOIN cotizaciones c ON c.id = a.cotizacion_id
+                            SET a.estado_evento = 'confirmado'
+                            WHERE a.cotizacion_id IN ($placeholdersCot)
+                              AND LOWER(TRIM(COALESCE(a.estado_evento, ''))) = 'pendiente'
+                                                            AND LOWER(TRIM(COALESCE(c.estado, ''))) IN ('parcial', 'pagado', 'pagada', 'completado', 'completada', 'control', 'contrato')";
+            $stmtBackfill = $conn->prepare($sqlBackfill);
+            if ($stmtBackfill) {
+                $stmtBackfill->bind_param(str_repeat('i', count($cotizacionIds)), ...$cotizacionIds);
+                $stmtBackfill->execute();
+                $stmtBackfill->close();
+            }
+        }
+
+        $placeholders = implode(',', array_fill(0, count($cotizacionIds), '?'));
+        $hasDetalle = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id');
+        $hasTipo = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo');
+        $hasMedico = oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id');
+        $selectDetalle = $hasDetalle ? 'a.cotizacion_detalle_id' : 'NULL';
+        $selectTipo = $hasTipo ? 'a.servicio_tipo' : 'NULL';
+        $selectMedico = $hasMedico ? 'a.medico_id' : '0';
+
+                $sql = "SELECT a.id, a.cotizacion_id, {$selectDetalle} AS cotizacion_detalle_id, {$selectTipo} AS servicio_tipo, {$selectMedico} AS medico_id, a.fecha_programada, a.hora_programada, LOWER(TRIM(COALESCE(a.estado_evento, ''))) AS estado_evento
+                FROM agenda_servicios_cotizacion a
+                WHERE a.cotizacion_id IN ($placeholders)
+                                    AND LOWER(COALESCE(a.estado_evento, '')) NOT IN ('cancelado', 'no_asistio')
+                ORDER BY a.fecha_programada ASC, a.hora_programada ASC, a.id ASC";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return [];
+        }
+
+        $stmt->bind_param(str_repeat('i', count($cotizacionIds)), ...$cotizacionIds);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $agendaByCotizacion = [];
+        while ($res && ($row = $res->fetch_assoc())) {
+            $cid = (int)($row['cotizacion_id'] ?? 0);
+            if ($cid <= 0) {
+                continue;
+            }
+            if (!isset($agendaByCotizacion[$cid])) {
+                $agendaByCotizacion[$cid] = [];
+            }
+            $agendaByCotizacion[$cid][] = [
+                'id' => (int)($row['id'] ?? 0),
+                'cotizacion_detalle_id' => (int)($row['cotizacion_detalle_id'] ?? 0),
+                'servicio_tipo' => (string)($row['servicio_tipo'] ?? ''),
+                'medico_id' => (int)($row['medico_id'] ?? 0),
+                'fecha_programada' => (string)($row['fecha_programada'] ?? ''),
+                'hora_programada' => (string)($row['hora_programada'] ?? ''),
+                'estado_evento' => (string)($row['estado_evento'] ?? ''),
+            ];
+        }
+        $stmt->close();
+
+        $pairsForRanks = [];
+        foreach ($agendaByCotizacion as $agendaItems) {
+            foreach ((array)$agendaItems as $agendaItem) {
+                $medicoTmp = (int)($agendaItem['medico_id'] ?? 0);
+                $fechaTmp = trim((string)($agendaItem['fecha_programada'] ?? ''));
+                if ($medicoTmp > 0 && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaTmp)) {
+                    $pairsForRanks[$medicoTmp . '|' . $fechaTmp] = [
+                        'medico_id' => $medicoTmp,
+                        'fecha' => $fechaTmp,
+                    ];
+                }
+            }
+        }
+        $rankMaps = correlativo_operativo_rank_maps($conn, array_values($pairsForRanks));
+        $rankByAgendaId = is_array($rankMaps['agenda'] ?? null) ? $rankMaps['agenda'] : [];
+
+        $out = [];
+
+        $usedAgendaIdxByDetalle = [];
+
+        foreach ($ordenesMeta as $ordenId => $meta) {
+            $cid = (int)($meta['cotizacion_id'] ?? 0);
+            $agendaItems = $agendaByCotizacion[$cid] ?? [];
+            if (empty($agendaItems)) {
+                continue;
+            }
+
+            $match = null;
+            $tokenId = (int)($meta['detalle_token_id'] ?? 0);
+            $unidadToken = (int)($meta['unidad_token'] ?? 0);
+            if ($tokenId > 0) {
+                $candidatosDetalle = [];
+                foreach ($agendaItems as $idx => $item) {
+                    if ((int)($item['cotizacion_detalle_id'] ?? 0) === $tokenId) {
+                        $candidatosDetalle[] = ['idx' => (int)$idx, 'item' => $item];
+                    }
+                }
+
+                if (!empty($candidatosDetalle)) {
+                    $keyDetalle = $cid . '|' . $tokenId;
+                    if (!isset($usedAgendaIdxByDetalle[$keyDetalle])) {
+                        $usedAgendaIdxByDetalle[$keyDetalle] = [];
+                    }
+
+                    if ($unidadToken > 0 && $unidadToken <= count($candidatosDetalle)) {
+                        $target = $candidatosDetalle[$unidadToken - 1];
+                        $match = $target['item'];
+                        $usedAgendaIdxByDetalle[$keyDetalle][$target['idx']] = true;
+                    } else {
+                        foreach ($candidatosDetalle as $cand) {
+                            $candIdx = (int)$cand['idx'];
+                            if (!isset($usedAgendaIdxByDetalle[$keyDetalle][$candIdx])) {
+                                $match = $cand['item'];
+                                $usedAgendaIdxByDetalle[$keyDetalle][$candIdx] = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ($match === null && $tokenId <= 0) {
+                $medicoId = (int)($meta['medico_id'] ?? 0);
+                $tipo = (string)($meta['tipo'] ?? '');
+                foreach ($agendaItems as $item) {
+                    $medicoOk = $medicoId <= 0 || (int)($item['medico_id'] ?? 0) === $medicoId;
+                    $tipoOk = oi_tipo_orden_equivale_agenda($tipo, (string)($item['servicio_tipo'] ?? ''));
+                    if ($medicoOk && $tipoOk) {
+                        $match = $item;
+                        break;
+                    }
+                }
+            }
+
+            if ($match === null && $tokenId <= 0) {
+                $match = $agendaItems[0];
+            }
+
+            if ($match === null) {
+                continue;
+            }
+
+            $correlativo = 0;
+            $medicoAgenda = (int)($match['medico_id'] ?? 0);
+            $fechaAgenda = (string)($match['fecha_programada'] ?? '');
+            $horaAgenda = (string)($match['hora_programada'] ?? '');
+            $estadoAgenda = strtolower(trim((string)($match['estado_evento'] ?? '')));
+            $estadoCotizacion = strtolower(trim((string)($cotEstadoMap[(int)$cid] ?? '')));
+            if ($estadoAgenda === 'pendiente' && in_array($estadoCotizacion, ['parcial', 'pagado', 'pagada', 'completado', 'completada', 'control', 'contrato'], true)) {
+                $estadoAgenda = 'confirmado';
+            }
+            $agendaId = (int)($match['id'] ?? 0);
+            $estadoCuenta = in_array($estadoAgenda, ['confirmado', 'atendido', 'espontaneo', 'completado', 'pagado'], true);
+            if ($estadoCuenta && $agendaId > 0) {
+                $correlativo = (int)($rankByAgendaId[$agendaId] ?? 0);
+            }
+
+            $out[$ordenId] = [
+                'agenda_id' => $agendaId,
+                'fecha_programada' => $fechaAgenda,
+                'hora_programada' => $horaAgenda,
+                'estado_evento_agenda' => $estadoAgenda,
+                'correlativo_operativo' => $correlativo,
+            ];
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('oi_attach_cola_medico_ordenes')) {
+    function oi_attach_cola_medico_ordenes(mysqli $conn, array &$rowsBase): void {
+        if (empty($rowsBase)) return;
+        if (!oi_table_exists($conn, 'recordatorios_cola_medico')) return;
+
+        $consultaIds = [];
+        $cotizacionIds = [];
+        foreach ($rowsBase as $row) {
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+            if ($consultaId > 0) $consultaIds[$consultaId] = $consultaId;
+            if ($cotizacionId > 0) $cotizacionIds[$cotizacionId] = $cotizacionId;
+        }
+
+        $consultaIds = array_values($consultaIds);
+        $cotizacionIds = array_values($cotizacionIds);
+        if (empty($consultaIds) && empty($cotizacionIds)) return;
+
+        $where = [];
+        $types = '';
+        $params = [];
+        if (!empty($consultaIds)) {
+            $where[] = 'consulta_id IN (' . implode(',', array_fill(0, count($consultaIds), '?')) . ')';
+            $types .= str_repeat('i', count($consultaIds));
+            foreach ($consultaIds as $id) $params[] = $id;
+        }
+        if (!empty($cotizacionIds)) {
+            $where[] = 'cotizacion_id IN (' . implode(',', array_fill(0, count($cotizacionIds), '?')) . ')';
+            $types .= str_repeat('i', count($cotizacionIds));
+            foreach ($cotizacionIds as $id) $params[] = $id;
+        }
+
+        $sql = 'SELECT consulta_id, cotizacion_id, estado_cola, correlativo_cola, es_siguiente, prioridad_cola, prioridad_detalle'
+            . ' FROM recordatorios_cola_medico WHERE ' . implode(' OR ', $where);
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return;
+        if ($types !== '') {
+            $stmt->bind_param($types, ...$params);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $byConsulta = [];
+        $byCotizacion = [];
+        while ($row = $res->fetch_assoc()) {
+            $normalized = [
+                'cola_estado' => (string)($row['estado_cola'] ?? 'pendiente'),
+                'cola_correlativo' => (int)($row['correlativo_cola'] ?? 0),
+                'cola_es_siguiente' => (int)($row['es_siguiente'] ?? 0),
+                'cola_prioridad' => (string)($row['prioridad_cola'] ?? 'normal'),
+                'cola_prioridad_detalle' => (string)($row['prioridad_detalle'] ?? ''),
+            ];
+
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+            if ($consultaId > 0) $byConsulta[$consultaId] = $normalized;
+            if ($cotizacionId > 0) $byCotizacion[$cotizacionId] = $normalized;
+        }
+        $stmt->close();
+
+        foreach ($rowsBase as &$row) {
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+
+            $cola = null;
+            if ($consultaId > 0 && isset($byConsulta[$consultaId])) {
+                $cola = $byConsulta[$consultaId];
+            } elseif ($cotizacionId > 0 && isset($byCotizacion[$cotizacionId])) {
+                $cola = $byCotizacion[$cotizacionId];
+            }
+
+            $row['cola_estado'] = (string)($cola['cola_estado'] ?? 'pendiente');
+            $row['cola_correlativo'] = (int)($cola['cola_correlativo'] ?? 0);
+            $row['cola_es_siguiente'] = (int)($cola['cola_es_siguiente'] ?? 0);
+            $row['cola_prioridad'] = (string)($cola['cola_prioridad'] ?? 'normal');
+            $row['cola_prioridad_detalle'] = (string)($cola['cola_prioridad_detalle'] ?? '');
+        }
+        unset($row);
+    }
+}
+
 // ─── Download ────────────────────────────────────────────────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'download') {
     $archivo_id = (int)($_GET['archivo_id'] ?? 0);
@@ -560,13 +1515,28 @@ if (isset($_GET['action']) && $_GET['action'] === 'download') {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
+if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+    // Evita que múltiples lecturas del modal queden serializadas por lock de sesión.
+    session_write_close();
+}
+
 // ─── GET ─────────────────────────────────────────────────────────────────────
 if ($method === 'GET') {
     $consulta_id = (int)($_GET['consulta_id'] ?? 0);
+    $cotizacion_id = (int)($_GET['cotizacion_id'] ?? 0);
+    $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
+    $isHcFast = ($vista === 'hc_fast');
+    $isInformeFast = ($vista === 'informe_fast');
     $paciente_id = (int)($_GET['paciente_id'] ?? 0);
     $medico_id   = (int)($_GET['medico_id'] ?? 0);
     $orden_id    = (int)($_GET['orden_id'] ?? 0);
     $tipo        = trim($_GET['tipo'] ?? '');
+    $search      = trim((string)($_GET['search'] ?? ''));
+    $fecha_desde = trim((string)($_GET['fecha_desde'] ?? ''));
+    $fecha_hasta = trim((string)($_GET['fecha_hasta'] ?? ''));
+    $estado_panel = strtolower(trim((string)($_GET['estado_panel'] ?? 'activas')));
+    $filtro_pago_panel = strtolower(trim((string)($_GET['filtro_pago_panel'] ?? 'solo_pagadas')));
+    $semaforo_panel = strtolower(trim((string)($_GET['semaforo_panel'] ?? 'todas')));
     $pagina      = max(1, (int)($_GET['page'] ?? 1));
     $limite      = min(50, max(5, (int)($_GET['limit'] ?? 10)));
     $contextConsultaId = (int)($_GET['context_consulta_id'] ?? 0);
@@ -576,7 +1546,19 @@ if ($method === 'GET') {
         // Un solo orden con detalles completos
         $row = $conn->query("SELECT * FROM ordenes_imagen WHERE id = $orden_id")->fetch_assoc();
         if (!$row) { echo json_encode(['success' => false, 'error' => 'Orden no encontrada']); exit; }
-        adjuntarArchivos($conn, $row);
+
+        if ($isInformeFast) {
+            $row['archivos'] = [];
+            $medInfo = resolverMedicoResponsableOrdenImagen($conn, $row);
+            $row['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
+            $row['medico_responsable_nombre'] = $medInfo['medico_responsable_nombre'];
+            $row['medico_responsable_apellido'] = $medInfo['medico_responsable_apellido'];
+            $row['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
+            $row['can_upload_archivos'] = usuarioPuedeOperarOrdenImagen($row, (string)$rol, (int)$usuarioId);
+            $row['can_edit_informe'] = usuarioPuedeEditarInformeOrdenImagen($row, (string)$rol, (int)$usuarioId);
+        } else {
+            adjuntarArchivos($conn, $row);
+        }
 
         if (!usuarioPuedeVerOrdenImagen($conn, $row, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
             http_response_code(403);
@@ -584,8 +1566,30 @@ if ($method === 'GET') {
             exit;
         }
 
+        if ($isInformeFast) {
+            $ordenLite = [
+                'id' => (int)($row['id'] ?? 0),
+                'consulta_id' => (int)($row['consulta_id'] ?? 0),
+                'paciente_id' => (int)($row['paciente_id'] ?? 0),
+                'medico_id' => (int)($row['medico_id'] ?? 0),
+                'tipo' => (string)($row['tipo'] ?? ''),
+                'indicaciones' => (string)($row['indicaciones'] ?? ''),
+                'estado' => (string)($row['estado'] ?? ''),
+                'fecha' => (string)($row['fecha'] ?? ''),
+                'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+                'medico_responsable_nombre' => (string)($row['medico_responsable_nombre'] ?? ''),
+                'medico_responsable_apellido' => (string)($row['medico_responsable_apellido'] ?? ''),
+                'can_edit_informe' => !empty($row['can_edit_informe']),
+            ];
+            echo json_encode(['success' => true, 'orden' => $ordenLite]);
+            exit;
+        }
+
         // Info paciente
-        $pac = $conn->query("SELECT id, nombre, apellido, dni, historia_clinica FROM pacientes WHERE id = " . (int)$row['paciente_id'])->fetch_assoc();
+        $pac = $conn->query("SELECT id, nombre, apellido, dni, historia_clinica, fecha_nacimiento, edad, edad_unidad, creado_en FROM pacientes WHERE id = " . (int)$row['paciente_id'])->fetch_assoc();
+        if (is_array($pac)) {
+            oi_set_edad_row($pac);
+        }
         $row['paciente'] = $pac;
 
         // Info consulta + médico
@@ -603,21 +1607,160 @@ if ($method === 'GET') {
     } elseif ($consulta_id > 0) {
         // Todas las órdenes de una consulta
         $res = $conn->query("SELECT * FROM ordenes_imagen WHERE consulta_id = $consulta_id ORDER BY fecha DESC");
-        $rows = [];
+        $rowsBase = [];
+        $orderIds = [];
         while ($r = $res->fetch_assoc()) {
-            adjuntarArchivos($conn, $r);
+            $rowsBase[] = $r;
+            $orderIds[] = (int)($r['id'] ?? 0);
+        }
+
+        $archivosMap = [];
+        $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
+        $contextQuery = '';
+        if ($contextConsultaId > 0 || $contextPacienteId > 0) {
+            $ctxParts = [];
+            if ($contextConsultaId > 0) {
+                $ctxParts[] = 'context_consulta_id=' . $contextConsultaId;
+            }
+            if ($contextPacienteId > 0) {
+                $ctxParts[] = 'context_paciente_id=' . $contextPacienteId;
+            }
+            $contextQuery = '&' . implode('&', $ctxParts);
+        }
+
+        if (!$isHcFast) {
+            $archivosRawMap = obtenerArchivosOrdenesMap($conn, $orderIds);
+            foreach ($archivosRawMap as $oid => $rawItems) {
+                $archivosMap[$oid] = [];
+                foreach ($rawItems as $a) {
+                    $mt = !empty($a['mime_type']) ? $a['mime_type'] : 'application/octet-stream';
+                    $archivosMap[$oid][] = [
+                        'id' => (int)($a['id'] ?? 0),
+                        'nombre_original' => (string)($a['nombre_original'] ?? ''),
+                        'tamano' => (int)($a['tamano'] ?? 0),
+                        'mime_type' => $mt,
+                        'es_imagen' => strpos($mt, 'image/') === 0,
+                        'es_dicom' => $mt === 'application/dicom',
+                        'url' => $downloadBaseUrl . '?action=download&archivo_id=' . (int)($a['id'] ?? 0) . $contextQuery,
+                        'fecha' => (string)($a['fecha'] ?? ''),
+                    ];
+                }
+            }
+        }
+
+        $rows = [];
+        foreach ($rowsBase as $r) {
+            if (!$isHcFast) {
+                $oid = (int)($r['id'] ?? 0);
+                $r['archivos'] = $archivosMap[$oid] ?? [];
+                // Mantener metadatos de orden (médico, permisos, servicios, cotización)
+                // sin disparar un SELECT por archivos por cada fila.
+                $medInfo = resolverMedicoResponsableOrdenImagen($conn, $r);
+                $r['medico_id'] = (int)($medInfo['medico_id'] ?? 0);
+                $r['medico_responsable_nombre'] = $medInfo['medico_responsable_nombre'];
+                $r['medico_responsable_apellido'] = $medInfo['medico_responsable_apellido'];
+                $r['medico_responsable_especialidad'] = $medInfo['medico_responsable_especialidad'];
+                $r['can_upload_archivos'] = usuarioPuedeOperarOrdenImagen($r, (string)$rol, (int)$usuarioId);
+                $r['can_edit_informe'] = usuarioPuedeEditarInformeOrdenImagen($r, (string)$rol, (int)$usuarioId);
+            } else {
+                $r['archivos'] = [];
+            }
+
             if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
                 continue;
             }
+
+            if (!$isHcFast) {
+                $cotizId = (int)($r['cotizacion_id'] ?? 0);
+                if ($cotizId > 0) {
+                    $cRow = $conn->query("SELECT estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id = $cotizId")->fetch_assoc();
+                    $r['cotizacion'] = $cRow ?: null;
+
+                    $descs = [];
+                    $tipoOrden = strtolower(trim((string)($r['tipo'] ?? '')));
+                    $detalleTokenId = 0;
+                    $indicaciones = (string)($r['indicaciones'] ?? '');
+                    if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+                        $detalleTokenId = (int)($m[1] ?? 0);
+                    }
+
+                    if ($detalleTokenId > 0) {
+                        $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId AND id = $detalleTokenId LIMIT 1");
+                        if ($dRes && ($d = $dRes->fetch_assoc())) {
+                            $descs[] = (string)($d['descripcion'] ?? '');
+                        }
+                    }
+
+                    if (empty($descs)) {
+                        $whereTipo = '';
+                        if ($tipoOrden === 'ecografia') {
+                            $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'ecografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND LOWER(descripcion) LIKE '%ecograf%'))";
+                        } elseif ($tipoOrden === 'rx') {
+                            $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) IN ('rayosx','rayos_x','rayos x','rx') OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%rayos x%' OR LOWER(descripcion) REGEXP '(^|[^a-z])rx([^a-z]|$)')))";
+                        } elseif ($tipoOrden === 'tomografia') {
+                            $whereTipo = " AND (LOWER(TRIM(servicio_tipo)) = 'tomografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%tomograf%' OR LOWER(descripcion) LIKE '% tac %' OR LOWER(descripcion) LIKE 'tac %' OR LOWER(descripcion) LIKE '% tac')))";
+                        }
+
+                        $dRes = $conn->query("SELECT descripcion FROM cotizaciones_detalle WHERE cotizacion_id = $cotizId{$whereTipo} ORDER BY id ASC");
+                        while ($dRes && ($d = $dRes->fetch_assoc())) {
+                            $descs[] = (string)($d['descripcion'] ?? '');
+                        }
+                    }
+
+                    $r['servicios_nombres'] = $descs;
+                } else {
+                    $r['cotizacion'] = null;
+                    $r['servicios_nombres'] = [];
+                }
+            }
+
             $rows[] = $r;
         }
         echo json_encode(['success' => true, 'ordenes' => $rows]);
 
-    } elseif ($medico_id > 0) {
-        if ($rol === 'medico' && $medico_id !== $usuarioId) {
+    } elseif ($cotizacion_id > 0) {
+        // Todas las ordenes de una cotizacion (para correlativo operativo en Atenciones)
+        if (!in_array($rol, ['administrador', 'recepcionista', 'laboratorista', 'medico'], true)) {
             http_response_code(403);
-            echo json_encode(['success' => false, 'error' => 'No autorizado para consultar órdenes de otro médico']);
+            echo json_encode(['success' => false, 'error' => 'No autorizado']);
             exit;
+        }
+
+        $res = $conn->query("SELECT * FROM ordenes_imagen WHERE cotizacion_id = $cotizacion_id ORDER BY fecha ASC, id ASC");
+        $rowsBase = [];
+        while ($res && ($r = $res->fetch_assoc())) {
+            if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
+                continue;
+            }
+            $rowsBase[] = $r;
+        }
+
+        $programacionMap = oi_programacion_ordenes_map($conn, $rowsBase);
+        $rows = [];
+        foreach ($rowsBase as $r) {
+            $oid = (int)($r['id'] ?? 0);
+            $programacion = $programacionMap[$oid] ?? null;
+            $r['agenda_id'] = (int)($programacion['agenda_id'] ?? 0);
+            $r['fecha_programada'] = (string)($programacion['fecha_programada'] ?? '');
+            $r['hora_programada'] = (string)($programacion['hora_programada'] ?? '');
+            $r['estado_evento_agenda'] = (string)($programacion['estado_evento_agenda'] ?? '');
+            $r['correlativo_operativo'] = (int)($programacion['correlativo_operativo'] ?? 0);
+            $rows[] = $r;
+        }
+
+        echo json_encode(['success' => true, 'ordenes' => $rows]);
+
+    } elseif ($medico_id > 0) {
+        // Esta vista puede sincronizar órdenes desde agenda (write path), por eso asegura esquema.
+        oi_ensure_schema($conn);
+        if ($rol === 'medico') {
+            if ($usuarioId <= 0) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'No autorizado']);
+                exit;
+            }
+            // Ignorar medico_id enviado por cliente y usar siempre la identidad de sesion.
+            $medico_id = (int)$usuarioId;
         }
         if (!in_array($rol, ['administrador', 'recepcionista', 'laboratorista', 'medico'], true)) {
             http_response_code(403);
@@ -625,26 +1768,258 @@ if ($method === 'GET') {
             exit;
         }
 
+        // Sincroniza ordenes faltantes desde agenda/cotizacion para que el panel medico
+        // refleje ecografias/rayos/tomografias aunque no hayan pasado por HC.
+        oi_sync_ordenes_imagen_desde_agenda_medico($conn, (int)$medico_id, (int)$usuarioId);
+
         $wheresTipo = '';
         if ($tipo && in_array($tipo, ['rx', 'ecografia', 'tomografia', 'todos'], true) && $tipo !== 'todos') {
             $tipoSeguro = $conn->real_escape_string($tipo);
             $wheresTipo = " AND oi.tipo = '$tipoSeguro'";
         }
-        $whereMedico = "oi.medico_id = $medico_id $wheresTipo";
+
+        $whereEstadoPanel = '';
+        switch ($estado_panel) {
+            case 'pendientes':
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) = 'pendiente'";
+                break;
+            case 'completadas':
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) IN ('completado', 'completada')";
+                break;
+            case 'canceladas_excluidas':
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) IN ('cancelado', 'cancelada', 'anulado', 'anulada', 'eliminado')";
+                break;
+            case 'todas':
+                $whereEstadoPanel = '';
+                break;
+            case 'activas':
+            default:
+                $whereEstadoPanel = " AND LOWER(TRIM(COALESCE(oi.estado, ''))) NOT IN ('cancelado', 'cancelada', 'anulado', 'anulada', 'eliminado')";
+                break;
+        }
+
+        $wherePagoPanel = '';
+        if ($estado_panel !== 'canceladas_excluidas') {
+            switch ($filtro_pago_panel) {
+                case 'solo_no_pagadas':
+                    $wherePagoPanel = " AND (
+                        oi.cotizacion_id IS NULL
+                        OR oi.cotizacion_id <= 0
+                        OR NOT EXISTS (
+                            SELECT 1
+                            FROM cotizaciones c_pago
+                            WHERE c_pago.id = oi.cotizacion_id
+                              AND LOWER(TRIM(COALESCE(c_pago.estado, ''))) IN ('pagado', 'pagada', 'control')
+                        )
+                    )";
+                    break;
+                case 'todas':
+                    $wherePagoPanel = '';
+                    break;
+                case 'solo_pagadas':
+                default:
+                    $wherePagoPanel = " AND (
+                        oi.cotizacion_id IS NULL
+                        OR oi.cotizacion_id <= 0
+                        OR EXISTS (
+                            SELECT 1
+                            FROM cotizaciones c_pago
+                            WHERE c_pago.id = oi.cotizacion_id
+                              AND LOWER(TRIM(COALESCE(c_pago.estado, ''))) IN ('pagado', 'pagada', 'control')
+                        )
+                    )";
+                    break;
+            }
+        }
+
+        $agendaTipoMatchExpr = "(
+                                                (oi.tipo = 'rx' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) IN ('rayosx', 'rayos_x', 'rayos x', 'rx'))
+                                                OR (oi.tipo = 'ecografia' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) = 'ecografia')
+                                                OR (oi.tipo = 'tomografia' AND LOWER(TRIM(COALESCE(a.servicio_tipo, ''))) = 'tomografia')
+                                            )";
+
+        $canUsarFechaAgenda = oi_table_exists($conn, 'agenda_servicios_cotizacion')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+            && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada');
+
+        $fechaOperativaExpr = $canUsarFechaAgenda
+            ? "COALESCE((
+                    SELECT MIN(a.fecha_programada)
+                    FROM agenda_servicios_cotizacion a
+                    WHERE a.cotizacion_id = oi.cotizacion_id
+                      AND a.medico_id = $medico_id
+                      AND {$agendaTipoMatchExpr}
+                ), (
+                    SELECT c2.fecha
+                    FROM consultas c2
+                    WHERE c2.id = oi.consulta_id
+                    LIMIT 1
+                ), DATE(oi.fecha))"
+            : "COALESCE((
+                    SELECT c2.fecha
+                    FROM consultas c2
+                    WHERE c2.id = oi.consulta_id
+                    LIMIT 1
+                ), DATE(oi.fecha))";
+
+        $whereSemaforoPanel = '';
+        if ($semaforo_panel === 'proxima' && oi_table_exists($conn, 'recordatorios_cola_medico')) {
+            $whereSemaforoPanel = " AND EXISTS (
+                SELECT 1
+                FROM recordatorios_cola_medico rcm
+                WHERE rcm.es_siguiente = 1
+                  AND (
+                    (oi.consulta_id > 0 AND rcm.consulta_id = oi.consulta_id)
+                    OR (oi.cotizacion_id > 0 AND rcm.cotizacion_id = oi.cotizacion_id)
+                  )
+            )";
+        }
+
+        $whereFechaPanel = '';
+        if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $fecha_desde)) {
+            $fechaDesdeSafe = $conn->real_escape_string($fecha_desde);
+            $whereFechaPanel .= " AND DATE({$fechaOperativaExpr}) >= '$fechaDesdeSafe'";
+        }
+        if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $fecha_hasta)) {
+            $fechaHastaSafe = $conn->real_escape_string($fecha_hasta);
+            $whereFechaPanel .= " AND DATE({$fechaOperativaExpr}) <= '$fechaHastaSafe'";
+        }
+
+        $whereBusquedaPanel = '';
+        if ($search !== '') {
+            $searchLike = '%' . $conn->real_escape_string($search) . '%';
+            $whereBusquedaPanel = " AND (
+                oi.indicaciones LIKE '$searchLike'
+                OR EXISTS (
+                    SELECT 1
+                    FROM pacientes p
+                    WHERE p.id = oi.paciente_id
+                      AND (
+                        p.nombre LIKE '$searchLike'
+                        OR p.apellido LIKE '$searchLike'
+                        OR CONCAT(TRIM(COALESCE(p.nombre, '')), ' ', TRIM(COALESCE(p.apellido, ''))) LIKE '$searchLike'
+                        OR p.dni LIKE '$searchLike'
+                        OR p.historia_clinica LIKE '$searchLike'
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM cotizaciones_detalle cd_bus
+                    WHERE cd_bus.cotizacion_id = oi.cotizacion_id
+                      AND (
+                        cd_bus.descripcion LIKE '$searchLike'
+                        OR cd_bus.servicio_nombre LIKE '$searchLike'
+                      )
+                )
+            )";
+        }
+
+        $whereCotizacionVigente = " AND (
+            oi.cotizacion_id IS NULL
+            OR oi.cotizacion_id <= 0
+            OR EXISTS (
+                SELECT 1
+                FROM cotizaciones c
+                WHERE c.id = oi.cotizacion_id
+                  AND LOWER(TRIM(COALESCE(c.estado, ''))) NOT IN ('anulada', 'cancelada')
+            )
+        )";
+        $whereMedico = "(
+                        oi.medico_id = $medico_id
+                        OR EXISTS (
+                                SELECT 1
+                                FROM agenda_servicios_cotizacion a
+                                WHERE a.cotizacion_id = oi.cotizacion_id
+                                    AND a.medico_id = $medico_id
+                        AND {$agendaTipoMatchExpr}
+                        )
+                            ) $wheresTipo $whereCotizacionVigente $whereEstadoPanel $wherePagoPanel $whereSemaforoPanel $whereFechaPanel $whereBusquedaPanel";
         $totalRes = $conn->query("SELECT COUNT(*) AS total FROM ordenes_imagen oi WHERE $whereMedico");
         $total = (int)(($totalRes ? $totalRes->fetch_assoc() : [])['total'] ?? 0);
         $totalPaginas = max(1, (int)ceil($total / $limite));
         $pagina = min($pagina, $totalPaginas);
         $offset = ($pagina - 1) * $limite;
-        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY oi.fecha DESC LIMIT $limite OFFSET $offset");
-        $rows = [];
+        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY DATE({$fechaOperativaExpr}) DESC, oi.fecha DESC LIMIT $limite OFFSET $offset");
+        $rowsBase = [];
+        $orderIds = [];
+        $pacienteIds = [];
         while ($r = $res->fetch_assoc()) {
-            adjuntarArchivos($conn, $r);
+            $rowsBase[] = $r;
+            $orderIds[] = (int)($r['id'] ?? 0);
+            $pid = (int)($r['paciente_id'] ?? 0);
+            if ($pid > 0) {
+                $pacienteIds[] = $pid;
+            }
+        }
+
+        $downloadBaseUrl = getApiEndpointPath('api_ordenes_imagen.php');
+        $contextQuery = '';
+        if ($contextConsultaId > 0 || $contextPacienteId > 0) {
+            $ctxParts = [];
+            if ($contextConsultaId > 0) {
+                $ctxParts[] = 'context_consulta_id=' . $contextConsultaId;
+            }
+            if ($contextPacienteId > 0) {
+                $ctxParts[] = 'context_paciente_id=' . $contextPacienteId;
+            }
+            $contextQuery = '&' . implode('&', $ctxParts);
+        }
+
+        $archivosMap = [];
+        $archivosRawMap = obtenerArchivosOrdenesMap($conn, $orderIds);
+        foreach ($archivosRawMap as $oid => $rawItems) {
+            $archivosMap[$oid] = [];
+            foreach ($rawItems as $a) {
+                $mt = !empty($a['mime_type']) ? $a['mime_type'] : 'application/octet-stream';
+                $archivosMap[$oid][] = [
+                    'id' => (int)($a['id'] ?? 0),
+                    'nombre_original' => (string)($a['nombre_original'] ?? ''),
+                    'tamano' => (int)($a['tamano'] ?? 0),
+                    'mime_type' => $mt,
+                    'es_imagen' => strpos($mt, 'image/') === 0,
+                    'es_dicom' => $mt === 'application/dicom',
+                    'url' => $downloadBaseUrl . '?action=download&archivo_id=' . (int)($a['id'] ?? 0) . $contextQuery,
+                    'fecha' => (string)($a['fecha'] ?? ''),
+                ];
+            }
+        }
+
+        $pacienteMap = [];
+        $pacienteIds = array_values(array_unique(array_filter($pacienteIds, static function ($id) {
+            return (int)$id > 0;
+        })));
+        if (!empty($pacienteIds)) {
+            $inPac = implode(',', $pacienteIds);
+            $resPac = $conn->query("SELECT id, nombre, apellido, dni, historia_clinica, fecha_nacimiento, edad, edad_unidad, creado_en FROM pacientes WHERE id IN ($inPac)");
+            while ($resPac && ($p = $resPac->fetch_assoc())) {
+                oi_set_edad_row($p);
+                $pacienteMap[(int)($p['id'] ?? 0)] = $p;
+            }
+        }
+
+        $programacionMap = oi_programacion_ordenes_map($conn, $rowsBase);
+        oi_attach_cola_medico_ordenes($conn, $rowsBase);
+
+        $rows = [];
+        foreach ($rowsBase as $r) {
+            $oid = (int)($r['id'] ?? 0);
+            $programacion = $programacionMap[$oid] ?? null;
+            $r['agenda_id'] = (int)($programacion['agenda_id'] ?? 0);
+            $r['fecha_programada'] = (string)($programacion['fecha_programada'] ?? '');
+            $r['hora_programada'] = (string)($programacion['hora_programada'] ?? '');
+            $r['estado_evento_agenda'] = (string)($programacion['estado_evento_agenda'] ?? '');
+            $r['correlativo_operativo'] = (int)($programacion['correlativo_operativo'] ?? 0);
+            $r['archivos'] = $archivosMap[$oid] ?? [];
+            completarMetadatosOrdenImagen($conn, $r);
+
             if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
                 continue;
             }
-            $paciente = $conn->query('SELECT id, nombre, apellido, dni, historia_clinica FROM pacientes WHERE id = ' . (int)$r['paciente_id'] . ' LIMIT 1')->fetch_assoc();
-            $r['paciente'] = $paciente ?: null;
+
+            $pid = (int)($r['paciente_id'] ?? 0);
+            $r['paciente'] = $pacienteMap[$pid] ?? null;
             $rows[] = $r;
         }
         echo json_encode([
@@ -655,6 +2030,15 @@ if ($method === 'GET') {
                 'limit' => $limite,
                 'total' => $total,
                 'total_pages' => $totalPaginas,
+            ],
+            'filtros' => [
+                'tipo' => $tipo,
+                'search' => $search,
+                'fecha_desde' => $fecha_desde,
+                'fecha_hasta' => $fecha_hasta,
+                'estado_panel' => $estado_panel,
+                'filtro_pago_panel' => $filtro_pago_panel,
+                'semaforo_panel' => $semaforo_panel,
             ],
         ]);
 
@@ -676,13 +2060,14 @@ if ($method === 'GET') {
         echo json_encode(['success' => true, 'ordenes' => $rows]);
 
     } else {
-        echo json_encode(['success' => false, 'error' => 'Parámetro requerido: orden_id, consulta_id, medico_id o paciente_id']);
+        echo json_encode(['success' => false, 'error' => 'Parámetro requerido: orden_id, consulta_id, cotizacion_id, medico_id o paciente_id']);
     }
     exit;
 }
 
 // ─── POST ─────────────────────────────────────────────────────────────────────
 if ($method === 'POST') {
+    oi_ensure_schema($conn);
     // Determinar si es upload de archivos o JSON
     $hayArchivos = isset($_FILES['archivos']) && !empty($_FILES['archivos']['name'][0]);
 
@@ -742,14 +2127,28 @@ if ($method === 'POST') {
         ];
         $mimesPermitidos = array_keys($extMap);
 
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        if (!$finfo) {
+            echo json_encode(['success' => false, 'error' => 'No se pudo inicializar validación de archivos']);
+            exit;
+        }
+
+        $stmtInsertArchivo = $conn->prepare(
+            'INSERT INTO ordenes_imagen_archivos (orden_id, nombre_original, archivo_path, tamano, mime_type) VALUES (?, ?, ?, ?, ?)'
+        );
+        if (!$stmtInsertArchivo) {
+            finfo_close($finfo);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar registro de archivos']);
+            exit;
+        }
+
         $subidos = 0;
         for ($i = 0; $i < $count; $i++) {
             if ($files['error'][$i] !== UPLOAD_ERR_OK) continue;
             if ($files['size'][$i] > 100 * 1024 * 1024) continue; // 100 MB max
 
-            $finfo    = finfo_open(FILEINFO_MIME_TYPE);
             $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
-            finfo_close($finfo);
+            if ($mimeType === false) continue;
 
             $extArchivo = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
             if ($mimeType === 'application/octet-stream' && $extArchivo === 'dcm') {
@@ -765,14 +2164,15 @@ if ($method === 'POST') {
 
             if (!move_uploaded_file($files['tmp_name'][$i], $destPath)) continue;
 
-            $stmt = $conn->prepare(
-                'INSERT INTO ordenes_imagen_archivos (orden_id, nombre_original, archivo_path, tamano, mime_type) VALUES (?, ?, ?, ?, ?)'
-            );
-            $stmt->bind_param('issis', $orden_id, $nombreOriginal, $destPath, $tamano, $mimeType);
-            $stmt->execute();
-            $stmt->close();
+            $stmtInsertArchivo->bind_param('issis', $orden_id, $nombreOriginal, $destPath, $tamano, $mimeType);
+            if (!$stmtInsertArchivo->execute()) {
+                continue;
+            }
             $subidos++;
         }
+
+        $stmtInsertArchivo->close();
+        finfo_close($finfo);
 
         if ($subidos > 0) {
             $conn->query("UPDATE ordenes_imagen SET estado = 'completado' WHERE id = $orden_id");
@@ -791,6 +2191,8 @@ if ($method === 'POST') {
             $tipo                = trim($input['tipo'] ?? 'rx');
             $indicacionesUsuario = trim($input['indicaciones'] ?? '');
             $cargaAnticipada     = !empty($input['carga_anticipada']) ? 1 : 0;
+            $fechaProgramadaInput = oi_normalizar_fecha_programada_agenda($input['fecha_programada'] ?? null);
+            $horaProgramadaInput = oi_normalizar_hora_programada_agenda($input['hora_programada'] ?? null);
             // servicios: array of {tarifa_id, descripcion, precio, medico_id} sent from SolicitudImagenPage
             $servicios = is_array($input['servicios'] ?? null) ? $input['servicios'] : [];
 
@@ -801,9 +2203,50 @@ if ($method === 'POST') {
                 echo json_encode(['success' => false, 'error' => 'Tipo no válido']); exit;
             }
 
+            $conn->begin_transaction();
+
+            try {
+
+            $consultaFecha = null;
+            $consultaHora = null;
+            $stmtConsulta = $conn->prepare('SELECT fecha, hora FROM consultas WHERE id = ? LIMIT 1');
+            if ($stmtConsulta) {
+                $stmtConsulta->bind_param('i', $consulta_id);
+                $stmtConsulta->execute();
+                $rowConsulta = $stmtConsulta->get_result()->fetch_assoc();
+                $stmtConsulta->close();
+                $consultaFecha = oi_normalizar_fecha_programada_agenda($rowConsulta['fecha'] ?? null);
+                $consultaHora = oi_normalizar_hora_programada_agenda($rowConsulta['hora'] ?? null);
+            }
+
+            if ($fechaProgramadaInput === null) {
+                $fechaProgramadaInput = $consultaFecha ?: date('Y-m-d');
+            }
+            if ($horaProgramadaInput === null) {
+                $horaProgramadaInput = $consultaHora ?: date('H:i:s');
+            }
+
             $tipoServMap     = ['rx' => 'rayosx', 'ecografia' => 'ecografia', 'tomografia' => 'procedimientos'];
             $detalleServTipo = $tipoServMap[$tipo] ?? $tipo;
             $tipoLabel       = ['rx' => 'Rayos X', 'ecografia' => 'Ecografía', 'tomografia' => 'Tomografía'][$tipo] ?? strtoupper($tipo);
+
+            // Validar médico responsable antes de crear cotización para evitar huérfanas por reintentos.
+            if (!empty($servicios)) {
+                $serviciosSinMedicoPre = [];
+                foreach ($servicios as $srv) {
+                    $precio = floatval($srv['precio'] ?? 0);
+                    if ($precio <= 0) continue;
+                    $medicoServicioId = (int)($srv['medico_id'] ?? 0);
+                    if ($medicoServicioId <= 0) {
+                        $descSrv = trim((string)($srv['descripcion'] ?? ''));
+                        $serviciosSinMedicoPre[] = ($descSrv !== '' ? $descSrv : ('Tarifa #' . (int)($srv['tarifa_id'] ?? 0)));
+                    }
+                }
+
+                if (!empty($serviciosSinMedicoPre)) {
+                    throw new Exception('Hay servicios de imagen sin médico responsable configurado: ' . implode(', ', $serviciosSinMedicoPre));
+                }
+            }
 
             // ── Paso 1: crear cotización primero para obtener cotizaciones_detalle.id ──
             // Esto permite asignar un token "Detalle #X" por orden, que hace que:
@@ -875,8 +2318,7 @@ if ($method === 'POST') {
                     $medicoFallback = (int)($rowMedicoConsulta['medico_id'] ?? 0);
                 }
                 if ($medicoFallback <= 0) {
-                    echo json_encode(['success' => false, 'error' => 'No se pudo resolver médico responsable para esta solicitud de imagen.']);
-                    exit;
+                    throw new Exception('No se pudo resolver médico responsable para esta solicitud de imagen.');
                 }
                 $stmt = $conn->prepare('INSERT INTO ordenes_imagen (consulta_id, paciente_id, tipo, indicaciones, estado, solicitado_por, carga_anticipada) VALUES (?, ?, ?, ?, \'pendiente\', ?, ?)');
                 $stmt->bind_param('iissii', $consulta_id, $paciente_id, $tipo, $indFinal, $usuarioId, $cargaAnticipada);
@@ -891,6 +2333,7 @@ if ($method === 'POST') {
             } else {
                 $serviciosSinMedico = [];
                 $serviciosNormalizados = [];
+                $slotsAsignadosPorGrupo = [];
                 foreach ($servicios as $srv) {
                     $desc = trim((string)($srv['descripcion'] ?? 'Servicio'));
                     $tarifaIdSrv = (int)($srv['tarifa_id'] ?? 0);
@@ -913,23 +2356,39 @@ if ($method === 'POST') {
 
                     $serviciosNormalizados[] = [
                         'detalle_id' => $detalleId,
+                        'servicio_id' => $tarifaIdSrv,
                         'descripcion' => $desc,
                         'medico_id' => $medicoResponsableId,
                     ];
                 }
 
                 if (!empty($serviciosSinMedico)) {
-                    echo json_encode([
-                        'success' => false,
-                        'error' => 'Hay servicios de imagen sin médico responsable configurado: ' . implode(', ', $serviciosSinMedico),
-                    ]);
-                    exit;
+                    throw new Exception('Hay servicios de imagen sin médico responsable configurado: ' . implode(', ', $serviciosSinMedico));
                 }
 
                 foreach ($serviciosNormalizados as $srvNorm) {
                     $detalleId = (int)$srvNorm['detalle_id'];
                     $desc = (string)$srvNorm['descripcion'];
                     $medicoResponsableId = (int)$srvNorm['medico_id'];
+                    $fechaAgenda = $fechaProgramadaInput;
+                    $horaAgenda = $horaProgramadaInput;
+
+                    if ($fechaAgenda !== null && $medicoResponsableId > 0) {
+                        $grupoKey = $medicoResponsableId . '|' . $fechaAgenda;
+                        if (!isset($slotsAsignadosPorGrupo[$grupoKey])) {
+                            $slotsAsignadosPorGrupo[$grupoKey] = [];
+                        }
+                        $horaAgenda = oi_resolver_hora_libre_secuencial(
+                            $conn,
+                            $medicoResponsableId,
+                            $fechaAgenda,
+                            $horaAgenda,
+                            $slotsAsignadosPorGrupo[$grupoKey]
+                        );
+                        if ($horaAgenda !== null) {
+                            $slotsAsignadosPorGrupo[$grupoKey][] = $horaAgenda;
+                        }
+                    }
 
                     // Formato estricto: compatible con idempotencia de crear_ordenes_imagen_cotizacion
                     // (payment-sync usa este mismo formato para deduplicar)
@@ -951,6 +2410,22 @@ if ($method === 'POST') {
                     $stmt->execute();
                     $stmt->close();
                     $ordenIds[] = (int)$conn->insert_id;
+
+                    if ($cotizId > 0 && $detalleId > 0) {
+                        oi_agendar_detalle_cotizacion_imagen(
+                            $conn,
+                            $cotizId,
+                            $detalleId,
+                            $paciente_id,
+                            $medicoResponsableId,
+                            $detalleServTipo,
+                            (int)($srvNorm['servicio_id'] ?? 0),
+                            $desc,
+                            $fechaAgenda,
+                            $horaAgenda,
+                            (int)$usuarioId
+                        );
+                    }
                 }
             }
 
@@ -958,6 +2433,8 @@ if ($method === 'POST') {
             foreach ($ordenIds as $oid) {
                 $conn->query("UPDATE ordenes_imagen oi INNER JOIN historia_clinica h ON h.consulta_id = oi.consulta_id SET oi.historia_clinica_id = h.id WHERE oi.id = $oid AND oi.historia_clinica_id IS NULL");
             }
+
+            $conn->commit();
 
             echo json_encode([
                 'success'            => true,
@@ -967,6 +2444,13 @@ if ($method === 'POST') {
                 'numero_comprobante' => $cotizData['numero_comprobante'],
                 'total'              => $cotizData['total'],
             ]);
+            } catch (Throwable $e) {
+                $conn->rollback();
+                echo json_encode([
+                    'success' => false,
+                    'error' => $e->getMessage() ?: 'No se pudo crear la orden de imagen.',
+                ]);
+            }
 
         } elseif ($action === 'crear_desde_cotizacion') {
             $cotizacion_id = (int)($input['cotizacion_id'] ?? 0);

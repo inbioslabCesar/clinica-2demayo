@@ -41,6 +41,10 @@ if ($debugJson) {
     exit;
 }
 
+$debugLogoFlag = strtolower(trim((string)(getenv('LAB_PDF_LOGO_DEBUG') ?: '')));
+$debugPdfLogo = (isset($_GET['debug_logo']) && (string)$_GET['debug_logo'] === '1')
+    || in_array($debugLogoFlag, ['1', 'true', 'yes', 'on'], true);
+
 $orden = null;
 if (!empty($row['orden_id'])) {
     $stmt = $conn->prepare('SELECT * FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
@@ -315,10 +319,110 @@ function normalize_tipo_parametro_pdf($value)
     return preg_replace('/[^a-z]/', '', $tipo);
 }
 
+function pdf_parse_date_safe($value)
+{
+    $raw = trim((string)$value);
+    if ($raw === '') return null;
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $raw . ' 00:00:00');
+        return ($dt instanceof DateTime) ? $dt : null;
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) return null;
+    $dt = new DateTime();
+    $dt->setTimestamp($ts);
+    return $dt;
+}
+
+function pdf_normalizar_unidad_edad($unidad)
+{
+    $u = strtolower(trim((string)$unidad));
+    if ($u === '') return 'anios';
+    if (in_array($u, ['anio', 'anios', 'años', 'year', 'years'], true)) return 'anios';
+    if (in_array($u, ['mes', 'meses', 'month', 'months'], true)) return 'meses';
+    if (in_array($u, ['dia', 'dias', 'días', 'day', 'days'], true)) return 'dias';
+    return 'anios';
+}
+
+function pdf_resolver_edad_actual($fechaNacimientoRaw, $edadBaseRaw, $edadUnidadRaw, $fechaBaseRaw)
+{
+    $hoy = new DateTime('today');
+    $fechaNac = pdf_parse_date_safe($fechaNacimientoRaw);
+
+    if ($fechaNac instanceof DateTime) {
+        $fechaNac->setTime(0, 0, 0);
+        if ($fechaNac <= $hoy) {
+            $diff = $fechaNac->diff($hoy);
+            $dias = max(0, (int)$diff->days);
+            $meses = max(0, ((int)$diff->y * 12) + (int)$diff->m);
+            $anios = max(0, (int)$diff->y);
+
+            if ($dias <= 28) return ['edad' => $dias, 'edad_unidad' => 'dias'];
+            if ($meses < 12) return ['edad' => $meses, 'edad_unidad' => 'meses'];
+            return ['edad' => $anios, 'edad_unidad' => 'años'];
+        }
+    }
+
+    if ($edadBaseRaw === null || $edadBaseRaw === '' || !is_numeric($edadBaseRaw)) {
+        return ['edad' => '', 'edad_unidad' => 'años'];
+    }
+
+    $edadBase = max(0, (int)$edadBaseRaw);
+    $unidadBase = pdf_normalizar_unidad_edad($edadUnidadRaw);
+    $fechaBase = pdf_parse_date_safe($fechaBaseRaw);
+    if (!($fechaBase instanceof DateTime)) {
+        return ['edad' => $edadBase, 'edad_unidad' => $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias')];
+    }
+
+    $fechaBase->setTime(0, 0, 0);
+    if ($fechaBase > $hoy) {
+        return ['edad' => $edadBase, 'edad_unidad' => $unidadBase === 'anios' ? 'años' : ($unidadBase === 'meses' ? 'meses' : 'dias')];
+    }
+
+    $diffRef = $fechaBase->diff($hoy);
+    $aniosTrans = max(0, (int)$diffRef->y);
+    $mesesTrans = max(0, ((int)$diffRef->y * 12) + (int)$diffRef->m);
+    $diasTrans = max(0, (int)$diffRef->days);
+
+    if ($unidadBase === 'dias') {
+        $totalDias = $edadBase + $diasTrans;
+        if ($totalDias <= 28) {
+            return ['edad' => $totalDias, 'edad_unidad' => 'dias'];
+        }
+        return ['edad' => (int)floor($totalDias / 30), 'edad_unidad' => 'meses'];
+    }
+
+    if ($unidadBase === 'meses') {
+        $totalMeses = $edadBase + $mesesTrans;
+        if ($totalMeses < 12) {
+            return ['edad' => $totalMeses, 'edad_unidad' => 'meses'];
+        }
+        return ['edad' => (int)floor($totalMeses / 12), 'edad_unidad' => 'años'];
+    }
+
+    return ['edad' => $edadBase + $aniosTrans, 'edad_unidad' => 'años'];
+}
+
+function pdf_formatear_fecha_hora_corta($raw)
+{
+    $txt = trim((string)$raw);
+    if ($txt === '') return '';
+
+    $ts = strtotime($txt);
+    if ($ts === false) return '';
+
+    $ampm = strtolower(date('a', $ts));
+    $ampmTxt = $ampm === 'pm' ? 'p. m.' : 'a. m.';
+    return date('d/m/Y h:i', $ts) . ' ' . $ampmTxt;
+}
+
 $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInterno = '') {
     $idText = (string)$exId;
     $nombre = trim((string)$nombreActual);
     $codigo = trim((string)$codigoInterno);
+    $isNamedParam = ($nombre !== '' || $codigo !== '');
 
     $directKeys = [];
     if ($codigo !== '') $directKeys[] = $idText . '__' . $codigo;
@@ -367,11 +471,17 @@ $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInte
         }
     }
 
-    if (array_key_exists($idText, $map)) {
+    if (!$isNamedParam && array_key_exists($idText, $map)) {
         $rawDirect = $map[$idText];
         if ($rawDirect !== null && trim((string)$rawDirect) !== '') {
             return $rawDirect;
         }
+    }
+
+    // Si se está resolviendo un parámetro con nombre/código y no hubo match,
+    // devolver vacío para evitar arrastrar el primer valor del examen.
+    if ($isNamedParam) {
+        return '';
     }
 
     $prefix = $idText . '__';
@@ -390,6 +500,10 @@ $resolveResultadoValor = function (array $map, $exId, $nombreActual, $codigoInte
         if (strpos($key, $prefix) !== 0) continue;
         $suffix = substr($key, strlen($prefix));
         if (isset($metadataSuffixes['__' . $suffix])) continue;
+        if (strpos($suffix, 'param_imprimir__') === 0) continue;
+        if (strpos($suffix, 'param_validado__') === 0) continue;
+        if (strpos($suffix, 'param_validado_at__') === 0) continue;
+        if (strpos($suffix, 'param_validado_por__') === 0) continue;
         if ($firstNonMetaValue === null) {
             $firstNonMetaValue = $v;
         }
@@ -420,6 +534,71 @@ $toNullableFloat = function ($val) {
         }
     }
     return is_numeric($val) ? floatval($val) : null;
+};
+
+$evalFormulaPdf = function ($formula, $exId, array $resultadosMap, array $paramsList = [], $decimales = null) use ($resolveResultadoValor, $toNullableFloat) {
+    $expr = trim((string)$formula);
+    if ($expr === '') return '';
+
+    // Normalizar operadores pegados desde distintas fuentes.
+    $expr = str_replace(['−', '–', '—', '×', '÷'], ['-', '-', '-', '*', '/'], $expr);
+
+    $valuesByToken = [];
+    foreach ($paramsList as $p) {
+        if (!is_array($p)) continue;
+        $tipoNorm = normalize_tipo_parametro_pdf($p['tipo'] ?? 'Parámetro');
+        if (!($tipoNorm === '' || $tipoNorm === 'parametro' || $tipoNorm === 'parmetro')) continue;
+
+        $pNombre = trim((string)($p['nombre'] ?? ''));
+        if ($pNombre === '') continue;
+        $pCodigo = trim((string)($p['codigo_interno'] ?? ''));
+
+        $raw = $resolveResultadoValor($resultadosMap, $exId, $pNombre, $pCodigo);
+        $num = $toNullableFloat($raw);
+        if ($num === null) continue;
+
+        $valuesByToken[$pNombre] = $num;
+        if ($pCodigo !== '') $valuesByToken[$pCodigo] = $num;
+    }
+
+    if (empty($valuesByToken)) return '';
+
+    uksort($valuesByToken, function ($a, $b) {
+        return strlen((string)$b) <=> strlen((string)$a);
+    });
+
+    foreach ($valuesByToken as $token => $num) {
+        if ($token === '') continue;
+        $pattern = '/' . preg_quote((string)$token, '/') . '/i';
+        if (preg_match($pattern, $expr)) {
+            $expr = preg_replace($pattern, (string)$num, $expr);
+        }
+    }
+
+    $normalizedExpr = str_replace(',', '.', $expr);
+    $normalizedExpr = str_replace('^', '**', $normalizedExpr);
+    $normalizedExpr = trim((string)$normalizedExpr);
+    if ($normalizedExpr === '') return '';
+    if (!preg_match('/^[0-9+\-*\/().\s%eE*]+$/', $normalizedExpr)) return '';
+
+    $result = null;
+    try {
+        $result = @eval('return (' . $normalizedExpr . ');');
+    } catch (Throwable $e) {
+        return '';
+    }
+
+    if (!is_numeric($result)) return '';
+    $numResult = floatval($result);
+    if (!is_finite($numResult)) return '';
+
+    if ($decimales !== null && $decimales !== '' && is_numeric($decimales)) {
+        return number_format($numResult, intval($decimales), '.', ',');
+    }
+    if (floor($numResult) == $numResult) {
+        return number_format($numResult, 0, '.', ',');
+    }
+    return (string)$numResult;
 };
 
 $normalizarSexo = function ($sexoValor) {
@@ -464,7 +643,7 @@ $firmante_cargo = trim((string)($clinica_config['director_cargo'] ?? ''));
 $firmante_colegiatura = trim((string)($clinica_config['colegio_profesional'] ?? ''));
 $firmante_firma = '';
 $firmanteUsuarioAplicado = false;
-$rolesFirmantesLaboratorio = ['laboratorista', 'quimico', 'químico'];
+$rolesFirmantesLaboratorio = ['laboratorista', 'tecnologo', 'tecnólogo'];
 
 $firmadoPorUsuarioId = isset($row['firmado_por_usuario_id']) ? intval($row['firmado_por_usuario_id']) : 0;
 if ($firmadoPorUsuarioId > 0) {
@@ -517,7 +696,7 @@ if (!$firmanteUsuarioAplicado) {
     $stmt_fallback_firmante = $conn->prepare(
         "SELECT nombre, profesion, cargo_firma, colegiatura_tipo, colegiatura_numero, firma_reportes
          FROM usuarios
-         WHERE rol IN ('laboratorista', 'quimico', 'químico')
+         WHERE rol IN ('laboratorista', 'tecnologo', 'tecnólogo')
          ORDER BY
             CASE WHEN firma_reportes IS NOT NULL AND TRIM(firma_reportes) <> '' THEN 0 ELSE 1 END,
             id ASC
@@ -577,7 +756,7 @@ if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
     $pac_data = null;
 
     if (!empty($row['orden_id'])) {
-        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
+        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad, p.creado_en,
                                 o.consulta_id, c.medico_id,
                                 CASE WHEN o.consulta_id IS NOT NULL THEN 'Médico' ELSE 'Particular' END as tipo_solicitud
                          FROM pacientes p
@@ -592,7 +771,7 @@ if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
     }
 
     if (!$pac_data && !empty($row['consulta_id'])) {
-        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad,
+        $paciente_sql = "SELECT p.dni, p.historia_clinica, p.fecha_nacimiento, p.sexo, p.edad, p.edad_unidad, p.creado_en,
                                 c.id as consulta_id, c.medico_id,
                                 'Médico' as tipo_solicitud
                          FROM consultas c
@@ -610,8 +789,14 @@ if (!empty($row['orden_id']) || !empty($row['consulta_id'])) {
         $historia_clinica = $pac_data['historia_clinica'] ?? '';
         $fecha_nacimiento = $pac_data['fecha_nacimiento'] ?? '';
         $sexo = $pac_data['sexo'] ?? '';
-        $edad = $pac_data['edad'] ?? '';
-        $edad_unidad = $pac_data['edad_unidad'] ?? 'años';
+        $edadResuelta = pdf_resolver_edad_actual(
+            $pac_data['fecha_nacimiento'] ?? '',
+            $pac_data['edad'] ?? '',
+            $pac_data['edad_unidad'] ?? 'años',
+            $pac_data['creado_en'] ?? ''
+        );
+        $edad = $edadResuelta['edad'];
+        $edad_unidad = $edadResuelta['edad_unidad'];
         $tipo_solicitud = $pac_data['tipo_solicitud'] ?? '';
 
         if (!empty($pac_data['medico_id'])) {
@@ -636,9 +821,13 @@ $isProduction = (
 
 $logo_paths = [];
 $logo_config_value = '';
+$logo_selected_key = '';
+$logo_selected_path = '';
+$logo_selected_exists = false;
 foreach (['logo_laboratorio_url', 'logo_resultados_laboratorio_url', 'logo_resultados_url', 'logo_url'] as $logo_key) {
     if (!empty($clinica_config[$logo_key])) {
         $logo_config_value = (string)$clinica_config[$logo_key];
+        $logo_selected_key = $logo_key;
         break;
     }
 }
@@ -675,7 +864,12 @@ $logo_html_header = '<div style="display:block;width:' . $logo_size_pdf . 'px;te
     . h($clinica_config['nombre_clinica'] ?? 'Mi Clínica')
     . '</div>';
 foreach ($logo_paths as $logo_path) {
+    if ($logo_selected_path === '') {
+        $logo_selected_path = (string)$logo_path;
+    }
     if (!file_exists($logo_path)) continue;
+    $logo_selected_path = (string)$logo_path;
+    $logo_selected_exists = true;
     $logo_data = base64_encode(file_get_contents($logo_path));
     $logo_ext = strtolower((string)pathinfo($logo_path, PATHINFO_EXTENSION));
     $logo_mime = 'image/png';
@@ -688,10 +882,43 @@ foreach ($logo_paths as $logo_path) {
     break;
 }
 
+if ($debugPdfLogo) {
+    $pdfLogoDebug = [
+        'resultado_id' => intval($row['id'] ?? 0),
+        'config_id' => intval($clinica_config['id'] ?? 0),
+        'selected_key' => $logo_selected_key,
+        'logo_config_value' => $logo_config_value,
+        'selected_path' => $logo_selected_path,
+        'selected_exists' => $logo_selected_exists ? 1 : 0,
+        'is_production_host' => $isProduction ? 1 : 0,
+        'host' => (string)($_SERVER['HTTP_HOST'] ?? ''),
+    ];
+    @error_log('pdf_lab_logo_debug ' . json_encode($pdfLogoDebug, JSON_UNESCAPED_UNICODE));
+}
+
 // Construir contenido de resultados
 $hayFueraRango = false;
 $rowsHtml = '';
 $examenesImpresos = 0;
+
+$pdfBoolFlag = function ($raw, bool $default = false): bool {
+    if ($raw === null || $raw === '') return $default;
+    if (is_bool($raw)) return $raw;
+    if (is_numeric($raw)) return intval($raw) === 1;
+    $v = strtolower(trim((string)$raw));
+    return in_array($v, ['1', 'true', 'si', 'sí', 'yes', 'on'], true);
+};
+
+$getParamTokenPdf = function (array $param): string {
+    $base = trim((string)($param['codigo_interno'] ?? ''));
+    if ($base === '') {
+        $base = trim((string)($param['nombre'] ?? ''));
+    }
+    return normalize_resultado_key_token($base);
+};
+
+$fechaIngresoRaw = (string)($orden['fecha'] ?? ($row['fecha'] ?? ''));
+$fechaIngresoFmtGlobal = pdf_formatear_fecha_hora_corta($fechaIngresoRaw);
 
 if (empty($examenes_detalle)) {
     $rowsHtml .= '<tr><td colspan="5" style="padding:8px;"><pre style="margin:0;white-space:pre-wrap;">' . h(json_encode($resultados_map, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</pre></td></tr>';
@@ -708,6 +935,93 @@ if (empty($examenes_detalle)) {
         ) {
             continue;
         }
+
+        $examPrefix = $exId . '__';
+        $examStrictValidation = false;
+        $examHasValidatedData = false;
+        $examHasNonMetaValue = false;
+        foreach ($resultados_map as $rk => $rv) {
+            $rks = (string)$rk;
+            if (strpos($rks, $examPrefix) !== 0) continue;
+
+            $suffix = substr($rks, strlen($examPrefix));
+            if ($suffix === false || $suffix === '') continue;
+
+            if (strpos($suffix, 'param_validado__') === 0) {
+                $examStrictValidation = true;
+                if ($pdfBoolFlag($rv, false)) {
+                    $examHasValidatedData = true;
+                }
+                continue;
+            }
+
+            if (
+                strpos($suffix, 'param_validado_at__') === 0
+                || strpos($suffix, 'param_validado_por__') === 0
+                || strpos($suffix, 'param_imprimir__') === 0
+            ) {
+                continue;
+            }
+
+            if (
+                $suffix === 'imprimir_examen'
+                || $suffix === 'alarma_activa'
+                || $suffix === 'alarma_dias'
+                || $suffix === 'seccion_categoria'
+                || $suffix === 'seccion_titulo'
+                || $suffix === 'seccion_alineacion'
+                || $suffix === 'seccion_color_texto'
+            ) {
+                continue;
+            }
+
+            if ($rv !== null && trim((string)$rv) !== '') {
+                $examHasNonMetaValue = true;
+            }
+        }
+
+        $rawExamKey = (string)$exId;
+        $rawExamValue = array_key_exists($rawExamKey, $resultados_map) ? $resultados_map[$rawExamKey] : null;
+        $examHasRawValue = $rawExamValue !== null && trim((string)$rawExamValue) !== '';
+        $examHasContent = $examHasNonMetaValue || $examHasRawValue || $examHasValidatedData;
+
+        // Regla de impresion reforzada:
+        // - Si el examen usa validacion por parametro, exigir al menos un parametro validado.
+        // - Si no usa validacion estricta, exigir contenido real para evitar secciones vacias.
+        if ($examStrictValidation && !$examHasValidatedData) {
+            continue;
+        }
+        if (!$examStrictValidation && !$examHasContent) {
+            continue;
+        }
+
+        $examFechaIngresoFmt = $fechaIngresoFmtGlobal;
+        $examFechaValidacionTs = 0;
+        $examFechaValidacionFmt = '';
+        foreach ($resultados_map as $rk => $rv) {
+            $rks = (string)$rk;
+            if (strpos($rks, $examPrefix . 'param_validado_at__') !== 0) continue;
+            $rawAt = trim((string)$rv);
+            if ($rawAt === '') continue;
+            $token = substr($rks, strlen($examPrefix . 'param_validado_at__'));
+            if ($token === false || $token === '') continue;
+            $isValidated = true;
+            if ($examStrictValidation) {
+                $vk = $examPrefix . 'param_validado__' . $token;
+                $isValidated = array_key_exists($vk, $resultados_map) ? $pdfBoolFlag($resultados_map[$vk], false) : false;
+            }
+            if (!$isValidated) continue;
+            $ts = strtotime($rawAt);
+            if ($ts === false) continue;
+            if ($ts > $examFechaValidacionTs) {
+                $examFechaValidacionTs = $ts;
+            }
+        }
+        if ($examFechaValidacionTs > 0) {
+            $examFechaValidacionFmt = pdf_formatear_fecha_hora_corta(date('Y-m-d H:i:s', $examFechaValidacionTs));
+        }
+        $examIngresoMostrado = false;
+        $examTieneFilas = false;
 
         $examenesImpresos++;
         $seccionCategoria = trim((string)($resultados_map[$exId . '__seccion_categoria'] ?? ''));
@@ -777,14 +1091,53 @@ if (empty($examenes_detalle)) {
                     $titleStyle = !empty($param['cursiva']) ? 'italic' : 'normal';
 
                     $rowsHtml .= '<tr><td colspan="5" style="background:' . h($titleBackground) . ';color:' . h($titleColor) . ';font-weight:' . h($titleWeight) . ';font-style:' . h($titleStyle) . ';text-align:' . h($titleAlign) . ';padding:4px 7px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
+                    $examTieneFilas = true;
+                    if (!$examIngresoMostrado && $examFechaIngresoFmt !== '') {
+                        $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de ingreso: ' . h($examFechaIngresoFmt) . '</td></tr>';
+                        $examIngresoMostrado = true;
+                    }
                     continue;
                 }
 
                 if ($tipoNorm === 'textolargo') {
+                    $paramToken = $getParamTokenPdf(is_array($param) ? $param : []);
+                    $paramValidated = $examStrictValidation ? false : true;
+                    if ($paramToken !== '') {
+                        $validatedKey = $exId . '__param_validado__' . $paramToken;
+                        if (array_key_exists($validatedKey, $resultados_map)) {
+                            $paramValidated = $pdfBoolFlag($resultados_map[$validatedKey], false);
+                        }
+                    }
+                    if (!$paramValidated) {
+                        continue;
+                    }
+
+                    $cellAlign = strtolower(trim((string)($param['alineacion'] ?? 'left')));
+                    if (!in_array($cellAlign, ['left', 'center', 'right'], true)) {
+                        $cellAlign = 'left';
+                    }
+                    $cellTextColor = trim((string)($param['color_texto'] ?? '#1f2937'));
+                    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $cellTextColor)) {
+                        $cellTextColor = '#1f2937';
+                    }
+                    $cellBackground = trim((string)($param['color_fondo'] ?? '#ffffff'));
+                    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $cellBackground)) {
+                        $cellBackground = '#ffffff';
+                    }
+                    $cellWeight = !empty($param['negrita']) ? 'bold' : 'normal';
+                    $cellStyle = !empty($param['cursiva']) ? 'italic' : 'normal';
                     $valorTexto = $resolveResultadoValor($resultados_map, $exId, $nombre_param, $param['codigo_interno'] ?? '');
+                    if (($valorTexto === '' || $valorTexto === null) && isset($param['texto_por_defecto'])) {
+                        $defaultText = trim((string)$param['texto_por_defecto']);
+                        if ($defaultText !== '') {
+                            $valorTexto = $defaultText;
+                        }
+                    }
                     $rowsHtml .= '<tr><td colspan="5" style="padding:6px 8px;">'
-                        . '<div style="font-weight:bold; margin-bottom:3px;">' . h($nombre_param) . '</div>'
+                        . '<div style="font-weight:' . h($cellWeight) . ';font-style:' . h($cellStyle) . ';text-align:' . h($cellAlign) . ';color:' . h($cellTextColor) . ';background:' . h($cellBackground) . ';padding:6px 7px;border-radius:3px;">'
+                        . '<div style="font-weight:' . h($cellWeight) . ';margin-bottom:3px;">' . h($nombre_param) . '</div>'
                         . '<div>' . nl2br(h((string)$valorTexto)) . '</div>'
+                        . '</div>'
                         . '</td></tr>';
                     continue;
                 }
@@ -792,7 +1145,57 @@ if (empty($examenes_detalle)) {
                 $nombre = $param['nombre'] ?? '';
                 $metodo = $param['metodologia'] ?? '';
                 $unidad = $param['unidad'] ?? '';
+
+                $paramToken = $getParamTokenPdf(is_array($param) ? $param : []);
+                $paramValidated = $examStrictValidation ? false : true;
+                if ($paramToken !== '') {
+                    $validatedKey = $exId . '__param_validado__' . $paramToken;
+                    if (array_key_exists($validatedKey, $resultados_map)) {
+                        $paramValidated = $pdfBoolFlag($resultados_map[$validatedKey], false);
+                    }
+                }
+
+                if (!$paramValidated) {
+                    continue;
+                }
+
                 $valor = $resolveResultadoValor($resultados_map, $exId, $nombre, $param['codigo_interno'] ?? '');
+                if (($valor === '' || $valor === null) && !empty($param['formula'])) {
+                    $valorCalc = $evalFormulaPdf(
+                        (string)$param['formula'],
+                        $exId,
+                        $resultados_map,
+                        is_array($ex['valores_referenciales'] ?? null) ? $ex['valores_referenciales'] : [],
+                        $param['decimales'] ?? null
+                    );
+                    if ($valorCalc !== '') {
+                        $valor = $valorCalc;
+                    }
+                }
+                if (($valor === '' || $valor === null) && $tipoNorm === 'campo') {
+                    $defaultText = trim((string)($param['texto_por_defecto'] ?? ''));
+                    if ($defaultText !== '') {
+                        $valor = $defaultText;
+                    } elseif (!empty($param['opciones']) && is_array($param['opciones'])) {
+                        $defaultOption = '';
+                        foreach ($param['opciones'] as $op) {
+                            if (!is_array($op)) continue;
+                            $candidate = trim((string)($op['valor'] ?? $op['label'] ?? $op['texto'] ?? $op['nombre'] ?? ''));
+                            if ($candidate === '') continue;
+                            $isDefault = !empty($op['por_defecto']) || !empty($op['default']) || !empty($op['defecto']);
+                            if ($isDefault) {
+                                $defaultOption = $candidate;
+                                break;
+                            }
+                            if ($defaultOption === '') {
+                                $defaultOption = $candidate;
+                            }
+                        }
+                        if ($defaultOption !== '') {
+                            $valor = $defaultOption;
+                        }
+                    }
+                }
                 $valorNum = $toNullableFloat($valor);
 
                 $edadPaciente = $toNullableFloat($edad);
@@ -840,38 +1243,87 @@ if (empty($examenes_detalle)) {
                     $valorMostrar = '* ' . $valorMostrar;
                 }
 
+                $cellAlign = strtolower(trim((string)($param['alineacion'] ?? 'left')));
+                if (!in_array($cellAlign, ['left', 'center', 'right'], true)) {
+                    $cellAlign = 'left';
+                }
+                $cellTextColor = trim((string)($param['color_texto'] ?? '#111827'));
+                if (!preg_match('/^#[0-9a-fA-F]{6}$/', $cellTextColor)) {
+                    $cellTextColor = '#111827';
+                }
+                $cellBackground = trim((string)($param['color_fondo'] ?? '#ffffff'));
+                if (!preg_match('/^#[0-9a-fA-F]{6}$/', $cellBackground)) {
+                    $cellBackground = '#ffffff';
+                }
+                $cellWeight = !empty($param['negrita']) ? 'bold' : 'normal';
+                $cellStyle = !empty($param['cursiva']) ? 'italic' : 'normal';
+
                 $refs = '';
                 if (!empty($param['referencias']) && is_array($param['referencias'])) {
                     $parts = [];
                     foreach ($param['referencias'] as $r) {
-                        if (!empty($r['valor_min']) && !empty($r['valor_max'])) {
-                            $parts[] = '• ' . h($r['valor_min']) . '-' . h($r['valor_max']);
-                        } elseif (!empty($r['valor'])) {
-                            $parts[] = '• ' . h($r['valor']);
+                        $descRef = trim((string)($r['desc'] ?? ($r['descripcion'] ?? '')));
+                        $valorRef = trim((string)($r['valor'] ?? ''));
+                        $valorMinRef = trim((string)($r['valor_min'] ?? ''));
+                        $valorMaxRef = trim((string)($r['valor_max'] ?? ''));
+                        if ($valorMinRef !== '' && $valorMaxRef !== '') {
+                            $refText = h($valorMinRef) . '-' . h($valorMaxRef);
+                            if ($descRef !== '') {
+                                $refText .= '   ' . h($descRef);
+                            }
+                            $parts[] = '• ' . $refText;
+                        } elseif ($valorRef !== '') {
+                            $refText = h($valorRef);
+                            if ($descRef !== '') {
+                                $refText .= '   ' . h($descRef);
+                            }
+                            $parts[] = '• ' . $refText;
+                        } elseif ($descRef !== '') {
+                            $parts[] = '• ' . h($descRef);
                         }
                     }
                     $refs = implode('<br>', $parts);
                 }
 
+                $refCellHtml = $refs !== '' ? $refs : '&nbsp;';
+
+                if (!$examIngresoMostrado && $examFechaIngresoFmt !== '') {
+                    $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de ingreso: ' . h($examFechaIngresoFmt) . '</td></tr>';
+                    $examIngresoMostrado = true;
+                }
+
                 $rowsHtml .= '<tr>'
-                    . '<td style="padding:5px 7px;font-weight:bold;">' . h($nombre) . '</td>'
+                    . '<td style="padding:5px 7px;font-weight:' . h($cellWeight) . ';font-style:' . h($cellStyle) . ';text-align:' . h($cellAlign) . ';color:' . h($cellTextColor) . ';background:' . h($cellBackground) . ';">' . h($nombre) . '</td>'
                     . '<td style="padding:5px 7px;text-align:center;color:#374151;">' . h($metodo) . '</td>'
                     . '<td style="padding:5px 7px;text-align:center;font-weight:bold;color:#111827;">' . h((string)$valorMostrar) . '</td>'
                     . '<td style="padding:5px 7px;text-align:center;color:#374151;">' . h($unidad) . '</td>'
-                    . '<td style="padding:5px 7px;color:#374151;">' . $refs . '</td>'
+                    . '<td style="padding:5px 7px;color:#374151;">' . $refCellHtml . '</td>'
                     . '</tr>';
+                $examTieneFilas = true;
+            }
+
+            if ($examFechaValidacionFmt !== '' && $examTieneFilas) {
+                $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 4px 7px;color:#334155;text-align:right;font-size:9px;"><strong>Fecha de validación:</strong> ' . h($examFechaValidacionFmt) . '</td></tr>';
             }
         } else {
             $rawKey = (string)$exId;
+            if (!$examIngresoMostrado && $examFechaIngresoFmt !== '') {
+                $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de ingreso: ' . h($examFechaIngresoFmt) . '</td></tr>';
+                $examIngresoMostrado = true;
+            }
             $val = isset($resultados_map[$rawKey]) ? $resultados_map[$rawKey] : null;
             $rowsHtml .= '<tr><td colspan="5" style="padding:6px 8px;">'
                 . ($val !== null && $val !== '' ? nl2br(h((string)$val)) : 'No hay resultados registrados para este examen.')
                 . '</td></tr>';
+
+            if ($examFechaValidacionFmt !== '') {
+                $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 4px 7px;color:#334155;text-align:right;font-size:9px;"><strong>Fecha de validación:</strong> ' . h($examFechaValidacionFmt) . '</td></tr>';
+            }
         }
     }
 
     if ($examenesImpresos === 0) {
-        $rowsHtml .= '<tr><td colspan="5" style="padding:8px;text-align:center;color:#6b7280;">No hay exámenes marcados para imprimir.</td></tr>';
+        $rowsHtml .= '<tr><td colspan="5" style="padding:8px;text-align:center;color:#6b7280;">No hay exámenes con resultados listos para imprimir.</td></tr>';
     }
 }
 
@@ -923,7 +1375,7 @@ $headerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, 
     . '<div style="font-size:10.8px;"><span style="font-weight:600;">Paciente:</span> ' . h($paciente_nombre) . '</div>'
     . ($paciente_dni ? '<div style="font-size:10.8px;"><span style="font-weight:600;">DNI:</span> ' . h($paciente_dni) . '</div>' : '')
     . ($historia_clinica ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Historia Clínica:</span> ' . h($historia_clinica) . '</div>' : '')
-    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Edad:</span> ' . h($edad ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
+    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Edad:</span> ' . h(($edad !== '' && $edad !== null) ? ($edad . ' ' . $edad_unidad) : 'N/A') . '</div>'
     . '</td>'
     . '<td width="50%" style="vertical-align:top;line-height:1.17;font-size:10.8px;">'
     . ($sexo ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Sexo:</span> ' . h($sexo) . '</div>' : '')

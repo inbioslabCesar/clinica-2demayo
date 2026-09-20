@@ -84,10 +84,29 @@ try {
         $columnaSeguro('diferencia_virtual'),
         $columnaSeguro('cierre_automatico'),
         $columnaSeguro('cierre_pendiente_cuadre'),
-        $columnaSeguro('total_egresos'),
-        $columnaSeguro('ganancia_dia'),
         $columnaSeguro('monto_contado'),
     ];
+
+    $exprTotalEfectivo = isset($columnasCajas['total_efectivo']) ? 'COALESCE(c.total_efectivo, 0)' : '0';
+    $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';
+    $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'COALESCE(c.total_plin, 0)' : '0';
+    $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'COALESCE(c.total_tarjetas, 0)' : '0';
+    $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'COALESCE(c.total_transferencias, 0)' : '0';
+    $exprIngresoCaja = "({$exprTotalEfectivo} + {$exprTotalYape} + {$exprTotalPlin} + {$exprTotalTarjetas} + {$exprTotalTransferencias})";
+
+    $exprEgresoHonorarios = isset($columnasCajas['egreso_honorarios']) ? 'COALESCE(c.egreso_honorarios, 0)' : '0';
+    $exprEgresoLabRef = isset($columnasCajas['egreso_lab_ref']) ? 'COALESCE(c.egreso_lab_ref, 0)' : '0';
+    $exprEgresoOperativo = isset($columnasCajas['egreso_operativo']) ? 'COALESCE(c.egreso_operativo, 0)' : '0';
+    $exprEgresoCajaFallback = "({$exprEgresoHonorarios} + {$exprEgresoLabRef} + {$exprEgresoOperativo})";
+    $exprTotalEgresosCaja = isset($columnasCajas['total_egresos'])
+        ? "COALESCE(c.total_egresos, {$exprEgresoCajaFallback})"
+        : $exprEgresoCajaFallback;
+    $exprGananciaCaja = isset($columnasCajas['ganancia_dia'])
+        ? "COALESCE(c.ganancia_dia, ({$exprIngresoCaja} - {$exprTotalEgresosCaja}))"
+        : "({$exprIngresoCaja} - {$exprTotalEgresosCaja})";
+
+    $selectExtras[] = $exprTotalEgresosCaja . ' AS total_egresos';
+    $selectExtras[] = $exprGananciaCaja . ' AS ganancia_dia';
 
     $where = [
         "c.estado = 'cerrada'",
@@ -141,15 +160,15 @@ try {
         COUNT(*) AS total_cajas,
         COALESCE(SUM(c.monto_cierre), 0) AS monto_cierre,
         COALESCE(SUM(c.diferencia), 0) AS diferencia,
-        COALESCE(SUM(" . (isset($columnasCajas['total_efectivo']) ? "c.total_efectivo" : "0") . "), 0) AS total_efectivo,
-        COALESCE(SUM(" . (isset($columnasCajas['total_yape']) ? "c.total_yape" : "0") . "), 0) AS total_yape,
-        COALESCE(SUM(" . (isset($columnasCajas['total_plin']) ? "c.total_plin" : "0") . "), 0) AS total_plin,
-        COALESCE(SUM(" . (isset($columnasCajas['total_tarjetas']) ? "c.total_tarjetas" : "0") . "), 0) AS total_tarjetas,
-        COALESCE(SUM(" . (isset($columnasCajas['total_transferencias']) ? "c.total_transferencias" : "0") . "), 0) AS total_transferencias,
+        COALESCE(SUM({$exprTotalEfectivo}), 0) AS total_efectivo,
+        COALESCE(SUM({$exprTotalYape}), 0) AS total_yape,
+        COALESCE(SUM({$exprTotalPlin}), 0) AS total_plin,
+        COALESCE(SUM({$exprTotalTarjetas}), 0) AS total_tarjetas,
+        COALESCE(SUM({$exprTotalTransferencias}), 0) AS total_transferencias,
         COALESCE(SUM(" . (isset($columnasCajas['virtual_contado']) ? "c.virtual_contado" : "0") . "), 0) AS virtual_contado,
         COALESCE(SUM(" . (isset($columnasCajas['diferencia_virtual']) ? "c.diferencia_virtual" : "0") . "), 0) AS diferencia_virtual,
-        COALESCE(SUM(" . (isset($columnasCajas['total_egresos']) ? "c.total_egresos" : "0") . "), 0) AS total_egresos,
-        COALESCE(SUM(" . (isset($columnasCajas['ganancia_dia']) ? "c.ganancia_dia" : "0") . "), 0) AS ganancia_dia
+        COALESCE(SUM({$exprTotalEgresosCaja}), 0) AS total_egresos,
+        COALESCE(SUM({$exprGananciaCaja}), 0) AS ganancia_dia
         FROM cajas c
         WHERE {$whereSql}
         GROUP BY c.fecha
@@ -163,10 +182,10 @@ try {
     $exprMontoContado = isset($columnasCajas['monto_contado']) ? 'c.monto_contado' : 'NULL';
     $exprVirtualContado = isset($columnasCajas['virtual_contado']) ? 'c.virtual_contado' : 'NULL';
     $exprDiferenciaVirtual = isset($columnasCajas['diferencia_virtual']) ? 'c.diferencia_virtual' : 'NULL';
-    $exprTotalYape = isset($columnasCajas['total_yape']) ? 'c.total_yape' : '0';
-    $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'c.total_plin' : '0';
-    $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'c.total_tarjetas' : '0';
-    $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'c.total_transferencias' : '0';
+    $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';
+    $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'COALESCE(c.total_plin, 0)' : '0';
+    $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'COALESCE(c.total_tarjetas, 0)' : '0';
+    $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'COALESCE(c.total_transferencias, 0)' : '0';
 
     $sqlResumenRealDiario = "SELECT
         c.fecha,

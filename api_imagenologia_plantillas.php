@@ -169,6 +169,7 @@ function img_default_valor_base(array $campo, string $tipoExamen = '', string $s
 
 function img_normalize_secciones(array $sections): array {
     $clean = [];
+    $allowedWidths = ['sixth', 'quarter', 'third', 'half', 'full'];
     foreach ($sections as $s) {
         $id     = trim((string)($s['id'] ?? ''));
         $nombre = trim((string)($s['nombre'] ?? ''));
@@ -178,11 +179,17 @@ function img_normalize_secciones(array $sections): array {
             $cid = trim((string)($c['id'] ?? ''));
             if ($cid === '') continue;
             $tipo = strtolower(trim((string)($c['type'] ?? 'textarea')));
-            if (!in_array($tipo, ['text', 'textarea', 'number', 'select'], true)) $tipo = 'textarea';
+            if (!in_array($tipo, ['text', 'textarea', 'number', 'select', 'checkbox'], true)) $tipo = 'textarea';
+            $width = strtolower(trim((string)($c['width'] ?? 'full')));
+            if (!in_array($width, $allowedWidths, true)) {
+                $width = 'full';
+            }
             $campos[] = [
                 'id'          => $cid,
                 'label'       => trim((string)($c['label'] ?? '')),
                 'type'        => $tipo,
+                'width'       => $width,
+                'break_after' => (bool)($c['break_after'] ?? $c['breakAfter'] ?? false),
                 'placeholder' => trim((string)($c['placeholder'] ?? '')),
                 'valor_base'  => trim((string)($c['valor_base'] ?? '')),
                 'usar_valor_base_si_vacio' => array_key_exists('usar_valor_base_si_vacio', (array)$c)
@@ -196,6 +203,11 @@ function img_normalize_secciones(array $sections): array {
         }
     }
     return $clean;
+}
+
+function img_normalize_pdf_layout_mode($value): string {
+    $mode = strtolower(trim((string)$value));
+    return $mode === 'compact' ? 'compact' : 'normal';
 }
 
 function img_validate_structure_ids(array $sections): string {
@@ -237,6 +249,10 @@ function img_decode_row(array $row): array {
         : null;
 
     $row['estructura_json'] = img_fix_mojibake_recursive($row['estructura_json']);
+
+    if (is_array($row['estructura_json'])) {
+        $row['estructura_json']['pdf_layout_mode'] = img_normalize_pdf_layout_mode($row['estructura_json']['pdf_layout_mode'] ?? 'normal');
+    }
 
     if (isset($row['estructura_json']['sections']) && is_array($row['estructura_json']['sections'])) {
         $tipoExamen = (string)($row['tipo_examen'] ?? '');
@@ -378,6 +394,7 @@ if ($method === 'POST') {
 
     // Resolver secciones (acepta estructura_json.sections o sections directamente)
     $sectionsRaw = [];
+    $pdfLayoutMode = img_normalize_pdf_layout_mode($input['estructura_json']['pdf_layout_mode'] ?? $input['pdf_layout_mode'] ?? 'normal');
     if (isset($input['estructura_json']['sections'])) {
         $sectionsRaw = (array)$input['estructura_json']['sections'];
     } elseif (isset($input['sections'])) {
@@ -399,7 +416,10 @@ if ($method === 'POST') {
         exit;
     }
 
-    $estructuraJson = json_encode(['sections' => $sections], JSON_UNESCAPED_UNICODE);
+    $estructuraJson = json_encode([
+        'pdf_layout_mode' => $pdfLayoutMode,
+        'sections' => $sections,
+    ], JSON_UNESCAPED_UNICODE);
     $ahora = date('Y-m-d H:i:s');
 
     if ($id > 0) {

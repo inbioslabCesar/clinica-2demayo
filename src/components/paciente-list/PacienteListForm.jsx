@@ -8,7 +8,37 @@ import DatosEdad from "./DatosEdad.jsx";
 import DatosAdicionales from "./DatosAdicionales.jsx";
 import DatosContacto from "./DatosContacto.jsx";
 
-function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente, postSaveBackTo = "" }) {
+function normalizeSexoValue(value) {
+  const token = String(value || "").trim().toUpperCase();
+  if (token === "F" || token === "FEMENINO") return "F";
+  if (token === "OTRO" || token === "O") return "Otro";
+  if (token === "M" || token === "MASCULINO") return "M";
+  return "";
+}
+
+function resolveSexoDefault(sexoDefault) {
+  const normalized = normalizeSexoValue(sexoDefault);
+  return normalized || "M";
+}
+
+function resolveInitialSexo(existingSexo, sexoDefault) {
+  const normalizedExisting = normalizeSexoValue(existingSexo);
+  if (normalizedExisting) return normalizedExisting;
+  return resolveSexoDefault(sexoDefault);
+}
+
+function buildSexoOptions(sexoDefault) {
+  const first = resolveSexoDefault(sexoDefault);
+  const ordered = [first, "M", "F", "Otro"];
+  const unique = [];
+  ordered.forEach((value) => {
+    if (!unique.includes(value)) unique.push(value);
+  });
+  return unique;
+}
+
+function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente, postSaveBackTo = "", sexoDefault = "M" }) {
+  const sexoOptions = buildSexoOptions(sexoDefault);
   const MySwal = withReactContent(Swal);
   const [form, setForm] = useState({
     id: initialData.id || undefined,
@@ -22,7 +52,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
     edad_unidad: initialData.edad_unidad || "años",
     procedencia: initialData.procedencia || "",
     tipo_seguro: initialData.tipo_seguro || "",
-    sexo: initialData.sexo || "M",
+    sexo: resolveInitialSexo(initialData.sexo, sexoDefault),
     direccion: initialData.direccion || "",
     telefono: initialData.telefono || "",
     email: initialData.email || "",
@@ -50,7 +80,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
       edad_unidad: initialData.edad_unidad || "años",
       procedencia: initialData.procedencia || "",
       tipo_seguro: initialData.tipo_seguro || "",
-      sexo: initialData.sexo || "M",
+      sexo: resolveInitialSexo(initialData.sexo, sexoDefault),
       direccion: initialData.direccion || "",
       telefono: initialData.telefono || "",
       email: initialData.email || "",
@@ -64,7 +94,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
           }))
         : [],
     });
-  }, [initialData]);
+  }, [initialData, sexoDefault]);
   const [error, setError] = useState("");
   const [dniLookup, setDniLookup] = useState({
     status: "idle", // idle | checking | duplicate | external | not_found | error
@@ -465,7 +495,7 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
         className="flex flex-col space-y-4 bg-blue-50 p-4 rounded border border-blue-200 h-full w-full overflow-y-auto"
         style={{ minHeight: '60vh', maxHeight: '70vh' }}
       >
-        <DatosBasicos form={form} handleChange={handleChange} dniLookup={dniLookup} />
+        <DatosBasicos form={form} handleChange={handleChange} dniLookup={dniLookup} sexoOptions={sexoOptions} />
         <DatosEdad form={form} handleChange={handleChange} />
         <DatosAdicionales
           form={form}

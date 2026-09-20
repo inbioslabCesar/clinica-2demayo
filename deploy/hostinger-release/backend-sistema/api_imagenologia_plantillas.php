@@ -52,8 +52,15 @@ if (!$usuario) {
 $isAdmin = ($rol === 'administrador');
 
 function img_has_column(mysqli $db, string $table, string $column): bool {
+    static $cache = [];
+    $cacheKey = $table . '.' . $column;
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
     $stmt = $db->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
     if (!$stmt) {
+        $cache[$cacheKey] = false;
         return false;
     }
     $stmt->bind_param('ss', $table, $column);
@@ -61,16 +68,22 @@ function img_has_column(mysqli $db, string $table, string $column): bool {
     $res = $stmt->get_result();
     $ok = ($res && $res->num_rows > 0);
     $stmt->close();
+    $cache[$cacheKey] = $ok;
     return $ok;
 }
 
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+    // Permite paralelizar lecturas en frontend (evita cola por lock de sesión PHP).
+    session_write_close();
+}
+
 // ─ Migración idempotente: añadir clinic_key si no existe ─────────────────────
-if (!img_has_column($mysqli, 'imagenologia_plantillas', 'clinic_key')) {
+if ($method !== 'GET' && !img_has_column($mysqli, 'imagenologia_plantillas', 'clinic_key')) {
     // Mejor esfuerzo: si el usuario DB no tiene ALTER, el endpoint debe seguir funcionando.
     $mysqli->query("ALTER TABLE imagenologia_plantillas ADD COLUMN clinic_key VARCHAR(120) NULL");
 }
-
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 // Solo administradores pueden escribir
 if ($method !== 'GET' && !$isAdmin) {
@@ -156,6 +169,7 @@ function img_default_valor_base(array $campo, string $tipoExamen = '', string $s
 
 function img_normalize_secciones(array $sections): array {
     $clean = [];
+    $allowedWidths = ['sixth', 'quarter', 'third', 'half', 'full'];
     foreach ($sections as $s) {
         $id     = trim((string)($s['id'] ?? ''));
         $nombre = trim((string)($s['nombre'] ?? ''));
@@ -165,11 +179,17 @@ function img_normalize_secciones(array $sections): array {
             $cid = trim((string)($c['id'] ?? ''));
             if ($cid === '') continue;
             $tipo = strtolower(trim((string)($c['type'] ?? 'textarea')));
-            if (!in_array($tipo, ['text', 'textarea', 'number', 'select'], true)) $tipo = 'textarea';
+            if (!in_array($tipo, ['text', 'textarea', 'number', 'select', 'checkbox'], true)) $tipo = 'textarea';
+            $width = strtolower(trim((string)($c['width'] ?? 'full')));
+            if (!in_array($width, $allowedWidths, true)) {
+                $width = 'full';
+            }
             $campos[] = [
                 'id'          => $cid,
                 'label'       => trim((string)($c['label'] ?? '')),
                 'type'        => $tipo,
+                'width'       => $width,
+                'break_after' => (bool)($c['break_after'] ?? $c['breakAfter'] ?? false),
                 'placeholder' => trim((string)($c['placeholder'] ?? '')),
                 'valor_base'  => trim((string)($c['valor_base'] ?? '')),
                 'usar_valor_base_si_vacio' => array_key_exists('usar_valor_base_si_vacio', (array)$c)
@@ -183,6 +203,11 @@ function img_normalize_secciones(array $sections): array {
         }
     }
     return $clean;
+}
+
+function img_normalize_pdf_layout_mode($value): string {
+    $mode = strtolower(trim((string)$value));
+    return $mode === 'compact' ? 'compact' : 'normal';
 }
 
 function img_validate_structure_ids(array $sections): string {
@@ -224,6 +249,10 @@ function img_decode_row(array $row): array {
         : null;
 
     $row['estructura_json'] = img_fix_mojibake_recursive($row['estructura_json']);
+
+    if (is_array($row['estructura_json'])) {
+        $row['estructura_json']['pdf_layout_mode'] = img_normalize_pdf_layout_mode($row['estructura_json']['pdf_layout_mode'] ?? 'normal');
+    }
 
     if (isset($row['estructura_json']['sections']) && is_array($row['estructura_json']['sections'])) {
         $tipoExamen = (string)($row['tipo_examen'] ?? '');
@@ -365,6 +394,7 @@ if ($method === 'POST') {
 
     // Resolver secciones (acepta estructura_json.sections o sections directamente)
     $sectionsRaw = [];
+    $pdfLayoutMode = img_normalize_pdf_layout_mode($input['estructura_json']['pdf_layout_mode'] ?? $input['pdf_layout_mode'] ?? 'normal');
     if (isset($input['estructura_json']['sections'])) {
         $sectionsRaw = (array)$input['estructura_json']['sections'];
     } elseif (isset($input['sections'])) {
@@ -386,7 +416,10 @@ if ($method === 'POST') {
         exit;
     }
 
-    $estructuraJson = json_encode(['sections' => $sections], JSON_UNESCAPED_UNICODE);
+    $estructuraJson = json_encode([
+        'pdf_layout_mode' => $pdfLayoutMode,
+        'sections' => $sections,
+    ], JSON_UNESCAPED_UNICODE);
     $ahora = date('Y-m-d H:i:s');
 
     if ($id > 0) {

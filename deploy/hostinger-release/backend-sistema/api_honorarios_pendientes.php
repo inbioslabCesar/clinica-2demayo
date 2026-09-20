@@ -3,6 +3,39 @@
 require_once __DIR__ . '/init_api.php';
 require_once "db.php";
 
+function resumir_descripcion_honorario(string $descripcion): string
+{
+    $raw = trim($descripcion);
+    if ($raw === '') {
+        return '';
+    }
+
+    if (stripos($raw, ' | CAMPANA ') !== false) {
+        $segmentos = array_map('trim', explode('|', $raw));
+        $base = trim((string)($segmentos[0] ?? ''));
+        if ($base !== '') {
+            return $base;
+        }
+    }
+
+    $marcadoresMeta = [
+        ' | Modo:',
+        ' | Medico:',
+        ' | Clinica:',
+        ' | Clinica objetivo:',
+        ' | REPARTO MANUAL COBRO',
+    ];
+
+    foreach ($marcadoresMeta as $meta) {
+        $pos = stripos($raw, $meta);
+        if ($pos !== false) {
+            return trim(substr($raw, 0, $pos));
+        }
+    }
+
+    return $raw;
+}
+
 $hasHonorariosPorCobrar = false;
 try {
     $stmtTbl = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'honorarios_por_cobrar' LIMIT 1");
@@ -170,6 +203,12 @@ $stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
 $stmt->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
 $stmt->execute();
 $honorarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+foreach ($honorarios as &$item) {
+    $descripcionCompleta = (string)($item['descripcion'] ?? '');
+    $item['descripcion_completa'] = $descripcionCompleta;
+    $item['descripcion'] = resumir_descripcion_honorario($descripcionCompleta);
+}
+unset($item);
 
 $sqlResumen = "SELECT
         COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pendiente' THEN h.monto_medico ELSE 0 END), 0) AS pendiente_total,

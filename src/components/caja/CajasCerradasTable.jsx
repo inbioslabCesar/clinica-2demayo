@@ -203,11 +203,11 @@ function CajasCerradasTable({
 		{ label: 'Cajas cerradas', value: Number(indicadores.total_cajas || 0), accent: 'text-slate-800' },
 		{ label: 'Pendiente de cuadre', value: Number(indicadores.total_pendientes_cuadre || 0), accent: 'text-amber-700' },
 		{ label: 'Regularizadas', value: Number(indicadores.total_regularizadas || 0), accent: 'text-emerald-700' },
-		{ label: 'Cierre real efectivo', value: fmtMoney(indicadores.efectivo_real_total), accent: 'text-blue-700' },
-		{ label: 'Efectivo esperado', value: fmtMoney(indicadores.efectivo_esperado_total), accent: 'text-slate-700' },
+		{ label: 'Cierre real efectivo (regularizadas)', value: fmtMoney(indicadores.efectivo_real_total), accent: 'text-blue-700' },
+		{ label: 'Efectivo esperado (regularizadas)', value: fmtMoney(indicadores.efectivo_esperado_total), accent: 'text-slate-700' },
 		{ label: 'Diferencia efectiva', value: fmtMoney(indicadores.diferencia_efectivo_total), accent: Number(indicadores.diferencia_efectivo_total || 0) === 0 ? 'text-emerald-700' : 'text-rose-700' },
-		{ label: 'Virtual cobrado', value: fmtMoney(indicadores.virtual_cobrado_total), accent: 'text-indigo-700' },
-		{ label: 'Virtual real', value: fmtMoney(indicadores.virtual_real_total), accent: 'text-cyan-700' },
+		{ label: 'Virtual cobrado (regularizadas)', value: fmtMoney(indicadores.virtual_cobrado_total), accent: 'text-indigo-700' },
+		{ label: 'Virtual real (regularizadas)', value: fmtMoney(indicadores.virtual_real_total), accent: 'text-cyan-700' },
 	];
 
 	const resumirObservacion = (texto) => {
@@ -246,6 +246,9 @@ function CajasCerradasTable({
 			</div>
 			<div className="px-4 py-4 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-gray-100">
 				<h3 className="text-sm font-semibold text-gray-800 mb-3">Panel de control del cierre</h3>
+				<p className="text-xs text-amber-800 mb-3">
+					Los indicadores de cierre real se calculan solo con cajas regularizadas. Las cajas en pendiente de cuadre pueden mostrar montos operativos en "Resumen por dia", pero no suman en este bloque.
+				</p>
 				<div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
 					{kpiCards.map((kpi) => (
 						<div key={kpi.label} className="rounded-xl border border-white/70 bg-white p-3 shadow-sm">
@@ -257,6 +260,9 @@ function CajasCerradasTable({
 			</div>
 			<div className="px-4 py-4 border-b border-gray-100 bg-white">
 				<h3 className="text-sm font-semibold text-gray-800 mb-2">Cierre real por día</h3>
+				<p className="text-xs text-gray-500 mb-2">
+					Este cuadro excluye autocierres pendientes de cuadre real.
+				</p>
 				{resumenCierreRealDiario.length === 0 ? (
 					<p className="text-xs text-gray-500">Sin datos para el rango seleccionado.</p>
 				) : (

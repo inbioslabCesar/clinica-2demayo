@@ -5,14 +5,57 @@ require_once 'db.php';
 
 function normalizar_turno($turno)
 {
-    $t = strtolower(trim((string)$turno));
-    if ($t === 'manana' || $t === 'mañana' || $t === 'maÃ±ana') {
-        return 'mañana';
+    $map = [
+        'maÃ±ana' => 'mañana',
+        'maã±ana' => 'mañana',
+    ];
+    $normalizado = strtr((string)$turno, $map);
+    $t = strtolower(trim($normalizado));
+    if ($t === 'manana' || $t === 'mañana') {
+        return 'manana';
     }
     if ($t === 'tarde' || $t === 'noche') {
         return $t;
     }
     return '';
+}
+
+function resolver_turno_para_db($pdo, $turnoCanonico)
+{
+    $turnoCanonico = strtolower(trim((string)$turnoCanonico));
+    if (!in_array($turnoCanonico, ['manana', 'tarde', 'noche'], true)) {
+        return '';
+    }
+
+    try {
+        $stmt = $pdo->query("SHOW COLUMNS FROM cajas LIKE 'turno'");
+        $col = $stmt ? $stmt->fetch(PDO::FETCH_ASSOC) : null;
+        $columnType = strtolower(trim((string)($col['Type'] ?? '')));
+        if ($columnType !== '' && strpos($columnType, 'enum(') === 0) {
+            preg_match_all("/'([^']+)'/", $columnType, $matches);
+            $enumValues = $matches[1] ?? [];
+            if (!empty($enumValues)) {
+                $candidatos = [
+                    'manana' => ['manana', 'mañana'],
+                    'tarde' => ['tarde'],
+                    'noche' => ['noche'],
+                ][$turnoCanonico];
+
+                foreach ($candidatos as $cand) {
+                    if (in_array(strtolower($cand), $enumValues, true)) {
+                        return $cand;
+                    }
+                }
+
+                // Si no hubo match exacto, devolver el valor canónico y dejar que BD valide.
+                return $turnoCanonico;
+            }
+        }
+    } catch (Throwable $e) {
+        // Fallback silencioso al valor canónico cuando no se puede leer metadata.
+    }
+
+    return $turnoCanonico;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -35,6 +78,27 @@ try {
     $monto_apertura = floatval($input['monto_apertura'] ?? 0);
     $observaciones = trim($input['observaciones'] ?? '');
     $turno = normalizar_turno($input['turno'] ?? '');
+    $turnoDb = resolver_turno_para_db($pdo, $turno);
+    $traspasoId = (int)($input['traspaso_id'] ?? 0);
+
+    if ($traspasoId > 0) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS caja_traspasos (
+            id INT AUTO_INCREMENT PRIMARY KEY, caja_origen_id INT NOT NULL, caja_destino_id INT NULL,
+            usuario_entrega_id INT NOT NULL, usuario_recibe_id INT NOT NULL, monto DECIMAL(12,2) NOT NULL,
+            estado VARCHAR(20) NOT NULL DEFAULT 'pendiente', observaciones TEXT NULL,
+            fecha_entrega DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, fecha_recepcion DATETIME NULL,
+            INDEX idx_ct_destino (usuario_recibe_id, estado)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $stmtTraspaso = $pdo->prepare("SELECT id, monto FROM caja_traspasos WHERE id = ? AND usuario_recibe_id = ? AND estado = 'pendiente' LIMIT 1");
+        $stmtTraspaso->execute([$traspasoId, $usuario_id]);
+        $traspaso = $stmtTraspaso->fetch(PDO::FETCH_ASSOC);
+        if (!$traspaso) {
+            echo json_encode(['success' => false, 'error' => 'El traspaso seleccionado no esta disponible']);
+            exit;
+        }
+        $monto_apertura = (float)$traspaso['monto'];
+        $observaciones = trim(($observaciones ? $observaciones . ' | ' : '') . 'Fondo recibido por traspaso #' . $traspasoId);
+    }
 
     // Validaciones
     if ($monto_apertura < 0) {
@@ -43,6 +107,43 @@ try {
     }
     if ($turno === '') {
         echo json_encode(['success' => false, 'error' => 'Turno inválido. Use mañana, tarde o noche']);
+        exit;
+    }
+    if ($turnoDb === '') {
+        echo json_encode(['success' => false, 'error' => 'No se pudo resolver el turno para esta base de datos']);
+        exit;
+    }
+
+    // Evitar depender solo del índice único para reportar estados ambiguos en UI.
+    $stmtCajaDia = $pdo->prepare(
+        "SELECT id, estado, fecha, turno, hora_apertura, hora_cierre
+         FROM cajas
+         WHERE DATE(fecha) = ? AND usuario_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1"
+    );
+    $stmtCajaDia->execute([$fecha_hoy, $usuario_id]);
+    $cajaDia = $stmtCajaDia->fetch(PDO::FETCH_ASSOC);
+    if ($cajaDia) {
+        $estadoCajaDia = strtolower(trim((string)($cajaDia['estado'] ?? '')));
+        if ($estadoCajaDia === 'abierta') {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Ya tienes una caja abierta para hoy. Cierra la caja actual antes de abrir otra.',
+                'caja_id' => (int)$cajaDia['id'],
+                'estado_actual' => 'abierta',
+                'requiere_reapertura' => false,
+            ]);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => false,
+            'error' => 'Ya registraste una caja en la fecha actual y se encuentra cerrada. Para continuar, usa Reabrir Cajas sobre ese registro.',
+            'caja_id' => (int)$cajaDia['id'],
+            'estado_actual' => $estadoCajaDia !== '' ? $estadoCajaDia : 'cerrada',
+            'requiere_reapertura' => true,
+        ]);
         exit;
     }
 
@@ -69,10 +170,15 @@ try {
         $monto_apertura,
         $hora_actual,
         $observaciones,
-        $turno
+        $turnoDb
     ]);
 
     $caja_id = $pdo->lastInsertId();
+
+    if ($traspasoId > 0) {
+        $stmtRecibir = $pdo->prepare("UPDATE caja_traspasos SET caja_destino_id = ?, estado = 'recibido', fecha_recepcion = NOW() WHERE id = ? AND usuario_recibe_id = ? AND estado = 'pendiente'");
+        $stmtRecibir->execute([$caja_id, $traspasoId, $usuario_id]);
+    }
 
     // Obtener información del usuario para el log
     $stmt = $pdo->prepare("SELECT nombre FROM usuarios WHERE id = ?");
@@ -96,9 +202,34 @@ try {
     
     // Manejo específico de error de restricción única
     if (strpos($e->getMessage(), 'Duplicate entry') !== false && strpos($e->getMessage(), 'unique_fecha_usuario') !== false) {
+        $stmtCajaDia = $pdo->prepare(
+            "SELECT id, estado
+             FROM cajas
+             WHERE DATE(fecha) = ? AND usuario_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1"
+        );
+        $stmtCajaDia->execute([$fecha_hoy, $usuario_id]);
+        $cajaDia = $stmtCajaDia->fetch(PDO::FETCH_ASSOC);
+        $estadoCajaDia = strtolower(trim((string)($cajaDia['estado'] ?? '')));
+
+        if ($estadoCajaDia === 'abierta') {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Ya tienes una caja abierta para hoy. Cierra la caja actual antes de abrir otra.',
+                'caja_id' => (int)($cajaDia['id'] ?? 0),
+                'estado_actual' => 'abierta',
+                'requiere_reapertura' => false,
+            ]);
+            exit;
+        }
+
         echo json_encode([
             'success' => false,
-            'error' => 'Ya existe una caja para este usuario en la fecha actual. Para abrir una nueva caja, primero debe cerrar o reabrir la caja existente.'
+            'error' => 'Ya registraste una caja en la fecha actual y se encuentra cerrada. Para continuar, usa Reabrir Cajas sobre ese registro.',
+            'caja_id' => (int)($cajaDia['id'] ?? 0),
+            'estado_actual' => $estadoCajaDia !== '' ? $estadoCajaDia : 'cerrada',
+            'requiere_reapertura' => true,
         ]);
     } else {
         echo json_encode([

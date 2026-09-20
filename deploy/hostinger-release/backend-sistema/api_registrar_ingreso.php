@@ -170,28 +170,29 @@ try {
             $consulta_id = isset($input['consulta_id']) ? $input['consulta_id'] : null;
             $paciente_id = isset($input['paciente_id']) ? $input['paciente_id'] : null;
 
-            // Insertar movimiento de honorario
-            $sqlHonorario = "INSERT INTO honorarios_medicos_movimientos (
-                consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, especialidad, tarifa_total,
-                monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, caja_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, NOW())";
-            $stmtHonorario = $pdo->prepare($sqlHonorario);
-            $stmtHonorario->execute([
-                $consulta_id,
-                $tarifa['medico_id'] ?? null,
-                $paciente_id,
-                $tarifa['id'],
-                $tipo_precio,
-                $input['tipo_ingreso'],
-                $tarifa['descripcion'],
-                $tarifa_total,
-                $monto_clinica,
-                $monto_medico,
-                $porcentaje_aplicado_clinica,
-                $porcentaje_aplicado_medico,
-                $input['metodo_pago'],
-                $cajaAbierta['id']
-            ]);
+            if ((float)$monto_medico > 0.00001) {
+                $sqlHonorario = "INSERT INTO honorarios_medicos_movimientos (
+                    consulta_id, medico_id, paciente_id, tarifa_id, tipo_precio, fecha, hora, tipo_servicio, especialidad, tarifa_total,
+                    monto_clinica, monto_medico, porcentaje_aplicado_clinica, porcentaje_aplicado_medico, estado_pago_medico, metodo_pago_medico, caja_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, NOW())";
+                $stmtHonorario = $pdo->prepare($sqlHonorario);
+                $stmtHonorario->execute([
+                    $consulta_id,
+                    $tarifa['medico_id'] ?? null,
+                    $paciente_id,
+                    $tarifa['id'],
+                    $tipo_precio,
+                    $input['tipo_ingreso'],
+                    $tarifa['descripcion'],
+                    $tarifa_total,
+                    $monto_clinica,
+                    $monto_medico,
+                    $porcentaje_aplicado_clinica,
+                    $porcentaje_aplicado_medico,
+                    $input['metodo_pago'],
+                    $cajaAbierta['id']
+                ]);
+            }
         }
 
         $pdo->commit();

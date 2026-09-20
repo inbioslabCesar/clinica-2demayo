@@ -18,11 +18,11 @@ try {
     $offset = intval($_GET['offset'] ?? 0);
 
     // Base de la consulta
-    $sql = "SELECT i.*, u.nombre as usuario_nombre, c.fecha as fecha_caja
+        $sql = "SELECT i.*, u.nombre as usuario_nombre, c.fecha as fecha_caja
             FROM ingresos_diarios i
             INNER JOIN cajas c ON i.caja_id = c.id
-            INNER JOIN usuarios u ON i.usuario_registro = u.id
-            WHERE DATE(i.fecha_registro) = ?";
+            LEFT JOIN usuarios u ON i.usuario_id = u.id
+            WHERE DATE(i.fecha_hora) = ?";
     
     $params = [$fecha];
     
@@ -38,7 +38,7 @@ try {
     }
     
     // Ordenar por fecha descendente
-    $sql .= " ORDER BY i.fecha_registro DESC LIMIT ? OFFSET ?";
+    $sql .= " ORDER BY i.fecha_hora DESC, i.id DESC LIMIT ? OFFSET ?";
     $params[] = $limite;
     $params[] = $offset;
     
@@ -50,7 +50,7 @@ try {
     $sqlCount = "SELECT COUNT(*) as total
                  FROM ingresos_diarios i
                  INNER JOIN cajas c ON i.caja_id = c.id
-                 WHERE DATE(i.fecha_registro) = ?";
+                 WHERE DATE(i.fecha_hora) = ?";
     
     $paramsCount = [$fecha];
     
@@ -76,7 +76,7 @@ try {
                     COUNT(DISTINCT metodo_pago) as metodos_diferentes
                  FROM ingresos_diarios i
                  INNER JOIN cajas c ON i.caja_id = c.id
-                 WHERE DATE(i.fecha_registro) = ?";
+                 WHERE DATE(i.fecha_hora) = ?";
     
     $stmtStats = $pdo->prepare($sqlStats);
     $stmtStats->execute([$fecha]);
@@ -89,7 +89,7 @@ try {
                     SUM(monto) as total
                  FROM ingresos_diarios i
                  INNER JOIN cajas c ON i.caja_id = c.id
-                 WHERE DATE(i.fecha_registro) = ?
+                 WHERE DATE(i.fecha_hora) = ?
                  GROUP BY tipo_ingreso
                  ORDER BY total DESC";
     
@@ -104,7 +104,7 @@ try {
                       SUM(monto) as total
                    FROM ingresos_diarios i
                    INNER JOIN cajas c ON i.caja_id = c.id
-                   WHERE DATE(i.fecha_registro) = ?
+                   WHERE DATE(i.fecha_hora) = ?
                    GROUP BY metodo_pago
                    ORDER BY total DESC";
     

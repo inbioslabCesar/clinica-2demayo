@@ -12,6 +12,7 @@ function permisosPermitidosRecepcion() {
         'ver_gestion_tarifas',
         'ver_inventario_general',
         'ver_panel_laboratorio',
+        'operar_resultados_laboratorio',
         'ver_inventario_laboratorio',
         'ver_modulo_quimico',
         'ver_contabilidad',

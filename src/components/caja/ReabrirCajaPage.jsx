@@ -7,6 +7,12 @@ import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../../utils/apiClient';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
+const getFechaLimaISO = (offsetDias = 0) => {
+	const base = new Date();
+	base.setDate(base.getDate() + offsetDias);
+	return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(base);
+};
+
 const ReabrirCajaPage = () => {
 	const [cajasCerradas, setCajasCerradas] = useState([]);
 	const [resumenDiario, setResumenDiario] = useState([]);
@@ -33,12 +39,8 @@ const ReabrirCajaPage = () => {
 	const [rowsPerPage, setRowsPerPage] = useState(10);
 	const [page, setPage] = useState(1);
 	const [paginacion, setPaginacion] = useState({ page: 1, per_page: 10, total: 0, total_pages: 1, from: 0, to: 0 });
-	const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().slice(0, 10));
-	const [fechaDesde, setFechaDesde] = useState(() => {
-		const now = new Date();
-		now.setDate(now.getDate() - 30);
-		return now.toISOString().slice(0, 10);
-	});
+	const [fechaHasta, setFechaHasta] = useState(() => getFechaLimaISO(0));
+	const [fechaDesde, setFechaDesde] = useState(() => getFechaLimaISO(-30));
 	const [usuarioIdFiltro, setUsuarioIdFiltro] = useState('');
 	const [turnoFiltro, setTurnoFiltro] = useState('');
 	const [usuariosDisponibles, setUsuariosDisponibles] = useState([]);
@@ -171,10 +173,8 @@ const ReabrirCajaPage = () => {
 	};
 
 	const handleResetFiltros = () => {
-		const hoy = new Date();
-		const hasta = hoy.toISOString().slice(0, 10);
-		hoy.setDate(hoy.getDate() - 30);
-		const desde = hoy.toISOString().slice(0, 10);
+		const hasta = getFechaLimaISO(0);
+		const desde = getFechaLimaISO(-30);
 		setFechaDesde(desde);
 		setFechaHasta(hasta);
 		setUsuarioIdFiltro('');

@@ -62,6 +62,30 @@ class LaboratorioModule {
                     return $stmtLink->execute();
                 }
             }
+
+            // Si ya existe un movimiento vinculado a cobro para esta misma cotización y firma,
+            // no crear otro al registrar abonos parciales (evita duplicados en liquidación).
+            if ($hasCotizacionId && $cotizacionIdFinal > 0) {
+                $stmtExistsLinked = $conn->prepare("SELECT id
+                    FROM laboratorio_referencia_movimientos
+                    WHERE cotizacion_id = ?
+                      AND paciente_id = ?
+                      AND examen_id = ?
+                      AND laboratorio = ?
+                      AND tipo = ?
+                      AND ABS(monto - ?) < 0.01
+                      AND cobro_id > 0
+                    ORDER BY id DESC
+                    LIMIT 1");
+                if ($stmtExistsLinked) {
+                    $stmtExistsLinked->bind_param('iiissd', $cotizacionIdFinal, $paciente_id, $examen_id, $lab_nombre, $lab_tipo, $monto_liquidar);
+                    $stmtExistsLinked->execute();
+                    $rowExistsLinked = $stmtExistsLinked->get_result()->fetch_assoc();
+                    if ($rowExistsLinked && !empty($rowExistsLinked['id'])) {
+                        return true;
+                    }
+                }
+            }
         }
 
         if ($hasCotizacionId) {

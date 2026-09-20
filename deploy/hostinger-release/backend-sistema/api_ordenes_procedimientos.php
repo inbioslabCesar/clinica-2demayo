@@ -291,7 +291,7 @@ if (!function_exists('op_crear_cotizacion_procedimientos')) {
 }
 
 if (!function_exists('op_listar_ordenes_por_consulta')) {
-    function op_listar_ordenes_por_consulta(mysqli $conn, int $consultaId, bool $filtrarPorMedico = false, int $medicoSesionId = 0)
+    function op_listar_ordenes_por_consulta(mysqli $conn, int $consultaId, bool $filtrarPorMedico = false, int $medicoSesionId = 0, bool $lite = false)
     {
         $stmt = $conn->prepare('SELECT * FROM ordenes_procedimientos WHERE consulta_id = ? ORDER BY fecha ASC, id ASC');
         if (!$stmt) {
@@ -326,10 +326,26 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
                     $items[] = $catalog[$id];
                 }
             }
-            $r['procedimientos'] = $items;
-            $filtradas[] = $r;
+            if ($lite) {
+                $filtradas[] = [
+                    'id' => (int)($r['id'] ?? 0),
+                    'consulta_id' => (int)($r['consulta_id'] ?? 0),
+                    'paciente_id' => (int)($r['paciente_id'] ?? 0),
+                    'estado' => (string)($r['estado'] ?? ''),
+                    'fecha' => (string)($r['fecha'] ?? ''),
+                    'procedimientos' => $items,
+                ];
+            } else {
+                $r['procedimientos'] = $items;
+                $filtradas[] = $r;
+            }
         }
         unset($r);
+
+        if ($lite) {
+            echo json_encode(['success' => true, 'ordenes' => $filtradas]);
+            return;
+        }
 
         echo json_encode(['success' => true, 'ordenes' => $filtrarPorMedico ? $filtradas : $rows]);
     }
@@ -357,6 +373,8 @@ op_ensure_schema($conn);
 
 if ($method === 'GET') {
     $consultaId = isset($_GET['consulta_id']) ? (int)$_GET['consulta_id'] : 0;
+    $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
+    $isHcFast = ($vista === 'hc_fast');
     if ($consultaId <= 0) {
         echo json_encode(['success' => true, 'ordenes' => []]);
         exit;
@@ -370,7 +388,7 @@ if ($method === 'GET') {
         }
     }
 
-    op_listar_ordenes_por_consulta($conn, $consultaId, $esSesionMedico, $medicoSesionId);
+    op_listar_ordenes_por_consulta($conn, $consultaId, $esSesionMedico, $medicoSesionId, $isHcFast);
     exit;
 }
 

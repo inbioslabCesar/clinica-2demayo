@@ -1,0 +1,1 @@
+System.register(["./vendor-react-legacy-CUrkIHYz.js","./vendor-dicom-legacy-CP2__vbQ.js","./vendor-pkg-scheduler-legacy-UFPeR5s0.js"],function(e,n){"use strict";var r;return{setters:[e=>{r=e.j},null,null],execute:function(){e("default",function(){return r.jsx("div",{className:"max-w-3xl mx-auto p-6",children:"// Página eliminada para nuevo diseño"})})}}});
