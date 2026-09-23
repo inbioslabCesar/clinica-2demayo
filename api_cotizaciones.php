@@ -5332,6 +5332,11 @@ function registrar_abono_cotizacion($conn, $data) {
     }
 
     $hasSaldoV2 = column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente');
+    $usaMovimientos = $hasSaldoV2 && table_exists($conn, 'cotizacion_movimientos');
+
+    if ($usaMovimientos && $monto > 0 && $cobroId <= 0) {
+        respond(['success' => false, 'error' => 'Para registrar un abono monetario se requiere cobro_id válido.'], 400);
+    }
 
     $conn->begin_transaction();
     try {
@@ -5349,7 +5354,18 @@ function registrar_abono_cotizacion($conn, $data) {
         $pagadoActual = $hasSaldoV2 ? (float)$cot['total_pagado'] : 0;
         $saldoAnterior = $hasSaldoV2 ? (float)$cot['saldo_pendiente'] : max(0, $total);
 
-        if ($hasSaldoV2 && table_exists($conn, 'cotizacion_movimientos') && $cobroId) {
+        if ($usaMovimientos && $cobroId) {
+            $stmtCobroExiste = $conn->prepare("SELECT id FROM cobros WHERE id = ? LIMIT 1");
+            if (!$stmtCobroExiste) {
+                throw new Exception('No se pudo validar la existencia del cobro asociado.');
+            }
+            $stmtCobroExiste->bind_param("i", $cobroId);
+            $stmtCobroExiste->execute();
+            $rowCobro = $stmtCobroExiste->get_result()->fetch_assoc();
+            if (!$rowCobro) {
+                throw new Exception('El cobro asociado no existe; no se puede registrar un abono huérfano.');
+            }
+
             $stmtDup = $conn->prepare("SELECT id FROM cotizacion_movimientos WHERE cotizacion_id = ? AND cobro_id = ? AND tipo_movimiento = 'abono' LIMIT 1");
             if ($stmtDup) {
                 $stmtDup->bind_param("ii", $cotizacionId, $cobroId);
@@ -5410,19 +5426,29 @@ function registrar_abono_cotizacion($conn, $data) {
         }
         $stmtUp->execute();
 
-        if ($hasSaldoV2 && table_exists($conn, 'cotizacion_movimientos')) {
+        if ($usaMovimientos) {
             $tipoMov = 'abono';
             $stmtMov = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            if (!$stmtMov) {
+                throw new Exception('No se pudo preparar el movimiento de abono.');
+            }
             $stmtMov->bind_param("iisdddsi", $cotizacionId, $cobroId, $tipoMov, $montoAplicado, $saldoAnterior, $saldoNuevo, $descripcion, $usuarioId);
-            $stmtMov->execute();
+            if (!$stmtMov->execute()) {
+                throw new Exception('No se pudo registrar el movimiento de abono.');
+            }
 
             if ($montoDescuentoAplicado > 0) {
                 // Usar tipo existente en el esquema para evitar truncation en ENUM.
                 $tipoMovDescuento = 'devolucion';
                 $descripcionDescuento = trim($descripcion . ' (descuento aplicado)');
                 $stmtMovDesc = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                if (!$stmtMovDesc) {
+                    throw new Exception('No se pudo preparar el movimiento de descuento.');
+                }
                 $stmtMovDesc->bind_param("iisdddsi", $cotizacionId, $cobroId, $tipoMovDescuento, $montoDescuentoAplicado, $saldoAnterior, $saldoNuevo, $descripcionDescuento, $usuarioId);
-                $stmtMovDesc->execute();
+                if (!$stmtMovDesc->execute()) {
+                    throw new Exception('No se pudo registrar el movimiento de descuento.');
+                }
             }
         }
 
@@ -5946,6 +5972,52 @@ function fecha_iso_valida($value) {
     return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1;
 }
 
+function normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, $usarHoySiVacio = false) {
+    $fechaInicio = trim((string)$fechaInicioRaw);
+    $fechaFin = trim((string)$fechaFinRaw);
+
+    if ($fechaInicio === '' && $fechaFin === '' && $usarHoySiVacio) {
+        $hoyLima = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+        $fechaInicio = $hoyLima;
+        $fechaFin = $hoyLima;
+    } elseif ($fechaInicio === '' && $fechaFin !== '') {
+        $fechaInicio = $fechaFin;
+    } elseif ($fechaFin === '' && $fechaInicio !== '') {
+        $fechaFin = $fechaInicio;
+    }
+
+    if ($fechaInicio === '' && $fechaFin === '') {
+        return [
+            'ok' => true,
+            'fecha_inicio' => '',
+            'fecha_fin' => '',
+            'error' => '',
+        ];
+    }
+
+    if (!fecha_iso_valida($fechaInicio) || !fecha_iso_valida($fechaFin)) {
+        return [
+            'ok' => false,
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'error' => 'Rango de fechas invalido. Use formato YYYY-MM-DD',
+        ];
+    }
+
+    if ($fechaInicio > $fechaFin) {
+        $tmp = $fechaInicio;
+        $fechaInicio = $fechaFin;
+        $fechaFin = $tmp;
+    }
+
+    return [
+        'ok' => true,
+        'fecha_inicio' => $fechaInicio,
+        'fecha_fin' => $fechaFin,
+        'error' => '',
+    ];
+}
+
 function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
     $map = [];
     $ids = array_values(array_filter(array_map('intval', (array)$cotizacionIds), function($id) {
@@ -5988,27 +6060,20 @@ function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
 }
 
 function reporte_atenciones_detallado($conn) {
-    $hoyLima = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
-    $fechaInicio = trim((string)($_GET['fecha_inicio'] ?? ''));
-    $fechaFin = trim((string)($_GET['fecha_fin'] ?? ''));
+    $fechaInicioRaw = $_GET['fecha_inicio'] ?? '';
+    $fechaFinRaw = $_GET['fecha_fin'] ?? '';
     $estado = trim((string)($_GET['estado'] ?? ''));
     $q = trim((string)($_GET['q'] ?? ''));
     $rol = normalizar_rol_usuario_reporte($_GET['rol'] ?? 'todos');
     $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : 0;
     $expandirMetodosPago = !isset($_GET['expandir_metodos_pago']) || (string)$_GET['expandir_metodos_pago'] !== '0';
 
-    if ($fechaInicio === '' && $fechaFin === '') {
-        $fechaInicio = $hoyLima;
-        $fechaFin = $hoyLima;
-    } elseif ($fechaInicio === '') {
-        $fechaInicio = $fechaFin;
-    } elseif ($fechaFin === '') {
-        $fechaFin = $fechaInicio;
+    $rango = normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, true);
+    if (!$rango['ok']) {
+        respond(['success' => false, 'error' => $rango['error']], 400);
     }
-
-    if (!fecha_iso_valida($fechaInicio) || !fecha_iso_valida($fechaFin)) {
-        respond(['success' => false, 'error' => 'Rango de fechas invalido. Use formato YYYY-MM-DD'], 400);
-    }
+    $fechaInicio = $rango['fecha_inicio'];
+    $fechaFin = $rango['fecha_fin'];
 
     $hasCotizacionMovimientosCreatedAt = table_exists($conn, 'cotizacion_movimientos') && column_exists($conn, 'cotizacion_movimientos', 'created_at');
     $subqueryUltimoPagoAt = "(SELECT MAX(cm.created_at) FROM cotizacion_movimientos cm WHERE cm.cotizacion_id = c.id AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ''))) = 'abono' AND COALESCE(cm.monto, 0) > 0)";
@@ -6470,8 +6535,8 @@ switch ($method) {
         $limit = isset($_GET['limit']) ? max(1, (int)$_GET['limit']) : 10;
         $limit = min($limit, 50);
         $offset = ($page - 1) * $limit;
-        $fechaInicio = $_GET['fecha_inicio'] ?? null;
-        $fechaFin = $_GET['fecha_fin'] ?? null;
+        $fechaInicioRaw = $_GET['fecha_inicio'] ?? '';
+        $fechaFinRaw = $_GET['fecha_fin'] ?? '';
         $estado = $_GET['estado'] ?? null;
         $soloRegistroIncompleto = isset($_GET['registro_incompleto']) && (string)$_GET['registro_incompleto'] === '1';
         $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : null;
@@ -6496,6 +6561,13 @@ switch ($method) {
         $where = [];
         $types = '';
         $params = [];
+
+        $rango = normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, false);
+        if (!$rango['ok']) {
+            respond(['success' => false, 'error' => $rango['error']], 400);
+        }
+        $fechaInicio = $rango['fecha_inicio'];
+        $fechaFin = $rango['fecha_fin'];
 
         if ($fechaInicio && $fechaFin) {
             $fechaFinExclusiva = date('Y-m-d', strtotime($fechaFin . ' +1 day'));

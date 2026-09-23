@@ -3527,6 +3527,9 @@ class CobroModule
 
             // Registrar cobro principal y detalles
             $cobro_id = self::registrarCobro($conn, $data);
+            if ($cobro_id <= 0) {
+                throw new \Exception('No se pudo registrar el cobro principal.');
+            }
             $fechaHoraIngresoBase = self::resolverFechaHoraCobroParaIngreso($conn, $cobro_id);
             // Registrar descuento aplicado si corresponde
             self::registrarDescuento($conn, $data, $cobro_id);
@@ -3851,7 +3854,10 @@ class CobroModule
                                 'fecha_liquidacion' => $fecha_liquidacion,
                                 'fecha_hora_param' => $fechaHoraIngresoBase
                             ];
-                            CajaModule::registrarIngreso($conn, $params_individual);
+                            $okIngreso = CajaModule::registrarIngreso($conn, $params_individual);
+                            if (!$okIngreso) {
+                                throw new \Exception('No se pudo registrar el ingreso en caja para el detalle cobrado.');
+                            }
                         } else {
                             throw new \Exception('No se encontró tarifa activa para el servicio y médico seleccionado (servicio_tipo: ' . $servicio_key . ', medico_id: ' . ($medico_id_buscar ?? 'N/A') . ').');
                         }
@@ -3929,6 +3935,17 @@ class CobroModule
                 }
             }
 
+            // Hardening anti-huerfanos: no confirmar cobro si no quedo asentado en caja.
+            $validacionAsiento = self::validarAsientoCobroEnCaja(
+                $conn,
+                (int)$caja_id,
+                (int)$cobro_id,
+                (float)($data['total'] ?? 0)
+            );
+            if (!$validacionAsiento['ok']) {
+                throw new \Exception($validacionAsiento['error'] ?? 'El cobro no quedo correctamente asentado en caja.');
+            }
+
             // Commit y respuesta
             $conn->commit();
             $numero_comprobante = sprintf("C%06d", $cobro_id);
@@ -3943,6 +3960,60 @@ class CobroModule
             return ['success' => false, 'error' => 'Error al procesar el cobro: ' . $e->getMessage()];
         }
     }
+
+    private static function obtenerAsientoCobroEnCaja($conn, $cajaId, $cobroId)
+    {
+        $cajaId = (int)$cajaId;
+        $cobroId = (int)$cobroId;
+        if ($cajaId <= 0 || $cobroId <= 0) {
+            return ['total' => 0.0, 'items' => 0];
+        }
+
+        $sql = "SELECT COALESCE(SUM(monto), 0) AS total, COUNT(*) AS items
+                FROM ingresos_diarios
+                WHERE caja_id = ?
+                  AND referencia_id = ?
+                  AND LOWER(TRIM(COALESCE(referencia_tabla, ''))) = 'cobros'";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return ['total' => 0.0, 'items' => 0];
+        }
+        $stmt->bind_param('ii', $cajaId, $cobroId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        return [
+            'total' => (float)($row['total'] ?? 0),
+            'items' => (int)($row['items'] ?? 0),
+        ];
+    }
+
+    private static function validarAsientoCobroEnCaja($conn, $cajaId, $cobroId, $totalEsperado)
+    {
+        $totalEsperado = round(max(0.0, (float)$totalEsperado), 2);
+        $asiento = self::obtenerAsientoCobroEnCaja($conn, $cajaId, $cobroId);
+        $totalAsentado = round((float)($asiento['total'] ?? 0), 2);
+        $itemsAsiento = (int)($asiento['items'] ?? 0);
+
+        if ($itemsAsiento <= 0 && $totalEsperado > 0.00001) {
+            return [
+                'ok' => false,
+                'error' => 'Cobro sin asiento en caja detectado. La operación fue cancelada para proteger la conciliación.',
+            ];
+        }
+
+        $delta = round(abs($totalAsentado - $totalEsperado), 2);
+        if ($delta > 0.01) {
+            return [
+                'ok' => false,
+                'error' => 'Descuadre entre cobro y asiento en caja (esperado: S/ ' . number_format($totalEsperado, 2) . ', asentado: S/ ' . number_format($totalAsentado, 2) . ').',
+            ];
+        }
+
+        return ['ok' => true, 'error' => null];
+    }
+
     // Validar datos principales del cobro
     public static function validarDatos($data)
     {
@@ -3988,8 +4059,16 @@ class CobroModule
             $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones) VALUES (?, ?, ?, ?, 'pagado', ?)");
             $stmt->bind_param("iidss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones);
         }
-        $stmt->execute();
+        if (!$stmt) {
+            throw new \Exception('No se pudo preparar el registro del cobro.');
+        }
+        if (!$stmt->execute()) {
+            throw new \Exception('No se pudo registrar el cobro en la tabla cobros.');
+        }
         $cobro_id = $conn->insert_id;
+        if ((int)$cobro_id <= 0) {
+            throw new \Exception('No se obtuvo ID de cobro luego del registro principal.');
+        }
         // Insertar detalles del cobro
         $tiposServicio = [];
         foreach ($data['detalles'] as $detalle) {
@@ -4012,8 +4091,13 @@ class CobroModule
             return $d['subtotal'];
         }, $data['detalles']));
         $stmt_detalle = $conn->prepare("INSERT INTO cobros_detalle (cobro_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        if (!$stmt_detalle) {
+            throw new \Exception('No se pudo preparar el detalle del cobro.');
+        }
         $stmt_detalle->bind_param("isisssd", $cobro_id, $servicio_tipo, $servicio_id, $descripcion_json, $cantidad, $precio_unitario, $subtotal);
-        $stmt_detalle->execute();
+        if (!$stmt_detalle->execute()) {
+            throw new \Exception('No se pudo registrar el detalle del cobro.');
+        }
         return $cobro_id;
     }
     // --- Registrar descuento aplicado en cobro ---

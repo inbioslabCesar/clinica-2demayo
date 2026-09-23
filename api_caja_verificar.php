@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/caja_autocierre.php';
+require_once __DIR__ . '/caja_estado_helper.php';
 
 try {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -38,28 +39,13 @@ try {
 
     caja_auto_cerrar_vencidas($pdo);
 
-    $fechaHoy = date('Y-m-d');
-
-    $stmt = $pdo->prepare(
-        "SELECT id, fecha, estado, turno, monto_apertura, hora_apertura
-         FROM cajas
-         WHERE fecha = :fecha_hoy
-           AND usuario_id = :usuario_id
-           AND estado <> 'cerrada'
-         ORDER BY created_at DESC
-         LIMIT 1"
-    );
-    $stmt->execute([
-        ':fecha_hoy' => $fechaHoy,
-        ':usuario_id' => $usuarioId,
-    ]);
-    $caja = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    $estadoCaja = caja_obtener_estado_actual($pdo, $usuarioId, date('Y-m-d'));
 
     echo json_encode([
         'success' => true,
-        'caja_abierta' => $caja !== null,
-        'fecha_hoy' => $fechaHoy,
-        'caja' => $caja,
+        'caja_abierta' => (bool)$estadoCaja['caja_abierta'],
+        'fecha_hoy' => $estadoCaja['fecha_hoy'],
+        'caja' => $estadoCaja['caja'],
     ]);
 } catch (Throwable $e) {
     if (function_exists('api_log_server_error')) {

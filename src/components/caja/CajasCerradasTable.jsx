@@ -199,6 +199,13 @@ function CajasCerradasTable({
 
 	const fmtMoney = (value) => `S/ ${Number(value || 0).toFixed(2)}`;
 	const fmtMoneyNullable = (value) => (value === null || value === undefined || value === '' ? '-' : `S/ ${Number(value).toFixed(2)}`);
+	const ingresoRealCalculado = (caja) => (
+		Number(caja?.total_efectivo || 0)
+		+ Number(caja?.total_yape || 0)
+		+ Number(caja?.total_plin || 0)
+		+ Number(caja?.total_tarjetas || 0)
+		+ Number(caja?.total_transferencias || 0)
+	);
 	const kpiCards = [
 		{ label: 'Cajas cerradas', value: Number(indicadores.total_cajas || 0), accent: 'text-slate-800' },
 		{ label: 'Pendiente de cuadre', value: Number(indicadores.total_pendientes_cuadre || 0), accent: 'text-amber-700' },
@@ -218,6 +225,7 @@ function CajasCerradasTable({
 	};
 
 	const resumen = cajas.reduce((acc, caja) => {
+		acc.ingreso_real += ingresoRealCalculado(caja);
 		acc.total_efectivo += parseFloat(caja.total_efectivo || 0);
 		acc.total_yape += parseFloat(caja.total_yape || 0);
 		acc.total_plin += parseFloat(caja.total_plin || 0);
@@ -227,6 +235,7 @@ function CajasCerradasTable({
 		acc.ganancia_dia += parseFloat(caja.ganancia_dia || 0);
 		return acc;
 	}, {
+		ingreso_real: 0,
 		total_efectivo: 0,
 		total_yape: 0,
 		total_plin: 0,
@@ -369,7 +378,11 @@ function CajasCerradasTable({
 					</>
 				)}
 			</div>
-			<div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-b border-gray-100 bg-gray-50">
+			<div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 border-b border-gray-100 bg-gray-50">
+				<div className="rounded bg-white p-2 border text-xs">
+					<span className="text-gray-500">Ingreso real calculado</span>
+					<div className="text-sm font-bold text-gray-900">S/ {resumen.ingreso_real.toFixed(2)}</div>
+				</div>
 				<div className="rounded bg-white p-2 border text-xs">
 					<span className="text-gray-500">Efectivo</span>
 					<div className="text-sm font-bold text-gray-900">S/ {resumen.total_efectivo.toFixed(2)}</div>
@@ -408,6 +421,9 @@ function CajasCerradasTable({
 							</div>
 							<div className="flex gap-2 text-xs text-gray-500 mb-1">
 								<span>Monto cierre: <span className="font-bold text-yellow-800">S/ {parseFloat(caja.monto_cierre || 0).toFixed(2)}</span></span>
+							</div>
+							<div className="text-xs text-gray-700 mb-1">
+								<span className="font-semibold">Ingreso real calculado:</span> {fmtMoney(ingresoRealCalculado(caja))}
 							</div>
 							<div className="text-xs rounded bg-white/80 border border-yellow-200 p-2 text-gray-700">
 								<div>Efectivo esperado: <span className="font-semibold">{fmtMoney(Number(caja.monto_contado || 0) - Number(caja.diferencia || 0))}</span></div>
@@ -471,10 +487,12 @@ function CajasCerradasTable({
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Plin</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tarjetas</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Transferencias</th>
+							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ingreso Real Calc.</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Egresos</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ganancia</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ef. Esperado Real</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ef. Real Contado</th>
+							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Virtual Real Contado</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Observaciones</th>
 							<th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
 						</tr>
@@ -482,7 +500,7 @@ function CajasCerradasTable({
 					<tbody className="bg-white divide-y divide-gray-200">
 						{cajas.length === 0 ? (
 							<tr>
-								<td colSpan="18" className="px-4 py-8 text-center text-gray-500">
+								<td colSpan="20" className="px-4 py-8 text-center text-gray-500">
 									No hay cajas cerradas
 								</td>
 							</tr>
@@ -513,10 +531,12 @@ function CajasCerradasTable({
 									<td className="px-4 py-3 text-sm text-gray-600">S/ {parseFloat(caja.total_plin || 0).toFixed(2)}</td>
 									<td className="px-4 py-3 text-sm text-gray-600">S/ {parseFloat(caja.total_tarjetas || 0).toFixed(2)}</td>
 									<td className="px-4 py-3 text-sm text-gray-600">S/ {parseFloat(caja.total_transferencias || 0).toFixed(2)}</td>
+									<td className="px-4 py-3 text-sm font-semibold text-gray-700">{fmtMoney(ingresoRealCalculado(caja))}</td>
 									<td className="px-4 py-3 text-sm text-gray-600">S/ {parseFloat(caja.total_egresos || 0).toFixed(2)}</td>
 									<td className="px-4 py-3 text-sm text-gray-600">S/ {parseFloat(caja.ganancia_dia || 0).toFixed(2)}</td>
 									<td className="px-4 py-3 text-sm text-gray-600">{(caja.monto_contado === null || caja.monto_contado === '' || caja.monto_contado === undefined) ? '-' : fmtMoney(Number(caja.monto_contado || 0) - Number(caja.diferencia || 0))}</td>
 									<td className="px-4 py-3 text-sm text-gray-600">{fmtMoneyNullable(caja.monto_contado)}</td>
+									<td className="px-4 py-3 text-sm text-gray-600">{fmtMoneyNullable(caja.virtual_contado)}</td>
 									<td className="px-4 py-3 text-sm text-gray-600 max-w-[260px]" title={String(caja.observaciones_cierre || '').trim() || 'Sin observaciones'}>
 										{resumirObservacion(caja.observaciones_cierre)}
 									</td>

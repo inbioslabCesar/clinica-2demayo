@@ -215,6 +215,38 @@ function sync_cotizacion_por_eliminacion_local(PDO $pdo, $cotizacion_id, $servic
     }
 }
 
+function registrar_movimiento_eliminacion_cotizacion_local(PDO $pdo, $cotizacion_id, $cobro_id, $montoEliminar, $usuario_id, $motivo = '') {
+    $cotizacion_id = intval($cotizacion_id);
+    $cobro_id = intval($cobro_id);
+    $usuario_id = intval($usuario_id);
+    $montoEliminar = round(max(0, floatval($montoEliminar)), 2);
+    if ($cotizacion_id <= 0 || $cobro_id <= 0 || $montoEliminar <= 0) return;
+    if (!table_exists_local($pdo, 'cotizacion_movimientos')) return;
+
+    $saldoAnterior = 0.0;
+    $saldoNuevo = 0.0;
+    if (table_exists_local($pdo, 'cotizaciones') && column_exists_local($pdo, 'cotizaciones', 'saldo_pendiente')) {
+        $stmtCot = $pdo->prepare('SELECT saldo_pendiente FROM cotizaciones WHERE id = ? LIMIT 1');
+        if ($stmtCot) {
+            $stmtCot->execute([$cotizacion_id]);
+            $rowCot = $stmtCot->fetch(PDO::FETCH_ASSOC) ?: [];
+            $saldoNuevo = floatval($rowCot['saldo_pendiente'] ?? 0);
+            $saldoAnterior = max(0.0, $saldoNuevo - $montoEliminar);
+        }
+    }
+
+    $descripcion = 'Eliminación/ajuste de ítem en cobro #' . $cobro_id;
+    if (trim((string)$motivo) !== '') {
+        $descripcion .= ' - ' . trim((string)$motivo);
+    }
+
+    $stmtMov = $pdo->prepare('INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    if ($stmtMov) {
+        $tipo = 'devolucion';
+        $stmtMov->execute([$cotizacion_id, $cobro_id, $tipo, $montoEliminar, $saldoAnterior, $saldoNuevo, $descripcion, $usuario_id]);
+    }
+}
+
 if ($cobro_id <= 0 || empty($servicio_tipo) || !is_array($item)) {
     echo json_encode(['success' => false, 'error' => 'Parámetros inválidos']);
     exit;
@@ -420,6 +452,14 @@ try {
                 $montoEliminar,
                 $usuario_id,
                 $motivo !== '' ? $motivo : 'Reducción desde edición de cobro'
+            );
+            registrar_movimiento_eliminacion_cotizacion_local(
+                $pdo,
+                $cotizacion_id,
+                $cobro_id,
+                $montoEliminar,
+                $usuario_id,
+                $motivo
             );
         }
 
@@ -646,6 +686,14 @@ try {
             $usuario_id,
             $motivo !== '' ? $motivo : 'Eliminación desde edición de cobro'
         );
+        registrar_movimiento_eliminacion_cotizacion_local(
+            $pdo,
+            $cotizacion_id,
+            $cobro_id,
+            $montoEliminar,
+            $usuario_id,
+            $motivo
+        );
     }
 
     // Eliminar movimientos financieros asociados para servicios no farmacia
@@ -723,14 +771,30 @@ try {
             break;
         }
     }
-    // Si no hay coincidencia fuerte, como fallback eliminar el último ingreso del tipo para ese cobro
+    if (count($ingresos) === 0 && $montoEliminar > 0) {
+        throw new Exception('No se encontró asiento en caja para el cobro; se cancela la eliminación para evitar descuadre.');
+    }
+
+    // Si no hay coincidencia fuerte, como fallback usar el último ingreso del tipo para ese cobro
     if ($candidatoId === null && count($ingresos) > 0) {
         $candidatoId = intval($ingresos[0]['id']);
     }
-    if ($candidatoId !== null) {
-        $stmtIngDel = $pdo->prepare('DELETE FROM ingresos_diarios WHERE id = ?');
-        $stmtIngDel->execute([$candidatoId]);
-        $ingresoEliminado = true;
+
+    if ($candidatoId !== null && $montoEliminar > 0) {
+        foreach ($ingresos as $ing) {
+            if (intval($ing['id']) !== $candidatoId) continue;
+            $montoActual = floatval($ing['monto'] ?? 0);
+            $montoNuevo = $montoActual - $montoEliminar;
+            if ($montoNuevo > 0.01) {
+                $stmtIngUpd = $pdo->prepare('UPDATE ingresos_diarios SET monto = ? WHERE id = ?');
+                $stmtIngUpd->execute([$montoNuevo, $candidatoId]);
+            } else {
+                $stmtIngDel = $pdo->prepare('DELETE FROM ingresos_diarios WHERE id = ?');
+                $stmtIngDel->execute([$candidatoId]);
+                $ingresoEliminado = true;
+            }
+            break;
+        }
     }
 
     // Registrar auditoría de eliminación

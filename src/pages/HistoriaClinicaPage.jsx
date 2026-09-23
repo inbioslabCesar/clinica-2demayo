@@ -9,11 +9,10 @@ import { FormularioHistoriaClinica, TriajePaciente, DatosPaciente, TratamientoPa
 import DiagnosticoCIE10Selector from "../components/diagnostico/DiagnosticoCIE10Selector";
 import ImpresionHistoriaClinica from "../components/print/ImpresionHistoriaClinica";
 import ImpresionAnalisisLaboratorio from "../components/print/ImpresionAnalisisLaboratorio";
-import ImpresionRecetaMedicamentos from "../components/print/ImpresionRecetaMedicamentos";
 import ImpresionServiciosSolicitados from "../components/print/ImpresionServiciosSolicitados";
 import ImpresionInformeProcedimiento from "../components/print/ImpresionInformeProcedimiento";
 import TriageForm from "../components/enfermero/TriageForm";
-import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintReceta, usePrintServicios, usePrintInformeProcedimiento } from "../hooks/usePrint";
+import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintServicios, usePrintInformeProcedimiento } from "../hooks/usePrint";
 import { formatColegiatura, formatProfesionalName } from "../utils/profesionalDisplay";
 
 const hcTemplateFlag = String(import.meta.env.VITE_HC_TEMPLATE_ENGINE_READ || "").toLowerCase();
@@ -299,7 +298,6 @@ function HistoriaClinicaPage() {
   const restoreTabFromQuery = String(searchParams.get('hc_prev_tab') || '').trim().toLowerCase();
   const { componentRef: printRef, handlePrint: handlePrintHC } = usePrintHistoriaClinica();
   const { componentRef: printLabRef, handlePrint: handlePrintLab } = usePrintLaboratorio();
-  const { componentRef: printRecetaRef, handlePrint: handlePrintReceta } = usePrintReceta();
   const { componentRef: printImagenRef, handlePrint: handlePrintImagen } = usePrintServicios('Solicitud de Imagenes Diagnosticas');
   const { componentRef: printProcRef, handlePrint: handlePrintProcedimientos } = usePrintServicios('Solicitud de Procedimientos');
   const { componentRef: printInformeProcRef, handlePrint: handlePrintInformeProcedimiento } = usePrintInformeProcedimiento('Informe de Procedimiento Medico');
@@ -313,6 +311,7 @@ function HistoriaClinicaPage() {
   const [ordenesProcedimientosPrint, setOrdenesProcedimientosPrint] = useState([]);
   const [cargandoOrdenesImagenPrint, setCargandoOrdenesImagenPrint] = useState(false);
   const [cargandoOrdenesProcedimientosPrint, setCargandoOrdenesProcedimientosPrint] = useState(false);
+  const [generandoRecetaPdf, setGenerandoRecetaPdf] = useState(false);
   const [recetaSugerencias, setRecetaSugerencias] = useState({
     medico: [],
     especialidad: [],
@@ -2777,6 +2776,60 @@ function HistoriaClinicaPage() {
     };
   }, [paciente, consultaActual?.edad_snapshot_valor, consultaActual?.edad_snapshot_unidad, consultaActual?.edad_snapshot_es_estimada, consultaActual?.edad_snapshot_fecha_calculo]);
 
+  const handlePrintRecetaPdf = useCallback(async () => {
+    const medicamentos = Array.isArray(hc?.receta) ? hc.receta : [];
+    if (medicamentos.length === 0) {
+      console.warn('No hay medicamentos en la receta para imprimir.');
+      return;
+    }
+
+    setGenerandoRecetaPdf(true);
+    try {
+      const payload = {
+        paciente: pacienteParaVista || paciente || {},
+        medicamentos,
+        recomendaciones: String(hc?.recomendaciones || '').trim(),
+        medicoInfo: medicoInfo || {},
+        configuracionClinica: configuracionClinica || {},
+        diagnosticos: Array.isArray(diagnosticos) ? diagnosticos : [],
+        fecha_emision: new Date().toISOString(),
+      };
+
+      const response = await authFetch('api_receta_generar_pdf.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let detalle = `HTTP ${response.status}`;
+        try {
+          const err = await response.json();
+          detalle = err?.error || detalle;
+        } catch {
+          // noop
+        }
+        setMsg(`No se pudo generar la receta en PDF: ${detalle}`);
+        return;
+      }
+
+      const pdfBlob = await response.blob();
+      if (!(pdfBlob instanceof Blob) || pdfBlob.size <= 0) {
+        setMsg('No se pudo generar la receta en PDF (archivo vacio).');
+        return;
+      }
+
+      const pdfUrl = window.URL.createObjectURL(pdfBlob);
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60_000);
+    } catch (error) {
+      console.error('Error generando receta PDF:', error);
+      setMsg('Error de conexion al generar receta en PDF.');
+    } finally {
+      setGenerandoRecetaPdf(false);
+    }
+  }, [hc?.receta, hc?.recomendaciones, pacienteParaVista, paciente, medicoInfo, configuracionClinica, diagnosticos, setMsg]);
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={themedPageBg}>
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/50 flex flex-col items-center gap-4">
@@ -3799,15 +3852,15 @@ function HistoriaClinicaPage() {
                       console.warn('Referencia de receta no disponible o sin medicamentos');
                       return;
                     }
-                    handlePrintReceta();
+                    handlePrintRecetaPdf();
                   }}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap"
-                  disabled={!hc.receta || hc.receta.length === 0}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none"
+                  disabled={!hc.receta || hc.receta.length === 0 || generandoRecetaPdf}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                   </svg>
-                  <span>💊 Receta</span>
+                  <span>{generandoRecetaPdf ? 'Generando PDF...' : '💊 Receta'}</span>
                 </button>
               </div>
               <div className="text-center w-full mt-4 pt-4 border-t border-gray-200">
@@ -4625,19 +4678,6 @@ function HistoriaClinicaPage() {
             medicoInfo={medicoInfo}
             firmaMedico={firmaMedico}
             configuracionClinica={configuracionClinica}
-          />
-        </div>
-      </div>
-      {/* Componente oculto para impresión de Receta de Medicamentos */}
-      <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
-        <div ref={printRecetaRef}>
-          <ImpresionRecetaMedicamentos
-            paciente={pacienteParaVista || paciente}
-            medicamentos={hc.receta}
-            recomendaciones={hc.recomendaciones || ''}
-            medicoInfo={medicoInfo}
-            configuracionClinica={configuracionClinica}
-            diagnosticos={diagnosticos}
           />
         </div>
       </div>

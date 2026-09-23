@@ -194,7 +194,10 @@ try {
                 'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id),
                 'fecha_hora_param' => ($cobro['fecha_cobro'] ?? null)
             ];
-            CajaModule::registrarIngreso($conn, $params_individual);
+            $okIngreso = CajaModule::registrarIngreso($conn, $params_individual);
+            if (!$okIngreso) {
+                throw new Exception('No se pudo registrar el ingreso en caja durante la actualización del cobro.');
+            }
         }
 
         // Laboratorio de referencia si aplica

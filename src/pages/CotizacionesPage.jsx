@@ -97,6 +97,17 @@ function formatDateShort(value) {
   return String(value).replace(/[^0-9-]/g, "").slice(0, 10) || "sin-fecha";
 }
 
+function getRowDateYmd(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const ymd = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return formatDateInput(parsed);
+}
+
 function formatCorrelativoFechaAtencion(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -1589,7 +1600,22 @@ export default function CotizacionesPage() {
   }, []);
 
   const rowsVisibles = useMemo(() => {
-    const base = Array.isArray(rows) ? rows : [];
+    let base = Array.isArray(rows) ? rows : [];
+
+    let fechaInicioActiva = String(filtrosAplicados.fechaInicio || "").trim();
+    let fechaFinActiva = String(filtrosAplicados.fechaFin || "").trim();
+    if (fechaInicioActiva && !fechaFinActiva) fechaFinActiva = fechaInicioActiva;
+    if (fechaFinActiva && !fechaInicioActiva) fechaInicioActiva = fechaFinActiva;
+
+    if (fechaInicioActiva && fechaFinActiva) {
+      const inicio = fechaInicioActiva <= fechaFinActiva ? fechaInicioActiva : fechaFinActiva;
+      const fin = fechaInicioActiva <= fechaFinActiva ? fechaFinActiva : fechaInicioActiva;
+      base = base.filter((row) => {
+        const ymd = getRowDateYmd(row?.fecha);
+        return Boolean(ymd) && ymd >= inicio && ymd <= fin;
+      });
+    }
+
     if (filtroSolicitudHC === "solo_hc") {
       return base.filter((row) => resolverSolicitudDesdeHC(row).activa);
     }
@@ -1601,7 +1627,7 @@ export default function CotizacionesPage() {
       });
     }
     return base;
-  }, [rows, filtroSolicitudHC]);
+  }, [rows, filtroSolicitudHC, filtrosAplicados.fechaInicio, filtrosAplicados.fechaFin]);
 
   const rowsOperativos = useMemo(() => agruparFilasOperativasPorEpisodio(rowsVisibles), [rowsVisibles]);
 
@@ -1687,11 +1713,16 @@ export default function CotizacionesPage() {
   }, [qInput, filtrosAplicados.q]);
 
   const filtrar = () => {
+    let fechaInicio = String(fechaInicioInput || "").trim();
+    let fechaFin = String(fechaFinInput || "").trim();
+    if (fechaInicio && !fechaFin) fechaFin = fechaInicio;
+    if (fechaFin && !fechaInicio) fechaInicio = fechaFin;
+
     const next = {
       q: qInput,
       estado: estadoInput,
-      fechaInicio: fechaInicioInput,
-      fechaFin: fechaFinInput,
+      fechaInicio,
+      fechaFin,
     };
 
     const unchanged = (
@@ -1701,10 +1732,17 @@ export default function CotizacionesPage() {
       && String(filtrosAplicados.fechaFin || "") === String(next.fechaFin || "")
     );
 
+    setFechaInicioInput(fechaInicio);
+    setFechaFinInput(fechaFin);
+
     if (page !== 1) setPage(1);
     if (!unchanged) {
       setFiltrosAplicados(next);
+      return;
     }
+
+    // Permite refrescar explícitamente con los mismos filtros para evitar UI desfasada.
+    void cargar();
   };
 
   const aplicarRangoDias = (dias) => {

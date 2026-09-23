@@ -10,9 +10,9 @@ function caja_columna_existe(PDO $pdo, string $columna): bool {
         return $cache[$columna];
     }
     try {
-        $stmt = $pdo->prepare("SHOW COLUMNS FROM cajas LIKE ?");
+        $stmt = $pdo->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cajas' AND column_name = ? LIMIT 1");
         $stmt->execute([$columna]);
-        $exists = (bool)$stmt->fetch(PDO::FETCH_ASSOC);
+        $exists = (bool)$stmt->fetchColumn();
         $cache[$columna] = $exists;
         return $exists;
     } catch (Throwable $e) {
@@ -164,7 +164,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
     }
 }
 
-$stmt = $pdo->prepare('SELECT SUM(monto) FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
+$stmt = $pdo->prepare('SELECT COALESCE(SUM(h.monto_medico), 0) FROM honorarios_medicos_movimientos h WHERE h.caja_id = ? AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ""))) = "pagado"');
 $stmt->execute([$caja_id]);
 $egreso_honorarios = $stmt->fetchColumn();
 if ($egreso_honorarios === false || $egreso_honorarios === null) {
@@ -279,6 +279,18 @@ $paramsUpdate[] = $caja_id;
 $stmt = $pdo->prepare($sqlUpdate);
 $stmt->execute($paramsUpdate);
 
+$horaCierreTicket = date('h:i A');
+try {
+    $stmtHora = $pdo->prepare('SELECT DATE_FORMAT(hora_cierre, "%h:%i %p") AS hora_cierre_fmt FROM cajas WHERE id = ? LIMIT 1');
+    $stmtHora->execute([$caja_id]);
+    $horaRow = $stmtHora->fetch(PDO::FETCH_ASSOC);
+    if ($horaRow && !empty($horaRow['hora_cierre_fmt'])) {
+        $horaCierreTicket = (string)$horaRow['hora_cierre_fmt'];
+    }
+} catch (Throwable $e) {
+    // fallback a hora local ya inicializada
+}
+
 // Opcional: registrar log de cierre
 // $stmtLog = $pdo->prepare('INSERT INTO log_cierres_caja (caja_id, usuario_id, fecha, monto_contado, diferencia) VALUES (?, ?, NOW(), ?, ?)');
 // $stmtLog->execute([$caja_id, $usuario_id, $monto_contado, $diferencia]);
@@ -288,7 +300,7 @@ echo json_encode([
     'mensaje' => 'Caja cerrada correctamente',
     'caja_id' => (int)$caja_id,
     'fecha' => $fecha,
-    'hora_cierre' => date('h:i A'),
+    'hora_cierre' => $horaCierreTicket,
     'diferencia' => $diferencia,
     'totales' => [
         'total_efectivo' => $total_efectivo,

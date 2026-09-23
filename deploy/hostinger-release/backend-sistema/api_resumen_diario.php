@@ -213,6 +213,16 @@ try {
         $cajas_resumen = $stmt->fetchAll(PDO::FETCH_ASSOC);
         // Para cada caja, calcular egresos y ganancia propios
         foreach ($cajas_resumen as &$caja) {
+            $totalCajaLegacy = isset($caja['total_caja']) ? (float)$caja['total_caja'] : 0.0;
+            $totalCajaOperativo =
+                (float)($caja['total_efectivo'] ?? 0)
+                + (float)($caja['total_yape'] ?? 0)
+                + (float)($caja['total_plin'] ?? 0)
+                + (float)($caja['total_tarjetas'] ?? 0)
+                + (float)($caja['total_transferencias'] ?? 0);
+            $caja['total_caja'] = $totalCajaLegacy;
+            $caja['total_caja_operativo'] = $totalCajaOperativo;
+
             // Egreso honorarios médicos por caja
             $stmtEgreso = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
             $stmtEgreso->execute([$caja['id']]);
@@ -229,7 +239,7 @@ try {
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
             // Ganancia por caja
-            $caja['ganancia_dia'] = floatval($caja['total_caja']) - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
+            $caja['ganancia_dia'] = $totalCajaOperativo - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
             // Ingresos por tipo de pago por caja
             $stmtPago = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
             $stmtPago->execute([$caja['id']]);
@@ -248,6 +258,16 @@ try {
         $stmt->execute([$inicioDia, $finDia, $usuario['id']]);
         $cajas_resumen = $stmt->fetchAll(PDO::FETCH_ASSOC);
         foreach ($cajas_resumen as &$caja) {
+            $totalCajaLegacy = isset($caja['total_caja']) ? (float)$caja['total_caja'] : 0.0;
+            $totalCajaOperativo =
+                (float)($caja['total_efectivo'] ?? 0)
+                + (float)($caja['total_yape'] ?? 0)
+                + (float)($caja['total_plin'] ?? 0)
+                + (float)($caja['total_tarjetas'] ?? 0)
+                + (float)($caja['total_transferencias'] ?? 0);
+            $caja['total_caja'] = $totalCajaLegacy;
+            $caja['total_caja_operativo'] = $totalCajaOperativo;
+
             $stmtEgreso = $pdo->prepare('SELECT SUM(monto) as egreso_honorarios FROM egresos WHERE caja_id = ? AND tipo_egreso = "honorario_medico"');
             $stmtEgreso->execute([$caja['id']]);
             $egresoCaja = $stmtEgreso->fetchColumn();
@@ -260,7 +280,7 @@ try {
             $stmtOperativo->execute([$caja['id']]);
             $egresoOperativo = $stmtOperativo->fetchColumn();
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
-            $caja['ganancia_dia'] = floatval($caja['total_caja']) - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
+            $caja['ganancia_dia'] = $totalCajaOperativo - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
 
             $normalizarControlRealCaja($caja);
         }

@@ -4,6 +4,7 @@ import { authFetch } from "../../utils/apiClient";
 const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
   const [egresos, setEgresos] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
     const [filtro, setFiltro] = useState("");
     const [fechaFiltro, setFechaFiltro] = useState("");
   const [rowsPerPage, setRowsPerPage] = useState(3);
@@ -14,11 +15,17 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
     }, [fechaFiltro]);
 
   useImperativeHandle(ref, () => ({
-    fetchEgresos
+    fetchEgresos,
+    goFirstPage: () => setPage(1),
   }));
 
-  const fetchEgresos = async () => {
+  const fetchEgresos = async (options = {}) => {
+    const shouldResetPage = Boolean(options?.resetPage);
+    if (shouldResetPage) {
+      setPage(1);
+    }
     setLoading(true);
+    setError("");
     try {
       let url = `api_egresos.php`;
       if (fechaFiltro) {
@@ -30,6 +37,7 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
       if (!resp.ok) {
         console.error(`Error fetching egresos: ${resp.status} ${resp.statusText}`);
         setEgresos([]);
+        setError(`No se pudo cargar egresos (${resp.status})`);
         setLoading(false);
         return;
       }
@@ -40,10 +48,12 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
       } else {
         console.warn('API returned success=false:', data);
         setEgresos([]);
+        setError(data.error || "No se pudo cargar egresos");
       }
     } catch (err) {
       console.error('Error fetching egresos:', err);
       setEgresos([]);
+      setError("Error de conexion al cargar egresos");
       setLoading(false);
     }
   };
@@ -113,6 +123,8 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
         <table className="min-w-full border border-gray-200 rounded-lg shadow text-xs sm:text-sm bg-white">
           <thead>
             <tr className="bg-blue-50 text-blue-800">
+              <th className="px-2 py-2 font-semibold border-b border-gray-200">ID</th>
+              <th className="px-2 py-2 font-semibold border-b border-gray-200">Caja ID</th>
               <th className="px-2 py-2 font-semibold border-b border-gray-200">Monto</th>
               <th className="px-2 py-2 font-semibold border-b border-gray-200">Descripción</th>
               <th className="hidden sm:table-cell px-2 py-2 font-semibold border-b border-gray-200">Categoría</th>
@@ -128,6 +140,8 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
           <tbody>
             {paginatedEgresos.map((e, idx) => (
               <tr key={e.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50 hover:bg-blue-50 transition"}>
+                <td className="px-2 py-2 border-b border-gray-100">{e.id ?? '-'}</td>
+                <td className="px-2 py-2 border-b border-gray-100">{e.caja_id ?? '-'}</td>
                 <td className="px-2 py-2 border-b border-gray-100">S/ {parseFloat(e.monto).toFixed(2)}</td>
                 <td className="px-2 py-2 border-b border-gray-100">{e.descripcion}</td>
                 <td className="hidden sm:table-cell px-2 py-2 border-b border-gray-100">{e.categoria}</td>
@@ -177,6 +191,7 @@ const EgresosList = forwardRef(function EgresosList({ onEdit }, ref) {
         </div>
       </div>
       {loading && <div className="mt-4 text-blue-600">Cargando...</div>}
+      {!loading && error && <div className="mt-4 text-red-600 font-semibold">{error}</div>}
       {!loading && egresosFiltrados.length === 0 && <div className="mt-4 text-gray-500">No hay egresos registrados.</div>}
     </div>
   );

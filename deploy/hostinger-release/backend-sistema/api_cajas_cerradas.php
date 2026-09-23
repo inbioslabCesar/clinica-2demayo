@@ -77,17 +77,57 @@ try {
         $columnaSeguro('total_plin'),
         $columnaSeguro('total_tarjetas'),
         $columnaSeguro('total_transferencias'),
-        $columnaSeguro('egreso_honorarios'),
-        $columnaSeguro('egreso_lab_ref'),
-        $columnaSeguro('egreso_operativo'),
         $columnaSeguro('virtual_contado'),
         $columnaSeguro('diferencia_virtual'),
         $columnaSeguro('cierre_automatico'),
         $columnaSeguro('cierre_pendiente_cuadre'),
-        $columnaSeguro('total_egresos'),
-        $columnaSeguro('ganancia_dia'),
         $columnaSeguro('monto_contado'),
     ];
+
+        $exprTotalEfectivo = isset($columnasCajas['total_efectivo']) ? 'COALESCE(c.total_efectivo, 0)' : '0';
+        $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';
+        $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'COALESCE(c.total_plin, 0)' : '0';
+        $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'COALESCE(c.total_tarjetas, 0)' : '0';
+        $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'COALESCE(c.total_transferencias, 0)' : '0';
+        $exprIngresoCaja = "({$exprTotalEfectivo} + {$exprTotalYape} + {$exprTotalPlin} + {$exprTotalTarjetas} + {$exprTotalTransferencias})";
+
+        $exprEgresoHonorarios = "COALESCE((
+                SELECT SUM(h.monto_medico)
+                FROM honorarios_medicos_movimientos h
+                WHERE h.caja_id = c.id
+                    AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ''))) = 'pagado'
+        ), 0)";
+        $exprEgresoHonorariosDiaOperativo = "COALESCE((
+                SELECT SUM(h.monto_medico)
+                FROM honorarios_medicos_movimientos h
+                WHERE h.caja_id = c.id
+                    AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ''))) = 'pagado'
+                    AND DATE(h.fecha) = DATE(c.fecha)
+        ), 0)";
+        $exprEgresoLabRef = "COALESCE((
+                SELECT SUM(e.monto)
+                FROM egresos e
+                WHERE e.caja_id = c.id
+                    AND e.tipo_egreso = 'laboratorio'
+        ), 0)";
+        $exprEgresoOperativo = "COALESCE((
+                SELECT SUM(e.monto)
+                FROM egresos e
+                WHERE e.caja_id = c.id
+                    AND e.tipo_egreso NOT IN ('honorario_medico', 'laboratorio')
+        ), 0)";
+        $exprEgresoHonorariosArrastre = "GREATEST(0, {$exprEgresoHonorarios} - {$exprEgresoHonorariosDiaOperativo})";
+        $exprTotalEgresosCaja = "({$exprEgresoHonorarios} + {$exprEgresoLabRef} + {$exprEgresoOperativo})";
+        $exprGananciaCaja = "({$exprIngresoCaja} - {$exprTotalEgresosCaja})";
+
+        $selectExtras[] = $exprEgresoHonorarios . ' AS egreso_honorarios';
+        $selectExtras[] = $exprEgresoHonorarios . ' AS egreso_honorarios_caja';
+        $selectExtras[] = $exprEgresoHonorariosDiaOperativo . ' AS egreso_honorarios_dia_operativo';
+        $selectExtras[] = $exprEgresoHonorariosArrastre . ' AS egreso_honorarios_arrastre';
+        $selectExtras[] = $exprEgresoLabRef . ' AS egreso_lab_ref';
+        $selectExtras[] = $exprEgresoOperativo . ' AS egreso_operativo';
+        $selectExtras[] = $exprTotalEgresosCaja . ' AS total_egresos';
+        $selectExtras[] = $exprGananciaCaja . ' AS ganancia_dia';
 
     $where = [
         "c.estado = 'cerrada'",
@@ -141,15 +181,15 @@ try {
         COUNT(*) AS total_cajas,
         COALESCE(SUM(c.monto_cierre), 0) AS monto_cierre,
         COALESCE(SUM(c.diferencia), 0) AS diferencia,
-        COALESCE(SUM(" . (isset($columnasCajas['total_efectivo']) ? "c.total_efectivo" : "0") . "), 0) AS total_efectivo,
-        COALESCE(SUM(" . (isset($columnasCajas['total_yape']) ? "c.total_yape" : "0") . "), 0) AS total_yape,
-        COALESCE(SUM(" . (isset($columnasCajas['total_plin']) ? "c.total_plin" : "0") . "), 0) AS total_plin,
-        COALESCE(SUM(" . (isset($columnasCajas['total_tarjetas']) ? "c.total_tarjetas" : "0") . "), 0) AS total_tarjetas,
-        COALESCE(SUM(" . (isset($columnasCajas['total_transferencias']) ? "c.total_transferencias" : "0") . "), 0) AS total_transferencias,
+        COALESCE(SUM({$exprTotalEfectivo}), 0) AS total_efectivo,
+        COALESCE(SUM({$exprTotalYape}), 0) AS total_yape,
+        COALESCE(SUM({$exprTotalPlin}), 0) AS total_plin,
+        COALESCE(SUM({$exprTotalTarjetas}), 0) AS total_tarjetas,
+        COALESCE(SUM({$exprTotalTransferencias}), 0) AS total_transferencias,
         COALESCE(SUM(" . (isset($columnasCajas['virtual_contado']) ? "c.virtual_contado" : "0") . "), 0) AS virtual_contado,
         COALESCE(SUM(" . (isset($columnasCajas['diferencia_virtual']) ? "c.diferencia_virtual" : "0") . "), 0) AS diferencia_virtual,
-        COALESCE(SUM(" . (isset($columnasCajas['total_egresos']) ? "c.total_egresos" : "0") . "), 0) AS total_egresos,
-        COALESCE(SUM(" . (isset($columnasCajas['ganancia_dia']) ? "c.ganancia_dia" : "0") . "), 0) AS ganancia_dia
+        COALESCE(SUM({$exprTotalEgresosCaja}), 0) AS total_egresos,
+        COALESCE(SUM({$exprGananciaCaja}), 0) AS ganancia_dia
         FROM cajas c
         WHERE {$whereSql}
         GROUP BY c.fecha

@@ -422,9 +422,9 @@ function CajaAperturaGuard({ usuario }) {
 
     const verificar = async () => {
       try {
-        const response = await authFetch("api_caja_verificar.php", { cache: "no-store" });
+        const response = await authFetch("api_caja_estado.php", { cache: "no-store" });
         const data = await response.json();
-        const cajaAbierta = Boolean(data?.success && data?.caja_abierta);
+        const cajaAbierta = Boolean(data?.success) && String(data?.estado || '').toLowerCase() === 'abierta';
         if (activo) {
           cajaCache.ts = Date.now();
           cajaCache.abierta = cajaAbierta;

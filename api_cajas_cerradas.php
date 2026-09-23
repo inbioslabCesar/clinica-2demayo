@@ -77,15 +77,31 @@ try {
         $columnaSeguro('total_plin'),
         $columnaSeguro('total_tarjetas'),
         $columnaSeguro('total_transferencias'),
-        $columnaSeguro('egreso_honorarios'),
-        $columnaSeguro('egreso_lab_ref'),
-        $columnaSeguro('egreso_operativo'),
         $columnaSeguro('virtual_contado'),
         $columnaSeguro('diferencia_virtual'),
         $columnaSeguro('cierre_automatico'),
         $columnaSeguro('cierre_pendiente_cuadre'),
-        $columnaSeguro('monto_contado'),
     ];
+
+    // Normalizar monto contado para reapertura:
+    // 1) usar monto_contado cuando existe,
+    // 2) si viene NULL, usar monto_cierre,
+    // 3) en históricos con monto_contado=0 pero monto_cierre>0, mostrar monto_cierre.
+    if (isset($columnasCajas['monto_contado']) && isset($columnasCajas['monto_cierre'])) {
+        $exprMontoContadoNormalizado = "CASE
+            WHEN c.monto_contado IS NULL THEN c.monto_cierre
+            WHEN ABS(COALESCE(c.monto_contado, 0)) < 0.0001 AND ABS(COALESCE(c.monto_cierre, 0)) > 0.0001 THEN c.monto_cierre
+            ELSE c.monto_contado
+        END";
+    } elseif (isset($columnasCajas['monto_contado'])) {
+        $exprMontoContadoNormalizado = 'c.monto_contado';
+    } elseif (isset($columnasCajas['monto_cierre'])) {
+        $exprMontoContadoNormalizado = 'c.monto_cierre';
+    } else {
+        $exprMontoContadoNormalizado = 'NULL';
+    }
+
+    $selectExtras[] = $exprMontoContadoNormalizado . ' AS monto_contado';
 
     $exprTotalEfectivo = isset($columnasCajas['total_efectivo']) ? 'COALESCE(c.total_efectivo, 0)' : '0';
     $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';
@@ -94,16 +110,44 @@ try {
     $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'COALESCE(c.total_transferencias, 0)' : '0';
     $exprIngresoCaja = "({$exprTotalEfectivo} + {$exprTotalYape} + {$exprTotalPlin} + {$exprTotalTarjetas} + {$exprTotalTransferencias})";
 
-    $exprEgresoHonorarios = isset($columnasCajas['egreso_honorarios']) ? 'COALESCE(c.egreso_honorarios, 0)' : '0';
-    $exprEgresoLabRef = isset($columnasCajas['egreso_lab_ref']) ? 'COALESCE(c.egreso_lab_ref, 0)' : '0';
-    $exprEgresoOperativo = isset($columnasCajas['egreso_operativo']) ? 'COALESCE(c.egreso_operativo, 0)' : '0';
-    $exprEgresoCajaFallback = "({$exprEgresoHonorarios} + {$exprEgresoLabRef} + {$exprEgresoOperativo})";
-    $exprTotalEgresosCaja = isset($columnasCajas['total_egresos'])
-        ? "COALESCE(c.total_egresos, {$exprEgresoCajaFallback})"
-        : $exprEgresoCajaFallback;
-    $exprGananciaCaja = isset($columnasCajas['ganancia_dia'])
-        ? "COALESCE(c.ganancia_dia, ({$exprIngresoCaja} - {$exprTotalEgresosCaja}))"
-        : "({$exprIngresoCaja} - {$exprTotalEgresosCaja})";
+    // Usar egresos reales por caja para evitar snapshots desactualizados en c.total_egresos.
+    $exprEgresoHonorarios = "COALESCE((
+        SELECT SUM(h.monto_medico)
+        FROM honorarios_medicos_movimientos h
+        WHERE h.caja_id = c.id
+          AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ''))) = 'pagado'
+    ), 0)";
+    $exprEgresoHonorariosDiaOperativo = "COALESCE((
+        SELECT SUM(h.monto_medico)
+        FROM honorarios_medicos_movimientos h
+        WHERE h.caja_id = c.id
+          AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ''))) = 'pagado'
+          AND DATE(h.fecha) = DATE(c.fecha)
+    ), 0)";
+        // Debe coincidir con cierre/resumen diario: laboratorio de referencia se toma
+        // desde laboratorio_referencia_movimientos (estado pagado), no desde egresos.
+        $exprEgresoLabRef = "COALESCE((
+                SELECT SUM(lrm.monto)
+                FROM laboratorio_referencia_movimientos lrm
+                WHERE lrm.caja_id = c.id
+                    AND lrm.estado = 'pagado'
+        ), 0)";
+    $exprEgresoOperativo = "COALESCE((
+        SELECT SUM(e.monto)
+        FROM egresos e
+        WHERE e.caja_id = c.id
+          AND e.tipo_egreso NOT IN ('honorario_medico', 'laboratorio')
+    ), 0)";
+    $exprEgresoHonorariosArrastre = "GREATEST(0, {$exprEgresoHonorarios} - {$exprEgresoHonorariosDiaOperativo})";
+    $exprTotalEgresosCaja = "({$exprEgresoHonorarios} + {$exprEgresoLabRef} + {$exprEgresoOperativo})";
+    $exprGananciaCaja = "({$exprIngresoCaja} - {$exprTotalEgresosCaja})";
+
+    $selectExtras[] = $exprEgresoHonorarios . ' AS egreso_honorarios';
+    $selectExtras[] = $exprEgresoHonorarios . ' AS egreso_honorarios_caja';
+    $selectExtras[] = $exprEgresoHonorariosDiaOperativo . ' AS egreso_honorarios_dia_operativo';
+    $selectExtras[] = $exprEgresoHonorariosArrastre . ' AS egreso_honorarios_arrastre';
+    $selectExtras[] = $exprEgresoLabRef . ' AS egreso_lab_ref';
+    $selectExtras[] = $exprEgresoOperativo . ' AS egreso_operativo';
 
     $selectExtras[] = $exprTotalEgresosCaja . ' AS total_egresos';
     $selectExtras[] = $exprGananciaCaja . ' AS ganancia_dia';
@@ -179,7 +223,7 @@ try {
     $resumenDiario = $stmtResumen->fetchAll(PDO::FETCH_ASSOC);
 
     $exprPendiente = isset($columnasCajas['cierre_pendiente_cuadre']) ? 'COALESCE(c.cierre_pendiente_cuadre, 0)' : '0';
-    $exprMontoContado = isset($columnasCajas['monto_contado']) ? 'c.monto_contado' : 'NULL';
+    $exprMontoContado = $exprMontoContadoNormalizado;
     $exprVirtualContado = isset($columnasCajas['virtual_contado']) ? 'c.virtual_contado' : 'NULL';
     $exprDiferenciaVirtual = isset($columnasCajas['diferencia_virtual']) ? 'c.diferencia_virtual' : 'NULL';
     $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';

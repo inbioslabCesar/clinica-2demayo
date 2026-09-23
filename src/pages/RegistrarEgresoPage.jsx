@@ -117,37 +117,49 @@ export default function RegistrarEgresoPage() {
   const handleSubmit = async e => {
     e.preventDefault();
     setLoading(true);
-    let url = `api_egresos.php`;
-    let method = "POST";
-    if (editId) {
-      url += `?id=${editId}`;
-      method = "PUT";
-    }
-    const resp = await authFetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify((() => {
-        const categoriaResuelta = form.categoria || inferCategoriaFromDescripcion(form.descripcion) || "otros";
-        return {
-          ...form,
-          categoria: categoriaResuelta,
-          tipo_egreso: inferTipoEgresoFromCategoria(categoriaResuelta),
-        };
-      })()),
-    });
-    const data = await resp.json();
-    setLoading(false);
-    if (data.success) {
-      // Eliminado alert de éxito en producción
-      setShowForm(false);
-      setEditId(null);
-      setForm(getInitialForm());
-      setIsCategoriaManual(false);
-      if (egresosListRef.current && egresosListRef.current.fetchEgresos) {
-        egresosListRef.current.fetchEgresos();
+    try {
+      let url = `api_egresos.php`;
+      let method = "POST";
+      if (editId) {
+        url += `?id=${editId}`;
+        method = "PUT";
       }
-    } else {
-      // Eliminado alert de error en producción
+      const resp = await authFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify((() => {
+          const categoriaResuelta = form.categoria || inferCategoriaFromDescripcion(form.descripcion) || "otros";
+          return {
+            ...form,
+            categoria: categoriaResuelta,
+            tipo_egreso: inferTipoEgresoFromCategoria(categoriaResuelta),
+          };
+        })()),
+      });
+
+      let data = null;
+      try {
+        data = await resp.json();
+      } catch (_) {
+        data = { success: false, error: `Respuesta invalida del servidor (${resp.status})` };
+      }
+
+      setLoading(false);
+      if (data.success) {
+        setShowForm(false);
+        setEditId(null);
+        setForm(getInitialForm());
+        setIsCategoriaManual(false);
+        if (egresosListRef.current && egresosListRef.current.fetchEgresos) {
+          egresosListRef.current.fetchEgresos({ resetPage: true });
+        }
+      } else {
+        alert(data.error || "No se pudo registrar el egreso");
+      }
+    } catch (err) {
+      setLoading(false);
+      alert("Error de conexion al registrar egreso");
+      console.error("Error guardando egreso:", err);
     }
   };
 

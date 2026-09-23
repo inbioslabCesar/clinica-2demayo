@@ -196,8 +196,12 @@ const ReabrirCajaPage = () => {
 		{ key: 'total_plin', label: 'Plin' },
 		{ key: 'total_tarjetas', label: 'Tarjetas' },
 		{ key: 'total_transferencias', label: 'Transferencias' },
+		{ key: 'ingreso_real_calculado', label: 'Ingreso Real Calculado' },
 		{ key: 'total_egresos', label: 'Total Egresos' },
 		{ key: 'ganancia_dia', label: 'Ganancia Día' },
+		{ key: 'efectivo_esperado_real', label: 'Efectivo Esperado Real' },
+		{ key: 'efectivo_real_contado', label: 'Efectivo Real Contado' },
+		{ key: 'virtual_real_contado', label: 'Virtual Real Contado' },
 	];
 
 	const columnasResumenExport = [
@@ -226,8 +230,24 @@ const ReabrirCajaPage = () => {
 		total_plin: Number(caja.total_plin || 0).toFixed(2),
 		total_tarjetas: Number(caja.total_tarjetas || 0).toFixed(2),
 		total_transferencias: Number(caja.total_transferencias || 0).toFixed(2),
+		ingreso_real_calculado: (
+			Number(caja.total_efectivo || 0)
+			+ Number(caja.total_yape || 0)
+			+ Number(caja.total_plin || 0)
+			+ Number(caja.total_tarjetas || 0)
+			+ Number(caja.total_transferencias || 0)
+		).toFixed(2),
 		total_egresos: Number(caja.total_egresos || 0).toFixed(2),
 		ganancia_dia: Number(caja.ganancia_dia || 0).toFixed(2),
+		efectivo_esperado_real: (caja.monto_contado === null || caja.monto_contado === '' || caja.monto_contado === undefined)
+			? '-'
+			: (Number(caja.monto_contado || 0) - Number(caja.diferencia || 0)).toFixed(2),
+		efectivo_real_contado: (caja.monto_contado === null || caja.monto_contado === '' || caja.monto_contado === undefined)
+			? '-'
+			: Number(caja.monto_contado || 0).toFixed(2),
+		virtual_real_contado: (caja.virtual_contado === null || caja.virtual_contado === '' || caja.virtual_contado === undefined)
+			? '-'
+			: Number(caja.virtual_contado || 0).toFixed(2),
 	}));
 
 	const filasResumenExport = resumenDiario.map((fila) => ({
@@ -278,8 +298,24 @@ const ReabrirCajaPage = () => {
 			total_plin: Number(caja.total_plin || 0).toFixed(2),
 			total_tarjetas: Number(caja.total_tarjetas || 0).toFixed(2),
 			total_transferencias: Number(caja.total_transferencias || 0).toFixed(2),
+			ingreso_real_calculado: (
+				Number(caja.total_efectivo || 0)
+				+ Number(caja.total_yape || 0)
+				+ Number(caja.total_plin || 0)
+				+ Number(caja.total_tarjetas || 0)
+				+ Number(caja.total_transferencias || 0)
+			).toFixed(2),
 			total_egresos: Number(caja.total_egresos || 0).toFixed(2),
 			ganancia_dia: Number(caja.ganancia_dia || 0).toFixed(2),
+			efectivo_esperado_real: (caja.monto_contado === null || caja.monto_contado === '' || caja.monto_contado === undefined)
+				? '-'
+				: (Number(caja.monto_contado || 0) - Number(caja.diferencia || 0)).toFixed(2),
+			efectivo_real_contado: (caja.monto_contado === null || caja.monto_contado === '' || caja.monto_contado === undefined)
+				? '-'
+				: Number(caja.monto_contado || 0).toFixed(2),
+			virtual_real_contado: (caja.virtual_contado === null || caja.virtual_contado === '' || caja.virtual_contado === undefined)
+				? '-'
+				: Number(caja.virtual_contado || 0).toFixed(2),
 		}));
 	};
 

@@ -17,6 +17,11 @@ export default function CajaResumenDiario({ resumen, adminRecepConsolidado = nul
     </svg>
   );
   if (!resumen) return null;
+  const egresoHonorariosCaja = Number(resumen.egreso_honorarios_caja ?? resumen.egreso_honorarios ?? 0);
+  const egresoHonorariosDia = Number(resumen.egreso_honorarios_dia_operativo ?? 0);
+  const egresoHonorariosArrastre = Number(resumen.egreso_honorarios_arrastre ?? Math.max(0, egresoHonorariosCaja - egresoHonorariosDia));
+  const hasControlRealData = Number(adminControlRealConsolidado?.cajasCerradas || 0) > 0;
+  const fmtControl = (val) => hasControlRealData ? `S/ ${Number(val || 0).toFixed(2)}` : "No aplica aun";
   return (
     <div className="w-full rounded-3xl border border-slate-200 bg-gradient-to-b from-white via-slate-50 to-cyan-50 p-4 shadow-sm sm:p-6">
       <h2 className="mb-4 text-center text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Resumen Diario de Caja</h2>
@@ -25,19 +30,19 @@ export default function CajaResumenDiario({ resumen, adminRecepConsolidado = nul
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Vista consolidada admin</div>
-              <div className="text-lg sm:text-xl font-extrabold text-emerald-800">Ingreso total recepcionistas: S/ {Number(adminRecepConsolidado.totalIngresos || 0).toFixed(2)}</div>
+              <div className="text-lg sm:text-xl font-extrabold text-emerald-800">Ingreso total recepcionistas (cobro real): S/ {Number(adminRecepConsolidado.totalIngresos || 0).toFixed(2)}</div>
               <div className="text-sm text-slate-600">Ganancia neta recepcionistas: S/ {Number(adminRecepConsolidado.totalGanancia || 0).toFixed(2)}</div>
             </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700">
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-700">
                 Cajas abiertas: {Number(adminRecepConsolidado.cajasAbiertas || 0)}
-              </span>
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700">
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-700">
                 Recepcionistas activos: {Number(adminRecepConsolidado.usuariosUnicos || 0)}
-              </span>
-              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-100 px-3 py-2 font-semibold text-emerald-700">
                 Tiempo real: 10s
-              </span>
+              </div>
             </div>
           </div>
         </div>
@@ -48,41 +53,43 @@ export default function CajaResumenDiario({ resumen, adminRecepConsolidado = nul
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">Control real de cierre (recepcionistas)</div>
               <div className="text-base sm:text-lg font-extrabold text-amber-900">
-                Efectivo esperado: S/ {Number(adminControlRealConsolidado.efectivoEsperadoTotal || 0).toFixed(2)}
+                Efectivo esperado: {fmtControl(adminControlRealConsolidado.efectivoEsperadoTotal)}
                 {" | "}
-                Efectivo contado: S/ {Number(adminControlRealConsolidado.efectivoContadoTotal || 0).toFixed(2)}
+                Efectivo contado: {fmtControl(adminControlRealConsolidado.efectivoContadoTotal)}
               </div>
               <div className="text-sm text-slate-700">
-                Diferencia neta: S/ {Number(adminControlRealConsolidado.diferenciaEfectivoTotal || 0).toFixed(2)}
+                Diferencia neta: {fmtControl(adminControlRealConsolidado.diferenciaEfectivoTotal)}
                 {" | "}
-                Virtual cobrado: S/ {Number(adminControlRealConsolidado.virtualCobradoTotal || 0).toFixed(2)}
+                Virtual cobrado: {fmtControl(adminControlRealConsolidado.virtualCobradoTotal)}
               </div>
               <div className="text-sm text-slate-700">
-                Virtual contado: S/ {Number(adminControlRealConsolidado.virtualContadoTotal || 0).toFixed(2)}
+                Virtual contado: {fmtControl(adminControlRealConsolidado.virtualContadoTotal)}
                 {" | "}
-                Diferencia virtual neta: S/ {Number(adminControlRealConsolidado.diferenciaVirtualTotal || 0).toFixed(2)}
+                Diferencia virtual neta: {fmtControl(adminControlRealConsolidado.diferenciaVirtualTotal)}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700">
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-700">
                 Cajas cerradas: {Number(adminControlRealConsolidado.cajasCerradas || 0)}
-              </span>
-              <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-100 px-2.5 py-1 font-semibold text-rose-700">
+              </div>
+              <div className="rounded-xl border border-rose-200 bg-rose-100 px-3 py-2 font-semibold text-rose-700">
                 Autocierre pendiente: {Number(adminControlRealConsolidado.cajasPendientesRegularizacion || 0)}
-              </span>
-              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-100 px-3 py-2 font-semibold text-emerald-700">
                 Cuadre efectivo OK: {Number(adminControlRealConsolidado.cajasConCuadreEfectivo || 0)}
-              </span>
-              <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-100 px-2.5 py-1 font-semibold text-indigo-700">
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-indigo-100 px-3 py-2 font-semibold text-indigo-700">
                 Virtual registrado: {Number(adminControlRealConsolidado.cajasConVirtualRegistrado || 0)}
-              </span>
-              <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-100 px-2.5 py-1 font-semibold text-sky-700">
+              </div>
+              <div className="rounded-xl border border-sky-200 bg-sky-100 px-3 py-2 font-semibold text-sky-700">
                 Cuadre virtual OK: {Number(adminControlRealConsolidado.cajasConCuadreVirtual || 0)}
-              </span>
+              </div>
             </div>
           </div>
           <div className="mt-2 text-xs text-amber-800">
-            Este bloque refleja solo cierres con cuadre real final. Los autocierres por corte de 24h quedan marcados como pendientes de regularizacion.
+            {hasControlRealData
+              ? "Este bloque refleja solo cierres con cuadre real final. Los autocierres por corte de 24h quedan marcados como pendientes de regularizacion."
+              : "Aun no hay cajas cerradas regularizadas hoy. Mientras la caja este abierta, este bloque de cierre real no aplica."}
           </div>
         </div>
       )}
@@ -107,8 +114,8 @@ export default function CajaResumenDiario({ resumen, adminRecepConsolidado = nul
         </div>
         {/* Egreso honorarios médicos */}
         <div className="rounded-2xl border border-rose-100 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
-          <span className="font-bold text-red-700 text-md flex items-center">EGRESO HONORARIOS MÉDICOS {hasPositive(resumen.egreso_honorarios) && (<span className="ml-2 text-green-600"><Check /></span>)}</span>
-          <div className="text-3xl font-extrabold text-red-600 drop-shadow">S/ {resumen.egreso_honorarios ? resumen.egreso_honorarios.toFixed(2) : "0.00"}</div>
+          <span className="font-bold text-red-700 text-md flex items-center">HONORARIOS PAGADOS EN CAJA {hasPositive(egresoHonorariosCaja) && (<span className="ml-2 text-green-600"><Check /></span>)}</span>
+          <div className="text-3xl font-extrabold text-red-600 drop-shadow">S/ {egresoHonorariosCaja.toFixed(2)}</div>
         </div>
         {/* Egreso laboratorio de referencia */}
         <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
@@ -124,6 +131,23 @@ export default function CajaResumenDiario({ resumen, adminRecepConsolidado = nul
         <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
           <span className="font-bold text-green-700 text-md flex items-center">GANANCIA DEL DÍA {hasPositive(resumen.ganancia_dia) && (<span className="ml-2 text-green-600"><Check /></span>)}</span>
           <div className="text-3xl font-extrabold text-green-600 drop-shadow">S/ {resumen.ganancia_dia ? resumen.ganancia_dia.toFixed(2) : "0.00"}</div>
+        </div>
+      </div>
+      <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50/70 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">Conciliación de honorarios</div>
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+          <div className="rounded-xl border border-rose-100 bg-white px-3 py-2">
+            <div className="text-slate-500">Pagado en caja</div>
+            <div className="font-extrabold text-rose-700">S/ {egresoHonorariosCaja.toFixed(2)}</div>
+          </div>
+          <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
+            <div className="text-slate-500">Atenciones del día operativo</div>
+            <div className="font-extrabold text-emerald-700">S/ {egresoHonorariosDia.toFixed(2)}</div>
+          </div>
+          <div className="rounded-xl border border-amber-100 bg-white px-3 py-2">
+            <div className="text-slate-500">Arrastre liquidado</div>
+            <div className="font-extrabold text-amber-700">S/ {egresoHonorariosArrastre.toFixed(2)}</div>
+          </div>
         </div>
       </div>
       {/* Cards modernas para tipo de pago */}

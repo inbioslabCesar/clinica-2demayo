@@ -97,8 +97,11 @@ class CajaModule {
             caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno, honorario_movimiento_id, cobrado_por, liquidado_por, fecha_liquidacion, fecha_hora
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))";
         $stmt_ingreso = $conn->prepare($sql);
+        if (!$stmt_ingreso) {
+            return false;
+        }
         $fechaHoraParam = $params['fecha_hora_param'] ?? null;
-        $stmt_ingreso->bind_param(
+        if (!$stmt_ingreso->bind_param(
             "isssdsisisisiiiss",
             $params['caja_id'],
             $params['tipo_ingreso'],
@@ -117,8 +120,16 @@ class CajaModule {
             $params['liquidado_por'],
             $params['fecha_liquidacion'],
             $fechaHoraParam
-        );
+        )) {
+            $stmt_ingreso->close();
+            return false;
+        }
         $result = $stmt_ingreso->execute();
+        $affected = (int)$stmt_ingreso->affected_rows;
+        $stmt_ingreso->close();
+        if (!$result || $affected <= 0) {
+            return false;
+        }
         if ($result) {
             $okTotales = self::actualizarTotalesCaja(
                 $conn,

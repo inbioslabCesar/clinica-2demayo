@@ -68,6 +68,12 @@ $incluirAnuladas = isset($_GET['incluir_anuladas']) && intval($_GET['incluir_anu
 $whereBase = "WHERE 1=1";
 $paramsBase = [];
 
+$estadoNormalizado = strtolower(trim((string)$estado));
+$usarFechaPagoComoFiltro = ($estadoNormalizado === 'pagado');
+$fechaFiltroExpr = $usarFechaPagoComoFiltro
+    ? "DATE(COALESCE(h.fecha_pago_medico, h.fecha))"
+    : "DATE(h.fecha)";
+
 if ($fecha_desde === '' && $fecha_hasta === '' && in_array($rango, ['hoy', 'semana', 'mes'], true)) {
     $hoy = date('Y-m-d');
     if ($rango === 'hoy') {
@@ -83,11 +89,11 @@ if ($fecha_desde === '' && $fecha_hasta === '' && in_array($rango, ['hoy', 'sema
 }
 
 if ($fecha_desde !== '') {
-    $whereBase .= " AND DATE(h.fecha) >= :fecha_desde";
+    $whereBase .= " AND {$fechaFiltroExpr} >= :fecha_desde";
     $paramsBase[':fecha_desde'] = $fecha_desde;
 }
 if ($fecha_hasta !== '') {
-    $whereBase .= " AND DATE(h.fecha) <= :fecha_hasta";
+    $whereBase .= " AND {$fechaFiltroExpr} <= :fecha_hasta";
     $paramsBase[':fecha_hasta'] = $fecha_hasta;
 }
 if ($medico_id) {
@@ -127,6 +133,10 @@ if ($estado === 'pendiente' || $estado === 'pagado') {
     $where .= " AND h.estado_pago_medico = :estado";
     $params[':estado'] = $estado;
 }
+
+$orderByExpr = $usarFechaPagoComoFiltro
+    ? "COALESCE(h.fecha_pago_medico, DATE(h.fecha))"
+    : "h.fecha";
 
 $joinHpc = '';
 $cobradoPorExpr = 'i.usuario_id';
@@ -191,7 +201,7 @@ $sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medic
     $joinHpc
     LEFT JOIN usuarios uc ON uc.id = $cobradoPorExpr
     $where
-    ORDER BY h.fecha DESC, h.id DESC
+    ORDER BY {$orderByExpr} DESC, h.id DESC
     LIMIT :limit OFFSET :offset";
 
 $stmt = $pdo->prepare($sql);

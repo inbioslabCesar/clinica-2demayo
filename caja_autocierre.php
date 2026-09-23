@@ -8,9 +8,9 @@ if (!function_exists('caja_auto_columna_existe')) {
             return $cache[$columna];
         }
         try {
-            $stmt = $pdo->prepare("SHOW COLUMNS FROM cajas LIKE ?");
+            $stmt = $pdo->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cajas' AND column_name = ? LIMIT 1");
             $stmt->execute([$columna]);
-            $exists = (bool)$stmt->fetch(PDO::FETCH_ASSOC);
+            $exists = (bool)$stmt->fetchColumn();
             $cache[$columna] = $exists;
             return $exists;
         } catch (Throwable $e) {

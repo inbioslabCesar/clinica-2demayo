@@ -84,8 +84,25 @@ export default function CajaAdminDashboard() {
     });
   }, [resumen]);
 
+  const obtenerTotalCobradoRealCaja = (caja) => {
+    const estado = String(caja?.estado || "").toLowerCase();
+    const controlRealDisponible = Number(caja?.control_real_disponible || 0) === 1
+      && Number(caja?.cierre_pendiente_cuadre || 0) !== 1;
+
+    if (estado === "cerrada" && controlRealDisponible) {
+      const totalEfectivo = Number(caja?.total_efectivo || 0);
+      const totalYape = Number(caja?.total_yape || 0);
+      const totalPlin = Number(caja?.total_plin || 0);
+      const totalTarjetas = Number(caja?.total_tarjetas || 0);
+      const totalTransferencias = Number(caja?.total_transferencias || 0);
+      return totalEfectivo + totalYape + totalPlin + totalTarjetas + totalTransferencias;
+    }
+
+    return Number(caja?.total_caja || 0);
+  };
+
   const consolidadoRecepcion = useMemo(() => {
-    const totalIngresos = cajasRecepcionistas.reduce((acc, caja) => acc + Number(caja?.total_caja || 0), 0);
+    const totalIngresos = cajasRecepcionistas.reduce((acc, caja) => acc + obtenerTotalCobradoRealCaja(caja), 0);
     const totalGanancia = cajasRecepcionistas.reduce((acc, caja) => acc + Number(caja?.ganancia_dia || 0), 0);
     const cajasAbiertas = cajasRecepcionistas.filter((caja) => String(caja?.estado || "").toLowerCase() === "abierta").length;
     const usuariosUnicos = new Set(cajasRecepcionistas.map((caja) => String(caja?.usuario_id || "")).filter(Boolean)).size;
@@ -250,7 +267,7 @@ export default function CajaAdminDashboard() {
         <main className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-100 p-3 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Ingresos recep.</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Cobrado real recep.</div>
               <div className="mt-1 text-2xl font-black text-cyan-900">S/ {Number(consolidadoRecepcion.totalIngresos || 0).toFixed(2)}</div>
             </div>
             <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-100 p-3 shadow-sm">

@@ -5946,6 +5946,52 @@ function fecha_iso_valida($value) {
     return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1;
 }
 
+function normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, $usarHoySiVacio = false) {
+    $fechaInicio = trim((string)$fechaInicioRaw);
+    $fechaFin = trim((string)$fechaFinRaw);
+
+    if ($fechaInicio === '' && $fechaFin === '' && $usarHoySiVacio) {
+        $hoyLima = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+        $fechaInicio = $hoyLima;
+        $fechaFin = $hoyLima;
+    } elseif ($fechaInicio === '' && $fechaFin !== '') {
+        $fechaInicio = $fechaFin;
+    } elseif ($fechaFin === '' && $fechaInicio !== '') {
+        $fechaFin = $fechaInicio;
+    }
+
+    if ($fechaInicio === '' && $fechaFin === '') {
+        return [
+            'ok' => true,
+            'fecha_inicio' => '',
+            'fecha_fin' => '',
+            'error' => '',
+        ];
+    }
+
+    if (!fecha_iso_valida($fechaInicio) || !fecha_iso_valida($fechaFin)) {
+        return [
+            'ok' => false,
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'error' => 'Rango de fechas invalido. Use formato YYYY-MM-DD',
+        ];
+    }
+
+    if ($fechaInicio > $fechaFin) {
+        $tmp = $fechaInicio;
+        $fechaInicio = $fechaFin;
+        $fechaFin = $tmp;
+    }
+
+    return [
+        'ok' => true,
+        'fecha_inicio' => $fechaInicio,
+        'fecha_fin' => $fechaFin,
+        'error' => '',
+    ];
+}
+
 function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
     $map = [];
     $ids = array_values(array_filter(array_map('intval', (array)$cotizacionIds), function($id) {
@@ -5988,27 +6034,20 @@ function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
 }
 
 function reporte_atenciones_detallado($conn) {
-    $hoyLima = (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
-    $fechaInicio = trim((string)($_GET['fecha_inicio'] ?? ''));
-    $fechaFin = trim((string)($_GET['fecha_fin'] ?? ''));
+    $fechaInicioRaw = $_GET['fecha_inicio'] ?? '';
+    $fechaFinRaw = $_GET['fecha_fin'] ?? '';
     $estado = trim((string)($_GET['estado'] ?? ''));
     $q = trim((string)($_GET['q'] ?? ''));
     $rol = normalizar_rol_usuario_reporte($_GET['rol'] ?? 'todos');
     $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : 0;
     $expandirMetodosPago = !isset($_GET['expandir_metodos_pago']) || (string)$_GET['expandir_metodos_pago'] !== '0';
 
-    if ($fechaInicio === '' && $fechaFin === '') {
-        $fechaInicio = $hoyLima;
-        $fechaFin = $hoyLima;
-    } elseif ($fechaInicio === '') {
-        $fechaInicio = $fechaFin;
-    } elseif ($fechaFin === '') {
-        $fechaFin = $fechaInicio;
+    $rango = normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, true);
+    if (!$rango['ok']) {
+        respond(['success' => false, 'error' => $rango['error']], 400);
     }
-
-    if (!fecha_iso_valida($fechaInicio) || !fecha_iso_valida($fechaFin)) {
-        respond(['success' => false, 'error' => 'Rango de fechas invalido. Use formato YYYY-MM-DD'], 400);
-    }
+    $fechaInicio = $rango['fecha_inicio'];
+    $fechaFin = $rango['fecha_fin'];
 
     $hasCotizacionMovimientosCreatedAt = table_exists($conn, 'cotizacion_movimientos') && column_exists($conn, 'cotizacion_movimientos', 'created_at');
     $subqueryUltimoPagoAt = "(SELECT MAX(cm.created_at) FROM cotizacion_movimientos cm WHERE cm.cotizacion_id = c.id AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ''))) = 'abono' AND COALESCE(cm.monto, 0) > 0)";
@@ -6470,8 +6509,8 @@ switch ($method) {
         $limit = isset($_GET['limit']) ? max(1, (int)$_GET['limit']) : 10;
         $limit = min($limit, 50);
         $offset = ($page - 1) * $limit;
-        $fechaInicio = $_GET['fecha_inicio'] ?? null;
-        $fechaFin = $_GET['fecha_fin'] ?? null;
+        $fechaInicioRaw = $_GET['fecha_inicio'] ?? '';
+        $fechaFinRaw = $_GET['fecha_fin'] ?? '';
         $estado = $_GET['estado'] ?? null;
         $soloRegistroIncompleto = isset($_GET['registro_incompleto']) && (string)$_GET['registro_incompleto'] === '1';
         $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : null;
@@ -6496,6 +6535,13 @@ switch ($method) {
         $where = [];
         $types = '';
         $params = [];
+
+        $rango = normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, false);
+        if (!$rango['ok']) {
+            respond(['success' => false, 'error' => $rango['error']], 400);
+        }
+        $fechaInicio = $rango['fecha_inicio'];
+        $fechaFin = $rango['fecha_fin'];
 
         if ($fechaInicio && $fechaFin) {
             $fechaFinExclusiva = date('Y-m-d', strtotime($fechaFin . ' +1 day'));

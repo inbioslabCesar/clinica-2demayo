@@ -18,7 +18,9 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
   const egreso_lab_ref = totalesBackend?.egreso_lab_ref ?? datos.egreso_lab_ref ?? 0;
   const egreso_operativo = totalesBackend?.egreso_operativo ?? datos.egreso_operativo ?? 0;
   // Nuevo: egresos cubiertos por Yape/Transferencias
-  const egreso_electronico = datos.egreso_electronico !== undefined && datos.egreso_electronico !== "" && !isNaN(parseFloat(datos.egreso_electronico)) ? parseFloat(datos.egreso_electronico) : 0;
+  const egreso_electronico_backend = Number(totalesBackend?.egresos_virtuales_clinica ?? 0);
+  const egreso_electronico_datos = datos.egreso_electronico !== undefined && datos.egreso_electronico !== "" && !isNaN(parseFloat(datos.egreso_electronico)) ? parseFloat(datos.egreso_electronico) : 0;
+  const egreso_electronico = egreso_electronico_backend > 0 ? egreso_electronico_backend : egreso_electronico_datos;
   const total_egresos = totalesBackend?.total_egresos ?? (egreso_honorarios + egreso_lab_ref + egreso_operativo);
   const efectivo_esperado = Number(totalesBackend?.efectivo_esperado ?? datos.efectivo_esperado ?? 0);
   const virtual_esperado = Number(totalesBackend?.virtual_esperado ?? datos.virtual_esperado ?? 0);
@@ -507,7 +509,7 @@ export default function CerrarCajaView() {
           total_plin,
           total_tarjetas,
           total_transferencias,
-          egreso_electronico: 0
+          egreso_electronico: Number(resumen?.egresos_virtuales_clinica || 0)
         })
       });
       const data = await resp.json();
@@ -520,7 +522,7 @@ export default function CerrarCajaView() {
           monto_virtual_contado: montoVirtualContadoPayload,
           caja_id: data.caja_id,
           fecha: data.fecha || resumen?.fecha || new Date().toISOString().slice(0, 10),
-          egreso_electronico: 0,
+          egreso_electronico: Number(data?.totales?.egresos_virtuales_clinica || resumen?.egresos_virtuales_clinica || 0),
           hora_cierre: data.hora_cierre || new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
           usuario_nombre: data.usuario_nombre || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).nombre : ''),
           usuario_rol: data.usuario_rol || (window.sessionStorage.getItem('usuario') ? JSON.parse(window.sessionStorage.getItem('usuario')).rol : ''),
@@ -550,9 +552,13 @@ export default function CerrarCajaView() {
   const totalEgresos = (resumen.egreso_honorarios ? resumen.egreso_honorarios : 0)
     + (resumen.egreso_lab_ref ? resumen.egreso_lab_ref : 0)
     + (resumen.egreso_operativo ? resumen.egreso_operativo : 0);
+  const honorariosCaja = Number((resumen.egreso_honorarios_caja ?? resumen.egreso_honorarios) || 0);
+  const honorariosDiaOperativo = Number(resumen.egreso_honorarios_dia_operativo || 0);
+  const honorariosArrastre = Number(resumen.egreso_honorarios_arrastre ?? Math.max(0, honorariosCaja - honorariosDiaOperativo));
 
   const egresosPorMetodo = resumen?.egresos_por_metodo || {};
   const egresosEfectivo = Number(egresosPorMetodo.efectivo || 0) + Number(resumen.egreso_lab_ref || 0);
+  const aperturaCaja = Number(resumen.monto_apertura || 0);
   const efectivoEsperado = Number(resumen.monto_apertura || 0) + efectivoCobrado - egresosEfectivo;
   const virtualCobrado = Number(resumen?.virtual_cobrado || 0);
   const egresosVirtualesClinica = Number(resumen?.egresos_virtuales_clinica || 0);
@@ -627,7 +633,8 @@ export default function CerrarCajaView() {
           <div className="flex gap-4 flex-wrap justify-center my-2">
             <div className="bg-orange-100 rounded-xl px-6 py-4 flex flex-col items-center shadow-lg min-w-[160px]">
               <span className="text-xs text-orange-700 font-semibold flex items-center gap-1">🩺 Honorarios Médicos</span>
-              <span className="font-bold text-orange-800 text-lg">- S/ {(resumen.egreso_honorarios ? resumen.egreso_honorarios.toFixed(2) : "0.00")}</span>
+              <span className="font-bold text-orange-800 text-lg">- S/ {honorariosCaja.toFixed(2)}</span>
+              <span className="text-[11px] text-orange-700 mt-1 text-center">Día: S/ {honorariosDiaOperativo.toFixed(2)} | Arrastre: S/ {honorariosArrastre.toFixed(2)}</span>
             </div>
             <div className="bg-pink-100 rounded-xl px-6 py-4 flex flex-col items-center shadow-lg min-w-[160px]">
               <span className="text-xs text-pink-700 font-semibold flex items-center gap-1">🧑‍🔬 Honorarios Lab. Ref.</span>
@@ -651,6 +658,12 @@ export default function CerrarCajaView() {
               <span className="text-xs text-yellow-700 font-semibold">Efectivo esperado</span>
               <span className="font-bold text-yellow-800 text-3xl">S/ {efectivoEsperado.toFixed(2)}</span>
               <span className="text-xs text-gray-700 mt-1">(Apertura + cobros en efectivo - egresos en efectivo)</span>
+              <span className="text-xs text-gray-700 mt-1 text-center">
+                S/ {aperturaCaja.toFixed(2)} + S/ {efectivoCobrado.toFixed(2)} - S/ {egresosEfectivo.toFixed(2)} = S/ {efectivoEsperado.toFixed(2)}
+              </span>
+              <span className="text-[11px] text-gray-600 mt-1 text-center">
+                Nota: no tiene que coincidir con ganancia del día porque ganancia incluye también movimientos virtuales.
+              </span>
             </div>
             <div className="flex-1 bg-purple-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
               <span className="text-xs text-purple-700 font-semibold">Virtual esperado</span>
