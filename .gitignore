@@ -101,6 +101,10 @@ composer.phar
 *.tmp
 *.temp
 *.bak
+build_output.txt
+diag_cot.php
+tmp_diag_manual_*.php
+tmp_merge_lab_*.php
 _tmp_resultado_*.pdf
 tmp/api-cache/
 tmp_case_*.php
