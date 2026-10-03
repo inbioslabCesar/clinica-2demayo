@@ -2,6 +2,22 @@ import { useState, useEffect } from "react";
 import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 
+const LIQUIDACION_PREFS_KEY = "liquidacion_honorarios_filtros_v1";
+
+function leerPreferenciasLiquidacion(prefKey) {
+  try {
+    const raw = sessionStorage.getItem(prefKey);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function esFechaIsoValida(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim());
+}
+
 function LiquidacionHonorariosPage() {
   // Obtener usuario actual desde sessionStorage
   const usuario = (() => {
@@ -11,6 +27,11 @@ function LiquidacionHonorariosPage() {
       return {};
     }
   })();
+  const rolUsuario = String(usuario?.rol || "").toLowerCase();
+  const esRolMedico = rolUsuario.includes("medico") || rolUsuario.includes("doctor");
+  const usuarioPrefId = String(usuario?.id ?? usuario?.usuario_id ?? usuario?.nombre ?? "anon").trim() || "anon";
+  const preferenciasKey = `${LIQUIDACION_PREFS_KEY}_${usuarioPrefId}`;
+  const preferenciasGuardadas = leerPreferenciasLiquidacion(preferenciasKey);
 
   const [honorarios, setHonorarios] = useState([]);
   const [medicos, setMedicos] = useState([]);
@@ -24,15 +45,39 @@ function LiquidacionHonorariosPage() {
     por_servicio: [],
     subtotales_pagina: { pendiente: 0, pagado: 0, total: 0, items: 0 },
   });
-  const [turno, setTurno] = useState("");
-  const [medicoId, setMedicoId] = useState("");
-  const [estado, setEstado] = useState("pendiente");
-  const [rango, setRango] = useState("mes");
-  const [fechaDesde, setFechaDesde] = useState("");
-  const [fechaHasta, setFechaHasta] = useState("");
+  const [turno, setTurno] = useState(() => {
+    const saved = String(preferenciasGuardadas?.turno || "").toLowerCase().trim();
+    return ["", "mañana", "tarde", "noche"].includes(saved) ? saved : "";
+  });
+  const [medicoId, setMedicoId] = useState(() => String(preferenciasGuardadas?.medicoId || ""));
+  const [estado, setEstado] = useState(() => {
+    const saved = String(preferenciasGuardadas?.estado || "").toLowerCase().trim();
+    return ["pendiente", "pagado", "cancelado"].includes(saved) ? saved : "pendiente";
+  });
+  const [tipoFecha, setTipoFecha] = useState(() => {
+    const saved = String(preferenciasGuardadas?.tipoFecha || "").toLowerCase().trim();
+    if (saved === "movimiento" || saved === "atencion") return saved;
+    return esRolMedico ? "atencion" : "movimiento";
+  });
+  const [rango, setRango] = useState(() => {
+    const saved = String(preferenciasGuardadas?.rango || "").toLowerCase().trim();
+    if (["hoy", "semana", "mes", ""].includes(saved)) return saved;
+    return "hoy";
+  });
+  const [fechaDesde, setFechaDesde] = useState(() => {
+    const saved = String(preferenciasGuardadas?.fechaDesde || "").trim();
+    return esFechaIsoValida(saved) ? saved : "";
+  });
+  const [fechaHasta, setFechaHasta] = useState(() => {
+    const saved = String(preferenciasGuardadas?.fechaHasta || "").trim();
+    return esFechaIsoValida(saved) ? saved : "";
+  });
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(3);
+  const [rowsPerPage, setRowsPerPage] = useState(() => {
+    const saved = Number(preferenciasGuardadas?.rowsPerPage || 0);
+    return [3, 5, 10].includes(saved) ? saved : 3;
+  });
   const [totalPages, setTotalPages] = useState(1);
   const [totalRegistros, setTotalRegistros] = useState(0);
 
@@ -42,12 +87,39 @@ function LiquidacionHonorariosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(preferenciasKey, JSON.stringify({
+        tipoFecha,
+        rango,
+        medicoId,
+        turno,
+        estado,
+        fechaDesde,
+        fechaHasta,
+        rowsPerPage,
+      }));
+    } catch {
+      // Ignorar errores de persistencia para no romper el flujo de liquidación.
+    }
+  }, [preferenciasKey, tipoFecha, rango, medicoId, turno, estado, fechaDesde, fechaHasta, rowsPerPage]);
+
   const fmtMoney = (n) => `S/ ${Number(n || 0).toFixed(2)}`;
 
   const badgeEstadoClass = (value) => {
-    if ((value || "").toLowerCase() === "pagado") return "bg-emerald-100 text-emerald-800";
+    const key = (value || "").toLowerCase();
+    if (key === "pagado") return "bg-emerald-100 text-emerald-800";
+    if (key === "cancelado") return "bg-rose-100 text-rose-800";
     return "bg-amber-100 text-amber-800";
   };
+
+  const estadoLabel = (value) => {
+    const key = (value || "").toLowerCase();
+    if (key === "cancelado") return "ANULADO";
+    return value ? value.toUpperCase() : "";
+  };
+
+  const etiquetaListaVacia = estado === "pendiente" ? "pendientes" : estado === "pagado" ? "pagados" : "anulados";
 
   const badgeOrigenClass = (value) => {
     const key = (value || "").toLowerCase();
@@ -89,18 +161,34 @@ function LiquidacionHonorariosPage() {
     }
   };
 
-  const cargarHonorarios = async (targetPage = page) => {
+  const cargarHonorarios = async (targetPage = page, filtrosOverride = null) => {
     setLoading(true);
     try {
+      const filtros = filtrosOverride || {};
+      const medicoIdQ = filtros.medicoId ?? medicoId;
+      const turnoQ = filtros.turno ?? turno;
+      const estadoQ = filtros.estado ?? estado;
+      const tipoFechaQ = filtros.tipoFecha ?? tipoFecha;
+      const fechaDesdeQ = filtros.fechaDesde ?? fechaDesde;
+      const fechaHastaQ = filtros.fechaHasta ?? fechaHasta;
+      const rangoQ = filtros.rango ?? rango;
+      const rowsPerPageQ = filtros.rowsPerPage ?? rowsPerPage;
+
       const params = [];
-      if (medicoId) params.push(`medico_id=${medicoId}`);
-      if (turno) params.push(`turno=${turno}`);
-      if (estado) params.push(`estado=${estado}`);
-      if (fechaDesde) params.push(`fecha_desde=${encodeURIComponent(fechaDesde)}`);
-      if (fechaHasta) params.push(`fecha_hasta=${encodeURIComponent(fechaHasta)}`);
-      if (!fechaDesde && !fechaHasta && rango) params.push(`rango=${encodeURIComponent(rango)}`);
+      if (medicoIdQ) params.push(`medico_id=${medicoIdQ}`);
+      if (turnoQ) params.push(`turno=${turnoQ}`);
+      if (estadoQ) params.push(`estado=${estadoQ}`);
+      if (tipoFechaQ) params.push(`tipo_fecha=${encodeURIComponent(tipoFechaQ)}`);
+      // Al pedir anulados, queremos verlos TODOS: honorarios anulados uno por
+      // uno (api_eliminar_honorario.php) y los anulados en bloque al anular
+      // toda una cotización. El backend excluye estos últimos por defecto en
+      // las demás pestañas para no ensuciar "pendiente"/"pagado".
+      if (estadoQ === 'cancelado') params.push(`incluir_anuladas=1`);
+      if (fechaDesdeQ) params.push(`fecha_desde=${encodeURIComponent(fechaDesdeQ)}`);
+      if (fechaHastaQ) params.push(`fecha_hasta=${encodeURIComponent(fechaHastaQ)}`);
+      if (!fechaDesdeQ && !fechaHastaQ && rangoQ) params.push(`rango=${encodeURIComponent(rangoQ)}`);
       params.push(`page=${targetPage}`);
-      params.push(`limit=${rowsPerPage}`);
+      params.push(`limit=${rowsPerPageQ}`);
       const query = params.length ? `?${params.join("&")}` : "";
       const response = await authFetch(`api_honorarios_pendientes.php${query}`);
       const data = await response.json();
@@ -131,30 +219,74 @@ function LiquidacionHonorariosPage() {
     cargarHonorarios(1);
   };
 
-  // Acción eliminar honorario
+  const restablecerPreferencias = async () => {
+    const tipoFechaDefault = esRolMedico ? "atencion" : "movimiento";
+    const rangoDefault = "hoy";
+    const estadoDefault = "pendiente";
+    const rowsDefault = 3;
+
+    try {
+      sessionStorage.removeItem(preferenciasKey);
+    } catch {
+      // No bloquear el flujo si sessionStorage no está disponible.
+    }
+
+    setMedicoId("");
+    setTurno("");
+    setEstado(estadoDefault);
+    setTipoFecha(tipoFechaDefault);
+    setRango(rangoDefault);
+    setFechaDesde("");
+    setFechaHasta("");
+    setRowsPerPage(rowsDefault);
+    setPage(1);
+
+    await cargarHonorarios(1, {
+      medicoId: "",
+      turno: "",
+      estado: estadoDefault,
+      tipoFecha: tipoFechaDefault,
+      rango: rangoDefault,
+      fechaDesde: "",
+      fechaHasta: "",
+      rowsPerPage: rowsDefault,
+    });
+
+    Swal.fire("Preferencias restablecidas", "Se restauraron tus filtros por defecto.", "success");
+  };
+
+  // Acción anular honorario (no se elimina físicamente: se anula el cobro,
+  // se revierte su ingreso en caja y se cancela el registro, conservando el
+  // rastro contable y clínico para auditoría).
   const eliminarHonorario = async (honorarioId) => {
-    const result = await Swal.fire({
-      title: "¿Eliminar honorario?",
-      text: "Esta acción eliminará el registro de honorario y no podrá recuperarse.",
+    const { value: motivo, isConfirmed } = await Swal.fire({
+      title: "¿Anular este honorario?",
+      html: "Se anulará el cobro asociado, se revertirá su ingreso en caja y se cancelará el registro. No se borrará ningún dato: todo queda disponible para auditoría.",
       icon: "warning",
+      input: "text",
+      inputPlaceholder: "Escribe el motivo de la anulación",
+      inputValidator: (value) => {
+        if (!value || !value.trim()) return "El motivo es obligatorio";
+        return undefined;
+      },
       showCancelButton: true,
-      confirmButtonText: "Sí, eliminar",
+      confirmButtonText: "Sí, anular",
       cancelButtonText: "Cancelar",
       confirmButtonColor: "#d33",
     });
-    if (!result.isConfirmed) return;
+    if (!isConfirmed) return;
     try {
       const response = await authFetch(`api_eliminar_honorario.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: honorarioId }),
+        body: JSON.stringify({ id: honorarioId, motivo: motivo.trim() }),
       });
       const data = await response.json();
       if (data.success) {
-        Swal.fire("¡Eliminado!", "El honorario ha sido eliminado.", "success");
+        Swal.fire("Anulado", "El honorario y su cobro asociado fueron anulados correctamente.", "success");
         cargarHonorarios(page);
       } else {
-        Swal.fire("Error", data.error || "No se pudo eliminar el honorario.", "error");
+        Swal.fire("Error", data.error || "No se pudo anular el honorario.", "error");
       }
     } catch {
       Swal.fire("Error", "Error de conexión.", "error");
@@ -315,7 +447,7 @@ function LiquidacionHonorariosPage() {
           <button type="button" onClick={() => { setRango(""); }} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${(fechaDesde || fechaHasta) ? "bg-blue-600 text-white" : "bg-blue-100 text-blue-800"}`}>Personalizado</button>
         </div>
 
-        <form className="grid grid-cols-1 md:grid-cols-7 gap-3">
+        <form className="grid grid-cols-1 md:grid-cols-8 gap-3">
             <div className="flex flex-col bg-blue-50 rounded-lg p-2">
               <label className="text-xs sm:text-sm font-semibold text-blue-800 mb-1">Médico:</label>
               <select value={medicoId} onChange={e => setMedicoId(e.target.value)} className="border rounded px-2 py-2 text-xs sm:text-sm focus:outline-blue-400">
@@ -339,6 +471,14 @@ function LiquidacionHonorariosPage() {
               <select value={estado} onChange={e => setEstado(e.target.value)} className="border rounded px-2 py-2 text-xs sm:text-sm focus:outline-blue-400">
                 <option value="pendiente">Pendiente</option>
                 <option value="pagado">Pagado</option>
+                <option value="cancelado">Anulado</option>
+              </select>
+            </div>
+            <div className="flex flex-col bg-blue-50 rounded-lg p-2">
+              <label className="text-xs sm:text-sm font-semibold text-blue-800 mb-1">Base de fecha:</label>
+              <select value={tipoFecha} onChange={e => setTipoFecha(e.target.value)} className="border rounded px-2 py-2 text-xs sm:text-sm focus:outline-blue-400">
+                <option value="movimiento">Movimiento / cobro</option>
+                <option value="atencion">Atención / cotización</option>
               </select>
             </div>
             <div className="flex flex-col bg-blue-50 rounded-lg p-2">
@@ -357,8 +497,9 @@ function LiquidacionHonorariosPage() {
               <label className="text-xs sm:text-sm font-semibold text-blue-800 mb-1">Hasta:</label>
               <input type="date" value={fechaHasta} onChange={e => { setFechaHasta(e.target.value); setRango(""); }} className="border rounded px-2 py-2 text-xs sm:text-sm focus:outline-blue-400" />
             </div>
-            <div className="flex flex-col justify-end">
+            <div className="flex flex-col justify-end gap-2">
               <button type="button" onClick={filtrar} className="bg-blue-600 text-white px-4 py-2 rounded font-bold w-full">Filtrar</button>
+              <button type="button" onClick={restablecerPreferencias} className="bg-slate-100 text-slate-700 border border-slate-300 px-4 py-2 rounded font-semibold w-full">Restablecer preferencias</button>
             </div>
           </form>
       </div>
@@ -370,7 +511,7 @@ function LiquidacionHonorariosPage() {
           <div className="block md:hidden">
             <div className="space-y-4">
               {honorariosUnicos.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">No hay honorarios {estado === "pendiente" ? "pendientes" : "pagados"}</div>
+                <div className="text-center py-8 text-gray-500">No hay honorarios {etiquetaListaVacia}</div>
               ) : honorariosUnicos.map(h => {
                 const antiguedad = badgeAntiguedad(h.antiguedad_dias);
                 return (
@@ -390,7 +531,7 @@ function LiquidacionHonorariosPage() {
                       <span>Turno: {h.turno ? h.turno.toUpperCase() : ""}</span>
                     </div>
                     <div className="flex gap-2 text-xs text-gray-500">
-                      <span>Estado: <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${badgeEstadoClass(h.estado_pago_medico)}`}>{h.estado_pago_medico ? h.estado_pago_medico.toUpperCase() : ""}</span></span>
+                      <span>Estado: <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${badgeEstadoClass(h.estado_pago_medico)}`}>{estadoLabel(h.estado_pago_medico)}</span></span>
                       <span>Monto: <span className="font-bold text-blue-800">S/ {parseFloat(h.monto_medico).toFixed(2)}</span></span>
                     </div>
                     <div className="flex gap-2 text-xs text-gray-500">
@@ -400,13 +541,18 @@ function LiquidacionHonorariosPage() {
                     <div className="flex gap-2 text-xs text-gray-500">
                       <span>Fecha Liquidación: {h.fecha_liquidacion ? h.fecha_liquidacion.toUpperCase() : "-"}</span>
                     </div>
+                    {h.estado_pago_medico === "cancelado" && h.motivo_anulacion && (
+                      <div className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded px-2 py-1">
+                        Motivo de anulación: {h.motivo_anulacion}
+                      </div>
+                    )}
                     <div className="mt-2 flex justify-end gap-2">
                       {h.estado_pago_medico === "pendiente" && (
                         <button onClick={() => liquidarHonorario(h.id)} className="bg-green-600 text-white px-4 py-1 rounded font-bold">Liquidar</button>
                       )}
-                      {/* Botón eliminar solo para administrador */}
-                      {usuario.rol === 'administrador' && (
-                        <button onClick={() => eliminarHonorario(h.id)} className="bg-red-600 text-white px-4 py-1 rounded font-bold">Eliminar</button>
+                      {/* Botón anular solo para administrador y mientras siga pendiente */}
+                      {usuario.rol === 'administrador' && h.estado_pago_medico === "pendiente" && (
+                        <button onClick={() => eliminarHonorario(h.id)} className="bg-red-600 text-white px-4 py-1 rounded font-bold">Anular</button>
                       )}
                     </div>
                   </div>
@@ -437,7 +583,7 @@ function LiquidacionHonorariosPage() {
               </thead>
               <tbody>
                 {honorariosUnicos.length === 0 ? (
-                  <tr><td colSpan={14} className="text-center py-8 text-gray-500">No hay honorarios {estado === "pendiente" ? "pendientes" : "pagados"}</td></tr>
+                  <tr><td colSpan={14} className="text-center py-8 text-gray-500">No hay honorarios {etiquetaListaVacia}</td></tr>
                 ) : honorariosUnicos.map(h => {
                   const antiguedad = badgeAntiguedad(h.antiguedad_dias);
                   return (
@@ -451,7 +597,12 @@ function LiquidacionHonorariosPage() {
                       <td className="hidden sm:table-cell px-4 py-2">{h.fecha ? h.fecha.toUpperCase() : ""}</td>
                       <td className="hidden sm:table-cell px-4 py-2">{h.turno ? h.turno.toUpperCase() : ""}</td>
                       <td className="px-4 py-2">S/ {parseFloat(h.monto_medico).toFixed(2)}</td>
-                      <td className="px-4 py-2"><span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeEstadoClass(h.estado_pago_medico)}`}>{h.estado_pago_medico ? h.estado_pago_medico.toUpperCase() : ""}</span></td>
+                      <td className="px-4 py-2">
+                        <span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeEstadoClass(h.estado_pago_medico)}`}>{estadoLabel(h.estado_pago_medico)}</span>
+                        {h.estado_pago_medico === "cancelado" && h.motivo_anulacion && (
+                          <div className="mt-1 max-w-[220px] text-[11px] text-rose-700" title={h.motivo_anulacion}>{h.motivo_anulacion}</div>
+                        )}
+                      </td>
                       <td className="hidden sm:table-cell px-4 py-2">
                         {h.cobrado_por_nombre ? (
                           <span>{h.cobrado_por_nombre.toUpperCase()} <span className="text-xs text-gray-500">({h.cobrado_por_rol ? h.cobrado_por_rol.toUpperCase() : ""})</span></span>
@@ -471,8 +622,8 @@ function LiquidacionHonorariosPage() {
                         {h.estado_pago_medico === "pendiente" && (
                           <button onClick={() => liquidarHonorario(h.id)} className="bg-green-600 text-white px-3 py-1 rounded">Liquidar</button>
                         )}
-                        {usuario.rol === 'administrador' && (
-                          <button onClick={() => eliminarHonorario(h.id)} className="bg-red-600 text-white px-3 py-1 rounded">Eliminar</button>
+                        {usuario.rol === 'administrador' && h.estado_pago_medico === "pendiente" && (
+                          <button onClick={() => eliminarHonorario(h.id)} className="bg-red-600 text-white px-3 py-1 rounded">Anular</button>
                         )}
                       </td>
                     </tr>

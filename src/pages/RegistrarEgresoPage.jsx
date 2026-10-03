@@ -52,6 +52,15 @@ function getLimaNowStrings() {
   return { fecha, hora };
 }
 
+function inferTurnoFromHora(hora) {
+  if (typeof hora !== "string") return "mañana";
+  const hh = Number(hora.slice(0, 2));
+  if (!Number.isFinite(hh)) return "mañana";
+  if (hh >= 6 && hh < 14) return "mañana";
+  if (hh >= 14 && hh < 20) return "tarde";
+  return "noche";
+}
+
 function getInitialForm() {
   const { fecha, hora } = getLimaNowStrings();
   return {
@@ -62,7 +71,7 @@ function getInitialForm() {
     descripcion: "",
     monto: "",
     metodo_pago: "efectivo",
-    turno: "",
+    turno: inferTurnoFromHora(hora),
     estado: "pagado",
     caja_id: "",
     observaciones: "",
@@ -172,10 +181,10 @@ export default function RegistrarEgresoPage() {
       hora: normalizeTimeForInput(egreso.hora, defaults.hora),
       tipo_egreso: egreso.tipo_egreso || inferTipoEgresoFromCategoria(egreso.categoria || "otros"),
       categoria: egreso.categoria || "",
-      descripcion: egreso.descripcion || "",
+      descripcion: egreso.descripcion || egreso.concepto || "",
       monto: egreso.monto || "",
       metodo_pago: egreso.metodo_pago || "efectivo",
-      turno: egreso.turno || "",
+      turno: egreso.turno || inferTurnoFromHora(normalizeTimeForInput(egreso.hora, defaults.hora)),
       estado: egreso.estado || "pagado",
       caja_id: egreso.caja_id || "",
       observaciones: egreso.observaciones || "",
@@ -198,33 +207,50 @@ export default function RegistrarEgresoPage() {
   };
 
   return (
-    <div className="w-full max-w-[1600px] mx-auto px-2 sm:px-6 py-4">
-      <h1 className="text-xl sm:text-2xl font-bold text-blue-800 text-center mb-6 flex items-center justify-center gap-2">
-        <span className="inline-block bg-blue-100 text-blue-700 rounded-full p-2 text-2xl">💸</span>
-        Registro y Gestión de Egresos
-      </h1>
-      <div className="flex flex-col sm:flex-row justify-center items-stretch sm:items-center gap-2 sm:gap-4 mt-8 mb-4">
-        <button
-          className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 sm:px-6 sm:py-3 rounded shadow hover:bg-blue-700 font-semibold text-base sm:text-lg transition"
-          onClick={() => { setShowForm(true); setEditId(null); setForm(getInitialForm()); setIsCategoriaManual(false); }}
-        >
-          <span className="inline-block mr-2">➕</span> Registrar Egreso
-        </button>
-      </div>
-      {/* Modal para el formulario */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-2">
-          <div className="w-full max-w-md sm:max-w-lg bg-white rounded-xl shadow-lg relative p-4 sm:p-8 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-100 px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+      <div className="mx-auto w-full max-w-[1600px]">
+        <div className="mb-5 rounded-3xl border border-cyan-100 bg-white/90 p-4 shadow-xl backdrop-blur sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-center gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-500 to-orange-500 text-2xl text-white shadow-lg shadow-rose-200">
+                💸
+              </span>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">Panel financiero</p>
+                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Registro y Gestión de Egresos</h1>
+                <p className="mt-1 text-sm text-slate-600">Controla gastos operativos, sueldos y pagos de servicios de la clínica.</p>
+              </div>
+            </div>
             <button
-              className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-2xl font-bold focus:outline-none"
-              onClick={() => { setShowForm(false); setEditId(null); }}
-              title="Cerrar"
-              aria-label="Cerrar"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:from-blue-700 hover:to-cyan-600 sm:w-auto"
+              onClick={() => { setShowForm(true); setEditId(null); setForm(getInitialForm()); setIsCategoriaManual(false); }}
             >
-              ×
+              <span className="text-lg">➕</span> Registrar Egreso
             </button>
-            <h2 className="text-lg sm:text-2xl font-bold mb-4 text-blue-700 text-center">{editId ? "Editar Egreso" : "Registrar Egreso"}</h2>
-            <div className="flex flex-col gap-2">
+          </div>
+        </div>
+
+        {/* Modal para el formulario */}
+        {showForm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-2 backdrop-blur-sm">
+            <div className="relative flex w-full max-h-[92vh] max-w-md flex-col overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:p-8">
+              <button
+                className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none"
+                onClick={() => { setShowForm(false); setEditId(null); }}
+                title="Cerrar"
+                aria-label="Cerrar"
+              >
+                <span className="text-xl leading-none">×</span>
+              </button>
+              <div className="mb-5 flex items-center gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-500 text-xl text-white shadow-md shadow-blue-200">
+                  {editId ? "✏️" : "💸"}
+                </span>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-700">{editId ? "Editar registro" : "Nuevo registro"}</p>
+                  <h2 className="text-lg font-bold text-slate-900 sm:text-xl">{editId ? "Editar Egreso" : "Registrar Egreso"}</h2>
+                </div>
+              </div>
               <RegistrarEgresoForm
                 form={form}
                 onChange={handleChange}
@@ -237,9 +263,8 @@ export default function RegistrarEgresoPage() {
               />
             </div>
           </div>
-        </div>
-      )}
-      <div className="mt-8">
+        )}
+
         <EgresosList ref={egresosListRef} onEdit={handleEdit} />
       </div>
     </div>

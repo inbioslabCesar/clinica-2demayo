@@ -6,19 +6,23 @@ require_once __DIR__ . '/config.php';
 
 function egresos_columna_existe(PDO $pdo, string $columna): bool
 {
-    static $cache = [];
-    if (array_key_exists($columna, $cache)) {
-        return $cache[$columna];
+    static $cache = null;
+    if (!is_array($cache)) {
+        $cache = [];
+        try {
+            $stmt = $pdo->query("SHOW COLUMNS FROM egresos");
+            $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+            foreach ($rows as $row) {
+                $field = isset($row['Field']) ? (string)$row['Field'] : '';
+                if ($field !== '') {
+                    $cache[$field] = true;
+                }
+            }
+        } catch (Throwable $e) {
+            $cache = [];
+        }
     }
-    try {
-        $stmt = $pdo->prepare("SHOW COLUMNS FROM egresos LIKE ?");
-        $stmt->execute([$columna]);
-        $cache[$columna] = (bool)$stmt->fetch(PDO::FETCH_ASSOC);
-        return $cache[$columna];
-    } catch (Throwable $e) {
-        $cache[$columna] = false;
-        return false;
-    }
+    return !empty($cache[$columna]);
 }
 
 function egresos_construir_insert(PDO $pdo, array $valores): array
@@ -123,6 +127,54 @@ function normalizar_turno_egreso($turno)
     return 'mañana';
 }
 
+function normalizar_turno_egreso_opcional($turno): string
+{
+    $map = [
+        'maÃ±ana' => 'mañana',
+        'maã±ana' => 'mañana',
+    ];
+    $normalizado = strtr((string)$turno, $map);
+    $t = strtolower(trim($normalizado));
+    if ($t === 'manana' || $t === 'mañana') {
+        return 'mañana';
+    }
+    if ($t === 'tarde' || $t === 'noche') {
+        return $t;
+    }
+    return '';
+}
+
+function inferir_turno_por_hora_egreso(?string $hora): string
+{
+    $h = hora_valida_egreso((string)$hora);
+    if (!$h) {
+        return 'mañana';
+    }
+    $hh = (int)substr($h, 0, 2);
+    if ($hh >= 6 && $hh < 14) {
+        return 'mañana';
+    }
+    if ($hh >= 14 && $hh < 20) {
+        return 'tarde';
+    }
+    return 'noche';
+}
+
+function resolver_turno_egreso($turnoInput, string $hora, $turnoSesion = '', $turnoCaja = ''): string
+{
+    $candidatos = [
+        normalizar_turno_egreso_opcional($turnoInput),
+        normalizar_turno_egreso_opcional($turnoSesion),
+        normalizar_turno_egreso_opcional($turnoCaja),
+    ];
+    foreach ($candidatos as $c) {
+        if ($c !== '') {
+            return $c;
+        }
+    }
+    return inferir_turno_por_hora_egreso($hora);
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'POST') {
@@ -134,7 +186,6 @@ if ($method === 'POST') {
     $monto = $input['monto'] ?? 0;
     $metodo_pago = $input['metodo_pago'] ?? 'efectivo';
     $usuario_id = $_SESSION['usuario']['id'] ?? null;
-    $turno = normalizar_turno_egreso($input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana'));
     $estado = $input['estado'] ?? 'pagado';
     $fecha = fecha_valida_egreso($input['fecha'] ?? null) ?? fecha_hoy_lima_egreso();
     $hora = hora_valida_egreso($input['hora'] ?? null) ?? hora_actual_lima_egreso();
@@ -142,11 +193,11 @@ if ($method === 'POST') {
     // Si no se envía caja_id, buscar la caja abierta del usuario en el día y asignar siempre para egreso operativo
     $usuario_id_actual = $_SESSION['usuario']['id'] ?? null;
     if (empty($input['caja_id']) || $tipo_egreso === 'operativo') {
-        $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE usuario_id = ? AND estado = "abierta" ORDER BY created_at DESC LIMIT 1');
+        $stmtCaja = $pdo->prepare('SELECT id, turno FROM cajas WHERE usuario_id = ? AND estado = "abierta" ORDER BY created_at DESC LIMIT 1');
         $stmtCaja->execute([$usuario_id_actual]);
         $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
         if (!$cajaRow) {
-            $stmtCaja = $pdo->prepare('SELECT id FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
+            $stmtCaja = $pdo->prepare('SELECT id, turno FROM cajas WHERE DATE(fecha) = ? AND usuario_id = ? AND estado = "abierta" ORDER BY hora_apertura ASC LIMIT 1');
             $stmtCaja->execute([$fecha, $usuario_id_actual]);
             $cajaRow = $stmtCaja->fetch(PDO::FETCH_ASSOC);
         }
@@ -156,6 +207,13 @@ if ($method === 'POST') {
     }
     $observaciones = $input['observaciones'] ?? '';
 
+    $turno = resolver_turno_egreso(
+        $input['turno'] ?? null,
+        $hora,
+        $_SESSION['usuario']['turno'] ?? '',
+        $cajaRow['turno'] ?? ''
+    );
+
     $tipo = $input['tipo'] ?? 'operativo';
     $concepto = $input['concepto'] ?? $descripcion;
     $responsable = isset($_SESSION['usuario']['nombre']) ? $_SESSION['usuario']['nombre'] : '';
@@ -163,6 +221,7 @@ if ($method === 'POST') {
     try {
         [$sql, $params] = egresos_construir_insert($pdo, [
             'fecha' => $fecha,
+            'fecha_hora' => $fecha . ' ' . $hora,
             'tipo' => $tipo,
             'tipo_egreso' => $tipo_egreso,
             'categoria' => $categoria,
@@ -221,15 +280,32 @@ if ($method === 'PUT') {
     $input = json_decode(file_get_contents('php://input'), true);
     $fecha = fecha_valida_egreso($input['fecha'] ?? null) ?? fecha_hoy_lima_egreso();
     $hora = hora_valida_egreso($input['hora'] ?? null) ?? hora_actual_lima_egreso();
+    $turnoCaja = '';
+    if (!empty($input['caja_id'])) {
+        try {
+            $stmtCajaTurno = $pdo->prepare('SELECT turno FROM cajas WHERE id = ? LIMIT 1');
+            $stmtCajaTurno->execute([(int)$input['caja_id']]);
+            $turnoCaja = (string)($stmtCajaTurno->fetchColumn() ?: '');
+        } catch (Throwable $e) {
+            $turnoCaja = '';
+        }
+    }
+    $turno = resolver_turno_egreso(
+        $input['turno'] ?? null,
+        $hora,
+        $_SESSION['usuario']['turno'] ?? '',
+        $turnoCaja
+    );
     try {
         [$sql, $params] = egresos_construir_update($pdo, [
             'fecha' => $fecha,
+            'fecha_hora' => $fecha . ' ' . $hora,
             'tipo_egreso' => $input['tipo_egreso'] ?? '',
             'categoria' => $input['categoria'] ?? '',
             'descripcion' => $input['descripcion'] ?? '',
             'monto' => $input['monto'] ?? 0,
             'metodo_pago' => $input['metodo_pago'] ?? 'efectivo',
-            'turno' => normalizar_turno_egreso($input['turno'] ?? ($_SESSION['usuario']['turno'] ?? 'mañana')),
+            'turno' => $turno,
             'estado' => $input['estado'] ?? 'pagado',
             'caja_id' => empty($input['caja_id']) ? null : $input['caja_id'],
             'observaciones' => $input['observaciones'] ?? '',
@@ -255,10 +331,14 @@ if ($method === 'GET') {
         $fechaSolicitada = fecha_valida_egreso($_GET['fecha'] ?? null);
         $hasFecha = egresos_columna_existe($pdo, 'fecha');
         $hasHora = egresos_columna_existe($pdo, 'hora');
+        $hasTurno = egresos_columna_existe($pdo, 'turno');
+        $hasFechaHora = egresos_columna_existe($pdo, 'fecha_hora');
         $hasCreatedAt = egresos_columna_existe($pdo, 'created_at');
 
         if ($hasFecha) {
             $dateExpr = "DATE(e.fecha)";
+        } elseif ($hasFechaHora) {
+            $dateExpr = "DATE(e.fecha_hora)";
         } elseif ($hasCreatedAt) {
             $dateExpr = "DATE(e.created_at)";
         } else {
@@ -267,13 +347,27 @@ if ($method === 'GET') {
 
         if ($hasHora) {
             $timeExpr = "TIME(e.hora)";
+        } elseif ($hasFechaHora) {
+            $timeExpr = "TIME(e.fecha_hora)";
         } elseif ($hasCreatedAt) {
             $timeExpr = "TIME(e.created_at)";
         } else {
             $timeExpr = "'00:00:00'";
         }
 
-        $sql = "SELECT e.*, u.nombre as usuario_nombre FROM egresos e LEFT JOIN usuarios u ON e.usuario_id = u.id";
+        $turnExpr = $hasTurno ? "NULLIF(TRIM(CAST(e.turno AS CHAR)), '')" : "NULL";
+
+        $sql = "SELECT
+                    e.*,
+                    u.nombre as usuario_nombre,
+                    {$dateExpr} AS _fecha_norm,
+                    {$timeExpr} AS _hora_norm,
+                    COALESCE({$turnExpr}, NULLIF(TRIM(COALESCE(c.turno, '')), '')) AS _turno_norm,
+                    COALESCE(NULLIF(e.descripcion, ''), NULLIF(e.concepto, '')) AS _descripcion_norm,
+                    COALESCE(NULLIF(e.concepto, ''), NULLIF(e.descripcion, '')) AS _concepto_norm
+                FROM egresos e
+                LEFT JOIN usuarios u ON e.usuario_id = u.id
+                LEFT JOIN cajas c ON e.caja_id = c.id";
         $params = [];
 
         if ($fechaSolicitada) {
@@ -287,6 +381,28 @@ if ($method === 'GET') {
         $stmt->execute($params);
 
         $egresos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($egresos as &$row) {
+            if (empty($row['fecha']) && !empty($row['_fecha_norm'])) {
+                $row['fecha'] = $row['_fecha_norm'];
+            }
+            if (empty($row['hora']) && !empty($row['_hora_norm'])) {
+                $row['hora'] = $row['_hora_norm'];
+            }
+            if (empty($row['turno']) && !empty($row['_turno_norm'])) {
+                $row['turno'] = normalizar_turno_egreso($row['_turno_norm']);
+            }
+            if (empty($row['turno'])) {
+                $row['turno'] = inferir_turno_por_hora_egreso($row['hora'] ?? null);
+            }
+            if (empty($row['descripcion']) && !empty($row['_descripcion_norm'])) {
+                $row['descripcion'] = $row['_descripcion_norm'];
+            }
+            if (empty($row['concepto']) && !empty($row['_concepto_norm'])) {
+                $row['concepto'] = $row['_concepto_norm'];
+            }
+            unset($row['_fecha_norm'], $row['_hora_norm'], $row['_turno_norm'], $row['_descripcion_norm'], $row['_concepto_norm']);
+        }
+        unset($row);
         echo json_encode(["success" => true, "egresos" => $egresos]);
     } catch (Throwable $e) {
         error_log('api_egresos GET error: ' . $e->getMessage());

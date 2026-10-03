@@ -11,8 +11,9 @@ import ImpresionHistoriaClinica from "../components/print/ImpresionHistoriaClini
 import ImpresionAnalisisLaboratorio from "../components/print/ImpresionAnalisisLaboratorio";
 import ImpresionServiciosSolicitados from "../components/print/ImpresionServiciosSolicitados";
 import ImpresionInformeProcedimiento from "../components/print/ImpresionInformeProcedimiento";
+import ImpresionRecetaMedicamentos from "../components/print/ImpresionRecetaMedicamentos";
 import TriageForm from "../components/enfermero/TriageForm";
-import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintServicios, usePrintInformeProcedimiento } from "../hooks/usePrint";
+import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintServicios, usePrintInformeProcedimiento, usePrintReceta } from "../hooks/usePrint";
 import { formatColegiatura, formatProfesionalName } from "../utils/profesionalDisplay";
 
 const hcTemplateFlag = String(import.meta.env.VITE_HC_TEMPLATE_ENGINE_READ || "").toLowerCase();
@@ -301,6 +302,7 @@ function HistoriaClinicaPage() {
   const { componentRef: printImagenRef, handlePrint: handlePrintImagen } = usePrintServicios('Solicitud de Imagenes Diagnosticas');
   const { componentRef: printProcRef, handlePrint: handlePrintProcedimientos } = usePrintServicios('Solicitud de Procedimientos');
   const { componentRef: printInformeProcRef, handlePrint: handlePrintInformeProcedimiento } = usePrintInformeProcedimiento('Informe de Procedimiento Medico');
+  const { componentRef: printRecetaRef, handlePrint: handlePrintReceta } = usePrintReceta();
   const [medicoInfo, setMedicoInfo] = useState(null);
   const [configuracionClinica, setConfiguracionClinica] = useState(null);
   const [firmaMedico, setFirmaMedico] = useState(null);
@@ -2830,6 +2832,114 @@ function HistoriaClinicaPage() {
     }
   }, [hc?.receta, hc?.recomendaciones, pacienteParaVista, paciente, medicoInfo, configuracionClinica, diagnosticos, setMsg]);
 
+  const handleDownloadRecetaStyledPdf = useCallback(async () => {
+    const medicamentos = Array.isArray(hc?.receta) ? hc.receta : [];
+    if (medicamentos.length === 0) {
+      setMsg('No hay medicamentos en la receta para exportar.');
+      return;
+    }
+
+    const root = printRecetaRef.current;
+    if (!root) {
+      // Si aun no existe el nodo, usar fallback de impresion.
+      handlePrintReceta();
+      return;
+    }
+
+    setGenerandoRecetaPdf(true);
+    try {
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ]);
+
+      const target = root;
+      const canvas = await html2canvas(target, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: '#ffffff',
+        logging: false,
+        windowWidth: target.scrollWidth,
+        windowHeight: target.scrollHeight,
+      });
+
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+        compress: true,
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 6;
+      const renderWidth = pageWidth - margin * 2;
+      const renderHeight = pageHeight - margin * 2;
+
+      const pxPerMm = canvas.width / renderWidth;
+      const pageSlicePx = Math.max(1, Math.floor(renderHeight * pxPerMm));
+      let yOffset = 0;
+      let pageIndex = 0;
+
+      while (yOffset < canvas.height) {
+        if (pageIndex > 0) {
+          pdf.addPage('a4', 'landscape');
+        }
+
+        const sliceHeightPx = Math.min(pageSlicePx, canvas.height - yOffset);
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+
+        const ctx = sliceCanvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('No se pudo inicializar el lienzo para exportar PDF.');
+        }
+
+        ctx.drawImage(
+          canvas,
+          0,
+          yOffset,
+          canvas.width,
+          sliceHeightPx,
+          0,
+          0,
+          canvas.width,
+          sliceHeightPx
+        );
+
+        const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
+        const sliceHeightMm = sliceHeightPx / pxPerMm;
+        pdf.addImage(imgData, 'JPEG', margin, margin, renderWidth, sliceHeightMm, undefined, 'FAST');
+
+        yOffset += sliceHeightPx;
+        pageIndex += 1;
+      }
+
+      const nombrePacienteRaw = `${paciente?.nombre || paciente?.nombres || ''}_${paciente?.apellido || paciente?.apellidos || ''}`
+        .trim()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-zA-Z0-9_\-]/g, '')
+        .toLowerCase();
+      const fechaTag = new Date().toISOString().slice(0, 10);
+      const filename = `receta_medica_${nombrePacienteRaw || 'paciente'}_${fechaTag}.pdf`;
+
+      pdf.save(filename);
+    } catch (error) {
+      console.error('Error exportando receta PDF estilizada:', error);
+      setMsg('No se pudo descargar el PDF estilizado. Se abrira el modo alternativo.');
+
+      if (printRecetaRef.current) {
+        handlePrintReceta();
+      } else {
+        handlePrintRecetaPdf();
+      }
+    } finally {
+      setGenerandoRecetaPdf(false);
+    }
+  }, [hc?.receta, paciente, setMsg, printRecetaRef, handlePrintReceta, handlePrintRecetaPdf]);
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={themedPageBg}>
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/50 flex flex-col items-center gap-4">
@@ -3852,7 +3962,8 @@ function HistoriaClinicaPage() {
                       console.warn('Referencia de receta no disponible o sin medicamentos');
                       return;
                     }
-                    handlePrintRecetaPdf();
+
+                    handleDownloadRecetaStyledPdf();
                   }}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg text-sm whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none"
                   disabled={!hc.receta || hc.receta.length === 0 || generandoRecetaPdf}
@@ -3860,7 +3971,7 @@ function HistoriaClinicaPage() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                   </svg>
-                  <span>{generandoRecetaPdf ? 'Generando PDF...' : '💊 Receta'}</span>
+                  <span>{generandoRecetaPdf ? 'Descargando PDF...' : '💊 Receta'}</span>
                 </button>
               </div>
               <div className="text-center w-full mt-4 pt-4 border-t border-gray-200">
@@ -4719,6 +4830,19 @@ function HistoriaClinicaPage() {
             fechaInforme={new Date()}
             contenidoPrincipal={informeProcedimiento?.contenidoPrincipal}
             camposDetalle={informeProcedimiento?.camposDetalle || []}
+          />
+        </div>
+      </div>
+      {/* Componente oculto para impresión de Receta */}
+      <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
+        <div ref={printRecetaRef}>
+          <ImpresionRecetaMedicamentos
+            paciente={pacienteParaVista || paciente}
+            medicamentos={hc.receta}
+            recomendaciones={hc.recomendaciones}
+            medicoInfo={{ ...(medicoInfo || {}), firma: firmaMedico || medicoInfo?.firma || '' }}
+            configuracionClinica={configuracionClinica}
+            diagnosticos={diagnosticos}
           />
         </div>
       </div>

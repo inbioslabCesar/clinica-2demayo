@@ -4186,6 +4186,42 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
     }
 }
 
+function cotizacion_requiere_consulta_asociada(array $detalles): bool {
+    foreach ($detalles as $detalle) {
+        $tipo = correlativo_operativo_normalizar_servicio_tipo((string)($detalle['servicio_tipo'] ?? ''));
+        if ($tipo === 'consulta') {
+            return true;
+        }
+    }
+    return false;
+}
+
+function cotizacion_asegurar_consulta_asociada_si_aplica(
+    mysqli $conn,
+    int $cotizacionId,
+    array $detalles,
+    int $pacienteId,
+    bool $modoInformativo = false
+): void {
+    if ($modoInformativo || $cotizacionId <= 0 || $pacienteId <= 0) {
+        return;
+    }
+    if (!cotizacion_requiere_consulta_asociada($detalles)) {
+        return;
+    }
+
+    $sync = asegurar_consulta_desde_cotizacion_interno($conn, $cotizacionId);
+    if (!($sync['success'] ?? false)) {
+        $msg = trim((string)($sync['error'] ?? ''));
+        throw new Exception($msg !== '' ? $msg : 'No se pudo asociar la consulta médica de la cotización');
+    }
+
+    $consultaId = (int)($sync['consulta_id'] ?? 0);
+    if ($consultaId <= 0) {
+        throw new Exception('La cotización incluye consulta pero no tiene una consulta médica asociada');
+    }
+}
+
 function registrar_cotizacion($conn, $data) {
     $usuarioSesion = get_user_id_from_session();
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : $usuarioSesion;
@@ -4333,6 +4369,13 @@ function registrar_cotizacion($conn, $data) {
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, null, $fechaRef, [
             'modo_informativo' => $modoInformativo,
         ]);
+        cotizacion_asegurar_consulta_asociada_si_aplica(
+            $conn,
+            $cotizacionId,
+            $detalles,
+            $pacienteId,
+            $modoInformativo
+        );
         $totalReal = total_detalles_cotizacion_activos($conn, $cotizacionId);
         $debeSincronizarClinico = false;
         if ($hasSaldoV2) {
@@ -4461,6 +4504,13 @@ function editar_cotizacion($conn, $data) {
         agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
 
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivo, $fechaRef);
+        cotizacion_asegurar_consulta_asociada_si_aplica(
+            $conn,
+            $cotizacionId,
+            $detalles,
+            (int)($cot['paciente_id'] ?? 0),
+            false
+        );
         sincronizar_movimientos_lab_ref_en_edicion_cotizacion($conn, (int)$cot['paciente_id'], $detallesAntes, $detalles, $usuarioId, $cotizacionId);
 
         // Mantener la orden de laboratorio activa aunque existan derivaciones externas.
@@ -5578,6 +5628,13 @@ function agregar_detalle_cotizacion($conn, $data) {
         }
 
         insertar_detalles_cotizacion($conn, $cotizacionId, [$detalle], $usuarioId, $motivo);
+        cotizacion_asegurar_consulta_asociada_si_aplica(
+            $conn,
+            $cotizacionId,
+            [$detalle],
+            (int)($cot['paciente_id'] ?? 0),
+            false
+        );
 
         $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
         $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");

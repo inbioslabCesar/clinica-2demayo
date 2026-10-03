@@ -17,6 +17,17 @@ class HonorarioModule {
         return $res && $res->num_rows > 0;
     }
 
+    private static function columnExists($conn, $tableName, $columnName) {
+        $stmt = $conn->prepare("SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1");
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param("ss", $tableName, $columnName);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        return $res && $res->num_rows > 0;
+    }
+
     private static function normalizarMetodoPagoMedico($metodoPago) {
         $metodo = strtolower(trim((string)$metodoPago));
         $permitidos = ['efectivo', 'transferencia', 'cheque', 'deposito', 'tarjeta', 'yape', 'plin'];
@@ -79,6 +90,142 @@ class HonorarioModule {
         return strtolower($raw);
     }
 
+    private static function resolverCotizacionDetalleOrigenId($conn, $cotizacionId, $detalleConsulta, $datos) {
+        $candA = isset($detalleConsulta['cotizacion_detalle_id']) ? (int)$detalleConsulta['cotizacion_detalle_id'] : 0;
+        if ($candA > 0) {
+            return $candA;
+        }
+
+        $candB = isset($detalleConsulta['detalle_id']) ? (int)$detalleConsulta['detalle_id'] : 0;
+        if ($candB > 0) {
+            return $candB;
+        }
+
+        if (!self::tableExists($conn, 'cotizaciones_detalle')) {
+            return 0;
+        }
+
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return 0;
+        }
+
+        $hasEstadoItem = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item');
+        $whereEstado = $hasEstadoItem ? " AND (cd.estado_item IS NULL OR cd.estado_item <> 'eliminado')" : '';
+
+        $consultaId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
+        if ($consultaId > 0 && self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            $stmt = $conn->prepare("SELECT cd.id
+                FROM cotizaciones_detalle cd
+                WHERE cd.cotizacion_id = ? AND cd.consulta_id = ?{$whereEstado}
+                ORDER BY cd.id ASC LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param('ii', $cotizacionId, $consultaId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $id = (int)($row['id'] ?? 0);
+                if ($id > 0) {
+                    return $id;
+                }
+            }
+        }
+
+        $servicioId = isset($detalleConsulta['servicio_id']) ? (int)$detalleConsulta['servicio_id'] : 0;
+        if ($servicioId <= 0 && isset($datos['tarifa_id'])) {
+            $servicioId = (int)$datos['tarifa_id'];
+        }
+        $tipoServicio = self::normalizarTipoServicioMovimiento($datos['tipo_servicio'] ?? ($detalleConsulta['servicio_tipo'] ?? 'consulta'));
+
+        if ($servicioId > 0 && self::columnExists($conn, 'cotizaciones_detalle', 'servicio_id')) {
+            $stmt = $conn->prepare("SELECT cd.id
+                FROM cotizaciones_detalle cd
+                WHERE cd.cotizacion_id = ?
+                  AND LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) = ?
+                  AND cd.servicio_id = ?{$whereEstado}
+                ORDER BY cd.id ASC LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param('isi', $cotizacionId, $tipoServicio, $servicioId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $id = (int)($row['id'] ?? 0);
+                if ($id > 0) {
+                    return $id;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    private static function construirOrigenUid($cotizacionId, $detalleOrigenId, $datos, $descripcionFirma) {
+        $cotizacionId = (int)$cotizacionId;
+        $detalleOrigenId = (int)$detalleOrigenId;
+        $consultaId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
+        $medicoId = isset($datos['medico_id']) ? (int)$datos['medico_id'] : 0;
+        $pacienteId = isset($datos['paciente_id']) ? (int)$datos['paciente_id'] : 0;
+        $tarifaId = isset($datos['tarifa_id']) ? (int)$datos['tarifa_id'] : 0;
+        $tipoServicio = self::normalizarTipoServicioMovimiento($datos['tipo_servicio'] ?? 'consulta');
+
+        if ($detalleOrigenId > 0) {
+            return 'cot:' . $cotizacionId . '|det:' . $detalleOrigenId;
+        }
+
+        if ($consultaId > 0) {
+            return 'cot:' . $cotizacionId . '|con:' . $consultaId . '|tar:' . $tarifaId . '|med:' . $medicoId . '|tip:' . $tipoServicio;
+        }
+
+        $descripcionHash = sha1((string)$descripcionFirma);
+        return 'cot:' . $cotizacionId . '|pac:' . $pacienteId . '|tar:' . $tarifaId . '|med:' . $medicoId . '|tip:' . $tipoServicio . '|dsha:' . $descripcionHash;
+    }
+
+    private static function existePendientePorOrigenUid($conn, $cotizacionId, $origenUid) {
+        if (!self::columnExists($conn, 'honorarios_por_cobrar', 'origen_uid')) {
+            return false;
+        }
+
+        $stmt = $conn->prepare("SELECT id FROM honorarios_por_cobrar WHERE cotizacion_id = ? AND origen_uid = ? AND estado_consolidacion = 'pendiente' LIMIT 1");
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('is', $cotizacionId, $origenUid);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return !empty($row['id']);
+    }
+
+    private static function existePendienteCanonicoFallback($conn, $cotizacionId, $datos, $descripcionFirma) {
+        $consultaId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
+        $medicoId = isset($datos['medico_id']) ? (int)$datos['medico_id'] : 0;
+        $pacienteId = isset($datos['paciente_id']) ? (int)$datos['paciente_id'] : 0;
+        $tarifaId = isset($datos['tarifa_id']) ? (int)$datos['tarifa_id'] : 0;
+        $tipoServicio = self::normalizarTipoServicioMovimiento($datos['tipo_servicio'] ?? 'consulta');
+
+        $sql = "SELECT id
+            FROM honorarios_por_cobrar
+            WHERE cotizacion_id = ?
+              AND estado_consolidacion = 'pendiente'
+              AND COALESCE(consulta_id, 0) = ?
+              AND medico_id = ?
+              AND COALESCE(paciente_id, 0) = ?
+              AND COALESCE(tarifa_id, 0) = ?
+              AND LOWER(TRIM(COALESCE(tipo_servicio, ''))) = ?
+              AND LOWER(TRIM(COALESCE(descripcion, ''))) = ?
+            LIMIT 1";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('iiiiiss', $cotizacionId, $consultaId, $medicoId, $pacienteId, $tarifaId, $tipoServicio, $descripcionFirma);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return !empty($row['id']);
+    }
+
     private static function decodificarSnapshotDetalle($detalleConsulta) {
         $snapshot = $detalleConsulta['snapshot_json'] ?? null;
         if (is_array($snapshot)) {
@@ -91,6 +238,247 @@ class HonorarioModule {
             }
         }
         return [];
+    }
+
+    private static function obtenerDetalleCotizacionObjetivo($conn, $cotizacionId, $detalleOrigenId) {
+        $cotizacionId = (int)$cotizacionId;
+        $detalleOrigenId = (int)$detalleOrigenId;
+        if ($cotizacionId <= 0 || $detalleOrigenId <= 0 || !self::tableExists($conn, 'cotizaciones_detalle')) {
+            return null;
+        }
+
+        $cols = ['id', 'cantidad', 'subtotal', 'snapshot_json'];
+        if (self::columnExists($conn, 'cotizaciones_detalle', 'paquete_id')) {
+            $cols[] = 'paquete_id';
+        }
+        if (self::columnExists($conn, 'cotizaciones_detalle', 'paquete_codigo')) {
+            $cols[] = 'paquete_codigo';
+        }
+        if (self::columnExists($conn, 'cotizaciones_detalle', 'paquete_tipo')) {
+            $cols[] = 'paquete_tipo';
+        }
+
+        $stmt = $conn->prepare('SELECT ' . implode(', ', $cols) . ' FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ? LIMIT 1');
+        if (!$stmt) {
+            return null;
+        }
+        $stmt->bind_param('ii', $detalleOrigenId, $cotizacionId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return is_array($row) ? $row : null;
+    }
+
+    private static function ajustarDatosPaquetePorObjetivoCotizacion($conn, $cotizacionId, $detalleConsulta, $tarifa, $servicioKey, $metodoPago, $datos) {
+        if (!is_array($datos) || empty($datos['success']) || !empty($datos['reparto_manual_aplicado'])) {
+            return $datos;
+        }
+
+        $snapshotDetalle = self::decodificarSnapshotDetalle($detalleConsulta);
+        if (!self::esDetallePaquete($detalleConsulta, $snapshotDetalle)) {
+            return $datos;
+        }
+
+        $reglaPaquete = self::obtenerReglaHonorarioPaquete($detalleConsulta, $snapshotDetalle);
+        $modoHonorarioPaquete = strtolower(trim((string)($reglaPaquete['modo_honorario'] ?? 'usar_configuracion_medico')));
+        if (!in_array($modoHonorarioPaquete, ['monto_fijo_medico_paquete', 'porcentaje_medico_paquete'], true)) {
+            return $datos;
+        }
+
+        $detalleOrigenId = self::resolverCotizacionDetalleOrigenId($conn, (int)$cotizacionId, $detalleConsulta, $datos);
+        $rowObjetivo = self::obtenerDetalleCotizacionObjetivo($conn, (int)$cotizacionId, $detalleOrigenId);
+
+        $subtotalObjetivo = 0.0;
+        if (is_array($rowObjetivo)) {
+            $subtotalObjetivo = self::toFloatFlexible($rowObjetivo['subtotal'] ?? 0);
+        }
+        if ($subtotalObjetivo <= 0) {
+            $subtotalObjetivo = self::toFloatFlexible($detalleConsulta['subtotal_snapshot'] ?? 0);
+        }
+        if ($subtotalObjetivo <= 0) {
+            return $datos;
+        }
+
+        $cantidadObjetivo = 1.0;
+        if (is_array($rowObjetivo)) {
+            $cantidadObjetivo = self::toFloatFlexible($rowObjetivo['cantidad'] ?? 1);
+        }
+        if ($cantidadObjetivo <= 0) {
+            $cantidadObjetivo = self::toFloatFlexible($detalleConsulta['cantidad'] ?? 1);
+        }
+        if ($cantidadObjetivo <= 0) {
+            $cantidadObjetivo = 1.0;
+        }
+
+        $snapshotObjetivo = [];
+        if (is_array($rowObjetivo) && !empty($rowObjetivo['snapshot_json'])) {
+            $snapshotObjetivo = self::decodificarSnapshotDetalle(['snapshot_json' => $rowObjetivo['snapshot_json']]);
+        }
+
+        $detalleRegla = $detalleConsulta;
+        if (is_array($rowObjetivo)) {
+            if (!isset($detalleRegla['paquete_id']) && array_key_exists('paquete_id', $rowObjetivo)) {
+                $detalleRegla['paquete_id'] = $rowObjetivo['paquete_id'];
+            }
+            if (!isset($detalleRegla['paquete_codigo']) && array_key_exists('paquete_codigo', $rowObjetivo)) {
+                $detalleRegla['paquete_codigo'] = $rowObjetivo['paquete_codigo'];
+            }
+            if (!isset($detalleRegla['paquete_tipo']) && array_key_exists('paquete_tipo', $rowObjetivo)) {
+                $detalleRegla['paquete_tipo'] = $rowObjetivo['paquete_tipo'];
+            }
+        }
+
+        $reglaObjetivo = self::obtenerReglaHonorarioPaquete($detalleRegla, $snapshotObjetivo);
+        if (!is_array($reglaObjetivo) || empty($reglaObjetivo)) {
+            $reglaObjetivo = $reglaPaquete;
+        }
+
+        $tarifaTotalObjetivo = round(max(0.0, $subtotalObjetivo), 2);
+        if ($tarifaTotalObjetivo <= 0) {
+            return $datos;
+        }
+
+        if ($modoHonorarioPaquete === 'monto_fijo_medico_paquete') {
+            $montoFijo = max(0.0, self::toFloatFlexible($reglaObjetivo['monto_fijo_medico'] ?? 0));
+            $montoFijoEscalado = $montoFijo * $cantidadObjetivo;
+            $montoMedicoObjetivo = round(min($montoFijoEscalado, $tarifaTotalObjetivo), 2);
+            $porcentajeMedicoObjetivo = $tarifaTotalObjetivo > 0 ? round(($montoMedicoObjetivo * 100) / $tarifaTotalObjetivo, 2) : 0.0;
+        } else {
+            $porcentaje = self::toFloatFlexible($reglaObjetivo['porcentaje_medico'] ?? 0);
+            $porcentaje = min(max($porcentaje, 0.0), 100.0);
+            $montoMedicoObjetivo = round($tarifaTotalObjetivo * $porcentaje / 100, 2);
+            $porcentajeMedicoObjetivo = $porcentaje;
+        }
+
+        $montoClinicaObjetivo = round(max(0.0, $tarifaTotalObjetivo - $montoMedicoObjetivo), 2);
+        $porcentajeClinicaObjetivo = $tarifaTotalObjetivo > 0 ? round(($montoClinicaObjetivo * 100) / $tarifaTotalObjetivo, 2) : 0.0;
+
+        $descripcionBase = (string)($tarifa['descripcion'] ?? ($detalleConsulta['descripcion'] ?? 'Servicio médico'));
+        $descripcionFinal = self::construirDescripcionPaquete(
+            $descripcionBase,
+            $detalleRegla,
+            $snapshotDetalle,
+            $modoHonorarioPaquete,
+            $montoMedicoObjetivo,
+            $montoClinicaObjetivo
+        );
+
+        $datos['tipo_servicio'] = self::normalizarTipoServicioMovimiento($servicioKey);
+        $datos['metodo_pago_medico'] = self::normalizarMetodoPagoMedico($metodoPago);
+        $datos['descripcion'] = $descripcionFinal;
+        $datos['tarifa_total'] = $tarifaTotalObjetivo;
+        $datos['monto_medico'] = $montoMedicoObjetivo;
+        $datos['monto_clinica'] = $montoClinicaObjetivo;
+        $datos['porcentaje_aplicado_medico'] = $porcentajeMedicoObjetivo;
+        $datos['porcentaje_aplicado_clinica'] = $porcentajeClinicaObjetivo;
+
+        return $datos;
+    }
+
+    private static function buscarPendientePorOrigen($conn, $cotizacionId, $origenUid, $datos, $descripcionFirma) {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return 0;
+        }
+
+        if (self::columnExists($conn, 'honorarios_por_cobrar', 'origen_uid')) {
+            $stmt = $conn->prepare("SELECT id FROM honorarios_por_cobrar WHERE cotizacion_id = ? AND origen_uid = ? AND estado_consolidacion = 'pendiente' ORDER BY id DESC LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param('is', $cotizacionId, $origenUid);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $id = (int)($row['id'] ?? 0);
+                if ($id > 0) {
+                    return $id;
+                }
+            }
+        }
+
+        $consultaId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
+        $medicoId = isset($datos['medico_id']) ? (int)$datos['medico_id'] : 0;
+        $pacienteId = isset($datos['paciente_id']) ? (int)$datos['paciente_id'] : 0;
+        $tarifaId = isset($datos['tarifa_id']) ? (int)$datos['tarifa_id'] : 0;
+        $tipoServicio = self::normalizarTipoServicioMovimiento($datos['tipo_servicio'] ?? 'consulta');
+
+        $sql = "SELECT id
+            FROM honorarios_por_cobrar
+            WHERE cotizacion_id = ?
+              AND estado_consolidacion = 'pendiente'
+              AND COALESCE(consulta_id, 0) = ?
+              AND medico_id = ?
+              AND COALESCE(paciente_id, 0) = ?
+              AND COALESCE(tarifa_id, 0) = ?
+              AND LOWER(TRIM(COALESCE(tipo_servicio, ''))) = ?
+              AND LOWER(TRIM(COALESCE(descripcion, ''))) = ?
+            ORDER BY id DESC
+            LIMIT 1";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return 0;
+        }
+        $stmt->bind_param('iiiiiss', $cotizacionId, $consultaId, $medicoId, $pacienteId, $tarifaId, $tipoServicio, $descripcionFirma);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int)($row['id'] ?? 0);
+    }
+
+    private static function actualizarPendientePorCobrar($conn, $id, $datosUpdate) {
+        $id = (int)$id;
+        if ($id <= 0) {
+            return false;
+        }
+
+        $sql = "UPDATE honorarios_por_cobrar
+            SET cobro_id = ?,
+                consulta_id = ?,
+                tipo_precio = ?,
+                descripcion = ?,
+                tarifa_total = ?,
+                monto_clinica = ?,
+                monto_medico = ?,
+                porcentaje_aplicado_clinica = ?,
+                porcentaje_aplicado_medico = ?,
+                metodo_pago_medico = ?,
+                usuario_cobro_id = ?,
+                caja_id = ?,
+                turno = ?,
+                observaciones = ?,
+                updated_at = NOW()
+            WHERE id = ? AND estado_consolidacion = 'pendiente'
+            LIMIT 1";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param(
+            'iissdddddsiissi',
+            $datosUpdate['cobro_id'],
+            $datosUpdate['consulta_id'],
+            $datosUpdate['tipo_precio'],
+            $datosUpdate['descripcion'],
+            $datosUpdate['tarifa_total'],
+            $datosUpdate['monto_clinica'],
+            $datosUpdate['monto_medico'],
+            $datosUpdate['porcentaje_aplicado_clinica'],
+            $datosUpdate['porcentaje_aplicado_medico'],
+            $datosUpdate['metodo_pago_medico'],
+            $datosUpdate['usuario_cobro_id'],
+            $datosUpdate['caja_id'],
+            $datosUpdate['turno'],
+            $datosUpdate['observaciones'],
+            $id
+        );
+
+        $ok = $stmt->execute();
+        $stmt->close();
+        return (bool)$ok;
     }
 
     private static function obtenerReglaHonorarioPaquete($detalleConsulta, $snapshot) {
@@ -434,6 +822,7 @@ class HonorarioModule {
         }
 
         $datos = self::calcularDatosMovimiento($detalleConsulta, $tarifa, $servicio_key, $metodo_pago);
+        $datos = self::ajustarDatosPaquetePorObjetivoCotizacion($conn, (int)$cotizacion_id, $detalleConsulta, $tarifa, $servicio_key, $metodo_pago, $datos);
         if (!($datos['success'] ?? false)) {
             return $datos;
         }
@@ -465,11 +854,12 @@ class HonorarioModule {
 
         // firma_origen identifica el SERVICIO dentro de la cotización, no el cobro individual.
         // Evitar descripcion completa porque puede incluir montos variables por abono parcial.
-        $detalleOrigenId = isset($detalleConsulta['cotizacion_detalle_id'])
-            ? (int)$detalleConsulta['cotizacion_detalle_id']
-            : (isset($detalleConsulta['detalle_id']) ? (int)$detalleConsulta['detalle_id'] : 0);
+        $detalleOrigenId = self::resolverCotizacionDetalleOrigenId($conn, $cotizacionId, $detalleConsulta, $datos);
         $consultaOrigenId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
         $descripcionFirma = self::resumirDescripcionFirma($descripcion);
+        $origenUid = self::construirOrigenUid($cotizacionId, $detalleOrigenId, $datos, $descripcionFirma);
+
+        $pendienteExistenteId = self::buscarPendientePorOrigen($conn, $cotizacionId, $origenUid, $datos, $descripcionFirma);
 
         $firmaOrigenPartes = [
             $cotizacionId,
@@ -498,19 +888,53 @@ class HonorarioModule {
             $observaciones .= ' | Reparto manual en cobro';
         }
 
+        if ($pendienteExistenteId > 0) {
+            $actualizado = self::actualizarPendientePorCobrar($conn, $pendienteExistenteId, [
+                'cobro_id' => $cobroId,
+                'consulta_id' => $datos['consulta_id'],
+                'tipo_precio' => $tipoPrecio,
+                'descripcion' => $descripcion,
+                'tarifa_total' => $tarifaTotal,
+                'monto_clinica' => $montoClinica,
+                'monto_medico' => $montoMedico,
+                'porcentaje_aplicado_clinica' => $porcClinica,
+                'porcentaje_aplicado_medico' => $porcMedico,
+                'metodo_pago_medico' => $metodoPagoMedico,
+                'usuario_cobro_id' => $usuarioCobroId,
+                'caja_id' => $cajaId,
+                'turno' => $turnoVal,
+                'observaciones' => $observaciones,
+            ]);
+            return ['success' => true, 'ya_existia' => true, 'actualizado' => $actualizado];
+        }
+
+        $usaOrigenUid = self::columnExists($conn, 'honorarios_por_cobrar', 'origen_uid');
         $sql = "INSERT INTO honorarios_por_cobrar (
             cotizacion_id, cobro_id, consulta_id, medico_id, paciente_id, tarifa_id,
             tipo_precio, tipo_servicio, descripcion, tarifa_total, monto_clinica, monto_medico,
             porcentaje_aplicado_clinica, porcentaje_aplicado_medico, metodo_pago_medico,
-            usuario_cobro_id, caja_id, turno, observaciones, firma_origen,
-            estado_consolidacion, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', NOW(), NOW())
+            usuario_cobro_id, caja_id, turno, observaciones, firma_origen"
+            . ($usaOrigenUid ? ", origen_uid" : "")
+            . ", estado_consolidacion, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+            . ($usaOrigenUid ? ", ?" : "")
+            . ", 'pendiente', NOW(), NOW())
         ON DUPLICATE KEY UPDATE
-            cobro_id          = VALUES(cobro_id),
-            usuario_cobro_id  = VALUES(usuario_cobro_id),
-            caja_id           = VALUES(caja_id),
-            turno             = VALUES(turno),
-            updated_at        = NOW()";
+            cobro_id                    = VALUES(cobro_id),
+            consulta_id                 = VALUES(consulta_id),
+            tipo_precio                 = VALUES(tipo_precio),
+            descripcion                 = VALUES(descripcion),
+            tarifa_total                = VALUES(tarifa_total),
+            monto_clinica               = VALUES(monto_clinica),
+            monto_medico                = VALUES(monto_medico),
+            porcentaje_aplicado_clinica = VALUES(porcentaje_aplicado_clinica),
+            porcentaje_aplicado_medico  = VALUES(porcentaje_aplicado_medico),
+            metodo_pago_medico          = VALUES(metodo_pago_medico),
+            usuario_cobro_id            = VALUES(usuario_cobro_id),
+            caja_id                     = VALUES(caja_id),
+            turno                       = VALUES(turno),
+            observaciones               = VALUES(observaciones),
+            updated_at                  = NOW()";
 
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
@@ -521,29 +945,56 @@ class HonorarioModule {
         }
 
         $consultaId = $datos['consulta_id'];
-        $stmt->bind_param(
-            "iiiiiisssdddddsiisss",
-            $cotizacionId,
-            $cobroId,
-            $consultaId,
-            $medicoId,
-            $pacienteId,
-            $tarifaId,
-            $tipoPrecio,
-            $tipoServicio,
-            $descripcion,
-            $tarifaTotal,
-            $montoClinica,
-            $montoMedico,
-            $porcClinica,
-            $porcMedico,
-            $metodoPagoMedico,
-            $usuarioCobroId,
-            $cajaId,
-            $turnoVal,
-            $observaciones,
-            $firmaOrigen
-        );
+        if ($usaOrigenUid) {
+            $stmt->bind_param(
+                "iiiiiisssdddddsiissss",
+                $cotizacionId,
+                $cobroId,
+                $consultaId,
+                $medicoId,
+                $pacienteId,
+                $tarifaId,
+                $tipoPrecio,
+                $tipoServicio,
+                $descripcion,
+                $tarifaTotal,
+                $montoClinica,
+                $montoMedico,
+                $porcClinica,
+                $porcMedico,
+                $metodoPagoMedico,
+                $usuarioCobroId,
+                $cajaId,
+                $turnoVal,
+                $observaciones,
+                $firmaOrigen,
+                $origenUid
+            );
+        } else {
+            $stmt->bind_param(
+                "iiiiiisssdddddsiisss",
+                $cotizacionId,
+                $cobroId,
+                $consultaId,
+                $medicoId,
+                $pacienteId,
+                $tarifaId,
+                $tipoPrecio,
+                $tipoServicio,
+                $descripcion,
+                $tarifaTotal,
+                $montoClinica,
+                $montoMedico,
+                $porcClinica,
+                $porcMedico,
+                $metodoPagoMedico,
+                $usuarioCobroId,
+                $cajaId,
+                $turnoVal,
+                $observaciones,
+                $firmaOrigen
+            );
+        }
 
         $ok = $stmt->execute();
         if (!$ok) {

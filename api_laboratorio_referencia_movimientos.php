@@ -25,6 +25,12 @@ function table_exists_lr($conn, $table) {
     return $res && $res->num_rows > 0;
 }
 
+function ensure_column_lr($conn, $table, $column, $definition) {
+    if (!column_exists_lr($conn, $table, $column)) {
+        $conn->query("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
+    }
+}
+
 function resolver_cotizacion_id_liquidacion_lr($conn, array $movimiento, bool $hasCotizacionId, bool $hasCotizacionMovimientos): int {
     $directo = $hasCotizacionId ? (int)($movimiento['cotizacion_id'] ?? 0) : 0;
     if ($directo > 0) {
@@ -133,13 +139,97 @@ $method = $_SERVER['REQUEST_METHOD'];
 switch($method) {
     case 'POST':
         $data = json_decode(file_get_contents('php://input'), true);
+        // Anular movimiento de laboratorio de referencia (sin eliminación física)
+        if (isset($data['accion']) && $data['accion'] === 'anular_movimiento' && isset($data['id'])) {
+            $usuario = $_SESSION['usuario'] ?? null;
+            if (!$usuario || !is_array($usuario) || strtolower(trim((string)($usuario['rol'] ?? ''))) !== 'administrador') {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'Solo el administrador puede anular movimientos de laboratorio']);
+                break;
+            }
+            $motivo = trim((string)($data['motivo'] ?? ''));
+            if ($motivo === '') {
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => 'Debes indicar el motivo de la anulación']);
+                break;
+            }
+
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'anulado_por', 'INT NULL');
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'fecha_anulacion', 'DATETIME NULL');
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'motivo_anulacion', 'TEXT NULL');
+
+            try {
+                $conn->begin_transaction();
+
+                $stmt = $conn->prepare("SELECT id, estado FROM laboratorio_referencia_movimientos WHERE id = ? LIMIT 1 FOR UPDATE");
+                $stmt->bind_param("i", $data['id']);
+                $stmt->execute();
+                $mov = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+
+                if (!$mov) {
+                    throw new RuntimeException('Movimiento de laboratorio no encontrado');
+                }
+                $estadoActual = strtolower(trim((string)($mov['estado'] ?? '')));
+                if ($estadoActual === 'cancelado') {
+                    throw new RuntimeException('Este movimiento ya fue anulado anteriormente');
+                }
+                if ($estadoActual === 'pagado') {
+                    throw new RuntimeException('Este movimiento ya fue liquidado al laboratorio. Debes revertir primero ese pago antes de poder anularlo.');
+                }
+
+                $usuarioId = (int)($usuario['id'] ?? 0);
+                $stmtUpd = $conn->prepare("UPDATE laboratorio_referencia_movimientos SET estado = 'cancelado', anulado_por = ?, fecha_anulacion = NOW(), motivo_anulacion = ? WHERE id = ? AND estado = 'pendiente'");
+                $stmtUpd->bind_param('isi', $usuarioId, $motivo, $data['id']);
+                $stmtUpd->execute();
+                if ($stmtUpd->affected_rows !== 1) {
+                    throw new RuntimeException('No se pudo anular el movimiento de laboratorio');
+                }
+                $stmtUpd->close();
+
+                $conn->commit();
+                echo json_encode(['success' => true]);
+            } catch (Throwable $e) {
+                try { $conn->rollback(); } catch (Throwable $ignored) {}
+                error_log('api_laboratorio_referencia_movimientos.php: ' . $e->getMessage());
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+            }
+            break;
+        }
+
         // Si la acción es marcar como pagado
         if (isset($data['accion']) && $data['accion'] === 'marcar_pagado' && isset($data['id'])) {
+            $metodoPago = strtolower(trim((string)($data['metodo_pago'] ?? 'efectivo')));
+            $fuenteFondos = strtolower(trim((string)($data['fuente_fondos'] ?? 'clinica')));
+            $terceroNombre = trim((string)($data['tercero_nombre'] ?? ''));
+            $referenciaPago = trim((string)($data['referencia_pago'] ?? ''));
+            $observacionesPago = trim((string)($data['observaciones'] ?? ''));
+
+            $metodosValidos = ['efectivo', 'yape', 'plin', 'transferencia', 'tarjeta', 'cheque', 'deposito'];
+            $fuentesValidas = ['clinica', 'tercero_directo', 'tercero_fondeo'];
+            if (!in_array($metodoPago, $metodosValidos, true) || !in_array($fuenteFondos, $fuentesValidas, true)) {
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => 'Datos de liquidación inválidos']);
+                break;
+            }
+            if ($fuenteFondos !== 'clinica' && $terceroNombre === '') {
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => 'Indica quién cubrió el pago externo']);
+                break;
+            }
+
             // Registrar quién liquidó y el turno/hora de liquidación
             $usuario = $_SESSION['usuario'] ?? null;
             $usuario_id = $usuario['id'] ?? null;
             $turno_liq = null;
             $caja_id = null;
+            if (!$usuario_id) {
+                http_response_code(401);
+                echo json_encode(['success' => false, 'error' => 'Usuario no autenticado']);
+                break;
+            }
+
             if ($usuario_id) {
                 $stmtCaja = $conn->prepare("SELECT id, turno FROM cajas WHERE estado = 'abierta' AND usuario_id = ? ORDER BY created_at DESC LIMIT 1");
                 $stmtCaja->bind_param("i", $usuario_id);
@@ -151,35 +241,93 @@ switch($method) {
                     $caja_id = $cajaRow['id'];
                 }
             }
+
+            if (!$caja_id) {
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => 'Debes tener una caja abierta para liquidar laboratorio de referencia']);
+                break;
+            }
+
+            ensure_column_lr($conn, 'egresos', 'fuente_fondos', "VARCHAR(30) NOT NULL DEFAULT 'clinica'");
+            ensure_column_lr($conn, 'egresos', 'tercero_nombre', 'VARCHAR(150) NULL');
+            ensure_column_lr($conn, 'egresos', 'referencia_pago', 'VARCHAR(150) NULL');
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'metodo_pago_liquidacion', "VARCHAR(30) NULL DEFAULT NULL");
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'fuente_fondos_liquidacion', "VARCHAR(30) NULL DEFAULT NULL");
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'tercero_nombre_liquidacion', "VARCHAR(150) NULL DEFAULT NULL");
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'referencia_pago_liquidacion', "VARCHAR(150) NULL DEFAULT NULL");
+            ensure_column_lr($conn, 'laboratorio_referencia_movimientos', 'observacion_liquidacion', "TEXT NULL");
+
+            $conn->query("CREATE TABLE IF NOT EXISTS cuenta_corriente_terceros (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                caja_id INT NULL,
+                tercero_nombre VARCHAR(150) NOT NULL,
+                tipo_movimiento VARCHAR(30) NOT NULL,
+                monto DECIMAL(12,2) NOT NULL,
+                metodo_pago VARCHAR(30) NOT NULL,
+                referencia_pago VARCHAR(150) NULL,
+                honorario_movimiento_id INT NULL,
+                usuario_id INT NOT NULL,
+                observaciones TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_cct_caja (caja_id),
+                INDEX idx_cct_tercero (tercero_nombre),
+                INDEX idx_cct_honorario (honorario_movimiento_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
             // Obtener datos del movimiento de laboratorio para el egreso
             $hasCotizacionId = column_exists_lr($conn, 'laboratorio_referencia_movimientos', 'cotizacion_id');
             $hasCotizacionMovimientos = table_exists_lr($conn, 'cotizacion_movimientos');
 
-            $stmtMovimiento = $conn->prepare("SELECT * FROM laboratorio_referencia_movimientos WHERE id = ?");
-            $stmtMovimiento->bind_param("i", $data['id']);
-            $stmtMovimiento->execute();
-            $resMovimiento = $stmtMovimiento->get_result();
-            if ($resMovimiento && $resMovimiento->num_rows > 0) {
+            try {
+                $conn->begin_transaction();
+
+                $stmtMovimiento = $conn->prepare("SELECT * FROM laboratorio_referencia_movimientos WHERE id = ? FOR UPDATE");
+                $stmtMovimiento->bind_param("i", $data['id']);
+                $stmtMovimiento->execute();
+                $resMovimiento = $stmtMovimiento->get_result();
+                if (!$resMovimiento || $resMovimiento->num_rows === 0) {
+                    throw new RuntimeException('Movimiento de laboratorio no encontrado');
+                }
+
                 $movimiento = $resMovimiento->fetch_assoc();
+                if (strtolower(trim((string)($movimiento['estado'] ?? ''))) !== 'pendiente') {
+                    throw new RuntimeException('El movimiento ya fue liquidado o no está disponible');
+                }
+
                 $liquidacion = resolver_monto_liquidacion_lr($conn, $movimiento, $hasCotizacionId, $hasCotizacionMovimientos);
-                
-                // Actualizar estado a pagado
-                $stmt = $conn->prepare("UPDATE laboratorio_referencia_movimientos SET estado = 'pagado', liquidado_por = ?, turno_liquidacion = ?, hora_liquidacion = CURTIME(), caja_id = COALESCE(caja_id, ?) WHERE id = ?");
-                $stmt->bind_param("issi", $usuario_id, $turno_liq, $caja_id, $data['id']);
-                $stmt->execute();
-                
-                // Registrar egreso en tabla egresos
                 $monto = (float)($liquidacion['monto'] ?? 0);
-                $laboratorio = $conn->real_escape_string($movimiento['laboratorio']);
-                $fecha = date('Y-m-d');
-                $descripcion = "Liquidación laboratorio referencia: $laboratorio ID {$data['id']}";
-                $usuario_nombre = isset($_SESSION['usuario']['nombre']) ? $conn->real_escape_string($_SESSION['usuario']['nombre']) : '';
-                
-                $sqlEgreso = "INSERT INTO egresos (fecha, tipo, tipo_egreso, categoria, descripcion, concepto, monto, usuario_id, turno, estado, caja_id, responsable, liquidacion_id) VALUES (
-                    '$fecha', 'laboratorio', 'laboratorio', 'Laboratorio de Referencia', '$descripcion', '$laboratorio', $monto, $usuario_id, " . ($turno_liq ? "'$turno_liq'" : "NULL") . ", 'pagado', " . ($caja_id ? $caja_id : "NULL") . ", '$usuario_nombre', {$data['id']}
-                )";
-                $conn->query($sqlEgreso);
-                
+                if ($monto <= 0) {
+                    throw new RuntimeException('El monto de liquidación no es válido');
+                }
+
+                // Actualizar estado a pagado y datos de liquidación
+                $stmt = $conn->prepare("UPDATE laboratorio_referencia_movimientos SET estado = 'pagado', liquidado_por = ?, turno_liquidacion = ?, hora_liquidacion = CURTIME(), caja_id = COALESCE(caja_id, ?), metodo_pago_liquidacion = ?, fuente_fondos_liquidacion = ?, tercero_nombre_liquidacion = ?, referencia_pago_liquidacion = ?, observacion_liquidacion = ? WHERE id = ? AND estado = 'pendiente'");
+                $stmt->bind_param("isisssssi", $usuario_id, $turno_liq, $caja_id, $metodoPago, $fuenteFondos, $terceroNombre, $referenciaPago, $observacionesPago, $data['id']);
+                $stmt->execute();
+                if ($stmt->affected_rows !== 1) {
+                    throw new RuntimeException('No se pudo actualizar el estado del movimiento de laboratorio');
+                }
+
+                // Registrar egreso en tabla egresos
+                $descripcion = 'Liquidación laboratorio referencia: ' . (string)($movimiento['laboratorio'] ?? '') . ' ID ' . (int)$data['id'];
+                $concepto = (string)($movimiento['laboratorio'] ?? 'Laboratorio');
+                $usuario_nombre = isset($_SESSION['usuario']['nombre']) ? (string)$_SESSION['usuario']['nombre'] : '';
+                $tercero = $fuenteFondos === 'clinica' ? null : $terceroNombre;
+
+                $stmtEgreso = $conn->prepare("INSERT INTO egresos (fecha, tipo, tipo_egreso, categoria, descripcion, concepto, monto, metodo_pago, usuario_id, turno, estado, caja_id, responsable, fuente_fondos, tercero_nombre, referencia_pago, liquidacion_id) VALUES (CURDATE(), 'laboratorio', 'laboratorio', 'Laboratorio de Referencia', ?, ?, ?, ?, ?, ?, 'pagado', ?, ?, ?, ?, ?, ?)");
+                $stmtEgreso->bind_param("ssdsisissssi", $descripcion, $concepto, $monto, $metodoPago, $usuario_id, $turno_liq, $caja_id, $usuario_nombre, $fuenteFondos, $tercero, $referenciaPago, $data['id']);
+                $stmtEgreso->execute();
+
+                if ($fuenteFondos !== 'clinica') {
+                    $stmtCuentaTercero = $conn->prepare("INSERT INTO cuenta_corriente_terceros (caja_id, tercero_nombre, tipo_movimiento, monto, metodo_pago, referencia_pago, honorario_movimiento_id, usuario_id, observaciones) VALUES (?, ?, 'adelanto_laboratorio_referencia', ?, ?, ?, NULL, ?, ?)");
+                    $stmtCuentaTercero->bind_param('isdssis', $caja_id, $terceroNombre, $monto, $metodoPago, $referenciaPago, $usuario_id, $observacionesPago);
+                    $stmtCuentaTercero->execute();
+                    $stmtCuentaTercero->close();
+                }
+
+                $stmtEgreso->close();
+                $conn->commit();
+
                 echo json_encode([
                     'success' => true,
                     'monto_liquidado' => round($monto, 2),
@@ -187,8 +335,11 @@ switch($method) {
                     'subtotal_cotizacion' => isset($liquidacion['subtotal']) && $liquidacion['subtotal'] !== null ? round((float)$liquidacion['subtotal'], 2) : null,
                     'porcentaje_derivacion' => isset($liquidacion['porcentaje']) && $liquidacion['porcentaje'] !== null ? (float)$liquidacion['porcentaje'] : null,
                 ]);
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Movimiento de laboratorio no encontrado']);
+            } catch (Throwable $e) {
+                try { $conn->rollback(); } catch (Throwable $ignored) {}
+                error_log('api_laboratorio_referencia_movimientos.php: ' . $e->getMessage());
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
             }
             break;
         }
@@ -229,6 +380,7 @@ switch($method) {
         $examenId = isset($_GET['examen_id']) ? (int)$_GET['examen_id'] : 0;
         $cotizacionId = isset($_GET['cotizacion_id']) ? (int)$_GET['cotizacion_id'] : 0;
         $soloLiquidables = isset($_GET['solo_liquidables']) && (string)$_GET['solo_liquidables'] === '1';
+        $incluirCancelados = isset($_GET['incluir_cancelados']) && (string)$_GET['incluir_cancelados'] === '1';
         $hasCotizacionId = column_exists_lr($conn, 'laboratorio_referencia_movimientos', 'cotizacion_id');
         $hasCotizacionMovimientos = table_exists_lr($conn, 'cotizacion_movimientos');
 
@@ -262,6 +414,9 @@ switch($method) {
             } else {
                 $sql .= " AND m.cobro_id > 0";
             }
+        }
+        if (!$incluirCancelados) {
+            $sql .= " AND LOWER(COALESCE(m.estado, '')) <> 'cancelado'";
         }
         if ($laboratorio) {
             $sql .= " AND m.laboratorio = ?";

@@ -35,6 +35,7 @@
     "cornerstone-wado-image-loader": "^4.13.2",
     "dicom-parser": "^1.8.21",
     "file-saver": "^2.0.5",
+    "html2canvas": "^1.4.1",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",
     "mathjs": "^14.8.2",

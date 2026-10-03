@@ -9,6 +9,16 @@ import CajaResumenDiario from "./CajaResumenDiario";
 import CajaRecepcionistasResumen from "./CajaRecepcionistasResumen";
 import ModalCorregirApertura from "./ModalCorregirApertura";
 
+function getFechaLimaISO(offsetDias = 0) {
+  const now = new Date();
+  const limaDate = new Date(now.toLocaleString("en-US", { timeZone: "America/Lima" }));
+  limaDate.setDate(limaDate.getDate() + Number(offsetDias || 0));
+  const y = limaDate.getFullYear();
+  const m = String(limaDate.getMonth() + 1).padStart(2, "0");
+  const d = String(limaDate.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 
 export default function CajaAdminDashboard() {
   const [resumen, setResumen] = useState(null);
@@ -19,13 +29,20 @@ export default function CajaAdminDashboard() {
   const [usuario, setUsuario] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [showCorregirAperturaModal, setShowCorregirAperturaModal] = useState(false);
+  const [fechaConsulta, setFechaConsulta] = useState(() => getFechaLimaISO(0));
   // ...existing code...
 
   // Función para cargar resumen (reutilizable)
-  const fetchResumen = async ({ silent = false } = {}) => {
+  const fetchResumen = async ({ silent = false, fecha = null } = {}) => {
+    const fechaObjetivo = String(fecha || fechaConsulta || getFechaLimaISO(0));
     if (!silent) setLoading(true);
     try {
-      const resp = await authFetch("api_resumen_diario.php");
+      const params = new URLSearchParams();
+      if (fechaObjetivo) {
+        params.set("fecha", fechaObjetivo);
+      }
+      const url = `api_resumen_diario.php${params.toString() ? `?${params.toString()}` : ""}`;
+      const resp = await authFetch(url);
       const data = await resp.json();
       if (data.success) {
         setResumen(data);
@@ -65,16 +82,18 @@ export default function CajaAdminDashboard() {
   useEffect(() => {
     const usuarioSession = JSON.parse(sessionStorage.getItem("usuario") || "{}");
     setUsuario(usuarioSession);
-    fetchResumen();
+    fetchResumen({ fecha: fechaConsulta });
 
     const timerId = window.setInterval(() => {
-      fetchResumen({ silent: true });
+      fetchResumen({ silent: true, fecha: fechaConsulta });
     }, 10000);
 
     return () => {
       window.clearInterval(timerId);
     };
-  }, []);
+  }, [fechaConsulta]);
+
+  const esFechaHoy = String(fechaConsulta || "") === getFechaLimaISO(0);
 
   const cajasRecepcionistas = useMemo(() => {
     if (!Array.isArray(resumen?.cajas_resumen)) return [];
@@ -265,6 +284,37 @@ export default function CajaAdminDashboard() {
         </aside>
 
         <main className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Fecha del reporte</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  {esFechaHoy ? "Mostrando datos del día actual" : `Mostrando histórico del ${fechaConsulta}`}
+                </div>
+              </div>
+              <div className="flex items-end gap-2">
+                <label className="flex flex-col text-xs font-semibold text-slate-600">
+                  Fecha
+                  <input
+                    type="date"
+                    value={fechaConsulta}
+                    onChange={(e) => setFechaConsulta(e.target.value)}
+                    className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                  />
+                </label>
+                {!esFechaHoy && (
+                  <button
+                    type="button"
+                    onClick={() => setFechaConsulta(getFechaLimaISO(0))}
+                    className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                  >
+                    Ir a hoy
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-100 p-3 shadow-sm">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Cobrado real recep.</div>

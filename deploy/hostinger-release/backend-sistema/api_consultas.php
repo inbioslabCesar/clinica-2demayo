@@ -2081,7 +2081,8 @@ switch ($method) {
         // Listar consultas (por médico, paciente o todas)
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
         $cotizacion_id = isset($_GET['cotizacion_id']) ? intval($_GET['cotizacion_id']) : null;
-        if ((!$consulta_id || $consulta_id <= 0) && $cotizacion_id > 0) {
+        $solicitaConsultaPorCotizacion = (!$consulta_id || $consulta_id <= 0) && $cotizacion_id > 0;
+        if ($solicitaConsultaPorCotizacion) {
             $consulta_id = resolver_consulta_id_por_cotizacion($conn, $cotizacion_id);
         }
         $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
@@ -2120,6 +2121,23 @@ switch ($method) {
             }
             $medico_id = $medicoSesionId;
             $paciente_id = null;
+        }
+
+        // Seguridad de vínculo clínico: cuando se solicita por cotización y no se
+        // pudo resolver una consulta válida, no caer al listado general.
+        if ($solicitaConsultaPorCotizacion && (!$consulta_id || $consulta_id <= 0)) {
+            echo json_encode([
+                'success' => true,
+                'consultas' => [],
+                'stats' => [
+                    'total' => 0,
+                    'pendientes' => 0,
+                    'emergencias' => 0,
+                ],
+                'cotizacion_id' => $cotizacion_id,
+                'reason' => 'sin_consulta_asociada',
+            ]);
+            exit;
         }
 
         if ($vista === 'anticipada') {

@@ -64,98 +64,102 @@ if (!function_exists('db_connect_error_retryable')) {
     }
 }
 
+$skipMysqliInit = defined('SKIP_MYSQLI_INIT') && SKIP_MYSQLI_INIT;
+
 $mysqli = null;
 $mysqliException = null;
 $mysqliConnectErrno = 0;
 $mysqliConnectError = '';
 
-for ($attempt = 1; $attempt <= $dbConnectMaxAttempts; $attempt++) {
-    $mysqli = null;
-    $mysqliException = null;
-    $mysqliConnectErrno = 0;
-    $mysqliConnectError = '';
+if (!$skipMysqliInit) {
+    for ($attempt = 1; $attempt <= $dbConnectMaxAttempts; $attempt++) {
+        $mysqli = null;
+        $mysqliException = null;
+        $mysqliConnectErrno = 0;
+        $mysqliConnectError = '';
 
-    try {
-        $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
-        if ($mysqli && !$mysqli->connect_errno) {
+        try {
+            $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+            if ($mysqli && !$mysqli->connect_errno) {
+                break;
+            }
+            $mysqliConnectErrno = (int)($mysqli ? $mysqli->connect_errno : 0);
+            $mysqliConnectError = (string)($mysqli ? $mysqli->connect_error : '');
+        } catch (Throwable $e) {
+            $mysqliException = $e;
+            $mysqliConnectError = $e->getMessage();
+        }
+
+        $retryable = db_connect_error_retryable($mysqliConnectErrno, $mysqliConnectError);
+        if ($mysqliException) {
+            $retryable = db_connect_error_retryable($mysqliException->getCode(), $mysqliException->getMessage());
+        }
+
+        if ($attempt >= $dbConnectMaxAttempts || !$retryable) {
             break;
         }
-        $mysqliConnectErrno = (int)($mysqli ? $mysqli->connect_errno : 0);
-        $mysqliConnectError = (string)($mysqli ? $mysqli->connect_error : '');
-    } catch (Throwable $e) {
-        $mysqliException = $e;
-        $mysqliConnectError = $e->getMessage();
+
+        usleep($dbConnectBaseDelayUs * $attempt);
     }
 
-    $retryable = db_connect_error_retryable($mysqliConnectErrno, $mysqliConnectError);
     if ($mysqliException) {
-        $retryable = db_connect_error_retryable($mysqliException->getCode(), $mysqliException->getMessage());
+        if (function_exists('api_log_server_error')) {
+            api_log_server_error('db-mysqli-exception', $mysqliException->getMessage(), $mysqliException->getFile(), (int)$mysqliException->getLine());
+        }
+
+        $payload = [];
+        if (function_exists('api_debug_enabled') && api_debug_enabled()) {
+            $payload['debug'] = [
+                'db_host' => DB_HOST,
+                'db_name' => DB_NAME,
+                'db_user' => DB_USER,
+                'exception_class' => get_class($mysqliException),
+                'exception_message' => $mysqliException->getMessage(),
+                'attempts' => $dbConnectMaxAttempts,
+                'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
+            ];
+        }
+
+        if (function_exists('api_emit_error')) {
+            api_emit_error('Error de conexión a la base de datos', 500, $payload);
+        } else {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión a la base de datos'], $payload));
+        }
+        exit;
     }
 
-    if ($attempt >= $dbConnectMaxAttempts || !$retryable) {
-        break;
-    }
+    if (!$mysqli || $mysqli->connect_errno) {
+        if (function_exists('api_log_server_error')) {
+            api_log_server_error('db-mysqli', (string)($mysqli ? $mysqli->connect_error : $mysqliConnectError), __FILE__, __LINE__);
+        }
 
-    usleep($dbConnectBaseDelayUs * $attempt);
+        $payload = [];
+        if (function_exists('api_debug_enabled') && api_debug_enabled()) {
+            $payload['debug'] = [
+                'db_host' => DB_HOST,
+                'db_name' => DB_NAME,
+                'db_user' => DB_USER,
+                'connect_errno' => $mysqli ? $mysqli->connect_errno : $mysqliConnectErrno,
+                'connect_error' => $mysqli ? $mysqli->connect_error : $mysqliConnectError,
+                'attempts' => $dbConnectMaxAttempts,
+                'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
+            ];
+        }
+
+        if (function_exists('api_emit_error')) {
+            api_emit_error('Error de conexión a la base de datos', 500, $payload);
+        } else {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión a la base de datos'], $payload));
+        }
+        exit;
+    }
+    $mysqli->set_charset('utf8mb4');
+    $mysqli->query("SET time_zone = '{$dbSessionTimeZone}'");
 }
-
-if ($mysqliException) {
-    if (function_exists('api_log_server_error')) {
-        api_log_server_error('db-mysqli-exception', $mysqliException->getMessage(), $mysqliException->getFile(), (int)$mysqliException->getLine());
-    }
-
-    $payload = [];
-    if (function_exists('api_debug_enabled') && api_debug_enabled()) {
-        $payload['debug'] = [
-            'db_host' => DB_HOST,
-            'db_name' => DB_NAME,
-            'db_user' => DB_USER,
-            'exception_class' => get_class($mysqliException),
-            'exception_message' => $mysqliException->getMessage(),
-            'attempts' => $dbConnectMaxAttempts,
-            'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
-        ];
-    }
-
-    if (function_exists('api_emit_error')) {
-        api_emit_error('Error de conexión a la base de datos', 500, $payload);
-    } else {
-        http_response_code(500);
-        header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión a la base de datos'], $payload));
-    }
-    exit;
-}
-
-if (!$mysqli || $mysqli->connect_errno) {
-    if (function_exists('api_log_server_error')) {
-        api_log_server_error('db-mysqli', (string)($mysqli ? $mysqli->connect_error : $mysqliConnectError), __FILE__, __LINE__);
-    }
-
-    $payload = [];
-    if (function_exists('api_debug_enabled') && api_debug_enabled()) {
-        $payload['debug'] = [
-            'db_host' => DB_HOST,
-            'db_name' => DB_NAME,
-            'db_user' => DB_USER,
-            'connect_errno' => $mysqli ? $mysqli->connect_errno : $mysqliConnectErrno,
-            'connect_error' => $mysqli ? $mysqli->connect_error : $mysqliConnectError,
-            'attempts' => $dbConnectMaxAttempts,
-            'instance' => defined('APP_INSTANCE_KEY') ? APP_INSTANCE_KEY : null,
-        ];
-    }
-
-    if (function_exists('api_emit_error')) {
-        api_emit_error('Error de conexión a la base de datos', 500, $payload);
-    } else {
-        http_response_code(500);
-        header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(array_merge(['success' => false, 'error' => 'Error de conexión a la base de datos'], $payload));
-    }
-    exit;
-}
-$mysqli->set_charset('utf8mb4');
-$mysqli->query("SET time_zone = '{$dbSessionTimeZone}'");
 
 // Alias para compatibilidad
 $conn = $mysqli;

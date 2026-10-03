@@ -282,6 +282,15 @@ class CobroModule
                 $itemTipo = $payload['item_tipo'];
                 $cantidadFinal = $payload['cantidad_final'];
                 $subtotalBase = (float)$payload['subtotal_base'];
+                $fechaPadre = trim((string)($detalle['fecha_programada'] ?? $detalle['fecha_programada_servicio'] ?? ''));
+                $horaPadre = trim((string)($detalle['hora_programada'] ?? $detalle['hora_programada_servicio'] ?? ''));
+
+                if ($fechaPadre !== '') {
+                    $item['fecha_programada'] = $fechaPadre;
+                }
+                if ($horaPadre !== '') {
+                    $item['hora_programada'] = $horaPadre;
+                }
 
                 if ($idx === $lastIdx && $subtotalObjetivo > 0) {
                     $subtotalAjustado = round(max(0.0, $subtotalObjetivo - $subtotalAcumulado), 2);
@@ -501,6 +510,64 @@ class CobroModule
         return $ids;
     }
 
+    private static function normalizarClientRequestId($value)
+    {
+        $id = trim((string)$value);
+        if ($id === '') {
+            return '';
+        }
+
+        if (strlen($id) > 80) {
+            $id = substr($id, 0, 80);
+        }
+
+        if (!preg_match('/^[A-Za-z0-9._:-]+$/', $id)) {
+            return '';
+        }
+
+        return $id;
+    }
+
+    private static function buscarCobroIdPorClientRequestId($conn, $clientRequestId, $usuarioId = 0)
+    {
+        $clientRequestId = self::normalizarClientRequestId($clientRequestId);
+        if ($clientRequestId === '') {
+            return 0;
+        }
+        if (!self::tableExists($conn, 'cobros') || !self::columnExists($conn, 'cobros', 'client_request_id')) {
+            return 0;
+        }
+
+        $usuarioId = (int)$usuarioId;
+        $stmt = $conn->prepare('SELECT id FROM cobros WHERE client_request_id = ?' . ($usuarioId > 0 ? ' AND usuario_id = ?' : '') . ' ORDER BY id DESC LIMIT 1');
+        if (!$stmt) {
+            return 0;
+        }
+
+        if ($usuarioId > 0) {
+            $stmt->bind_param('si', $clientRequestId, $usuarioId);
+        } else {
+            $stmt->bind_param('s', $clientRequestId);
+        }
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int)($row['id'] ?? 0);
+    }
+
+    private static function construirRespuestaCobroIdempotente($cobroId)
+    {
+        $cobroId = (int)$cobroId;
+        return [
+            'success' => true,
+            'cobro_id' => $cobroId,
+            'numero_comprobante' => sprintf('C%06d', $cobroId),
+            'idempotent_replay' => true,
+            'message' => 'Cobro previamente registrado. Se devolvio la respuesta del mismo intento.'
+        ];
+    }
+
     private static function resolverFechaHoraCobroParaIngreso($conn, $cobroId)
     {
         $cobroId = (int)$cobroId;
@@ -598,6 +665,34 @@ class CobroModule
         }
 
         return $byId;
+    }
+
+    private static function validarMontoContraSaldoCotizaciones($resumenPorCotizacion, $cotizacionesBloqueadas)
+    {
+        foreach ((array)$resumenPorCotizacion as $resumen) {
+            $cotizacionId = (int)($resumen['cotizacion_id'] ?? 0);
+            if ($cotizacionId <= 0 || !isset($cotizacionesBloqueadas[$cotizacionId])) {
+                continue;
+            }
+
+            $cot = $cotizacionesBloqueadas[$cotizacionId];
+            $totalActual = self::toFloatFlexible($cot['total'] ?? 0);
+            $pagadoActual = self::toFloatFlexible($cot['total_pagado'] ?? 0);
+            $saldoActual = self::toFloatFlexible($cot['saldo_pendiente'] ?? 0);
+            $estadoActual = strtolower(trim((string)($cot['estado'] ?? 'pendiente')));
+            if ($saldoActual <= 0 && $totalActual > $pagadoActual && $estadoActual !== 'pagado') {
+                $saldoActual = max(0.0, round($totalActual - $pagadoActual, 2));
+            }
+
+            $montoAplicar = round(self::toFloatFlexible($resumen['monto_aplicado'] ?? 0), 2);
+            if ($montoAplicar > round($saldoActual, 2) + 0.01) {
+                throw new \Exception(
+                    'El monto a cobrar de la cotización #' . $cotizacionId
+                    . ' (S/ ' . number_format($montoAplicar, 2) . ') supera su saldo pendiente (S/ ' . number_format($saldoActual, 2) . ').'
+                    . ' Es posible que este cobro ya se haya registrado. Refresca la pantalla antes de volver a cobrar.'
+                );
+            }
+        }
     }
 
     private static function registrarCobroCotizaciones($conn, $cobroId, $resumenPorCotizacion, $cotizacionesBloqueadas, $usuarioId)
@@ -2961,6 +3056,80 @@ class CobroModule
         ];
     }
 
+    private static function cotizacionTieneProgramacionPreexistente($conn, $cotizacionId)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return false;
+        }
+
+        if (self::tableExists($conn, 'cotizaciones_detalle') && self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            $whereEstado = self::columnExists($conn, 'cotizaciones_detalle', 'estado_item')
+                ? " AND LOWER(TRIM(COALESCE(estado_item, ''))) <> 'eliminado'"
+                : '';
+            $stmtConsulta = $conn->prepare('SELECT 1 FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0' . $whereEstado . ' LIMIT 1');
+            if ($stmtConsulta) {
+                $stmtConsulta->bind_param('i', $cotizacionId);
+                $stmtConsulta->execute();
+                $rowConsulta = $stmtConsulta->get_result()->fetch_assoc();
+                $stmtConsulta->close();
+                if ($rowConsulta) {
+                    return true;
+                }
+            }
+        }
+
+        if (self::tableExists($conn, 'agenda_servicios_cotizacion')
+            && self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')) {
+            $whereAgendaEstado = self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')
+                ? " AND LOWER(TRIM(COALESCE(estado_evento, ''))) NOT IN ('cancelado', 'no_asistio', 'anulada')"
+                : '';
+            $stmtAgenda = $conn->prepare('SELECT 1 FROM agenda_servicios_cotizacion WHERE cotizacion_id = ?' . $whereAgendaEstado . ' LIMIT 1');
+            if ($stmtAgenda) {
+                $stmtAgenda->bind_param('i', $cotizacionId);
+                $stmtAgenda->execute();
+                $rowAgenda = $stmtAgenda->get_result()->fetch_assoc();
+                $stmtAgenda->close();
+                if ($rowAgenda) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function debeOmitirValidacionHorariaCobroSaldo($conn, $cotizacionIds, $cotizacionesBloqueadas, $reprogramacionMap = [])
+    {
+        if (!empty((array)$reprogramacionMap)) {
+            return false;
+        }
+
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids)) {
+            return false;
+        }
+
+        foreach ($ids as $cotizacionId) {
+            if (!isset($cotizacionesBloqueadas[$cotizacionId]) || !is_array($cotizacionesBloqueadas[$cotizacionId])) {
+                return false;
+            }
+
+            $estadoCot = strtolower(trim((string)($cotizacionesBloqueadas[$cotizacionId]['estado'] ?? '')));
+            if ($estadoCot !== 'parcial') {
+                return false;
+            }
+
+            if (!self::cotizacionTieneProgramacionPreexistente($conn, $cotizacionId)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static function asegurarAgendaServiciosPorCobro($conn, $cotizacionId, $usuarioId = 0)
     {
         $cotizacionId = (int)$cotizacionId;
@@ -3379,6 +3548,14 @@ class CobroModule
                 throw new \Exception('No autenticado para procesar cobro.');
             }
 
+            $data['client_request_id'] = self::normalizarClientRequestId($data['client_request_id'] ?? '');
+            if ($data['client_request_id'] !== '' && self::columnExists($conn, 'cobros', 'client_request_id')) {
+                $cobroIdExistente = self::buscarCobroIdPorClientRequestId($conn, $data['client_request_id'], $usuarioSesionId);
+                if ($cobroIdExistente > 0) {
+                    return self::construirRespuestaCobroIdempotente($cobroIdExistente);
+                }
+            }
+
             // Fuente de verdad del usuario: sesión del backend.
             $data['usuario_id'] = $usuarioSesionId;
 
@@ -3464,15 +3641,23 @@ class CobroModule
                 self::persistirReprogramacionEnAgendaServicios($conn, $data['detalles'], $reprogramacionHorariaMap, (int)$usuarioSesionId);
             }
 
-            $validacionHoraria = self::validarChoquesHorarioAntesCobro($conn, $data['detalles'], $cotizacionesBloqueadas, $reprogramacionHorariaMap);
-            if (!$validacionHoraria['ok']) {
-                $conn->rollback();
-                return [
-                    'success' => false,
-                    'code' => 'conflicto_horario',
-                    'error' => (string)($validacionHoraria['message'] ?? 'Conflicto de horario detectado.'),
-                    'conflictos' => $validacionHoraria['conflictos'] ?? [],
-                ];
+            $omitirValidacionHorariaSaldo = self::debeOmitirValidacionHorariaCobroSaldo(
+                $conn,
+                $cotizacionIdsFlujo,
+                $cotizacionesBloqueadas,
+                $reprogramacionHorariaMap
+            );
+            if (!$omitirValidacionHorariaSaldo) {
+                $validacionHoraria = self::validarChoquesHorarioAntesCobro($conn, $data['detalles'], $cotizacionesBloqueadas, $reprogramacionHorariaMap);
+                if (!$validacionHoraria['ok']) {
+                    $conn->rollback();
+                    return [
+                        'success' => false,
+                        'code' => 'conflicto_horario',
+                        'error' => (string)($validacionHoraria['message'] ?? 'Conflicto de horario detectado.'),
+                        'conflictos' => $validacionHoraria['conflictos'] ?? [],
+                    ];
+                }
             }
 
             $resumenPorCotizacion = self::construirResumenCobroPorCotizacion($data['detalles']);
@@ -3485,6 +3670,10 @@ class CobroModule
                     'orden_aplicacion' => 1,
                 ];
             }
+
+            // Anti-duplicado: el monto a aplicar no puede superar el saldo vigente de la cotización
+            // (bloqueada FOR UPDATE). Evita doble envío del mismo cobro sobre un saldo ya abonado.
+            self::validarMontoContraSaldoCotizaciones($resumenPorCotizacion, $cotizacionesBloqueadas);
 
             $data['monto_original'] = $montoOriginal;
             $data['monto_descuento'] = $montoDescuento;
@@ -3526,10 +3715,17 @@ class CobroModule
             $caja_id = $caja_abierta['id'];
 
             // Registrar cobro principal y detalles
-            $cobro_id = self::registrarCobro($conn, $data);
+            $registroCobro = self::registrarCobro($conn, $data);
+            $cobro_id = (int)($registroCobro['cobro_id'] ?? 0);
             if ($cobro_id <= 0) {
                 throw new \Exception('No se pudo registrar el cobro principal.');
             }
+
+            if (!empty($registroCobro['idempotent_replay'])) {
+                $conn->rollback();
+                return self::construirRespuestaCobroIdempotente($cobro_id);
+            }
+
             $fechaHoraIngresoBase = self::resolverFechaHoraCobroParaIngreso($conn, $cobro_id);
             // Registrar descuento aplicado si corresponde
             self::registrarDescuento($conn, $data, $cobro_id);
@@ -3800,6 +3996,11 @@ class CobroModule
 
                                 if ($tieneMedicoAsignado || $requiereMedicoEstricto) {
                                     if ($usarHonorarioDiferido) {
+                                        // Asegura una identidad estable del detalle para deduplicar
+                                        // honorarios en cobros parciales/reintentos.
+                                        if (empty($detalleServicio['cotizacion_detalle_id']) && !empty($detalleServicio['detalle_id'])) {
+                                            $detalleServicio['cotizacion_detalle_id'] = (int)$detalleServicio['detalle_id'];
+                                        }
                                         $registroPorCobrar = HonorarioModule::registrarPorCobrar(
                                             $conn,
                                             $detalleServicio,
@@ -3894,7 +4095,7 @@ class CobroModule
                 $servicio_key = self::normalizarServicioTipo($data['detalles'][0]['servicio_tipo'] ?? 'consulta');
             }
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
-                $ok = AtencionModule::registrarAtencion($conn, $data['paciente_id'], $data['usuario_id'], $servicio_key);
+                $ok = AtencionModule::registrarAtencion($conn, $data['paciente_id'], $data['usuario_id'], $servicio_key, $cobro_id);
                 if (!$ok) {
                     throw new \Exception("Servicio '$servicio_key' no permitido en atenciones. Actualiza el ENUM o revisa el frontend.");
                 }
@@ -4044,9 +4245,23 @@ class CobroModule
     $usuario_id_param = (int)($_SESSION['usuario']['id'] ?? ($data['usuario_id'] ?? 0));
         $total_param = $data['total'];
         $tipo_pago_param = $data['tipo_pago'];
+        $clientRequestId = self::normalizarClientRequestId($data['client_request_id'] ?? '');
         $hasReferenciaOrigen = self::columnExists($conn, 'cobros', 'referencia_origen');
         $hasAtencionSolidaria = self::columnExists($conn, 'cobros', 'atencion_solidaria');
-        if ($hasReferenciaOrigen && $hasAtencionSolidaria) {
+        $hasClientRequestId = self::columnExists($conn, 'cobros', 'client_request_id');
+        if ($hasReferenciaOrigen && $hasAtencionSolidaria && $hasClientRequestId) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen, atencion_solidaria, client_request_id) VALUES (?, ?, ?, ?, 'pagado', ?, ?, ?, ?)");
+            $stmt->bind_param("iidsssis", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen, $esAtencionSolidaria, $clientRequestId);
+        } elseif ($hasAtencionSolidaria && $hasClientRequestId) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, atencion_solidaria, client_request_id) VALUES (?, ?, ?, ?, 'pagado', ?, ?, ?)");
+            $stmt->bind_param("iidssis", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $esAtencionSolidaria, $clientRequestId);
+        } elseif ($hasReferenciaOrigen && $hasClientRequestId) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen, client_request_id) VALUES (?, ?, ?, ?, 'pagado', ?, ?, ?)");
+            $stmt->bind_param("iidssss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen, $clientRequestId);
+        } elseif ($hasClientRequestId) {
+            $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, client_request_id) VALUES (?, ?, ?, ?, 'pagado', ?, ?)");
+            $stmt->bind_param("iidsss", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $clientRequestId);
+        } elseif ($hasReferenciaOrigen && $hasAtencionSolidaria) {
             $stmt = $conn->prepare("INSERT INTO cobros (paciente_id, usuario_id, total, tipo_pago, estado, observaciones, referencia_origen, atencion_solidaria) VALUES (?, ?, ?, ?, 'pagado', ?, ?, ?)");
             $stmt->bind_param("iidsssi", $paciente_id_param, $usuario_id_param, $total_param, $tipo_pago_param, $observaciones, $referenciaOrigen, $esAtencionSolidaria);
         } elseif ($hasAtencionSolidaria) {
@@ -4063,6 +4278,12 @@ class CobroModule
             throw new \Exception('No se pudo preparar el registro del cobro.');
         }
         if (!$stmt->execute()) {
+            if ((int)$conn->errno === 1062 && $hasClientRequestId && $clientRequestId !== '') {
+                $cobroExistenteId = self::buscarCobroIdPorClientRequestId($conn, $clientRequestId, $usuario_id_param);
+                if ($cobroExistenteId > 0) {
+                    return ['cobro_id' => $cobroExistenteId, 'idempotent_replay' => true];
+                }
+            }
             throw new \Exception('No se pudo registrar el cobro en la tabla cobros.');
         }
         $cobro_id = $conn->insert_id;
@@ -4098,7 +4319,7 @@ class CobroModule
         if (!$stmt_detalle->execute()) {
             throw new \Exception('No se pudo registrar el detalle del cobro.');
         }
-        return $cobro_id;
+        return ['cobro_id' => (int)$cobro_id, 'idempotent_replay' => false];
     }
     // --- Registrar descuento aplicado en cobro ---
     public static function registrarDescuento($conn, $data, $cobro_id) {

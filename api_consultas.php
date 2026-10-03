@@ -2081,7 +2081,8 @@ switch ($method) {
         // Listar consultas (por médico, paciente o todas)
         $consulta_id = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : null;
         $cotizacion_id = isset($_GET['cotizacion_id']) ? intval($_GET['cotizacion_id']) : null;
-        if ((!$consulta_id || $consulta_id <= 0) && $cotizacion_id > 0) {
+        $solicitaConsultaPorCotizacion = (!$consulta_id || $consulta_id <= 0) && $cotizacion_id > 0;
+        if ($solicitaConsultaPorCotizacion) {
             $consulta_id = resolver_consulta_id_por_cotizacion($conn, $cotizacion_id);
         }
         $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
@@ -2120,6 +2121,23 @@ switch ($method) {
             }
             $medico_id = $medicoSesionId;
             $paciente_id = null;
+        }
+
+        // Seguridad de vínculo clínico: cuando se solicita por cotización y no se
+        // pudo resolver una consulta válida, no caer al listado general.
+        if ($solicitaConsultaPorCotizacion && (!$consulta_id || $consulta_id <= 0)) {
+            echo json_encode([
+                'success' => true,
+                'consultas' => [],
+                'stats' => [
+                    'total' => 0,
+                    'pendientes' => 0,
+                    'emergencias' => 0,
+                ],
+                'cotizacion_id' => $cotizacion_id,
+                'reason' => 'sin_consulta_asociada',
+            ]);
+            exit;
         }
 
         if ($vista === 'anticipada') {
@@ -2860,6 +2878,95 @@ switch ($method) {
         }
 
         $habByConsultaListado = consultas_resolver_habilitaciones_por_consulta_ids($conn, $consultaIdsListado);
+        $paquetesResumenByCotizacion = [];
+
+        $cotizacionIdsListado = [];
+        foreach ($rows as $tmpRow) {
+            $cotTmp = intval($tmpRow['cotizacion_id'] ?? 0);
+            if ($cotTmp > 0) {
+                $cotizacionIdsListado[$cotTmp] = $cotTmp;
+            }
+        }
+
+        if (!empty($cotizacionIdsListado) && columna_existe_local($conn, 'cotizaciones_detalle', 'snapshot_json')) {
+            $cotizacionIdsListado = array_values($cotizacionIdsListado);
+            $placeholdersPaquete = implode(',', array_fill(0, count($cotizacionIdsListado), '?'));
+            $typesPaquete = str_repeat('i', count($cotizacionIdsListado));
+            $wherePaqueteActivo = $hasDetalleEstadoItem
+                ? ' AND (LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) <> "eliminado" OR LOWER(TRIM(COALESCE(c.estado, ""))) IN ("anulada", "anulado"))'
+                : '';
+
+            $sqlPaquetesResumen = 'SELECT cd.cotizacion_id, cd.descripcion, cd.snapshot_json '
+                . 'FROM cotizaciones_detalle cd '
+                . 'INNER JOIN cotizaciones c ON c.id = cd.cotizacion_id '
+                . 'WHERE cd.cotizacion_id IN (' . $placeholdersPaquete . ')'
+                . $wherePaqueteActivo;
+
+            $stmtPaquetesResumen = $conn->prepare($sqlPaquetesResumen);
+            if ($stmtPaquetesResumen) {
+                $stmtPaquetesResumen->bind_param($typesPaquete, ...$cotizacionIdsListado);
+                $stmtPaquetesResumen->execute();
+                $resPaquetesResumen = $stmtPaquetesResumen->get_result();
+                while ($rowPaquete = $resPaquetesResumen->fetch_assoc()) {
+                    $cotId = intval($rowPaquete['cotizacion_id'] ?? 0);
+                    if ($cotId <= 0) continue;
+
+                    $snapshotRaw = trim((string)($rowPaquete['snapshot_json'] ?? ''));
+                    if ($snapshotRaw === '') continue;
+
+                    $snapshot = json_decode($snapshotRaw, true);
+                    if (!is_array($snapshot)) continue;
+
+                    $paqueteTipo = strtolower(trim((string)($snapshot['paquete_tipo'] ?? '')));
+                    $paqueteCodigo = trim((string)($snapshot['paquete_codigo'] ?? ''));
+                    $paqueteNombre = trim((string)($snapshot['paquete_nombre'] ?? ''));
+                    $paqueteId = isset($snapshot['paquete_id']) ? intval($snapshot['paquete_id']) : 0;
+
+                    if ($paqueteTipo === '' && $paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0) {
+                        continue;
+                    }
+
+                    $tipoLabel = ($paqueteTipo === 'perfil') ? 'Perfil' : 'Paquete';
+                    $nombreVisible = $paqueteNombre;
+                    if ($nombreVisible === '' && $paqueteCodigo !== '') {
+                        $nombreVisible = $paqueteCodigo;
+                    }
+                    if ($nombreVisible === '' && $paqueteId > 0) {
+                        $nombreVisible = $tipoLabel . ' #' . $paqueteId;
+                    }
+                    if ($nombreVisible === '') {
+                        $nombreVisible = trim((string)($rowPaquete['descripcion'] ?? ''));
+                    }
+                    if ($nombreVisible === '') continue;
+
+                    $label = $tipoLabel . ': ';
+                    if ($paqueteCodigo !== '' && stripos($nombreVisible, $paqueteCodigo) !== 0) {
+                        $label .= $paqueteCodigo . ' - ';
+                    }
+                    $label .= $nombreVisible;
+
+                    $key = strtolower(implode('|', [
+                        $paqueteTipo,
+                        $paqueteCodigo,
+                        $paqueteNombre,
+                        (string)$paqueteId,
+                    ]));
+                    if ($key === '') {
+                        $key = strtolower($label);
+                    }
+
+                    if (!isset($paquetesResumenByCotizacion[$cotId])) {
+                        $paquetesResumenByCotizacion[$cotId] = [];
+                    }
+                    $paquetesResumenByCotizacion[$cotId][$key] = $label;
+                }
+                $stmtPaquetesResumen->close();
+
+                foreach ($paquetesResumenByCotizacion as $cotIdResumen => $labelsResumen) {
+                    $paquetesResumenByCotizacion[$cotIdResumen] = implode(' | ', array_values($labelsResumen));
+                }
+            }
+        }
 
         $statsOperativasListado = 0;
         $statsExcluidasListado = 0;
@@ -2875,6 +2982,9 @@ switch ($method) {
 
             $row['cotizacion_id'] = $cotId > 0 ? $cotId : null;
             $row['cotizacion_estado'] = $cotEstado !== '' ? $cotEstado : null;
+            $row['paquetes_resumen'] = ($cotId > 0 && isset($paquetesResumenByCotizacion[$cotId]))
+                ? (string)$paquetesResumenByCotizacion[$cotId]
+                : '';
             $row['es_contrato'] = ($cotTieneOrigenContrato || $cotEsCostoCeroContrato || $esContratoLegacy) ? 1 : 0;
             $row['consulta_item_estado_actual'] = strtolower(trim((string)($row['consulta_item_estado_actual'] ?? 'activo')));
             $row['servicios_tipos_resumen'] = trim((string)($row['servicios_tipos_resumen'] ?? ''));

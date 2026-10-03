@@ -26,14 +26,41 @@ function hc_slugify_text($value) {
     $value = trim((string)$value);
     if ($value === '') return '';
 
-    $value = strtolower($value);
+    // Unificar formas Unicode: una tilde puede llegar "compuesta" (í = un solo
+    // caracter) o "descompuesta" (i + marca de acento combinante separada,
+    // frecuente al copiar texto desde Mac, PDF u otros teclados). El mapa de
+    // abajo solo reconoce la forma compuesta; sin este paso, la forma
+    // descompuesta cuela una marca de acento suelta que el regex final
+    // destruye en un guion bajo, partiendo la palabra (bug real que dejó
+    // `clinic_key` de dos plantillas de Nutrimed Perú desincronizado: "Clínica"
+    // -> "cl_nica" en vez de "clinica").
+    if (function_exists('normalizer_normalize')) {
+        $normalizado = @normalizer_normalize($value, \Normalizer::FORM_C);
+        if (is_string($normalizado) && $normalizado !== '') {
+            $value = $normalizado;
+        }
+    }
+
+    $value = function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
     $map = [
         'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
         'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u',
         'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u',
-        'ñ' => 'n'
+        'â' => 'a', 'ê' => 'e', 'î' => 'i', 'ô' => 'o', 'û' => 'u',
+        'ñ' => 'n', 'ç' => 'c', 'ý' => 'y', 'ÿ' => 'y'
     ];
     $value = strtr($value, $map);
+
+    // Red de seguridad: si aun quedan letras multibyte no cubiertas por el
+    // mapa (otros idiomas, simbolos), transliteralas en vez de dejar que el
+    // regex final las destruya en bloque.
+    if (function_exists('iconv')) {
+        $transliterado = @iconv('UTF-8', 'ASCII//TRANSLIT', $value);
+        if (is_string($transliterado) && $transliterado !== '') {
+            $value = $transliterado;
+        }
+    }
+
     $value = preg_replace('/[^a-z0-9]+/', '_', $value);
     $value = preg_replace('/_+/', '_', $value);
     return trim((string)$value, '_');
@@ -265,15 +292,53 @@ function hc_guess_clinic_key($conn) {
         return '';
     }
 
-    $stmt = $conn->prepare('SELECT nombre_clinica FROM configuracion_clinica ORDER BY id ASC LIMIT 1');
+    // `clinic_key` es el identificador que enlaza cada plantilla con "su"
+    // clinica. Si se sigue recalculando en cada llamada a partir del nombre
+    // de la clinica (texto libre, editable en cualquier momento), un simple
+    // cambio de nombre -o un acento mal codificado al guardarlo, como paso
+    // con Nutrimed Peru- desconecta de golpe TODAS las plantillas ya
+    // guardadas. Por eso, en cuanto existe la columna `clinic_key` en
+    // `configuracion_clinica`, se calcula UNA sola vez y se deja fijo; las
+    // llamadas siguientes reusan ese valor sin volver a derivarlo del
+    // nombre, aunque el nombre cambie despues.
+    $hasClinicKeyCol = hc_column_exists_configuracion($conn, 'clinic_key');
+    $columnas = $hasClinicKeyCol ? 'id, nombre_clinica, clinic_key' : 'id, nombre_clinica';
+
+    $stmt = $conn->prepare("SELECT {$columnas} FROM configuracion_clinica ORDER BY id ASC LIMIT 1");
     if (!$stmt) {
         return '';
     }
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if (!$row) {
+        return '';
+    }
 
-    return hc_slugify_text($row['nombre_clinica'] ?? '');
+    if ($hasClinicKeyCol) {
+        $fijo = trim((string)($row['clinic_key'] ?? ''));
+        if ($fijo !== '') {
+            return $fijo;
+        }
+    }
+
+    $calculado = hc_slugify_text($row['nombre_clinica'] ?? '');
+
+    // Primera vez que se resuelve (o fila creada antes de tener esta
+    // columna, o migracion recien aplicada): fijarlo para que de aqui en
+    // adelante ya no dependa del nombre de la clinica.
+    if ($hasClinicKeyCol && $calculado !== '') {
+        $stmtFijar = $conn->prepare(
+            "UPDATE configuracion_clinica SET clinic_key = ? WHERE id = ? AND (clinic_key IS NULL OR clinic_key = '')"
+        );
+        if ($stmtFijar) {
+            $stmtFijar->bind_param('si', $calculado, $row['id']);
+            $stmtFijar->execute();
+            $stmtFijar->close();
+        }
+    }
+
+    return $calculado;
 }
 
 function hc_get_specialty_by_consulta_id($conn, $consultaId) {

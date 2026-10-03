@@ -55,6 +55,7 @@ if (isset($_SESSION['usuario'])) {
         || strpos($_SERVER['SCRIPT_NAME'], 'api_tratamientos_ejecucion.php') !== false;
     $isRecetaSugerencias = strpos($_SERVER['SCRIPT_NAME'], 'api_receta_sugerencias.php') !== false;
     $isRecetaProtocolos = strpos($_SERVER['SCRIPT_NAME'], 'api_receta_protocolos.php') !== false;
+    $isRecomendacionesProtocolos = strpos($_SERVER['SCRIPT_NAME'], 'api_recomendaciones_protocolos.php') !== false;
     
     $rolesPermitidos = ['administrador', 'quimico', 'laboratorio', 'laboratorista', 'recepcionista'];
     
@@ -107,6 +108,7 @@ if (isset($_SESSION['usuario'])) {
         $isResultadosLaboratorio
         || $isRecetaSugerencias
         || $isRecetaProtocolos
+        || $isRecomendacionesProtocolos
     ) {
         $rolesPermitidos[] = 'medico';
     }

@@ -385,7 +385,7 @@ function RequireCajaAbierta({ children }) {
 const CAJA_CACHE_TTL_MS = 2 * 60 * 1000;
 const cajaCache = { ts: 0, abierta: true };
 
-function CajaAperturaGuard({ usuario }) {
+function CajaAperturaGuard({ usuario, onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
   // Inicializar loading:true para evitar el flash de modal antes del primer resultado.
@@ -393,6 +393,8 @@ function CajaAperturaGuard({ usuario }) {
 
   const rol = String(usuario?.rol || "").toLowerCase();
   const aplicaBloqueo = rol === "administrador" || rol === "recepcionista";
+  const puedeGestionarCaja =
+    hasPermiso(usuario, "ver_contabilidad") || hasPermiso(usuario, "ver_reabrir_caja");
   const pathname = String(location?.pathname || "/");
 
   const rutaPermitidaSinCaja =
@@ -454,11 +456,27 @@ function CajaAperturaGuard({ usuario }) {
   return (
     <ModalAperturaCaja
       open
-      mensaje="¡Atención! No puedes realizar operaciones sin una caja activa."
+      mensaje={
+        puedeGestionarCaja
+          ? "¡Atención! No puedes realizar operaciones sin una caja activa."
+          : "Tu usuario no tiene permisos para abrir o reabrir caja. Solicita a un administrador habilitar estos permisos para continuar."
+      }
+      ctaLabel={puedeGestionarCaja ? "Ir a Reporte de Caja para Abrir" : "Cerrar sesión"}
       onIrReporteCaja={() => {
+        if (!puedeGestionarCaja) {
+          if (typeof onLogout === "function") {
+            onLogout();
+          }
+          return;
+        }
+
         // Invalidar cache para que al volver se re-verifique.
         cajaCache.ts = 0;
-        navigate("/contabilidad");
+        if (hasPermiso(usuario, "ver_contabilidad")) {
+          navigate("/contabilidad");
+          return;
+        }
+        navigate("/reabrir-caja");
       }}
     />
   );
@@ -807,7 +825,7 @@ function App() {
       <BrowserRouter basename={ROUTER_BASENAME}>
         {usuario ? (
           <>
-          <CajaAperturaGuard usuario={usuario} />
+          <CajaAperturaGuard usuario={usuario} onLogout={handleLogout} />
           <DashboardLayout usuario={usuario} onLogout={handleLogout}>
             <RouteErrorBoundary>
             {/* Suspense solo para el contenido de rutas: evita que desaparezca todo el layout */}

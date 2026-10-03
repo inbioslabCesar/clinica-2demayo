@@ -466,6 +466,15 @@ function parseServiciosTipos(rawValue) {
   ));
 }
 
+function parsePaquetesResumen(rawValue) {
+  return Array.from(new Set(
+    String(rawValue || "")
+      .split("|")
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  ));
+}
+
 function resolverEstadoGrupoCotizacion(items) {
   const rows = Array.isArray(items) ? items : [];
   if (!rows.length) return "pendiente";
@@ -520,6 +529,11 @@ function agruparFilasOperativasPorEpisodio(rows) {
         .flatMap((row) => String(row?.servicios_tipos || "").split(",").map(normalizarServicioTipo))
         .filter(Boolean)
     ));
+    const paquetesUnicos = Array.from(new Set(
+      items
+        .flatMap((row) => parsePaquetesResumen(row?.paquetes_resumen || ""))
+        .filter(Boolean)
+    ));
 
     const ultimoPago = items
       .map((row) => String(row?.ultimo_pago_at || "").trim())
@@ -551,6 +565,7 @@ function agruparFilasOperativasPorEpisodio(rows) {
       ultimo_pago_at: ultimoPago || base?.ultimo_pago_at || "",
       servicios_tipos: serviciosUnicos.join(","),
       pagado_con_descuento: items.some((row) => Number(row?.pagado_con_descuento || 0) === 1) ? 1 : 0,
+      paquetes_resumen: paquetesUnicos.join(" | "),
       referencia_origen: [
         String(base?.referencia_origen || "").trim(),
         idsGrupo.length > 1 ? `Grupo episodio: ${idsGrupo.map((id) => `#${id}`).join(", ")}` : "",
@@ -680,7 +695,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud, paqueteResumenFallback }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const estadoRow = useMemo(() => {
     const estadoBase = String(row.estado || "").toLowerCase();
@@ -747,6 +762,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   }, [correlativosServiciosList, correlativoFechaAtencion]);
 
   const servicios = useMemo(() => parseServiciosTipos(row.servicios_tipos || ""), [row.servicios_tipos]);
+  const paquetesResumen = useMemo(
+    () => parsePaquetesResumen(String(row.paquetes_resumen || "").trim() || String(paqueteResumenFallback || "").trim()),
+    [row.paquetes_resumen, paqueteResumenFallback]
+  );
 
   const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
   const esGrupoEpisodio = Number(row?.es_grupo_episodio || 0) === 1 || Number(row?.adendas_count || 0) > 0;
@@ -963,7 +982,16 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
-          {servicios.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
+          {paquetesResumen.map((paq) => (
+            <span
+              key={`${row.id}-paq-srv-${paq}`}
+              className="text-xs px-2 py-1 rounded bg-violet-100 text-violet-800"
+              title="Paquete/perfil cotizado"
+            >
+              {paq}
+            </span>
+          ))}
+          {servicios.length === 0 && paquetesResumen.length === 0 ? <span className="text-gray-400">-</span> : servicios.map((s) => (
             <span
               key={`${row.id}-${s}`}
               className="text-xs px-2 py-1 rounded"
@@ -1281,6 +1309,10 @@ export default function CotizacionesPage() {
   const [correlativosImagenDetalleByCotizacionId, setCorrelativosImagenDetalleByCotizacionId] = useState({});
   const [correlativoFechaByConsultaId, setCorrelativoFechaByConsultaId] = useState({});
   const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
+  const [paquetesFallbackByCotizacion, setPaquetesFallbackByCotizacion] = useState({});
+  const paquetesFallbackTriedRef = useRef(new Set());
+  const paquetesFallbackAttemptsRef = useRef(new Map());
+  const [paquetesFallbackRetryTick, setPaquetesFallbackRetryTick] = useState(0);
 
 
   const cargarEstadosAnticipados = useCallback(async (rowsInput, options = {}) => {
@@ -1630,6 +1662,78 @@ export default function CotizacionesPage() {
   }, [rows, filtroSolicitudHC, filtrosAplicados.fechaInicio, filtrosAplicados.fechaFin]);
 
   const rowsOperativos = useMemo(() => agruparFilasOperativasPorEpisodio(rowsVisibles), [rowsVisibles]);
+
+  useEffect(() => {
+    const idsPendientes = (Array.isArray(rowsOperativos) ? rowsOperativos : [])
+      .map((row) => Number(row?.id || 0))
+      .filter((id) => id > 0)
+      .filter((id) => {
+        if (paquetesFallbackTriedRef.current.has(id)) return false;
+        const attempts = Number(paquetesFallbackAttemptsRef.current.get(id) || 0);
+        if (attempts >= 3) return false;
+        const row = rowsOperativos.find((it) => Number(it?.id || 0) === id);
+        const paquetesRow = parsePaquetesResumen(row?.paquetes_resumen || "");
+        return paquetesRow.length === 0;
+      });
+
+    if (idsPendientes.length === 0) return;
+
+    idsPendientes.forEach((id) => {
+      paquetesFallbackTriedRef.current.add(id);
+      const attempts = Number(paquetesFallbackAttemptsRef.current.get(id) || 0);
+      paquetesFallbackAttemptsRef.current.set(id, attempts + 1);
+    });
+
+    const controller = new AbortController();
+    let active = true;
+
+    const hidratarPaquetes = async () => {
+      const updates = {};
+      const failedIds = [];
+
+      await Promise.all(idsPendientes.map(async (cotizacionId) => {
+        try {
+          const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          const data = await res.json();
+          if (!data?.success) return;
+
+          const cot = data?.cotizacion || {};
+          const resumen = String(cot?.paquetes_resumen || cot?.paquete_resumen || "").trim();
+          if (resumen) {
+            updates[cotizacionId] = resumen;
+          } else {
+            failedIds.push(cotizacionId);
+          }
+        } catch {
+          failedIds.push(cotizacionId);
+        }
+      }));
+
+      if (!active) return;
+      if (failedIds.length > 0) {
+        failedIds.forEach((id) => {
+          // Permite reintentar en el próximo ciclo cuando una consulta puntual falle temporalmente.
+          paquetesFallbackTriedRef.current.delete(id);
+        });
+        window.setTimeout(() => {
+          if (!active) return;
+          setPaquetesFallbackRetryTick((v) => v + 1);
+        }, 900);
+      }
+      if (Object.keys(updates).length === 0) return;
+      setPaquetesFallbackByCotizacion((prev) => ({ ...prev, ...updates }));
+    };
+
+    void hidratarPaquetes();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [rowsOperativos, paquetesFallbackRetryTick]);
 
   const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rowsOperativos), [rowsOperativos]);
 
@@ -2597,6 +2701,7 @@ export default function CotizacionesPage() {
                     correlativoFechaAtencion={correlativoFechaAtencion}
                     correlativosServicios={correlativosServicios}
                     relacionSolicitud={relacionSolicitudByCotizacion[Number(row?.id || 0)] || null}
+                    paqueteResumenFallback={paquetesFallbackByCotizacion[Number(row?.id || 0)] || ""}
                   />
                   );
                 })()

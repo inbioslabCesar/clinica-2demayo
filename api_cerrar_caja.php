@@ -189,8 +189,8 @@ if ($egreso_operativo === false || $egreso_operativo === null) {
 }
 
 $total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floatval($egreso_operativo);
-// Los movimientos históricos de laboratorio de referencia no guardan método, por compatibilidad se consideran efectivo.
-$efectivo_esperado = floatval($caja['monto_apertura']) + floatval($total_efectivo) - $egresosPorMetodo['efectivo'] - floatval($egreso_lab_ref);
+// El efectivo esperado se calcula con egresos reales en efectivo registrados en egresos.
+$efectivo_esperado = floatval($caja['monto_apertura']) + floatval($total_efectivo) - $egresosPorMetodo['efectivo'];
 $virtual_cobrado = floatval($total_yape) + floatval($total_plin) + floatval($total_tarjetas) + floatval($total_transferencias);
 $egresos_virtuales_clinica = floatval($egresosPorMetodo['yape']) + floatval($egresosPorMetodo['plin']) + floatval($egresosPorMetodo['tarjeta']) + floatval($egresosPorMetodo['transferencia']);
 $virtual_esperado = $virtual_cobrado - $egresos_virtuales_clinica;

@@ -557,7 +557,7 @@ export default function CerrarCajaView() {
   const honorariosArrastre = Number(resumen.egreso_honorarios_arrastre ?? Math.max(0, honorariosCaja - honorariosDiaOperativo));
 
   const egresosPorMetodo = resumen?.egresos_por_metodo || {};
-  const egresosEfectivo = Number(egresosPorMetodo.efectivo || 0) + Number(resumen.egreso_lab_ref || 0);
+  const egresosEfectivo = Number(egresosPorMetodo.efectivo || 0);
   const aperturaCaja = Number(resumen.monto_apertura || 0);
   const efectivoEsperado = Number(resumen.monto_apertura || 0) + efectivoCobrado - egresosEfectivo;
   const virtualCobrado = Number(resumen?.virtual_cobrado || 0);

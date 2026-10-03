@@ -55,6 +55,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const [loadingResumenEconomico, setLoadingResumenEconomico] = useState(false);
   const [expandedServicios, setExpandedServicios] = useState({});
   const [detalleServiciosByCotizacion, setDetalleServiciosByCotizacion] = useState({});
+  const [paquetesResumenByCotizacion, setPaquetesResumenByCotizacion] = useState({});
   const [loadingDetalleServiciosByCotizacion, setLoadingDetalleServiciosByCotizacion] = useState({});
   const [clockTick, setClockTick] = useState(0);
   
@@ -102,6 +103,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     return { tipos: tiposFinal, count, extras };
   };
 
+  const parsePaquetesResumen = (raw) => {
+    return Array.from(new Set(
+      String(raw || "")
+        .split("|")
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    ));
+  };
+
   const cargarDetalleServiciosCotizacion = async (cotizacionId) => {
     const cotId = Number(cotizacionId || 0);
     if (cotId <= 0) return;
@@ -113,6 +123,59 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       const data = await response.json();
       const cot = data?.cotizacion || null;
       const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+      const paquetesBase = parsePaquetesResumen(cot?.paquetes_resumen || cot?.paquete_resumen || "");
+      const paquetesDesdeDetalle = detalles
+        .map((d) => {
+          const tipoDirecto = String(d?.paquete_tipo || "").trim().toLowerCase();
+          const codigoDirecto = String(d?.paquete_codigo || "").trim();
+          const nombreDirecto = String(d?.paquete_nombre || "").trim();
+          const paqueteIdDirecto = Number(d?.paquete_id || 0);
+
+          if (tipoDirecto || codigoDirecto || nombreDirecto || paqueteIdDirecto > 0) {
+            const tipoLabel = tipoDirecto === "perfil" ? "Perfil" : "Paquete";
+            let nombreVisible = nombreDirecto || codigoDirecto;
+            if (!nombreVisible && paqueteIdDirecto > 0) nombreVisible = `${tipoLabel} #${paqueteIdDirecto}`;
+            if (nombreVisible) {
+              if (codigoDirecto && !nombreVisible.toLowerCase().startsWith(codigoDirecto.toLowerCase())) {
+                return `${tipoLabel}: ${codigoDirecto} - ${nombreVisible}`;
+              }
+              return `${tipoLabel}: ${nombreVisible}`;
+            }
+          }
+
+          const snapshotRaw = d?.snapshot_json;
+          let snapshot = null;
+          if (snapshotRaw && typeof snapshotRaw === "string") {
+            try {
+              snapshot = JSON.parse(snapshotRaw);
+            } catch {
+              snapshot = null;
+            }
+          } else if (snapshotRaw && typeof snapshotRaw === "object") {
+            snapshot = snapshotRaw;
+          }
+
+          if (!snapshot || typeof snapshot !== "object") return "";
+
+          const tipo = String(snapshot?.paquete_tipo || "").trim().toLowerCase();
+          const codigo = String(snapshot?.paquete_codigo || "").trim();
+          const nombre = String(snapshot?.paquete_nombre || "").trim();
+          const paqueteId = Number(snapshot?.paquete_id || 0);
+          if (!tipo && !codigo && !nombre && paqueteId <= 0) return "";
+
+          const tipoLabel = tipo === "perfil" ? "Perfil" : "Paquete";
+          let nombreVisible = nombre || codigo;
+          if (!nombreVisible && paqueteId > 0) nombreVisible = `${tipoLabel} #${paqueteId}`;
+          if (!nombreVisible) return "";
+
+          if (codigo && !nombreVisible.toLowerCase().startsWith(codigo.toLowerCase())) {
+            return `${tipoLabel}: ${codigo} - ${nombreVisible}`;
+          }
+          return `${tipoLabel}: ${nombreVisible}`;
+        })
+        .filter(Boolean);
+
+      const paquetesResumen = Array.from(new Set([...paquetesBase, ...paquetesDesdeDetalle]));
       const servicios = detalles
         .filter((d) => String(d?.estado_item || "").toLowerCase() !== "eliminado")
         .map((d) => ({
@@ -124,8 +187,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
         }));
 
       setDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: servicios }));
+      setPaquetesResumenByCotizacion((prev) => ({ ...prev, [cotId]: paquetesResumen }));
     } catch {
       setDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: [] }));
+      setPaquetesResumenByCotizacion((prev) => ({ ...prev, [cotId]: [] }));
     } finally {
       setLoadingDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: false }));
     }
@@ -1421,6 +1486,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                     const cotizacionId = Number(consulta?.cotizacion_id || 0);
                     const estaExpandido = Boolean(expandedServicios[consultaId]);
                     const detalleServicios = cotizacionId > 0 ? (detalleServiciosByCotizacion[cotizacionId] || []) : [];
+                    const paquetesFila = parsePaquetesResumen(consulta?.paquetes_resumen || consulta?.paquete_resumen || "");
+                    const paquetesDetalle = cotizacionId > 0 ? (paquetesResumenByCotizacion[cotizacionId] || []) : [];
+                    const paquetesResumen = Array.from(new Set([...paquetesFila, ...paquetesDetalle]));
                     const loadingDetalle = Boolean(loadingDetalleServiciosByCotizacion[cotizacionId]);
                     
                     return ([
@@ -1477,6 +1545,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
 
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap items-center gap-1.5">
+                            {paquetesResumen.map((paq) => (
+                              <span key={`${consulta.id}-paq-${paq}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-violet-100 text-violet-800 border-violet-200">
+                                {paq}
+                              </span>
+                            ))}
                             {serviciosResumen.tipos.slice(0, 3).map((tipo) => (
                               <span key={`${consulta.id}-${tipo}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-200">
                                 {etiquetaServicio(tipo)}
@@ -1660,6 +1733,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                         <tr key={`det-${consulta.id}`} className="bg-slate-50">
                           <td colSpan={9} className="px-4 py-3">
                             <div className="text-xs text-slate-600 mb-2 font-semibold">Servicios asociados a la consulta</div>
+                            {paquetesResumen.length > 0 && (
+                              <div className="mb-2 flex flex-wrap gap-1">
+                                {paquetesResumen.map((paq) => (
+                                  <span key={`${consulta.id}-det-paq-${paq}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-violet-100 text-violet-800 border-violet-200">
+                                    {paq}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                             {loadingDetalle ? (
                               <div className="text-xs text-slate-500">Cargando servicios...</div>
                             ) : detalleServicios.length === 0 ? (
@@ -1708,6 +1790,9 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               const cotizacionId = Number(consulta?.cotizacion_id || 0);
               const estaExpandido = Boolean(expandedServicios[consultaId]);
               const detalleServicios = cotizacionId > 0 ? (detalleServiciosByCotizacion[cotizacionId] || []) : [];
+              const paquetesFila = parsePaquetesResumen(consulta?.paquetes_resumen || consulta?.paquete_resumen || "");
+              const paquetesDetalle = cotizacionId > 0 ? (paquetesResumenByCotizacion[cotizacionId] || []) : [];
+              const paquetesResumen = Array.from(new Set([...paquetesFila, ...paquetesDetalle]));
               const loadingDetalle = Boolean(loadingDetalleServiciosByCotizacion[cotizacionId]);
               return (
               <div
@@ -1771,6 +1856,11 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 <div className="mb-3">
                   <p className="text-gray-600 font-medium text-sm mb-1">🧩 Servicios asociados</p>
                   <div className="flex flex-wrap gap-1.5">
+                    {paquetesResumen.map((paq) => (
+                      <span key={`${consulta.id}-m-paq-${paq}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-violet-100 text-violet-800 border-violet-200">
+                        {paq}
+                      </span>
+                    ))}
                     {serviciosResumen.tipos.slice(0, 3).map((tipo) => (
                       <span key={`${consulta.id}-m-${tipo}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-200">
                         {etiquetaServicio(tipo)}
@@ -1799,6 +1889,15 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 {estaExpandido && (
                   <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                     <div className="text-xs text-slate-600 mb-2 font-semibold">Servicios asociados a la consulta</div>
+                    {paquetesResumen.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-1">
+                        {paquetesResumen.map((paq) => (
+                          <span key={`${consulta.id}-m-det-paq-${paq}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-violet-100 text-violet-800 border-violet-200">
+                            {paq}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {loadingDetalle ? (
                       <div className="text-xs text-slate-500">Cargando servicios...</div>
                     ) : detalleServicios.length === 0 ? (

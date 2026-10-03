@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 export default function ModalAperturaCaja({
   open,
   onIrReporteCaja,
+  ctaLabel = "Ir a Reporte de Caja para Abrir",
   mensaje = "¡Atención! No puedes realizar operaciones sin una caja activa.",
 }) {
   const navigate = useNavigate();
@@ -59,7 +60,7 @@ export default function ModalAperturaCaja({
             onClick={irAReporte}
             className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-4 shadow-md transition-colors"
           >
-            Ir a Reporte de Caja para Abrir
+            {ctaLabel}
           </button>
         </div>
       </div>

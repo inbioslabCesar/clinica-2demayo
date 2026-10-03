@@ -1,5 +1,6 @@
 import React from "react";
 import SelectorMedicamentosReceta from "../comunes/SelectorMedicamentosReceta";
+import SelectorRecomendacionesProtocolos from "../comunes/SelectorRecomendacionesProtocolos";
 
 export default function TratamientoPaciente({ receta, setReceta, tratamiento, setTratamiento, recomendaciones, setRecomendaciones, sugerenciasReceta, consultaId }) {
   return (
@@ -21,6 +22,11 @@ export default function TratamientoPaciente({ receta, setReceta, tratamiento, se
         consultaId={consultaId}
       />
       <div className="mt-3">
+        <SelectorRecomendacionesProtocolos
+          recomendaciones={recomendaciones || ""}
+          setRecomendaciones={setRecomendaciones}
+          consultaId={consultaId}
+        />
         <label className="block text-sm font-semibold mb-1">Recomendaciones</label>
         <textarea
           className="w-full border rounded p-2"

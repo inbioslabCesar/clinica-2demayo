@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import CobroDescuento from './CobroDescuento';
 import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
@@ -14,6 +14,14 @@ function formatUserRole(roleRaw) {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+function generarClientRequestId() {
+  const prefix = 'cobro';
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}:${crypto.randomUUID()}`;
+  }
+  return `${prefix}:${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     // Estados para descuento
     const [tipoDescuento, setTipoDescuento] = useState('porcentaje');
@@ -24,6 +32,9 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones, setObservaciones] = useState('');
   const [loading, setLoading] = useState(false);
+  // Candado síncrono anti doble clic: el estado `loading` no se refleja hasta el siguiente render.
+  const cobroEnCursoRef = useRef(false);
+  const intentoCobroPendienteRef = useRef({ id: '', firma: '' });
   const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '', direccion: '', telefono: '', celular: '', ruc: '', email: '' });
 
   // Cargar tarifas al montar el componente
@@ -133,6 +144,8 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
     } else {
       setErrorDescuento('');
     }
+    if (cobroEnCursoRef.current) return;
+    cobroEnCursoRef.current = true;
     setLoading(true);
     try {
       // Obtener usuario actual del sessionStorage
@@ -150,6 +163,22 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
         detalles: detallesCobro,
         servicio_info: servicio
       };
+
+      const firmaIntento = JSON.stringify({
+        paciente_id: cobroData.paciente_id || 0,
+        total: Number(cobroData.total || 0).toFixed(2),
+        tipo_pago: String(cobroData.tipo_pago || ''),
+        servicio_key: String(cobroData?.servicio_info?.key || ''),
+        detalles: (Array.isArray(cobroData.detalles) ? cobroData.detalles : []).map((d) => ({
+          servicio_tipo: String(d?.servicio_tipo || ''),
+          servicio_id: Number(d?.servicio_id || 0),
+          subtotal: Number(d?.subtotal || 0).toFixed(2),
+        })),
+      });
+      const reusarRequestId = intentoCobroPendienteRef.current.firma === firmaIntento && String(intentoCobroPendienteRef.current.id || '').trim() !== '';
+      cobroData.client_request_id = reusarRequestId ? intentoCobroPendienteRef.current.id : generarClientRequestId();
+      intentoCobroPendienteRef.current = { id: cobroData.client_request_id, firma: firmaIntento };
+
       const response = await authFetch("api_cobros.php", {
         method: 'POST',
         headers: {
@@ -159,6 +188,7 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
       });
       const result = await response.json();
       if (result.success) {
+        intentoCobroPendienteRef.current = { id: '', firma: '' };
         let comprobanteOk = true;
         try {
           // Mostrar comprobante
@@ -180,12 +210,14 @@ function CobroModulo({ paciente, servicio, onCobroCompleto, onCancelar }) {
           return;
         }
       } else {
+        intentoCobroPendienteRef.current = { id: '', firma: '' };
         Swal.fire('Error', result.error || 'Error al procesar el cobro', 'error');
       }
     } catch (error) {
       console.error('Error:', error);
       Swal.fire('Error', 'Error de conexión con el servidor', 'error');
     } finally {
+      cobroEnCursoRef.current = false;
       setLoading(false);
     }
   };

@@ -29,7 +29,13 @@ function labelMontoTipo(m) {
 }
 
 
-export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVerDetalles, onMarcarPagado }) {
+export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVerDetalles, onMarcarPagado, onAnular, canAnular = false }) {
+  const estadoClass = (estado) => {
+    if (estado === "pendiente") return "bg-yellow-200 text-yellow-800";
+    if (estado === "pagado") return "bg-green-200 text-green-800";
+    if (estado === "cancelado") return "bg-red-200 text-red-800";
+    return "bg-gray-200 text-gray-700";
+  };
   return (
     <div className="w-full">
       {/* Vista tipo card en móvil */}
@@ -41,7 +47,7 @@ export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVer
             <div key={m.id} className="rounded-xl shadow-lg border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-blue-100 p-4 flex flex-col gap-2">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-bold text-blue-800 text-lg">{m.laboratorio}</span>
-                <span className={`text-xs px-2 py-1 rounded font-bold ${m.estado === 'pendiente' ? 'bg-yellow-200 text-yellow-800' : 'bg-green-200 text-green-800'}`}>{m.estado}</span>
+                <span className={`text-xs px-2 py-1 rounded font-bold ${estadoClass(m.estado)}`}>{m.estado}</span>
               </div>
               <div className="flex gap-2 text-xs text-gray-500 mb-1">
                 <span>Fecha: <span className="font-bold">{m.fecha}</span></span>
@@ -70,13 +76,20 @@ export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVer
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 </button>
               </div>
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex justify-end gap-2">
                 {m.estado === 'pendiente' && (
                   <button
-                    title="Marcar como pagado"
+                    title="Liquidar"
                     onClick={() => onMarcarPagado(m.id)}
                     className="px-4 py-1 rounded bg-green-600 text-white font-bold"
-                  >Marcar pagado</button>
+                  >Liquidar</button>
+                )}
+                {canAnular && m.estado === "pendiente" && (
+                  <button
+                    title="Anular"
+                    onClick={() => onAnular(m.id)}
+                    className="px-4 py-1 rounded bg-red-600 text-white font-bold"
+                  >Anular</button>
                 )}
               </div>
             </div>
@@ -125,16 +138,27 @@ export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVer
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   </button>
                 </td>
-                <td className={`px-2 py-2 border-b border-gray-100 font-bold ${m.estado === 'pendiente' ? 'text-yellow-600' : 'text-green-700'}`}>{m.estado}</td>
+                <td className={`px-2 py-2 border-b border-gray-100 font-bold ${m.estado === 'pendiente' ? 'text-yellow-600' : m.estado === 'pagado' ? 'text-green-700' : m.estado === 'cancelado' ? 'text-red-700' : 'text-gray-700'}`}>{m.estado}</td>
                 <td className="px-2 py-2 border-b border-gray-100 text-center">
                   {m.estado === 'pendiente' ? (
-                    <button
-                      title="Marcar como pagado"
-                      onClick={() => onMarcarPagado(m.id)}
-                      className="p-2 rounded-full bg-green-100 hover:bg-green-200 text-green-700 shadow-sm"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                    </button>
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        title="Liquidar"
+                        onClick={() => onMarcarPagado(m.id)}
+                        className="p-2 rounded-full bg-green-100 hover:bg-green-200 text-green-700 shadow-sm"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      </button>
+                      {canAnular && (
+                        <button
+                          title="Anular"
+                          onClick={() => onAnular(m.id)}
+                          className="p-2 rounded-full bg-red-100 hover:bg-red-200 text-red-700 shadow-sm"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      )}
+                    </div>
                   ) : null}
                 </td>
               </tr>

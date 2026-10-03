@@ -1765,6 +1765,67 @@ function optimizar_horario_bloque_atencion($conn, $cotizacionId = 0, $bloqueId =
     ]);
 }
 
+function construir_paquetes_resumen_desde_detalles($detalles) {
+    $labels = [];
+    foreach ((array)$detalles as $det) {
+        $paqueteTipo = strtolower(trim((string)($det['paquete_tipo'] ?? '')));
+        $paqueteCodigo = trim((string)($det['paquete_codigo'] ?? ''));
+        $paqueteNombre = trim((string)($det['paquete_nombre'] ?? ''));
+        $paqueteId = isset($det['paquete_id']) ? (int)$det['paquete_id'] : 0;
+
+        if (($paqueteTipo === '' || ($paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0)) && !empty($det['snapshot_json'])) {
+            $snap = is_array($det['snapshot_json']) ? $det['snapshot_json'] : json_decode((string)$det['snapshot_json'], true);
+            if (is_array($snap)) {
+                if ($paqueteTipo === '') {
+                    $paqueteTipo = strtolower(trim((string)($snap['paquete_tipo'] ?? '')));
+                }
+                if ($paqueteCodigo === '') {
+                    $paqueteCodigo = trim((string)($snap['paquete_codigo'] ?? ''));
+                }
+                if ($paqueteNombre === '') {
+                    $paqueteNombre = trim((string)($snap['paquete_nombre'] ?? ''));
+                }
+                if ($paqueteId <= 0) {
+                    $paqueteId = isset($snap['paquete_id']) ? (int)$snap['paquete_id'] : 0;
+                }
+            }
+        }
+
+        if ($paqueteTipo === '' && $paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0) {
+            continue;
+        }
+
+        $tipoLabel = ($paqueteTipo === 'perfil') ? 'Perfil' : 'Paquete';
+        $nombreVisible = $paqueteNombre;
+        if ($nombreVisible === '' && $paqueteCodigo !== '') {
+            $nombreVisible = $paqueteCodigo;
+        }
+        if ($nombreVisible === '' && $paqueteId > 0) {
+            $nombreVisible = $tipoLabel . ' #' . $paqueteId;
+        }
+        if ($nombreVisible === '') {
+            $nombreVisible = trim((string)($det['descripcion'] ?? ''));
+        }
+        if ($nombreVisible === '') {
+            continue;
+        }
+
+        $label = $tipoLabel . ': ';
+        if ($paqueteCodigo !== '' && stripos($nombreVisible, $paqueteCodigo) !== 0) {
+            $label .= $paqueteCodigo . ' - ';
+        }
+        $label .= $nombreVisible;
+
+        $key = strtolower(implode('|', [$paqueteTipo, $paqueteCodigo, $paqueteNombre, (string)$paqueteId]));
+        if ($key === '') {
+            $key = strtolower($label);
+        }
+        $labels[$key] = $label;
+    }
+
+    return implode(' | ', array_values($labels));
+}
+
 function obtener_cotizacion($conn, $cotizacionId) {
     $stmt = $conn->prepare("
         SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica, p.telefono, p.tipo_seguro,
@@ -1782,6 +1843,7 @@ function obtener_cotizacion($conn, $cotizacionId) {
     aplicar_fallback_paciente_temporal($cot);
     normalizar_estado_informativo_cotizacion($cot);
     $cot['detalles'] = cargar_detalles_cotizacion($conn, $cotizacionId);
+    $cot['paquetes_resumen'] = construir_paquetes_resumen_desde_detalles($cot['detalles']);
     $cot['pagos'] = obtener_pagos_cotizacion_rows($conn, $cotizacionId);
     $cot['consulta_ref_id'] = resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
 
@@ -2647,12 +2709,10 @@ function expandir_detalles_paquetes_cotizacion($detalles) {
 
             $fechaPadre = trim((string)($detalle['fecha_programada'] ?? $detalle['fecha_programada_servicio'] ?? ''));
             $horaPadre = trim((string)($detalle['hora_programada'] ?? $detalle['hora_programada_servicio'] ?? ''));
-            $fechaItem = trim((string)($item['fecha_programada'] ?? $item['fecha_programada_servicio'] ?? ''));
-            $horaItem = trim((string)($item['hora_programada'] ?? $item['hora_programada_servicio'] ?? ''));
-            if ($fechaItem === '' && $fechaPadre !== '') {
+            if ($fechaPadre !== '') {
                 $item['fecha_programada'] = $fechaPadre;
             }
-            if ($horaItem === '' && $horaPadre !== '') {
+            if ($horaPadre !== '') {
                 $item['hora_programada'] = $horaPadre;
             }
 
@@ -3881,20 +3941,42 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
     }
 
     $pacienteId = (int)($cot['paciente_id'] ?? 0);
-    // La consulta debe reflejar la fecha real de creacion, no una fecha historica de cotizacion pendiente.
-    $fechaCot = date('Y-m-d');
+    $fechaCot = normalizar_fecha_programada_agenda($cot['fecha'] ?? null);
+    $horaCot = normalizar_hora_programada_agenda($cot['fecha'] ?? null);
+    if ($fechaCot === null) {
+        $fechaCot = date('Y-m-d');
+    }
 
     $hasConsultaId = column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
     $hasMedicoId = column_exists($conn, 'cotizaciones_detalle', 'medico_id');
     $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
 
-    if ($hasConsultaId && $hasMedicoId) {
-        $stmtDet = $conn->prepare("SELECT id, medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
-    } elseif ($hasMedicoId) {
-        $stmtDet = $conn->prepare("SELECT id, medico_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+    $hasFechaProgramadaDet = column_exists($conn, 'cotizaciones_detalle', 'fecha_programada');
+    $hasHoraProgramadaDet = column_exists($conn, 'cotizaciones_detalle', 'hora_programada');
+    $camposDetalleConsulta = ['id'];
+    if ($hasMedicoId) {
+        $camposDetalleConsulta[] = 'medico_id';
     } else {
-        $stmtDet = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+        $camposDetalleConsulta[] = '0 AS medico_id';
     }
+    if ($hasConsultaId) {
+        $camposDetalleConsulta[] = 'consulta_id';
+    } else {
+        $camposDetalleConsulta[] = '0 AS consulta_id';
+    }
+    if ($hasFechaProgramadaDet) {
+        $camposDetalleConsulta[] = 'fecha_programada';
+    } else {
+        $camposDetalleConsulta[] = 'NULL AS fecha_programada';
+    }
+    if ($hasHoraProgramadaDet) {
+        $camposDetalleConsulta[] = 'hora_programada';
+    } else {
+        $camposDetalleConsulta[] = 'NULL AS hora_programada';
+    }
+    $sqlDetalleConsulta = "SELECT " . implode(', ', $camposDetalleConsulta)
+        . " FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1";
+    $stmtDet = $conn->prepare($sqlDetalleConsulta);
 
     if (!$stmtDet) {
         $out['success'] = false;
@@ -3936,7 +4018,50 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
         return $out;
     }
 
-    $hora = date('H:i:s');
+    $fechaProgramadaConsulta = normalizar_fecha_programada_agenda($rowDet['fecha_programada'] ?? null);
+    $horaProgramadaConsulta = normalizar_hora_programada_agenda($rowDet['hora_programada'] ?? null);
+
+    if ($fechaProgramadaConsulta !== null) {
+        $fechaCot = $fechaProgramadaConsulta;
+    }
+    if ($horaProgramadaConsulta !== null) {
+        $horaCot = $horaProgramadaConsulta;
+    }
+
+    if (table_exists($conn, 'agenda_servicios_cotizacion')
+        && column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+        && column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')) {
+        $selectHoraAgenda = column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
+            ? 'hora_programada'
+            : 'NULL AS hora_programada';
+        $whereEstadoAgenda = column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')
+            ? ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+            : '';
+        $sqlAgendaRef = 'SELECT fecha_programada, ' . $selectHoraAgenda
+            . ' FROM agenda_servicios_cotizacion'
+            . ' WHERE cotizacion_id = ?'
+            . $whereEstadoAgenda
+            . ' ORDER BY fecha_programada ASC, hora_programada ASC, id ASC LIMIT 1';
+        $stmtAgendaRef = $conn->prepare($sqlAgendaRef);
+        if ($stmtAgendaRef) {
+            $stmtAgendaRef->bind_param('i', $cotizacionId);
+            $stmtAgendaRef->execute();
+            $rowAgendaRef = $stmtAgendaRef->get_result()->fetch_assoc();
+            $stmtAgendaRef->close();
+            if (is_array($rowAgendaRef)) {
+                $fechaAgendaRef = normalizar_fecha_programada_agenda($rowAgendaRef['fecha_programada'] ?? null);
+                $horaAgendaRef = normalizar_hora_programada_agenda($rowAgendaRef['hora_programada'] ?? null);
+                if ($fechaAgendaRef !== null) {
+                    $fechaCot = $fechaAgendaRef;
+                }
+                if ($horaAgendaRef !== null) {
+                    $horaCot = $horaAgendaRef;
+                }
+            }
+        }
+    }
+
+    $hora = $horaCot !== null ? $horaCot : date('H:i:s');
     $tipoConsulta = 'programada';
     cotizacion_ensure_consultas_edad_snapshot_columns($conn);
     $hasOrigenCreacion = column_exists($conn, 'consultas', 'origen_creacion');
@@ -4186,6 +4311,42 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
     }
 }
 
+function cotizacion_requiere_consulta_asociada(array $detalles): bool {
+    foreach ($detalles as $detalle) {
+        $tipo = correlativo_operativo_normalizar_servicio_tipo((string)($detalle['servicio_tipo'] ?? ''));
+        if ($tipo === 'consulta') {
+            return true;
+        }
+    }
+    return false;
+}
+
+function cotizacion_asegurar_consulta_asociada_si_aplica(
+    mysqli $conn,
+    int $cotizacionId,
+    array $detalles,
+    int $pacienteId,
+    bool $modoInformativo = false
+): void {
+    if ($modoInformativo || $cotizacionId <= 0 || $pacienteId <= 0) {
+        return;
+    }
+    if (!cotizacion_requiere_consulta_asociada($detalles)) {
+        return;
+    }
+
+    $sync = asegurar_consulta_desde_cotizacion_interno($conn, $cotizacionId);
+    if (!($sync['success'] ?? false)) {
+        $msg = trim((string)($sync['error'] ?? ''));
+        throw new Exception($msg !== '' ? $msg : 'No se pudo asociar la consulta médica de la cotización');
+    }
+
+    $consultaId = (int)($sync['consulta_id'] ?? 0);
+    if ($consultaId <= 0) {
+        throw new Exception('La cotización incluye consulta pero no tiene una consulta médica asociada');
+    }
+}
+
 function registrar_cotizacion($conn, $data) {
     $usuarioSesion = get_user_id_from_session();
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : $usuarioSesion;
@@ -4333,6 +4494,13 @@ function registrar_cotizacion($conn, $data) {
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, null, $fechaRef, [
             'modo_informativo' => $modoInformativo,
         ]);
+        cotizacion_asegurar_consulta_asociada_si_aplica(
+            $conn,
+            $cotizacionId,
+            $detalles,
+            $pacienteId,
+            $modoInformativo
+        );
         $totalReal = total_detalles_cotizacion_activos($conn, $cotizacionId);
         $debeSincronizarClinico = false;
         if ($hasSaldoV2) {
@@ -4461,6 +4629,13 @@ function editar_cotizacion($conn, $data) {
         agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
 
         insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioId, $motivo, $fechaRef);
+        cotizacion_asegurar_consulta_asociada_si_aplica(
+            $conn,
+            $cotizacionId,
+            $detalles,
+            (int)($cot['paciente_id'] ?? 0),
+            false
+        );
         sincronizar_movimientos_lab_ref_en_edicion_cotizacion($conn, (int)$cot['paciente_id'], $detallesAntes, $detalles, $usuarioId, $cotizacionId);
 
         // Mantener la orden de laboratorio activa aunque existan derivaciones externas.
@@ -5604,6 +5779,13 @@ function agregar_detalle_cotizacion($conn, $data) {
         }
 
         insertar_detalles_cotizacion($conn, $cotizacionId, [$detalle], $usuarioId, $motivo);
+        cotizacion_asegurar_consulta_asociada_si_aplica(
+            $conn,
+            $cotizacionId,
+            [$detalle],
+            (int)($cot['paciente_id'] ?? 0),
+            false
+        );
 
         $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
         $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");
@@ -6669,7 +6851,7 @@ switch ($method) {
             LEFT JOIN usuarios u ON c.usuario_id = u.id
             {$joinResponsableFarmacia}
             $whereSql
-            ORDER BY c.fecha DESC
+            ORDER BY c.fecha DESC, c.id DESC
             LIMIT ? OFFSET ?
         ";
 
@@ -6801,10 +6983,19 @@ switch ($method) {
             }
 
             if (column_exists($conn, 'cotizaciones_detalle', 'snapshot_json')) {
+                $hasPaqueteTipoCol = column_exists($conn, 'cotizaciones_detalle', 'paquete_tipo');
+                $hasPaqueteCodigoCol = column_exists($conn, 'cotizaciones_detalle', 'paquete_codigo');
+                $hasPaqueteNombreCol = column_exists($conn, 'cotizaciones_detalle', 'paquete_nombre');
+                $hasPaqueteIdCol = column_exists($conn, 'cotizaciones_detalle', 'paquete_id');
+                $selectPaqueteTipo = $hasPaqueteTipoCol ? 'cd.paquete_tipo' : "'' AS paquete_tipo";
+                $selectPaqueteCodigo = $hasPaqueteCodigoCol ? 'cd.paquete_codigo' : "'' AS paquete_codigo";
+                $selectPaqueteNombre = $hasPaqueteNombreCol ? 'cd.paquete_nombre' : "'' AS paquete_nombre";
+                $selectPaqueteId = $hasPaqueteIdCol ? 'cd.paquete_id' : '0 AS paquete_id';
                 $wherePaqueteActivo = $hasEstadoItem
                     ? " AND (c.estado = 'anulada' OR cd.estado_item <> 'eliminado')"
                     : '';
-                $sqlPaquetes = "SELECT cd.cotizacion_id, cd.descripcion, cd.snapshot_json
+                $sqlPaquetes = "SELECT cd.cotizacion_id, cd.descripcion, cd.snapshot_json,
+                                       {$selectPaqueteTipo}, {$selectPaqueteCodigo}, {$selectPaqueteNombre}, {$selectPaqueteId}
                                 FROM cotizaciones_detalle cd
                                 INNER JOIN cotizaciones c ON c.id = cd.cotizacion_id
                                 WHERE cd.cotizacion_id IN ($placeholders)
@@ -6820,16 +7011,29 @@ switch ($method) {
                         $cid = (int)($rowPaq['cotizacion_id'] ?? 0);
                         if ($cid <= 0) continue;
 
+                        $paqueteTipo = strtolower(trim((string)($rowPaq['paquete_tipo'] ?? '')));
+                        $paqueteCodigo = trim((string)($rowPaq['paquete_codigo'] ?? ''));
+                        $paqueteNombre = trim((string)($rowPaq['paquete_nombre'] ?? ''));
+                        $paqueteId = isset($rowPaq['paquete_id']) ? (int)$rowPaq['paquete_id'] : 0;
+
                         $snapshotRaw = (string)($rowPaq['snapshot_json'] ?? '');
-                        if (trim($snapshotRaw) === '') continue;
-
-                        $snapshot = json_decode($snapshotRaw, true);
-                        if (!is_array($snapshot)) continue;
-
-                        $paqueteTipo = strtolower(trim((string)($snapshot['paquete_tipo'] ?? '')));
-                        $paqueteCodigo = trim((string)($snapshot['paquete_codigo'] ?? ''));
-                        $paqueteNombre = trim((string)($snapshot['paquete_nombre'] ?? ''));
-                        $paqueteId = isset($snapshot['paquete_id']) ? (int)$snapshot['paquete_id'] : 0;
+                        if (($paqueteTipo === '' || ($paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0)) && trim($snapshotRaw) !== '') {
+                            $snapshot = json_decode($snapshotRaw, true);
+                            if (is_array($snapshot)) {
+                                if ($paqueteTipo === '') {
+                                    $paqueteTipo = strtolower(trim((string)($snapshot['paquete_tipo'] ?? '')));
+                                }
+                                if ($paqueteCodigo === '') {
+                                    $paqueteCodigo = trim((string)($snapshot['paquete_codigo'] ?? ''));
+                                }
+                                if ($paqueteNombre === '') {
+                                    $paqueteNombre = trim((string)($snapshot['paquete_nombre'] ?? ''));
+                                }
+                                if ($paqueteId <= 0) {
+                                    $paqueteId = isset($snapshot['paquete_id']) ? (int)$snapshot['paquete_id'] : 0;
+                                }
+                            }
+                        }
 
                         if ($paqueteTipo === '' && $paqueteCodigo === '' && $paqueteNombre === '' && $paqueteId <= 0) {
                             continue;

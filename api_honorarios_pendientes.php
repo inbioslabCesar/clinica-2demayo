@@ -64,15 +64,33 @@ $fecha_desde = isset($_GET['fecha_desde']) ? trim((string)$_GET['fecha_desde']) 
 $fecha_hasta = isset($_GET['fecha_hasta']) ? trim((string)$_GET['fecha_hasta']) : '';
 $rango = isset($_GET['rango']) ? strtolower(trim((string)$_GET['rango'])) : '';
 $incluirAnuladas = isset($_GET['incluir_anuladas']) && intval($_GET['incluir_anuladas']) === 1;
+$tipoFecha = isset($_GET['tipo_fecha']) ? strtolower(trim((string)$_GET['tipo_fecha'])) : 'movimiento';
+if (!in_array($tipoFecha, ['movimiento', 'atencion'], true)) {
+    $tipoFecha = 'movimiento';
+}
 
 $whereBase = "WHERE 1=1";
 $paramsBase = [];
 
 $estadoNormalizado = strtolower(trim((string)$estado));
 $usarFechaPagoComoFiltro = ($estadoNormalizado === 'pagado');
-$fechaFiltroExpr = $usarFechaPagoComoFiltro
+$fechaAtencionExpr = "DATE(h.fecha)";
+if ($hasCotizacionMovimientos) {
+    $fechaAtencionExpr = "DATE(COALESCE((
+        SELECT c_ref.fecha
+        FROM cotizacion_movimientos cm_ref
+        INNER JOIN cotizaciones c_ref ON c_ref.id = cm_ref.cotizacion_id
+        WHERE cm_ref.cobro_id = h.cobro_id
+          AND cm_ref.tipo_movimiento = 'abono'
+          AND cm_ref.cotizacion_id IS NOT NULL
+        ORDER BY cm_ref.id DESC
+        LIMIT 1
+    ), h.fecha))";
+}
+$fechaMovimientoExpr = $usarFechaPagoComoFiltro
     ? "DATE(COALESCE(h.fecha_pago_medico, h.fecha))"
     : "DATE(h.fecha)";
+$fechaFiltroExpr = $tipoFecha === 'atencion' ? $fechaAtencionExpr : $fechaMovimientoExpr;
 
 if ($fecha_desde === '' && $fecha_hasta === '' && in_array($rango, ['hoy', 'semana', 'mes'], true)) {
     $hoy = date('Y-m-d');
@@ -129,14 +147,14 @@ if (!$incluirAnuladas) {
 
 $where = $whereBase;
 $params = $paramsBase;
-if ($estado === 'pendiente' || $estado === 'pagado') {
+if (in_array($estado, ['pendiente', 'pagado', 'cancelado'], true)) {
     $where .= " AND h.estado_pago_medico = :estado";
     $params[':estado'] = $estado;
 }
 
-$orderByExpr = $usarFechaPagoComoFiltro
-    ? "COALESCE(h.fecha_pago_medico, DATE(h.fecha))"
-    : "h.fecha";
+$orderByExpr = $tipoFecha === 'atencion'
+    ? $fechaAtencionExpr
+    : ($usarFechaPagoComoFiltro ? "COALESCE(h.fecha_pago_medico, DATE(h.fecha))" : "h.fecha");
 
 $joinHpc = '';
 $cobradoPorExpr = 'i.usuario_id';
@@ -187,11 +205,11 @@ $stmtCount->execute($params);
 $totalRegistros = (int)$stmtCount->fetchColumn();
 $totalPaginas = $limit > 0 ? (int)ceil($totalRegistros / $limit) : 1;
 
-$sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medico_apellido, h.descripcion, h.tipo_servicio, h.paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, h.fecha, h.turno, h.monto_medico, h.estado_pago_medico,
+$sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medico_apellido, h.descripcion, h.tipo_servicio, h.paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, h.fecha, h.turno, h.monto_medico, h.estado_pago_medico, h.observaciones,
     e.usuario_id AS liquidado_por_id, u.nombre AS liquidado_por_nombre, u.rol AS liquidado_por_rol, e.created_at AS fecha_liquidacion,
     $cobradoPorExpr AS cobrado_por_id, $cobradoPorNombreExpr AS cobrado_por_nombre, $cobradoPorRolExpr AS cobrado_por_rol,
     $origenExpr AS origen_resumen,
-    DATEDIFF(CURDATE(), DATE(h.fecha)) AS antiguedad_dias
+    DATEDIFF(CURDATE(), {$fechaFiltroExpr}) AS antiguedad_dias
     FROM honorarios_medicos_movimientos h
     LEFT JOIN medicos m ON h.medico_id = m.id
     LEFT JOIN pacientes p ON h.paciente_id = p.id
@@ -217,8 +235,22 @@ foreach ($honorarios as &$item) {
     $descripcionCompleta = (string)($item['descripcion'] ?? '');
     $item['descripcion_completa'] = $descripcionCompleta;
     $item['descripcion'] = resumir_descripcion_honorario($descripcionCompleta);
+
+    $item['motivo_anulacion'] = null;
+    if (($item['estado_pago_medico'] ?? '') === 'cancelado') {
+        $obs = (string)($item['observaciones'] ?? '');
+        if (preg_match('/ANULADO:\s*(.+)$/u', $obs, $m)) {
+            $item['motivo_anulacion'] = trim($m[1]);
+        }
+    }
+    unset($item['observaciones']);
 }
 unset($item);
+
+$resumenFechaPendienteExpr = $tipoFecha === 'atencion' ? $fechaAtencionExpr : "DATE(h.fecha)";
+$resumenFechaPagadoExpr = $tipoFecha === 'atencion'
+    ? $fechaAtencionExpr
+    : "DATE(COALESCE(h.fecha_pago_medico, h.fecha))";
 
 $sqlResumen = "SELECT
         COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pendiente' THEN h.monto_medico ELSE 0 END), 0) AS pendiente_total,
@@ -226,9 +258,9 @@ $sqlResumen = "SELECT
         COALESCE(SUM(h.monto_medico), 0) AS monto_total,
         SUM(CASE WHEN h.estado_pago_medico = 'pendiente' THEN 1 ELSE 0 END) AS pendientes_count,
         SUM(CASE WHEN h.estado_pago_medico = 'pagado' THEN 1 ELSE 0 END) AS liquidados_count,
-        COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pendiente' AND DATE(h.fecha) = CURDATE() THEN h.monto_medico ELSE 0 END), 0) AS pendiente_hoy,
-        COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pendiente' AND DATE(h.fecha) >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND DATE(h.fecha) <= LAST_DAY(CURDATE()) THEN h.monto_medico ELSE 0 END), 0) AS pendiente_mes,
-        COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pagado' AND DATE(h.fecha_pago_medico) >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND DATE(h.fecha_pago_medico) <= LAST_DAY(CURDATE()) THEN h.monto_medico ELSE 0 END), 0) AS liquidado_mes
+        COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pendiente' AND {$resumenFechaPendienteExpr} = CURDATE() THEN h.monto_medico ELSE 0 END), 0) AS pendiente_hoy,
+        COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pendiente' AND {$resumenFechaPendienteExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND {$resumenFechaPendienteExpr} <= LAST_DAY(CURDATE()) THEN h.monto_medico ELSE 0 END), 0) AS pendiente_mes,
+        COALESCE(SUM(CASE WHEN h.estado_pago_medico = 'pagado' AND {$resumenFechaPagadoExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND {$resumenFechaPagadoExpr} <= LAST_DAY(CURDATE()) THEN h.monto_medico ELSE 0 END), 0) AS liquidado_mes
     FROM honorarios_medicos_movimientos h
     $whereBase";
 $stmtResumen = $pdo->prepare($sqlResumen);
@@ -287,5 +319,6 @@ echo json_encode([
         "fecha_desde" => $fecha_desde,
         "fecha_hasta" => $fecha_hasta,
         "rango" => $rango,
+        "tipo_fecha" => $tipoFecha,
     ],
 ]);

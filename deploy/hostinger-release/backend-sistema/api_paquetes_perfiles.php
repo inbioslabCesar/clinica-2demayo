@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_MYSQLI_INIT')) {
+    define('SKIP_MYSQLI_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
 
@@ -352,6 +355,8 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
 
     $pdo->beginTransaction();
     try {
+        $hasVersionRefTable = pp_table_exists($pdo, 'paquetes_perfiles_items_version_ref');
+
         if ($id > 0) {
             $stmtUp = $pdo->prepare(
                 "UPDATE paquetes_perfiles
@@ -361,6 +366,9 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
             );
             $stmtUp->execute([$codigo, $nombre, $descripcion, $estado, $tipo, $precioGlobal, $modoPrecio, $permiteDesc, $vigDesde, $vigHasta, $meta, $usuarioId, $id]);
 
+            if ($hasVersionRefTable) {
+                $pdo->prepare("DELETE vr FROM paquetes_perfiles_items_version_ref vr INNER JOIN paquetes_perfiles_items i ON i.id = vr.paquete_item_id WHERE i.paquete_id = ?")->execute([$id]);
+            }
             $pdo->prepare("DELETE hr FROM paquetes_perfiles_items_honorario_reglas hr INNER JOIN paquetes_perfiles_items i ON i.id = hr.paquete_item_id WHERE i.paquete_id = ?")->execute([$id]);
             $pdo->prepare("DELETE FROM paquetes_perfiles_items WHERE paquete_id = ?")->execute([$id]);
         } else {
@@ -384,14 +392,20 @@ function pp_save_package(PDO $pdo, array $payload, int $usuarioId): int {
              VALUES (?, ?, ?, ?, ?, 1)"
         );
 
-        $hasVersionRefTable = pp_table_exists($pdo, 'paquetes_perfiles_items_version_ref');
         $hasExamVersionsTable = pp_table_exists($pdo, 'examenes_laboratorio_versiones');
         $stmtVersionRef = null;
         if ($hasVersionRefTable) {
             $stmtVersionRef = $pdo->prepare(
                 "INSERT INTO paquetes_perfiles_items_version_ref
                  (paquete_item_id, examen_id, examen_version_id, version_num, hash_contenido, estado_compatibilidad, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, 'vigente', NOW(), NOW())"
+                 VALUES (?, ?, ?, ?, ?, 'vigente', NOW(), NOW())
+                 ON DUPLICATE KEY UPDATE
+                    examen_id = VALUES(examen_id),
+                    examen_version_id = VALUES(examen_version_id),
+                    version_num = VALUES(version_num),
+                    hash_contenido = VALUES(hash_contenido),
+                    estado_compatibilidad = 'vigente',
+                    updated_at = NOW()"
             );
         }
 

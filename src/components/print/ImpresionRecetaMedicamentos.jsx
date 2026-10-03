@@ -136,45 +136,45 @@ const ImpresionRecetaMedicamentos = ({
         />
 
         <div className="relative z-10 flex h-full min-h-0 flex-col">
-          <header className="flex items-start justify-between gap-2 border-b border-slate-900 pb-1">
-            <div className="flex min-w-0 items-start gap-2">
+          <header className="flex items-start justify-between gap-1.5 border-b border-slate-900 pb-0.5">
+            <div className="flex min-w-0 items-start gap-1.5">
               <img
                 src={logoSrc}
                 alt={configuracionClinica?.nombre_clinica || "Logo"}
-                className="h-12 w-auto shrink-0 object-contain"
+                className="h-9 w-auto shrink-0 object-contain"
               />
               <div className="min-w-0">
-                <p className="text-sm font-bold uppercase leading-tight">
+                <p className="text-[10px] font-bold uppercase leading-[1.05]">
                   {configuracionClinica?.nombre_clinica || "MI CLINICA"}
                 </p>
                 {configuracionClinica?.slogan && (
-                  <p className="text-[11px] leading-tight" style={{ color: configuracionClinica.slogan_color || "#374151" }}>
+                  <p className="text-[8.5px] leading-[1.05]" style={{ color: configuracionClinica.slogan_color || "#374151" }}>
                     {configuracionClinica.slogan}
                   </p>
                 )}
-                <p className="text-[11px] leading-tight">RUC: {configuracionClinica?.ruc || "-"}</p>
-                <p className="text-[11px] leading-tight">Dirección: {configuracionClinica?.direccion || "-"}</p>
-                <p className="text-[11px] leading-tight">Tel: {configuracionClinica?.telefono || "-"}</p>
+                <p className="text-[8.5px] leading-[1.05]">RUC: {configuracionClinica?.ruc || "-"}</p>
+                <p className="text-[8.5px] leading-[1.05]">Dirección: {configuracionClinica?.direccion || "-"}</p>
+                <p className="text-[8.5px] leading-[1.05]">Tel: {configuracionClinica?.telefono || "-"}</p>
               </div>
             </div>
             <div className="shrink-0 text-right">
-              <p className="text-xs font-bold leading-tight">{formatProfesionalName(medicoInfo || {})}</p>
-              <p className="text-[11px] leading-tight">{medicoInfo?.especialidad}</p>
-              <p className="text-[11px] leading-tight">{formatColegiatura(medicoInfo || {})}</p>
-              {medicoInfo?.rne && <p className="text-[11px] leading-tight">RNE: {medicoInfo.rne}</p>}
+              <p className="text-[10px] font-bold leading-[1.05]">{formatProfesionalName(medicoInfo || {})}</p>
+              <p className="text-[8.5px] leading-[1.05]">{medicoInfo?.especialidad}</p>
+              <p className="text-[8.5px] leading-[1.05]">{formatColegiatura(medicoInfo || {})}</p>
+              {medicoInfo?.rne && <p className="text-[8.5px] leading-[1.05]">RNE: {medicoInfo.rne}</p>}
             </div>
           </header>
 
-          <div className="mt-1 flex items-center justify-between border-b border-slate-900 pb-1">
-            <p className="text-sm font-bold tracking-wide">RECETA MEDICA</p>
+          <div className="mt-1 flex items-center justify-between border-b border-blue-300 pb-1">
+            <p className="text-[22px] font-bold leading-none tracking-tight text-blue-700">Rx</p>
             <div className="text-[11px] text-slate-700">
               <span className="mr-3">Fecha: {formatearFecha(new Date())}</span>
               <span>Hora: {formatearHora(new Date())}</span>
             </div>
           </div>
 
-          <section className="mt-1 border border-slate-900 p-1">
-            <p className="mb-0.5 border-b border-slate-300 text-[11px] font-semibold uppercase">Datos del paciente</p>
+          <section className="mt-1 rounded-md border border-slate-300 bg-slate-50/50 p-1.5">
+            <p className="mb-0.5 border-b border-slate-300 text-[11px] font-semibold uppercase text-slate-700">Datos del paciente</p>
             <div className="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[11px] leading-tight">
               <p className="col-span-3"><span className="font-semibold">Paciente:</span> {nombrePaciente} {apellidoPaciente}</p>
               <p><span className="font-semibold">DNI:</span> {paciente?.dni || "-"}</p>
@@ -202,7 +202,7 @@ const ImpresionRecetaMedicamentos = ({
             </section>
           )}
 
-          <section className="mt-1 flex min-h-0 flex-1 flex-col border border-slate-900 p-1">
+          <section className="mt-1 flex min-h-0 flex-1 flex-col rounded-md border border-slate-300 bg-white p-1">
             <div className="mb-1 flex items-center justify-between border-b border-slate-300 pb-0.5">
               <p className="text-sm font-bold">Rp/ Medicamentos</p>
               <p className="text-[11px] text-slate-600">Lista prescrita</p>
@@ -210,27 +210,29 @@ const ImpresionRecetaMedicamentos = ({
 
             <div className="min-h-0 flex-1">
               {medicamentosArray.length > 0 ? (
-                <div className="divide-y divide-slate-200">
+                <div className="space-y-0.5">
                   {medicamentosArray.map((medicamento, index) => (
-                    <article key={index} className="py-0.5">
-                      <div className="flex gap-1.5">
-                        <div className="w-6 shrink-0 text-[10px] font-semibold">{index + 1}.</div>
-                        <div className="min-w-0 flex-1 space-y-0.5 leading-[1]">
-                          <p className="text-[10px] font-semibold uppercase leading-[1]">
-                            {medicamento.nombre || "Medicamento no especificado"}
-                            {medicamento.codigo && <span className="ml-1 font-normal text-slate-600">({medicamento.codigo})</span>}
-                          </p>
-                          <p className="text-[10px] leading-[1] text-slate-800">
-                            {[
+                    <article key={index} className="rounded-md border border-slate-200 bg-slate-50/60 px-1.5 py-0.5">
+                      <div className="flex gap-1">
+                        <div className="w-5 shrink-0 text-[9px] font-semibold text-slate-700">{index + 1}.</div>
+                        <div className="min-w-0 flex-1 space-y-0 leading-[1]">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-[9px] font-semibold uppercase leading-[1.02] pr-2">
+                              {medicamento.nombre || "Medicamento no especificado"}
+                              {medicamento.codigo && <span className="ml-1 font-normal text-slate-600">({medicamento.codigo})</span>}
+                            </p>
+                            <span className="shrink-0 rounded-md bg-blue-100 px-1.5 py-[1px] text-[9px] font-semibold text-blue-700">
+                              {getCantidadImpresion(medicamento)} {getUnidadImpresion(medicamento)}
+                            </span>
+                          </div>
+                          <p className="text-[8.7px] leading-[1.02] text-slate-700">
+                            Presentación: {[
                               medicamento.presentacion,
                               medicamento.concentracion,
                               medicamento.laboratorio,
                             ]
                               .filter(Boolean)
-                              .join(" - ") || "Sin presentación / concentración / laboratorio"}
-                          </p>
-                          <p className="text-[10px] leading-[1] text-slate-800">
-                            <span className="font-semibold">Cantidad:</span> {getCantidadImpresion(medicamento)} {getUnidadImpresion(medicamento)}
+                              .join(" - ") || "No especificada"}
                           </p>
                         </div>
                       </div>
@@ -270,32 +272,33 @@ const ImpresionRecetaMedicamentos = ({
         />
 
         <div className="relative z-10 flex h-full min-h-0 flex-col">
-          <header className="border-b border-slate-900 pb-1 text-right">
-            <p className="text-xs font-bold leading-tight">{formatProfesionalName(medicoInfo || {})}</p>
-            <p className="text-[11px] leading-tight">{medicoInfo?.especialidad}</p>
-            <p className="text-[11px] leading-tight">{formatColegiatura(medicoInfo || {})}</p>
-            {medicoInfo?.rne && <p className="text-[11px] leading-tight">RNE: {medicoInfo.rne}</p>}
+          <header className="border-b border-slate-900 pb-0.5 text-right">
+            <p className="text-[10px] font-bold leading-[1.05]">{formatProfesionalName(medicoInfo || {})}</p>
+            <p className="text-[8.5px] leading-[1.05]">{medicoInfo?.especialidad}</p>
+            <p className="text-[8.5px] leading-[1.05]">{formatColegiatura(medicoInfo || {})}</p>
+            {medicoInfo?.rne && <p className="text-[8.5px] leading-[1.05]">RNE: {medicoInfo.rne}</p>}
           </header>
 
-          <div className="mt-1 border-b border-slate-900 pb-1 text-center">
-            <p className="text-sm font-bold tracking-wide">INDICACIONES</p>
+          <div className="mt-1 border-b border-emerald-300 pb-1 text-left">
+            <p className="text-[18px] font-bold tracking-tight text-blue-700">Indicaciones para el paciente</p>
+            <p className="text-[10px] text-slate-600">Siga cuidadosamente cada indicación. Ante cualquier duda, contacte a su médico.</p>
           </div>
 
-          <section className="mt-1 flex min-h-0 flex-1 flex-col border border-slate-900 p-1">
+          <section className="mt-1 flex min-h-0 flex-1 flex-col rounded-md border border-blue-200 bg-slate-50/40 p-1">
             <div className="min-h-0 flex-1">
               {medicamentosArray.length > 0 ? (
-                <div className="divide-y divide-slate-200">
+                <div className="space-y-0.5">
                   {medicamentosArray.map((medicamento, index) => (
-                    <article key={index} className="py-0.5 break-inside-avoid">
-                      <div className="flex gap-1.5">
-                        <div className="w-6 shrink-0 text-[10px] font-semibold">{index + 1}.</div>
-                        <div className="min-w-0 flex-1 space-y-0.5 leading-[1]">
-                          <p className="text-[10px] font-semibold uppercase leading-[1]">{medicamento.nombre || "Medicamento"}</p>
-                          <p className="text-[10px] leading-[1.15] text-slate-800 break-words">
-                            <span className="font-semibold">Indicaciones:</span> {getIndicacionImpresion(medicamento)}
-                          </p>
-                          <p className="text-[10px] leading-[1] text-slate-800">
-                            <span className="font-semibold">Cantidad:</span> {getCantidadImpresion(medicamento)} {getUnidadImpresion(medicamento)}
+                    <article key={index} className="break-inside-avoid rounded-md border border-blue-100 bg-blue-50/60 px-1.5 py-0.5">
+                      <div className="flex gap-1">
+                        <div className="relative h-4 w-4 shrink-0 rounded-full bg-blue-600 text-white">
+                          <span className="absolute inset-0 grid place-items-center text-[8px] font-bold leading-none [transform:translateY(-0.4px)]">{index + 1}</span>
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-0 leading-[1]">
+                          <p className="text-[9px] font-semibold uppercase leading-[1]">{medicamento.nombre || "Medicamento"}</p>
+                          <p className="text-[8.7px] leading-[1.03] text-slate-800 break-words">
+                            {getIndicacionImpresion(medicamento)}
+                            <span className="font-semibold"> | {getCantidadImpresion(medicamento)} {getUnidadImpresion(medicamento)}</span>
                           </p>
                         </div>
                       </div>
@@ -310,10 +313,41 @@ const ImpresionRecetaMedicamentos = ({
 
           {recomendacionesGenerales && (
             <section className="mt-1 shrink-0 border border-amber-300 bg-amber-50 p-1.5 text-[11px] text-amber-900">
-              <p className="font-semibold uppercase">Recomendaciones</p>
-              <p className="mt-0.5 whitespace-pre-wrap leading-tight bg-white border border-amber-200 rounded p-1">
-                {recomendacionesGenerales}
-              </p>
+              <table className="w-full border-collapse" cellPadding={0} cellSpacing={0}>
+                <tbody>
+                  <tr>
+                    <td
+                      style={{
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.02em",
+                        lineHeight: 1.15,
+                        paddingBottom: "4px",
+                      }}
+                    >
+                      Recomendaciones
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          lineHeight: 1.25,
+                          background: "#ffffff",
+                          border: "1px solid #fde68a",
+                          borderRadius: "4px",
+                          padding: "5px 7px",
+                          marginTop: "0",
+                        }}
+                      >
+                        {recomendacionesGenerales}
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </section>
           )}
 
@@ -325,25 +359,26 @@ const ImpresionRecetaMedicamentos = ({
           <footer className="mt-1 flex shrink-0 justify-end border-t border-slate-900 pt-1">
             <div className="flex flex-col items-center justify-end text-center">
               {medicoInfo?.firma && (
-                <div className="mb-[-10px]">
+                <div className="relative z-10 mb-[-8px]">
                   <img
                     src={medicoInfo.firma}
                     alt="Firma digital del médico"
-                    className="firma-img-receta mx-auto block max-h-20 w-auto bg-transparent p-0"
+                    className="firma-img-receta mx-auto block max-h-12 w-auto bg-transparent p-0"
                   />
                 </div>
               )}
               {!medicoInfo?.firma && (
-                <div className="mb-[-10px] flex h-20 w-40 items-center justify-center border border-dashed border-slate-400">
+                <div className="mb-[-2px] flex h-12 w-32 items-center justify-center border border-dashed border-slate-400">
                   <span className="text-[11px] text-slate-500">[Firma Manual]</span>
                 </div>
               )}
-              <div className="min-w-40 border-t border-slate-900 pt-1 text-[11px] leading-tight">
-                <p className="font-bold">{formatProfesionalName(medicoInfo || {})}</p>
-                <p>{medicoInfo?.especialidad}</p>
-                <p>{formatColegiatura(medicoInfo || {})}</p>
-                {medicoInfo?.rne && <p>RNE: {medicoInfo.rne}</p>}
-                <p className="mt-1 font-bold uppercase">Firma médico</p>
+              <div className="min-w-40 border-t border-slate-900 pt-0.5 text-[8px] leading-[1] text-slate-700">
+                <p className="font-bold text-[8.5px] leading-[1]">{formatProfesionalName(medicoInfo || {})}</p>
+                <p className="text-[7.5px] leading-[1]">{medicoInfo?.especialidad}</p>
+                <p>
+                  {formatColegiatura(medicoInfo || {})}
+                  {medicoInfo?.rne ? ` | RNE: ${medicoInfo.rne}` : ""}
+                </p>
               </div>
             </div>
           </footer>

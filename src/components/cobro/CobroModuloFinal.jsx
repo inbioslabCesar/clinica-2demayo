@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import CobroDescuento from './CobroDescuento';
 import { BASE_URL } from '../../config/config';
 import Swal from 'sweetalert2';
@@ -12,6 +12,14 @@ function formatUserRole(roleRaw) {
   if (role.includes('caja') || role.includes('cajero')) return 'Caja';
   if (role.includes('medico')) return 'Medico';
   return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function generarClientRequestId() {
+  const prefix = 'cobro';
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}:${crypto.randomUUID()}`;
+  }
+  return `${prefix}:${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function CobroModulo({
@@ -68,6 +76,9 @@ function CobroModulo({
   const [tipoPago, setTipoPago] = useState('efectivo');
   const [observaciones] = useState('');
   const [loading, setLoading] = useState(false);
+  // Candado síncrono anti doble clic: el estado `loading` no se refleja hasta el siguiente render.
+  const cobroEnCursoRef = useRef(false);
+  const intentoCobroPendienteRef = useRef({ id: '', firma: '' });
   const [usarRepartoManual, setUsarRepartoManual] = useState(false);
   const [repartoPorDetalle, setRepartoPorDetalle] = useState({});
   const [clinicBrand, setClinicBrand] = useState({ name: 'MI CLINICA', logo: '', slogan: '', slogan_color: '', nombre_color: '', direccion: '', telefono: '', celular: '', ruc: '', email: '' });
@@ -534,6 +545,8 @@ if (tipoDescuento === 'porcentaje') {
       detallesPayload = validados;
     }
 
+    if (cobroEnCursoRef.current) return;
+    cobroEnCursoRef.current = true;
     setLoading(true);
 
     try {
@@ -576,6 +589,23 @@ if (tipoDescuento === 'porcentaje') {
         reparto_manual_aplicado: usarRepartoManual ? 1 : 0,
         motivo: descuento > 0 ? motivo : ''
       };
+
+      const firmaIntento = JSON.stringify({
+        paciente_id: cobroData.paciente_id || 0,
+        total: Number(cobroData.total || 0).toFixed(2),
+        tipo_pago: String(cobroData.tipo_pago || ''),
+        cotizacion_ids: Array.isArray(cobroData.cotizacion_ids) ? cobroData.cotizacion_ids.map((id) => Number(id || 0)).sort((a, b) => a - b) : [],
+        detalles: (Array.isArray(cobroData.detalles) ? cobroData.detalles : []).map((d) => ({
+          detalle_id: Number(d?.cotizacion_detalle_id || d?.detalle_id || 0),
+          subtotal: Number(d?.subtotal || 0).toFixed(2),
+        })),
+      });
+      const reusarRequestId = intentoCobroPendienteRef.current.firma === firmaIntento && String(intentoCobroPendienteRef.current.id || '').trim() !== '';
+      const clientRequestId = reusarRequestId ? intentoCobroPendienteRef.current.id : generarClientRequestId();
+      intentoCobroPendienteRef.current = { id: clientRequestId, firma: firmaIntento };
+
+      cobroData.client_request_id = clientRequestId;
+
       let payloadCobro = { ...cobroData };
       let result = null;
       let intentoReprogramacion = 0;
@@ -599,6 +629,7 @@ if (tipoDescuento === 'porcentaje') {
         }
 
         if (result?.success) {
+          intentoCobroPendienteRef.current = { id: '', firma: '' };
           break;
         }
 
@@ -703,6 +734,7 @@ if (tipoDescuento === 'porcentaje') {
         }
 
         if (result?.error) {
+          intentoCobroPendienteRef.current = { id: '', firma: '' };
           Swal.fire({
             icon: 'error',
             title: 'Error en el cobro',
@@ -711,6 +743,7 @@ if (tipoDescuento === 'porcentaje') {
           return;
         }
 
+        intentoCobroPendienteRef.current = { id: '', firma: '' };
         Swal.fire('Error', 'Error al procesar el cobro', 'error');
         return;
       }
@@ -745,6 +778,7 @@ if (tipoDescuento === 'porcentaje') {
       // Eliminado log de error en producción
       Swal.fire('Error', 'Error de conexión con el servidor', 'error');
     } finally {
+      cobroEnCursoRef.current = false;
       setLoading(false);
     }
   };

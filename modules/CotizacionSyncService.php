@@ -255,16 +255,171 @@ class CotizacionSyncService
         return $stmtIns->execute();
     }
 
+    /**
+     * Revierte lo que un cobro puntual le abonó a las cotizaciones a las que
+     * estaba vinculado (tabla `cobros_cotizaciones`), para que su
+     * total_pagado/saldo_pendiente/estado vuelvan a reflejar la realidad tras
+     * anular el cobro. Sin esto, una cotización podía quedar marcada "pagado"
+     * con el cobro que la pagó ya anulado (el mismo tipo de descuadre que
+     * motivó esta reescritura). No toca cotizaciones que ya están anuladas
+     * por completo (esas siguen su propio flujo).
+     */
+    private static function reversarVinculosCotizacionPorCobro($conn, $cobroId, $usuarioId, $motivo)
+    {
+        $cobroId = (int)$cobroId;
+        $afectadas = 0;
+        if ($cobroId <= 0 || !self::tableExists($conn, 'cobros_cotizaciones') || !self::tableExists($conn, 'cotizaciones')) {
+            return $afectadas;
+        }
+
+        $stmtCC = $conn->prepare("SELECT cotizacion_id, monto_aplicado, descuento_aplicado FROM cobros_cotizaciones WHERE cobro_id = ? AND estado_resultado <> 'anulado'");
+        if (!$stmtCC) {
+            return $afectadas;
+        }
+        $stmtCC->bind_param('i', $cobroId);
+        $stmtCC->execute();
+        $vinculos = $stmtCC->get_result()->fetch_all(MYSQLI_ASSOC);
+
+        $stmtCC2 = $conn->prepare("UPDATE cobros_cotizaciones SET estado_resultado = 'anulado', updated_at = NOW() WHERE cobro_id = ? AND cotizacion_id = ? AND estado_resultado <> 'anulado'");
+
+        foreach ($vinculos as $vinculo) {
+            $cotizacionId = (int)($vinculo['cotizacion_id'] ?? 0);
+            $montoAplicado = (float)($vinculo['monto_aplicado'] ?? 0);
+            $descuentoAplicado = (float)($vinculo['descuento_aplicado'] ?? 0);
+            if ($cotizacionId <= 0) {
+                continue;
+            }
+
+            // Regla de integridad: al revertir un cobro, el vinculo monetario debe
+            // quedar anulado siempre, incluso si la cotizacion completa ya estaba anulada.
+            if ($stmtCC2) {
+                $stmtCC2->bind_param('ii', $cobroId, $cotizacionId);
+                $stmtCC2->execute();
+            }
+
+            $stmtCot = $conn->prepare("SELECT total, total_pagado, estado FROM cotizaciones WHERE id = ? FOR UPDATE");
+            if (!$stmtCot) {
+                continue;
+            }
+            $stmtCot->bind_param('i', $cotizacionId);
+            $stmtCot->execute();
+            $cot = $stmtCot->get_result()->fetch_assoc();
+            if (!$cot) {
+                continue;
+            }
+            if (strtolower(trim((string)($cot['estado'] ?? ''))) === 'anulada') {
+                // La cotización completa ya está anulada por otro flujo; no la resucitamos.
+                // El bridge ya fue marcado como anulado arriba para evitar descuadres.
+                $afectadas++;
+                continue;
+            }
+
+            $totalActual = (float)$cot['total'];
+            $pagadoActual = (float)$cot['total_pagado'];
+            $saldoAntes = max(0.0, round($totalActual - $pagadoActual, 2));
+
+            $totalNuevo = round($totalActual + $descuentoAplicado, 2);
+            $pagadoNuevo = max(0.0, round($pagadoActual - $montoAplicado, 2));
+            $saldoNuevo = max(0.0, round($totalNuevo - $pagadoNuevo, 2));
+            $estadoNuevo = ($totalNuevo > 0 && $saldoNuevo <= 0.009)
+                ? 'pagado'
+                : ($pagadoNuevo > 0 ? 'parcial' : 'pendiente');
+
+            $stmtUpd = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
+            if ($stmtUpd) {
+                $stmtUpd->bind_param('dddsi', $totalNuevo, $pagadoNuevo, $saldoNuevo, $estadoNuevo, $cotizacionId);
+                $stmtUpd->execute();
+            }
+
+            if (self::tableExists($conn, 'cotizacion_movimientos') && ($montoAplicado > 0 || $descuentoAplicado > 0)) {
+                $montoMov = round($montoAplicado + $descuentoAplicado, 2);
+                $tipoMov = 'devolucion';
+                $descripcion = 'Reversa por anulación de cobro #' . $cobroId . '. Motivo: ' . $motivo;
+                $stmtMov = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                if ($stmtMov) {
+                    $stmtMov->bind_param('iisdddsi', $cotizacionId, $cobroId, $tipoMov, $montoMov, $saldoAntes, $saldoNuevo, $descripcion, $usuarioId);
+                    $stmtMov->execute();
+                }
+            }
+
+            $afectadas++;
+        }
+
+        return $afectadas;
+    }
+
+    /**
+     * Igual que reversarCobroCompletoPorCotizacion pero para un cobro puntual,
+     * sin depender de que exista una cotización vinculada (p. ej. al anular un
+     * honorario mal registrado). Anula el cobro (nunca lo borra), revierte sus
+     * ingresos de caja con un asiento negativo, repone stock de farmacia y
+     * revierte lo que ese cobro le hubiera abonado a cotizaciones vinculadas.
+     */
+    public static function reversarCobroPorId($conn, $cobroId, $usuarioId, $motivo, $honorarioMovimientoId = null)
+    {
+        $cobroId = (int)$cobroId;
+        if ($cobroId <= 0) {
+            return ['cobro_afectado' => false, 'reversas_ingreso' => 0, 'stock_restaurado' => 0, 'cotizaciones_afectadas' => 0];
+        }
+
+        $stmtEstado = $conn->prepare("UPDATE cobros SET estado = 'anulado', observaciones = CONCAT(COALESCE(observaciones, ''), ' | ANULADO: ', ?) WHERE id = ? AND estado <> 'anulado'");
+        $cobroAfectado = false;
+        if ($stmtEstado) {
+            $stmtEstado->bind_param('si', $motivo, $cobroId);
+            $stmtEstado->execute();
+            $cobroAfectado = $stmtEstado->affected_rows > 0;
+        }
+
+        $totalReversas = 0;
+        $honorarioMovimientoId = (int)$honorarioMovimientoId;
+        $sqlIng = "SELECT * FROM ingresos_diarios WHERE monto > 0 AND (
+            (referencia_id = ? AND referencia_tabla = 'cobros')"
+            . ($honorarioMovimientoId > 0 ? " OR honorario_movimiento_id = ?" : "")
+            . ") ORDER BY id ASC";
+        $stmtIng = $conn->prepare($sqlIng);
+        if ($stmtIng) {
+            if ($honorarioMovimientoId > 0) {
+                $stmtIng->bind_param('ii', $cobroId, $honorarioMovimientoId);
+            } else {
+                $stmtIng->bind_param('i', $cobroId);
+            }
+            $stmtIng->execute();
+            $resIng = $stmtIng->get_result();
+            $vistos = [];
+            while ($ing = $resIng->fetch_assoc()) {
+                $idIng = (int)($ing['id'] ?? 0);
+                if (isset($vistos[$idIng])) {
+                    continue;
+                }
+                $vistos[$idIng] = true;
+                if (self::insertarReversaDesdeIngreso($conn, $ing, $usuarioId, $motivo)) {
+                    $totalReversas++;
+                }
+            }
+        }
+
+        $stockRestaurado = self::restaurarStockFarmaciaPorCobro($conn, 0, $cobroId, $usuarioId, $motivo);
+        $cotizacionesAfectadas = self::reversarVinculosCotizacionPorCobro($conn, $cobroId, $usuarioId, $motivo);
+
+        return [
+            'cobro_afectado' => $cobroAfectado,
+            'reversas_ingreso' => $totalReversas,
+            'stock_restaurado' => $stockRestaurado,
+            'cotizaciones_afectadas' => $cotizacionesAfectadas,
+        ];
+    }
+
     public static function reversarCobroCompletoPorCotizacion($conn, $cotizacionId, $usuarioId, $motivo)
     {
         $cobroIds = self::obtenerCobroIdsPorCotizacion($conn, $cotizacionId);
         if (empty($cobroIds)) {
-            return ['cobros_afectados' => 0, 'reversas_ingreso' => 0, 'stock_restaurado' => 0];
+            return ['cobros_afectados' => 0, 'reversas_ingreso' => 0, 'stock_restaurado' => 0, 'cotizaciones_afectadas' => 0];
         }
 
         $totalReversas = 0;
         $cobrosAfectados = 0;
         $stockRestaurado = 0;
+        $cotizacionesAfectadas = 0;
 
         foreach ($cobroIds as $cobroId) {
             $stmtEstado = $conn->prepare("UPDATE cobros SET estado = 'anulado', observaciones = CONCAT(COALESCE(observaciones, ''), ' | ANULADO POR COTIZACION #', ?, ': ', ?) WHERE id = ? AND estado <> 'anulado'");
@@ -289,6 +444,10 @@ class CotizacionSyncService
                 }
             }
 
+            // Mantener alineado el bridge cobro-cotizacion aun si la cotizacion padre
+            // ya fue marcada anulada antes en el flujo que invoca este metodo.
+            $cotizacionesAfectadas += self::reversarVinculosCotizacionPorCobro($conn, $cobroId, $usuarioId, $motivo);
+
             $stockRestaurado += self::restaurarStockFarmaciaPorCobro($conn, $cotizacionId, $cobroId, $usuarioId, $motivo);
         }
 
@@ -296,6 +455,7 @@ class CotizacionSyncService
             'cobros_afectados' => $cobrosAfectados,
             'reversas_ingreso' => $totalReversas,
             'stock_restaurado' => $stockRestaurado,
+            'cotizaciones_afectadas' => $cotizacionesAfectadas,
         ];
     }
 

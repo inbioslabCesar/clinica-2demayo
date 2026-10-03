@@ -91,30 +91,43 @@ try {
         ];
     };
 
-    $calcularConciliacionCaja = function (int $usuarioId, string $fechaOperativa, int $cajaId) use ($pdo) {
+    $calcularConciliacionCajaV2 = function (int $cajaId, string $fechaOperativa) use ($pdo) {
         $fechaOperativa = trim($fechaOperativa);
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaOperativa)) {
             $fechaOperativa = date('Y-m-d');
         }
 
         $totalAtencionesDia = 0.0;
+        $cantidadAtencionesDia = 0;
         $cobradoTurno = 0.0;
         $montoSinAsientoCaja = 0.0;
         $montoCobrosInexistentes = 0.0;
 
-        try {
-            $stmtAtenciones = $pdo->prepare('SELECT COALESCE(SUM(total_pagado), 0), COUNT(*) FROM cotizaciones WHERE usuario_id = ? AND DATE(fecha) = ? AND COALESCE(total_pagado, 0) > 0 AND LOWER(TRIM(COALESCE(estado, ""))) IN ("pagado", "parcial")');
-            $stmtAtenciones->execute([$usuarioId, $fechaOperativa]);
-            $rowAtenciones = $stmtAtenciones->fetch(PDO::FETCH_NUM) ?: [0, 0];
-            $totalAtencionesDia = (float)($rowAtenciones[0] ?? 0);
-            $cantidadAtencionesDia = (int)($rowAtenciones[1] ?? 0);
-        } catch (Throwable $e) {
-            $totalAtencionesDia = 0.0;
-            $cantidadAtencionesDia = 0;
+        if ($cajaId <= 0) {
+            return [
+                'total_atenciones_dia' => 0.0,
+                'cantidad_atenciones_dia' => 0,
+                'cobrado_turno' => 0.0,
+                'diferencia_conciliacion' => 0.0,
+                'monto_sin_asiento_caja' => 0.0,
+                'monto_cobros_inexistentes' => 0.0,
+            ];
         }
 
         try {
-            $stmtCaja = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ?');
+            $stmtCaja = $pdo->prepare(
+                'SELECT COALESCE(SUM(monto), 0) '
+                . 'FROM ingresos_diarios '
+                . 'WHERE caja_id = ? '
+                . '  AND ( '
+                . '    LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobros" '
+                . '    OR ( '
+                . '      (referencia_tabla IS NULL OR TRIM(COALESCE(referencia_tabla, "")) = "" OR LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobro") '
+                . '      AND referencia_id IS NOT NULL '
+                . '      AND EXISTS (SELECT 1 FROM cobros cb WHERE cb.id = ingresos_diarios.referencia_id) '
+                . '    ) '
+                . '  )'
+            );
             $stmtCaja->execute([$cajaId]);
             $cobradoTurno = (float)$stmtCaja->fetchColumn();
         } catch (Throwable $e) {
@@ -122,28 +135,68 @@ try {
         }
 
         try {
-            $stmtSinAsiento = $pdo->prepare(
-                'SELECT COALESCE(SUM(GREATEST(0, pagos.monto_abono - COALESCE(ing.monto_asentado, 0))), 0) '
-                . 'FROM ('
-                . '  SELECT cm.cobro_id, COALESCE(SUM(cm.monto), 0) AS monto_abono '
-                . '  FROM cotizacion_movimientos cm '
-                . '  INNER JOIN cotizaciones c ON c.id = cm.cotizacion_id '
-                . '  WHERE c.usuario_id = ? '
-                . '    AND DATE(c.fecha) = ? '
-                . '    AND cm.cobro_id IS NOT NULL '
-                . '    AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ""))) = "abono" '
-                . '    AND COALESCE(cm.monto, 0) > 0 '
-                . '  GROUP BY cm.cobro_id '
-                . ') pagos '
-                . 'LEFT JOIN ('
-                . '  SELECT referencia_id AS cobro_id, COALESCE(SUM(monto), 0) AS monto_asentado '
+            $stmtAtenciones = $pdo->prepare(
+                'SELECT '
+                . '  COALESCE(SUM(COALESCE(cc.monto_aplicado, 0)), 0) AS total_atenciones, '
+                . '  COUNT(DISTINCT cc.cotizacion_id) AS cantidad_atenciones '
+                . 'FROM cobros_cotizaciones cc '
+                . 'INNER JOIN ('
+                . '  SELECT referencia_id AS cobro_id '
                 . '  FROM ingresos_diarios '
                 . '  WHERE caja_id = ? '
-                . '    AND LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobros" '
+                . '    AND ( '
+                . '      LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobros" '
+                . '      OR ( '
+                . '        (referencia_tabla IS NULL OR TRIM(COALESCE(referencia_tabla, "")) = "" OR LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobro") '
+                . '        AND referencia_id IS NOT NULL '
+                . '        AND EXISTS (SELECT 1 FROM cobros cb WHERE cb.id = ingresos_diarios.referencia_id) '
+                . '      ) '
+                . '    ) '
                 . '  GROUP BY referencia_id '
-                . ') ing ON ing.cobro_id = pagos.cobro_id'
+                . ') asientos ON asientos.cobro_id = cc.cobro_id '
+                . 'WHERE COALESCE(cc.estado_resultado, "ok") <> "anulado" '
+                . '  AND COALESCE(cc.monto_aplicado, 0) > 0'
             );
-            $stmtSinAsiento->execute([$usuarioId, $fechaOperativa, $cajaId]);
+            $stmtAtenciones->execute([$cajaId]);
+            $rowAtenciones = $stmtAtenciones->fetch(PDO::FETCH_ASSOC) ?: [];
+            $totalAtencionesDia = (float)($rowAtenciones['total_atenciones'] ?? 0);
+            $cantidadAtencionesDia = (int)($rowAtenciones['cantidad_atenciones'] ?? 0);
+        } catch (Throwable $e) {
+            $totalAtencionesDia = 0.0;
+            $cantidadAtencionesDia = 0;
+        }
+
+        try {
+            $stmtSinAsiento = $pdo->prepare(
+                'SELECT COALESCE(SUM(GREATEST(0, t.monto_aplicado - t.monto_asentado)), 0) '
+                . 'FROM ('
+                . '  SELECT '
+                . '    asientos.cobro_id, '
+                . '    asientos.monto_asentado, '
+                . '    COALESCE(SUM(CASE '
+                . '      WHEN COALESCE(cc.estado_resultado, "ok") <> "anulado" '
+                . '      THEN COALESCE(cc.monto_aplicado, 0) '
+                . '      ELSE 0 '
+                . '    END), 0) AS monto_aplicado '
+                . '  FROM ('
+                . '    SELECT referencia_id AS cobro_id, COALESCE(SUM(monto), 0) AS monto_asentado '
+                . '    FROM ingresos_diarios '
+                . '    WHERE caja_id = ? '
+                . '      AND ( '
+                . '        LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobros" '
+                . '        OR ( '
+                . '          (referencia_tabla IS NULL OR TRIM(COALESCE(referencia_tabla, "")) = "" OR LOWER(TRIM(COALESCE(referencia_tabla, ""))) = "cobro") '
+                . '          AND referencia_id IS NOT NULL '
+                . '          AND EXISTS (SELECT 1 FROM cobros cb WHERE cb.id = ingresos_diarios.referencia_id) '
+                . '        ) '
+                . '      ) '
+                . '    GROUP BY referencia_id '
+                . '  ) asientos '
+                . '  LEFT JOIN cobros_cotizaciones cc ON cc.cobro_id = asientos.cobro_id '
+                . '  GROUP BY asientos.cobro_id, asientos.monto_asentado '
+                . ') t'
+            );
+            $stmtSinAsiento->execute([$cajaId]);
             $montoSinAsientoCaja = (float)$stmtSinAsiento->fetchColumn();
         } catch (Throwable $e) {
             $montoSinAsientoCaja = 0.0;
@@ -151,18 +204,20 @@ try {
 
         try {
             $stmtCobrosInexistentes = $pdo->prepare(
-                'SELECT COALESCE(SUM(cm.monto), 0) '
-                . 'FROM cotizacion_movimientos cm '
-                . 'INNER JOIN cotizaciones c ON c.id = cm.cotizacion_id '
-                . 'LEFT JOIN cobros cb ON cb.id = cm.cobro_id '
-                . 'WHERE c.usuario_id = ? '
-                . '  AND DATE(c.fecha) = ? '
-                . '  AND cm.cobro_id IS NOT NULL '
-                . '  AND cb.id IS NULL '
-                . '  AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ""))) = "abono" '
-                . '  AND COALESCE(cm.monto, 0) > 0'
+                'SELECT COALESCE(SUM(i.monto), 0) '
+                . 'FROM ingresos_diarios i '
+                . 'LEFT JOIN cobros cb ON cb.id = i.referencia_id '
+                . 'WHERE i.caja_id = ? '
+                . '  AND ( '
+                . '    LOWER(TRIM(COALESCE(i.referencia_tabla, ""))) = "cobros" '
+                . '    OR LOWER(TRIM(COALESCE(i.referencia_tabla, ""))) = "cobro" '
+                . '    OR TRIM(COALESCE(i.referencia_tabla, "")) = "" '
+                . '    OR i.referencia_tabla IS NULL '
+                . '  ) '
+                . '  AND i.referencia_id IS NOT NULL '
+                . '  AND cb.id IS NULL'
             );
-            $stmtCobrosInexistentes->execute([$usuarioId, $fechaOperativa]);
+            $stmtCobrosInexistentes->execute([$cajaId]);
             $montoCobrosInexistentes = (float)$stmtCobrosInexistentes->fetchColumn();
         } catch (Throwable $e) {
             $montoCobrosInexistentes = 0.0;
@@ -178,6 +233,11 @@ try {
             'monto_sin_asiento_caja' => round($montoSinAsientoCaja, 2),
             'monto_cobros_inexistentes' => round($montoCobrosInexistentes, 2),
         ];
+    };
+
+    // Wrapper legacy para mantener compatibilidad interna durante el cambio por fases.
+    $calcularConciliacionCaja = function (int $usuarioId, string $fechaOperativa, int $cajaId) use ($calcularConciliacionCajaV2) {
+        return $calcularConciliacionCajaV2($cajaId, $fechaOperativa);
     };
 
     $normalizarTipoIngresoServicio = function (string $tipoRaw): string {
@@ -568,7 +628,7 @@ try {
         $egreso_honorarios_dia_operativo = (float)$resumenHonorarios['total_dia_operativo'];
         $egreso_honorarios_arrastre = (float)$resumenHonorarios['total_arrastre'];
 
-        $conciliacionActual = $calcularConciliacionCaja((int)$usuario['id'], $fechaCajaActual, $caja_id_actual);
+        $conciliacionActual = $calcularConciliacionCajaV2($caja_id_actual, $fechaCajaActual);
         $total_atenciones_dia = (float)($conciliacionActual['total_atenciones_dia'] ?? 0);
         $cobrado_turno = (float)($conciliacionActual['cobrado_turno'] ?? 0);
         $diferencia_conciliacion = (float)($conciliacionActual['diferencia_conciliacion'] ?? 0);
@@ -586,9 +646,9 @@ try {
         $stmt->execute([$caja_id_actual]);
         $total = floatval($stmt->fetchColumn());
 
+        // Mostrar por_servicio en base a asientos reales de caja.
+        // El faltante sin asiento ya se expone en monto_sin_asiento_caja para auditoria.
         $ingresos_por_servicio = $calcularIngresosPorServicioCaja($caja_id_actual);
-        $sinAsientoServicioActual = $calcularSinAsientoPorServicio((int)$usuario['id'], $fecha, $caja_id_actual);
-        $ingresos_por_servicio = $fusionarIngresosPorServicio($ingresos_por_servicio, $sinAsientoServicioActual);
 
         $stmt = $pdo->prepare('SELECT area, SUM(monto) as total_area FROM ingresos_diarios WHERE caja_id = ? GROUP BY area');
         $stmt->execute([$caja_id_actual]);
@@ -768,7 +828,7 @@ try {
             // Ganancia por caja
             $caja['ganancia_dia'] = $totalCajaOperativo - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
 
-            $conciliacionCaja = $calcularConciliacionCaja((int)$caja['usuario_id'], (string)($caja['fecha_operativa'] ?? $fecha), (int)$caja['id']);
+            $conciliacionCaja = $calcularConciliacionCajaV2((int)$caja['id'], (string)($caja['fecha_operativa'] ?? $fecha));
             $caja['total_atenciones_dia'] = (float)($conciliacionCaja['total_atenciones_dia'] ?? 0);
             $caja['cantidad_atenciones_dia'] = (int)($conciliacionCaja['cantidad_atenciones_dia'] ?? 0);
             $caja['cobrado_turno'] = (float)($conciliacionCaja['cobrado_turno'] ?? 0);
@@ -780,9 +840,9 @@ try {
             $stmtPago->execute([$caja['id']]);
             $caja['por_pago'] = $stmtPago->fetchAll(PDO::FETCH_ASSOC);
             // Ingresos por tipo de servicio por caja
-            $serviciosBase = $calcularIngresosPorServicioCaja((int)$caja['id']);
-            $sinAsientoServicioCaja = $calcularSinAsientoPorServicio((int)$caja['usuario_id'], (string)($caja['fecha_operativa'] ?? $fecha), (int)$caja['id']);
-            $caja['por_servicio'] = $fusionarIngresosPorServicio($serviciosBase, $sinAsientoServicioCaja);
+            // Mantener por_servicio solo con lo asentado en caja para evitar
+            // descuadres visuales contra total_caja_operativo.
+            $caja['por_servicio'] = $calcularIngresosPorServicioCaja((int)$caja['id']);
 
             $normalizarControlRealCaja($caja);
         }
@@ -818,7 +878,7 @@ try {
             $caja['egreso_operativo'] = $egresoOperativo ? floatval($egresoOperativo) : 0.0;
             $caja['ganancia_dia'] = $totalCajaOperativo - ($caja['egreso_honorarios'] + $caja['egreso_lab_ref'] + $caja['egreso_operativo']);
 
-            $conciliacionCaja = $calcularConciliacionCaja((int)$caja['usuario_id'], (string)($caja['fecha_operativa'] ?? $fecha), (int)$caja['id']);
+            $conciliacionCaja = $calcularConciliacionCajaV2((int)$caja['id'], (string)($caja['fecha_operativa'] ?? $fecha));
             $caja['total_atenciones_dia'] = (float)($conciliacionCaja['total_atenciones_dia'] ?? 0);
             $caja['cantidad_atenciones_dia'] = (int)($conciliacionCaja['cantidad_atenciones_dia'] ?? 0);
             $caja['cobrado_turno'] = (float)($conciliacionCaja['cobrado_turno'] ?? 0);
@@ -830,9 +890,9 @@ try {
             $stmtPago->execute([$caja['id']]);
             $caja['por_pago'] = $stmtPago->fetchAll(PDO::FETCH_ASSOC);
 
-            $serviciosBase = $calcularIngresosPorServicioCaja((int)$caja['id']);
-            $sinAsientoServicioCaja = $calcularSinAsientoPorServicio((int)$caja['usuario_id'], (string)($caja['fecha_operativa'] ?? $fecha), (int)$caja['id']);
-            $caja['por_servicio'] = $fusionarIngresosPorServicio($serviciosBase, $sinAsientoServicioCaja);
+            // Mantener por_servicio solo con lo asentado en caja para evitar
+            // descuadres visuales contra total_caja_operativo.
+            $caja['por_servicio'] = $calcularIngresosPorServicioCaja((int)$caja['id']);
 
             $normalizarControlRealCaja($caja);
         }
