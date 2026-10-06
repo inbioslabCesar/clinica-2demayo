@@ -32,6 +32,8 @@ try {
         'website'             => "ALTER TABLE configuracion_clinica ADD COLUMN website VARCHAR(255) DEFAULT NULL",
         'contacto_emergencias'=> "ALTER TABLE configuracion_clinica ADD COLUMN contacto_emergencias VARCHAR(100) DEFAULT NULL",
         'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
+        'agenda_inteligente_cotizacion_v1' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_inteligente_cotizacion_v1 TINYINT(1) NOT NULL DEFAULT 0",
+        'duracion_slot_min' => "ALTER TABLE configuracion_clinica ADD COLUMN duracion_slot_min INT NOT NULL DEFAULT 30",
     ];
     foreach ($late_columns as $col => $sql) {
         try {
@@ -86,10 +88,15 @@ try {
             'hc_template_mode' => 'auto',
             'hc_template_single_id' => null,
             'paciente_sexo_default' => 'M',
+            'agenda_inteligente_cotizacion_v1' => 0,
+            'duracion_slot_min' => 30,
         ];
     }
 
     $configuracion['paciente_sexo_default'] = cfg_normalize_paciente_sexo_default($configuracion['paciente_sexo_default'] ?? 'M');
+    $configuracion['agenda_inteligente_cotizacion_v1'] = (int)($configuracion['agenda_inteligente_cotizacion_v1'] ?? 0);
+    $slot = (int)($configuracion['duracion_slot_min'] ?? 30);
+    $configuracion['duracion_slot_min'] = max(5, min(120, $slot));
     
     echo json_encode([
         'success' => true,

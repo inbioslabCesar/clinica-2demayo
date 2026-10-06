@@ -91,6 +91,15 @@ function resolverDescripcionDetalle(detalle) {
   return descripcionBase || "-";
 }
 
+function esDetalleAdicionalAutorizado(detalle) {
+  const flag = Number(detalle?.es_adicional_dinamico || detalle?.adicional_dinamico || 0) === 1
+    || Boolean(detalle?.adicional_autorizado || detalle?.adicionalAutorizado);
+  if (flag) return true;
+  const descripcion = String(detalle?.descripcion || "").toLowerCase();
+  const observacion = String(detalle?.observacion_programacion || detalle?.observacionProgramacion || "").toLowerCase();
+  return descripcion.includes("adicional autorizado") || observacion.includes("adicional autorizado");
+}
+
 function parseSnapshotJson(raw) {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     return raw;
@@ -1080,6 +1089,11 @@ export default function DetalleCotizacionPage() {
                       {(Number(d.derivado) === 1) && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)", borderColor: "var(--color-primary-light)" }}>
                           🔗 Referenciado
+                        </span>
+                      )}
+                      {esDetalleAdicionalAutorizado(d) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200">
+                          Adicional autorizado
                         </span>
                       )}
                     </div>

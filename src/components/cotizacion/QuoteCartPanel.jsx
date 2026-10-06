@@ -4,6 +4,8 @@ import { useQuoteCart } from "../../context/QuoteCartContext";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
 import { validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
+import { getCachedAgendaSlotMinutes } from "../../config/config";
+import { getReferenceHorarioFromCart } from "../../utils/cartScheduling";
 
 function getLimaDate() {
   const now = new Date();
@@ -54,6 +56,21 @@ function buildEntryKey(row) {
   ].join("|");
 }
 
+function esAdicionalAutorizadoProgramado(detalle, cartItem) {
+  const marcaDetalle = String(detalle?.observacion_programacion || detalle?.observacionProgramacion || "").toLowerCase();
+  const marcaCart = String(cartItem?.observacion_programacion || cartItem?.observacionProgramacion || "").toLowerCase();
+  const descDetalle = String(detalle?.descripcion || "").toLowerCase();
+  const descCart = String(cartItem?.description || "").toLowerCase();
+  const flagDetalle = Boolean(detalle?.adicional_autorizado || detalle?.adicionalAutorizado);
+  const flagCart = Boolean(cartItem?.adicional_autorizado || cartItem?.adicionalAutorizado);
+  return flagDetalle
+    || flagCart
+    || marcaDetalle.includes("adicional autorizado")
+    || marcaCart.includes("adicional autorizado")
+    || descDetalle.includes("adicional autorizado")
+    || descCart.includes("adicional autorizado");
+}
+
 function actualizarDescripcionConsultaProgramada(descripcion, fecha, hora) {
   const base = String(descripcion || "Consulta medica").trim();
   const fechaNorm = String(fecha || "").slice(0, 10);
@@ -93,13 +110,90 @@ function formatProgramacionItem(fecha, hora) {
   return `Programado: ${fechaFmt}${h ? ` ${h}` : ""}`;
 }
 
+function normalizeHourHm(value) {
+  const raw = String(value || "").trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return "";
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return "";
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function hmToMinutes(hm) {
+  const norm = normalizeHourHm(hm);
+  if (!norm) return null;
+  const [h, m] = norm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesToHm(total) {
+  const safe = Math.max(0, Math.min(23 * 60 + 59, Number(total) || 0));
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function resolveAgendaStepMinutes() {
+  const configured = Number(getCachedAgendaSlotMinutes() || 30);
+  return Math.max(5, Math.min(120, Math.round(configured)));
+}
+
+function getProgramacionBloquesItem(it) {
+  const tipo = String(it?.serviceType || "").toLowerCase();
+  if (tipo !== "paquete" && tipo !== "perfil") return [];
+
+  const { fecha, hora } = getProgramacionItem(it);
+  const medicoId = getMedicoIdProgramacionItem(it);
+  const baseMin = hmToMinutes(hora);
+  if (!fecha || !hora || baseMin === null || medicoId <= 0) return [];
+
+  const componentes = Array.isArray(it?.componentes) ? it.componentes : [];
+  const agendables = componentes.filter((comp) => {
+    const t = String(comp?.servicio_tipo || comp?.source_type || "").toLowerCase();
+    return t === "consulta" || t === "ecografia" || t === "rayosx" || t === "rayos x" || t === "procedimiento" || t === "operacion";
+  });
+  const mismoMedico = agendables.filter((comp) => Number(comp?.medico_id || comp?.medicoId || 0) === medicoId);
+  const base = mismoMedico.length > 0 ? mismoMedico : agendables;
+  const bloques = Math.max(1, base.length || 1);
+  if (bloques <= 1) return [];
+
+  const step = resolveAgendaStepMinutes();
+  const out = [];
+  for (let i = 0; i < bloques; i += 1) {
+    out.push(minutesToHm(baseMin + (i * step)));
+  }
+  return out;
+}
+
+function buildResumenProgramacionHtml(items) {
+  const rows = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    const desc = String(item?.description || "Servicio").trim();
+    const slot = getProgramacionItem(item);
+    const base = formatProgramacionItem(slot.fecha, slot.hora);
+    if (!base) continue;
+    const bloques = getProgramacionBloquesItem(item);
+    const bloquesTxt = Array.isArray(bloques) && bloques.length > 1
+      ? ` · Bloques (${bloques.length}): ${bloques.join(" · ")}`
+      : "";
+    rows.push(`<div style="padding:4px 0;border-bottom:1px solid #eef2ff;"><b>${desc}</b><br/><span style="font-size:12px;color:#334155;">${base}${bloquesTxt}</span></div>`);
+  }
+  if (rows.length === 0) return "";
+  return `<div style="margin-top:8px;text-align:left;max-height:200px;overflow:auto;">${rows.join("")}</div>`;
+}
+
 function limpiarSoloDigitos(value) {
   return String(value || "").replace(/\D+/g, "").trim();
 }
 
 function esErrorSinDisponibilidad(err) {
   const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("no hay disponibilidad registrada");
+  return (
+    msg.includes("no hay disponibilidad registrada")
+    || msg.includes("cupos agotados para este horario")
+    || msg.includes("no hay cupos disponibles")
+  );
 }
 
 const XL_BREAKPOINT = 1280;
@@ -117,6 +211,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
   const [aplicarProgramacionGlobal, setAplicarProgramacionGlobal] = useState(true);
   const [fechaProgramacionGlobal, setFechaProgramacionGlobal] = useState(getLimaDate());
   const [horaProgramacionGlobal, setHoraProgramacionGlobal] = useState(getLimaTime());
+  const [programacionGlobalEditada, setProgramacionGlobalEditada] = useState(false);
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const editingCotizacionId = searchParams.get("cotizacion_id");
   const isEditingCobro = Boolean(searchParams.get("cobro_id"));
@@ -131,6 +226,14 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
     () => cart.items.some((it) => esConsultaProgramadaDelCarrito(it)),
     [cart.items]
   );
+
+  useEffect(() => {
+    if (programacionGlobalEditada) return;
+    const referencia = getReferenceHorarioFromCart(cart?.items);
+    if (!referencia?.fecha || !referencia?.hora) return;
+    setFechaProgramacionGlobal(String(referencia.fecha).slice(0, 10));
+    setHoraProgramacionGlobal(String(referencia.hora).slice(0, 5));
+  }, [cart?.items, programacionGlobalEditada]);
 
   const grouped = useMemo(() => {
     return cart.items.slice().sort((a, b) => String(a.source).localeCompare(String(b.source)));
@@ -302,6 +405,8 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         medico_id: Number(it.medico_id || it.medicoId || it.consultaMedicoId || 0) || null,
         fecha_programada: String(it.fechaProgramada || it.fecha_programada || ""),
         hora_programada: String(it.horaProgramada || it.hora_programada || ""),
+        observacion_programacion: String(it.observacionProgramacion || it.observacion_programacion || ""),
+        adicional_autorizado: Boolean(it.adicionalAutorizado || it.adicional_autorizado),
       };
 
       if (
@@ -451,6 +556,9 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       }
 
       const cartItem = cart.items[i] || {};
+      if (esAdicionalAutorizadoProgramado(d, cartItem)) {
+        continue;
+      }
       const medicoId = Number(
         d.medico_id
         || cartItem?.medico_id
@@ -677,9 +785,15 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       }
 
       const resumenServicios = Array.from(new Set(detalles.map((d) => String(d.servicio_tipo || "otros"))));
+      const resumenProgramacionHtml = buildResumenProgramacionHtml(cart.items);
       const confirm = await Swal.fire({
         title: irACobro ? "Registrar y cobrar cotización" : "Registrar nueva cotización",
-        text: `${pacienteRegistradoId > 0 ? `Paciente #${pacienteRegistradoId}` : pacienteNombreParaPayload} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}`,
+        html: `
+          <div style="text-align:left;font-size:13px;">
+            ${pacienteRegistradoId > 0 ? `Paciente #${pacienteRegistradoId}` : pacienteNombreParaPayload} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}
+            ${resumenProgramacionHtml || ""}
+          </div>
+        `,
         icon: "question",
         showCancelButton: true,
         confirmButtonText: irACobro ? "Registrar y cobrar" : "Registrar cotización",
@@ -812,6 +926,88 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         cotizacionIdDestino = Number(editingCotizacionId);
       } else {
         const esCotizacionInformativa = pacienteRegistradoId <= 0;
+        const detallesPaquete = detalles.filter((d) => {
+          const tipo = String(d?.servicio_tipo || "").toLowerCase();
+          return tipo === "paquete" || tipo === "perfil";
+        });
+        const detallesNoPaquete = detalles.filter((d) => {
+          const tipo = String(d?.servicio_tipo || "").toLowerCase();
+          return tipo !== "paquete" && tipo !== "perfil";
+        });
+        const separarPaquetesEnCotizaciones = detallesPaquete.length > 1 && detallesNoPaquete.length === 0;
+
+        if (separarPaquetesEnCotizaciones) {
+          const resumenPreview = detallesPaquete
+            .map((detalle, idx) => {
+              const titulo = String(detalle?.descripcion || `Paquete ${idx + 1}`);
+              const fecha = String(detalle?.fecha_programada || "").slice(0, 10) || "-";
+              const hora = String(detalle?.hora_programada || "").slice(0, 5) || "-";
+              const totalItem = Number(detalle?.subtotal || 0).toFixed(2);
+              return `<div style="padding:6px 0;border-bottom:1px solid #f1f5f9"><b>Atención ${idx + 1}</b>: ${titulo}<br/><span style="color:#475569">Fecha/Hora sugerida: ${fecha} ${hora} · Total: S/ ${totalItem}</span></div>`;
+            })
+            .join("");
+
+          const confirmSplit = await Swal.fire({
+            title: "Previsualización de split",
+            html: `<div style="text-align:left;font-size:13px;max-height:280px;overflow:auto">${resumenPreview}</div>`,
+            icon: "info",
+            showCancelButton: true,
+            confirmButtonText: "Registrar separado",
+            cancelButtonText: "Cancelar",
+          });
+          if (!confirmSplit.isConfirmed) {
+            return;
+          }
+
+          const payloadSplit = {
+            accion: "registrar_split",
+            paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : 0,
+            paciente_nombre: pacienteNombreParaPayload,
+            paciente_dni: esCotizacionInformativa ? "-" : undefined,
+            modo_cotizacion: esCotizacionInformativa ? "informativa" : undefined,
+            solo_ticket: esCotizacionInformativa ? 1 : undefined,
+            vencimiento_horas: esCotizacionInformativa ? 6 : undefined,
+            observaciones: esCotizacionInformativa
+              ? "Cotizacion informativa por paquete creada desde carrito global"
+              : "Cotizacion por paquete creada desde carrito global",
+            grupos: detallesPaquete.map((detallePaquete) => ({
+              detalles: [detallePaquete],
+              total: Number(Number(detallePaquete?.subtotal || 0).toFixed(2)),
+              fecha_ref: String(detallePaquete?.fecha_programada || "").slice(0, 10),
+            })),
+          };
+
+          const resSplit = await authFetch("api_cotizaciones.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payloadSplit),
+          });
+          const dataSplit = await resSplit.json();
+          const cotizacionesCreadas = Array.isArray(dataSplit?.cotizacion_ids)
+            ? dataSplit.cotizacion_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+            : [];
+          if (!dataSplit?.success || cotizacionesCreadas.length === 0) {
+            throw new Error(dataSplit?.error || "No se pudo registrar el split de cotizaciones");
+          }
+
+          clearCart();
+
+          if (irACobro) {
+            const principal = cotizacionesCreadas[0];
+            const idsQuery = cotizacionesCreadas.join(",");
+            navigate(`/cobrar-cotizacion/${principal}?ids=${encodeURIComponent(idsQuery)}`);
+            return;
+          }
+
+          await Swal.fire(
+            "Listo",
+            `Se crearon ${cotizacionesCreadas.length} cotización(es) separadas por paquete.`,
+            "success"
+          );
+          navigate("/cotizaciones");
+          return;
+        }
+
         payload = {
           paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : 0,
           paciente_nombre: pacienteNombreParaPayload,
@@ -884,6 +1080,15 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
                   return <div className="text-[11px] text-indigo-700 mt-0.5">{label}</div>;
                 })()}
                 {(() => {
+                  const bloques = getProgramacionBloquesItem(it);
+                  if (!Array.isArray(bloques) || bloques.length <= 1) return null;
+                  return (
+                    <div className="text-[11px] text-sky-700 mt-0.5">
+                      Bloques reservados ({bloques.length}): {bloques.join(" · ")}
+                    </div>
+                  );
+                })()}
+                {(() => {
                   const key = buildProgramacionConflictKey(it);
                   const conflicts = key ? Number(conflictoProgramacionMap[key] || 0) : 0;
                   if (conflicts <= 1) return null;
@@ -946,14 +1151,20 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
             <input
               type="date"
               value={fechaProgramacionGlobal}
-              onChange={(e) => setFechaProgramacionGlobal(e.target.value)}
+              onChange={(e) => {
+                setProgramacionGlobalEditada(true);
+                setFechaProgramacionGlobal(e.target.value);
+              }}
               disabled={!aplicarProgramacionGlobal}
               className="rounded border border-indigo-200 px-2 py-1 text-xs disabled:bg-gray-100"
             />
             <input
               type="time"
               value={horaProgramacionGlobal}
-              onChange={(e) => setHoraProgramacionGlobal(e.target.value)}
+              onChange={(e) => {
+                setProgramacionGlobalEditada(true);
+                setHoraProgramacionGlobal(e.target.value);
+              }}
               disabled={!aplicarProgramacionGlobal}
               className="rounded border border-indigo-200 px-2 py-1 text-xs disabled:bg-gray-100"
             />

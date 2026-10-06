@@ -24,6 +24,65 @@ function normalizarServicioKey(value) {
   return serviceKeyMap[base] || "procedimiento";
 }
 
+function parseSnapshotJson(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+  const txt = String(raw || "").trim();
+  if (!txt) return null;
+  try {
+    const parsed = JSON.parse(txt);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildTipoLabelCotizacion(cot) {
+  const tiposRaw = String(cot?.servicios_tipos || "").trim();
+  const tiposArr = tiposRaw
+    ? tiposRaw.split(",").map((t) => t.trim()).filter(Boolean)
+    : Array.from(new Set((cot?.detalles || []).map((d) => String(d?.servicio_tipo || "").trim()).filter(Boolean)));
+  const labelMap = { laboratorio: "Laboratorio", rayosx: "Rayos X", rayos_x: "Rayos X", rx: "Rayos X", ecografia: "Ecografía", farmacia: "Farmacia", consulta: "Consulta", procedimiento: "Procedimiento", operacion: "Operación", operaciones: "Operación", cirugia: "Cirugía", cirugia_mayor: "Cirugía mayor" };
+  return tiposArr.length > 0
+    ? tiposArr.map((t) => labelMap[t.toLowerCase()] || (t.charAt(0).toUpperCase() + t.slice(1))).join(" + ")
+    : "Servicio";
+}
+
+function buildPaqueteLabelCotizacion(cot) {
+  const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+  const nombres = [];
+  const seen = new Set();
+
+  for (const d of detalles) {
+    const snap = parseSnapshotJson(d?.snapshot_json);
+    const nombre = String(
+      d?.paquete_nombre
+      || snap?.paquete_nombre
+      || d?.paquete_codigo
+      || snap?.paquete_codigo
+      || ""
+    ).trim();
+    if (!nombre) continue;
+    const key = nombre.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    nombres.push(nombre);
+  }
+
+  if (nombres.length === 0) return "";
+  if (nombres.length === 1) return nombres[0];
+  return `${nombres[0]} +${nombres.length - 1} más`;
+}
+
+function parseMontoInput(value) {
+  const normalized = String(value ?? "").replace(",", ".").trim();
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function clampMonto(value, min = 0, max = Number.POSITIVE_INFINITY) {
+  return Math.min(max, Math.max(min, Number(value || 0)));
+}
+
 export default function CobrarCotizacionPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -37,6 +96,8 @@ export default function CobrarCotizacionPage() {
   const [pagos, setPagos] = useState([]);
   const [montoAbonoInput, setMontoAbonoInput] = useState("");
   const [modoCobro, setModoCobro] = useState("completo");
+  const [usarDistribucionPorAtencion, setUsarDistribucionPorAtencion] = useState(false);
+  const [abonoPorAtencion, setAbonoPorAtencion] = useState({});
   const blockedNoticeShownRef = useRef(false);
   const criterioImputacion = "fifo";
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -173,6 +234,66 @@ export default function CobrarCotizacionPage() {
     }, 0);
   }, [cotizacionesActivas]);
 
+  const cotizacionMetaMap = useMemo(() => {
+    const out = {};
+    for (const cot of cotizacionesSeleccionadas) {
+      const id = Number(cot?.id || 0);
+      if (id <= 0) continue;
+      out[String(id)] = {
+        tipoLabel: buildTipoLabelCotizacion(cot),
+        paqueteLabel: buildPaqueteLabelCotizacion(cot),
+      };
+    }
+    return out;
+  }, [cotizacionesSeleccionadas]);
+
+  const cotizacionesActivasResumen = useMemo(() => {
+    return cotizacionesActivas.map((cot) => {
+      const id = Number(cot?.id || 0);
+      const saldo = Math.max(0, Number(cot?.saldo_pendiente ?? cot?.total ?? 0));
+      const meta = cotizacionMetaMap[String(id)] || {};
+      return {
+        id,
+        saldo,
+        tipoLabel: String(meta?.tipoLabel || buildTipoLabelCotizacion(cot)),
+        paqueteLabel: String(meta?.paqueteLabel || buildPaqueteLabelCotizacion(cot)),
+      };
+    }).filter((row) => row.id > 0);
+  }, [cotizacionesActivas, cotizacionMetaMap]);
+
+  useEffect(() => {
+    const permitida = esCobroUnificado && modoCobro === "parcial";
+    if (!permitida && usarDistribucionPorAtencion) {
+      setUsarDistribucionPorAtencion(false);
+    }
+    if (!permitida) return;
+
+    setAbonoPorAtencion((prev) => {
+      const next = {};
+      for (const row of cotizacionesActivasResumen) {
+        const key = String(row.id);
+        const raw = parseMontoInput(prev[key]);
+        const capped = clampMonto(raw, 0, Number(row.saldo || 0));
+        next[key] = capped.toFixed(2);
+      }
+      return next;
+    });
+  }, [cotizacionesActivasResumen, esCobroUnificado, modoCobro, usarDistribucionPorAtencion]);
+
+  const totalDistribucionAtencion = useMemo(() => {
+    if (!(esCobroUnificado && modoCobro === "parcial" && usarDistribucionPorAtencion)) return 0;
+    return cotizacionesActivasResumen.reduce((acc, row) => {
+      const key = String(row.id);
+      const monto = clampMonto(parseMontoInput(abonoPorAtencion[key]), 0, Number(row.saldo || 0));
+      return acc + monto;
+    }, 0);
+  }, [abonoPorAtencion, cotizacionesActivasResumen, esCobroUnificado, modoCobro, usarDistribucionPorAtencion]);
+
+  useEffect(() => {
+    if (!(esCobroUnificado && modoCobro === "parcial" && usarDistribucionPorAtencion)) return;
+    setMontoAbonoInput(Number(totalDistribucionAtencion || 0).toFixed(2));
+  }, [esCobroUnificado, modoCobro, usarDistribucionPorAtencion, totalDistribucionAtencion]);
+
   const detallesCotizacionActivos = useMemo(() => {
     return cotizacionesActivas.flatMap((cot) => {
       const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
@@ -271,10 +392,13 @@ export default function CobrarCotizacionPage() {
   const montoObjetivoCobro = useMemo(() => {
     const saldo = Math.max(0, Number(saldoPendiente || 0));
     if (modoCobro !== "parcial") return saldo;
-    const monto = Number(montoAbonoInput);
+    if (esCobroUnificado && usarDistribucionPorAtencion) {
+      return Math.min(Number(totalDistribucionAtencion || 0), saldo);
+    }
+    const monto = parseMontoInput(montoAbonoInput);
     if (!Number.isFinite(monto) || monto <= 0) return saldo;
     return Math.min(monto, saldo);
-  }, [montoAbonoInput, saldoPendiente, modoCobro]);
+  }, [montoAbonoInput, saldoPendiente, modoCobro, esCobroUnificado, usarDistribucionPorAtencion, totalDistribucionAtencion]);
 
   const detallesCobro = useMemo(() => {
     if (!detallesCotizacionActivos.length) return [];
@@ -286,6 +410,84 @@ export default function CobrarCotizacionPage() {
       return detallesCotizacionActivos;
     }
 
+    const construirPendientesPorCotizacion = (detallesBase, pagadoInicial, objetivo) => {
+      const source = criterioImputacion === "lifo"
+        ? [...detallesBase].reverse()
+        : detallesBase;
+      const pendientes = [];
+      let pagadoRestante = Math.max(0, Number(pagadoInicial || 0));
+
+      for (const item of source) {
+        const subtotalItem = Math.max(0, Number(item.subtotal || 0));
+        const pagadoEnItem = Math.min(subtotalItem, pagadoRestante);
+        const pendienteItem = Number((subtotalItem - pagadoEnItem).toFixed(2));
+        pagadoRestante = Number((pagadoRestante - pagadoEnItem).toFixed(2));
+
+        if (pendienteItem > 0) {
+          const cantidadOriginal = Math.max(1, Number(item.cantidad || 1));
+          const precioPendiente = Number((pendienteItem / cantidadOriginal).toFixed(2));
+          pendientes.push({
+            ...item,
+            precio_unitario: precioPendiente,
+            subtotal: pendienteItem,
+          });
+        }
+      }
+
+      if (!pendientes.length && objetivo > 0) {
+        const primero = source[0];
+        return [{
+          ...primero,
+          cantidad: 1,
+          precio_unitario: objetivo,
+          subtotal: objetivo,
+        }];
+      }
+
+      const recortados = [];
+      let restante = Number(Math.max(0, objetivo).toFixed(2));
+      for (const item of pendientes) {
+        if (restante <= 0) break;
+        const subtotalItem = Math.max(0, Number(item.subtotal || 0));
+        const montoAplicado = Math.min(subtotalItem, restante);
+        if (montoAplicado <= 0) continue;
+        const cantidadBase = Math.max(1, Number(item.cantidad || 1));
+        const precioAplicado = Number((montoAplicado / cantidadBase).toFixed(2));
+        recortados.push({
+          ...item,
+          precio_unitario: precioAplicado,
+          subtotal: Number(montoAplicado.toFixed(2)),
+        });
+        restante = Number((restante - montoAplicado).toFixed(2));
+      }
+
+      return recortados;
+    };
+
+    if (esCobroUnificado && modoCobro === "parcial" && usarDistribucionPorAtencion) {
+      const byCot = new Map();
+      for (const d of detallesCotizacionActivos) {
+        const cid = Number(d?.cotizacion_id || 0);
+        if (cid <= 0) continue;
+        if (!byCot.has(cid)) byCot.set(cid, []);
+        byCot.get(cid).push(d);
+      }
+
+      const out = [];
+      for (const row of cotizacionesActivasResumen) {
+        const cid = Number(row.id || 0);
+        if (cid <= 0) continue;
+        const detallesCot = byCot.get(cid) || [];
+        if (!detallesCot.length) continue;
+        const objetivoCot = clampMonto(parseMontoInput(abonoPorAtencion[String(cid)]), 0, Number(row.saldo || 0));
+        if (objetivoCot <= 0) continue;
+        const cotRow = cotizacionesActivas.find((c) => Number(c?.id || 0) === cid) || null;
+        const pagadoCot = Number(cotRow?.total_pagado || 0);
+        out.push(...construirPendientesPorCotizacion(detallesCot, pagadoCot, objetivoCot));
+      }
+      return out;
+    }
+
     // Si el saldo cubre todo, cobrar todos los ítems tal cual.
     if (saldoObjetivo >= totalBase) {
       return detallesCotizacionActivos;
@@ -294,62 +496,24 @@ export default function CobrarCotizacionPage() {
     // Reparte el pago histórico por orden de detalle (FIFO/LIFO configurable):
     // evita prorrateos artificiales como 8.33/1.67 cuando el pendiente real
     // corresponde a un ítem específico.
-    let pagadoRestante = Math.max(0, Number(cotizacion?.total_pagado || 0));
-    const source = criterioImputacion === "lifo"
-      ? [...detallesCotizacionActivos].reverse()
-      : detallesCotizacionActivos;
-    const pendientes = [];
-
-    for (const item of source) {
-      const subtotalItem = Math.max(0, Number(item.subtotal || 0));
-      const pagadoEnItem = Math.min(subtotalItem, pagadoRestante);
-      const pendienteItem = Number((subtotalItem - pagadoEnItem).toFixed(2));
-      pagadoRestante = Number((pagadoRestante - pagadoEnItem).toFixed(2));
-
-      if (pendienteItem > 0) {
-        const cantidadOriginal = Math.max(1, Number(item.cantidad || 1));
-        const precioPendiente = Number((pendienteItem / cantidadOriginal).toFixed(2));
-        pendientes.push({
-          ...item,
-          precio_unitario: precioPendiente,
-          subtotal: pendienteItem,
-        });
-      }
-    }
-
-    // Salvaguarda: si por redondeo no quedaron pendientes calculados,
-    // usar el enfoque previo de un solo ítem por saldo.
-    if (!pendientes.length && saldoObjetivo > 0) {
-      const primero = source[0];
-      return [{
-        ...primero,
-        cantidad: 1,
-        precio_unitario: saldoObjetivo,
-        subtotal: saldoObjetivo,
-      }];
-    }
-
-    // Si el usuario eligió un adelanto menor al saldo pendiente, recorta
-    // el cobro al monto objetivo respetando el orden FIFO/LIFO.
-    const pendientesRecortados = [];
-    let restante = Number(saldoObjetivo.toFixed(2));
-    for (const item of pendientes) {
-      if (restante <= 0) break;
-      const subtotalItem = Math.max(0, Number(item.subtotal || 0));
-      const montoAplicado = Math.min(subtotalItem, restante);
-      if (montoAplicado <= 0) continue;
-      const cantidadBase = Math.max(1, Number(item.cantidad || 1));
-      const precioAplicado = Number((montoAplicado / cantidadBase).toFixed(2));
-      pendientesRecortados.push({
-        ...item,
-        precio_unitario: precioAplicado,
-        subtotal: Number(montoAplicado.toFixed(2)),
-      });
-      restante = Number((restante - montoAplicado).toFixed(2));
-    }
-
-    return pendientesRecortados;
-  }, [detallesCotizacionActivos, totalDetallesActivos, montoObjetivoCobro, cotizacion?.total_pagado, criterioImputacion]);
+    return construirPendientesPorCotizacion(
+      detallesCotizacionActivos,
+      Number(cotizacion?.total_pagado || 0),
+      saldoObjetivo
+    );
+  }, [
+    detallesCotizacionActivos,
+    totalDetallesActivos,
+    montoObjetivoCobro,
+    cotizacion?.total_pagado,
+    criterioImputacion,
+    esCobroUnificado,
+    modoCobro,
+    usarDistribucionPorAtencion,
+    abonoPorAtencion,
+    cotizacionesActivasResumen,
+    cotizacionesActivas,
+  ]);
 
   const totalCobro = useMemo(() => {
     return detallesCobro.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
@@ -381,8 +545,9 @@ export default function CobrarCotizacionPage() {
       cotizacion_id: Number(activeIdList[0] || cotizacion?.id || 0),
       cotizacion_ids: activeIdList,
       referencia_origen: String(cotizacion?.referencia_origen || "").trim(),
+      cotizacion_meta_map: cotizacionMetaMap,
     };
-  }, [cotizacion?.id, cotizacion?.referencia_origen, selectedIds, detallesCobro]);
+  }, [cotizacion?.id, cotizacion?.referencia_origen, selectedIds, detallesCobro, cotizacionMetaMap]);
 
   const recargarCotizacion = async () => {
     try {
@@ -598,16 +763,8 @@ export default function CobrarCotizacionPage() {
               {cotizacionesSeleccionadas.map((cot) => {
                 const isSelected = selectedIds.has(String(cot.id));
                 const saldoCot = Math.max(0, Number(cot?.saldo_pendiente ?? cot?.total ?? 0));
-                // Derivar etiqueta del tipo de servicio desde el campo servicios_tipos
-                // (ej: "laboratorio,farmacia") o desde el primer detalle activo.
-                const tiposRaw = String(cot?.servicios_tipos || "").trim();
-                const tiposArr = tiposRaw
-                  ? tiposRaw.split(",").map((t) => t.trim()).filter(Boolean)
-                  : Array.from(new Set((cot?.detalles || []).map((d) => String(d?.servicio_tipo || "").trim()).filter(Boolean)));
-                const labelMap = { laboratorio: "Laboratorio", rayosx: "Rayos X", rayos_x: "Rayos X", rx: "Rayos X", ecografia: "Ecografía", farmacia: "Farmacia", consulta: "Consulta", procedimiento: "Procedimiento", operacion: "Operación", operaciones: "Operación", cirugia: "Cirugía", cirugia_mayor: "Cirugía mayor" };
-                const tipoLabel = tiposArr.length > 0
-                  ? tiposArr.map((t) => labelMap[t.toLowerCase()] || (t.charAt(0).toUpperCase() + t.slice(1))).join(" + ")
-                  : "Servicio";
+                const tipoLabel = buildTipoLabelCotizacion(cot);
+                const paqueteLabel = buildPaqueteLabelCotizacion(cot);
                 const isLast = isSelected && selectedIds.size === 1;
                 return (
                   <label
@@ -635,6 +792,11 @@ export default function CobrarCotizacionPage() {
                       />
                       <span className="font-medium">#{cot.id}</span>
                       <span className="text-gray-600">{tipoLabel}</span>
+                      {paqueteLabel ? (
+                        <span className="text-xs rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-indigo-700">
+                          {paqueteLabel}
+                        </span>
+                      ) : null}
                     </div>
                     <span className={`font-semibold tabular-nums ${
                       isSelected ? "text-gray-800" : "text-gray-400 line-through"
@@ -648,6 +810,98 @@ export default function CobrarCotizacionPage() {
             {selectedIds.size < cotizacionIds.length && (
               <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
                 {cotizacionIds.length - selectedIds.size} atención(es) excluida(s) — quedan como <b>pendiente</b> para cobrar después.
+              </div>
+            )}
+
+            {esCobroUnificado && modoCobro === "parcial" && (
+              <div className="mt-3 border-t border-current/20 pt-3">
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-800">
+                  <input
+                    type="checkbox"
+                    checked={usarDistribucionPorAtencion}
+                    onChange={(e) => {
+                      const checked = Boolean(e.target.checked);
+                      setUsarDistribucionPorAtencion(checked);
+                      if (checked) {
+                        setAbonoPorAtencion((prev) => {
+                          const next = {};
+                          for (const row of cotizacionesActivasResumen) {
+                            const key = String(row.id);
+                            const existente = clampMonto(parseMontoInput(prev[key]), 0, Number(row.saldo || 0));
+                            next[key] = existente > 0 ? existente.toFixed(2) : "0.00";
+                          }
+                          return next;
+                        });
+                      }
+                    }}
+                  />
+                  Distribuir abono por atención (Recomendado para recepción)
+                </label>
+
+                {usarDistribucionPorAtencion && (
+                  <div className="mt-2 rounded border border-indigo-200 bg-white p-2.5">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="text-gray-700">Define cuánto cobrar hoy en cada atención.</span>
+                      <button
+                        type="button"
+                        className="rounded border border-indigo-300 px-2 py-1 text-indigo-700 hover:bg-indigo-50"
+                        onClick={() => {
+                          setAbonoPorAtencion(() => {
+                            const next = {};
+                            const totalSaldo = cotizacionesActivasResumen.reduce((acc, row) => acc + Number(row.saldo || 0), 0);
+                            const objetivo = clampMonto(parseMontoInput(montoAbonoInput), 0, totalSaldo);
+                            let restante = Number(objetivo.toFixed(2));
+                            for (const row of cotizacionesActivasResumen) {
+                              const aplicar = Math.min(Number(row.saldo || 0), restante);
+                              next[String(row.id)] = Number(aplicar).toFixed(2);
+                              restante = Number((restante - aplicar).toFixed(2));
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        Auto distribuir según monto ingresado
+                      </button>
+                    </div>
+
+                    <div className="grid gap-2">
+                      {cotizacionesActivasResumen.map((row) => {
+                        const key = String(row.id);
+                        const saldoCot = Number(row.saldo || 0);
+                        const value = String(abonoPorAtencion[key] ?? "0.00");
+                        return (
+                          <div key={key} className="grid grid-cols-1 md:grid-cols-[1fr_140px] gap-2 items-center">
+                            <div className="text-xs">
+                              <div className="font-semibold text-slate-700">Atención #{row.id}</div>
+                              <div className="text-slate-500">{row.tipoLabel}{row.paqueteLabel ? ` · ${row.paqueteLabel}` : ""}</div>
+                              <div className="text-slate-600">Saldo: S/ {saldoCot.toFixed(2)}</div>
+                            </div>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              max={saldoCot}
+                              value={value}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const monto = clampMonto(parseMontoInput(raw), 0, saldoCot);
+                                setAbonoPorAtencion((prev) => ({
+                                  ...prev,
+                                  [key]: raw === "" ? "" : monto.toFixed(2),
+                                }));
+                              }}
+                              className="rounded border border-indigo-200 px-2 py-1.5 text-sm"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">
+                      Total a cobrar hoy por distribución: <b>S/ {Number(totalDistribucionAtencion || 0).toFixed(2)}</b> de S/ {Number(saldoPendiente || 0).toFixed(2)}.
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

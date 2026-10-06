@@ -5,9 +5,9 @@ import withReactContent from "sweetalert2-react-content";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
-import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
@@ -93,9 +93,10 @@ export default function CotizarRayosXPage() {
       fechaBase,
       stepMinutes: 30,
     });
+    const referencia = getReferenceHorarioFromCart(cart?.items);
     return {
-      fecha: fechaBase,
-      hora: String(sugerida?.hora || getDefaultTime()).slice(0, 5),
+      fecha: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
+      hora: String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
     };
   };
 
@@ -501,7 +502,7 @@ export default function CotizarRayosXPage() {
     }).filter(Boolean);
   };
 
-  const agregarAlCarrito = () => {
+  const agregarAlCarrito = async () => {
     if (seleccionados.length === 0) {
       Swal.fire('Atención', 'Selecciona al menos un estudio de Rayos X para agregar al carrito.', 'info');
       return;
@@ -519,7 +520,7 @@ export default function CotizarRayosXPage() {
       ));
     };
 
-    const detalles = detallesBase
+    const detallesIniciales = detallesBase
       .map((d) => {
         if (!isEditingCotizacion) return d;
         const preQty = Number(preloadedCounts[Number(d.servicio_id)] || 0);
@@ -535,8 +536,51 @@ export default function CotizarRayosXPage() {
       .filter(Boolean)
       .filter((d) => !(isEditingCotizacion && yaExisteEnCarrito(d)));
 
-    if (detalles.length === 0) {
+    if (detallesIniciales.length === 0) {
       Swal.fire('Atención', isEditingCotizacion ? 'No hay estudios nuevos para agregar al carrito.' : 'No hay estudios válidos para agregar.', 'info');
+      return;
+    }
+
+    const detalles = secuenciarDetallesPacienteSinCruce({
+      detalles: detallesIniciales,
+      cartItems: cart?.items,
+      fallbackFecha: getLimaDate(),
+      fallbackHora: getDefaultTime(),
+      stepMinutes: 30,
+    });
+
+    const cruceEnCarrito = detectarCruceConCarrito({
+      cartItems: cart?.items,
+      nuevosDetalles: detalles,
+    });
+    if (cruceEnCarrito) {
+      const { nuevo } = cruceEnCarrito;
+      await Swal.fire(
+        "Cruce en carrito",
+        `Ya existe un servicio en el carrito para el mismo médico y horario (${nuevo.fecha} ${nuevo.hora}). Ajusta la hora antes de agregar.`,
+        "warning"
+      );
+      return;
+    }
+
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora) => {
+        detalles.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(d?.hora_programada || "").slice(0, 5);
+          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+          }
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
       return;
     }
 
@@ -591,7 +635,13 @@ export default function CotizarRayosXPage() {
       return;
     }
     // Construir detalles para cotización
-    const detalles = construirDetallesSeleccionados();
+    const detalles = secuenciarDetallesPacienteSinCruce({
+      detalles: construirDetallesSeleccionados(),
+      cartItems: cart?.items,
+      fallbackFecha: getLimaDate(),
+      fallbackHora: getDefaultTime(),
+      stepMinutes: 30,
+    });
     const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
     const agendaCheck = await validarAgendaAntesDeCotizar({
       authFetch,

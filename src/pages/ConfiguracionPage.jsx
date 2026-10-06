@@ -32,6 +32,19 @@ function normalizePacienteSexoDefault(value) {
   return 'M';
 }
 
+function normalizeBooleanTinyInt(value) {
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'number') return value > 0 ? 1 : 0;
+  const token = String(value || '').trim().toLowerCase();
+  return ['1', 'true', 'si', 'sí', 'yes', 'on'].includes(token) ? 1 : 0;
+}
+
+function normalizeSlotMinutes(value) {
+  const n = Number(value || 30);
+  if (!Number.isFinite(n) || n <= 0) return 30;
+  return Math.max(5, Math.min(120, Math.round(n)));
+}
+
 
 
 function ConfiguracionPage() {
@@ -84,6 +97,8 @@ function ConfiguracionPage() {
     hc_template_mode: 'auto',
     hc_template_single_id: '',
     paciente_sexo_default: 'M',
+    agenda_inteligente_cotizacion_v1: 0,
+    duracion_slot_min: 30,
   });
 
   const [loading, setLoading] = useState(false);
@@ -120,6 +135,8 @@ function ConfiguracionPage() {
             incoming.hc_template_single_id = '';
           }
           incoming.paciente_sexo_default = normalizePacienteSexoDefault(incoming.paciente_sexo_default || 'M');
+          incoming.agenda_inteligente_cotizacion_v1 = normalizeBooleanTinyInt(incoming.agenda_inteligente_cotizacion_v1);
+          incoming.duracion_slot_min = normalizeSlotMinutes(incoming.duracion_slot_min);
           setConfiguracion(prev => ({ ...prev, ...incoming }));
           // mostrar preview si hay logo
           if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
@@ -313,6 +330,8 @@ function ConfiguracionPage() {
                   hc_template_mode: payload.hc_template_mode || 'auto',
                   hc_template_single_id: payload.hc_template_single_id || '',
                   paciente_sexo_default: normalizePacienteSexoDefault(payload.paciente_sexo_default || 'M'),
+                  agenda_inteligente_cotizacion_v1: normalizeBooleanTinyInt(payload.agenda_inteligente_cotizacion_v1),
+                  duracion_slot_min: normalizeSlotMinutes(payload.duracion_slot_min),
                   updated_at: Date.now()
                 }
               }));
@@ -388,6 +407,8 @@ function ConfiguracionPage() {
                 hc_template_mode: configuracion.hc_template_mode || 'auto',
                 hc_template_single_id: configuracion.hc_template_single_id || '',
                 paciente_sexo_default: normalizePacienteSexoDefault(configuracion.paciente_sexo_default || 'M'),
+                agenda_inteligente_cotizacion_v1: normalizeBooleanTinyInt(configuracion.agenda_inteligente_cotizacion_v1),
+                duracion_slot_min: normalizeSlotMinutes(configuracion.duracion_slot_min),
                 updated_at: Date.now()
               }
             }));
@@ -414,6 +435,8 @@ function ConfiguracionPage() {
         hc_template_mode: configuracion.hc_template_mode || 'auto',
         hc_template_single_id: configuracion.hc_template_single_id || '',
         paciente_sexo_default: normalizePacienteSexoDefault(configuracion.paciente_sexo_default || 'M'),
+        agenda_inteligente_cotizacion_v1: normalizeBooleanTinyInt(configuracion.agenda_inteligente_cotizacion_v1),
+        duracion_slot_min: normalizeSlotMinutes(configuracion.duracion_slot_min),
         updated_at: Date.now()
       }
     }));
@@ -557,6 +580,44 @@ function ConfiguracionPage() {
               </select>
               <p className="mt-1 text-xs text-gray-500">
                 Solo aplica al valor inicial al registrar pacientes nuevos en esta clínica.
+              </p>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Agenda inteligente en cotización
+              </label>
+              <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-md bg-blue-50">
+                <input
+                  type="checkbox"
+                  checked={normalizeBooleanTinyInt(configuracion.agenda_inteligente_cotizacion_v1) === 1}
+                  onChange={(e) => manejarCambio('agenda_inteligente_cotizacion_v1', e.target.checked ? 1 : 0)}
+                  className="mt-1 h-4 w-4"
+                />
+                <span className="text-sm text-gray-700">
+                  Detectar cruces de horario antes de guardar una cotización y sugerir horas libres del médico para resolverlos en el momento.
+                </span>
+              </label>
+              <p className="mt-1 text-xs text-gray-500">
+                Recomendado activarlo primero en pruebas y luego en producción.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Duración base por turno (minutos)
+              </label>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                step={5}
+                value={normalizeSlotMinutes(configuracion.duracion_slot_min)}
+                onChange={(e) => manejarCambio('duracion_slot_min', normalizeSlotMinutes(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Se usa para sugerencias automáticas de horarios. Por ahora aplica globalmente.
               </p>
             </div>
 

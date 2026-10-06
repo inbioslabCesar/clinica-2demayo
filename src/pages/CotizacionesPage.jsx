@@ -302,6 +302,22 @@ function badgeOrigenVisual(row) {
   return badgeOrigen(row?.origen_cobro_resumen);
 }
 
+function formatReferenciaOrigenVisual(row) {
+  const referencia = String(row?.referencia_origen || "").trim();
+  if (!referencia) return "-";
+
+  const refLower = referencia.toLowerCase();
+  if (refLower.startsWith("split_")) {
+    return "Atención separada por paquete";
+  }
+
+  if (refLower.includes("hc_proxima")) {
+    return "Programación desde historia clínica";
+  }
+
+  return referencia;
+}
+
 function resolverAnulacionDesdeHC(row, servicios = []) {
   const estado = String(row?.estado || "").toLowerCase().trim();
   if (estado !== "anulada") return { activa: false, detalle: "" };
@@ -789,6 +805,8 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const anticipadoMotivo = String(anticipadoInfo?.motivo || '').trim();
   const tieneVinculoOperativoExplicito = Number(anticipadoInfo?.vinculo_anticipado_valido || 0) === 1;
   const puedeGestionarAnticipado = canAutorizarAnticipado && tieneVinculoOperativoExplicito;
+  const adicionalDinamico = Number(row?.adicional_dinamico || 0) === 1;
+  const adicionalDinamicoItems = Number(row?.adicional_dinamico_items || 0);
 
   // Handler HC separado con useCallback para evitar función anónima nueva en cada render
   const handleVerHC = useCallback(async (event) => {
@@ -948,7 +966,7 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       </td>
       <td className="px-3 py-2 text-xs text-slate-600">
         <div className="flex flex-col gap-1 items-start">
-          <span>{String(row.referencia_origen || "").trim() || "-"}</span>
+          <span>{formatReferenciaOrigenVisual(row)}</span>
           {relacionSolicitud?.baseCotizacionId > 0 && (
             <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${relacionSolicitud.tipo === 'base' ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'}`}>
               {relacionSolicitud.tipo === 'base'
@@ -1006,6 +1024,16 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       <td className="px-3 py-2">
         <div className="flex flex-col gap-1 items-start">
           <span className={`px-2 py-1 rounded text-xs font-semibold ${origen.cls}`}>{origen.label}</span>
+          {adicionalDinamico && (
+            <span
+              className="px-2 py-1 rounded text-xs font-semibold bg-orange-100 text-orange-800"
+              title={adicionalDinamicoItems > 1
+                ? `${adicionalDinamicoItems} servicios están fuera del horario regular actual del médico`
+                : "Servicio fuera del horario regular actual del médico"}
+            >
+              Adicional
+            </span>
+          )}
           {anulacionDesdeHC.activa && (
             <span className="px-2 py-1 rounded text-xs font-semibold bg-rose-100 text-rose-700">
               HC cancelada

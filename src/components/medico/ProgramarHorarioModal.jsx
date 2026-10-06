@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { authFetch } from "../../utils/apiClient";
 import Swal from "sweetalert2";
 import { formatProfesionalName } from "../../utils/profesionalDisplay";
+import { fetchConfigSingleton, getCachedAgendaSlotMinutes } from "../../config/config";
 
 const DIAS = [
   { label: "Dom", full: "Domingo", value: 0 },
@@ -37,6 +38,33 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
   const [loading, setLoading]   = useState(false);
   const [bloques, setBloques]   = useState([]);
   const [loadingBloques, setLoadingBloques] = useState(false);
+  const [duracionSlotMin, setDuracionSlotMin] = useState(() => {
+    const cached = Number(getCachedAgendaSlotMinutes() || 30);
+    return Number.isFinite(cached) && cached > 0 ? cached : 30;
+  });
+  const stepSeconds = Math.max(300, Math.min(7200, Math.round(duracionSlotMin * 60)));
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchConfigSingleton()
+      .catch(() => ({}))
+      .finally(() => {
+        if (cancelled) return;
+        const cached = Number(getCachedAgendaSlotMinutes() || 30);
+        setDuracionSlotMin(Number.isFinite(cached) && cached > 0 ? cached : 30);
+      });
+
+    const onConfigUpdated = (event) => {
+      const raw = Number(event?.detail?.duracion_slot_min || getCachedAgendaSlotMinutes() || 30);
+      setDuracionSlotMin(Number.isFinite(raw) && raw > 0 ? raw : 30);
+    };
+
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
 
   // Cargar bloques existentes del mes seleccionado
   useEffect(() => {
@@ -210,6 +238,9 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
                 </span>
               )}
             </p>
+            <p className="text-xs text-indigo-700 mt-1">
+              Tiempo por consulta configurado: <span className="font-semibold">{duracionSlotMin} min</span>
+            </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
         </div>
@@ -272,6 +303,7 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
                       type="time"
                       value={bloquesSemana[d.value]?.hora_inicio || "08:00"}
                       onChange={(e) => setDiaHora(d.value, "hora_inicio", e.target.value)}
+                      step={stepSeconds}
                       disabled={!bloquesSemana[d.value]?.activo}
                       className="w-full border rounded px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400"
                     />
@@ -281,6 +313,7 @@ export default function ProgramarHorarioModal({ medico, onClose, onGuardado }) {
                       type="time"
                       value={bloquesSemana[d.value]?.hora_fin || "12:00"}
                       onChange={(e) => setDiaHora(d.value, "hora_fin", e.target.value)}
+                      step={stepSeconds}
                       disabled={!bloquesSemana[d.value]?.activo}
                       className="w-full border rounded px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400"
                     />
