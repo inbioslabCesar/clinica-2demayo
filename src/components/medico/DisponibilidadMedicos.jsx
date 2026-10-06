@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
+import { fetchConfigSingleton, getCachedAgendaSlotMinutes } from "../../config/config";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
 
@@ -55,15 +56,23 @@ function toMinutesHHMM(value) {
   return hh * 60 + mm;
 }
 
+function resolveAgendaStepMinutes() {
+  const configured = Number(getCachedAgendaSlotMinutes() || 30);
+  if (!Number.isFinite(configured) || configured <= 0) return 30;
+  return Math.max(5, Math.min(120, Math.round(configured)));
+}
+
 function DisponibilidadMedicos({ refreshKey = 0 }) {
   const [medicos, setMedicos] = useState([]);
   const [consultas, setConsultas] = useState([]);
   const [disponibilidad, setDisponibilidad] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [activeStartDate, setActiveStartDate] = useState(() => new Date());
   const [loading, setLoading] = useState(false);
+  const [ocupadosPorMedicoFecha, setOcupadosPorMedicoFecha] = useState({});
 
-  const monthRange = useMemo(() => getMonthDateRange(selectedDate), [selectedDate]);
+  const monthRange = useMemo(() => getMonthDateRange(activeStartDate), [activeStartDate]);
 
   const colorPalette = [
     "#22c55e",
@@ -87,6 +96,10 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
       }, {}),
     [medicosSafe]
   );
+
+  useEffect(() => {
+    fetchConfigSingleton().catch(() => ({}));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,13 +228,97 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     });
   }, [texto, bloquesHoy, disponibilidad, medicosSafe]);
 
+  const slotMinutes = resolveAgendaStepMinutes();
+  const selectedDateYMD = formatDateLimaYMD(selectedDate);
+
+  useEffect(() => {
+    const bloquesVisibles = Array.isArray(bloquesPagina) ? bloquesPagina : [];
+    if (bloquesVisibles.length === 0) {
+      setOcupadosPorMedicoFecha({});
+      return undefined;
+    }
+
+    const claves = new Map();
+    bloquesVisibles.forEach((bloque) => {
+      const medicoId = Number(bloque?.medico_id || 0);
+      if (medicoId <= 0) return;
+      const fechaRef = normalizeDateYMD(bloque?.fecha) || selectedDateYMD;
+      if (!fechaRef) return;
+      const key = `${medicoId}|${fechaRef}`;
+      if (!claves.has(key)) {
+        claves.set(key, { medicoId, fechaRef });
+      }
+    });
+
+    if (claves.size === 0) {
+      setOcupadosPorMedicoFecha({});
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const cargarOcupados = async () => {
+      try {
+        const entries = await Promise.all(
+          Array.from(claves.values()).map(async ({ medicoId, fechaRef }) => {
+            const params = new URLSearchParams({
+              medico_id: String(medicoId),
+              fecha: fechaRef,
+            });
+            const res = await authFetch(`api_horarios_disponibles.php?${params.toString()}`, {
+              cache: "no-store",
+              signal: controller.signal,
+            });
+            const data = await res.json();
+            const ocupados = (data?.success && Array.isArray(data?.horarios_ocupados))
+              ? data.horarios_ocupados.map((h) => normalizeHHMM(h)).filter(Boolean)
+              : [];
+            return [`${medicoId}|${fechaRef}`, ocupados];
+          })
+        );
+
+        const next = {};
+        entries.forEach(([key, ocupados]) => {
+          next[key] = ocupados;
+        });
+        setOcupadosPorMedicoFecha(next);
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+        setOcupadosPorMedicoFecha({});
+      }
+    };
+
+    cargarOcupados();
+    return () => controller.abort();
+  }, [bloquesPagina, selectedDateYMD]);
+
+  const handleCalendarChange = (value) => {
+    const nextDate = value instanceof Date ? value : (Array.isArray(value) ? value[0] : new Date());
+    const safeDate = nextDate instanceof Date && !Number.isNaN(nextDate.getTime()) ? nextDate : new Date();
+    setSelectedDate(safeDate);
+    setActiveStartDate(new Date(safeDate.getFullYear(), safeDate.getMonth(), 1));
+  };
+
+  const handleActiveStartDateChange = ({ activeStartDate: nextStartDate, view }) => {
+    if (view !== "month") return;
+    if (!(nextStartDate instanceof Date) || Number.isNaN(nextStartDate.getTime())) return;
+
+    setActiveStartDate(nextStartDate);
+    const selected = selectedDate instanceof Date ? selectedDate : new Date();
+    const cambioMes = selected.getFullYear() !== nextStartDate.getFullYear()
+      || selected.getMonth() !== nextStartDate.getMonth();
+    if (cambioMes) {
+      setSelectedDate(new Date(nextStartDate.getFullYear(), nextStartDate.getMonth(), 1));
+    }
+  };
+
   return (
     <div className="mb-6 w-full">
       <h3 className="font-extrabold text-xl mb-4 text-center text-blue-700 tracking-tight">Disponibilidad de Médicos</h3>
       <div className="flex flex-col md:flex-row gap-5 mb-4 items-start justify-center w-full">
         <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl shadow-lg border border-blue-200 p-3 md:p-4 flex flex-col items-center w-full max-w-[320px] md:max-w-[360px]">
           <Calendar
-            onChange={setSelectedDate}
+            onChange={handleCalendarChange}
+            onActiveStartDateChange={handleActiveStartDateChange}
             value={selectedDate}
             className="border rounded-xl shadow text-base md:text-lg w-[280px] h-[340px] md:w-[330px] md:h-[390px] bg-white"
             tileContent={({ date, view }) => {
@@ -270,7 +367,7 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
                     <th className="px-2 py-2 text-blue-700 font-bold rounded-tl-xl">Médico</th>
                     <th className="px-2 py-2 text-blue-700 font-bold">Especialidad</th>
                     <th className="px-2 py-2 text-blue-700 font-bold">Horario</th>
-                    <th className="px-2 py-2 text-blue-700 font-bold rounded-tr-xl">Cupos libres</th>
+                    <th className="px-2 py-2 text-blue-700 font-bold rounded-tr-xl">Cupos (libres / total)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -290,18 +387,39 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
                     const mFin = horaFin[1] || 0;
                     while (h < hFin || (h === hFin && m < mFin)) {
                       slots += 1;
-                      m += 30;
+                      m += slotMinutes;
                       if (m >= 60) {
-                        h += 1;
-                        m = 0;
+                        h += Math.floor(m / 60);
+                        m = m % 60;
                       }
                     }
 
                     const horaInicio = normalizeHHMM(bloque.hora_inicio);
                     const horaFinNorm = normalizeHHMM(bloque.hora_fin);
-                    const ocupadas = fechaBloque
-                      ? countConsultasEnBloque(medico.id, fechaBloque, horaInicio, horaFinNorm)
-                      : 0;
+                    const fechaCalculo = fechaBloque || selectedDateYMD;
+                    const keyOcupados = `${Number(medico.id || 0)}|${fechaCalculo}`;
+                    const ocupadosLista = Array.isArray(ocupadosPorMedicoFecha?.[keyOcupados])
+                      ? ocupadosPorMedicoFecha[keyOcupados]
+                      : null;
+                    const ocupadosSet = ocupadosLista ? new Set(ocupadosLista) : null;
+                    let ocupadas = 0;
+                    if (ocupadosSet) {
+                      let hh = horaIni[0] || 0;
+                      let mm = horaIni[1] || 0;
+                      while (hh < hFin || (hh === hFin && mm < mFin)) {
+                        const hhmm = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+                        if (ocupadosSet.has(hhmm)) ocupadas += 1;
+                        mm += slotMinutes;
+                        if (mm >= 60) {
+                          hh += Math.floor(mm / 60);
+                          mm = mm % 60;
+                        }
+                      }
+                    } else {
+                      ocupadas = fechaCalculo
+                        ? countConsultasEnBloque(medico.id, fechaCalculo, horaInicio, horaFinNorm)
+                        : 0;
+                    }
                     const cupos = Math.max(0, slots - ocupadas);
 
                     return (
@@ -320,7 +438,15 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
                           {bloque.hora_fin}
                           {etiquetaFecha ? <span className="text-xs text-gray-500 ml-1">({etiquetaFecha})</span> : null}
                         </td>
-                        <td className="px-2 py-2 font-bold rounded-r-xl">{cupos > 0 ? cupos : <span className="text-red-600">Sin cupos</span>}</td>
+                        <td className="px-2 py-2 font-bold rounded-r-xl">
+                          {slots > 0 ? (
+                            <span className={cupos > 0 ? "text-gray-800" : "text-red-600"}>
+                              {cupos} / {slots}
+                            </span>
+                          ) : (
+                            <span className="text-red-600">Sin cupos</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}

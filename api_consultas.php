@@ -105,6 +105,39 @@ function consultas_es_rol_autorizador_anticipado($rol) {
     return false;
 }
 
+function consultas_normalize_slot_minutes($value) {
+    $slot = (int)$value;
+    if ($slot <= 0) $slot = 30;
+    if ($slot < 5) $slot = 5;
+    if ($slot > 120) $slot = 120;
+    return $slot;
+}
+
+function consultas_get_slot_minutes($conn) {
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    $cached = 30;
+    if (!consultas_table_exists($conn, 'configuracion_clinica')
+        || !consultas_column_exists($conn, 'configuracion_clinica', 'duracion_slot_min')) {
+        return $cached;
+    }
+
+    $stmt = $conn->prepare('SELECT duracion_slot_min FROM configuracion_clinica ORDER BY id DESC LIMIT 1');
+    if (!$stmt) {
+        return $cached;
+    }
+
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $cached = consultas_normalize_slot_minutes($row['duracion_slot_min'] ?? 30);
+    return $cached;
+}
+
 function consultas_table_exists($conn, $table) {
     $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
     if (!$stmt) {
@@ -3158,8 +3191,8 @@ switch ($method) {
         // Para espontánea/reservada_sin_turno: permite cualquier hora, pero mantiene validación de conflicto exacto.
         $es_espontanea = ($tipo_consulta === 'espontanea');
         $omitir_validacion_disponibilidad = $es_espontanea || $es_reservada_sin_turno;
-        $conn->begin_transaction();
         try {
+            $conn->begin_transaction();
             $totalSlots = null;
             $agendadas = null;
 
@@ -3186,15 +3219,19 @@ switch ($method) {
                     exit;
                 }
 
-                // 2. Calcular capacidad total del bloque (intervalos de 30 min)
+                // 2. Calcular capacidad total del bloque (intervalos según slot configurado).
+                $slotMinutes = consultas_get_slot_minutes($conn);
                 [$hIni, $mIni] = array_map('intval', explode(':', $bloque['hora_inicio']));
                 [$hFin, $mFin] = array_map('intval', explode(':', $bloque['hora_fin']));
                 $totalSlots = 0;
                 $h = $hIni; $m = $mIni;
                 while ($h < $hFin || ($h === $hFin && $m < $mFin)) {
                     $totalSlots++;
-                    $m += 30;
-                    if ($m >= 60) { $h++; $m = 0; }
+                    $m += $slotMinutes;
+                    if ($m >= 60) {
+                        $h += (int)floor($m / 60);
+                        $m = $m % 60;
+                    }
                 }
 
                 // 3. Contar consultas activas en el bloque (dentro del rango hora_inicio..hora_fin)
@@ -3321,8 +3358,10 @@ switch ($method) {
             }
             echo json_encode($responseOk);
 
-        } catch (Exception $e) {
-            $conn->rollback();
+        } catch (\Throwable $e) {
+            if ($conn && method_exists($conn, 'rollback')) {
+                @$conn->rollback();
+            }
             echo json_encode(['success' => false, 'error' => 'Error del servidor: ' . $e->getMessage()]);
         }
         break;

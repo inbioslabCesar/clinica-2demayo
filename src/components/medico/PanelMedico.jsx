@@ -7,6 +7,7 @@ import { useLocation, useParams } from "react-router-dom";
 import { authFetch } from "../../utils/apiClient";
 import Swal from 'sweetalert2';
 import { formatProfesionalName } from "../../utils/profesionalDisplay";
+import { fetchConfigSingleton, getCachedAgendaSlotMinutes } from "../../config/config";
 
 
 function PanelMedico() {
@@ -82,6 +83,11 @@ function PanelMedico() {
   // ...existing code...
   const [bloquesGuardados, setBloquesGuardados] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [horasOcupadasPorFecha, setHorasOcupadasPorFecha] = useState({});
+  const [duracionSlotMin, setDuracionSlotMin] = useState(() => {
+    const cached = Number(getCachedAgendaSlotMinutes() || 30);
+    return Number.isFinite(cached) && cached > 0 ? cached : 30;
+  });
 
   // Cargar bloques guardados al montar
   const fetchBloques = useCallback(async () => {
@@ -99,6 +105,84 @@ function PanelMedico() {
   useEffect(() => {
     fetchBloques();
   }, [fetchBloques]);
+
+  useEffect(() => {
+    const fechas = Array.from(new Set((bloquesGuardados || []).map((b) => String(b?.fecha || "").slice(0, 10)).filter(Boolean))).sort();
+    if (!medicoId || fechas.length === 0) {
+      setHorasOcupadasPorFecha({});
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId = null;
+
+    const normalizeHourHm = (value) => {
+      const txt = String(value || "").trim();
+      const m = txt.match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return "";
+      const h = Number(m[1]);
+      const mm = Number(m[2]);
+      if (!Number.isFinite(h) || !Number.isFinite(mm) || h < 0 || h > 23 || mm < 0 || mm > 59) return "";
+      return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    };
+
+    const cargarOcupados = async () => {
+      const results = await Promise.all(fechas.map(async (fecha) => {
+        try {
+          const res = await authFetch(
+            `api_horarios_disponibles.php?medico_id=${medicoId}&fecha=${encodeURIComponent(fecha)}&_t=${Date.now()}`,
+            { cache: "no-store" }
+          );
+          const data = await res.json();
+          const horas = Array.isArray(data?.horarios_ocupados)
+            ? Array.from(new Set(data.horarios_ocupados.map((h) => normalizeHourHm(h)).filter(Boolean)))
+            : [];
+          return [fecha, horas];
+        } catch {
+          return [fecha, []];
+        }
+      }));
+
+      if (cancelled) return;
+      const next = {};
+      results.forEach(([fecha, horas]) => {
+        next[fecha] = horas;
+      });
+      setHorasOcupadasPorFecha(next);
+    };
+
+    void cargarOcupados();
+    intervalId = window.setInterval(() => {
+      void cargarOcupados();
+    }, 20000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [medicoId, bloquesGuardados]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchConfigSingleton()
+      .catch(() => ({}))
+      .finally(() => {
+        if (cancelled) return;
+        const cached = Number(getCachedAgendaSlotMinutes() || 30);
+        setDuracionSlotMin(Number.isFinite(cached) && cached > 0 ? cached : 30);
+      });
+
+    const onConfigUpdated = (event) => {
+      const raw = Number(event?.detail?.duracion_slot_min || getCachedAgendaSlotMinutes() || 30);
+      setDuracionSlotMin(Number.isFinite(raw) && raw > 0 ? raw : 30);
+    };
+
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
 
   // Guardar disponibilidad (enviar al backend)
   const handleSaveDisponibilidad = async (bloques) => {
@@ -143,6 +227,58 @@ function PanelMedico() {
 
   // Formato de hora amigable
   const formatHora = (hora) => hora?.slice(0,5);
+  const stepSeconds = Math.max(300, Math.min(7200, Math.round(Number(duracionSlotMin || 30) * 60)));
+
+  const calcularCuposBloque = (horaInicioRaw, horaFinRaw) => {
+    const hhmmToMinutes = (value) => {
+      const txt = String(value || "").trim();
+      const m = txt.match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      const h = Number(m[1]);
+      const mm = Number(m[2]);
+      if (!Number.isFinite(h) || !Number.isFinite(mm) || h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+      return h * 60 + mm;
+    };
+
+    const start = hhmmToMinutes(horaInicioRaw);
+    const end = hhmmToMinutes(horaFinRaw);
+    const step = Math.max(5, Math.min(120, Math.round(Number(duracionSlotMin || 30))));
+    if (start === null || end === null || end <= start) return 0;
+    return Math.floor((end - start) / step);
+  };
+
+  const contarConsultasOcupadasEnBloque = (fechaRaw, horaInicioRaw, horaFinRaw) => {
+    const fecha = String(fechaRaw || "").slice(0, 10);
+    const hhmmToMinutes = (value) => {
+      const txt = String(value || "").trim();
+      const m = txt.match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      const h = Number(m[1]);
+      const mm = Number(m[2]);
+      if (!Number.isFinite(h) || !Number.isFinite(mm) || h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+      return h * 60 + mm;
+    };
+
+    const start = hhmmToMinutes(horaInicioRaw);
+    const end = hhmmToMinutes(horaFinRaw);
+    if (!fecha || start === null || end === null || end <= start) return 0;
+
+    const ocupadosLista = Array.isArray(horasOcupadasPorFecha?.[fecha]) ? horasOcupadasPorFecha[fecha] : [];
+    if (ocupadosLista.length === 0) return 0;
+    const ocupadosSet = new Set(ocupadosLista);
+    const step = Math.max(5, Math.min(120, Math.round(Number(duracionSlotMin || 30))));
+    let count = 0;
+
+    for (let min = start; min < end; min += step) {
+      const hh = Math.floor(min / 60);
+      const mm = min % 60;
+      const hhmm = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+      if (ocupadosSet.has(hhmm)) {
+        count += 1;
+      }
+    }
+    return count;
+  };
 
   // Función para verificar si una fecha ya pasó
   const esFechaPasada = (dateString) => {
@@ -173,16 +309,26 @@ function PanelMedico() {
             ? `${formatProfesionalName(medicoObjetivo)} · ID ${medicoObjetivo.id}`.trim()
             : `Medico ID ${medicoId}`}
         </p>
+        <p className="text-xs text-white/90 mt-2">
+          Tiempo por consulta configurado: <span className="font-semibold">{duracionSlotMin} min</span>
+        </p>
       </div>
       <div className="flex flex-col md:flex-row gap-8">
   <div className="md:w-1/2 w-full">
-    <DisponibilidadFormMedico onSave={handleSaveDisponibilidad} bloquesGuardados={bloquesGuardados} />
+    <DisponibilidadFormMedico
+      onSave={handleSaveDisponibilidad}
+      bloquesGuardados={bloquesGuardados}
+      duracionSlotMin={duracionSlotMin}
+    />
   </div>
   <div className="md:w-1/2 w-full max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-inner">
           <h2 className="font-bold text-lg mb-2 flex items-center gap-2">
             <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
             Disponibilidad registrada
           </h2>
+          <p className="text-xs text-blue-700 mb-3 px-1">
+            Esta vista usa bloques de <span className="font-semibold">{duracionSlotMin} min por consulta</span>.
+          </p>
           {loading ? (
             <div className="text-center py-4"><Spinner message="Cargando disponibilidad registrada..." /></div>
           ) : (
@@ -194,6 +340,13 @@ function PanelMedico() {
                   const fechaEsPasada = esFechaPasada(fecha);
                   // Ordenar los bloques por hora de inicio ascendente
                   const bloquesOrdenados = [...bloquesPorFecha[fecha]].sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio));
+                  const cuposTotalesFecha = bloquesOrdenados.reduce((acc, b) => (
+                    acc + calcularCuposBloque(b.hora_inicio, b.hora_fin)
+                  ), 0);
+                  const cuposOcupadosFecha = bloquesOrdenados.reduce((acc, b) => (
+                    acc + contarConsultasOcupadasEnBloque(fecha, b.hora_inicio, b.hora_fin)
+                  ), 0);
+                  const cuposLibresFecha = Math.max(0, cuposTotalesFecha - cuposOcupadosFecha);
                   return (
                     <div key={fecha} className={`rounded-lg shadow p-4 ${fechaEsPasada ? 'bg-gray-50 border-l-4 border-gray-400' : 'bg-blue-50'}`}>
                       <div className={`font-semibold mb-2 flex items-center gap-2 ${fechaEsPasada ? 'text-gray-600' : 'text-blue-700'}`}>
@@ -211,22 +364,33 @@ function PanelMedico() {
                             Consulta pasada
                           </span>
                         )}
+                        <span className={`text-xs px-2 py-1 rounded-full ml-2 ${fechaEsPasada ? 'bg-gray-200 text-gray-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                          Cupos: {cuposLibresFecha} / {cuposTotalesFecha}
+                        </span>
                       </div>
                       <table className={`min-w-full text-sm border rounded overflow-hidden ${fechaEsPasada ? 'opacity-70' : ''}`}>
                         <thead className={`${fechaEsPasada ? 'bg-gray-200' : 'bg-blue-100'}`}>
                           <tr>
                             <th className="px-2 py-1">Hora inicio</th>
                             <th className="px-2 py-1">Hora fin</th>
+                            <th className="px-2 py-1 text-center">Cupos (libres / total)</th>
                             <th className="px-2 py-1 text-center">
                               {fechaEsPasada ? 'Historial' : 'Acciones'}
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {bloquesOrdenados.map(b => (
+                          {bloquesOrdenados.map(b => {
+                            const cuposTotalesBloque = calcularCuposBloque(b.hora_inicio, b.hora_fin);
+                            const cuposOcupadosBloque = contarConsultasOcupadasEnBloque(fecha, b.hora_inicio, b.hora_fin);
+                            const cuposLibresBloque = Math.max(0, cuposTotalesBloque - cuposOcupadosBloque);
+                            return (
                             <tr key={b.id} className={`${fechaEsPasada ? 'hover:bg-gray-100' : 'hover:bg-blue-200'} transition group`}>
                               <td className="px-2 py-1 text-center font-mono text-green-700">{formatHora(b.hora_inicio)}</td>
                               <td className="px-2 py-1 text-center font-mono text-red-700">{formatHora(b.hora_fin)}</td>
+                              <td className="px-2 py-1 text-center font-semibold text-indigo-700">
+                                {cuposLibresBloque} / {cuposTotalesBloque}
+                              </td>
                               <td className="px-2 py-1 text-center flex gap-1 justify-center">
                                 {fechaEsPasada ? (
                                   <span className="text-xs text-gray-500 px-2 py-1 bg-gray-100 rounded">
@@ -265,11 +429,11 @@ function PanelMedico() {
                                           <label className="text-sm">Fecha: <span className="font-bold">{editModal.bloque.fecha}</span></label>
                                           <label className="text-sm">Hora inicio:
                                             <input type="time" value={editModal.bloque.hora_inicio.slice(0,5)} onChange={e => handleEditChange("hora_inicio", e.target.value + ":00")}
-                                              className="border rounded px-2 py-1 ml-2" step="1800" />
+                                              className="border rounded px-2 py-1 ml-2" step={stepSeconds} />
                                           </label>
                                           <label className="text-sm">Hora fin:
                                             <input type="time" value={editModal.bloque.hora_fin.slice(0,5)} onChange={e => handleEditChange("hora_fin", e.target.value + ":00")}
-                                              className="border rounded px-2 py-1 ml-2" step="1800" />
+                                              className="border rounded px-2 py-1 ml-2" step={stepSeconds} />
                                           </label>
                                         </div>
                                         <button onClick={handleEditSave} className="bg-blue-600 text-white px-4 py-2 rounded font-bold w-full mt-4">Guardar cambios</button>
@@ -277,7 +441,7 @@ function PanelMedico() {
                                     </div>
                                   )}
                             </tr>
-                          ))}
+                          )})}
                         </tbody>
                       </table>
                     </div>

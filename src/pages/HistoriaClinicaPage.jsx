@@ -2171,6 +2171,20 @@ function HistoriaClinicaPage() {
     const archivos = Array.isArray(doc?.archivos) ? doc.archivos : [];
     return archivos.map((archivo, index) => ({
       ...archivo,
+      url: (() => {
+        const raw = String(archivo?.url || '').trim();
+        if (!raw) return raw;
+
+        const normalized = raw
+          .replace(/^(https?:)?\/\/[^/]+\/clinica-2demayo\//i, '/')
+          .replace(/^\/clinica-2demayo\//i, '/');
+
+        if (/^api_[^/]/i.test(normalized)) {
+          return `/${normalized}`;
+        }
+
+        return normalized;
+      })(),
       _docTitulo: String(doc?.titulo || doc?.descripcion || `Documento ${docIndex + 1}`).trim(),
       _docTipo: String(doc?.tipo || '').trim(),
       _docIndex: docIndex,
@@ -2920,7 +2934,7 @@ function HistoriaClinicaPage() {
       const nombrePacienteRaw = `${paciente?.nombre || paciente?.nombres || ''}_${paciente?.apellido || paciente?.apellidos || ''}`
         .trim()
         .replace(/\s+/g, '_')
-        .replace(/[^a-zA-Z0-9_\-]/g, '')
+        .replace(/[^a-zA-Z0-9_-]/g, '')
         .toLowerCase();
       const fechaTag = new Date().toISOString().slice(0, 10);
       const filename = `receta_medica_${nombrePacienteRaw || 'paciente'}_${fechaTag}.pdf`;
@@ -3248,14 +3262,14 @@ function HistoriaClinicaPage() {
           className="space-y-6"
         >
           {/* Anamnesis y Examen Físico */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
-            <div className="flex items-center gap-3 mb-6">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-violet-200">
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={themedAccentIconBg}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-gray-800">📝 Anamnesis y Examen Físico</h2>
+              <h2 className="text-lg font-bold text-violet-800">📝 Anamnesis y Examen Físico</h2>
             </div>
             {HC_TEMPLATE_ENGINE_READ && (
               <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
@@ -3288,14 +3302,14 @@ function HistoriaClinicaPage() {
             />
           </div>
           {/* Laboratorio y Apoyo Diagnóstico */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
-            <div className="flex items-center gap-3 mb-6">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-cyan-200">
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-gray-800">🔬 Laboratorio y Apoyo Diagnóstico</h2>
+              <h2 className="text-lg font-bold text-cyan-900">🔬 Laboratorio y Apoyo Diagnóstico</h2>
             </div>
             <TabsApoyoDiagnostico
               consultaId={consultaId}
@@ -3308,14 +3322,14 @@ function HistoriaClinicaPage() {
             />
           </div>
           {/* Diagnósticos CIE10 */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
-            <div className="flex items-center gap-3 mb-6">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-orange-200">
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
               <div className="w-8 h-8 bg-gradient-to-r from-orange-500 to-red-500 rounded-full flex items-center justify-center">
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-gray-800">🩺 Diagnósticos CIE10</h2>
+              <h2 className="text-lg font-bold text-orange-900">🩺 Diagnósticos CIE10</h2>
             </div>
             <DiagnosticoCIE10Selector
               diagnosticos={diagnosticos}
@@ -3323,14 +3337,14 @@ function HistoriaClinicaPage() {
             />
           </div>
           {/* Tratamiento y Receta Médica */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
-            <div className="flex items-center gap-3 mb-6">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-blue-200">
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={themedHeroIconBg}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-gray-800">💊 Tratamiento y Receta Médica</h2>
+              <h2 className="text-lg font-bold text-blue-900">💊 Tratamiento y Receta Médica</h2>
             </div>
             {readOnly ? (
               <div className="space-y-4">
@@ -3401,15 +3415,15 @@ function HistoriaClinicaPage() {
               />
             )}
           </div>
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-emerald-200">
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>
                   <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2-11H7a2 2 0 00-2 2v10a2 2 0 002 2h5m5-11l2 2-6 6H9v-4l6-6z" />
                   </svg>
                 </div>
-                <h2 className="text-lg font-semibold text-gray-800">📈 Evolución de Tratamiento (Enfermería)</h2>
+                <h2 className="text-lg font-bold text-emerald-900">📈 Evolución de Tratamiento (Enfermería)</h2>
               </div>
               <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${estadoTratamientoBadgeClass}`}>
                 {estadoTratamientoLabel}
@@ -3485,14 +3499,14 @@ function HistoriaClinicaPage() {
               </>
             )}
           </div>
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-white/50">
-            <div className="flex items-center gap-3 mb-5">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-indigo-200">
+            <div className="mb-5 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10m-11 9h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v11a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-gray-800">📅 Próxima cita sugerida</h2>
+              <h2 className="text-lg font-bold text-indigo-900">📅 Próxima cita sugerida</h2>
             </div>
 
             <div className="space-y-4">
@@ -4594,12 +4608,26 @@ function HistoriaClinicaPage() {
                       </div>
 
                       {(adjuntosImagenes.length > 0 || adjuntosPdf.length > 0) && (
-                        <div className="text-xs text-slate-800 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
-                          <p className="font-semibold">Exámenes y adjuntos</p>
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-3 text-xs text-slate-800">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-bold text-indigo-900">Exámenes y adjuntos</p>
+                            <div className="flex items-center gap-1.5 text-[10px]">
+                              {adjuntosImagenes.length > 0 && (
+                                <span className="rounded-full border border-indigo-200 bg-white px-2 py-0.5 font-semibold text-indigo-700">
+                                  Imágenes: {adjuntosImagenes.length}
+                                </span>
+                              )}
+                              {adjuntosPdf.length > 0 && (
+                                <span className="rounded-full border border-indigo-200 bg-white px-2 py-0.5 font-semibold text-indigo-700">
+                                  PDF: {adjuntosPdf.length}
+                                </span>
+                              )}
+                            </div>
+                          </div>
 
                           {adjuntosImagenes.length > 0 && (
                             <div className="mt-2">
-                              <p className="text-[11px] font-medium text-slate-700 mb-2">Imágenes</p>
+                              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-800">Imágenes</p>
                               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                 {adjuntosImagenes.map((archivo, index) => (
                                   <button
@@ -4610,12 +4638,12 @@ function HistoriaClinicaPage() {
                                       nombre: archivo.nombre_original || `Imagen ${index + 1}`,
                                       titulo: archivo._docTitulo,
                                     })}
-                                    className="rounded-lg border border-slate-200 bg-white p-1 hover:bg-slate-100 text-left"
+                                    className="rounded-lg border border-indigo-100 bg-white p-1 text-left hover:bg-indigo-50"
                                   >
                                     <img
                                       src={archivo.url}
                                       alt={archivo.nombre_original || `Imagen ${index + 1}`}
-                                      className="w-full h-20 object-cover rounded"
+                                      className="h-20 w-full rounded object-cover"
                                     />
                                     <p className="mt-1 text-[10px] text-slate-600 truncate" title={archivo._docTitulo}>{archivo._docTitulo}</p>
                                   </button>
@@ -4626,10 +4654,10 @@ function HistoriaClinicaPage() {
 
                           {adjuntosPdf.length > 0 && (
                             <div className="mt-3">
-                              <p className="text-[11px] font-medium text-slate-700 mb-2">Documentos PDF</p>
+                              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-800">Documentos PDF</p>
                               <div className="space-y-2">
                                 {adjuntosPdf.map((archivo, index) => (
-                                  <div key={`adj-pdf-${archivo.archivo_id || index}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2">
+                                  <div key={`adj-pdf-${archivo.archivo_id || index}`} className="flex items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-white px-2 py-2">
                                     <div className="min-w-0">
                                       <p className="text-xs font-medium text-slate-800 truncate">{archivo.nombre_original || `Documento ${index + 1}`}</p>
                                       <p className="text-[10px] text-slate-500 truncate">{archivo._docTitulo}</p>
@@ -4638,7 +4666,7 @@ function HistoriaClinicaPage() {
                                       href={archivo.url}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="px-2 py-1 rounded bg-slate-700 text-white text-[10px] hover:bg-slate-800 whitespace-nowrap"
+                                      className="whitespace-nowrap rounded bg-indigo-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-indigo-700"
                                     >
                                       Ver PDF
                                     </a>

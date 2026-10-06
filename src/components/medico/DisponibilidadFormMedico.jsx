@@ -5,11 +5,12 @@ import "react-calendar/dist/Calendar.css";
 import "./DisponibilidadFormMedico.custom.css";
 
 // Formulario para que el médico seleccione fechas y agregue uno o varios bloques de horario por fecha
-function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
+function DisponibilidadFormMedico({ onSave, bloquesGuardados = [], duracionSlotMin = 30 }) {
   const [selectedDates, setSelectedDates] = useState([]); // array de fechas seleccionadas
   const [bloques, setBloques] = useState({}); // { fecha: [{hora_inicio, hora_fin}, ...] }
   // Modal de edición rápida
   const [modalFecha, setModalFecha] = useState(null); // fecha activa para modal, o null
+  const stepSeconds = Math.max(300, Math.min(7200, Math.round(Number(duracionSlotMin || 30) * 60)));
 
   // Crear conjunto de fechas ya registradas en la base de datos
   const fechasRegistradas = new Set(bloquesGuardados.map(bloque => bloque.fecha));
@@ -121,6 +122,9 @@ function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
   return (
     <div className="max-w-xl mx-auto p-4 border rounded shadow bg-white">
       <h2 className="font-bold text-lg mb-2 text-center">Definir Disponibilidad</h2>
+      <p className="text-xs text-center text-blue-700 mb-3">
+        Duración configurada por consulta: <span className="font-semibold">{Math.round(stepSeconds / 60)} min</span>
+      </p>
       <div className="mb-4">
         <label className="block mb-1 font-semibold">Selecciona fechas:</label>
         <Calendar
@@ -191,10 +195,10 @@ function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
             {bloques[modalFecha] && bloques[modalFecha].map((bloque, idx) => (
               <div key={idx} className="flex items-center gap-2 mb-1">
                 <input type="time" value={bloque.hora_inicio} onChange={e => handleBloqueChange(modalFecha, idx, "hora_inicio", e.target.value + ":00")}
-                  className="border rounded px-2 py-1" step="1800" />
+                  className="border rounded px-2 py-1" step={stepSeconds} />
                 <span>a</span>
                 <input type="time" value={bloque.hora_fin} onChange={e => handleBloqueChange(modalFecha, idx, "hora_fin", e.target.value + ":00")}
-                  className="border rounded px-2 py-1" step="1800" />
+                  className="border rounded px-2 py-1" step={stepSeconds} />
                 <button type="button" onClick={() => removeBloque(modalFecha, idx)} className="text-red-600 hover:underline">Eliminar</button>
               </div>
             ))}
@@ -210,10 +214,10 @@ function DisponibilidadFormMedico({ onSave, bloquesGuardados = [] }) {
           {bloques[fecha].map((bloque, idx) => (
             <div key={idx} className="flex items-center gap-2 mb-1">
               <input type="time" value={bloque.hora_inicio} onChange={e => handleBloqueChange(fecha, idx, "hora_inicio", e.target.value + ":00")}
-                className="border rounded px-2 py-1" step="1800" />
+                className="border rounded px-2 py-1" step={stepSeconds} />
               <span>a</span>
               <input type="time" value={bloque.hora_fin} onChange={e => handleBloqueChange(fecha, idx, "hora_fin", e.target.value + ":00")}
-                className="border rounded px-2 py-1" step="1800" />
+                className="border rounded px-2 py-1" step={stepSeconds} />
               <button type="button" onClick={() => removeBloque(fecha, idx)} className="text-red-600 hover:underline">Eliminar</button>
             </div>
           ))}

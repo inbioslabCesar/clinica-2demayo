@@ -1366,6 +1366,85 @@ function correlativo_operativo_extraer_unidad_token($raw) {
     return '';
 }
 
+function cot_hora_a_minutos_desde_hms($value) {
+    $hora = normalizar_hora_programada_agenda($value);
+    if ($hora === '') return null;
+    $h = (int)substr($hora, 0, 2);
+    $m = (int)substr($hora, 3, 2);
+    if ($h < 0 || $h > 23 || $m < 0 || $m > 59) return null;
+    return ($h * 60) + $m;
+}
+
+function cot_cargar_rangos_regulares_por_pares($conn, $pairs) {
+    $out = [];
+    $pairs = array_values(array_filter((array)$pairs, function ($pair) {
+        return is_array($pair)
+            && (int)($pair['medico_id'] ?? 0) > 0
+            && preg_match('/^\d{4}-\d{2}-\d{2}$/', trim((string)($pair['fecha'] ?? '')));
+    }));
+
+    if (empty($pairs)) return $out;
+    if (!table_exists($conn, 'disponibilidad_medicos')
+        || !column_exists($conn, 'disponibilidad_medicos', 'medico_id')
+        || !column_exists($conn, 'disponibilidad_medicos', 'fecha')
+        || !column_exists($conn, 'disponibilidad_medicos', 'hora_inicio')
+        || !column_exists($conn, 'disponibilidad_medicos', 'hora_fin')) {
+        return $out;
+    }
+
+    $whereParts = [];
+    $types = '';
+    $params = [];
+    foreach ($pairs as $pair) {
+        $whereParts[] = '(medico_id = ? AND fecha = ?)';
+        $types .= 'is';
+        $params[] = (int)$pair['medico_id'];
+        $params[] = trim((string)$pair['fecha']);
+    }
+    if (empty($whereParts)) return $out;
+
+    $sql = 'SELECT medico_id, fecha, hora_inicio, hora_fin
+            FROM disponibilidad_medicos
+            WHERE ' . implode(' OR ', $whereParts) . '
+            ORDER BY medico_id ASC, fecha ASC, hora_inicio ASC';
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return $out;
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $medicoId = (int)($row['medico_id'] ?? 0);
+        $fechaYmd = trim((string)($row['fecha'] ?? ''));
+        if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaYmd)) continue;
+
+        $ini = cot_hora_a_minutos_desde_hms($row['hora_inicio'] ?? '');
+        $fin = cot_hora_a_minutos_desde_hms($row['hora_fin'] ?? '');
+        if ($ini === null || $fin === null || $fin <= $ini) continue;
+
+        $key = $medicoId . '|' . $fechaYmd;
+        if (!isset($out[$key])) $out[$key] = [];
+        $out[$key][] = ['inicio' => $ini, 'fin' => $fin];
+    }
+    $stmt->close();
+    return $out;
+}
+
+function cot_hora_en_rangos_regulares($horaHms, $rangos) {
+    $horaMin = cot_hora_a_minutos_desde_hms($horaHms);
+    if ($horaMin === null) return null;
+    $rangos = is_array($rangos) ? $rangos : [];
+    if (empty($rangos)) return null;
+    foreach ($rangos as $rango) {
+        $ini = isset($rango['inicio']) ? (int)$rango['inicio'] : null;
+        $fin = isset($rango['fin']) ? (int)$rango['fin'] : null;
+        if ($ini === null || $fin === null || $fin <= $ini) continue;
+        if ($horaMin >= $ini && $horaMin < $fin) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function construir_correlativos_operativos_por_cotizaciones($conn, $cotizacionIds, $consultaRefPorCotizacion = []) {
     $out = [];
     if (!function_exists('correlativo_operativo_rank_maps')) {
@@ -1480,6 +1559,7 @@ function construir_correlativos_operativos_por_cotizaciones($conn, $cotizacionId
                     'hora_programada' => trim((string)($rowAgenda['hora_programada'] ?? '')),
                     'estado_evento' => strtolower(trim((string)($rowAgenda['estado_evento'] ?? ''))),
                     'estado_cotizacion' => strtolower(trim((string)($rowAgenda['estado_cotizacion'] ?? ''))),
+                    'medico_id' => $medicoId,
                 ];
 
                 if ($medicoId > 0 && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
@@ -1533,6 +1613,7 @@ function construir_correlativos_operativos_por_cotizaciones($conn, $cotizacionId
                 $consultaMeta[$consultaId] = [
                     'fecha' => $fecha,
                     'hora' => trim((string)($rowConsulta['hora'] ?? '')),
+                    'medico_id' => $medicoId,
                 ];
 
                 if ($medicoId > 0 && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
@@ -1568,6 +1649,7 @@ function construir_correlativos_operativos_por_cotizaciones($conn, $cotizacionId
                     'fecha_atencion' => (string)($metaConsulta['fecha'] ?? ''),
                     'hora_atencion' => (string)($metaConsulta['hora'] ?? ''),
                     'origen' => 'consulta',
+                    'medico_id' => (int)($metaConsulta['medico_id'] ?? 0),
                 ];
                 continue;
             }
@@ -1606,6 +1688,8 @@ function construir_correlativos_operativos_por_cotizaciones($conn, $cotizacionId
                     'origen' => 'agenda',
                     'agenda_id' => $agendaId,
                     'unidad_token' => $unidadToken,
+                    'medico_id' => (int)($evento['medico_id'] ?? 0),
+                    'es_adicional_autorizado' => (strpos(strtolower(trim((string)($evento['titulo_evento'] ?? ''))), 'adicional autorizado') !== false) ? 1 : 0,
                 ];
             }
         }
@@ -4347,7 +4431,32 @@ function cotizacion_asegurar_consulta_asociada_si_aplica(
     }
 }
 
-function registrar_cotizacion($conn, $data) {
+function cotizacion_post_commit_no_bloqueante(mysqli $conn, int $cotizacionId, int $usuarioId, bool $debeSincronizarClinico): int {
+    if ($debeSincronizarClinico) {
+        try {
+            sincronizar_servicios_clinicos_post_pago_cotizacion($conn, $cotizacionId, $usuarioId);
+        } catch (Throwable $postError) {
+            error_log('Post-proceso registrar_cotizacion (no bloqueante): ' . $postError->getMessage());
+        }
+    }
+
+    $bloqueId = 0;
+    try {
+        $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
+        if ($bloqueId > 0) {
+            bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+            bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
+        }
+    } catch (Throwable $bloqueError) {
+        error_log('Post-proceso bloque registrar_cotizacion (no bloqueante): ' . $bloqueError->getMessage());
+    }
+    return $bloqueId;
+}
+
+function registrar_cotizacion_core(mysqli $conn, array $data, array $options = []): array {
+    $manageTransaction = array_key_exists('manage_transaction', $options) ? (bool)$options['manage_transaction'] : true;
+    $skipDuplicateCheck = !empty($options['skip_duplicate_check']);
+
     $usuarioSesion = get_user_id_from_session();
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : $usuarioSesion;
     $fechaRef = trim((string)($data['fecha_ref'] ?? ''));
@@ -4356,12 +4465,12 @@ function registrar_cotizacion($conn, $data) {
     }
 
     if (!$usuarioId || !isset($data['detalles']) || !is_array($data['detalles']) || empty($data['detalles'])) {
-        respond(['success' => false, 'error' => 'Datos incompletos'], 400);
+        throw new Exception('Datos incompletos');
     }
 
     $detalles = normalizar_detalles_entrada_cotizacion($data['detalles'] ?? []);
     if (empty($detalles)) {
-        respond(['success' => false, 'error' => 'No hay detalles válidos para registrar'], 400);
+        throw new Exception('No hay detalles válidos para registrar');
     }
 
     $pacienteId = isset($data['paciente_id']) ? (int)$data['paciente_id'] : 0;
@@ -4413,23 +4522,34 @@ function registrar_cotizacion($conn, $data) {
     $hasResponsableFarmacia = column_exists($conn, 'cotizaciones', 'responsable_farmacia_id');
     $firmaDetalles = firma_cotizacion_detalles($detalles);
 
-    $cotizacionDuplicada = buscar_cotizacion_reciente_duplicada($conn, $pacienteId, $usuarioId, $total, $firmaDetalles, 2);
-    if ($cotizacionDuplicada) {
-        $cotizacionIdExistente = (int)($cotizacionDuplicada['id'] ?? 0);
-        if ($cotizacionIdExistente > 0) {
-            $cotizacionExistente = obtener_cotizacion($conn, $cotizacionIdExistente);
-            respond([
-                'success' => true,
-                'cotizacion_id' => $cotizacionIdExistente,
-                'numero_comprobante' => $cotizacionExistente['numero_comprobante'] ?? sprintf("Q%06d", $cotizacionIdExistente),
-                'total' => (float)($cotizacionExistente['total'] ?? $total),
-                'duplicate' => true,
-                'message' => 'Se reutilizó una cotización reciente idéntica para evitar duplicados',
-            ]);
+    if (!$skipDuplicateCheck) {
+        $cotizacionDuplicada = buscar_cotizacion_reciente_duplicada($conn, $pacienteId, $usuarioId, $total, $firmaDetalles, 2);
+        if ($cotizacionDuplicada) {
+            $cotizacionIdExistente = (int)($cotizacionDuplicada['id'] ?? 0);
+            if ($cotizacionIdExistente > 0) {
+                $cotizacionExistente = obtener_cotizacion($conn, $cotizacionIdExistente);
+                return [
+                    'cotizacion_id' => $cotizacionIdExistente,
+                    'bloque_id' => 0,
+                    'numero_comprobante' => $cotizacionExistente['numero_comprobante'] ?? sprintf("Q%06d", $cotizacionIdExistente),
+                    'fecha_vencimiento' => $fechaVencimiento,
+                    'total' => (float)($cotizacionExistente['total'] ?? $total),
+                    'duplicate' => true,
+                    'message' => 'Se reutilizó una cotización reciente idéntica para evitar duplicados',
+                    'debe_sincronizar_clinico' => false,
+                    'usuario_id' => $usuarioId,
+                ];
+            }
         }
     }
 
-    $conn->begin_transaction();
+    if ($manageTransaction) {
+        $conn->begin_transaction();
+    }
+
+    $cotizacionId = 0;
+    $totalReal = 0.0;
+    $debeSincronizarClinico = false;
     try {
         if ($hasSaldoV2) {
             if ($hasFechaVencimiento) {
@@ -4536,41 +4656,138 @@ function registrar_cotizacion($conn, $data) {
             'modo_informativo' => $modoInformativo,
         ], 1);
 
-        $conn->commit();
-
-        if ($debeSincronizarClinico) {
-            try {
-                sincronizar_servicios_clinicos_post_pago_cotizacion($conn, $cotizacionId, $usuarioId);
-            } catch (Throwable $postError) {
-                error_log('Post-proceso registrar_cotizacion (no bloqueante): ' . $postError->getMessage());
-            }
+        if ($manageTransaction) {
+            $conn->commit();
         }
 
         $bloqueId = 0;
-        try {
-            $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
-            if ($bloqueId > 0) {
-                bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
-                bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
-            }
-        } catch (Throwable $bloqueError) {
-            error_log('Post-proceso bloque registrar_cotizacion (no bloqueante): ' . $bloqueError->getMessage());
+        if ($manageTransaction) {
+            $bloqueId = cotizacion_post_commit_no_bloqueante($conn, $cotizacionId, $usuarioId, $debeSincronizarClinico);
         }
 
-        respond([
-            'success' => true,
+        return [
             'cotizacion_id' => $cotizacionId,
             'bloque_id' => $bloqueId,
             'numero_comprobante' => sprintf("Q%06d", $cotizacionId),
             'fecha_vencimiento' => $fechaVencimiento,
             'total' => $totalReal,
-            'message' => 'Cotización registrada exitosamente'
+            'message' => 'Cotización registrada exitosamente',
+            'duplicate' => false,
+            'debe_sincronizar_clinico' => $debeSincronizarClinico,
+            'usuario_id' => $usuarioId,
+        ];
+    } catch (Exception $e) {
+        if ($manageTransaction) {
+            $conn->rollback();
+        }
+        throw $e;
+    }
+}
+
+function registrar_cotizacion($conn, $data) {
+    try {
+        $resultado = registrar_cotizacion_core($conn, is_array($data) ? $data : []);
+        respond([
+            'success' => true,
+            'cotizacion_id' => (int)($resultado['cotizacion_id'] ?? 0),
+            'bloque_id' => (int)($resultado['bloque_id'] ?? 0),
+            'numero_comprobante' => (string)($resultado['numero_comprobante'] ?? ''),
+            'fecha_vencimiento' => $resultado['fecha_vencimiento'] ?? null,
+            'total' => (float)($resultado['total'] ?? 0),
+            'duplicate' => !empty($resultado['duplicate']),
+            'message' => (string)($resultado['message'] ?? 'Cotización registrada exitosamente'),
         ]);
     } catch (Exception $e) {
-        $conn->rollback();
         error_log("Error al registrar cotización: " . $e->getMessage());
         respond(['success' => false, 'error' => 'Error al registrar la cotización: ' . $e->getMessage()], 500);
     }
+}
+
+function registrar_split_cotizaciones($conn, $data) {
+    if (!is_array($data)) {
+        respond(['success' => false, 'error' => 'Payload inválido para split'], 400);
+    }
+    $grupos = isset($data['grupos']) && is_array($data['grupos']) ? $data['grupos'] : [];
+    if (empty($grupos)) {
+        respond(['success' => false, 'error' => 'No se recibieron grupos para split'], 400);
+    }
+
+    $splitToken = 'split_' . date('YmdHis') . '_' . substr(bin2hex(random_bytes(6)), 0, 12);
+    $totalGrupos = count($grupos);
+    $resultados = [];
+    $deferredPost = [];
+
+    $conn->begin_transaction();
+    try {
+        foreach ($grupos as $idx => $grupo) {
+            if (!is_array($grupo)) {
+                throw new Exception('Grupo inválido en split');
+            }
+            $detallesGrupo = isset($grupo['detalles']) && is_array($grupo['detalles']) ? $grupo['detalles'] : [];
+            if (empty($detallesGrupo)) {
+                throw new Exception('Un grupo de split no tiene detalles válidos');
+            }
+
+            $payloadGrupo = $data;
+            $payloadGrupo['detalles'] = $detallesGrupo;
+            if (isset($grupo['total'])) {
+                $payloadGrupo['total'] = (float)$grupo['total'];
+            } else {
+                $payloadGrupo['total'] = total_detalles($detallesGrupo);
+            }
+            if (isset($grupo['fecha_ref'])) {
+                $payloadGrupo['fecha_ref'] = (string)$grupo['fecha_ref'];
+            }
+            $obsBase = trim((string)($data['observaciones'] ?? ''));
+            $obsGrupo = trim((string)($grupo['observaciones'] ?? ''));
+            $obsSplit = "[SPLIT:$splitToken " . ($idx + 1) . "/$totalGrupos]";
+            $payloadGrupo['observaciones'] = trim($obsBase . ' ' . $obsGrupo . ' ' . $obsSplit);
+
+            if (trim((string)($payloadGrupo['referencia_origen'] ?? '')) === '') {
+                $payloadGrupo['referencia_origen'] = $splitToken;
+            }
+
+            $resultado = registrar_cotizacion_core($conn, $payloadGrupo, [
+                'manage_transaction' => false,
+                'skip_duplicate_check' => true,
+            ]);
+            $resultados[] = $resultado;
+            $deferredPost[] = [
+                'cotizacion_id' => (int)($resultado['cotizacion_id'] ?? 0),
+                'usuario_id' => (int)($resultado['usuario_id'] ?? get_user_id_from_session()),
+                'debe_sincronizar_clinico' => !empty($resultado['debe_sincronizar_clinico']),
+            ];
+        }
+
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log("Error al registrar split de cotizaciones: " . $e->getMessage());
+        respond(['success' => false, 'error' => 'Error al registrar split de cotizaciones: ' . $e->getMessage()], 500);
+    }
+
+    $cotizacionIds = [];
+    $bloques = [];
+    foreach ($deferredPost as $post) {
+        $cid = (int)($post['cotizacion_id'] ?? 0);
+        if ($cid <= 0) continue;
+        $uid = (int)($post['usuario_id'] ?? 0);
+        $sincronizar = !empty($post['debe_sincronizar_clinico']);
+        $bloqueId = cotizacion_post_commit_no_bloqueante($conn, $cid, $uid, $sincronizar);
+        $cotizacionIds[] = $cid;
+        $bloques[] = [
+            'cotizacion_id' => $cid,
+            'bloque_id' => $bloqueId,
+        ];
+    }
+
+    respond([
+        'success' => true,
+        'split_token' => $splitToken,
+        'cotizacion_ids' => $cotizacionIds,
+        'bloques' => $bloques,
+        'message' => 'Cotizaciones split registradas exitosamente',
+    ]);
 }
 
 function editar_cotizacion($conn, $data) {
@@ -6613,6 +6830,9 @@ switch ($method) {
         if ($accion === 'agregar_detalle') {
             agregar_detalle_cotizacion($conn, $data);
         }
+        if ($accion === 'registrar_split') {
+            registrar_split_cotizaciones($conn, $data);
+        }
 
         registrar_cotizacion($conn, $data);
         break;
@@ -6901,6 +7121,8 @@ switch ($method) {
         $contratoResumenPorCotizacion = [];
         $metodoPagoResumenPorCotizacion = [];
         $metodosPagoListaPorCotizacion = [];
+        $adicionalDinamicoPorCotizacion = [];
+        $adicionalDinamicoItemsPorCotizacion = [];
         $paquetesResumenPorCotizacion = [];
 
         if (!empty($idsPagina)) {
@@ -7399,6 +7621,60 @@ switch ($method) {
                 )
                 : [];
 
+            $pairsRegular = [];
+            $eventosAgendaPorCotizacion = [];
+            foreach ($correlativosOperativosPorCotizacion as $cidCorr => $itemsCorr) {
+                $cidCorr = (int)$cidCorr;
+                if ($cidCorr <= 0 || !is_array($itemsCorr)) continue;
+
+                foreach ($itemsCorr as $itemCorr) {
+                    $origenItem = strtolower(trim((string)($itemCorr['origen'] ?? '')));
+                    $servicioItem = correlativo_operativo_normalizar_servicio_tipo($itemCorr['servicio_tipo'] ?? '');
+                    if ($origenItem !== 'agenda' || $servicioItem === 'consulta') continue;
+
+                    $medicoItem = (int)($itemCorr['medico_id'] ?? 0);
+                    $fechaItem = trim((string)($itemCorr['fecha_atencion'] ?? ''));
+                    $horaItem = normalizar_hora_programada_agenda($itemCorr['hora_atencion'] ?? '');
+                    if ($medicoItem <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaItem) || $horaItem === '') {
+                        continue;
+                    }
+
+                    $pairKey = $medicoItem . '|' . $fechaItem;
+                    $pairsRegular[$pairKey] = ['medico_id' => $medicoItem, 'fecha' => $fechaItem];
+                    if (!isset($eventosAgendaPorCotizacion[$cidCorr])) {
+                        $eventosAgendaPorCotizacion[$cidCorr] = [];
+                    }
+                    $eventosAgendaPorCotizacion[$cidCorr][] = [
+                        'medico_id' => $medicoItem,
+                        'fecha' => $fechaItem,
+                        'hora' => $horaItem,
+                    ];
+                }
+            }
+
+            if (!empty($pairsRegular)) {
+                $rangosRegularesPorPair = cot_cargar_rangos_regulares_por_pares($conn, array_values($pairsRegular));
+                foreach ($eventosAgendaPorCotizacion as $cidAgenda => $eventosAgenda) {
+                    $fueraCount = 0;
+                    $evaluados = 0;
+                    foreach ((array)$eventosAgenda as $eventoAgenda) {
+                        $pairKey = (int)($eventoAgenda['medico_id'] ?? 0) . '|' . trim((string)($eventoAgenda['fecha'] ?? ''));
+                        $enRegular = cot_hora_en_rangos_regulares($eventoAgenda['hora'] ?? '', $rangosRegularesPorPair[$pairKey] ?? []);
+                        if ($enRegular === null) {
+                            continue;
+                        }
+                        $evaluados++;
+                        if ($enRegular === false) {
+                            $fueraCount++;
+                        }
+                    }
+                    if ($evaluados > 0 && $fueraCount > 0) {
+                        $adicionalDinamicoPorCotizacion[(int)$cidAgenda] = 1;
+                        $adicionalDinamicoItemsPorCotizacion[(int)$cidAgenda] = $fueraCount;
+                    }
+                }
+            }
+
             } catch (Throwable $enrichmentError) {
                 error_log('[api_cotizaciones] enrichment warning: ' . $enrichmentError->getMessage());
                 // Mantener listado base para no romper UI cuando una instancia tiene esquema parcial.
@@ -7495,6 +7771,8 @@ switch ($method) {
             $cotRow['contratos_ids_resumen'] = $contratoResumenPorCotizacion[$cid] ?? '';
             $cotRow['metodo_pago_resumen'] = $metodoPagoResumenPorCotizacion[$cid] ?? 'sin_pago';
             $cotRow['metodos_pago_resumen'] = $metodosPagoListaPorCotizacion[$cid] ?? '';
+            $cotRow['adicional_dinamico'] = (int)($adicionalDinamicoPorCotizacion[$cid] ?? 0);
+            $cotRow['adicional_dinamico_items'] = (int)($adicionalDinamicoItemsPorCotizacion[$cid] ?? 0);
 
             $esControlHcFila = (int)($cotRow['es_hc_proxima_programada'] ?? 0) === 1
                 && (int)($cotRow['consulta_es_control'] ?? 0) === 1;

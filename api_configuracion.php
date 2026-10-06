@@ -37,6 +37,21 @@ function cfg_normalize_paciente_sexo_default($value): string {
     return 'M';
 }
 
+function cfg_to_bool_int($value): int {
+    if (is_bool($value)) return $value ? 1 : 0;
+    if (is_int($value) || is_float($value)) return ((float)$value) > 0 ? 1 : 0;
+    $normalized = strtolower(trim((string)$value));
+    return in_array($normalized, ['1', 'true', 'si', 'sí', 'yes', 'on'], true) ? 1 : 0;
+}
+
+function cfg_normalize_slot_minutes($value): int {
+    $slot = (int)$value;
+    if ($slot <= 0) $slot = 30;
+    if ($slot < 5) $slot = 5;
+    if ($slot > 120) $slot = 120;
+    return $slot;
+}
+
 function cfg_ensure_hc_backup_table($pdo) {
     $pdo->exec("CREATE TABLE IF NOT EXISTS historia_clinica_backups (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -194,6 +209,8 @@ try {
         'hc_template_mode' => "ALTER TABLE configuracion_clinica ADD COLUMN hc_template_mode VARCHAR(20) DEFAULT 'auto'",
         'hc_template_single_id' => "ALTER TABLE configuracion_clinica ADD COLUMN hc_template_single_id VARCHAR(100) DEFAULT NULL",
         'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
+        'agenda_inteligente_cotizacion_v1' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_inteligente_cotizacion_v1 TINYINT(1) NOT NULL DEFAULT 0",
+        'duracion_slot_min' => "ALTER TABLE configuracion_clinica ADD COLUMN duracion_slot_min INT NOT NULL DEFAULT 30",
     ];
     foreach ($autoColumns as $col => $ddl) {
         $chk = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
@@ -239,10 +256,14 @@ try {
                     'hc_template_mode' => 'auto',
                     'hc_template_single_id' => null,
                     'paciente_sexo_default' => 'M',
+                    'agenda_inteligente_cotizacion_v1' => 0,
+                    'duracion_slot_min' => 30,
                 ];
             }
 
             $configuracion['paciente_sexo_default'] = cfg_normalize_paciente_sexo_default($configuracion['paciente_sexo_default'] ?? 'M');
+            $configuracion['agenda_inteligente_cotizacion_v1'] = (int)($configuracion['agenda_inteligente_cotizacion_v1'] ?? 0);
+            $configuracion['duracion_slot_min'] = cfg_normalize_slot_minutes($configuracion['duracion_slot_min'] ?? 30);
             
             echo json_encode([
                 'success' => true,
@@ -295,13 +316,21 @@ try {
             }
             $pacienteSexoDefault = cfg_normalize_paciente_sexo_default($input['paciente_sexo_default'] ?? 'M');
 
-            $existingConfig = $pdo->query('SELECT id, hc_template_mode, hc_template_single_id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+            $existingConfig = $pdo->query('SELECT id, hc_template_mode, hc_template_single_id, agenda_inteligente_cotizacion_v1, duracion_slot_min FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
             $hasExistingConfig = is_array($existingConfig) && !empty($existingConfig['id']);
             $currentMode = cfg_normalize_mode($existingConfig['hc_template_mode'] ?? 'auto');
             $currentSingle = trim((string)($existingConfig['hc_template_single_id'] ?? ''));
             if ($currentSingle === '') {
                 $currentSingle = null;
             }
+            $agendaInteligenteActual = cfg_to_bool_int($existingConfig['agenda_inteligente_cotizacion_v1'] ?? 0);
+            $agendaInteligenteFlag = array_key_exists('agenda_inteligente_cotizacion_v1', $input)
+                ? cfg_to_bool_int($input['agenda_inteligente_cotizacion_v1'])
+                : $agendaInteligenteActual;
+            $duracionSlotActual = cfg_normalize_slot_minutes($existingConfig['duracion_slot_min'] ?? 30);
+            $duracionSlotMin = array_key_exists('duracion_slot_min', $input)
+                ? cfg_normalize_slot_minutes($input['duracion_slot_min'])
+                : $duracionSlotActual;
             $incomingSingle = trim((string)($hcTemplateSingleId ?? ''));
             if ($incomingSingle === '') {
                 $incomingSingle = null;
@@ -363,7 +392,7 @@ try {
                         slogan = ?, slogan_color = ?,
                         nombre_color = ?, nombre_font_size = ?,
                         logo_size_sistema = ?, logo_size_publico = ?, logo_shape_sistema = ?, caratula_fondo_url = ?,
-                        hc_template_mode = ?, hc_template_single_id = ?, paciente_sexo_default = ?,
+                        hc_template_mode = ?, hc_template_single_id = ?, paciente_sexo_default = ?, agenda_inteligente_cotizacion_v1 = ?, duracion_slot_min = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = (SELECT id FROM (SELECT id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1) AS temp)
                 ");
@@ -396,7 +425,9 @@ try {
                     $caratulaFondoUrl,
                     $hcTemplateMode,
                     $hcTemplateSingleId,
-                    $pacienteSexoDefault
+                    $pacienteSexoDefault,
+                    $agendaInteligenteFlag,
+                    $duracionSlotMin
                 ]);
 
                 $pdo->commit();
@@ -413,8 +444,8 @@ try {
                      especialidades, mision, vision, valores, director_general, jefe_enfermeria, contacto_emergencias,
                      celular, google_maps_embed, slogan, slogan_color, nombre_color, nombre_font_size,
                      logo_size_sistema, logo_size_publico, logo_shape_sistema, caratula_fondo_url,
-                     hc_template_mode, hc_template_single_id, paciente_sexo_default)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     hc_template_mode, hc_template_single_id, paciente_sexo_default, agenda_inteligente_cotizacion_v1, duracion_slot_min)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $stmt->execute([
@@ -445,7 +476,9 @@ try {
                     $caratulaFondoUrl,
                     $hcTemplateMode,
                     $hcTemplateSingleId,
-                    $pacienteSexoDefault
+                    $pacienteSexoDefault,
+                    $agendaInteligenteFlag,
+                    $duracionSlotMin
                 ]);
 
                 $pdo->commit();

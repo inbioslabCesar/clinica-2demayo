@@ -149,6 +149,35 @@ function RouteErrorBoundary({ children }) {
 
 const ROUTER_BASENAME = APP_BASE_PATH.replace(/\/+$/, "") || "/";
 
+function isJsonHttpResponse(response) {
+  const contentType = String(response?.headers?.get?.("content-type") || "").toLowerCase();
+  return contentType.includes("application/json") || contentType.includes("+json");
+}
+
+async function evaluarFalloAuthStatus(response) {
+  const status = Number(response?.status || 0);
+  if (status === 401) {
+    return { shouldLogout: true, detail: "Sesión no autorizada (HTTP 401)" };
+  }
+
+  if (status !== 403) {
+    return { shouldLogout: false, detail: `HTTP ${status || "desconocido"}` };
+  }
+
+  if (!isJsonHttpResponse(response)) {
+    return { shouldLogout: false, detail: "HTTP 403 no JSON (bloqueo temporal de infraestructura)" };
+  }
+
+  const payload = await response.json().catch(() => null);
+  const authenticated = Boolean(payload?.success) && Boolean(payload?.authenticated);
+  const rawMessage = String(payload?.error || payload?.message || "").trim();
+  const authMessage = /autentic|sesi[oó]n|token|credencial|unauthoriz|forbidden/i.test(rawMessage);
+  const explicitUnauthenticated = payload?.authenticated === false;
+  const shouldLogout = explicitUnauthenticated || authMessage || !authenticated;
+  const detail = rawMessage || "Respuesta de autenticación inválida";
+  return { shouldLogout, detail };
+}
+
 async function fetchInfraDiagnosis(fallbackDetail = "") {
   const fallback = String(fallbackDetail || "").trim() || "No fue posible conectar con el backend";
   try {
@@ -580,7 +609,8 @@ function App() {
         });
 
         if (!r.ok) {
-          if (r.status === 401 || r.status === 403) {
+          const authFailure = await evaluarFalloAuthStatus(r);
+          if (authFailure.shouldLogout) {
             if (activo) {
               clearClientSessionState();
               setUsuario(null);
@@ -589,15 +619,7 @@ function App() {
             return;
           }
 
-          let errorDetail = `HTTP ${r.status}`;
-          try {
-            const dataErr = await r.json();
-            if (dataErr?.error) {
-              errorDetail = String(dataErr.error);
-            }
-          } catch {
-            // keep fallback detail
-          }
+          const errorDetail = authFailure.detail || `HTTP ${r.status}`;
 
           if (activo) {
             const infra = await fetchInfraDiagnosis(errorDetail);
@@ -678,11 +700,15 @@ function App() {
         });
 
         if (!r.ok) {
-          if (r.status === 401 || r.status === 403) {
+          const authFailure = await evaluarFalloAuthStatus(r);
+          if (authFailure.shouldLogout) {
             hadSessionOnMount.current = false;
             clearClientSessionState();
             setUsuario(null);
             setAuthBootstrap({ phase: "idle", detail: "", checks: null });
+          } else {
+            const infra = await fetchInfraDiagnosis(authFailure.detail || `HTTP ${r.status}`);
+            setAuthBootstrap({ phase: "infra_error", detail: infra.detail, checks: infra.checks });
           }
           return;
         }

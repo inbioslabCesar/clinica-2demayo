@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
 import { useQuoteCart } from "../../context/QuoteCartContext";
+import { BASE_URL, getCachedAgendaSlotMinutes } from "../../config/config";
+import { detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 
 function getLimaDate() {
   const now = new Date();
@@ -98,11 +100,39 @@ function normalizeHourHm(value) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+function normalizeDateYmd(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const slash = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (slash) {
+    return `${slash[3]}-${slash[2]}-${slash[1]}`;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, "0");
+  const d = String(parsed.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function horaToMinutes(hm) {
   const v = normalizeHourHm(hm);
   if (!v) return Number.POSITIVE_INFINITY;
   const [h, m] = v.split(":").map(Number);
   return h * 60 + m;
+}
+
+function minutesToHm(total) {
+  const safe = Math.max(0, Math.min(23 * 60 + 59, Number(total) || 0));
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function resolveAgendaStepMinutes() {
+  const configured = Number(getCachedAgendaSlotMinutes() || 30);
+  return Math.max(5, Math.min(120, Math.round(configured)));
 }
 
 function addDaysYmd(ymd, days) {
@@ -113,6 +143,129 @@ function addDaysYmd(ymd, days) {
   const m = String(base.getMonth() + 1).padStart(2, "0");
   const d = String(base.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function collectOccupiedHoursFromCart(cartItems, medicoId, fechaYmd) {
+  const medico = Number(medicoId || 0);
+  const fecha = normalizeDateYmd(fechaYmd);
+  if (medico <= 0 || !fecha) return [];
+
+  const step = resolveAgendaStepMinutes();
+  const horas = new Set();
+  const items = Array.isArray(cartItems) ? cartItems : [];
+
+  for (const item of items) {
+    const medicoItem = Number(item?.medicoId || item?.consultaMedicoId || item?.medico_id || 0);
+    const fechaItem = normalizeDateYmd(item?.fechaProgramada || item?.consultaFecha || item?.fecha_programada || "");
+    const horaItem = normalizeHourHm(item?.horaProgramada || item?.consultaHora || item?.hora_programada || "");
+    const minutoBase = horaToMinutes(horaItem);
+    if (medicoItem === medico && fechaItem === fecha && horaItem) {
+      horas.add(horaItem);
+    }
+
+    const componentes = Array.isArray(item?.componentes) ? item.componentes : [];
+    const tipoItem = String(item?.serviceType || item?.servicio_tipo || "").toLowerCase();
+    const componentesMismoMedico = [];
+    for (const comp of componentes) {
+      const medicoComp = Number(comp?.medico_id || comp?.medicoId || 0);
+      const fechaComp = normalizeDateYmd(comp?.fecha_programada || comp?.fechaProgramada || fechaItem || "");
+      const horaComp = normalizeHourHm(comp?.hora_programada || comp?.horaProgramada || horaItem || "");
+      if (medicoComp === medico && fechaComp === fecha && horaComp) {
+        horas.add(horaComp);
+      }
+      if (medicoComp === medico) {
+        componentesMismoMedico.push(comp);
+      }
+    }
+
+    // Para paquetes/perfiles sin horas explícitas por componente, asumir bloques consecutivos.
+    if ((tipoItem === "paquete" || tipoItem === "perfil")
+      && medicoItem === medico
+      && fechaItem === fecha
+      && Number.isFinite(minutoBase)
+      && componentesMismoMedico.length > 1) {
+      for (let i = 0; i < componentesMismoMedico.length; i += 1) {
+        const horaBloque = normalizeHourHm(minutesToHm(minutoBase + i * step));
+        if (horaBloque) {
+          horas.add(horaBloque);
+        }
+      }
+    }
+  }
+
+  return Array.from(horas).sort((a, b) => horaToMinutes(a) - horaToMinutes(b));
+}
+
+function getBloquesEstimadosServicio(row, medicoId) {
+  const tipo = String(row?.serviceType || row?.servicio_tipo || "").toLowerCase();
+  if (tipo !== "paquete" && tipo !== "perfil") return 1;
+
+  const componentes = Array.isArray(row?.componentes) ? row.componentes : [];
+  if (componentes.length === 0) return 1;
+
+  const agendables = componentes.filter((comp) => {
+    const t = normalizeServiceType(comp?.servicio_tipo || comp?.source_type || comp?.serviceType || "");
+    return t === "consulta" || t === "ecografia" || t === "rayosx" || t === "procedimiento" || t === "operacion";
+  });
+  if (agendables.length === 0) return 1;
+
+  const mid = Number(medicoId || 0);
+  const mismoMedico = agendables.filter((comp) => Number(comp?.medico_id || comp?.medicoId || 0) === mid);
+  const base = mismoMedico.length > 0 ? mismoMedico : agendables;
+  return Math.max(1, base.length);
+}
+
+function getCartReferenceForDoctor(cartItems, medicoId) {
+  const doctorId = Number(medicoId || 0);
+  if (doctorId <= 0) return null;
+  const items = Array.isArray(cartItems) ? cartItems : [];
+  for (const item of items) {
+    const mid = Number(item?.medicoId || item?.medico_id || item?.consultaMedicoId || 0);
+    if (mid !== doctorId) continue;
+    const fecha = normalizeDateYmd(item?.fechaProgramada || item?.fecha_programada || item?.consultaFecha || "");
+    const hora = normalizeHourHm(item?.horaProgramada || item?.hora_programada || item?.consultaHora || "");
+    if (fecha && hora) return { fecha, hora };
+  }
+  return null;
+}
+
+function pickDefaultFreeHour({ horasLibres, cartItems, medicoId, fechaYmd }) {
+  const libres = Array.isArray(horasLibres)
+    ? horasLibres.map((h) => normalizeHourHm(h)).filter(Boolean).sort((a, b) => horaToMinutes(a) - horaToMinutes(b))
+    : [];
+  if (libres.length === 0) return "";
+
+  const ocupadasMismoDia = collectOccupiedHoursFromCart(cartItems, medicoId, fechaYmd)
+    .map((h) => normalizeHourHm(h))
+    .filter(Boolean)
+    .sort((a, b) => horaToMinutes(a) - horaToMinutes(b));
+
+  if (ocupadasMismoDia.length === 0) return libres[0];
+
+  const step = resolveAgendaStepMinutes();
+  const ultimaHora = ocupadasMismoDia[ocupadasMismoDia.length - 1];
+  const ultimaMin = horaToMinutes(ultimaHora);
+  if (!Number.isFinite(ultimaMin)) return libres[0];
+
+  const siguienteMin = ultimaMin + step;
+  const siguienteHm = normalizeHourHm(minutesToHm(siguienteMin));
+  if (siguienteHm && libres.includes(siguienteHm)) return siguienteHm;
+
+  const posterior = libres.find((h) => horaToMinutes(h) >= siguienteMin);
+  return posterior || libres[0];
+}
+
+function getNextConsecutiveHourFromCart(cartItems, medicoId, fechaYmd) {
+  const ocupadasMismoDia = collectOccupiedHoursFromCart(cartItems, medicoId, fechaYmd)
+    .map((h) => normalizeHourHm(h))
+    .filter(Boolean)
+    .sort((a, b) => horaToMinutes(a) - horaToMinutes(b));
+  if (ocupadasMismoDia.length === 0) return "";
+  const ultimaHora = ocupadasMismoDia[ocupadasMismoDia.length - 1];
+  const ultimaMin = horaToMinutes(ultimaHora);
+  if (!Number.isFinite(ultimaMin)) return "";
+  const step = resolveAgendaStepMinutes();
+  return normalizeHourHm(minutesToHm(ultimaMin + step));
 }
 
 export default function CotizadorExpressPanel() {
@@ -333,12 +486,20 @@ export default function CotizadorExpressPanel() {
     if (medicoId <= 0) return;
     const esConsulta = String(row?.serviceType || "").toLowerCase() === "consulta";
     const etiquetaServicio = esConsulta ? "consulta" : "servicio";
+    const bloquesEstimados = getBloquesEstimadosServicio(row, medicoId);
+    const step = resolveAgendaStepMinutes();
+    const avisoBloques = bloquesEstimados > 1
+      ? `<div style="margin-top:2px;color:#1d4ed8;font-size:12px;"><b>Bloques reservados estimados:</b> ${bloquesEstimados} (${step} min c/u). Si eliges una hora, también se bloquearán los siguientes bloques consecutivos.</div>`
+      : "";
 
     const fetchDisponibilidad = async (fecha) => {
       const res = await authFetch(`api_horarios_disponibles.php?medico_id=${medicoId}&fecha=${encodeURIComponent(fecha)}`);
       const data = await res.json();
+      const horasOcupadasCarrito = collectOccupiedHoursFromCart(cart?.items, medicoId, fecha);
+      const ocupadasCarritoSet = new Set(horasOcupadasCarrito);
       const horasLibres = (Array.isArray(data?.horarios_disponibles) ? data.horarios_disponibles : [])
         .map((h) => normalizeHourHm(h?.hora || h?.hora_db || ""))
+        .filter((h) => !ocupadasCarritoSet.has(h))
         .filter(Boolean)
         .sort((a, b) => horaToMinutes(a) - horaToMinutes(b));
       const horasOcupadas = (Array.isArray(data?.horarios_ocupados) ? data.horarios_ocupados : [])
@@ -346,12 +507,15 @@ export default function CotizadorExpressPanel() {
         .filter(Boolean)
         .sort((a, b) => horaToMinutes(a) - horaToMinutes(b));
 
-      return { horasLibres, horasOcupadas };
+      const horasOcupadasTotales = Array.from(new Set([...horasOcupadas, ...horasOcupadasCarrito]))
+        .sort((a, b) => horaToMinutes(a) - horaToMinutes(b));
+      return { horasLibres, horasOcupadas: horasOcupadasTotales };
     };
 
     try {
       const hoy = getLimaDate();
-      let fechaSeleccionada = String(fechaAgenda || hoy).slice(0, 10);
+      const referenciaMedico = getCartReferenceForDoctor(cart?.items, medicoId);
+      let fechaSeleccionada = normalizeDateYmd(referenciaMedico?.fecha || fechaAgenda || hoy);
 
       const picked = await Swal.fire({
         title: `Elegir fecha y horario de ${etiquetaServicio}`,
@@ -359,6 +523,7 @@ export default function CotizadorExpressPanel() {
           <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
             <div><b>Servicio:</b> ${String(row?.description || "Consulta")}</div>
             <div><b>Médico:</b> ${String(row?.medicoNombre || "Médico")}</div>
+            ${avisoBloques}
             <div><b>Fecha:</b></div>
             <input id="swal-fecha-programada" type="date" class="swal2-input" style="margin:0;width:100%;" min="${hoy}" value="${fechaSeleccionada}" />
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -374,7 +539,8 @@ export default function CotizadorExpressPanel() {
             <div id="swal-manual-wrap" style="display:none;">
               <div><b>Hora referencial manual:</b></div>
               <input id="swal-hora-manual" type="time" class="swal2-input" style="margin:0;width:100%;" value="09:00" />
-              <div style="margin-top:4px;color:#92400e;font-size:12px;">Sin horas libres en esta fecha. Se registrará como reserva sin turno para permitir agenda futura.</div>
+              <input id="swal-hora-context" type="hidden" value="manual-fallback" />
+              <div id="swal-hora-manual-msg" style="margin-top:4px;color:#92400e;font-size:12px;">Sin horas libres en esta fecha. Se registrará como reserva sin turno para permitir agenda futura.</div>
             </div>
             <div id="swal-horas-ocupadas" style="line-height:1.3;"></div>
           </div>
@@ -388,6 +554,8 @@ export default function CotizadorExpressPanel() {
           const select = document.getElementById("swal-hora-programada");
           const manualWrap = document.getElementById("swal-manual-wrap");
           const manualHoraInput = document.getElementById("swal-hora-manual");
+          const manualContextInput = document.getElementById("swal-hora-context");
+          const manualMsg = document.getElementById("swal-hora-manual-msg");
           const libresLabel = document.getElementById("swal-horas-libres-label");
           const ocupadasWrap = document.getElementById("swal-horas-ocupadas");
           const quickButtons = Array.from(document.querySelectorAll("button[data-quick-days]"));
@@ -417,14 +585,48 @@ export default function CotizadorExpressPanel() {
                   select.innerHTML = "<option value=\"\">Sin horas libres para esta fecha</option>";
                   select.disabled = true;
                   if (manualWrap) manualWrap.style.display = "block";
+                  if (manualContextInput) manualContextInput.value = "manual-fallback";
+                  if (manualMsg) manualMsg.innerHTML = "Sin horas libres en esta fecha. Se registrará como reserva sin turno para permitir agenda futura.";
                   if (manualHoraInput && !normalizeHourHm(manualHoraInput.value || "")) {
                     manualHoraInput.value = "09:00";
                   }
                 } else {
+                  const sugeridaConsecutiva = getNextConsecutiveHourFromCart(cart?.items, medicoId, fechaNorm);
+                  const maxLibreMin = horaToMinutes(horasLibres[horasLibres.length - 1] || "");
+                  const sugeridaMin = horaToMinutes(sugeridaConsecutiva);
+                  const sugerirAdicional = Boolean(sugeridaConsecutiva)
+                    && Number.isFinite(sugeridaMin)
+                    && Number.isFinite(maxLibreMin)
+                    && sugeridaMin > maxLibreMin;
+
+                  if (sugerirAdicional) {
+                    select.innerHTML = `<option value=\"\">Sin turno regular posterior para mantener el orden</option>`;
+                    select.value = "";
+                    select.disabled = true;
+                    if (manualWrap) manualWrap.style.display = "block";
+                    if (manualContextInput) manualContextInput.value = "adicional-consecutivo";
+                    if (manualHoraInput) {
+                      manualHoraInput.value = sugeridaConsecutiva;
+                    }
+                    if (manualMsg) {
+                      manualMsg.innerHTML = `No hay turno regular posterior para mantener el orden. Se propondrá <b>adicional autorizado</b> a las ${sugeridaConsecutiva}.`;
+                    }
+                    if (libresLabel) {
+                      libresLabel.innerHTML = `<b>Horas libres (${horasLibres.length}):</b> ${horasLibres.join(" · ")}<br/><span style="color:#1d4ed8;">Sugerencia adicional consecutiva: ${sugeridaConsecutiva}</span>`;
+                    }
+                  } else {
                   select.innerHTML = horasLibres.map((h) => `<option value="${h}">${h}</option>`).join("");
-                  select.value = horasLibres[0];
+                  const sugerida = pickDefaultFreeHour({
+                    horasLibres,
+                    cartItems: cart?.items,
+                    medicoId,
+                    fechaYmd: fechaNorm,
+                  });
+                  select.value = sugerida || horasLibres[0];
                   select.disabled = false;
                   if (manualWrap) manualWrap.style.display = "none";
+                  if (manualContextInput) manualContextInput.value = "regular";
+                  }
                 }
               }
 
@@ -467,8 +669,10 @@ export default function CotizadorExpressPanel() {
           const fecha = String(document.getElementById("swal-fecha-programada")?.value || "").slice(0, 10);
           const horaLibre = normalizeHourHm(document.getElementById("swal-hora-programada")?.value || "");
           const horaManual = normalizeHourHm(document.getElementById("swal-hora-manual")?.value || "");
+          const horaContext = String(document.getElementById("swal-hora-context")?.value || "").trim().toLowerCase();
           const hora = horaLibre || horaManual;
-          const reservaSinTurno = !horaLibre;
+          const reservaSinTurno = !horaLibre && horaContext !== "adicional-consecutivo";
+          const adicionalConsecutivo = horaContext === "adicional-consecutivo";
           if (!fecha) {
             Swal.showValidationMessage("Selecciona una fecha válida");
             return false;
@@ -477,7 +681,7 @@ export default function CotizadorExpressPanel() {
             Swal.showValidationMessage("Selecciona un horario válido o ingresa una hora manual");
             return false;
           }
-          return { fecha, hora, reservaSinTurno };
+          return { fecha, hora, reservaSinTurno, adicionalConsecutivo };
         },
       });
 
@@ -485,20 +689,21 @@ export default function CotizadorExpressPanel() {
         return;
       }
 
-      agregarItem(row, {
+      await agregarItem(row, {
         horaProgramada: picked.value.hora,
         fechaProgramada: picked.value.fecha,
         consultaTipoConsulta: picked.value.reservaSinTurno ? "reservada_sin_turno" : "programada",
+        adicionalAutorizado: Boolean(picked.value.adicionalConsecutivo),
       });
     } catch {
       await Swal.fire("Atención", "No se pudo consultar la disponibilidad del médico.", "warning");
     }
   };
 
-  const agregarItem = (row, opts = {}) => {
-    const patientId = Number(identityResolved?.patientId || 0);
-    const patientName = String(identityResolved?.patientName || "Particular").trim() || "Particular";
-    const patientDni = String(identityResolved?.dni || "").trim();
+  const agregarItem = async (row, opts = {}) => {
+    let patientId = Number(identityResolved?.patientId || 0);
+    let patientName = String(identityResolved?.patientName || "Particular").trim() || "Particular";
+    let patientDni = String(identityResolved?.dni || "").trim();
     const hasMedico = Number(row?.medicoId || 0) > 0;
     const esConsulta = String(row?.serviceType || "").toLowerCase() === "consulta";
 
@@ -509,12 +714,46 @@ export default function CotizadorExpressPanel() {
       return;
     }
 
-    const fechaProgramada = hasMedico ? String(opts?.fechaProgramada || fechaAgenda || "").slice(0, 10) : "";
+    const fechaProgramada = hasMedico ? normalizeDateYmd(opts?.fechaProgramada || fechaAgenda || "") : "";
     const horaProgramada = hasMedico
       ? normalizeHourHm(opts?.horaProgramada || "") || ""
       : "";
+    let fechaProgramadaFinal = fechaProgramada;
+    let horaProgramadaFinal = horaProgramada;
+    let adicionalAutorizadoFinal = Boolean(opts?.adicionalAutorizado);
 
-    if (cart?.items?.length > 0 && Number(cart?.patientId || 0) !== patientId) {
+    if (hasMedico) {
+      const detalleSecuenciado = secuenciarDetallesPacienteSinCruce({
+        detalles: [{
+          servicio_tipo: String(row?.serviceType || ""),
+          medico_id: Number(row?.medicoId || 0),
+          fecha_programada: fechaProgramadaFinal,
+          hora_programada: horaProgramadaFinal,
+        }],
+        cartItems: cart?.items,
+        fallbackFecha: fechaProgramadaFinal || fechaAgenda || getLimaDate(),
+        fallbackHora: horaProgramadaFinal || getLimaTime(),
+        stepMinutes: resolveAgendaStepMinutes(),
+      })[0];
+
+      const fechaSec = String(detalleSecuenciado?.fecha_programada || "").slice(0, 10);
+      const horaSec = normalizeHourHm(detalleSecuenciado?.hora_programada || "");
+      if (fechaSec) fechaProgramadaFinal = fechaSec;
+      if (horaSec) horaProgramadaFinal = horaSec;
+    }
+
+    const cartHasItems = Array.isArray(cart?.items) && cart.items.length > 0;
+    const cartPatientId = Number(cart?.patientId || 0);
+
+    // Si el usuario opera en modo "Sin datos" pero ya existe un paciente en carrito,
+    // heredar ese contexto para mantener continuidad operativa.
+    if (cartHasItems && patientId <= 0 && cartPatientId > 0) {
+      patientId = cartPatientId;
+      patientName = String(cart?.patientName || patientName || "Paciente").trim() || "Paciente";
+      patientDni = String(cart?.patientDni || patientDni || "").trim();
+    }
+
+    if (cartHasItems && cartPatientId > 0 && patientId > 0 && cartPatientId !== patientId) {
       Swal.fire("Carrito en uso", "El carrito ya tiene otro paciente/contexto. Vacía el carrito o conserva el mismo paciente.", "info");
       return;
     }
@@ -525,6 +764,74 @@ export default function CotizadorExpressPanel() {
       setPatient(0, patientName, patientDni);
     }
 
+    const cruceEnCarrito = detectarCruceConCarrito({
+      cartItems: cart?.items,
+      nuevosDetalles: [{
+        servicio_tipo: String(row?.serviceType || ""),
+        medico_id: Number(row?.medicoId || 0),
+        fecha_programada: fechaProgramadaFinal,
+        hora_programada: horaProgramadaFinal,
+      }],
+    });
+    if (cruceEnCarrito) {
+      await Swal.fire(
+        "Cruce en carrito",
+        `Ya existe un servicio en el carrito para el mismo médico y horario (${fechaProgramadaFinal} ${horaProgramadaFinal}). Ajusta la hora antes de agregar.`,
+        "warning"
+      );
+      return;
+    }
+
+    if (hasMedico && fechaProgramadaFinal && horaProgramadaFinal) {
+      const agendaCheck = await validarAgendaAntesDeCotizar({
+        authFetch,
+        baseUrl: BASE_URL,
+        Swal,
+        entries: [{
+          tipo: String(row?.serviceType || ""),
+          medicoId: Number(row?.medicoId || 0),
+          fecha: fechaProgramadaFinal,
+          hora: horaProgramadaFinal,
+        }],
+        onApplySuggestion: (_entry, nuevaHora, nuevaFecha, meta = {}) => {
+          fechaProgramadaFinal = String(nuevaFecha || fechaProgramadaFinal || "").slice(0, 10);
+          horaProgramadaFinal = String(nuevaHora || horaProgramadaFinal || "").slice(0, 5);
+          if (meta?.isAdicional) {
+            adicionalAutorizadoFinal = true;
+          }
+        },
+        isHourBlocked: (entry, hourCandidate, fechaCandidate) => {
+          const medicoEntry = Number(entry?.medicoId || 0);
+          const fechaEntry = String(fechaCandidate || entry?.fecha || "").slice(0, 10);
+          const horaEntry = normalizeHourHm(hourCandidate || "");
+          if (medicoEntry <= 0 || !fechaEntry || !horaEntry) return false;
+          const ocupadasCarrito = collectOccupiedHoursFromCart(cart?.items, medicoEntry, fechaEntry);
+          return ocupadasCarrito.includes(horaEntry);
+        },
+      });
+      if (!agendaCheck?.ok) {
+        return;
+      }
+
+      const cruceRevalidado = detectarCruceConCarrito({
+        cartItems: cart?.items,
+        nuevosDetalles: [{
+          servicio_tipo: String(row?.serviceType || ""),
+          medico_id: Number(row?.medicoId || 0),
+          fecha_programada: fechaProgramadaFinal,
+          hora_programada: horaProgramadaFinal,
+        }],
+      });
+      if (cruceRevalidado) {
+        await Swal.fire(
+          "Horario ya tomado",
+          `La hora ${horaProgramadaFinal} ya está ocupada en el carrito para ese médico. Selecciona otra hora.`,
+          "warning"
+        );
+        return;
+      }
+    }
+
     addItems({
       patientId,
       patientName,
@@ -533,20 +840,24 @@ export default function CotizadorExpressPanel() {
         {
           serviceType: row.serviceType,
           serviceId: row.serviceId,
-          description: row.description,
+          description: adicionalAutorizadoFinal && !/adicional autorizado/i.test(String(row.description || ""))
+            ? `${String(row.description || "").trim()} · Adicional autorizado`
+            : row.description,
           unitPrice: row.unitPrice,
           quantity: 1,
           source: row.source,
           medicoId: Number(row.medicoId || 0),
           medicoNombre: String(row.medicoNombre || "").trim(),
-          fechaProgramada,
-          horaProgramada,
+          fechaProgramada: fechaProgramadaFinal,
+          horaProgramada: horaProgramadaFinal,
           consultaMedicoId: row.serviceType === "consulta" ? Number(row.medicoId || 0) : null,
-          consultaFecha: row.serviceType === "consulta" && row.medicoId ? fechaProgramada : "",
-          consultaHora: row.serviceType === "consulta" && row.medicoId ? horaProgramada : "",
+          consultaFecha: row.serviceType === "consulta" && row.medicoId ? fechaProgramadaFinal : "",
+          consultaHora: row.serviceType === "consulta" && row.medicoId ? horaProgramadaFinal : "",
           consultaTipoConsulta: row.serviceType === "consulta"
             ? String(opts?.consultaTipoConsulta || "programada")
             : "",
+          observacionProgramacion: adicionalAutorizadoFinal ? "Adicional autorizado por recepción" : "",
+          adicionalAutorizado: adicionalAutorizadoFinal,
           packageId: Number(row.packageId || 0) || null,
           packageCode: String(row.packageCode || ""),
           packageType: String(row.packageType || ""),
@@ -557,7 +868,7 @@ export default function CotizadorExpressPanel() {
     });
 
     if (hasMedico && esConsulta) {
-      Swal.fire("Consulta programada", `Se agregó ${row.description} para ${fechaProgramada} ${horaProgramada}.`, "success");
+      Swal.fire("Consulta programada", `Se agregó ${row.description} para ${fechaProgramadaFinal} ${horaProgramadaFinal}.`, "success");
     }
   };
 

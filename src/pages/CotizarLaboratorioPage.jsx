@@ -7,7 +7,8 @@ import Swal from "sweetalert2";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
 export default function CotizarLaboratorioPage() {
   const safeText = (value) => String(value || "");
@@ -157,10 +158,11 @@ export default function CotizarLaboratorioPage() {
       fechaBase,
       stepMinutes: 30,
     });
+    const referencia = getReferenceHorarioFromCart(cart?.items);
 
     return {
-      fecha: fechaBase,
-      hora: String(sugerida?.hora || getDefaultTime()).slice(0, 5),
+      fecha: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
+      hora: String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
       medico_id: medicoId > 0 ? medicoId : null,
     };
   };
@@ -863,7 +865,7 @@ export default function CotizarLaboratorioPage() {
     });
   };
 
-  const agregarAlCarrito = () => {
+  const agregarAlCarrito = async () => {
     if (seleccionados.length === 0) {
       Swal.fire('Atención', 'Selecciona al menos un examen para agregar al carrito.', 'info');
       return;
@@ -905,15 +907,58 @@ export default function CotizarLaboratorioPage() {
       });
     };
 
-    const detalles = construirDetallesSeleccionados().filter((d) => {
+    const detallesFiltrados = construirDetallesSeleccionados().filter((d) => {
       if (!seleccionadosParaCarrito.includes(Number(d.servicio_id))) return false;
       if (isEditingCotizacion && yaExisteEnCarrito(d)) return false;
       return true;
     });
 
-    const cantidadAgregada = detalles.length;
+    const cantidadAgregada = detallesFiltrados.length;
     if (cantidadAgregada === 0) {
       Swal.fire('Atención', 'Los exámenes seleccionados ya están en el carrito.', 'info');
+      return;
+    }
+
+    const detalles = secuenciarDetallesPacienteSinCruce({
+      detalles: detallesFiltrados,
+      cartItems: cart?.items,
+      fallbackFecha: getLimaDate(),
+      fallbackHora: getDefaultTime(),
+      stepMinutes: 30,
+    });
+
+    const cruceEnCarrito = detectarCruceConCarrito({
+      cartItems: cart?.items,
+      nuevosDetalles: detalles,
+    });
+    if (cruceEnCarrito) {
+      const { nuevo } = cruceEnCarrito;
+      await Swal.fire(
+        "Cruce en carrito",
+        `Ya existe un servicio en el carrito para el mismo médico y horario (${nuevo.fecha} ${nuevo.hora}). Ajusta la hora antes de agregar.`,
+        "warning"
+      );
+      return;
+    }
+
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora) => {
+        detalles.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(d?.hora_programada || "").slice(0, 5);
+          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+          }
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
       return;
     }
 
@@ -1019,7 +1064,13 @@ export default function CotizarLaboratorioPage() {
       limpiarCarritoAlFinal = true;
     }
 
-    const detallesLaboratorio = construirDetallesSeleccionados();
+    const detallesLaboratorio = secuenciarDetallesPacienteSinCruce({
+      detalles: construirDetallesSeleccionados(),
+      cartItems: cart?.items,
+      fallbackFecha: getLimaDate(),
+      fallbackHora: getDefaultTime(),
+      stepMinutes: 30,
+    });
     const detallesFinales = cotizacionId
       ? await construirDetallesEditados(detallesLaboratorio)
       : detallesLaboratorio;

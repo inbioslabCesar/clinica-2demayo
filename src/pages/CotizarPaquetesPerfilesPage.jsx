@@ -2,10 +2,10 @@ import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { BASE_URL, getCachedAgendaSlotMinutes } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { buildAgendaGuardEntriesFromDetalles, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
-import { getNextSuggestedHoraVisible, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 
 const SERVICE_TYPE_LABELS = {
   consulta: "Consulta",
@@ -29,6 +29,61 @@ const COMPONENT_FILTER_OPTIONS = [
 
 const LIST_INITIAL_VISIBLE = 12;
 const LIST_LOAD_STEP = 12;
+const PRESENTIAL_AGENDABLE_TYPES = new Set(["consulta", "ecografia", "rayosx", "procedimiento", "operacion"]);
+
+function resolveAgendaStepMinutes(stepMinutes) {
+  const configured = Number(getCachedAgendaSlotMinutes() || 30);
+  const requested = Number(stepMinutes || 0);
+  const source = Number.isFinite(requested) && requested > 0 && requested !== 30
+    ? requested
+    : configured;
+  return Math.max(5, Math.min(120, Math.round(source)));
+}
+
+function normalizeDateYmd(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, "0");
+  const d = String(parsed.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function normalizeHourHm(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function hmToMinutes(hm) {
+  const norm = normalizeHourHm(hm);
+  if (!norm) return null;
+  const [h, m] = norm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesToHm(totalMinutes) {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Number(totalMinutes) || 0));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function addDaysYmd(fechaYmd, daysToAdd) {
+  const base = new Date(`${String(fechaYmd || "").trim()}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return "";
+  base.setDate(base.getDate() + Number(daysToAdd || 0));
+  const y = base.getFullYear();
+  const m = String(base.getMonth() + 1).padStart(2, "0");
+  const d = String(base.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 function normalizeServiceType(value) {
   const base = String(value || "").toLowerCase().trim();
@@ -37,6 +92,193 @@ function normalizeServiceType(value) {
   if (base === "operaciones") return "operacion";
   if (base === "procedimientos") return "procedimiento";
   return base;
+}
+
+function isPresentialAgendableType(value) {
+  return PRESENTIAL_AGENDABLE_TYPES.has(normalizeServiceType(value));
+}
+
+function collectOccupiedSlotsFromDetails(details, occupiedPatient, occupiedDoctor, parentFecha = "", parentHora = "") {
+  for (const detail of Array.isArray(details) ? details : []) {
+    if (!detail || typeof detail !== "object") continue;
+    const tipo = normalizeServiceType(detail?.servicio_tipo || detail?.source_type || detail?.serviceType || "");
+    const fecha = normalizeDateYmd(detail?.fecha_programada || detail?.fechaProgramada || detail?.fecha || parentFecha || "");
+    const hora = normalizeHourHm(detail?.hora_programada || detail?.horaProgramada || detail?.hora || parentHora || "");
+    const medicoId = Number(detail?.medico_id || detail?.medicoId || detail?.consultaMedicoId || 0);
+
+    if (isPresentialAgendableType(tipo) && fecha && hora) {
+      occupiedPatient.add(`${fecha}|${hora}`);
+      if (medicoId > 0) {
+        occupiedDoctor.add(`${medicoId}|${fecha}|${hora}`);
+      }
+    }
+
+    const componentes = Array.isArray(detail?.componentes) ? detail.componentes : [];
+    if (componentes.length > 0) {
+      const componentesAgendables = componentes
+        .map((comp) => {
+          const tipoComp = normalizeServiceType(comp?.servicio_tipo || comp?.source_type || comp?.serviceType || "");
+          if (!isPresentialAgendableType(tipoComp)) return null;
+          const fechaComp = normalizeDateYmd(comp?.fecha_programada || comp?.fechaProgramada || comp?.fecha || fecha || "");
+          const horaComp = normalizeHourHm(comp?.hora_programada || comp?.horaProgramada || comp?.hora || hora || "");
+          const medicoComp = Number(comp?.medico_id || comp?.medicoId || comp?.consultaMedicoId || 0);
+          return { fecha: fechaComp, hora: horaComp, medicoId: medicoComp };
+        })
+        .filter(Boolean);
+
+      const uniqueSlots = new Set(
+        componentesAgendables
+          .filter((it) => it.fecha && it.hora)
+          .map((it) => `${it.fecha}|${it.hora}`)
+      );
+      const baseFecha = normalizeDateYmd(fecha || componentesAgendables[0]?.fecha || "");
+      const baseHora = normalizeHourHm(hora || componentesAgendables[0]?.hora || "");
+      const baseMinute = hmToMinutes(baseHora);
+
+      const needsSequentialInference = componentesAgendables.length > 1
+        && uniqueSlots.size <= 1
+        && baseFecha
+        && baseMinute !== null;
+
+      if (needsSequentialInference) {
+        const step = resolveAgendaStepMinutes(30);
+        for (let idx = 0; idx < componentesAgendables.length; idx += 1) {
+          const comp = componentesAgendables[idx];
+          const totalMin = baseMinute + idx * step;
+          const dayShift = Math.floor(totalMin / (24 * 60));
+          const minuteOfDay = ((totalMin % (24 * 60)) + (24 * 60)) % (24 * 60);
+          const fechaSeq = addDaysYmd(baseFecha, dayShift);
+          const horaSeq = minutesToHm(minuteOfDay);
+          occupiedPatient.add(`${fechaSeq}|${horaSeq}`);
+          if (Number(comp?.medicoId || 0) > 0) {
+            occupiedDoctor.add(`${Number(comp.medicoId)}|${fechaSeq}|${horaSeq}`);
+          }
+        }
+        continue;
+      }
+
+      collectOccupiedSlotsFromDetails(componentes, occupiedPatient, occupiedDoctor, fecha, hora);
+    }
+  }
+}
+
+function findNextFreeSlot({ fechaBase, minuteBase, medicoId, occupiedPatient, occupiedDoctor, stepMinutes = 30 }) {
+  let fecha = normalizeDateYmd(fechaBase);
+  let minute = Number.isFinite(minuteBase) ? minuteBase : 8 * 60;
+  const step = resolveAgendaStepMinutes(stepMinutes);
+
+  for (let guard = 0; guard < 300; guard += 1) {
+    if (!fecha) return null;
+
+    if (minute > 23 * 60 + 30) {
+      fecha = addDaysYmd(fecha, 1);
+      minute = 0;
+      continue;
+    }
+
+    const hora = minutesToHm(minute);
+    const patientKey = `${fecha}|${hora}`;
+    const doctorKey = `${Number(medicoId || 0)}|${fecha}|${hora}`;
+    const patientBusy = occupiedPatient.has(patientKey);
+    const doctorBusy = Number(medicoId || 0) > 0 ? occupiedDoctor.has(doctorKey) : false;
+
+    if (!patientBusy && !doctorBusy) {
+      return { fecha, hora, minute };
+    }
+
+    minute += step;
+  }
+
+  return null;
+}
+
+function secuenciarComponentesPaquete({
+  componentes,
+  fechaBase,
+  horaBase,
+  occupiedPatient,
+  occupiedDoctor,
+  stepMinutes = 30,
+}) {
+  const cloned = Array.isArray(componentes) ? componentes.map((c) => ({ ...c })) : [];
+  const step = resolveAgendaStepMinutes(stepMinutes);
+  const priority = { consulta: 10, ecografia: 20, rayosx: 30, procedimiento: 40, operacion: 50, laboratorio: 60, farmacia: 70 };
+
+  const indexed = cloned
+    .map((comp, idx) => ({ comp, idx }))
+    .filter(({ comp }) => isPresentialAgendableType(comp?.servicio_tipo || comp?.source_type))
+    .sort((a, b) => {
+      const pa = Number(priority[normalizeServiceType(a.comp?.servicio_tipo || a.comp?.source_type)] || 999);
+      const pb = Number(priority[normalizeServiceType(b.comp?.servicio_tipo || b.comp?.source_type)] || 999);
+      if (pa !== pb) return pa - pb;
+      return a.idx - b.idx;
+    });
+
+  let cursorFecha = normalizeDateYmd(fechaBase);
+  let cursorMinute = hmToMinutes(horaBase);
+  if (!cursorFecha) return { componentes: cloned, startFecha: "", startHora: "" };
+  if (cursorMinute === null) cursorMinute = 8 * 60;
+
+  let firstSlot = null;
+  for (const item of indexed) {
+    const medicoId = Number(item?.comp?.medico_id || 0);
+    const slot = findNextFreeSlot({
+      fechaBase: cursorFecha,
+      minuteBase: cursorMinute,
+      medicoId,
+      occupiedPatient,
+      occupiedDoctor,
+      stepMinutes: step,
+    });
+    if (!slot) continue;
+
+    cloned[item.idx] = {
+      ...cloned[item.idx],
+      fecha_programada: slot.fecha,
+      hora_programada: slot.hora,
+    };
+    occupiedPatient.add(`${slot.fecha}|${slot.hora}`);
+    if (medicoId > 0) {
+      occupiedDoctor.add(`${medicoId}|${slot.fecha}|${slot.hora}`);
+    }
+
+    if (!firstSlot) firstSlot = slot;
+    cursorFecha = slot.fecha;
+    cursorMinute = slot.minute + step;
+  }
+
+  return {
+    componentes: cloned,
+    startFecha: firstSlot?.fecha || normalizeDateYmd(fechaBase),
+    startHora: firstSlot?.hora || normalizeHourHm(horaBase),
+  };
+}
+
+function normalizarPaquetesSecuenciales(detailItems, cartItems, fallbackDate, fallbackTime) {
+  const occupiedPatient = new Set();
+  const occupiedDoctor = new Set();
+  collectOccupiedSlotsFromDetails(cartItems, occupiedPatient, occupiedDoctor);
+
+  const out = [];
+  for (const item of Array.isArray(detailItems) ? detailItems : []) {
+    const fechaBase = normalizeDateYmd(item?.fechaProgramada || item?.fecha_programada || fallbackDate || "");
+    const horaBase = normalizeHourHm(item?.horaProgramada || item?.hora_programada || fallbackTime || "");
+    const scheduled = secuenciarComponentesPaquete({
+      componentes: item?.componentes,
+      fechaBase,
+      horaBase,
+      occupiedPatient,
+      occupiedDoctor,
+      stepMinutes: 30,
+    });
+    out.push({
+      ...item,
+      componentes: scheduled.componentes,
+      fechaProgramada: String(scheduled.startFecha || fechaBase || "").slice(0, 10),
+      horaProgramada: String(scheduled.startHora || horaBase || "").slice(0, 5),
+    });
+  }
+  return out;
 }
 
 function parsePackageMeta(metaRaw) {
@@ -197,9 +439,18 @@ export default function CotizarPaquetesPerfilesPage() {
     const pid = Number(paqueteId || 0);
     const actual = programacionPorPaquete[pid];
     if (actual?.fecha_programada || actual?.hora_programada) return actual;
+    const row = rows.find((r) => Number(r.id) === pid);
+    const medicoId = resolvePaqueteMedicoId(row);
+    const fechaBase = getLimaDate();
+    const sugerida = suggestNextHorarioFromCart(cart?.items, {
+      medicoId,
+      fechaBase,
+      stepMinutes: 30,
+    });
+    const referencia = getReferenceHorarioFromCart(cart?.items);
     return {
-      fecha_programada: getLimaDate(),
-      hora_programada: getDefaultTime(),
+      fecha_programada: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
+      hora_programada: String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
     };
   };
 
@@ -215,7 +466,8 @@ export default function CotizarPaquetesPerfilesPage() {
       fechaBase,
       stepMinutes: 30,
     });
-    const horaSugerida = String(sugerida?.hora || getDefaultTime()).slice(0, 5);
+    const referencia = getReferenceHorarioFromCart(cart?.items);
+    const horaSugerida = String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5);
     const horaAplicada = getNextSuggestedHoraVisible({
       horaActual,
       horaSugerida,
@@ -225,7 +477,7 @@ export default function CotizarPaquetesPerfilesPage() {
     setProgramacionPorPaquete((prev) => ({
       ...prev,
       [pid]: {
-        fecha_programada: fechaBase,
+        fecha_programada: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
         hora_programada: horaAplicada || horaSugerida,
       },
     }));
@@ -367,18 +619,33 @@ export default function CotizarPaquetesPerfilesPage() {
 
   useEffect(() => {
     setProgramacionPorPaquete((prev) => {
+      const occupiedPatient = new Set();
+      const occupiedDoctor = new Set();
+      collectOccupiedSlotsFromDetails(cart?.items, occupiedPatient, occupiedDoctor);
+
       const next = {};
       selectedRows.forEach((row) => {
         const current = prev?.[row.id];
-        if (current?.fecha_programada || current?.hora_programada) {
-          next[row.id] = current;
-          return;
-        }
-        next[row.id] = getProgramacionPaquete(row.id);
+        const fechaBase = String(current?.fecha_programada || getLimaDate()).slice(0, 10);
+        const horaBase = String(current?.hora_programada || getDefaultTime()).slice(0, 5);
+        const components = buildPackageComponents(row, cotizacionId);
+        const scheduled = secuenciarComponentesPaquete({
+          componentes: components,
+          fechaBase,
+          horaBase,
+          occupiedPatient,
+          occupiedDoctor,
+          stepMinutes: 30,
+        });
+
+        next[row.id] = {
+          fecha_programada: String(scheduled.startFecha || fechaBase).slice(0, 10),
+          hora_programada: String(scheduled.startHora || horaBase).slice(0, 5),
+        };
       });
       return next;
     });
-  }, [selectedRows]);
+  }, [selectedRows, cart?.items, cotizacionId]);
 
   const toggleComponentFilter = (typeValue) => {
     const val = String(typeValue || "").trim();
@@ -454,7 +721,7 @@ export default function CotizarPaquetesPerfilesPage() {
     return fechas[0] || getLimaDate();
   };
 
-  const addToCart = () => {
+  const addToCart = async () => {
     if (selectedRows.length === 0) {
       Swal.fire("Atencion", "Selecciona al menos un paquete/perfil.", "info");
       return;
@@ -467,22 +734,105 @@ export default function CotizarPaquetesPerfilesPage() {
       ));
     };
 
-    const detailItems = buildSelectedPackageEntries().filter((row) => !existsInCart({ id: row.serviceId }));
+    const detailItemsBase = buildSelectedPackageEntries().filter((row) => !existsInCart({ id: row.serviceId }));
+    const detailItems = normalizarPaquetesSecuenciales(
+      detailItemsBase,
+      cart?.items,
+      getLimaDate(),
+      getDefaultTime()
+    );
 
     if (detailItems.length === 0) {
       Swal.fire("Atencion", "Los paquetes seleccionados ya estan en el carrito.", "info");
       return;
     }
 
+    const detallesPaquete = detailItems.map((it) => ({
+      servicio_tipo: it.serviceType,
+      servicio_id: it.serviceId,
+      descripcion: it.description,
+      cantidad: Number(it.quantity || 1),
+      precio_unitario: Number(it.unitPrice || 0),
+      subtotal: Number((Number(it.quantity || 1) * Number(it.unitPrice || 0)).toFixed(2)),
+      paquete_id: it.packageId,
+      paquete_codigo: it.packageCode,
+      paquete_tipo: it.packageType,
+      componentes: Array.isArray(it.componentes) ? it.componentes : [],
+      fecha_programada: String(it.fechaProgramada || ""),
+      hora_programada: String(it.horaProgramada || ""),
+      cotizacion_id: Number(it.cotizacionId || 0) || null,
+    }));
+
+    const cruceEnCarrito = detectarCruceConCarrito({
+      cartItems: cart?.items,
+      nuevosDetalles: detallesPaquete,
+    });
+    if (cruceEnCarrito) {
+      const { nuevo } = cruceEnCarrito;
+      await Swal.fire(
+        "Cruce en carrito",
+        `Ya existe un servicio en el carrito para el mismo médico y horario (${nuevo.fecha} ${nuevo.hora}). Ajusta la hora antes de agregar.`,
+        "warning"
+      );
+      return;
+    }
+
+    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
+    const agendaCheck = await validarAgendaAntesDeCotizar({
+      authFetch,
+      baseUrl: BASE_URL,
+      Swal,
+      entries: agendaEntries,
+      onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
+        const horaNueva = String(nuevaHora || "").slice(0, 5);
+        const fechaNueva = String(nuevaFecha || entry?.fecha || "").slice(0, 10);
+        detallesPaquete.forEach((detalle) => {
+          const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
+          const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
+          if (fechaDet === entry.fecha && horaDet === entry.hora) {
+            detalle.fecha_programada = fechaNueva || fechaDet;
+            detalle.hora_programada = horaNueva;
+          }
+
+          const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
+          componentes.forEach((comp) => {
+            const medicoIdComp = Number(comp?.medico_id || 0);
+            const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
+            const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
+            if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
+              comp.fecha_programada = fechaNueva || fechaComp;
+              comp.hora_programada = horaNueva;
+            }
+          });
+        });
+      },
+    });
+    if (!agendaCheck?.ok) {
+      return;
+    }
+
+    const detailItemsAjustadosBase = detailItems.map((it, idx) => ({
+      ...it,
+      fechaProgramada: String(detallesPaquete[idx]?.fecha_programada || it?.fechaProgramada || ""),
+      horaProgramada: String(detallesPaquete[idx]?.hora_programada || it?.horaProgramada || ""),
+      componentes: Array.isArray(detallesPaquete[idx]?.componentes) ? detallesPaquete[idx].componentes : (Array.isArray(it?.componentes) ? it.componentes : []),
+    }));
+    const detailItemsAjustados = normalizarPaquetesSecuenciales(
+      detailItemsAjustadosBase,
+      cart?.items,
+      getLimaDate(),
+      getDefaultTime()
+    );
+
     addItems({
       patientId: Number(pacienteId),
       patientName: paciente
         ? `${paciente.nombres || paciente.nombre || ""} ${paciente.apellidos || paciente.apellido || ""}`.trim()
         : `Paciente #${pacienteId}`,
-      items: detailItems,
+      items: detailItemsAjustados,
     });
 
-    Swal.fire("Listo", `Se agregaron ${detailItems.length} paquete(s)/perfil(es) al carrito.`, "success");
+    Swal.fire("Listo", `Se agregaron ${detailItemsAjustados.length} paquete(s)/perfil(es) al carrito.`, "success");
   };
 
   const registrarCotizacion = async ({ irACobro = false } = {}) => {
@@ -492,7 +842,13 @@ export default function CotizarPaquetesPerfilesPage() {
     }
 
     try {
-      const paquetesSeleccionados = buildSelectedPackageEntries();
+      const paquetesSeleccionadosBase = buildSelectedPackageEntries();
+      const paquetesSeleccionados = normalizarPaquetesSecuenciales(
+        paquetesSeleccionadosBase,
+        cart?.items,
+        getLimaDate(),
+        getDefaultTime()
+      );
       const fechaRef = getFechaRefPaquetes(paquetesSeleccionados);
       const detallesPaquete = paquetesSeleccionados.map((it) => ({
         servicio_tipo: it.serviceType,
@@ -516,12 +872,14 @@ export default function CotizarPaquetesPerfilesPage() {
         baseUrl: BASE_URL,
         Swal,
         entries: agendaEntries,
-        onApplySuggestion: (entry, nuevaHora) => {
+        onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
           const horaNueva = String(nuevaHora || "").slice(0, 5);
+          const fechaNueva = String(nuevaFecha || entry?.fecha || "").slice(0, 10);
           detallesPaquete.forEach((detalle) => {
             const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
             const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
             if (fechaDet === entry.fecha && horaDet === entry.hora) {
+              detalle.fecha_programada = fechaNueva || fechaDet;
               detalle.hora_programada = horaNueva;
             }
 
@@ -531,6 +889,7 @@ export default function CotizarPaquetesPerfilesPage() {
               const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
               const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
               if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
+                comp.fecha_programada = fechaNueva || fechaComp;
                 comp.hora_programada = horaNueva;
               }
             });
@@ -541,7 +900,35 @@ export default function CotizarPaquetesPerfilesPage() {
         return;
       }
 
-      let detallesFinales = detallesPaquete;
+      const paquetesRehidratados = paquetesSeleccionados.map((it, idx) => ({
+        ...it,
+        fechaProgramada: String(detallesPaquete[idx]?.fecha_programada || it?.fechaProgramada || ""),
+        horaProgramada: String(detallesPaquete[idx]?.hora_programada || it?.horaProgramada || ""),
+        componentes: Array.isArray(detallesPaquete[idx]?.componentes) ? detallesPaquete[idx].componentes : (Array.isArray(it?.componentes) ? it.componentes : []),
+      }));
+      const paquetesSeleccionadosNormalizados = normalizarPaquetesSecuenciales(
+        paquetesRehidratados,
+        cart?.items,
+        getLimaDate(),
+        getDefaultTime()
+      );
+      const detallesPaqueteNormalizados = paquetesSeleccionadosNormalizados.map((it) => ({
+        servicio_tipo: it.serviceType,
+        servicio_id: it.serviceId,
+        descripcion: it.description,
+        cantidad: Number(it.quantity || 1),
+        precio_unitario: Number(it.unitPrice || 0),
+        subtotal: Number((Number(it.quantity || 1) * Number(it.unitPrice || 0)).toFixed(2)),
+        paquete_id: it.packageId,
+        paquete_codigo: it.packageCode,
+        paquete_tipo: it.packageType,
+        componentes: Array.isArray(it.componentes) ? it.componentes : [],
+        fecha_programada: String(it.fechaProgramada || ""),
+        hora_programada: String(it.horaProgramada || ""),
+        cotizacion_id: Number(it.cotizacionId || 0) || null,
+      }));
+
+      let detallesFinales = detallesPaqueteNormalizados;
       if (isEditingCotizacion && cotizacionId > 0) {
         const resGet = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`, {
           credentials: "include",
@@ -553,7 +940,7 @@ export default function CotizarPaquetesPerfilesPage() {
         const base = Array.isArray(dataGet.cotizacion.detalles) ? dataGet.cotizacion.detalles : [];
 
         const componentKeys = new Set();
-        for (const p of detallesPaquete) {
+        for (const p of detallesPaqueteNormalizados) {
           const comps = Array.isArray(p?.componentes) ? p.componentes : [];
           for (const c of comps) {
             componentKeys.add(buildDetalleKey(c));
@@ -561,10 +948,77 @@ export default function CotizarPaquetesPerfilesPage() {
         }
 
         const baseSinComponentesRepetidos = base.filter((d) => !componentKeys.has(buildDetalleKey(d)));
-        detallesFinales = [...baseSinComponentesRepetidos, ...detallesPaquete];
+        detallesFinales = [...baseSinComponentesRepetidos, ...detallesPaqueteNormalizados];
       }
 
       const totalFinal = detallesFinales.reduce((acc, d) => acc + Number(d?.subtotal || 0), 0);
+      if (!isEditingCotizacion && detallesFinales.length > 1) {
+        const resumenPreview = detallesFinales
+          .map((detalle, idx) => {
+            const titulo = String(detalle?.descripcion || `Paquete/Perfil ${idx + 1}`);
+            const fecha = String(detalle?.fecha_programada || "").slice(0, 10) || "-";
+            const hora = String(detalle?.hora_programada || "").slice(0, 5) || "-";
+            const totalItem = Number(detalle?.subtotal || 0).toFixed(2);
+            return `<div style="padding:6px 0;border-bottom:1px solid #f1f5f9"><b>Atención ${idx + 1}</b>: ${titulo}<br/><span style="color:#475569">Fecha/Hora sugerida: ${fecha} ${hora} · Total: S/ ${totalItem}</span></div>`;
+          })
+          .join("");
+        const confirmSplit = await Swal.fire({
+          title: "Previsualización de split",
+          html: `<div style="text-align:left;font-size:13px;max-height:280px;overflow:auto">${resumenPreview}</div>`,
+          icon: "info",
+          showCancelButton: true,
+          confirmButtonText: "Registrar separado",
+          cancelButtonText: "Cancelar",
+        });
+        if (!confirmSplit.isConfirmed) {
+          return;
+        }
+
+        const payloadSplit = {
+          accion: "registrar_split",
+          paciente_id: Number(pacienteId),
+          paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
+          paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
+          modo_cotizacion: esCotizacionInformativa ? "informativa" : undefined,
+          solo_ticket: esCotizacionInformativa ? 1 : undefined,
+          observaciones: esCotizacionInformativa
+            ? "Cotización informativa separada por paquete/perfil"
+            : "Cotizacion separada por paquete/perfil",
+          grupos: detallesFinales.map((detalle) => ({
+            detalles: [detalle],
+            total: Number(Number(detalle?.subtotal || 0).toFixed(2)),
+            fecha_ref: String(detalle?.fecha_programada || fechaRef || ""),
+          })),
+        };
+        const resSplit = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payloadSplit),
+        });
+        const dataSplit = await resSplit.json();
+        const cotizacionesSeparadas = Array.isArray(dataSplit?.cotizacion_ids)
+          ? dataSplit.cotizacion_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+          : [];
+        if (!dataSplit?.success || cotizacionesSeparadas.length === 0) {
+          throw new Error(dataSplit?.error || "No se pudo registrar el split de cotizaciones");
+        }
+
+        Swal.fire(
+          "Listo",
+          `Se registraron ${cotizacionesSeparadas.length} cotizaciones separadas por paquete/perfil.`,
+          "success"
+        ).then(() => {
+          if (irACobro && cotizacionesSeparadas.length > 0) {
+            const principal = cotizacionesSeparadas[0];
+            navigate(`/cobrar-cotizacion/${principal}?ids=${encodeURIComponent(cotizacionesSeparadas.join(","))}`);
+            return;
+          }
+          navigate("/cotizaciones");
+        });
+        return;
+      }
+
       const payload = isEditingCotizacion && cotizacionId > 0
         ? {
             accion: "editar",

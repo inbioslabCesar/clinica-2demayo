@@ -843,6 +843,41 @@ class CobroModule
         return $res && $res->num_rows > 0;
     }
 
+    private static function normalizarDuracionSlot($value)
+    {
+        $slot = (int)$value;
+        if ($slot <= 0) $slot = 30;
+        if ($slot < 5) $slot = 5;
+        if ($slot > 120) $slot = 120;
+        return $slot;
+    }
+
+    private static function obtenerDuracionSlotMin($conn)
+    {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+
+        $cache = 30;
+        if (!self::tableExists($conn, 'configuracion_clinica')
+            || !self::columnExists($conn, 'configuracion_clinica', 'duracion_slot_min')) {
+            return $cache;
+        }
+
+        $stmt = $conn->prepare('SELECT duracion_slot_min FROM configuracion_clinica ORDER BY id DESC LIMIT 1');
+        if (!$stmt) {
+            return $cache;
+        }
+
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $cache = self::normalizarDuracionSlot($row['duracion_slot_min'] ?? 30);
+        return $cache;
+    }
+
     private static function resolverMedicoDesdeConsulta($conn, $consultaId)
     {
         $consultaId = (int)$consultaId;
@@ -2466,6 +2501,7 @@ class CobroModule
         }
 
         $slots = [];
+        $slotMinutes = self::obtenerDuracionSlotMin($conn);
         if (self::tableExists($conn, 'disponibilidad_medicos')) {
             $stmtDisp = $conn->prepare('SELECT hora_inicio, hora_fin FROM disponibilidad_medicos WHERE medico_id = ? AND fecha = ? ORDER BY hora_inicio ASC');
             if ($stmtDisp) {
@@ -2476,7 +2512,7 @@ class CobroModule
                     $ini = self::toMinutesFromHm((string)($row['hora_inicio'] ?? ''));
                     $fin = self::toMinutesFromHm((string)($row['hora_fin'] ?? ''));
                     if ($ini === null || $fin === null || $fin <= $ini) continue;
-                    for ($m = $ini; $m < $fin; $m += 30) {
+                    for ($m = $ini; $m < $fin; $m += $slotMinutes) {
                         $h = self::toHmFromMinutes($m);
                         if (!isset($ocupadas[$h])) {
                             $slots[$h] = true;
@@ -2488,7 +2524,7 @@ class CobroModule
         }
 
         if (empty($slots)) {
-            for ($m = (7 * 60); $m <= (20 * 60); $m += 30) {
+            for ($m = (7 * 60); $m <= (20 * 60); $m += $slotMinutes) {
                 $h = self::toHmFromMinutes($m);
                 if (!isset($ocupadas[$h])) {
                     $slots[$h] = true;
@@ -2853,7 +2889,6 @@ class CobroModule
         $conflictos = [];
         $cacheMedico = [];
         $cacheOrigenHc = [];
-
         foreach ((array)$detalles as $detalle) {
             if (!is_array($detalle)) continue;
 
@@ -2975,6 +3010,10 @@ class CobroModule
                     $stmtChkA->execute();
                     $resChkA = $stmtChkA->get_result();
                     while ($resChkA && ($rowA = $resChkA->fetch_assoc())) {
+                        $mismoAgenda = $agendaIdActual > 0 && (int)($rowA['id'] ?? 0) === $agendaIdActual;
+                        if ($mismoAgenda) {
+                            continue;
+                        }
                         $mismaCot = (int)($rowA['cotizacion_id'] ?? 0) === $cotizacionId;
                         $mismoDet = $detalleId > 0 && (int)($rowA['cotizacion_detalle_id'] ?? 0) === $detalleId;
                         if ($mismaCot && $mismoDet) {
@@ -3003,40 +3042,6 @@ class CobroModule
                 continue;
             }
 
-            $horaActualMin = self::toMinutesFromHm($hora);
-            $horaMaximaOcupada = self::resolverHoraMaximaOcupadaDia(
-                $conn,
-                $medicoId,
-                $fecha,
-                $consultaId,
-                $agendaIdActual,
-                $cotizacionId,
-                $detalleId
-            );
-
-            if ($horaActualMin !== null && $horaMaximaOcupada !== null && $horaActualMin <= $horaMaximaOcupada) {
-                $sugeridosPosteriores = self::filtrarHorariosPosteriores($sugeridos, $horaMaximaOcupada);
-                if (empty($sugeridosPosteriores)) {
-                    $referenciaPosterior = self::toHmFromMinutes(min(1439, $horaMaximaOcupada + 1));
-                    $sugeridosPosteriores = self::filtrarHorariosPosteriores(
-                        self::resolverHorariosDisponiblesMedicoFecha($conn, $medicoId, $fecha, $referenciaPosterior, 10),
-                        $horaMaximaOcupada
-                    );
-                }
-
-                $conflictos[] = [
-                    'tipo' => 'requiere_reprogramacion',
-                    'detalle_id' => $detalleId,
-                    'cotizacion_id' => $cotizacionId,
-                    'medico_id' => $medicoId,
-                    'servicio_tipo' => $servicioTipo,
-                    'descripcion' => $descripcion,
-                    'fecha_programada' => $fecha,
-                    'hora_programada' => $hora,
-                    'horarios_sugeridos' => $sugeridosPosteriores,
-                    'mensaje' => 'Para mantener el orden operativo del día, reprograme a un horario posterior disponible antes de cobrar.',
-                ];
-            }
         }
 
         if (empty($conflictos)) {

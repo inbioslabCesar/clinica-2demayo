@@ -1,8 +1,8 @@
 import { authFetch } from "../../utils/apiClient";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../../config/config";
-import { validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
+import { detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 import DisponibilidadMedicos from "../medico/DisponibilidadMedicos";
 import FormularioAgendarConsulta from "./FormularioAgendarConsulta";
 import ResumenConsultaAgendada from "../comunes/ResumenConsultaAgendada";
@@ -84,6 +84,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const [cargandoConsultaEdicion, setCargandoConsultaEdicion] = useState(false);
   const [consultasDisponibles, setConsultasDisponibles] = useState([]);
   const [modoAgregarConsulta, setModoAgregarConsulta] = useState(false);
+  const coberturaConsultaCacheRef = useRef(new Map());
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
@@ -319,41 +320,62 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
 
     const cargarCoberturaConsulta = async () => {
       const tarifas = Array.isArray(tarifasConsulta) ? tarifasConsulta : [];
-      if (!pacienteId || tarifas.length === 0 || !fecha) {
+      if (!pacienteId || tarifas.length === 0 || !fecha || medicoIdRespaldo <= 0) {
         if (!cancelled) setCoverageByTarifa({});
         return;
       }
 
-      const entradas = await Promise.all(
-        tarifas.map(async (tarifa) => {
-          const tarifaId = Number(tarifa?.id || 0);
-          if (tarifaId <= 0) return [tarifaId, null];
-          try {
-            const res = await authFetch(
-              `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=consulta&servicio_id=${tarifaId}&cantidad=1&fecha_ref=${encodeURIComponent(String(fecha))}`,
-              { credentials: "include" }
-            );
-            const data = await res.json();
-            return [tarifaId, data?.cobertura || null];
-          } catch {
-            return [tarifaId, null];
-          }
-        })
+      const tarifaSeleccionada = tarifas.find(
+        (tarifa) => Number(tarifa?.medico_id || 0) === Number(medicoIdRespaldo)
       );
+      const tarifaId = Number(tarifaSeleccionada?.id || 0);
+      if (tarifaId <= 0) {
+        if (!cancelled) setCoverageByTarifa({});
+        return;
+      }
 
-      if (!cancelled) {
-        const sane = entradas.filter(([id]) => Number(id) > 0);
-        setCoverageByTarifa(Object.fromEntries(sane));
+      const fechaKey = String(fecha).slice(0, 10);
+      const cacheKey = `${Number(pacienteId)}|${tarifaId}|${fechaKey}`;
+
+      if (coberturaConsultaCacheRef.current.has(cacheKey)) {
+        const cached = coberturaConsultaCacheRef.current.get(cacheKey);
+        if (!cancelled) {
+          setCoverageByTarifa({ [tarifaId]: cached });
+        }
+        return;
+      }
+
+      try {
+        const res = await authFetch(
+          `${BASE_URL}api_contratos.php?accion=validar_cobertura&paciente_id=${Number(pacienteId)}&servicio_tipo=consulta&servicio_id=${tarifaId}&cantidad=1&fecha_ref=${encodeURIComponent(fechaKey)}`,
+          { credentials: "include" }
+        );
+        const data = await res.json();
+        const cobertura = data?.cobertura || null;
+        coberturaConsultaCacheRef.current.set(cacheKey, cobertura);
+        if (!cancelled) {
+          setCoverageByTarifa({ [tarifaId]: cobertura });
+        }
+      } catch {
+        if (!cancelled) {
+          setCoverageByTarifa({ [tarifaId]: null });
+        }
       }
     };
 
     cargarCoberturaConsulta();
     return () => { cancelled = true; };
-  }, [pacienteId, tarifasConsulta, fecha]);
+  }, [pacienteId, tarifasConsulta, fecha, medicoIdRespaldo]);
 
   // Cargar horarios disponibles cuando se selecciona médico y fecha
   useEffect(() => {
-    if (medicoIdRespaldo > 0 && fecha) {
+    if (!(medicoIdRespaldo > 0 && fecha)) {
+      setHorariosDisponibles([]);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const debounceId = window.setTimeout(() => {
       setCargandoHorarios(true);
 
       const params = new URLSearchParams({
@@ -367,6 +389,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       authFetch(`${BASE_URL}api_horarios_disponibles.php?${params.toString()}`, {
         credentials: "include",
         cache: "no-store",
+        signal: controller.signal,
       })
         .then((r) => r.json())
         .then((data) => {
@@ -378,13 +401,17 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           }
         })
         .catch((error) => {
+          if (error?.name === "AbortError") return;
           console.error("Error:", error);
           setHorariosDisponibles([]);
         })
         .finally(() => setCargandoHorarios(false));
-    } else {
-      setHorariosDisponibles([]);
-    }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(debounceId);
+      controller.abort();
+    };
   }, [medicoIdRespaldo, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
 
   useEffect(() => {
@@ -681,6 +708,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       authFetch,
       baseUrl: BASE_URL,
       Swal: MySwal,
+      useCartSessionFilter: false,
       entries: [{
         tipo: "consulta",
         medicoId: Number(medicoId),
@@ -904,6 +932,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       authFetch,
       baseUrl: BASE_URL,
       Swal: MySwal,
+      useCartSessionFilter: false,
       entries: [{
         tipo: "consulta",
         medicoId: Number(medicoId),
@@ -1084,6 +1113,50 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         return;
       }
 
+      let fechaProgramada = String(fecha || "").slice(0, 10);
+      let horaProgramada = String(hora || "").slice(0, 5);
+      const cruceEnCarrito = detectarCruceConCarrito({
+        cartItems: cart?.items,
+        nuevosDetalles: [{
+          servicio_tipo: "consulta",
+          medico_id: Number(medicoId || 0),
+          fecha_programada: fechaProgramada,
+          hora_programada: horaProgramada,
+        }],
+      });
+      if (cruceEnCarrito) {
+        await MySwal.fire({
+          icon: "warning",
+          title: "Cruce en carrito",
+          text: `Ya existe un servicio en el carrito para el mismo médico y horario (${fechaProgramada} ${horaProgramada}). Ajusta la hora antes de agregar.`,
+          confirmButtonText: "Entendido",
+        });
+        return;
+      }
+
+      const agendaCheck = await validarAgendaAntesDeCotizar({
+        authFetch,
+        baseUrl: BASE_URL,
+        Swal: MySwal,
+        entries: [
+          {
+            tipo: "consulta",
+            medicoId: Number(medicoId || 0),
+            fecha: fechaProgramada,
+            hora: horaProgramada,
+          },
+        ],
+        onApplySuggestion: (_entry, nuevaHora, nuevaFecha) => {
+          fechaProgramada = String(nuevaFecha || fechaProgramada || "").slice(0, 10);
+          horaProgramada = String(nuevaHora || horaProgramada || "").slice(0, 5);
+          setFecha(fechaProgramada);
+          setHora(horaProgramada);
+        },
+      });
+      if (!agendaCheck?.ok) {
+        return;
+      }
+
       addItems({
         patientId: pacienteActualId,
         patientName: pacienteInfo
@@ -1093,16 +1166,16 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           {
             serviceType: "consulta",
             serviceId: Number(tarifa.id || 0),
-            description: `${descripcionServicio} - ${medicoNombre || "Sin médico"} (${fecha} ${hora})`,
+            description: `${descripcionServicio} - ${medicoNombre || "Sin médico"} (${fechaProgramada} ${horaProgramada})`,
             quantity: 1,
             unitPrice: Number(precio),
             source: "consulta",
             medicoId: Number(medicoId || 0),
-            fechaProgramada: String(fecha || "").slice(0, 10),
-            horaProgramada: String(hora || "").slice(0, 5),
+            fechaProgramada,
+            horaProgramada,
             consultaMedicoId: Number(medicoId),
-            consultaFecha: fecha,
-            consultaHora: hora,
+            consultaFecha: fechaProgramada,
+            consultaHora: horaProgramada,
             consultaTipoConsulta: tipoConsulta,
             consultaId: consultaIdNum > 0 ? Number(consultaIdNum) : null,
           },

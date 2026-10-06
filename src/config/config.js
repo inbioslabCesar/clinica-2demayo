@@ -33,6 +33,45 @@ export const BASE_URL = import.meta.env.DEV
 let _configPromise = null;
 let _configResolvedAt = 0;
 const CONFIG_SINGLETON_TTL_MS = 5 * 60 * 1000;
+const AGENDA_SLOT_STORAGE_KEY = 'clinica_agenda_slot_min';
+
+function normalizeAgendaSlotMinutes(raw) {
+    const n = Number(raw || 30);
+    if (!Number.isFinite(n) || n <= 0) return 30;
+    return Math.max(5, Math.min(120, Math.round(n)));
+}
+
+function cacheAgendaSlotMinutes(raw) {
+    const slot = normalizeAgendaSlotMinutes(raw);
+    try {
+        sessionStorage.setItem(AGENDA_SLOT_STORAGE_KEY, String(slot));
+    } catch {
+        // noop
+    }
+    if (typeof window !== 'undefined') {
+        window.__CLINICA_AGENDA_SLOT_MIN = slot;
+    }
+    return slot;
+}
+
+export function getCachedAgendaSlotMinutes() {
+    if (typeof window !== 'undefined' && Number.isFinite(Number(window.__CLINICA_AGENDA_SLOT_MIN))) {
+        return normalizeAgendaSlotMinutes(window.__CLINICA_AGENDA_SLOT_MIN);
+    }
+    try {
+        const stored = sessionStorage.getItem(AGENDA_SLOT_STORAGE_KEY);
+        if (stored !== null) return normalizeAgendaSlotMinutes(stored);
+    } catch {
+        // noop
+    }
+    return 30;
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('clinica-config-updated', (event) => {
+        cacheAgendaSlotMinutes(event?.detail?.duracion_slot_min);
+    });
+}
 
 export function fetchConfigSingleton() {
     const now = Date.now();
@@ -45,6 +84,7 @@ export function fetchConfigSingleton() {
     )
         .then(r => r.json())
         .then(data => {
+            cacheAgendaSlotMinutes(data?.data?.duracion_slot_min);
             _configResolvedAt = Date.now();
             return data;
         })

@@ -81,9 +81,11 @@ function disponibilidadPagoLabel(cita) {
   const cotId = Number(cita?.cotizacion_id || 0);
   const saldo = Number(cita?.saldo_pendiente || 0);
   const estado = String(cita?.cotizacion_estado || "").toLowerCase();
+  const saldoRepetido = Boolean(cita?._saldo_repetido_cotizacion);
 
   if (cotId <= 0) return "Sin orden";
-  if (saldo > 0) return `Saldo S/ ${saldo.toFixed(2)}`;
+  if (saldo > 0 && saldoRepetido) return `Incluido en saldo cotiz. #${cotId}`;
+  if (saldo > 0) return `Saldo cotiz. S/ ${saldo.toFixed(2)}`;
   if (["pagado", "pagada", "control"].includes(estado)) return "Pagado";
   return "Sin saldo";
 }
@@ -92,8 +94,10 @@ function disponibilidadPagoBadge(cita) {
   const cotId = Number(cita?.cotizacion_id || 0);
   const saldo = Number(cita?.saldo_pendiente || 0);
   const estado = String(cita?.cotizacion_estado || "").toLowerCase();
+  const saldoRepetido = Boolean(cita?._saldo_repetido_cotizacion);
 
   if (cotId <= 0) return "border-slate-300 bg-slate-100 text-slate-700";
+  if (saldo > 0 && saldoRepetido) return "border-amber-300 bg-amber-50 text-amber-800";
   if (saldo > 0) return "border-rose-300 bg-rose-100 text-rose-700";
   if (["pagado", "pagada", "control"].includes(estado)) return "border-emerald-300 bg-emerald-100 text-emerald-700";
   return "border-slate-300 bg-slate-100 text-slate-700";
@@ -359,6 +363,8 @@ function agruparRecordatoriosAgendaServicio(items) {
     agendas.sort(compararFechaHoraItem);
     const agendasReferencia = agendas.filter((ag) => !ag?._fusionado_desde_consulta);
     const agendasBase = agendasReferencia.length > 0 ? agendasReferencia : agendas;
+    const agendaInicio = agendas[0] || agendasBase[0] || null;
+    const agendaFin = agendas[agendas.length - 1] || agendasBase[agendasBase.length - 1] || null;
     const serviciosTokens = agendas.flatMap(servicioTokensDesdeItem);
     const serviciosUnicos = Array.from(new Set(serviciosTokens));
     const medicosUnicos = Array.from(new Set(agendas.map((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim()).filter(Boolean)));
@@ -372,15 +378,15 @@ function agruparRecordatoriosAgendaServicio(items) {
 
     item.servicio_tipo = "paquete";
     item.servicios_label = serviciosUnicos.join(" + ") || "Paquete";
-    item.agendas_count = agendasBase.length;
+    item.agendas_count = agendas.length;
     item.servicios_count = serviciosUnicos.length;
     item.fechas_count = fechasUnicas.length;
     item.medico_nombre = medicosUnicos.length > 1 ? "Varios" : (primerAgendaConMedico?.medico_nombre || agendasBase[0]?.medico_nombre || item.medico_nombre || "");
     item.medico_apellido = medicosUnicos.length > 1 ? "médicos" : (primerAgendaConMedico?.medico_apellido || agendasBase[0]?.medico_apellido || item.medico_apellido || "");
-    item.fecha = agendasBase[0]?.fecha || item.fecha || "";
-    item.hora = agendasBase[0]?.hora || item.hora || "";
-    item.fecha_fin = agendasBase[agendasBase.length - 1]?.fecha || item.fecha_fin || "";
-    item.hora_fin = agendasBase[agendasBase.length - 1]?.hora || item.hora_fin || "";
+    item.fecha = agendaInicio?.fecha || item.fecha || "";
+    item.hora = agendaInicio?.hora || item.hora || "";
+    item.fecha_fin = agendaFin?.fecha || item.fecha_fin || "";
+    item.hora_fin = agendaFin?.hora || item.hora_fin || "";
     item.correlativo_estable = correlativosEstables[0] || Number(item?.correlativo_estable || 0) || null;
     item._pago_grupo = pagoConsolidado;
   }
@@ -962,8 +968,8 @@ export default function RecordatoriosCitasPage() {
 
   const citasDisponibilidadFiltradas = useMemo(() => {
     const citas = Array.isArray(agendaMedicoData?.citas) ? agendaMedicoData.citas : [];
-    if (filtroPagoDisponibilidad === "saldo_pendiente") {
-      return citas
+    const citasBase = filtroPagoDisponibilidad === "saldo_pendiente"
+      ? citas
         .filter((cita) => Number(cita?.saldo_pendiente || 0) > 0)
         .sort((a, b) => {
           const saldoA = Number(a?.saldo_pendiente || 0);
@@ -972,10 +978,72 @@ export default function RecordatoriosCitasPage() {
           const horaA = String(a?.hora || "").slice(0, 5);
           const horaB = String(b?.hora || "").slice(0, 5);
           return horaA.localeCompare(horaB);
-        });
-    }
-    return citas;
+        })
+      : citas;
+
+    const cotizacionesConSaldoMostrado = new Set();
+    return citasBase.map((cita) => {
+      const cotId = Number(cita?.cotizacion_id || 0);
+      const saldo = Number(cita?.saldo_pendiente || 0);
+      if (cotId <= 0 || saldo <= 0) {
+        return { ...cita, _saldo_repetido_cotizacion: false };
+      }
+
+      if (!cotizacionesConSaldoMostrado.has(cotId)) {
+        cotizacionesConSaldoMostrado.add(cotId);
+        return { ...cita, _saldo_repetido_cotizacion: false };
+      }
+
+      return { ...cita, _saldo_repetido_cotizacion: true };
+    });
   }, [agendaMedicoData, filtroPagoDisponibilidad]);
+
+  const resumenSaldoDisponibilidad = useMemo(() => {
+    const citas = Array.isArray(agendaMedicoData?.citas) ? agendaMedicoData.citas : [];
+    const citasConSaldo = citas.filter((cita) => Number(cita?.saldo_pendiente || 0) > 0);
+    const cotizacionesConSaldo = new Set(
+      citasConSaldo
+        .map((cita) => Number(cita?.cotizacion_id || 0))
+        .filter((cotId) => cotId > 0)
+    );
+    return {
+      serviciosConSaldo: citasConSaldo.length,
+      cotizacionesConSaldo: cotizacionesConSaldo.size,
+    };
+  }, [agendaMedicoData]);
+
+  const bloquesDisponibilidad = useMemo(() => {
+    const bloques = [];
+    const porCotizacion = new Map();
+
+    for (const cita of citasDisponibilidadFiltradas) {
+      const cotId = Number(cita?.cotizacion_id || 0);
+
+      if (cotId <= 0) {
+        bloques.push({
+          key: `single-${String(cita?.origen || "x")}-${Number(cita?.id || 0)}`,
+          cotizacion_id: 0,
+          citas: [cita],
+        });
+        continue;
+      }
+
+      if (!porCotizacion.has(cotId)) {
+        const bloque = {
+          key: `cot-${cotId}`,
+          cotizacion_id: cotId,
+          citas: [cita],
+        };
+        porCotizacion.set(cotId, bloque);
+        bloques.push(bloque);
+        continue;
+      }
+
+      porCotizacion.get(cotId).citas.push(cita);
+    }
+
+    return bloques;
+  }, [citasDisponibilidadFiltradas]);
 
   const irAAgendarConHora = (hora) => {
     const medicoId = Number(medicoDisponibilidadId || 0);
@@ -1517,6 +1585,9 @@ export default function RecordatoriosCitasPage() {
   const reprogramarAgendaServicio = async (item) => {
     const fechaActual = item.fecha || "";
     const horaActual = item.hora ? String(item.hora).slice(0, 5) : "";
+    let iniciosValidos = [];
+    let turnosLibresMedicoActual = [];
+    let turnosRequeridosActual = 1;
     
     const modal = await Swal.fire({
       title: "Reprogramar servicios",
@@ -1527,15 +1598,133 @@ export default function RecordatoriosCitasPage() {
             <input id="rc_fecha_reprog" type="date" class="swal2-input" style="margin:0;width:100%;" value="${fechaActual}" />
           </div>
           <div>
+            <label style="font-size:12px;font-weight:600;color:#334155;">Turnos libres del médico</label>
+            <select id="rc_hora_reprog_sugerida" class="swal2-input" style="margin:0;width:100%;">
+              <option value="">Cargando turnos...</option>
+            </select>
+          </div>
+          <div>
             <label style="font-size:12px;font-weight:600;color:#334155;">Nueva hora</label>
             <input id="rc_hora_reprog" type="time" class="swal2-input" style="margin:0;width:100%;" value="${horaActual}" />
           </div>
+          <div id="rc_hora_reprog_hint" style="font-size:12px;color:#64748b;line-height:1.35;"></div>
         </div>
       `,
       focusConfirm: false,
       showCancelButton: true,
       confirmButtonText: "Reprogramar",
       cancelButtonText: "Cancelar",
+      didOpen: async () => {
+        const fechaEl = document.getElementById("rc_fecha_reprog");
+        const horaEl = document.getElementById("rc_hora_reprog");
+        const selectEl = document.getElementById("rc_hora_reprog_sugerida");
+        const hintEl = document.getElementById("rc_hora_reprog_hint");
+        if (!fechaEl || !horaEl || !selectEl || !hintEl) return;
+
+        const llenarSelect = (horasLibres = [], horasInicioValidas = []) => {
+          selectEl.innerHTML = "";
+          if (!Array.isArray(horasLibres) || horasLibres.length === 0) {
+            const opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = "Sin turnos libres en esta fecha";
+            selectEl.appendChild(opt);
+            return;
+          }
+          const placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = "Elegir turno libre";
+          selectEl.appendChild(placeholder);
+          horasLibres.forEach((h) => {
+            const hh = String(h || "").slice(0, 5);
+            if (!hh) return;
+            const esInicioValido = Array.isArray(horasInicioValidas) && horasInicioValidas.includes(hh);
+            const opt = document.createElement("option");
+            opt.value = hh;
+            opt.textContent = esInicioValido ? `${hh} (inicio válido)` : `${hh} (no alcanza bloque)`;
+            selectEl.appendChild(opt);
+          });
+        };
+
+        const cargarTurnos = async (fecha, conservarHoraActual = false) => {
+          if (!fecha) return;
+          hintEl.textContent = "Consultando turnos libres...";
+          iniciosValidos = [];
+          turnosLibresMedicoActual = [];
+          llenarSelect([]);
+          try {
+            const params = new URLSearchParams({
+              vista: "reprogramacion_turnos",
+              cotizacion_id: String(Number(item?.cotizacion_id || 0)),
+              fecha: String(fecha),
+              _t: String(Date.now()),
+            });
+            const res = await authFetch(`api_recordatorios_citas.php?${params.toString()}`);
+            const data = await res.json();
+            if (!data?.success) {
+              throw new Error(data?.error || "No se pudo cargar turnos libres");
+            }
+
+            const turnosLibresMedico = Array.isArray(data?.turnos_libres_medico) ? data.turnos_libres_medico : [];
+            const turnos = Array.isArray(data?.turnos_libres_inicio) ? data.turnos_libres_inicio : [];
+            const turnosRequeridos = Number(data?.turnos_requeridos || 1);
+            iniciosValidos = [...turnos];
+            turnosLibresMedicoActual = [...turnosLibresMedico];
+            turnosRequeridosActual = turnosRequeridos > 0 ? turnosRequeridos : 1;
+            llenarSelect(turnosLibresMedico, turnos);
+            if (turnosLibresMedico.length > 0) {
+              const horaActualInput = String(horaEl.value || "").slice(0, 5);
+              const horaValida = conservarHoraActual && turnosLibresMedico.includes(horaActualInput);
+              const primeraValida = String(turnos[0] || "").slice(0, 5);
+              const primeraLibre = String(turnosLibresMedico[0] || "").slice(0, 5);
+              const horaSeleccionada = horaValida
+                ? horaActualInput
+                : (primeraValida || primeraLibre);
+              horaEl.value = horaSeleccionada;
+              selectEl.value = horaSeleccionada;
+              const libresTxt = `Turnos libres del médico: ${turnosLibresMedico.join(", ")}.`;
+              const iniciosTxt = turnos.length > 0
+                ? ` Inicios válidos para ${turnosRequeridos} turno(s) consecutivos: ${turnos.join(", ")}.`
+                : ` No hay inicio válido para ${turnosRequeridos} turno(s) consecutivos en esta fecha.`;
+              hintEl.textContent = `${libresTxt}${iniciosTxt}`;
+            } else {
+              const sugerencias = Array.isArray(data?.sugerencias_otras_fechas) ? data.sugerencias_otras_fechas : [];
+              const sugerenciasTxt = sugerencias
+                .slice(0, 3)
+                .map((s) => {
+                  const f = String(s?.fecha || "").trim();
+                  const hs = Array.isArray(s?.turnos_inicio) ? s.turnos_inicio.slice(0, 4) : [];
+                  if (!f || hs.length === 0) return "";
+                  return `${f}: ${hs.join(", ")}`;
+                })
+                .filter(Boolean)
+                .join(" | ");
+              hintEl.textContent = sugerenciasTxt
+                ? `No hay turnos libres ese día. Sugerencias: ${sugerenciasTxt}.`
+                : "No hay turnos libres ese día. Elige otra fecha.";
+            }
+          } catch (err) {
+            llenarSelect([]);
+            hintEl.textContent = err?.message || "No se pudo cargar turnos libres.";
+          }
+        };
+
+        fechaEl.addEventListener("change", () => {
+          cargarTurnos(String(fechaEl.value || "").trim(), false);
+        });
+        selectEl.addEventListener("change", () => {
+          const hh = String(selectEl.value || "").slice(0, 5);
+          if (hh) {
+            horaEl.value = hh;
+            if (iniciosValidos.includes(hh)) {
+              hintEl.textContent = `Turno ${hh} seleccionado: inicio válido de bloque.`;
+            } else if (turnosLibresMedicoActual.includes(hh)) {
+              hintEl.textContent = `Turno ${hh} está libre, pero no completa el bloque de turnos requerido.`;
+            }
+          }
+        });
+
+        await cargarTurnos(String(fechaEl.value || "").trim(), true);
+      },
       preConfirm: () => {
         const fechaEl = document.getElementById("rc_fecha_reprog");
         const horaEl = document.getElementById("rc_hora_reprog");
@@ -1544,6 +1733,31 @@ export default function RecordatoriosCitasPage() {
         if (!fecha || !hora) {
           Swal.showValidationMessage("Debes ingresar fecha y hora");
           return null;
+        }
+        const now = new Date();
+        const yyyy = String(now.getFullYear());
+        const mm = String(now.getMonth() + 1).padStart(2, "0");
+        const dd = String(now.getDate()).padStart(2, "0");
+        const hoy = `${yyyy}-${mm}-${dd}`;
+        if (fecha < hoy) {
+          Swal.showValidationMessage("No se puede reprogramar en una fecha pasada.");
+          return null;
+        }
+        if (fecha === hoy) {
+          const [hSel, mSel] = hora.split(":").map((v) => Number(v || 0));
+          const minutoSeleccionado = (hSel * 60) + mSel;
+          const minutoActual = (now.getHours() * 60) + now.getMinutes();
+          if (minutoSeleccionado <= minutoActual) {
+            Swal.showValidationMessage("La hora elegida ya pasó para hoy. Elige una hora futura.");
+            return null;
+          }
+        }
+        const horaHHMM = String(hora || "").slice(0, 5);
+        if (Array.isArray(turnosLibresMedicoActual) && turnosLibresMedicoActual.length > 0) {
+          if (!turnosLibresMedicoActual.includes(horaHHMM)) {
+            Swal.showValidationMessage("Debes elegir una hora que esté en los turnos libres del médico.");
+            return null;
+          }
         }
         return { fecha, hora };
       },
@@ -1556,29 +1770,80 @@ export default function RecordatoriosCitasPage() {
     setSavingId(item.id);
     setMensaje("");
     try {
-      const res = await authFetch(`api_recordatorios_citas.php`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "reprogramar_agenda_servicio",
-          cotizacion_id: Number(item.cotizacion_id),
-          nueva_fecha: fecha,
-          nueva_hora: hora,
-        }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || "No se pudo reprogramar");
+      const enviarReprogramacion = async (forzarAdicional = false) => {
+        const res = await authFetch(`api_recordatorios_citas.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "reprogramar_agenda_servicio",
+            cotizacion_id: Number(item.cotizacion_id),
+            nueva_fecha: fecha,
+            nueva_hora: hora,
+            forzar_adicional: forzarAdicional ? 1 : 0,
+          }),
+        });
+        return res.json();
+      };
+
+      let data = await enviarReprogramacion(false);
+      if (!data?.success && Number(data?.diagnostico?.permite_forzar_adicional || 0) === 1) {
+        const confirmAdicional = await Swal.fire({
+          icon: "question",
+          title: "¿Programar como adicional?",
+          text: `${data?.error || "No hay bloque regular completo."} Si el médico autoriza, puedo reprogramar como adicional solo después de su última hora regular.`,
+          showCancelButton: true,
+          confirmButtonText: "Sí, programar adicional",
+          cancelButtonText: "No",
+        });
+        if (confirmAdicional.isConfirmed) {
+          data = await enviarReprogramacion(true);
+        }
       }
-      setMensaje(`Servicios reprogramados para ${fecha} a las ${String(hora).slice(0, 5)}.`);
+
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo reprogramar");
+      }
+      const turnoProgramados = Array.isArray(data?.turnos_programados) ? data.turnos_programados : [];
+      const horaInicio = String(data?.reprogramada_hora || String(hora).slice(0, 5)).slice(0, 5);
+      const horaFin = String(data?.reprogramada_hora_fin || horaInicio).slice(0, 5);
+      const turnosRequeridos = Number(data?.turnos_requeridos || turnoProgramados.length || 1);
+      setMensaje(
+        `Servicios reprogramados para ${fecha} de ${horaInicio} a ${horaFin} (${turnosRequeridos} turno(s)).`
+      );
+
+      const horaPorAgenda = new Map();
+      const horaPorConsulta = new Map();
+      turnoProgramados.forEach((tp) => {
+        const tipo = String(tp?.item_tipo || "").trim().toLowerCase();
+        const horaTurno = String(tp?.hora || "").slice(0, 5);
+        if (!horaTurno) return;
+        if (tipo === "consulta") {
+          const consultaId = Number(tp?.consulta_id || tp?.item_id || 0);
+          if (consultaId > 0) horaPorConsulta.set(consultaId, horaTurno);
+          return;
+        }
+        const agendaId = Number(tp?.agenda_id || tp?.item_id || 0);
+        if (agendaId > 0) horaPorAgenda.set(agendaId, horaTurno);
+      });
       setItems((prev) => prev.map((row) => {
-        if (String(row?.origen_consulta || "") !== "agenda_servicio") return row;
-        if (Number(row?.cotizacion_id || 0) <= 0 || Number(row?.cotizacion_id || 0) !== Number(item?.cotizacion_id || 0)) return row;
+        const rowCotizacionId = Number(row?.cotizacion_id || 0);
+        const itemCotizacionId = Number(item?.cotizacion_id || 0);
+        if (rowCotizacionId <= 0 || rowCotizacionId !== itemCotizacionId) return row;
+        const esAgendaRow = String(row?.origen_consulta || "") === "agenda_servicio";
+        let horaTurno = "";
+        if (esAgendaRow) {
+          const agendaId = Number(row?.id || 0);
+          horaTurno = horaPorAgenda.get(agendaId) || "";
+        } else {
+          const consultaId = Number(row?.id || 0);
+          horaTurno = horaPorConsulta.get(consultaId) || "";
+        }
+        if (!horaTurno) return row;
         return {
           ...row,
           fecha,
-          hora,
-          observacion: `Cita reprogramada para ${fecha} ${String(hora).slice(0, 5)}`,
+          hora: horaTurno,
+          observacion: `Cita reprogramada para ${fecha} ${horaTurno}`,
         };
       }));
       return true;
@@ -1943,6 +2208,14 @@ export default function RecordatoriosCitasPage() {
                   </button>
                 </div>
 
+                <div className="rounded-xl border border-indigo-200 bg-white/80 px-3 py-2 text-xs text-indigo-900">
+                  <span className="font-semibold">Importante:</span> el saldo se cobra por cotización (no por cada servicio).
+                  <span className="mx-2 text-indigo-300">|</span>
+                  Servicios con saldo: <span className="font-semibold">{resumenSaldoDisponibilidad.serviciosConSaldo}</span>
+                  <span className="mx-1 text-indigo-300">·</span>
+                  Cotizaciones con saldo: <span className="font-semibold">{resumenSaldoDisponibilidad.cotizacionesConSaldo}</span>
+                </div>
+
                 <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">Horas libres</div>
@@ -1997,7 +2270,7 @@ export default function RecordatoriosCitasPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {citasDisponibilidadFiltradas.length === 0 ? (
+                      {bloquesDisponibilidad.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="p-3 text-center text-slate-500">
                             {filtroPagoDisponibilidad === "saldo_pendiente"
@@ -2006,33 +2279,99 @@ export default function RecordatoriosCitasPage() {
                           </td>
                         </tr>
                       ) : (
-                        citasDisponibilidadFiltradas.map((cita) => (
-                          <tr key={`${cita.origen}-${cita.id}`} className="border-t border-indigo-50">
-                            <td className="p-2 font-semibold text-indigo-800">{horaHm(cita.hora)}</td>
-                            <td className="p-2 text-slate-700">
-                              {Number(cita?.paciente_id || 0) > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => enfocarPacienteRecordatorio(cita)}
-                                  className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
-                                  title="Ir al recordatorio de este paciente"
-                                >
-                                  {cita.paciente_nombre || "-"}
-                                </button>
-                              ) : (
-                                <span>{cita.paciente_nombre || "-"}</span>
+                        bloquesDisponibilidad.map((bloque) => {
+                          const citasBloque = Array.isArray(bloque?.citas) ? bloque.citas : [];
+                          const cabecera = citasBloque[0] || null;
+                          const esGrupoCotizacion = Number(bloque?.cotizacion_id || 0) > 0 && citasBloque.length > 1;
+                          const estadoCotizacion = String(cabecera?.cotizacion_estado || "").toLowerCase();
+                          const estadoGrupo = estadoCotizacion === "pagado" || estadoCotizacion === "pagada"
+                            ? "Pagado"
+                            : Number(cabecera?.saldo_pendiente || 0) > 0
+                              ? "Con saldo pendiente"
+                              : "Sin saldo";
+
+                          return (
+                            <Fragment key={bloque.key}>
+                              {esGrupoCotizacion && cabecera && (
+                                <tr className="border-t border-indigo-200 bg-indigo-50/70">
+                                  <td className="p-2 font-semibold text-indigo-900">Grupo</td>
+                                  <td className="p-2 text-indigo-900">
+                                    {Number(cabecera?.paciente_id || 0) > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => enfocarPacienteRecordatorio(cabecera)}
+                                        className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
+                                        title="Ir al recordatorio de este paciente"
+                                      >
+                                        {cabecera.paciente_nombre || "-"}
+                                      </button>
+                                    ) : (
+                                      <span>{cabecera?.paciente_nombre || "-"}</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2 text-indigo-900">
+                                    Cotización #{Number(bloque.cotizacion_id)} · {citasBloque.length} servicios
+                                  </td>
+                                  <td className="p-2 text-indigo-700">Agrupado</td>
+                                  <td className="p-2 text-indigo-700">{estadoGrupo}</td>
+                                  <td className="p-2">
+                                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge({ ...cabecera, _saldo_repetido_cotizacion: false })}`}>
+                                      {disponibilidadPagoLabel({ ...cabecera, _saldo_repetido_cotizacion: false })}
+                                    </span>
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td className="p-2 text-slate-700">{cita.detalle || cita.servicio || "-"}</td>
-                            <td className="p-2 text-slate-600">{cita.origen === "agenda_servicio" ? "Agenda" : "Consulta"}</td>
-                            <td className="p-2 text-slate-600">{cita.estado || "-"}</td>
-                            <td className="p-2">
-                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge(cita)}`}>
-                                {disponibilidadPagoLabel(cita)}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
+
+                              {citasBloque.map((cita) => {
+                                const citaRender = esGrupoCotizacion
+                                  ? { ...cita, _saldo_repetido_cotizacion: true }
+                                  : cita;
+                                return (
+                                  <tr key={`${cita.origen}-${cita.id}`} className={`border-t border-indigo-50 ${esGrupoCotizacion ? "bg-indigo-50/20" : ""}`}>
+                                    <td className="p-2 font-semibold text-indigo-800">{horaHm(cita.hora)}</td>
+                                    <td className="p-2 text-slate-700">
+                                      {Number(cita?.paciente_id || 0) > 0 ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => enfocarPacienteRecordatorio(cita)}
+                                          className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
+                                          title="Ir al recordatorio de este paciente"
+                                        >
+                                          {cita.paciente_nombre || "-"}
+                                        </button>
+                                      ) : (
+                                        <span>{cita.paciente_nombre || "-"}</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-slate-700">
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        <span>
+                                          {esGrupoCotizacion ? "• " : ""}
+                                          {cita.detalle_base || cita.detalle || cita.servicio || "-"}
+                                        </span>
+                                        {Number(cita?.es_adicional_dinamico || 0) === 1 && (
+                                          <span className="inline-flex rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-800">
+                                            Adicional autorizado
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="p-2 text-slate-600">{cita.origen === "agenda_servicio" ? "Agenda" : "Consulta"}</td>
+                                    <td className="p-2 text-slate-600">{cita.estado || "-"}</td>
+                                    <td className="p-2">
+                                      <span
+                                        className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge(citaRender)}`}
+                                        title={citaRender?._saldo_repetido_cotizacion ? "Este servicio comparte el mismo saldo de la cotización; no se suma aparte." : ""}
+                                      >
+                                        {disponibilidadPagoLabel(citaRender)}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </Fragment>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -2435,6 +2774,10 @@ export default function RecordatoriosCitasPage() {
                                     <button
                                       type="button"
                                       onClick={async () => {
+                                        if (Number(item?.cotizacion_id || 0) > 0) {
+                                          await reprogramarAgendaServicio(item);
+                                          return;
+                                        }
                                         const ok = await guardarGestion(item, "reprogramar");
                                         if (!ok) return;
                                         const params = new URLSearchParams({

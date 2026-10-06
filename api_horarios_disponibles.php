@@ -58,6 +58,43 @@ if (!function_exists('hdisp_normalize_hora_hms')) {
     }
 }
 
+if (!function_exists('hdisp_normalize_slot_minutes')) {
+    function hdisp_normalize_slot_minutes($value): int {
+        $slot = (int)$value;
+        if ($slot <= 0) $slot = 30;
+        if ($slot < 5) $slot = 5;
+        if ($slot > 120) $slot = 120;
+        return $slot;
+    }
+}
+
+if (!function_exists('hdisp_get_slot_minutes')) {
+    function hdisp_get_slot_minutes(mysqli $conn): int {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $cached = 30;
+        if (!hdisp_table_exists($conn, 'configuracion_clinica')
+            || !hdisp_column_exists($conn, 'configuracion_clinica', 'duracion_slot_min')) {
+            return $cached;
+        }
+
+        $stmt = $conn->prepare('SELECT duracion_slot_min FROM configuracion_clinica ORDER BY id DESC LIMIT 1');
+        if (!$stmt) {
+            return $cached;
+        }
+
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $cached = hdisp_normalize_slot_minutes($row['duracion_slot_min'] ?? 30);
+        return $cached;
+    }
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
@@ -174,9 +211,10 @@ if ($method === 'GET') {
         $horariosOcupados = array_keys($horariosOcupadosSet);
         sort($horariosOcupados);
 
+        $slotMinutes = hdisp_get_slot_minutes($conn);
         while ($row = $res->fetch_assoc()) {
             
-            // Generar horarios de 30 en 30 minutos
+            // Generar horarios con la duración base configurada.
             list($h_inicio, $m_inicio) = explode(':', $row['hora_inicio']);
             list($h_fin, $m_fin) = explode(':', $row['hora_fin']);
             
@@ -200,11 +238,10 @@ if ($method === 'GET') {
                     ];
                 }
                 
-                // Incrementar 30 minutos
-                $m += 30;
+                $m += $slotMinutes;
                 if ($m >= 60) {
-                    $h++;
-                    $m = 0;
+                    $h += (int)floor($m / 60);
+                    $m = $m % 60;
                 }
             }
         }
@@ -216,6 +253,7 @@ if ($method === 'GET') {
             'horarios_disponibles' => $horariosDisponibles,
             'horarios_ocupados' => $horariosOcupados,
             'total' => count($horariosDisponibles),
+            'duracion_slot_min' => $slotMinutes,
             'consulta_excluida' => $consulta_id_excluir > 0 ? $consulta_id_excluir : null,
         ]);
         

@@ -1314,12 +1314,23 @@ if (tipoDescuento === 'porcentaje') {
                 Number(detalle?.subtotal_original || 0) - Number(detalle?.subtotal_mostrar || 0)
               );
               const key = buildDetalleKey(detalle, index);
+              const cotizacionMetaMap = (servicio && typeof servicio === 'object' && servicio.cotizacion_meta_map && typeof servicio.cotizacion_meta_map === 'object')
+                ? servicio.cotizacion_meta_map
+                : {};
+              const cotizacionIdDetalle = Number(detalle?.cotizacion_id || 0);
+              const cotMeta = cotizacionIdDetalle > 0
+                ? (cotizacionMetaMap[String(cotizacionIdDetalle)] || null)
+                : null;
+              const paqueteLabel = String(cotMeta?.paqueteLabel || '').trim();
               return (
                 <div key={key} className="flex justify-between items-center text-base">
                   <span>
                     {detalle.descripcion}
                     {Number(detalle?.cotizacion_id || 0) > 0 && Array.isArray(servicio?.cotizacion_ids) && servicio.cotizacion_ids.length > 1 ? (
                       <span className="block text-xs text-slate-500">Atención #{Number(detalle.cotizacion_id)}</span>
+                    ) : null}
+                    {paqueteLabel ? (
+                      <span className="block text-xs text-indigo-700">Paquete: {paqueteLabel}</span>
                     ) : null}
                     {modoCobro === 'parcial' ? (
                       <span className="block text-xs text-gray-500">

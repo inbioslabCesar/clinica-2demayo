@@ -588,6 +588,44 @@ if (!function_exists('bloque_atencion_minutes_to_time')) {
     }
 }
 
+if (!function_exists('bloque_atencion_normalize_slot_minutes')) {
+    function bloque_atencion_normalize_slot_minutes($value)
+    {
+        $slot = (int)$value;
+        if ($slot <= 0) $slot = 30;
+        if ($slot < 5) $slot = 5;
+        if ($slot > 120) $slot = 120;
+        return $slot;
+    }
+}
+
+if (!function_exists('bloque_atencion_get_slot_minutes')) {
+    function bloque_atencion_get_slot_minutes($conn)
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $cached = 30;
+        if (!bloque_atencion_table_exists($conn, 'configuracion_clinica')
+            || !bloque_atencion_column_exists($conn, 'configuracion_clinica', 'duracion_slot_min')) {
+            return $cached;
+        }
+
+        $stmt = $conn->prepare('SELECT duracion_slot_min FROM configuracion_clinica ORDER BY id DESC LIMIT 1');
+        if (!$stmt) {
+            return $cached;
+        }
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $cached = bloque_atencion_normalize_slot_minutes($row['duracion_slot_min'] ?? 30);
+        return $cached;
+    }
+}
+
 if (!function_exists('bloque_atencion_hora_base_default')) {
     function bloque_atencion_hora_base_default($horaObjetivo = '')
     {
@@ -673,6 +711,7 @@ if (!function_exists('bloque_atencion_existe_ocupado_en_hora')) {
 if (!function_exists('bloque_atencion_resolver_hora_disponible')) {
     function bloque_atencion_resolver_hora_disponible($conn, $medicoId, $fechaYmd, $horaBaseHms, $excludeAgendaIds = [], $reservadasLocales = [])
     {
+        $slotMinutes = bloque_atencion_get_slot_minutes($conn);
         $baseMin = bloque_atencion_time_to_minutes($horaBaseHms);
         if ($baseMin === null) {
             $baseMin = 8 * 60;
@@ -687,7 +726,7 @@ if (!function_exists('bloque_atencion_resolver_hora_disponible')) {
         }
 
         for ($i = 0; $i <= 48; $i++) {
-            $candMin = $baseMin + ($i * 30);
+            $candMin = $baseMin + ($i * $slotMinutes);
             if ($candMin > ((23 * 60) + 59)) {
                 break;
             }
