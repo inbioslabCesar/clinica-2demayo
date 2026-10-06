@@ -268,6 +268,30 @@ function getNextConsecutiveHourFromCart(cartItems, medicoId, fechaYmd) {
   return normalizeHourHm(minutesToHm(ultimaMin + step));
 }
 
+function getNextUnoccupiedHourCandidate(startHourHm, occupiedHours, stepMinutes = 30) {
+  const start = normalizeHourHm(startHourHm);
+  if (!start) return "";
+
+  const step = Math.max(5, Number(stepMinutes) || 30);
+  const occupiedSet = new Set(
+    (Array.isArray(occupiedHours) ? occupiedHours : [])
+      .map((h) => normalizeHourHm(h))
+      .filter(Boolean)
+  );
+
+  let minute = horaToMinutes(start);
+  if (!Number.isFinite(minute)) return "";
+
+  for (let guard = 0; guard < 300; guard += 1) {
+    if (minute > (23 * 60 + 59)) return "";
+    const hm = normalizeHourHm(minutesToHm(minute));
+    if (hm && !occupiedSet.has(hm)) return hm;
+    minute += step;
+  }
+
+  return "";
+}
+
 export default function CotizadorExpressPanel() {
   const { addItems, setPatient, cart } = useQuoteCart();
   const [loading, setLoading] = useState(false);
@@ -591,7 +615,16 @@ export default function CotizadorExpressPanel() {
                     manualHoraInput.value = "09:00";
                   }
                 } else {
-                  const sugeridaConsecutiva = getNextConsecutiveHourFromCart(cart?.items, medicoId, fechaNorm);
+                  const sugeridaConsecutivaBase = getNextConsecutiveHourFromCart(cart?.items, medicoId, fechaNorm);
+                  const ocupadasBackend = Array.isArray(horasOcupadas)
+                    ? horasOcupadas.map((h) => normalizeHourHm(h)).filter(Boolean)
+                    : [];
+                  const ocupadasCarrito = collectOccupiedHoursFromCart(cart?.items, medicoId, fechaNorm);
+                  const sugeridaConsecutiva = getNextUnoccupiedHourCandidate(
+                    sugeridaConsecutivaBase,
+                    [...ocupadasBackend, ...ocupadasCarrito],
+                    resolveAgendaStepMinutes()
+                  );
                   const maxLibreMin = horaToMinutes(horasLibres[horasLibres.length - 1] || "");
                   const sugeridaMin = horaToMinutes(sugeridaConsecutiva);
                   const sugerirAdicional = Boolean(sugeridaConsecutiva)
@@ -600,7 +633,7 @@ export default function CotizadorExpressPanel() {
                     && sugeridaMin > maxLibreMin;
 
                   if (sugerirAdicional) {
-                    select.innerHTML = `<option value=\"\">Sin turno regular posterior para mantener el orden</option>`;
+                    select.innerHTML = `<option value="">Sin turno regular posterior para mantener el orden</option>`;
                     select.value = "";
                     select.disabled = true;
                     if (manualWrap) manualWrap.style.display = "block";

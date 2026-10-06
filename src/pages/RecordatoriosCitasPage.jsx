@@ -1787,10 +1787,14 @@ export default function RecordatoriosCitasPage() {
 
       let data = await enviarReprogramacion(false);
       if (!data?.success && Number(data?.diagnostico?.permite_forzar_adicional || 0) === 1) {
+        const horaAdicionalSugerida = String(data?.diagnostico?.sugerencia_adicional_hora || "").slice(0, 5);
+        const textoAdicional = horaAdicionalSugerida
+          ? `${data?.error || "No hay bloque regular completo."} Si el médico autoriza, puedo reprogramar como adicional al primer bloque consecutivo libre (${horaAdicionalSugerida}).`
+          : `${data?.error || "No hay bloque regular completo."} Si el médico autoriza, puedo reprogramar como adicional solo después de su última hora regular.`;
         const confirmAdicional = await Swal.fire({
           icon: "question",
           title: "¿Programar como adicional?",
-          text: `${data?.error || "No hay bloque regular completo."} Si el médico autoriza, puedo reprogramar como adicional solo después de su última hora regular.`,
+          text: textoAdicional,
           showCancelButton: true,
           confirmButtonText: "Sí, programar adicional",
           cancelButtonText: "No",

@@ -2,11 +2,48 @@ import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { BASE_URL, getCachedAgendaSlotMinutes } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+
+function normalizeHourHm(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function hourToMinutes(value) {
+  const hm = normalizeHourHm(value);
+  if (!hm) return null;
+  const [h, m] = hm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesToHour(totalMinutes) {
+  if (!Number.isFinite(totalMinutes)) return "";
+  const rounded = Math.max(0, Math.floor(totalMinutes));
+  const h = Math.floor(rounded / 60) % 24;
+  const m = rounded % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function updateConsultaDescriptionSchedule(description, fechaProgramada, horaProgramada) {
+  const base = String(description || "").trim();
+  const fecha = String(fechaProgramada || "").slice(0, 10);
+  const hora = String(horaProgramada || "").slice(0, 5);
+  const scheduleText = `(${fecha} ${hora})`;
+  if (!base) return `Consulta ${scheduleText}`;
+  if (/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*$/.test(base)) {
+    return base.replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*$/, scheduleText);
+  }
+  return `${base} ${scheduleText}`;
+}
 
 export default function CotizarEcografiaPage() {
     const [busqueda, setBusqueda] = useState("");
@@ -29,7 +66,7 @@ export default function CotizarEcografiaPage() {
     const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
     const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
-    const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+    const { cart, addItems, replaceCart, clearCart, count: cartCount } = useQuoteCart();
     const pacienteTemporal = location.state?.pacienteTemporal || null;
     const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
     const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
@@ -638,6 +675,8 @@ export default function CotizarEcografiaPage() {
       fallbackHora: getHoraProgramadaDefault(),
       stepMinutes: 30,
     });
+    const agendaStepMinutes = Math.max(5, Number(getCachedAgendaSlotMinutes() || 30));
+    const consultaShiftsByKey = new Map();
 
     const cruceEnCarrito = detectarCruceConCarrito({
       cartItems: cart?.items,
@@ -665,16 +704,47 @@ export default function CotizarEcografiaPage() {
           const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
           const horaDet = String(d?.hora_programada || "").slice(0, 5);
           if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            const horaDetOriginal = horaDet;
             if (String(nuevaFecha || "").slice(0, 10)) {
               d.fecha_programada = String(nuevaFecha || "").slice(0, 10);
             }
-            d.hora_programada = String(nuevaHora || "").slice(0, 5);
             if (meta?.isAdicional) {
+              const nuevaHoraNormalizada = String(nuevaHora || "").slice(0, 5);
+              const minutosOriginales = hourToMinutes(horaDetOriginal);
+              const minutosConsultaOriginal = Number.isFinite(minutosOriginales)
+                ? minutosOriginales - agendaStepMinutes
+                : null;
+              const horaConsultaOriginal = Number.isFinite(minutosConsultaOriginal)
+                ? minutesToHour(minutosConsultaOriginal)
+                : "";
+              const consultaRelacionada = Array.isArray(cart?.items)
+                ? cart.items.find((it) => (
+                  String(it?.serviceType || "").toLowerCase() === "consulta"
+                  && Number(it?.medicoId || 0) === Number(entry.medicoId)
+                  && String(it?.fechaProgramada || "").slice(0, 10) === entry.fecha
+                  && String(it?.horaProgramada || "").slice(0, 5) === horaConsultaOriginal
+                ))
+                : null;
+              if (consultaRelacionada?.key) {
+                consultaShiftsByKey.set(String(consultaRelacionada.key), {
+                  fecha: String(nuevaFecha || "").slice(0, 10) || entry.fecha,
+                  hora: nuevaHoraNormalizada,
+                });
+                const minutosNuevaHora = hourToMinutes(nuevaHoraNormalizada);
+                const horaEcoReprogramada = Number.isFinite(minutosNuevaHora)
+                  ? minutesToHour(minutosNuevaHora + agendaStepMinutes)
+                  : nuevaHoraNormalizada;
+                d.hora_programada = horaEcoReprogramada || nuevaHoraNormalizada;
+              } else {
+                d.hora_programada = nuevaHoraNormalizada;
+              }
               d.adicional_autorizado = true;
               d.observacion_programacion = "Adicional autorizado por recepción";
               if (!/adicional autorizado/i.test(String(d.descripcion || ""))) {
                 d.descripcion = `${String(d.descripcion || "Ecografía").trim()} · Adicional autorizado`;
               }
+            } else {
+              d.hora_programada = String(nuevaHora || "").slice(0, 5);
             }
           }
         });
@@ -684,12 +754,11 @@ export default function CotizarEcografiaPage() {
       return;
     }
 
-    addItems({
-      patientId: Number(pacienteId),
-      patientName: paciente
-        ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim()
-        : (nombrePacienteTemporal || `Paciente #${pacienteId}`),
-      items: detalles.map((d) => ({
+    const patientId = Number(pacienteId);
+    const patientName = paciente
+      ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim()
+      : (nombrePacienteTemporal || `Paciente #${pacienteId}`);
+    const nuevosItemsEcografia = detalles.map((d) => ({
         serviceType: 'ecografia',
         serviceId: Number(d.servicio_id || 0),
         description: d.descripcion || 'Ecografía',
@@ -701,8 +770,42 @@ export default function CotizarEcografiaPage() {
         horaProgramada: String(d.hora_programada || ""),
         observacionProgramacion: String(d.observacion_programacion || ""),
         adicionalAutorizado: Boolean(d.adicional_autorizado),
-      })),
-    });
+      }));
+
+    if (consultaShiftsByKey.size > 0 && Array.isArray(cart?.items) && cart.items.length > 0) {
+      const cartActualizado = cart.items.map((it) => {
+        const shift = consultaShiftsByKey.get(String(it?.key || ""));
+        if (!shift) return it;
+        const fechaProgramada = String(shift.fecha || it.fechaProgramada || "").slice(0, 10);
+        const horaProgramada = String(shift.hora || it.horaProgramada || "").slice(0, 5);
+        const descripcionConHorario = updateConsultaDescriptionSchedule(it.description, fechaProgramada, horaProgramada);
+        const descripcionFinal = /adicional autorizado/i.test(String(descripcionConHorario || ""))
+          ? descripcionConHorario
+          : `${String(descripcionConHorario || "Consulta").trim()} · Adicional autorizado`;
+        return {
+          ...it,
+          fechaProgramada,
+          horaProgramada,
+          consultaFecha: fechaProgramada,
+          consultaHora: horaProgramada,
+          description: descripcionFinal,
+          observacionProgramacion: "Adicional autorizado por recepción",
+          adicionalAutorizado: true,
+        };
+      });
+      replaceCart({
+        patientId,
+        patientName,
+        patientDni: String(cart?.patientDni || paciente?.dni || dniPacienteTemporal || ""),
+        items: [...cartActualizado, ...nuevosItemsEcografia],
+      });
+    } else {
+      addItems({
+        patientId,
+        patientName,
+        items: nuevosItemsEcografia,
+      });
+    }
 
     if (!isEditingCotizacion) {
       setSeleccionados([]);

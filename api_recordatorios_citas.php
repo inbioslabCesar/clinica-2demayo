@@ -436,36 +436,7 @@ function rc_obtener_hora_consulta_base_cotizacion($conn, $cotizacionId, $medicoI
 
 function rc_resolver_hora_visual_agenda($conn, $row, $duracionTurnoMin, &$consultaBaseCache, &$adicionalSeqMap, &$turnosRegularesCache) {
     $horaOriginal = rc_normalizar_hora_hms($row['hora_programada'] ?? '');
-    $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
-    $medicoId = (int)($row['medico_id'] ?? 0);
-    $fechaYmd = trim((string)($row['fecha_programada'] ?? ''));
-    $titulo = (string)($row['titulo_evento'] ?? '');
-    $obs = (string)($row['observaciones'] ?? '');
-
-    $esAdicionalDinamico = rc_evento_es_adicional_dinamico(
-        $conn,
-        $medicoId,
-        $fechaYmd,
-        $horaOriginal,
-        $duracionTurnoMin,
-        $turnosRegularesCache
-    );
-
-    if (!$esAdicionalDinamico || !rc_es_adicional_autorizado_texto($titulo, $obs)) {
-        return $horaOriginal !== '' ? $horaOriginal : (string)($row['hora_programada'] ?? '');
-    }
-
-    $horaConsultaBase = rc_obtener_hora_consulta_base_cotizacion($conn, $cotizacionId, $medicoId, $fechaYmd, $consultaBaseCache);
-    $baseMin = rc_hora_a_minutos($horaConsultaBase);
-    if ($baseMin === null) {
-        return $horaOriginal !== '' ? $horaOriginal : (string)($row['hora_programada'] ?? '');
-    }
-
-    $seqKey = $cotizacionId . '|' . $medicoId . '|' . $fechaYmd;
-    $seq = (int)($adicionalSeqMap[$seqKey] ?? 0);
-    $adicionalSeqMap[$seqKey] = $seq + 1;
-    $duracion = rc_normalizar_duracion_turno_min($duracionTurnoMin);
-    return rc_minutos_a_hora_hms($baseMin + (($seq + 1) * $duracion));
+    return $horaOriginal !== '' ? $horaOriginal : (string)($row['hora_programada'] ?? '');
 }
 
 function rc_es_fecha_hoy($fechaYmd) {
@@ -813,6 +784,45 @@ function rc_obtener_turnos_libres_medico_fecha($conn, $medicoId, $fechaYmd, $dur
         $libres[] = substr($horaHms, 0, 5);
     }
     return $libres;
+}
+
+function rc_sugerir_inicio_adicional_reprogramacion($conn, $agendaItems, $fechaYmd, $duracionTurnoMin, $cotizacionId, $excludeConsultaIds = [], $maxSlots = 120) {
+    $agendaItems = array_values((array)$agendaItems);
+    if (empty($agendaItems)) return '';
+
+    $medicoBase = (int)($agendaItems[0]['medico_id'] ?? 0);
+    if ($medicoBase <= 0) return '';
+
+    $duracion = rc_normalizar_duracion_turno_min($duracionTurnoMin);
+    $rangos = rc_obtener_rangos_regulares_medico($conn, $medicoBase, $fechaYmd);
+    $finRegular = rc_obtener_ultima_hora_regular_medico($rangos);
+    if ($finRegular === null) return '';
+
+    $inicioMin = (int)$finRegular;
+    $limiteMin = 23 * 60 + 59;
+    $guard = 0;
+    while ($inicioMin <= $limiteMin && $guard < max(1, (int)$maxSlots)) {
+        $guard++;
+        $horaInicio = rc_minutos_a_hora_hms($inicioMin);
+        $plan = rc_construir_plan_turnos_reprogramacion($agendaItems, $horaInicio, $duracion);
+        if (!empty($plan)) {
+            $eval = rc_evaluar_plan_reprogramacion(
+                $conn,
+                $agendaItems,
+                $plan,
+                $fechaYmd,
+                (int)$cotizacionId,
+                $duracion,
+                true
+            );
+            if (($eval['ok'] ?? false) === true) {
+                return $horaInicio;
+            }
+        }
+        $inicioMin += $duracion;
+    }
+
+    return '';
 }
 
 function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
@@ -1378,10 +1388,20 @@ if ($method === 'GET') {
                  ORDER BY c.hora ASC, c.id ASC'
             );
             if ($stmtCons) {
+                $duracionTurnoMinConsultaDisp = rc_obtener_duracion_turno_min($conn);
+                $turnosRegularesCacheConsultaDisp = [];
                 $stmtCons->bind_param('is', $medicoId, $fecha);
                 $stmtCons->execute();
                 $resCons = $stmtCons->get_result();
                 while ($row = $resCons->fetch_assoc()) {
+                    $esAdicionalConsulta = rc_evento_es_adicional_dinamico(
+                        $conn,
+                        (int)$medicoId,
+                        (string)$fecha,
+                        (string)($row['hora'] ?? ''),
+                        $duracionTurnoMinConsultaDisp,
+                        $turnosRegularesCacheConsultaDisp
+                    );
                     $citas[] = [
                         'id' => (int)($row['id'] ?? 0),
                         'hora' => (string)($row['hora'] ?? ''),
@@ -1393,6 +1413,7 @@ if ($method === 'GET') {
                         'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
                         'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
                         'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
+                        'es_adicional_dinamico' => $esAdicionalConsulta ? 1 : 0,
                         'referencia' => 'Consulta #' . (int)($row['id'] ?? 0),
                     ];
                 }
@@ -2031,7 +2052,20 @@ if ($method === 'GET') {
     $res = $stmt->get_result();
 
     $items = [];
+    $duracionTurnoMinConsultas = rc_obtener_duracion_turno_min($conn);
+    $turnosRegularesCacheConsultas = [];
     while ($row = $res->fetch_assoc()) {
+        $medicoIdRow = (int)($row['medico_id'] ?? 0);
+        $fechaRow = (string)($row['fecha'] ?? '');
+        $horaRow = (string)($row['hora'] ?? '');
+        $esAdicionalDinamico = rc_evento_es_adicional_dinamico(
+            $conn,
+            $medicoIdRow,
+            $fechaRow,
+            $horaRow,
+            $duracionTurnoMinConsultas,
+            $turnosRegularesCacheConsultas
+        );
         $items[] = [
             'id' => (int)($row['id'] ?? 0),
             'paciente_id' => (int)($row['paciente_id'] ?? 0),
@@ -2064,6 +2098,7 @@ if ($method === 'GET') {
             'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
             'correlativo_estable' => (int)($row['correlativo_estable'] ?? 0) > 0 ? (int)$row['correlativo_estable'] : null,
             'correlativo_original' => (int)($row['correlativo_original'] ?? 0) > 0 ? (int)$row['correlativo_original'] : null,
+            'es_adicional_dinamico' => $esAdicionalDinamico ? 1 : 0,
         ];
     }
     $stmt->close();
@@ -2754,6 +2789,30 @@ if ($method === 'POST' || $method === 'PUT') {
             ]);
             exit;
         }
+        if ($forzarAdicional) {
+            $horaAdicionalSugerida = rc_sugerir_inicio_adicional_reprogramacion(
+                $conn,
+                $agendaItems,
+                $nuevaFecha,
+                $duracionTurnoMin,
+                $cotizacionId,
+                $excludeConsultaIds,
+                160
+            );
+            if ($horaAdicionalSugerida === '') {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'No existe bloque adicional consecutivo libre para esta fecha. Elige otra fecha.',
+                    'diagnostico' => [
+                        'duracion_turno_min' => $duracionTurnoMin,
+                        'turnos_requeridos' => $turnosRequeridos,
+                        'permite_forzar_adicional' => false,
+                    ],
+                ]);
+                exit;
+            }
+            $nuevaHora = $horaAdicionalSugerida;
+        }
         $planTurnos = rc_construir_plan_turnos_reprogramacion($agendaItems, $nuevaHora, $duracionTurnoMin);
         if (empty($planTurnos)) {
             http_response_code(400);
@@ -2789,6 +2848,15 @@ if ($method === 'POST' || $method === 'PUT') {
                 $cotizacionId,
                 14,
                 5
+            );
+            $sugerenciaAdicionalHora = rc_sugerir_inicio_adicional_reprogramacion(
+                $conn,
+                $agendaItems,
+                $nuevaFecha,
+                $duracionTurnoMin,
+                $cotizacionId,
+                $excludeConsultaIds,
+                160
             );
 
             $errores = is_array($evalPlan['errores'] ?? null) ? $evalPlan['errores'] : [];
@@ -2830,6 +2898,10 @@ if ($method === 'POST' || $method === 'PUT') {
                     $mensaje .= ' Otros días sugeridos: ' . implode(' | ', $partes) . '.';
                 }
             }
+            if ($sugerenciaAdicionalHora !== '') {
+                $mensaje .= ' Si el médico autoriza adicional, el primer bloque consecutivo libre sugerido inicia a las '
+                    . substr($sugerenciaAdicionalHora, 0, 5) . '.';
+            }
 
             echo json_encode([
                 'success' => false,
@@ -2840,6 +2912,7 @@ if ($method === 'POST' || $method === 'PUT') {
                     'turnos_disponibles_consecutivos' => $turnosDisponibles,
                     'sugerencias_dia' => $sugerenciasHoy,
                     'sugerencias_otras_fechas' => $sugerenciasDias,
+                    'sugerencia_adicional_hora' => $sugerenciaAdicionalHora !== '' ? substr($sugerenciaAdicionalHora, 0, 5) : null,
                     'detalles_error' => $errores,
                     'permite_forzar_adicional' => true,
                 ],

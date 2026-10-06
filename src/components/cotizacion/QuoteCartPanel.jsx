@@ -189,7 +189,11 @@ function limpiarSoloDigitos(value) {
 
 function esErrorSinDisponibilidad(err) {
   const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("no hay disponibilidad registrada");
+  return (
+    msg.includes("no hay disponibilidad registrada")
+    || msg.includes("cupos agotados para este horario")
+    || msg.includes("no hay cupos disponibles")
+  );
 }
 
 const XL_BREAKPOINT = 1280;

@@ -1266,6 +1266,10 @@ function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
     $consultaFallbackIdPorCotizacion = [];
     $medicoCachePorConsulta = [];
     $medicoCachePorTarifa = [];
+    $consultaMedicoIdCache = [];
+    $consultaProgramacionCache = [];
+    $adicionalMetaByDetalleId = [];
+    $pairsRegular = [];
     $rowsPorCotizacion = [];
 
     foreach ($rows as $row) {
@@ -1300,6 +1304,9 @@ function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
                             $medicoCachePorConsulta[$consultaId] = obtener_medico_desde_consulta($conn, $consultaId);
                         }
                         $medico = $medicoCachePorConsulta[$consultaId];
+                        if (!isset($consultaMedicoIdCache[$consultaId])) {
+                            $consultaMedicoIdCache[$consultaId] = obtener_medico_id_desde_consulta($conn, $consultaId);
+                        }
                     }
                 }
             } elseif ($tipo === 'ecografia' || $tipo === 'rayosx') {
@@ -1319,10 +1326,83 @@ function cargar_detalles_cotizaciones($conn, $cotizacionIds) {
             }
         }
 
+        $detalleId = (int)($row['id'] ?? 0);
+        $consultaIdMeta = (int)($row['consulta_id'] ?? 0);
+        $medicoIdMeta = (int)($row['medico_id'] ?? 0);
+        if ($medicoIdMeta <= 0 && $consultaIdMeta > 0) {
+            if (!isset($consultaMedicoIdCache[$consultaIdMeta])) {
+                $consultaMedicoIdCache[$consultaIdMeta] = obtener_medico_id_desde_consulta($conn, $consultaIdMeta);
+            }
+            $medicoIdMeta = (int)($consultaMedicoIdCache[$consultaIdMeta] ?? 0);
+        }
+
+        $fechaMeta = trim((string)($row['fecha_programada'] ?? ''));
+        $horaMeta = trim((string)($row['hora_programada'] ?? ''));
+        if (($fechaMeta === '' || $horaMeta === '') && $consultaIdMeta > 0) {
+            if (!isset($consultaProgramacionCache[$consultaIdMeta])) {
+                $consultaProgramacionCache[$consultaIdMeta] = [
+                    'fecha' => '',
+                    'hora' => '',
+                ];
+                $stmtProg = $conn->prepare("SELECT fecha, hora FROM consultas WHERE id = ? LIMIT 1");
+                if ($stmtProg) {
+                    $stmtProg->bind_param("i", $consultaIdMeta);
+                    $stmtProg->execute();
+                    $rowProg = $stmtProg->get_result()->fetch_assoc();
+                    $stmtProg->close();
+                    if ($rowProg) {
+                        $consultaProgramacionCache[$consultaIdMeta] = [
+                            'fecha' => trim((string)($rowProg['fecha'] ?? '')),
+                            'hora' => trim((string)($rowProg['hora'] ?? '')),
+                        ];
+                    }
+                }
+            }
+            if ($fechaMeta === '') {
+                $fechaMeta = trim((string)($consultaProgramacionCache[$consultaIdMeta]['fecha'] ?? ''));
+            }
+            if ($horaMeta === '') {
+                $horaMeta = trim((string)($consultaProgramacionCache[$consultaIdMeta]['hora'] ?? ''));
+            }
+        }
+
+        $row['es_adicional_dinamico'] = 0;
+        if ($detalleId > 0 && $medicoIdMeta > 0 && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaMeta) && cot_hora_a_minutos_desde_hms($horaMeta) !== null) {
+            $adicionalMetaByDetalleId[$detalleId] = [
+                'medico_id' => $medicoIdMeta,
+                'fecha' => $fechaMeta,
+                'hora' => $horaMeta,
+            ];
+            $pairsRegular[$medicoIdMeta . '|' . $fechaMeta] = [
+                'medico_id' => $medicoIdMeta,
+                'fecha' => $fechaMeta,
+            ];
+        }
+
         if (!isset($rowsPorCotizacion[$cotizacionId])) {
             $rowsPorCotizacion[$cotizacionId] = [];
         }
         $rowsPorCotizacion[$cotizacionId][] = $row;
+    }
+
+    if (!empty($adicionalMetaByDetalleId) && !empty($pairsRegular)) {
+        $rangosRegularesPorPair = cot_cargar_rangos_regulares_por_pares($conn, array_values($pairsRegular));
+        foreach ($rowsPorCotizacion as &$rowsCot) {
+            foreach ($rowsCot as &$rowDet) {
+                $detalleId = (int)($rowDet['id'] ?? 0);
+                if ($detalleId <= 0 || !isset($adicionalMetaByDetalleId[$detalleId])) {
+                    continue;
+                }
+                $meta = $adicionalMetaByDetalleId[$detalleId];
+                $pairKey = ((int)$meta['medico_id']) . '|' . (string)$meta['fecha'];
+                $enRegular = cot_hora_en_rangos_regulares((string)$meta['hora'], $rangosRegularesPorPair[$pairKey] ?? []);
+                if ($enRegular === false) {
+                    $rowDet['es_adicional_dinamico'] = 1;
+                }
+            }
+            unset($rowDet);
+        }
+        unset($rowsCot);
     }
 
     return $rowsPorCotizacion;

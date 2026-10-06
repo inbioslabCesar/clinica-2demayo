@@ -236,6 +236,19 @@ function addDaysYmd(fechaYmd, daysToAdd) {
   return `${y}-${m}-${d}`;
 }
 
+function nextUnoccupiedMinuteFrom(startMinute, occupiedSet, stepMinutes) {
+  const step = Math.max(5, Number(stepMinutes) || 30);
+  let minute = Number.isFinite(startMinute) ? startMinute : null;
+  if (minute === null) return null;
+
+  for (let guard = 0; guard < 300; guard += 1) {
+    if (minute > (23 * 60 + 59)) return null;
+    if (!occupiedSet.has(minute)) return minute;
+    minute += step;
+  }
+  return null;
+}
+
 async function fetchBloquesDelDia({ authFetch, baseUrl, medicoId, fecha }) {
   const qs = new URLSearchParams({
     medico_id: String(medicoId),
@@ -436,21 +449,15 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
     selectableLaterMinutes = availableMinutes.filter((m) => m > requestedMin && !occupied.has(m));
   }
   let additionalCandidateMinute = null;
-  if (isOutsideRegular && maxRegularMinute !== null && requestedMin > maxRegularMinute) {
-    additionalCandidateMinute = requestedMin;
+  if (maxRegularMinute !== null) {
+    const primerAdicionalRegular = maxRegularMinute + step;
+    const inicioBusqueda = isOutsideRegular && requestedMin > maxRegularMinute
+      ? requestedMin
+      : primerAdicionalRegular;
+    additionalCandidateMinute = nextUnoccupiedMinuteFrom(inicioBusqueda, occupied, step);
   } else if (availableMinutes.length > 0) {
     const ultimoTurnoLibreRegular = Math.max(...availableMinutes);
-    additionalCandidateMinute = ultimoTurnoLibreRegular + step;
-  } else if (blockSlots.length > 0) {
-    const ultimoTurnoRegular = Math.max(...blockSlots);
-    // El adicional debe iniciar justo después del último turno regular del médico.
-    // No debe depender de la hora solicitada por recepción para evitar "saltos" artificiales.
-    additionalCandidateMinute = ultimoTurnoRegular + step;
-  }
-  // Importante: el adicional autorizado puede superponerse con agenda regular;
-  // por eso no "saltamos" horas ocupadas aquí.
-  if (additionalCandidateMinute !== null && additionalCandidateMinute > (23 * 60 + 59)) {
-    additionalCandidateMinute = null;
+    additionalCandidateMinute = nextUnoccupiedMinuteFrom(ultimoTurnoLibreRegular + step, occupied, step);
   }
   const allowAdditional = Boolean(
     additionalCandidateMinute !== null

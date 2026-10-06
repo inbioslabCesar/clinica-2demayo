@@ -59,6 +59,42 @@ function buildItemKey(item) {
   ].join("::");
 }
 
+function normalizeCartItem(raw) {
+  const normalized = {
+    key: buildItemKey(raw),
+    serviceType: raw.serviceType || "otros",
+    serviceId: raw.serviceId || null,
+    description: raw.description || "Item",
+    unitPrice: Number(raw.unitPrice || 0),
+    quantity: Number(raw.quantity || 1),
+    presentation: raw.presentation || "default",
+    source: raw.source || raw.serviceType || "otros",
+    derivado: Boolean(raw.derivado),
+    tipoDerivacion: raw.tipoDerivacion || "",
+    valorDerivacion: Number(raw.valorDerivacion || 0),
+    laboratorioReferencia: raw.laboratorioReferencia || "",
+    fechaProgramada: raw.fechaProgramada || raw.fecha_programada || "",
+    horaProgramada: raw.horaProgramada || raw.hora_programada || "",
+    // Metadata de consulta (solo para serviceType=consulta)
+    consultaMedicoId: raw.consultaMedicoId || null,
+    consultaFecha: raw.consultaFecha || "",
+    consultaHora: raw.consultaHora || "",
+    consultaTipoConsulta: raw.consultaTipoConsulta || "",
+    consultaId: raw.consultaId || null,
+    medicoId: raw.medicoId || raw.medico_id || null,
+    medicoNombre: raw.medicoNombre || raw.medico_nombre || "",
+    packageId: raw.packageId || null,
+    packageCode: raw.packageCode || "",
+    packageType: raw.packageType || "",
+    componentes: Array.isArray(raw.componentes) ? raw.componentes : [],
+    cotizacionId: raw.cotizacionId || null,
+    observacionProgramacion: raw.observacionProgramacion || raw.observacion_programacion || "",
+    adicionalAutorizado: Boolean(raw.adicionalAutorizado || raw.adicional_autorizado),
+  };
+  normalized.quantity = Math.max(1, normalized.quantity);
+  return normalized;
+}
+
 export function QuoteCartProvider({ children }) {
   const [cart, setCart] = useState(() => {
     const parsed = safeParse(sessionStorage.getItem(STORAGE_KEY));
@@ -129,36 +165,7 @@ export function QuoteCartProvider({ children }) {
       }
 
       for (const raw of items) {
-        const normalized = {
-          key: buildItemKey(raw),
-          serviceType: raw.serviceType || "otros",
-          serviceId: raw.serviceId || null,
-          description: raw.description || "Item",
-          unitPrice: Number(raw.unitPrice || 0),
-          quantity: Number(raw.quantity || 1),
-          presentation: raw.presentation || "default",
-          source: raw.source || raw.serviceType || "otros",
-          derivado: Boolean(raw.derivado),
-          tipoDerivacion: raw.tipoDerivacion || "",
-          valorDerivacion: Number(raw.valorDerivacion || 0),
-          laboratorioReferencia: raw.laboratorioReferencia || "",
-          fechaProgramada: raw.fechaProgramada || raw.fecha_programada || "",
-          horaProgramada: raw.horaProgramada || raw.hora_programada || "",
-          // Metadata de consulta (solo para serviceType=consulta)
-          consultaMedicoId: raw.consultaMedicoId || null,
-          consultaFecha: raw.consultaFecha || "",
-          consultaHora: raw.consultaHora || "",
-          consultaTipoConsulta: raw.consultaTipoConsulta || "",
-          consultaId: raw.consultaId || null,
-          medicoId: raw.medicoId || raw.medico_id || null,
-          medicoNombre: raw.medicoNombre || raw.medico_nombre || "",
-          packageId: raw.packageId || null,
-          packageCode: raw.packageCode || "",
-          packageType: raw.packageType || "",
-          componentes: Array.isArray(raw.componentes) ? raw.componentes : [],
-          cotizacionId: raw.cotizacionId || null,
-        };
-        normalized.quantity = Math.max(1, normalized.quantity);
+        const normalized = normalizeCartItem(raw);
 
         if (map.has(normalized.key)) {
           const old = map.get(normalized.key);
@@ -185,6 +192,32 @@ export function QuoteCartProvider({ children }) {
         patientDni: normalizedPatientDni || prev.patientDni || "",
         items: Array.from(map.values()),
       };
+    });
+  }, []);
+
+  const replaceCart = useCallback((payload) => {
+    const {
+      patientId,
+      patientName,
+      patientDni,
+      items,
+    } = payload || {};
+
+    const numericPatientId = Number(patientId);
+    const normalizedPatientId = Number.isFinite(numericPatientId) && numericPatientId >= 0
+      ? numericPatientId
+      : null;
+    const normalizedPatientName = String(patientName || "").trim();
+    const normalizedPatientDni = String(patientDni || "").trim();
+
+    if (normalizedPatientId === null || !Array.isArray(items)) return;
+
+    const normalizedItems = items.map((raw) => normalizeCartItem(raw));
+    setCart({
+      patientId: normalizedPatientId,
+      patientName: normalizedPatientName,
+      patientDni: normalizedPatientDni,
+      items: normalizedItems,
     });
   }, []);
 
@@ -216,9 +249,10 @@ export function QuoteCartProvider({ children }) {
     clearCart,
     setPatient,
     addItems,
+    replaceCart,
     removeItem,
     updateQuantity,
-  }), [cart, total, count, clearCart, setPatient, addItems, removeItem, updateQuantity]);
+  }), [cart, total, count, clearCart, setPatient, addItems, replaceCart, removeItem, updateQuantity]);
 
   return <QuoteCartContext.Provider value={value}>{children}</QuoteCartContext.Provider>;
 }
