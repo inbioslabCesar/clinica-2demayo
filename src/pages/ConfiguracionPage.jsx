@@ -45,6 +45,10 @@ function normalizeSlotMinutes(value) {
   return Math.max(5, Math.min(120, Math.round(n)));
 }
 
+function normalizeAgendaProgramacionModo(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return ['strict', 'mixed', 'free'].includes(mode) ? mode : 'mixed';
+}
 
 
 function ConfiguracionPage() {
@@ -99,6 +103,7 @@ function ConfiguracionPage() {
     paciente_sexo_default: 'M',
     agenda_inteligente_cotizacion_v1: 0,
     duracion_slot_min: 30,
+    agenda_programacion_modo: 'mixed',
   });
 
   const [loading, setLoading] = useState(false);
@@ -137,6 +142,7 @@ function ConfiguracionPage() {
           incoming.paciente_sexo_default = normalizePacienteSexoDefault(incoming.paciente_sexo_default || 'M');
           incoming.agenda_inteligente_cotizacion_v1 = normalizeBooleanTinyInt(incoming.agenda_inteligente_cotizacion_v1);
           incoming.duracion_slot_min = normalizeSlotMinutes(incoming.duracion_slot_min);
+          incoming.agenda_programacion_modo = normalizeAgendaProgramacionModo(incoming.agenda_programacion_modo);
           setConfiguracion(prev => ({ ...prev, ...incoming }));
           // mostrar preview si hay logo
           if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
@@ -332,6 +338,7 @@ function ConfiguracionPage() {
                   paciente_sexo_default: normalizePacienteSexoDefault(payload.paciente_sexo_default || 'M'),
                   agenda_inteligente_cotizacion_v1: normalizeBooleanTinyInt(payload.agenda_inteligente_cotizacion_v1),
                   duracion_slot_min: normalizeSlotMinutes(payload.duracion_slot_min),
+                  agenda_programacion_modo: normalizeAgendaProgramacionModo(payload.agenda_programacion_modo),
                   updated_at: Date.now()
                 }
               }));
@@ -409,6 +416,7 @@ function ConfiguracionPage() {
                 paciente_sexo_default: normalizePacienteSexoDefault(configuracion.paciente_sexo_default || 'M'),
                 agenda_inteligente_cotizacion_v1: normalizeBooleanTinyInt(configuracion.agenda_inteligente_cotizacion_v1),
                 duracion_slot_min: normalizeSlotMinutes(configuracion.duracion_slot_min),
+                agenda_programacion_modo: normalizeAgendaProgramacionModo(configuracion.agenda_programacion_modo),
                 updated_at: Date.now()
               }
             }));
@@ -437,6 +445,7 @@ function ConfiguracionPage() {
         paciente_sexo_default: normalizePacienteSexoDefault(configuracion.paciente_sexo_default || 'M'),
         agenda_inteligente_cotizacion_v1: normalizeBooleanTinyInt(configuracion.agenda_inteligente_cotizacion_v1),
         duracion_slot_min: normalizeSlotMinutes(configuracion.duracion_slot_min),
+        agenda_programacion_modo: normalizeAgendaProgramacionModo(configuracion.agenda_programacion_modo),
         updated_at: Date.now()
       }
     }));
@@ -618,6 +627,24 @@ function ConfiguracionPage() {
               />
               <p className="mt-1 text-xs text-gray-500">
                 Se usa para sugerencias automáticas de horarios. Por ahora aplica globalmente.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Modo de programación de agenda
+              </label>
+              <select
+                value={normalizeAgendaProgramacionModo(configuracion.agenda_programacion_modo)}
+                onChange={(e) => manejarCambio('agenda_programacion_modo', normalizeAgendaProgramacionModo(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="strict">Estricto (solo horario regular)</option>
+                <option value="mixed">Mixto (recomendado)</option>
+                <option value="free">Libre (sin horario médico)</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Estricto: fuerza horas regulares. Mixto: guía por horas libres pero permite manual/fuera de horario. Libre: permite programación manual sin depender de agenda del médico.
               </p>
             </div>
 

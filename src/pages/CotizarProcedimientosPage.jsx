@@ -1,12 +1,28 @@
 import { authFetch } from "../utils/apiClient";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
-import { BASE_URL } from "../config/config";
+import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor, getMedicoSoftColor } from "../utils/medicoAccent";
-import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
+
+function normalizeAgendaProgramacionModo(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
+}
+
+function normalizeHourHm(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 
 export default function CotizarProcedimientosPage() {
    
@@ -24,7 +40,8 @@ export default function CotizarProcedimientosPage() {
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [medicos, setMedicos] = useState([]);
   const [programacionPorProcedimiento, setProgramacionPorProcedimiento] = useState({});
-  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
+  const [manualProgramacionByProcedimiento, setManualProgramacionByProcedimiento] = useState({});
+  const [agendaProgramacionModo, setAgendaProgramacionModo] = useState(() => getCachedAgendaProgramacionModo());
   const [isSaving, setIsSaving] = useState(false);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
@@ -79,63 +96,95 @@ export default function CotizarProcedimientosPage() {
     };
   };
 
-  const getSiguienteProgramacionProcedimiento = (procedimientoId, fechaPreferida = "") => {
-    const pid = Number(procedimientoId || 0);
-    const proc = procedimientos.find((p) => Number(p.id) === pid);
-    const medicoId = Number(proc?.medico_id || 0);
-    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
-    const sugerida = suggestNextHorarioFromCart(cart?.items, {
-      medicoId,
-      fechaBase,
-      stepMinutes: 30,
-    });
-    const referencia = getReferenceHorarioFromCart(cart?.items);
-    return {
-      fecha_programada: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
-      hora_programada: String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
-    };
-  };
-
-  const aplicarSiguienteHorarioSugeridoProcedimiento = (procedimientoId) => {
-    const pid = Number(procedimientoId || 0);
-    const actual = getProgramacionProcedimiento(pid);
-    const fechaActual = String(actual?.fecha_programada || getLimaDate()).slice(0, 10);
-    const horaActual = String(actual?.hora_programada || "").slice(0, 5);
-    const next = getSiguienteProgramacionProcedimiento(pid, fechaActual);
-    const horaAplicada = getNextSuggestedHoraVisible({
-      horaActual,
-      horaSugerida: next.hora_programada,
-      stepMinutes: 30,
-    });
-    setProgramacionPorProcedimiento((prev) => ({
-      ...prev,
-      [pid]: {
-        ...next,
-        hora_programada: horaAplicada || next.hora_programada,
-      },
-    }));
-
-    const horaFinal = String(horaAplicada || next.hora_programada || "").slice(0, 5);
-    setFeedbackProgramacion((prev) => ({
-      ...prev,
-      [pid]: `Hora aplicada: ${horaFinal}`,
-    }));
-    window.setTimeout(() => {
-      setFeedbackProgramacion((prev) => {
-        if (!prev[pid]) return prev;
-        const after = { ...prev };
-        delete after[pid];
-        return after;
-      });
-    }, 1500);
-  };
-
    const [busqueda, setBusqueda] = useState("");
     // Filtrar procedimientos por búsqueda
     const procedimientosFiltrados = procedimientos.filter(proc => {
       const texto = `${proc.descripcion || proc.nombre}`.toLowerCase();
       return texto.includes(busqueda.toLowerCase());
     });
+
+  const selectedAvailabilityTargets = useMemo(() => {
+    if (normalizeAgendaProgramacionModo(agendaProgramacionModo) === "free") return [];
+    return seleccionados
+      .map((id) => {
+        const proc = procedimientos.find((p) => Number(p.id) === Number(id));
+        const medicoId = Number(proc?.medico_id || 0);
+        const current = programacionPorProcedimiento[Number(id)] || {};
+        const fecha = String(current?.fecha_programada || getLimaDate()).slice(0, 10);
+        if (medicoId <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return null;
+        return {
+          procedimientoId: Number(id),
+          medicoId,
+          fecha,
+          key: `${medicoId}|${fecha}`,
+        };
+      })
+      .filter(Boolean);
+  }, [seleccionados, procedimientos, programacionPorProcedimiento, agendaProgramacionModo]);
+
+  const { availabilityByPair } = useAgendaAvailabilityByTargets({
+    targets: selectedAvailabilityTargets,
+    enabled: normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free" && selectedAvailabilityTargets.length > 0,
+  });
+
+  const actualizarHoraProgramadaProcedimiento = (procedimientoId, horaValue, options = {}) => {
+    const pid = Number(procedimientoId || 0);
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    const manualEnabled = Boolean(manualProgramacionByProcedimiento[pid]) && modo === "mixed";
+    const shouldCheckOccupied = modo !== "free" && manualEnabled && !options.skipOccupiedCheck;
+    const horaNorm = normalizeHourHm(horaValue);
+    const current = getProgramacionProcedimiento(pid);
+    const fecha = String(current?.fecha_programada || "").slice(0, 10);
+    const proc = procedimientos.find((p) => Number(p.id) === pid);
+    const medicoId = Number(proc?.medico_id || 0);
+    const availabilityKey = `${medicoId}|${fecha}`;
+    const ocupadas = Array.isArray(availabilityByPair?.[availabilityKey]?.horasOcupadas)
+      ? availabilityByPair[availabilityKey].horasOcupadas
+      : [];
+
+    if (shouldCheckOccupied && horaNorm && ocupadas.includes(horaNorm)) {
+      Swal.fire("Horario ocupado", `La hora ${horaNorm} ya está ocupada para este médico en ${fecha}. Elige otra hora para evitar choque.`, "warning");
+      return;
+    }
+
+    setProgramacionPorProcedimiento((prev) => ({
+      ...prev,
+      [pid]: {
+        ...getProgramacionProcedimiento(pid),
+        hora_programada: String(horaValue || "").slice(0, 5),
+      },
+    }));
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const applyModeFromPayload = (data) => {
+      const mode = normalizeAgendaProgramacionModo(data?.agenda_programacion_modo);
+      setAgendaProgramacionModo(mode);
+    };
+    fetchConfigSingleton().then((result) => {
+      if (cancelled) return;
+      applyModeFromPayload(result?.data || {});
+    });
+    const onConfigUpdated = (event) => applyModeFromPayload(event?.detail || {});
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    setManualProgramacionByProcedimiento((prev) => {
+      const selectedIds = new Set(seleccionados.map((id) => Number(id)));
+      const next = {};
+      Object.keys(prev || {}).forEach((rawId) => {
+        const id = Number(rawId);
+        if (selectedIds.has(id)) next[id] = Boolean(prev[rawId]);
+      });
+      return next;
+    });
+  }, [seleccionados]);
 
   useEffect(() => {
     authFetch(`${BASE_URL}api_tarifas.php`, { credentials: "include" })
@@ -898,6 +947,17 @@ export default function CotizarProcedimientosPage() {
                   const cantidad = cantidades[pid] || 1;
                   const subtotal = Number(proc?.precio_particular || 0) * cantidad;
                   const programacion = getProgramacionProcedimiento(pid);
+                  const medicoId = Number(proc?.medico_id || 0);
+                  const availabilityKey = `${medicoId}|${String(programacion.fecha_programada || "").slice(0, 10)}`;
+                  const availability = availabilityByPair[availabilityKey] || null;
+                  const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+                  const isModeFree = modo === "free";
+                  const isModeMixed = modo === "mixed";
+                  const isModeStrict = modo === "strict";
+                  const manualEnabled = Boolean(manualProgramacionByProcedimiento[Number(pid)]) && isModeMixed;
+                  const horasLibres = Array.isArray(availability?.horasLibres) ? availability.horasLibres : [];
+                  const horasOcupadas = Array.isArray(availability?.horasOcupadas) ? availability.horasOcupadas : [];
+                  const iniciosValidos = horasLibres;
                   return proc ? (
                     <li key={pid} className="py-2 flex flex-col gap-2">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -925,34 +985,86 @@ export default function CotizarProcedimientosPage() {
                         </label>
                         <label className="flex flex-col gap-1">
                           <span className="text-xs font-semibold text-gray-600">Hora programada</span>
-                          <input
-                            type="time"
-                            value={programacion.hora_programada}
-                            onChange={(e) => setProgramacionPorProcedimiento((prev) => ({
-                              ...prev,
-                              [pid]: {
-                                ...getProgramacionProcedimiento(pid),
-                                hora_programada: e.target.value,
-                              },
-                            }))}
-                            className="border rounded-lg px-2 py-1 bg-white"
-                          />
+                          {isModeFree ? (
+                            <input
+                              type="time"
+                              value={programacion.hora_programada}
+                              onChange={(e) => actualizarHoraProgramadaProcedimiento(pid, e.target.value)}
+                              className="border rounded-lg px-2 py-1 bg-white"
+                            />
+                          ) : (iniciosValidos.length > 0 && !manualEnabled) ? (
+                            <select
+                              value={iniciosValidos.includes(programacion.hora_programada) ? programacion.hora_programada : iniciosValidos[0]}
+                              onChange={(e) => setProgramacionPorProcedimiento((prev) => ({
+                                ...prev,
+                                [pid]: {
+                                  ...getProgramacionProcedimiento(pid),
+                                  hora_programada: String(e.target.value || "").slice(0, 5),
+                                },
+                              }))}
+                              className="border rounded-lg px-2 py-1 bg-white"
+                            >
+                              {iniciosValidos.map((hora) => (
+                                <option key={`${pid}-${hora}`} value={hora}>{hora}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="time"
+                              value={programacion.hora_programada}
+                              onChange={(e) => actualizarHoraProgramadaProcedimiento(pid, e.target.value)}
+                              className="border rounded-lg px-2 py-1 bg-white"
+                              disabled={isModeStrict && iniciosValidos.length === 0}
+                            />
+                          )}
                         </label>
                       </div>
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => aplicarSiguienteHorarioSugeridoProcedimiento(pid)}
-                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                        >
-                          Usar siguiente hora sugerida
-                        </button>
-                      </div>
-                      {feedbackProgramacion[pid] && (
-                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
-                          {feedbackProgramacion[pid]}
+                      {isModeMixed && medicoId > 0 && (
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setManualProgramacionByProcedimiento((prev) => ({
+                              ...prev,
+                              [Number(pid)]: !prev[Number(pid)],
+                            }))}
+                            className={`text-xs px-3 py-1.5 rounded border ${manualEnabled ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                          >
+                            {manualEnabled ? "Usando hora manual/fuera de horario" : "Permitir hora manual/fuera de horario"}
+                          </button>
                         </div>
                       )}
+                      <div className="text-[11px] text-slate-600 space-y-1">
+                        <div>
+                          <span className="font-semibold">Modo agenda:</span>{" "}
+                          {isModeStrict ? "Estricto" : isModeFree ? "Libre" : "Mixto"}
+                        </div>
+                        {medicoId <= 0 ? (
+                          <div className="text-amber-700">Este procedimiento no tiene médico asignado; no se puede mostrar disponibilidad.</div>
+                        ) : isModeFree ? (
+                          <div className="text-slate-500">Modo libre activo: se permite seleccionar hora manual sin depender del horario regular del médico.</div>
+                        ) : availability?.loading ? (
+                          <div className="text-slate-500">Consultando horas libres del médico...</div>
+                        ) : availability?.error ? (
+                          <div className="text-rose-700">No se pudo cargar disponibilidad: {availability.error}</div>
+                        ) : (
+                          <>
+                            <div>
+                              <span className="font-semibold">Horas libres del médico:</span>{" "}
+                              {horasLibres.length > 0 ? horasLibres.join(", ") : "sin horas libres"}
+                            </div>
+                            <div>
+                              <span className="font-semibold">Horas ocupadas del médico:</span>{" "}
+                              {horasOcupadas.length > 0 ? horasOcupadas.join(", ") : "sin horas ocupadas"}
+                            </div>
+                            {isModeStrict && iniciosValidos.length === 0 && (
+                              <div className="text-amber-700">Modo estricto: cambia fecha para encontrar horario regular disponible.</div>
+                            )}
+                            {isModeMixed && manualEnabled && (
+                              <div className="text-amber-700">Hora manual habilitada: si queda fuera de horario regular se marcará como adicional autorizado en la validación.</div>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </li>
                   ) : null;
                 })}

@@ -10,9 +10,14 @@ function FormularioAgendarConsulta({
   setMedicoId,
   fecha,
   setFecha,
+  fechaHoy = "",
+  bloquearCambioFecha = false,
   hora,
   setHora,
+  onHoraManualChange,
   horariosDisponibles,
+  horasLibres = [],
+  horasOcupadas = [],
   cargandoHorarios,
   handleSubmit,
   onCotizar,
@@ -81,8 +86,16 @@ function FormularioAgendarConsulta({
           value={fecha}
           onChange={(e) => setFecha(e.target.value)}
           className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
+          min={bloquearCambioFecha && fechaHoy ? fechaHoy : undefined}
+          max={bloquearCambioFecha && fechaHoy ? fechaHoy : undefined}
+          disabled={bloquearCambioFecha}
           required
         />
+        {bloquearCambioFecha && (
+          <div className="text-xs text-amber-700">
+            En consulta espontánea la fecha es solo hoy ({fechaHoy}).
+          </div>
+        )}
 
         {tipoConsulta === "programada" ? (
           <>
@@ -125,10 +138,34 @@ function FormularioAgendarConsulta({
               id="hora-input"
               type="time"
               value={hora}
-              onChange={(e) => setHora(e.target.value)}
+              onChange={(e) => (typeof onHoraManualChange === "function" ? onHoraManualChange(e.target.value) : setHora(e.target.value))}
               className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
               required
             />
+            {medicoId && fecha && (
+              <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+                <div className="font-semibold text-slate-800">Disponibilidad de referencia (para evitar cruces)</div>
+                {cargandoHorarios ? (
+                  <div className="text-slate-500">Consultando horas libres y ocupadas...</div>
+                ) : (
+                  <>
+                    <div>
+                      <span className="font-semibold">Horas libres:</span>{" "}
+                      {Array.isArray(horasLibres) && horasLibres.length > 0 ? horasLibres.join(", ") : "sin horas libres"}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Horas ocupadas:</span>{" "}
+                      {Array.isArray(horasOcupadas) && horasOcupadas.length > 0 ? horasOcupadas.join(", ") : "sin horas ocupadas"}
+                    </div>
+                    {!Array.isArray(horasLibres) || horasLibres.length === 0 ? (
+                      <div className="text-amber-700">
+                        No hay horario regular libre para esta fecha. Si el médico autoriza, puedes usar hora manual fuera de horario, evitando horas ocupadas.
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
 

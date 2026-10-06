@@ -17,6 +17,16 @@ import {
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 
+function normalizeHourHm(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = null, cotizacionId = null, isEditIntent = false }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -57,6 +67,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const [coverageByTarifa, setCoverageByTarifa] = useState({});
   const [medicoId, setMedicoId] = useState("");
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
+  const [horariosOcupados, setHorariosOcupados] = useState([]);
   // Inicializar fecha con la fecha actual de Lima
   const getLimaDate = () => {
     const now = new Date();
@@ -90,6 +101,16 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const MySwal = withReactContent(Swal);
   const medicoIdNormalizado = Number.parseInt(String(medicoId || "").trim(), 10) || 0;
   const medicoIdRespaldo = medicoIdNormalizado > 0 ? medicoIdNormalizado : medicoIdPrefill;
+  const horasLibresNormalizadas = Array.from(new Set(
+    (Array.isArray(horariosDisponibles) ? horariosDisponibles : [])
+      .map((h) => normalizeHourHm(h?.hora || h?.hora_db || h))
+      .filter(Boolean)
+  ));
+  const horasOcupadasNormalizadas = Array.from(new Set(
+    (Array.isArray(horariosOcupados) ? horariosOcupados : [])
+      .map((h) => normalizeHourHm(h))
+      .filter(Boolean)
+  ));
 
   const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal, opts = {}) => {
     if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
@@ -371,6 +392,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   useEffect(() => {
     if (!(medicoIdRespaldo > 0 && fecha)) {
       setHorariosDisponibles([]);
+      setHorariosOcupados([]);
       return undefined;
     }
 
@@ -395,8 +417,10 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         .then((data) => {
           if (data.success) {
             setHorariosDisponibles(data.horarios_disponibles || []);
+            setHorariosOcupados(Array.isArray(data.horarios_ocupados) ? data.horarios_ocupados : []);
           } else {
             setHorariosDisponibles([]);
+            setHorariosOcupados([]);
             console.error("Error:", data.error);
           }
         })
@@ -404,6 +428,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           if (error?.name === "AbortError") return;
           console.error("Error:", error);
           setHorariosDisponibles([]);
+          setHorariosOcupados([]);
         })
         .finally(() => setCargandoHorarios(false));
     }, 250);
@@ -413,6 +438,19 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       controller.abort();
     };
   }, [medicoIdRespaldo, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
+
+  const setHoraConGuardia = (value) => {
+    const horaNorm = normalizeHourHm(value);
+    if (tipoConsulta !== "programada" && horaNorm && horasOcupadasNormalizadas.includes(horaNorm)) {
+      MySwal.fire({
+        icon: "warning",
+        title: "Horario ocupado",
+        text: `La hora ${horaNorm} ya está ocupada para este médico en ${String(fecha || "").slice(0, 10)}. Elige otra hora para evitar choque.`,
+      });
+      return;
+    }
+    setHora(value);
+  };
 
   useEffect(() => {
     // Cargar información del paciente
@@ -524,6 +562,14 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       setHora(horaPrefill);
     }
   }, [isEditingConsulta, medicoIdPrefill, fechaPrefill, horaPrefill]);
+
+  useEffect(() => {
+    if (tipoConsulta !== "espontanea") return;
+    const hoy = getLimaDate();
+    if (String(fecha || "").slice(0, 10) !== hoy) {
+      setFecha(hoy);
+    }
+  }, [tipoConsulta, fecha]);
 
   const seleccionarConsultaParaEditar = (detalle) => {
     setConsultasDisponibles([]);
@@ -1444,9 +1490,14 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             setMedicoId={setMedicoId}
             fecha={fecha}
             setFecha={setFecha}
+            fechaHoy={getLimaDate()}
+            bloquearCambioFecha={tipoConsulta === "espontanea"}
             hora={hora}
             setHora={setHora}
+            onHoraManualChange={setHoraConGuardia}
             horariosDisponibles={horariosDisponibles}
+            horasLibres={horasLibresNormalizadas}
+            horasOcupadas={horasOcupadasNormalizadas}
             cargandoHorarios={cargandoHorarios}
             handleSubmit={handleSubmit}
             onCotizar={handleCotizar}

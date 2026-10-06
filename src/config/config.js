@@ -34,6 +34,7 @@ let _configPromise = null;
 let _configResolvedAt = 0;
 const CONFIG_SINGLETON_TTL_MS = 5 * 60 * 1000;
 const AGENDA_SLOT_STORAGE_KEY = 'clinica_agenda_slot_min';
+const AGENDA_MODE_STORAGE_KEY = 'clinica_agenda_programacion_modo';
 
 function normalizeAgendaSlotMinutes(raw) {
     const n = Number(raw || 30);
@@ -54,6 +55,24 @@ function cacheAgendaSlotMinutes(raw) {
     return slot;
 }
 
+function normalizeAgendaProgramacionModo(raw) {
+      const mode = String(raw || '').trim().toLowerCase();
+      return ['strict', 'mixed', 'free'].includes(mode) ? mode : 'mixed';
+}
+
+function cacheAgendaProgramacionModo(raw) {
+      const mode = normalizeAgendaProgramacionModo(raw);
+      try {
+          sessionStorage.setItem(AGENDA_MODE_STORAGE_KEY, mode);
+      } catch {
+          // noop
+      }
+      if (typeof window !== 'undefined') {
+          window.__CLINICA_AGENDA_PROGRAMACION_MODO = mode;
+      }
+      return mode;
+}
+
 export function getCachedAgendaSlotMinutes() {
     if (typeof window !== 'undefined' && Number.isFinite(Number(window.__CLINICA_AGENDA_SLOT_MIN))) {
         return normalizeAgendaSlotMinutes(window.__CLINICA_AGENDA_SLOT_MIN);
@@ -67,9 +86,23 @@ export function getCachedAgendaSlotMinutes() {
     return 30;
 }
 
+export function getCachedAgendaProgramacionModo() {
+    if (typeof window !== 'undefined' && typeof window.__CLINICA_AGENDA_PROGRAMACION_MODO === 'string') {
+        return normalizeAgendaProgramacionModo(window.__CLINICA_AGENDA_PROGRAMACION_MODO);
+    }
+    try {
+        const stored = sessionStorage.getItem(AGENDA_MODE_STORAGE_KEY);
+        if (stored !== null) return normalizeAgendaProgramacionModo(stored);
+    } catch {
+        // noop
+    }
+    return 'mixed';
+}
+
 if (typeof window !== 'undefined') {
     window.addEventListener('clinica-config-updated', (event) => {
         cacheAgendaSlotMinutes(event?.detail?.duracion_slot_min);
+        cacheAgendaProgramacionModo(event?.detail?.agenda_programacion_modo);
     });
 }
 
@@ -85,6 +118,7 @@ export function fetchConfigSingleton() {
         .then(r => r.json())
         .then(data => {
             cacheAgendaSlotMinutes(data?.data?.duracion_slot_min);
+            cacheAgendaProgramacionModo(data?.data?.agenda_programacion_modo);
             _configResolvedAt = Date.now();
             return data;
         })

@@ -2,10 +2,11 @@ import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
-import { BASE_URL, getCachedAgendaSlotMinutes } from "../config/config";
+import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo, getCachedAgendaSlotMinutes } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
-import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
 
 const SERVICE_TYPE_LABELS = {
   consulta: "Consulta",
@@ -368,6 +369,15 @@ function resolvePaqueteMedicoId(pkg) {
   return medicos[0];
 }
 
+function resolvePaqueteMedicoIds(pkg, cotizacionId) {
+  const componentes = buildPackageComponents(pkg, cotizacionId);
+  return Array.from(new Set(
+    componentes
+      .map((it) => Number(it?.medico_id || 0))
+      .filter((id) => id > 0)
+  ));
+}
+
 function buildDetalleKey(detalle) {
   const tipo = normalizeServiceType(detalle?.servicio_tipo || detalle?.source_type || "");
   const servicioId = Number(detalle?.servicio_id || detalle?.source_id || 0);
@@ -378,6 +388,45 @@ function buildDetalleKey(detalle) {
   const fechaProgramada = String(detalle?.fecha_programada || "").slice(0, 10);
   const horaProgramada = String(detalle?.hora_programada || "").slice(0, 5);
   return `${tipo}::${servicioId}::${examenVersionId}::${descripcion}::${cantidad}::${precioUnitario}::${fechaProgramada}::${horaProgramada}`;
+}
+
+function countPresentialBlocksForPackage(pkg, cotizacionId) {
+  const componentes = buildPackageComponents(pkg, cotizacionId);
+  const bloques = componentes.filter((it) => isPresentialAgendableType(it?.servicio_tipo || it?.source_type)).length;
+  return Math.max(1, bloques);
+}
+
+function computeValidStartHours(horasLibres, bloquesRequeridos, stepMinutes = 30) {
+  const step = resolveAgendaStepMinutes(stepMinutes);
+  const libres = Array.isArray(horasLibres)
+    ? horasLibres
+      .map((h) => normalizeHourHm(h))
+      .filter(Boolean)
+    : [];
+  const libresSet = new Set(libres);
+  const out = [];
+
+  for (const hora of libres) {
+    const baseMin = hmToMinutes(hora);
+    if (baseMin === null) continue;
+
+    let cumple = true;
+    for (let i = 1; i < Math.max(1, Number(bloquesRequeridos || 1)); i += 1) {
+      const next = minutesToHm(baseMin + i * step);
+      if (!libresSet.has(next)) {
+        cumple = false;
+        break;
+      }
+    }
+    if (cumple) out.push(hora);
+  }
+
+  return Array.from(new Set(out));
+}
+
+function normalizeAgendaProgramacionModo(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
 }
 
 export default function CotizarPaquetesPerfilesPage() {
@@ -395,9 +444,11 @@ export default function CotizarPaquetesPerfilesPage() {
   const [componentFilterMode, setComponentFilterMode] = useState("any");
   const [loading, setLoading] = useState(false);
   const [schemaWarning, setSchemaWarning] = useState(null);
+  const [medicos, setMedicos] = useState([]);
   const [visibleCount, setVisibleCount] = useState(LIST_INITIAL_VISIBLE);
   const [programacionPorPaquete, setProgramacionPorPaquete] = useState({});
-  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
+  const [manualProgramacionByPaquete, setManualProgramacionByPaquete] = useState({});
+  const [agendaProgramacionModo, setAgendaProgramacionModo] = useState(() => getCachedAgendaProgramacionModo());
   const loadPackagesRef = useRef(null);
 
   const sp = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -454,48 +505,6 @@ export default function CotizarPaquetesPerfilesPage() {
     };
   };
 
-  const aplicarSiguienteHorarioSugeridoPaquete = (paqueteId) => {
-    const pid = Number(paqueteId || 0);
-    const row = rows.find((r) => Number(r.id) === pid);
-    const medicoId = resolvePaqueteMedicoId(row);
-    const actual = getProgramacionPaquete(pid);
-    const fechaBase = String(actual?.fecha_programada || getLimaDate()).slice(0, 10);
-    const horaActual = String(actual?.hora_programada || "").slice(0, 5);
-    const sugerida = suggestNextHorarioFromCart(cart?.items, {
-      medicoId,
-      fechaBase,
-      stepMinutes: 30,
-    });
-    const referencia = getReferenceHorarioFromCart(cart?.items);
-    const horaSugerida = String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5);
-    const horaAplicada = getNextSuggestedHoraVisible({
-      horaActual,
-      horaSugerida,
-      stepMinutes: 30,
-    });
-
-    setProgramacionPorPaquete((prev) => ({
-      ...prev,
-      [pid]: {
-        fecha_programada: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
-        hora_programada: horaAplicada || horaSugerida,
-      },
-    }));
-
-    const horaFinal = String(horaAplicada || horaSugerida || "").slice(0, 5);
-    setFeedbackProgramacion((prev) => ({
-      ...prev,
-      [pid]: `Hora aplicada: ${horaFinal}`,
-    }));
-    window.setTimeout(() => {
-      setFeedbackProgramacion((prev) => {
-        if (!prev[pid]) return prev;
-        const after = { ...prev };
-        delete after[pid];
-        return after;
-      });
-    }, 1500);
-  };
 
   useEffect(() => {
     const qParam = String(sp.get("q") || "").trim();
@@ -549,6 +558,18 @@ export default function CotizarPaquetesPerfilesPage() {
       });
   }, [pacienteId]);
 
+  useEffect(() => {
+    authFetch(`${BASE_URL}api_medicos.php`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => {
+        const lista = Array.isArray(data?.medicos) ? data.medicos : (Array.isArray(data) ? data : []);
+        setMedicos(lista);
+      })
+      .catch(() => {
+        setMedicos([]);
+      });
+  }, []);
+
   const loadPackages = async () => {
     setLoading(true);
     try {
@@ -587,6 +608,28 @@ export default function CotizarPaquetesPerfilesPage() {
   });
 
   useEffect(() => {
+    let cancelled = false;
+    const applyModeFromPayload = (data) => {
+      const mode = normalizeAgendaProgramacionModo(data?.agenda_programacion_modo);
+      setAgendaProgramacionModo(mode);
+    };
+
+    fetchConfigSingleton().then((result) => {
+      if (cancelled) return;
+      applyModeFromPayload(result?.data || {});
+    });
+
+    const onConfigUpdated = (event) => {
+      applyModeFromPayload(event?.detail || {});
+    };
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
     loadPackages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -616,6 +659,47 @@ export default function CotizarPaquetesPerfilesPage() {
   const selectedRows = useMemo(() => {
     return rows.filter((r) => selected.includes(Number(r.id)));
   }, [rows, selected]);
+
+  const selectedAvailabilityTargets = useMemo(() => {
+    if (agendaProgramacionModo === "free") return [];
+    return selectedRows
+      .map((row) => {
+        const medicoId = resolvePaqueteMedicoId(row);
+        const programacion = programacionPorPaquete[Number(row.id)] || {};
+        const fecha = String(programacion?.fecha_programada || "").slice(0, 10);
+        const bloques = countPresentialBlocksForPackage(row, cotizacionId);
+        if (medicoId <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || bloques <= 0) return null;
+        return {
+          rowId: Number(row.id),
+          medicoId,
+          fecha,
+          bloquesRequeridos: bloques,
+          key: `${medicoId}|${fecha}`,
+        };
+      })
+      .filter(Boolean);
+  }, [selectedRows, programacionPorPaquete, cotizacionId, agendaProgramacionModo]);
+
+  const selectedAvailabilityTargetsAllDoctors = useMemo(() => {
+    if (agendaProgramacionModo === "free") return [];
+    return selectedRows.flatMap((row) => {
+      const programacion = programacionPorPaquete[Number(row.id)] || {};
+      const fecha = String(programacion?.fecha_programada || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return [];
+      const medicosIds = resolvePaqueteMedicoIds(row, cotizacionId);
+      return medicosIds.map((medicoId) => ({
+        rowId: Number(row.id),
+        medicoId: Number(medicoId),
+        fecha,
+        key: `${Number(medicoId)}|${fecha}`,
+      }));
+    });
+  }, [selectedRows, programacionPorPaquete, cotizacionId, agendaProgramacionModo]);
+
+  const { availabilityByPair } = useAgendaAvailabilityByTargets({
+    targets: selectedAvailabilityTargetsAllDoctors,
+    enabled: agendaProgramacionModo !== "free",
+  });
 
   useEffect(() => {
     setProgramacionPorPaquete((prev) => {
@@ -647,6 +731,44 @@ export default function CotizarPaquetesPerfilesPage() {
     });
   }, [selectedRows, cart?.items, cotizacionId]);
 
+  useEffect(() => {
+    setManualProgramacionByPaquete((prev) => {
+      const selectedIds = new Set(selectedRows.map((row) => Number(row.id)));
+      const next = {};
+      Object.keys(prev || {}).forEach((rawId) => {
+        const id = Number(rawId);
+        if (selectedIds.has(id)) next[id] = Boolean(prev[rawId]);
+      });
+      return next;
+    });
+  }, [selectedRows]);
+
+  useEffect(() => {
+    if (agendaProgramacionModo === "free") return;
+    if (selectedAvailabilityTargets.length === 0) return;
+    const step = resolveAgendaStepMinutes(30);
+    setProgramacionPorPaquete((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      selectedAvailabilityTargets.forEach((target) => {
+        const avail = availabilityByPair[target.key];
+        if (!avail || avail.loading || avail.error) return;
+        const iniciosValidos = computeValidStartHours(avail.horasLibres, target.bloquesRequeridos, step);
+        if (iniciosValidos.length === 0) return;
+        if (manualProgramacionByPaquete[target.rowId]) return;
+        const current = String(next[target.rowId]?.hora_programada || "").slice(0, 5);
+        if (iniciosValidos.includes(current)) return;
+        next[target.rowId] = {
+          ...next[target.rowId],
+          fecha_programada: target.fecha,
+          hora_programada: iniciosValidos[0],
+        };
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedAvailabilityTargets, availabilityByPair, agendaProgramacionModo, manualProgramacionByPaquete]);
+
   const toggleComponentFilter = (typeValue) => {
     const val = String(typeValue || "").trim();
     if (!val) return;
@@ -676,6 +798,41 @@ export default function CotizarPaquetesPerfilesPage() {
       return acc + Number(row.precio_global_venta || 0) * qty;
     }, 0);
   }, [selectedRows, quantities]);
+
+  const actualizarHoraProgramadaPaquete = (row, horaValue, options = {}) => {
+    const rowId = Number(row?.id || 0);
+    if (rowId <= 0) return;
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    const shouldCheckOccupied = modo !== "free" && !options.skipOccupiedCheck;
+    const horaNorm = normalizeHourHm(horaValue);
+    const current = getProgramacionPaquete(rowId);
+    const fecha = String(current?.fecha_programada || "").slice(0, 10);
+    const medicoIds = resolvePaqueteMedicoIds(row, cotizacionId);
+
+    if (shouldCheckOccupied && horaNorm) {
+      for (const medicoId of medicoIds) {
+        const availabilityKey = `${Number(medicoId)}|${fecha}`;
+        const ocupadas = Array.isArray(availabilityByPair?.[availabilityKey]?.horasOcupadas)
+          ? availabilityByPair[availabilityKey].horasOcupadas
+          : [];
+        if (!ocupadas.includes(horaNorm)) continue;
+        const medico = medicos.find((m) => Number(m?.id || 0) === Number(medicoId));
+        const medicoNombre = medico
+          ? `${medico?.nombres || medico?.nombre || ""} ${medico?.apellidos || medico?.apellido || ""}`.trim()
+          : `Médico #${medicoId}`;
+        Swal.fire("Horario ocupado", `La hora ${horaNorm} ya está ocupada para ${medicoNombre} en ${fecha}. Elige otra hora para evitar choque.`, "warning");
+        return;
+      }
+    }
+
+    setProgramacionPorPaquete((prev) => ({
+      ...prev,
+      [rowId]: {
+        ...getProgramacionPaquete(rowId),
+        hora_programada: String(horaValue || "").slice(0, 5),
+      },
+    }));
+  };
 
   useEffect(() => {
     setVisibleCount(LIST_INITIAL_VISIBLE);
@@ -777,38 +934,40 @@ export default function CotizarPaquetesPerfilesPage() {
       return;
     }
 
-    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
-    const agendaCheck = await validarAgendaAntesDeCotizar({
-      authFetch,
-      baseUrl: BASE_URL,
-      Swal,
-      entries: agendaEntries,
-      onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
-        const horaNueva = String(nuevaHora || "").slice(0, 5);
-        const fechaNueva = String(nuevaFecha || entry?.fecha || "").slice(0, 10);
-        detallesPaquete.forEach((detalle) => {
-          const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
-          const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
-          if (fechaDet === entry.fecha && horaDet === entry.hora) {
-            detalle.fecha_programada = fechaNueva || fechaDet;
-            detalle.hora_programada = horaNueva;
-          }
-
-          const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
-          componentes.forEach((comp) => {
-            const medicoIdComp = Number(comp?.medico_id || 0);
-            const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
-            const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
-            if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
-              comp.fecha_programada = fechaNueva || fechaComp;
-              comp.hora_programada = horaNueva;
+    if (normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free") {
+      const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
+      const agendaCheck = await validarAgendaAntesDeCotizar({
+        authFetch,
+        baseUrl: BASE_URL,
+        Swal,
+        entries: agendaEntries,
+        onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
+          const horaNueva = String(nuevaHora || "").slice(0, 5);
+          const fechaNueva = String(nuevaFecha || entry?.fecha || "").slice(0, 10);
+          detallesPaquete.forEach((detalle) => {
+            const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
+            const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
+            if (fechaDet === entry.fecha && horaDet === entry.hora) {
+              detalle.fecha_programada = fechaNueva || fechaDet;
+              detalle.hora_programada = horaNueva;
             }
+
+            const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
+            componentes.forEach((comp) => {
+              const medicoIdComp = Number(comp?.medico_id || 0);
+              const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
+              const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
+              if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
+                comp.fecha_programada = fechaNueva || fechaComp;
+                comp.hora_programada = horaNueva;
+              }
+            });
           });
-        });
-      },
-    });
-    if (!agendaCheck?.ok) {
-      return;
+        },
+      });
+      if (!agendaCheck?.ok) {
+        return;
+      }
     }
 
     const detailItemsAjustadosBase = detailItems.map((it, idx) => ({
@@ -866,38 +1025,40 @@ export default function CotizarPaquetesPerfilesPage() {
         cotizacion_id: Number(it.cotizacionId || 0) || null,
       }));
 
-      const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
-      const agendaCheck = await validarAgendaAntesDeCotizar({
-        authFetch,
-        baseUrl: BASE_URL,
-        Swal,
-        entries: agendaEntries,
-        onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
-          const horaNueva = String(nuevaHora || "").slice(0, 5);
-          const fechaNueva = String(nuevaFecha || entry?.fecha || "").slice(0, 10);
-          detallesPaquete.forEach((detalle) => {
-            const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
-            const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
-            if (fechaDet === entry.fecha && horaDet === entry.hora) {
-              detalle.fecha_programada = fechaNueva || fechaDet;
-              detalle.hora_programada = horaNueva;
-            }
-
-            const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
-            componentes.forEach((comp) => {
-              const medicoIdComp = Number(comp?.medico_id || 0);
-              const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
-              const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
-              if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
-                comp.fecha_programada = fechaNueva || fechaComp;
-                comp.hora_programada = horaNueva;
+      if (normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free") {
+        const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
+        const agendaCheck = await validarAgendaAntesDeCotizar({
+          authFetch,
+          baseUrl: BASE_URL,
+          Swal,
+          entries: agendaEntries,
+          onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
+            const horaNueva = String(nuevaHora || "").slice(0, 5);
+            const fechaNueva = String(nuevaFecha || entry?.fecha || "").slice(0, 10);
+            detallesPaquete.forEach((detalle) => {
+              const fechaDet = String(detalle?.fecha_programada || "").slice(0, 10);
+              const horaDet = String(detalle?.hora_programada || "").slice(0, 5);
+              if (fechaDet === entry.fecha && horaDet === entry.hora) {
+                detalle.fecha_programada = fechaNueva || fechaDet;
+                detalle.hora_programada = horaNueva;
               }
+
+              const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
+              componentes.forEach((comp) => {
+                const medicoIdComp = Number(comp?.medico_id || 0);
+                const fechaComp = String(comp?.fecha_programada || detalle?.fecha_programada || "").slice(0, 10);
+                const horaComp = String(comp?.hora_programada || detalle?.hora_programada || "").slice(0, 5);
+                if (medicoIdComp === Number(entry.medicoId) && fechaComp === entry.fecha && horaComp === entry.hora) {
+                  comp.fecha_programada = fechaNueva || fechaComp;
+                  comp.hora_programada = horaNueva;
+                }
+              });
             });
-          });
-        },
-      });
-      if (!agendaCheck?.ok) {
-        return;
+          },
+        });
+        if (!agendaCheck?.ok) {
+          return;
+        }
       }
 
       const paquetesRehidratados = paquetesSeleccionados.map((it, idx) => ({
@@ -1264,6 +1425,29 @@ export default function CotizarPaquetesPerfilesPage() {
                 const qty = Math.max(1, Number(quantities[row.id] || 1));
                 const subtotal = Number(row.precio_global_venta || 0) * qty;
                 const programacion = getProgramacionPaquete(row.id);
+                const medicoId = resolvePaqueteMedicoId(row);
+                const medicoIdsPaquete = resolvePaqueteMedicoIds(row, cotizacionId);
+                const bloquesRequeridos = countPresentialBlocksForPackage(row, cotizacionId);
+                const availabilityKey = `${medicoId}|${String(programacion.fecha_programada || "").slice(0, 10)}`;
+                const availability = availabilityByPair[availabilityKey] || null;
+                const disponibilidadPorMedico = medicoIdsPaquete.map((mid) => {
+                  const key = `${Number(mid)}|${String(programacion.fecha_programada || "").slice(0, 10)}`;
+                  return {
+                    medicoId: Number(mid),
+                    availability: availabilityByPair[key] || null,
+                  };
+                });
+                const iniciosValidos = computeValidStartHours(
+                  availability?.horasLibres || [],
+                  bloquesRequeridos,
+                  30
+                );
+                const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+                const isModeFree = modo === "free";
+                const isModeMixed = modo === "mixed";
+                const isModeStrict = modo === "strict";
+                const manualEnabled = Boolean(manualProgramacionByPaquete[row.id]) && isModeMixed;
+                const horasOcupadas = Array.isArray(availability?.horasOcupadas) ? availability.horasOcupadas : [];
                 return (
                   <li key={`sel-${row.id}`} className="py-2 flex flex-col gap-2">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1298,34 +1482,125 @@ export default function CotizarPaquetesPerfilesPage() {
                       </label>
                       <label className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-gray-600">Hora programada</span>
-                        <input
-                          type="time"
-                          value={programacion.hora_programada}
-                          onChange={(e) => setProgramacionPorPaquete((prev) => ({
-                            ...prev,
-                            [row.id]: {
-                              ...getProgramacionPaquete(row.id),
-                              hora_programada: e.target.value,
-                            },
-                          }))}
-                          className="border rounded-lg px-2 py-1 bg-white"
-                        />
+                        {isModeFree ? (
+                          <input
+                            type="time"
+                            value={programacion.hora_programada}
+                            onChange={(e) => actualizarHoraProgramadaPaquete(row, e.target.value, { skipOccupiedCheck: true })}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          />
+                        ) : (iniciosValidos.length > 0 && !manualEnabled) ? (
+                          <select
+                            value={iniciosValidos.includes(programacion.hora_programada) ? programacion.hora_programada : iniciosValidos[0]}
+                            onChange={(e) => setProgramacionPorPaquete((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...getProgramacionPaquete(row.id),
+                                hora_programada: String(e.target.value || "").slice(0, 5),
+                              },
+                            }))}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                          >
+                            {iniciosValidos.map((hora) => (
+                              <option key={`${row.id}-${hora}`} value={hora}>{hora}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="time"
+                            value={programacion.hora_programada}
+                            onChange={(e) => actualizarHoraProgramadaPaquete(row, e.target.value)}
+                            className="border rounded-lg px-2 py-1 bg-white"
+                            disabled={isModeStrict && iniciosValidos.length === 0}
+                          />
+                        )}
                       </label>
                     </div>
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => aplicarSiguienteHorarioSugeridoPaquete(row.id)}
-                        className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                      >
-                        Usar siguiente hora sugerida
-                      </button>
-                    </div>
-                    {feedbackProgramacion[Number(row.id)] && (
-                      <div className="text-[11px] text-emerald-700 font-semibold text-right">
-                        {feedbackProgramacion[Number(row.id)]}
+                    {isModeMixed && medicoId > 0 && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setManualProgramacionByPaquete((prev) => ({
+                            ...prev,
+                            [row.id]: !prev[row.id],
+                          }))}
+                          className={`text-xs px-3 py-1.5 rounded border ${manualEnabled ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                        >
+                          {manualEnabled ? "Usando hora manual/fuera de horario" : "Permitir hora manual/fuera de horario"}
+                        </button>
                       </div>
                     )}
+                    <div className="text-[11px] text-slate-600 space-y-1">
+                      <div>
+                        <span className="font-semibold">Bloques requeridos:</span> {bloquesRequeridos}
+                        <span className="text-slate-500"> ({resolveAgendaStepMinutes(30)} min c/u)</span>
+                      </div>
+                      <div>
+                        <span className="font-semibold">Modo agenda:</span>{" "}
+                        {isModeStrict ? "Estricto" : isModeFree ? "Libre" : "Mixto"}
+                      </div>
+                      {medicoId <= 0 && (
+                        <div className="text-amber-700">Este paquete tiene múltiples médicos o no define médico único; se muestra disponibilidad por médico.</div>
+                      )}
+                      {isModeFree && (
+                        <div className="text-slate-500">Modo libre activo: se permite seleccionar hora manual sin depender del horario regular del médico.</div>
+                      )}
+                      {!isModeFree && medicoId > 0 && availability?.loading && (
+                        <div className="text-slate-500">Consultando horas libres del médico...</div>
+                      )}
+                      {!isModeFree && medicoId > 0 && !availability?.loading && availability?.error && (
+                        <div className="text-rose-700">No se pudo cargar disponibilidad: {availability.error}</div>
+                      )}
+                      {!isModeFree && medicoId > 0 && !availability?.loading && !availability?.error && (
+                        <>
+                          <div>
+                            <span className="font-semibold">Horas libres:</span>{" "}
+                            {Array.isArray(availability?.horasLibres) && availability.horasLibres.length > 0
+                              ? availability.horasLibres.join(", ")
+                              : "sin horas libres"}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Horas ocupadas:</span>{" "}
+                            {horasOcupadas.length > 0 ? horasOcupadas.join(", ") : "sin horas ocupadas"}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Inicios válidos para este paquete:</span>{" "}
+                            {iniciosValidos.length > 0 ? iniciosValidos.join(", ") : "sin bloque regular consecutivo"}
+                          </div>
+                          {isModeStrict && iniciosValidos.length === 0 && (
+                            <div className="text-amber-700">Modo estricto: cambia fecha para encontrar bloque regular consecutivo.</div>
+                          )}
+                          {isModeMixed && manualEnabled && (
+                            <div className="text-amber-700">Hora manual habilitada: si queda fuera de horario regular se marcará como adicional autorizado en la validación.</div>
+                          )}
+                        </>
+                      )}
+                      {!isModeFree && medicoId <= 0 && medicoIdsPaquete.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="font-semibold">Disponibilidad por médico del paquete:</div>
+                          {disponibilidadPorMedico.map(({ medicoId: mid, availability: medAvail }) => {
+                            const medico = medicos.find((m) => Number(m?.id || 0) === Number(mid));
+                            const medicoNombre = medico
+                              ? `${medico?.nombres || medico?.nombre || ""} ${medico?.apellidos || medico?.apellido || ""}`.trim()
+                              : `Médico #${mid}`;
+                            if (medAvail?.loading) {
+                              return <div key={`disp-${row.id}-${mid}`} className="text-slate-500">• {medicoNombre}: consultando...</div>;
+                            }
+                            if (medAvail?.error) {
+                              return <div key={`disp-${row.id}-${mid}`} className="text-rose-700">• {medicoNombre}: error de disponibilidad ({medAvail.error})</div>;
+                            }
+                            const libres = Array.isArray(medAvail?.horasLibres) ? medAvail.horasLibres : [];
+                            const ocupadas = Array.isArray(medAvail?.horasOcupadas) ? medAvail.horasOcupadas : [];
+                            return (
+                              <div key={`disp-${row.id}-${mid}`}>
+                                <span className="font-semibold">• {medicoNombre}:</span>{" "}
+                                libres {libres.length > 0 ? libres.join(", ") : "sin horas libres"}; ocupadas {ocupadas.length > 0 ? ocupadas.join(", ") : "sin horas ocupadas"}.
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </li>
                 );
               })}

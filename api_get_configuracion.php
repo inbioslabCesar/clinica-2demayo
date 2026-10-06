@@ -9,6 +9,12 @@ function cfg_normalize_paciente_sexo_default($value): string {
     return 'M';
 }
 
+function cfg_normalize_agenda_programacion_modo($value): string {
+    $mode = strtolower(trim((string)$value));
+    if (in_array($mode, ['strict', 'mixed', 'free'], true)) return $mode;
+    return 'mixed';
+}
+
 // Solo permitir método GET para obtener configuración
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     echo json_encode(['error' => 'Método no permitido']);
@@ -34,6 +40,7 @@ try {
         'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
         'agenda_inteligente_cotizacion_v1' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_inteligente_cotizacion_v1 TINYINT(1) NOT NULL DEFAULT 0",
         'duracion_slot_min' => "ALTER TABLE configuracion_clinica ADD COLUMN duracion_slot_min INT NOT NULL DEFAULT 30",
+        'agenda_programacion_modo' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_programacion_modo VARCHAR(20) NOT NULL DEFAULT 'mixed'",
     ];
     foreach ($late_columns as $col => $sql) {
         try {
@@ -90,6 +97,7 @@ try {
             'paciente_sexo_default' => 'M',
             'agenda_inteligente_cotizacion_v1' => 0,
             'duracion_slot_min' => 30,
+            'agenda_programacion_modo' => 'mixed',
         ];
     }
 
@@ -97,6 +105,7 @@ try {
     $configuracion['agenda_inteligente_cotizacion_v1'] = (int)($configuracion['agenda_inteligente_cotizacion_v1'] ?? 0);
     $slot = (int)($configuracion['duracion_slot_min'] ?? 30);
     $configuracion['duracion_slot_min'] = max(5, min(120, $slot));
+    $configuracion['agenda_programacion_modo'] = cfg_normalize_agenda_programacion_modo($configuracion['agenda_programacion_modo'] ?? 'mixed');
     
     echo json_encode([
         'success' => true,

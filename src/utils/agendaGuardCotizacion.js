@@ -416,7 +416,11 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
   const blockSlots = buildSlotMinutesFromBloques(bloques);
   const minRegularMinute = blockSlots.length > 0 ? Math.min(...blockSlots) : null;
   const maxRegularMinute = blockSlots.length > 0 ? Math.max(...blockSlots) : null;
-  const isOutsideRegular = blockSlots.length > 0 && !blockSlots.includes(requestedMin);
+  const hasRegularSchedule = blockSlots.length > 0;
+  const hasNoRegularSchedule = !hasRegularSchedule;
+  const isOutsideRegular = hasRegularSchedule
+    ? !blockSlots.includes(requestedMin)
+    : true;
 
   const hasExact = scheduledMinutes.includes(requestedMin);
   if (!hasExact && !isOutsideRegular) {
@@ -455,6 +459,8 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
       ? requestedMin
       : primerAdicionalRegular;
     additionalCandidateMinute = nextUnoccupiedMinuteFrom(inicioBusqueda, occupied, step);
+  } else if (hasNoRegularSchedule) {
+    additionalCandidateMinute = nextUnoccupiedMinuteFrom(requestedMin, occupied, step);
   } else if (availableMinutes.length > 0) {
     const ultimoTurnoLibreRegular = Math.max(...availableMinutes);
     additionalCandidateMinute = nextUnoccupiedMinuteFrom(ultimoTurnoLibreRegular + step, occupied, step);
@@ -496,6 +502,7 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
   return {
     shouldWarn: true,
     warningType: isOutsideRegular ? "outside_regular" : "occupied",
+    noRegularSchedule: hasNoRegularSchedule,
     requestedDate: fechaNorm,
     hasExact,
     hasLater: scheduledMinutes.some((m) => m > requestedMin),
@@ -671,6 +678,7 @@ async function resolverCruceConUsuario({
   onApplySuggestion,
   isHourBlocked,
   useCartSessionFilter = true,
+  outsideRegularPrompt = null,
 }) {
   const requestedDate = advisory?.requestedDate || entry?.fecha || "";
   const requestedHour = advisory?.requestedHour || entry?.hora || "";
@@ -680,17 +688,62 @@ async function resolverCruceConUsuario({
   const ocupadoBloqueCustom = typeof isHourBlocked === "function"
     ? Boolean(isHourBlocked(entry, requestedHour, requestedDate))
     : false;
+  const stepMinutes = resolveAgendaStepMinutes(30);
+
+  const resolverHoraAdicionalSinCruce = (horaBase) => {
+    const start = normalizeHourHm(horaBase || "");
+    if (!start) return "";
+    const startMin = hmToMinutes(start);
+    if (startMin === null) return "";
+    let minute = startMin;
+    for (let guard = 0; guard < 120; guard += 1) {
+      const candidata = minutesToHm(minute);
+      const cruzaCarrito = useCartSessionFilter
+        ? isHourOccupiedInCartSession(entry, candidata, requestedDate)
+        : false;
+      const cruzaCustom = typeof isHourBlocked === "function"
+        ? Boolean(isHourBlocked(entry, candidata, requestedDate))
+        : false;
+      if (!cruzaCarrito && !cruzaCustom) {
+        return candidata;
+      }
+      minute += stepMinutes;
+      if (minute > (23 * 60 + 59)) break;
+    }
+    return "";
+  };
 
   if (String(advisory?.warningType || "") === "outside_regular") {
-    const horaAdicional = normalizeHourHm(advisory?.additionalCandidateHour || "");
+    const horaAdicional = resolverHoraAdicionalSinCruce(advisory?.additionalCandidateHour || "");
     const permitirAdicional = Boolean(advisory?.allowAdditional) && Boolean(horaAdicional);
+    const reusedApproval = Boolean(outsideRegularPrompt?.reuseApprovedAdditional) && permitirAdicional;
+    const sinHorarioRegular = Boolean(advisory?.noRegularSchedule);
+
+    if (reusedApproval) {
+      if (typeof onApplySuggestion === "function") {
+        await onApplySuggestion(entry, horaAdicional, advisory.requestedDate, {
+          isAdicional: true,
+          reason: "outside_regular_group_reuse",
+        });
+      }
+      return { ok: true, horaAplicada: horaAdicional, esAdicional: true };
+    }
+
+    const groupCount = Number(outsideRegularPrompt?.groupCount || 1);
+    const groupHint = groupCount > 1
+      ? ` Este ajuste aplica para ${groupCount} servicio(s) con el mismo horario.`
+      : "";
 
     const confirmOutside = await Swal.fire({
       icon: "question",
       title: "Fuera de horario regular",
       text: permitirAdicional
-        ? `La hora ${advisory?.requestedHour || requestedHour} está fuera del horario regular del médico para ${advisory?.requestedDate || requestedDate}. Si el médico autoriza, puedes registrarlo como adicional a las ${horaAdicional}.`
-        : `La hora ${advisory?.requestedHour || requestedHour} está fuera del horario regular del médico para ${advisory?.requestedDate || requestedDate}.`,
+        ? (sinHorarioRegular
+          ? `El médico no tiene horario regular configurado para ${advisory?.requestedDate || requestedDate}. Si el médico autoriza, puedes registrarlo como adicional a las ${horaAdicional}.${groupHint}`
+          : `La hora ${advisory?.requestedHour || requestedHour} está fuera del horario regular del médico para ${advisory?.requestedDate || requestedDate}. Si el médico autoriza, puedes registrarlo como adicional a las ${horaAdicional}.${groupHint}`)
+        : (sinHorarioRegular
+          ? `El médico no tiene horario regular configurado para ${advisory?.requestedDate || requestedDate}.`
+          : `La hora ${advisory?.requestedHour || requestedHour} está fuera del horario regular del médico para ${advisory?.requestedDate || requestedDate}.`),
       showCancelButton: true,
       showDenyButton: true,
       showConfirmButton: permitirAdicional,
@@ -745,7 +798,7 @@ async function resolverCruceConUsuario({
   ));
 
   if (horasUnicas.length === 0) {
-    const horaAdicional = normalizeHourHm(advisory?.additionalCandidateHour || "");
+    const horaAdicional = resolverHoraAdicionalSinCruce(advisory?.additionalCandidateHour || "");
     const decisionAdicional = await Swal.fire({
       icon: "question",
       title: "Sin turnos regulares libres",
@@ -844,6 +897,29 @@ async function resolverCruceConUsuario({
   return { ok: true, horaAplicada: selectedHour };
 }
 
+function buildOutsideRegularDecisionKey(entry, advisory) {
+  const medicoId = Number(entry?.medicoId || 0);
+  const fecha = normalizeDateYmd(advisory?.requestedDate || entry?.fecha || "");
+  if (medicoId <= 0 || !fecha) return "";
+  return `${medicoId}|${fecha}`;
+}
+
+function countOutsideRegularGroup(rows, startIndex, entry, advisory) {
+  const medicoId = Number(entry?.medicoId || 0);
+  const fecha = normalizeDateYmd(advisory?.requestedDate || entry?.fecha || "");
+  if (medicoId <= 0 || !fecha) return 1;
+
+  let total = 0;
+  for (let i = Number(startIndex) || 0; i < (Array.isArray(rows) ? rows.length : 0); i += 1) {
+    const row = rows[i];
+    if (!row) continue;
+    if (Number(row?.medicoId || 0) !== medicoId) continue;
+    if (normalizeDateYmd(row?.fecha || "") !== fecha) continue;
+    total += 1;
+  }
+  return Math.max(1, total);
+}
+
 export async function validarAgendaAntesDeCotizar({
   authFetch,
   baseUrl,
@@ -870,7 +946,10 @@ export async function validarAgendaAntesDeCotizar({
     return { ok: true };
   }
 
-  for (const entry of rows) {
+  const outsideRegularApproved = new Set();
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const entry = rows[rowIndex];
     if (Number(entry?.medicoId || 0) <= 0 || !entry?.fecha || !entry?.hora) {
       continue;
     }
@@ -892,6 +971,16 @@ export async function validarAgendaAntesDeCotizar({
         break;
       }
 
+      const isOutsideRegular = String(advisory?.warningType || "") === "outside_regular";
+      const outsideKey = isOutsideRegular ? buildOutsideRegularDecisionKey(entry, advisory) : "";
+      const alreadyApproved = Boolean(outsideKey) && outsideRegularApproved.has(outsideKey);
+      const outsideRegularPrompt = isOutsideRegular
+        ? {
+          groupCount: countOutsideRegularGroup(rows, rowIndex, entry, advisory),
+          reuseApprovedAdditional: alreadyApproved,
+        }
+        : null;
+
       const resolucion = await resolverCruceConUsuario({
         Swal,
         advisory,
@@ -899,6 +988,7 @@ export async function validarAgendaAntesDeCotizar({
         onApplySuggestion,
         isHourBlocked,
         useCartSessionFilter,
+        outsideRegularPrompt,
       });
 
       if (!resolucion.ok) {
@@ -906,6 +996,9 @@ export async function validarAgendaAntesDeCotizar({
       }
 
       entry.hora = resolucion.horaAplicada;
+      if (isOutsideRegular && resolucion.esAdicional && outsideKey) {
+        outsideRegularApproved.add(outsideKey);
+      }
       if (resolucion.esAdicional) {
         break;
       }
