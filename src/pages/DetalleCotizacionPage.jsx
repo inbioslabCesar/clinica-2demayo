@@ -960,6 +960,27 @@ export default function DetalleCotizacionPage() {
     setPagos(dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : []);
   };
 
+  const esConflictoVersionCotizacion = ({ status = 0, data = null, error = null } = {}) => {
+    const mensaje = String(
+      (data && (data.error || data.message))
+      || (error && error.message)
+      || ""
+    ).toLowerCase();
+    return status === 409
+      || mensaje.includes("cambió mientras editabas")
+      || (mensaje.includes("recarga la vista") && mensaje.includes("inténtalo de nuevo"));
+  };
+
+  const manejarConflictoVersionCotizacion = async (cotizacionActualId) => {
+    await Swal.fire({
+      icon: "warning",
+      title: "Cambios detectados",
+      text: "Otro usuario modificó esta cotización. Se recargará la vista para continuar con datos actualizados.",
+      confirmButtonText: "Entendido",
+    });
+    await refrescarCotizacionActual(cotizacionActualId);
+  };
+
   const ajustarCantidadFarmaciaInline = async (detalle) => {
     const cotizacionActualId = Number(cotizacion?.id || 0);
     const detalleId = Number(detalle?.id || 0);
@@ -1028,8 +1049,13 @@ export default function DetalleCotizacionPage() {
           motivo: result.value.motivo,
         }),
       });
+      const status = Number(res?.status || 0);
       const data = await res.json();
       if (!data?.success) {
+        if (esConflictoVersionCotizacion({ status, data })) {
+          await manejarConflictoVersionCotizacion(cotizacionActualId);
+          return;
+        }
         throw new Error(data?.error || "No se pudo ajustar la cantidad del ítem");
       }
 
@@ -1094,8 +1120,13 @@ export default function DetalleCotizacionPage() {
           motivo: confirm.value.motivo,
         }),
       });
+      const status = Number(res?.status || 0);
       const data = await res.json();
       if (!data?.success) {
+        if (esConflictoVersionCotizacion({ status, data })) {
+          await manejarConflictoVersionCotizacion(cotizacionActualId);
+          return;
+        }
         throw new Error(data?.error || "No se pudo quitar el medicamento");
       }
 
@@ -1272,8 +1303,13 @@ export default function DetalleCotizacionPage() {
           detalle: modal.value.detalle,
         }),
       });
+      const status = Number(res?.status || 0);
       const data = await res.json();
       if (!data?.success) {
+        if (esConflictoVersionCotizacion({ status, data })) {
+          await manejarConflictoVersionCotizacion(cotizacionActualId);
+          return;
+        }
         throw new Error(data?.error || "No se pudo agregar el medicamento");
       }
 
