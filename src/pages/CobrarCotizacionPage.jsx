@@ -99,6 +99,7 @@ export default function CobrarCotizacionPage() {
   const [usarDistribucionPorAtencion, setUsarDistribucionPorAtencion] = useState(false);
   const [abonoPorAtencion, setAbonoPorAtencion] = useState({});
   const blockedNoticeShownRef = useRef(false);
+  const modoCobroAutoKeyRef = useRef('');
   const criterioImputacion = "fifo";
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const cotizacionIds = useMemo(() => {
@@ -388,6 +389,23 @@ export default function CobrarCotizacionPage() {
       return Number(saldoPendiente).toFixed(2);
     });
   }, [saldoPendiente, cotizacion?.id]);
+
+  useEffect(() => {
+    const key = cotizacionIds.slice().sort((a, b) => a - b).join(",");
+    if (!key || key === modoCobroAutoKeyRef.current) return;
+
+    const haySaldo = Number(saldoPendiente || 0) > 0;
+    const hayAbonosPrevios = esCobroUnificado
+      ? cotizacionesActivas.some((c) => Number(c?.total_pagado || 0) > 0)
+      : Number(cotizacion?.total_pagado || 0) > 0;
+
+    if (haySaldo && hayAbonosPrevios) {
+      setModoCobro("parcial");
+    } else {
+      setModoCobro("completo");
+    }
+    modoCobroAutoKeyRef.current = key;
+  }, [cotizacionIds, esCobroUnificado, cotizacionesActivas, cotizacion?.total_pagado, saldoPendiente]);
 
   const montoObjetivoCobro = useMemo(() => {
     const saldo = Math.max(0, Number(saldoPendiente || 0));
@@ -931,13 +949,21 @@ export default function CobrarCotizacionPage() {
                 {pagos.map((pago) => {
                   const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
                   const esDescuento = tipo === "devolucion";
+                  const esCobroAnulado = String(pago?.cobro_estado || "").toLowerCase() === "anulado";
                   const fecha = pago?.created_at ? new Date(pago.created_at).toLocaleString("es-PE") : "-";
                   const metodoPago = String(pago?.metodo_pago || "").trim();
                   return (
                     <tr key={pago.id} className="border-b last:border-0 align-top">
                       {esCobroUnificado && <td className="py-2 pr-4 whitespace-nowrap">#{Number(pago?.cotizacion_id || 0)}</td>}
                       <td className="py-2 pr-4 whitespace-nowrap">{fecha}</td>
-                      <td className="py-2 pr-4">{esDescuento ? "Descuento" : "Abono"}</td>
+                      <td className="py-2 pr-4">
+                        {esDescuento ? "Descuento" : "Abono"}
+                        {esCobroAnulado && (
+                          <span className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold border border-red-200 bg-red-50 text-red-700">
+                            Cobro anulado
+                          </span>
+                        )}
+                      </td>
                       <td className={`py-2 pr-4 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>
                         {esDescuento ? "-" : "+"} S/ {Number(pago?.monto || 0).toFixed(2)}
                       </td>

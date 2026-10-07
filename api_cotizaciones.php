@@ -1811,19 +1811,22 @@ function obtener_pagos_cotizacion_rows($conn, $cotizacionId) {
     $hasUsuarios = table_exists($conn, 'usuarios');
     $hasCobros = table_exists($conn, 'cobros');
     $hasTipoPagoCobro = $hasCobros && column_exists($conn, 'cobros', 'tipo_pago');
+    $hasEstadoCobro = $hasCobros && column_exists($conn, 'cobros', 'estado');
+    $usaJoinCobros = $hasTipoPagoCobro || $hasEstadoCobro;
 
     $selectMetodoPago = $hasTipoPagoCobro ? ', c.tipo_pago AS metodo_pago' : ", NULL AS metodo_pago";
-    $joinCobros = $hasTipoPagoCobro ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
+    $selectEstadoCobro = $hasEstadoCobro ? ', c.estado AS cobro_estado' : ", NULL AS cobro_estado";
+    $joinCobros = $usaJoinCobros ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
 
     if ($hasUsuarios) {
-        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at, COALESCE(u.nombre, 'Sistema') AS usuario_nombre{$selectMetodoPago}
+        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at, COALESCE(u.nombre, 'Sistema') AS usuario_nombre{$selectMetodoPago}{$selectEstadoCobro}
                 FROM cotizacion_movimientos cm
                 LEFT JOIN usuarios u ON u.id = cm.usuario_id
                 {$joinCobros}
                 WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
                 ORDER BY cm.created_at DESC, cm.id DESC";
     } else {
-        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at{$selectMetodoPago}
+        $sql = "SELECT cm.id, cm.cotizacion_id, cm.cobro_id, cm.tipo_movimiento, cm.monto, cm.saldo_anterior, cm.saldo_nuevo, cm.descripcion, cm.usuario_id, cm.created_at{$selectMetodoPago}{$selectEstadoCobro}
                 FROM cotizacion_movimientos cm
                 {$joinCobros}
                 WHERE cm.cotizacion_id = ? AND cm.tipo_movimiento IN ('abono','devolucion')
@@ -4874,6 +4877,7 @@ function editar_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
     $motivo = trim((string)($data['motivo'] ?? 'Edición de cotización'));
+    $expectedVersion = isset($data['expected_version']) ? (int)$data['expected_version'] : 0;
     $fechaRef = trim((string)($data['fecha_ref'] ?? ''));
     if (!$fechaRef) {
         $fechaRef = date('Y-m-d');
@@ -4900,6 +4904,15 @@ function editar_cotizacion($conn, $data) {
                 'success' => false,
                 'error' => 'La cotización no está en estado editable. Usa adenda para cotizaciones pagadas.'
             ], 409);
+        }
+        if (column_exists($conn, 'cotizaciones', 'version_actual') && $expectedVersion > 0) {
+            $versionActual = (int)($cot['version_actual'] ?? 0);
+            if ($versionActual !== $expectedVersion) {
+                respond([
+                    'success' => false,
+                    'error' => 'La cotización cambió mientras editabas. Recarga la vista e inténtalo de nuevo.'
+                ], 409);
+            }
         }
 
         $detallesAntes = cargar_detalles_cotizacion($conn, $cotizacionId);
@@ -5026,7 +5039,13 @@ function editar_cotizacion($conn, $data) {
             error_log('Post-proceso bloque editar_cotizacion (no bloqueante): ' . $bloqueError->getMessage());
         }
 
-        respond(['success' => true, 'message' => 'Cotización actualizada', 'cotizacion_id' => $cotizacionId, 'bloque_id' => $bloqueId]);
+        respond([
+            'success' => true,
+            'message' => 'Cotización actualizada',
+            'cotizacion_id' => $cotizacionId,
+            'bloque_id' => $bloqueId,
+            'version_actual' => $version,
+        ]);
     } catch (Exception $e) {
         $conn->rollback();
         error_log("Error al editar cotización: " . $e->getMessage());
@@ -6002,6 +6021,8 @@ function eliminar_detalle_cotizacion($conn, $data) {
             }
         }
 
+        $detallesAntes = cargar_detalles_cotizacion($conn, $cotizacionId);
+
         $sqlDetInfo = "SELECT servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";
         if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
             $sqlDetInfo .= " AND COALESCE(estado_item, 'activo') <> 'eliminado'";
@@ -6067,6 +6088,20 @@ function eliminar_detalle_cotizacion($conn, $data) {
             $stmtUp->bind_param('di', $nuevoTotal, $cotizacionId);
         }
         $stmtUp->execute();
+
+        $servicioTipoEliminado = strtolower(trim((string)($detalleInfo['servicio_tipo'] ?? '')));
+        if ($servicioTipoEliminado === 'laboratorio') {
+            $detallesDespues = cargar_detalles_cotizacion($conn, $cotizacionId);
+            sincronizar_movimientos_lab_ref_en_edicion_cotizacion(
+                $conn,
+                (int)($cot['paciente_id'] ?? 0),
+                $detallesAntes,
+                $detallesDespues,
+                $usuarioId,
+                $cotizacionId
+            );
+            crear_ordenes_lab_cotizacion($conn, $cotizacionId, (int)($cot['paciente_id'] ?? 0), $detallesDespues);
+        }
 
         $version = 1;
         if (column_exists($conn, 'cotizaciones', 'version_actual')) {
@@ -6157,6 +6192,8 @@ function agregar_detalle_cotizacion($conn, $data) {
         exit;
     }
 
+    $detalle = normalizar_detalle_entrada_cotizacion($detalle);
+
     $conn->begin_transaction();
     try {
         $stmtCot = $conn->prepare('SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE');
@@ -6179,6 +6216,7 @@ function agregar_detalle_cotizacion($conn, $data) {
             }
         }
 
+        $detallesAntes = cargar_detalles_cotizacion($conn, $cotizacionId);
         validar_stock_disponible_para_detalle_farmacia($conn, $detalle);
 
         insertar_detalles_cotizacion($conn, $cotizacionId, [$detalle], $usuarioId, $motivo);
@@ -6189,6 +6227,19 @@ function agregar_detalle_cotizacion($conn, $data) {
             (int)($cot['paciente_id'] ?? 0),
             false
         );
+        $servicioTipoDetalle = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+        if ($servicioTipoDetalle === 'laboratorio') {
+            $detallesDespues = cargar_detalles_cotizacion($conn, $cotizacionId);
+            sincronizar_movimientos_lab_ref_en_edicion_cotizacion(
+                $conn,
+                (int)($cot['paciente_id'] ?? 0),
+                $detallesAntes,
+                $detallesDespues,
+                $usuarioId,
+                $cotizacionId
+            );
+            crear_ordenes_lab_cotizacion($conn, $cotizacionId, (int)($cot['paciente_id'] ?? 0), $detallesDespues);
+        }
 
         $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND estado_item <> 'eliminado'" : '';
         $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");

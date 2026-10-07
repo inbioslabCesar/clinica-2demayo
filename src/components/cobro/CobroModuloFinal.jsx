@@ -586,6 +586,7 @@ if (tipoDescuento === 'porcentaje') {
         servicio_info: { key: String(servicio.key), label: servicio.label, cotizacion_ids: servicio?.cotizacion_ids || [] },
         cotizacion_id: Number(servicio?.cotizacion_id || 0) || null,
         cotizacion_ids: Array.isArray(servicio?.cotizacion_ids) ? servicio.cotizacion_ids : [],
+        modo_cobro: modoCobro === 'parcial' ? 'adelanto_manual' : 'cobro_completo',
         reparto_manual_aplicado: usarRepartoManual ? 1 : 0,
         motivo: descuento > 0 ? motivo : ''
       };

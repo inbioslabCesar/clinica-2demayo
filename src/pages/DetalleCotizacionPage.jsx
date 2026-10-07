@@ -268,6 +268,7 @@ export default function DetalleCotizacionPage() {
   const [ajustandoDetalleId, setAjustandoDetalleId] = useState(0);
   const [eliminandoDetalleId, setEliminandoDetalleId] = useState(0);
   const [agregandoMedicamento, setAgregandoMedicamento] = useState(false);
+  const [agregandoAnalisis, setAgregandoAnalisis] = useState(false);
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
     logo: "",
@@ -1068,28 +1069,33 @@ export default function DetalleCotizacionPage() {
     }
   };
 
-  const eliminarDetalleFarmaciaInline = async (detalle) => {
+  const eliminarDetalleInline = async (detalle) => {
     const cotizacionActualId = Number(cotizacion?.id || 0);
     const detalleId = Number(detalle?.id || 0);
     const cantidadActual = Math.max(0, Number(detalle?.cantidad || 0));
     const servicioTipo = normalizarServicio(detalle?.servicio_tipo);
     const estadoActual = String(cotizacion?.estado || "").toLowerCase();
     if (cotizacionActualId <= 0 || detalleId <= 0 || cantidadActual <= 0) return;
-    if (servicioTipo !== "farmacia") return;
+    if (!(servicioTipo === "farmacia" || servicioTipo === "laboratorio")) return;
     if (!(estadoActual === "pendiente" || estadoActual === "parcial")) {
       await Swal.fire("No permitido", "Solo puedes quitar ítems en cotizaciones pendientes o parciales.", "info");
       return;
     }
+    const esLaboratorio = servicioTipo === "laboratorio";
+    const nombreTipo = esLaboratorio ? "análisis" : "medicamento";
+    const placeholderMotivo = esLaboratorio
+      ? "Ej. examen duplicado o ya no indicado en evolución"
+      : "Ej. paciente ya no desea este medicamento";
 
     const confirm = await Swal.fire({
-      title: "Quitar medicamento de la cotización",
+      title: `Quitar ${nombreTipo} de la cotización`,
       width: 680,
       html: `
         <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
-          <div><b>Ítem:</b> ${String(detalle?.descripcion || "Medicamento").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div><b>Ítem:</b> ${String(detalle?.descripcion || (esLaboratorio ? "Análisis" : "Medicamento")).replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
           <div><b>Cantidad actual:</b> ${cantidadActual}</div>
           <label for="swal-motivo-quitar">Motivo de eliminación</label>
-          <input id="swal-motivo-quitar" type="text" class="swal2-input" placeholder="Ej. paciente ya no desea este medicamento" />
+          <input id="swal-motivo-quitar" type="text" class="swal2-input" placeholder="${placeholderMotivo}" />
         </div>
       `,
       icon: "warning",
@@ -1127,15 +1133,259 @@ export default function DetalleCotizacionPage() {
           await manejarConflictoVersionCotizacion(cotizacionActualId);
           return;
         }
-        throw new Error(data?.error || "No se pudo quitar el medicamento");
+        throw new Error(data?.error || `No se pudo quitar el ${nombreTipo}`);
       }
 
       await refrescarCotizacionActual(cotizacionActualId);
-      await Swal.fire("Eliminado", "El medicamento se quitó correctamente.", "success");
+      await Swal.fire("Eliminado", `El ${nombreTipo} se quitó correctamente.`, "success");
     } catch (err) {
-      await Swal.fire("Error", err?.message || "No se pudo quitar el medicamento", "error");
+      await Swal.fire("Error", err?.message || `No se pudo quitar el ${nombreTipo}`, "error");
     } finally {
       setEliminandoDetalleId(0);
+    }
+  };
+
+  const agregarAnalisisLaboratorioInline = async () => {
+    const cotizacionActualId = Number(cotizacion?.id || 0);
+    const pacienteIdActual = Number(cotizacion?.paciente_id || 0);
+    const estadoActual = String(cotizacion?.estado || "").toLowerCase();
+    if (cotizacionActualId <= 0) return;
+    if (!(estadoActual === "pendiente" || estadoActual === "parcial")) {
+      await Swal.fire("No permitido", "Solo puedes agregar ítems en cotizaciones pendientes o parciales.", "info");
+      return;
+    }
+
+    let examenesDisponibles = [];
+    let tarifasLaboratorio = [];
+    let debounceId = null;
+
+    const cargarCatalogoLaboratorio = async () => {
+      const [resExamenes, resTarifas] = await Promise.all([
+        authFetch("api_examenes_laboratorio.php", { cache: "no-store" }),
+        authFetch("api_tarifas.php", { cache: "no-store" }),
+      ]);
+      const dataExamenes = await resExamenes.json();
+      const dataTarifas = await resTarifas.json();
+
+      examenesDisponibles = Array.isArray(dataExamenes?.examenes) ? dataExamenes.examenes : [];
+      tarifasLaboratorio = (Array.isArray(dataTarifas?.tarifas) ? dataTarifas.tarifas : []).filter((item) => (
+        normalizarServicio(item?.servicio_tipo) === "laboratorio" && Number(item?.activo || 0) === 1
+      ));
+    };
+
+    const buscarExamenes = (busqueda = "") => {
+      const term = String(busqueda || "").trim().toLowerCase();
+      const lista = term.length < 2
+        ? examenesDisponibles
+        : examenesDisponibles.filter((ex) => String(ex?.nombre || "").toLowerCase().includes(term));
+      return lista.slice(0, 120);
+    };
+
+    const precioExamen = (examenId) => {
+      const examId = Number(examenId || 0);
+      const tarifa = tarifasLaboratorio.find((item) => Number(item?.examen_id || 0) === examId);
+      if (tarifa) return Number(tarifa?.precio_particular || 0);
+      const examen = examenesDisponibles.find((item) => Number(item?.id || 0) === examId);
+      return Number(examen?.precio_publico || 0);
+    };
+
+    const renderOpcionesExamen = (items = []) => {
+      const select = document.getElementById("swal-lab-select");
+      const precioInfo = document.getElementById("swal-lab-precio");
+      if (!select) return;
+      if (!Array.isArray(items) || items.length === 0) {
+        select.innerHTML = `<option value="">Sin resultados</option>`;
+        if (precioInfo) precioInfo.textContent = "Precio: S/ 0.00";
+        return;
+      }
+      select.innerHTML = items.map((ex) => {
+        const id = Number(ex?.id || 0);
+        const precio = precioExamen(id);
+        const nombre = escapeHtml(String(ex?.nombre || "Examen"));
+        return `<option value="${id}">${nombre} (S/ ${precio.toFixed(2)})</option>`;
+      }).join("");
+      if (precioInfo) {
+        const inicialId = Number(select.value || 0);
+        precioInfo.textContent = `Precio: S/ ${precioExamen(inicialId).toFixed(2)}`;
+      }
+    };
+
+    try {
+      setAgregandoAnalisis(true);
+      await cargarCatalogoLaboratorio();
+      const iniciales = buscarExamenes("");
+
+      const modal = await Swal.fire({
+        title: "Agregar análisis (laboratorio)",
+        width: 760,
+        html: `
+          <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+            <label for="swal-lab-busqueda">Buscar examen</label>
+            <input id="swal-lab-busqueda" type="text" class="swal2-input" placeholder="Escribe al menos 2 letras para filtrar" />
+            <label for="swal-lab-select">Examen</label>
+            <select id="swal-lab-select" class="swal2-select"></select>
+            <div id="swal-lab-precio" style="font-size:12px;color:#475569;">Precio: S/ 0.00</div>
+            <label for="swal-lab-derivado">¿Se deriva a laboratorio externo?</label>
+            <select id="swal-lab-derivado" class="swal2-select">
+              <option value="no">No</option>
+              <option value="si">Sí</option>
+            </select>
+            <div id="swal-lab-derivacion-bloque" style="display:none;display:grid;gap:8px;">
+              <label for="swal-lab-referencia">Laboratorio de referencia</label>
+              <input id="swal-lab-referencia" type="text" class="swal2-input" placeholder="Nombre del laboratorio externo" />
+              <label for="swal-lab-tipo">¿Monto fijo o porcentaje?</label>
+              <select id="swal-lab-tipo" class="swal2-select">
+                <option value="">Seleccionar</option>
+                <option value="monto">Monto fijo</option>
+                <option value="porcentaje">Porcentaje</option>
+              </select>
+              <label for="swal-lab-valor">Valor de derivación</label>
+              <input id="swal-lab-valor" type="number" min="0" step="0.01" class="swal2-input" value="0" />
+            </div>
+            <label for="swal-lab-motivo">Motivo</label>
+            <input id="swal-lab-motivo" type="text" class="swal2-input" placeholder="Ej. examen adicional solicitado por evolución clínica" />
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: "Agregar",
+        cancelButtonText: "Cancelar",
+        didOpen: () => {
+          renderOpcionesExamen(iniciales);
+          const inputBusqueda = document.getElementById("swal-lab-busqueda");
+          const selectExamen = document.getElementById("swal-lab-select");
+          const selectDerivado = document.getElementById("swal-lab-derivado");
+          const bloqueDerivacion = document.getElementById("swal-lab-derivacion-bloque");
+          const precioInfo = document.getElementById("swal-lab-precio");
+
+          const refrescarPrecio = () => {
+            if (!precioInfo || !selectExamen) return;
+            const exId = Number(selectExamen.value || 0);
+            precioInfo.textContent = `Precio: S/ ${precioExamen(exId).toFixed(2)}`;
+          };
+          const toggleDerivacion = () => {
+            const derivado = String(selectDerivado?.value || "no") === "si";
+            if (bloqueDerivacion) {
+              bloqueDerivacion.style.display = derivado ? "grid" : "none";
+            }
+          };
+
+          if (selectExamen) {
+            selectExamen.addEventListener("change", refrescarPrecio);
+            refrescarPrecio();
+          }
+          if (selectDerivado) {
+            selectDerivado.addEventListener("change", toggleDerivacion);
+            toggleDerivacion();
+          }
+          if (inputBusqueda) {
+            inputBusqueda.addEventListener("input", () => {
+              const term = String(inputBusqueda.value || "");
+              if (debounceId) window.clearTimeout(debounceId);
+              debounceId = window.setTimeout(() => {
+                const lista = buscarExamenes(term);
+                renderOpcionesExamen(lista);
+              }, 250);
+            });
+          }
+        },
+        preConfirm: async () => {
+          const selectExamen = document.getElementById("swal-lab-select");
+          const derivadoInput = document.getElementById("swal-lab-derivado");
+          const laboratorioRefInput = document.getElementById("swal-lab-referencia");
+          const tipoDerivInput = document.getElementById("swal-lab-tipo");
+          const valorDerivInput = document.getElementById("swal-lab-valor");
+          const motivoInput = document.getElementById("swal-lab-motivo");
+
+          const examenId = Number(selectExamen?.value || 0);
+          const derivado = String(derivadoInput?.value || "no") === "si";
+          const laboratorioRef = String(laboratorioRefInput?.value || "").trim();
+          const tipoDeriv = String(tipoDerivInput?.value || "").trim().toLowerCase();
+          const valorDeriv = Number(valorDerivInput?.value || 0);
+          const motivo = String(motivoInput?.value || "").trim();
+          const examen = examenesDisponibles.find((item) => Number(item?.id || 0) === examenId);
+
+          if (!examenId || !examen) {
+            Swal.showValidationMessage("Selecciona un examen válido.");
+            return false;
+          }
+          if (motivo.length < 4) {
+            Swal.showValidationMessage("Ingresa un motivo (mínimo 4 caracteres).");
+            return false;
+          }
+
+          if (derivado) {
+            if (!laboratorioRef) {
+              Swal.showValidationMessage("Ingresa el laboratorio de referencia.");
+              return false;
+            }
+            if (!["monto", "porcentaje"].includes(tipoDeriv)) {
+              Swal.showValidationMessage("Selecciona tipo de derivación (monto o porcentaje).");
+              return false;
+            }
+            if (!Number.isFinite(valorDeriv) || valorDeriv < 0) {
+              Swal.showValidationMessage("Ingresa un valor de derivación válido.");
+              return false;
+            }
+            if (tipoDeriv === "porcentaje" && valorDeriv > 100) {
+              Swal.showValidationMessage("El porcentaje no puede ser mayor a 100.");
+              return false;
+            }
+          }
+
+          const precio = precioExamen(examenId);
+          const cobertura = await authFetch(`api_contratos.php?accion=validar_cobertura&paciente_id=${pacienteIdActual}&servicio_tipo=laboratorio&servicio_id=${examenId}&cantidad=1`)
+            .then((res) => res.json())
+            .catch(() => null);
+          const precioFinal = String(cobertura?.cobertura?.origen_cobro || "").toLowerCase() === "contrato" ? 0 : precio;
+
+          return {
+            motivo,
+            detalle: {
+              servicio_tipo: "laboratorio",
+              servicio_id: examenId,
+              descripcion: String(examen?.nombre || "Examen de laboratorio").trim() || "Examen de laboratorio",
+              cantidad: 1,
+              precio_unitario: Number(precioFinal.toFixed(2)),
+              subtotal: Number(precioFinal.toFixed(2)),
+              derivado,
+              tipo_derivacion: derivado ? tipoDeriv : "",
+              valor_derivacion: derivado ? Number(valorDeriv.toFixed(2)) : 0,
+              laboratorio_referencia: derivado ? laboratorioRef : "",
+            },
+          };
+        },
+      });
+
+      if (!modal.isConfirmed || !modal.value) return;
+
+      const res = await authFetch("api_cotizaciones.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "agregar_detalle",
+          cotizacion_id: cotizacionActualId,
+          expected_version: Number(cotizacion?.version_actual || 0),
+          motivo: modal.value.motivo,
+          detalle: modal.value.detalle,
+        }),
+      });
+      const status = Number(res?.status || 0);
+      const data = await res.json();
+      if (!data?.success) {
+        if (esConflictoVersionCotizacion({ status, data })) {
+          await manejarConflictoVersionCotizacion(cotizacionActualId);
+          return;
+        }
+        throw new Error(data?.error || "No se pudo agregar el análisis");
+      }
+
+      await refrescarCotizacionActual(cotizacionActualId);
+      await Swal.fire("Agregado", "El análisis se agregó correctamente.", "success");
+    } catch (err) {
+      await Swal.fire("Error", err?.message || "No se pudo agregar el análisis", "error");
+    } finally {
+      if (debounceId) window.clearTimeout(debounceId);
+      setAgregandoAnalisis(false);
     }
   };
 
@@ -1384,6 +1634,15 @@ export default function DetalleCotizacionPage() {
                 {agregandoMedicamento ? "Abriendo..." : "Agregar medicamento"}
               </button>
             )}
+            {!esVistaGrupo && puedeEditar && (estado === "pendiente" || estado === "parcial") && (
+              <button
+                onClick={agregarAnalisisLaboratorioInline}
+                disabled={agregandoAnalisis}
+                className="bg-cyan-100 text-cyan-800 px-4 py-2 rounded border border-cyan-300 hover:bg-cyan-200 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {agregandoAnalisis ? "Abriendo..." : "Agregar análisis"}
+              </button>
+            )}
             {puedeCobrar && (
               <button
                 onClick={async () => {
@@ -1557,7 +1816,22 @@ export default function DetalleCotizacionPage() {
                               {ajustandoDetalleId === Number(d?.id || 0) ? "Guardando..." : "Ajustar"}
                             </button>
                             <button
-                              onClick={() => eliminarDetalleFarmaciaInline(d)}
+                              onClick={() => eliminarDetalleInline(d)}
+                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0)}
+                              className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              {eliminandoDetalleId === Number(d?.id || 0) ? "Quitando..." : "Quitar"}
+                            </button>
+                          </div>
+                        )}
+                      {!esVistaGrupo
+                        && puedeEditar
+                        && (estado === "pendiente" || estado === "parcial")
+                        && normalizarServicio(d?.servicio_tipo) === "laboratorio"
+                        && Number(d?.cantidad || 0) > 0 && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => eliminarDetalleInline(d)}
                               disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0)}
                               className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
@@ -1603,13 +1877,21 @@ export default function DetalleCotizacionPage() {
               ) : pagosRender.map((pago) => {
                 const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
                 const esDescuento = tipo === "devolucion";
+                const esCobroAnulado = String(pago?.cobro_estado || "").toLowerCase() === "anulado";
                 const fecha = pago?.created_at ? new Date(pago.created_at).toLocaleString("es-PE") : "-";
                 const metodoPago = String(pago?.metodo_pago || "").trim();
                 return (
                   <tr key={pago.id} className="border-t align-top">
                     {esVistaGrupo && <td className="px-3 py-2 whitespace-nowrap">#{Number(pago?.cotizacion_origen_id || cotizacion?.id || 0)}</td>}
                     <td className="px-3 py-2 whitespace-nowrap">{fecha}</td>
-                    <td className="px-3 py-2">{esDescuento ? "Descuento" : "Abono"}</td>
+                    <td className="px-3 py-2">
+                      {esDescuento ? "Descuento" : "Abono"}
+                      {esCobroAnulado && (
+                        <span className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold border border-red-200 bg-red-50 text-red-700">
+                          Cobro anulado
+                        </span>
+                      )}
+                    </td>
                     <td className={`px-3 py-2 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>
                       {esDescuento ? "-" : "+"} S/ {Number(pago?.monto || 0).toFixed(2)}
                     </td>

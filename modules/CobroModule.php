@@ -1227,7 +1227,7 @@ class CobroModule
         return strtolower(trim((string)($row['estado'] ?? ''))) === 'pagado';
     }
 
-    private static function sincronizarAbonoCotizacionDesdeCobro($conn, $cotizacionId, $cobroId, $montoCobrado, $usuarioId, $montoDescuento = 0.0)
+    private static function sincronizarAbonoCotizacionDesdeCobro($conn, $cotizacionId, $cobroId, $montoCobrado, $usuarioId, $montoDescuento = 0.0, $modoCobro = '')
     {
         $cotizacionId = (int)$cotizacionId;
         $cobroId = (int)$cobroId;
@@ -1306,7 +1306,15 @@ class CobroModule
                 }
             }
 
-            $descripcion = 'Abono automatico desde cobro #' . $cobroId;
+            $modoCobroNorm = strtolower(trim((string)$modoCobro));
+            $esAdelantoManual = ($modoCobroNorm === 'parcial' || $modoCobroNorm === 'adelanto_manual');
+            if (!$esAdelantoManual) {
+                // Fallback por saldo: si aún queda saldo tras aplicar, es adelanto.
+                $esAdelantoManual = $saldoNuevo > 0.00001;
+            }
+            $descripcion = $esAdelantoManual
+                ? ('Adelanto manual desde cobro #' . $cobroId)
+                : ('Cobro final desde cobro #' . $cobroId);
             $tipoMov = 'abono';
             if ($montoAplicado > 0) {
                 $stmtMov = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
@@ -4119,7 +4127,8 @@ class CobroModule
                     $cobro_id,
                     (float)($resumenCotizacion['monto_aplicado'] ?? 0),
                     (int)($data['usuario_id'] ?? 0),
-                    (float)($resumenCotizacion['descuento_aplicado'] ?? 0)
+                    (float)($resumenCotizacion['descuento_aplicado'] ?? 0),
+                    (string)($data['modo_cobro'] ?? '')
                 );
 
                 $stmtEstadoCot = $conn->prepare('SELECT estado FROM cotizaciones WHERE id = ? LIMIT 1');

@@ -131,6 +131,7 @@ export default function CotizarLaboratorioPage() {
   const [pendingLabItems, setPendingLabItems] = useState([]); // items desde cobro para mapear contra examenes
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas para eliminar exacto
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const [cotizacionVersionActual, setCotizacionVersionActual] = useState(0);
   const [cajaEstado, setCajaEstado] = useState(null);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -278,7 +279,10 @@ export default function CotizarLaboratorioPage() {
       setDerivaciones({});
       setSeleccionados([]);
     }
-    if (!cotizacionId) setCotizacionDetallesOriginales([]);
+    if (!cotizacionId) {
+      setCotizacionDetallesOriginales([]);
+      setCotizacionVersionActual(0);
+    }
     if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(r => r.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null;
       if (!data.success || !cobro) return;
@@ -297,6 +301,7 @@ export default function CotizarLaboratorioPage() {
       if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
       setCotizacionDetallesOriginales(detalles);
+      setCotizacionVersionActual(Number(cot?.version_actual || 0));
       const itemsLab = detalles.filter(d => (d.servicio_tipo || '').toLowerCase() === 'laboratorio').map(d => ({
         servicio_id: d.servicio_id,
         descripcion: d.descripcion,
@@ -999,6 +1004,7 @@ export default function CotizarLaboratorioPage() {
     if (!data?.success || !data?.cotizacion) {
       throw new Error(data?.error || 'No se pudo cargar la cotización actual para edición');
     }
+    setCotizacionVersionActual(Number(data?.cotizacion?.version_actual || 0));
     return Array.isArray(data.cotizacion.detalles) ? data.cotizacion.detalles : [];
   };
 
@@ -1089,6 +1095,7 @@ export default function CotizarLaboratorioPage() {
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
+          expected_version: Number(cotizacionVersionActual || 0),
           fecha_ref: fechaRef,
           motivo: 'Edición de cotización (merge seguro) desde cotizador de Laboratorio'
         }
@@ -1114,7 +1121,33 @@ export default function CotizarLaboratorioPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      const status = Number(res?.status || 0);
       data = await res.json();
+
+      const esConflictoVersion = status === 409 || /cambió mientras editabas|recarga la vista/i.test(String(data?.error || ''));
+      if (!data?.success && cotizacionId && esConflictoVersion) {
+        const detallesRefrescados = await obtenerDetallesCotizacion(cotizacionId);
+        setCotizacionDetallesOriginales(detallesRefrescados);
+        const itemsLabRefrescados = (Array.isArray(detallesRefrescados) ? detallesRefrescados : [])
+          .filter((d) => String(d?.servicio_tipo || '').toLowerCase() === 'laboratorio')
+          .map((d) => ({
+            servicio_id: d.servicio_id,
+            descripcion: d.descripcion,
+            cantidad: d.cantidad,
+            precio_unitario: d.precio_unitario,
+            subtotal: d.subtotal,
+            derivado: d.derivado,
+            tipo_derivacion: d.tipo_derivacion,
+            valor_derivacion: d.valor_derivacion,
+            laboratorio_referencia: d.laboratorio_referencia,
+          }));
+        setPendingLabItems(itemsLabRefrescados);
+        setPreloadedItems(itemsLabRefrescados);
+        setSeleccionados([]);
+        setDerivaciones({});
+        await Swal.fire('Cambios detectados', 'La cotización fue modificada por otro usuario. Se recargó la base para evitar sobreescrituras.', 'warning');
+        return;
+      }
 
       const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
       if (!data?.success && cotizacionId && noEditable) {
@@ -1172,6 +1205,9 @@ export default function CotizarLaboratorioPage() {
 
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
+      }
+      if (cotizacionId && Number(data?.version_actual || 0) > 0) {
+        setCotizacionVersionActual(Number(data.version_actual));
       }
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
