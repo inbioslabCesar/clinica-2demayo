@@ -15,6 +15,31 @@ function cfg_normalize_agenda_programacion_modo($value): string {
     return 'mixed';
 }
 
+function cfg_table_columns(PDO $pdo, string $table): array {
+    static $cache = [];
+    if (isset($cache[$table]) && is_array($cache[$table])) {
+        return $cache[$table];
+    }
+
+    $columns = [];
+    try {
+        $stmt = $pdo->query("SHOW COLUMNS FROM {$table}");
+        if ($stmt) {
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $field = trim((string)($row['Field'] ?? ''));
+                if ($field !== '') {
+                    $columns[$field] = true;
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        $columns = [];
+    }
+
+    $cache[$table] = $columns;
+    return $columns;
+}
+
 // Solo permitir método GET para obtener configuración
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     echo json_encode(['error' => 'Método no permitido']);
@@ -22,90 +47,122 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
+$liteMode = isset($_GET['lite'])
+    ? in_array(strtolower(trim((string)$_GET['lite'])), ['1', 'true', 'si', 'sí', 'yes'], true)
+    : false;
+
 try {
-    // Garantizar columnas añadidas recientemente existen antes del SELECT
-    $late_columns = [
-        'celular'             => "ALTER TABLE configuracion_clinica ADD COLUMN celular VARCHAR(30) DEFAULT NULL",
-        'slogan'              => "ALTER TABLE configuracion_clinica ADD COLUMN slogan VARCHAR(255) DEFAULT NULL",
-        'slogan_color'        => "ALTER TABLE configuracion_clinica ADD COLUMN slogan_color VARCHAR(7) DEFAULT NULL",
-        'nombre_color'        => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_color VARCHAR(7) DEFAULT NULL",
-        'nombre_font_size'    => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_font_size VARCHAR(20) DEFAULT NULL",
-        'logo_size_sistema'   => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_sistema VARCHAR(10) DEFAULT NULL",
-        'logo_size_publico'   => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_publico VARCHAR(10) DEFAULT NULL",
-        'logo_shape_sistema'  => "ALTER TABLE configuracion_clinica ADD COLUMN logo_shape_sistema VARCHAR(10) NOT NULL DEFAULT 'auto'",
-        'caratula_fondo_url'  => "ALTER TABLE configuracion_clinica ADD COLUMN caratula_fondo_url VARCHAR(500) DEFAULT NULL",
-        'google_maps_embed'   => "ALTER TABLE configuracion_clinica ADD COLUMN google_maps_embed TEXT DEFAULT NULL",
-        'website'             => "ALTER TABLE configuracion_clinica ADD COLUMN website VARCHAR(255) DEFAULT NULL",
-        'contacto_emergencias'=> "ALTER TABLE configuracion_clinica ADD COLUMN contacto_emergencias VARCHAR(100) DEFAULT NULL",
-        'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
-        'agenda_inteligente_cotizacion_v1' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_inteligente_cotizacion_v1 TINYINT(1) NOT NULL DEFAULT 0",
-        'duracion_slot_min' => "ALTER TABLE configuracion_clinica ADD COLUMN duracion_slot_min INT NOT NULL DEFAULT 30",
-        'agenda_programacion_modo' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_programacion_modo VARCHAR(20) NOT NULL DEFAULT 'mixed'",
-    ];
-    foreach ($late_columns as $col => $sql) {
-        try {
-            $exists = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
-            if (!$exists || !$exists->fetch()) {
-                $pdo->exec($sql);
-            }
-        } catch (Throwable $e) {
-            $msg = strtolower((string)$e->getMessage());
-            if (strpos($msg, 'duplicate column name') !== false || strpos($msg, '42s21') !== false) {
+    if (!$liteMode) {
+        // Garantizar columnas añadidas recientemente existen antes del SELECT
+        $late_columns = [
+            'celular'             => "ALTER TABLE configuracion_clinica ADD COLUMN celular VARCHAR(30) DEFAULT NULL",
+            'slogan'              => "ALTER TABLE configuracion_clinica ADD COLUMN slogan VARCHAR(255) DEFAULT NULL",
+            'slogan_color'        => "ALTER TABLE configuracion_clinica ADD COLUMN slogan_color VARCHAR(7) DEFAULT NULL",
+            'nombre_color'        => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_color VARCHAR(7) DEFAULT NULL",
+            'nombre_font_size'    => "ALTER TABLE configuracion_clinica ADD COLUMN nombre_font_size VARCHAR(20) DEFAULT NULL",
+            'logo_size_sistema'   => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_sistema VARCHAR(10) DEFAULT NULL",
+            'logo_size_publico'   => "ALTER TABLE configuracion_clinica ADD COLUMN logo_size_publico VARCHAR(10) DEFAULT NULL",
+            'logo_shape_sistema'  => "ALTER TABLE configuracion_clinica ADD COLUMN logo_shape_sistema VARCHAR(10) NOT NULL DEFAULT 'auto'",
+            'caratula_fondo_url'  => "ALTER TABLE configuracion_clinica ADD COLUMN caratula_fondo_url VARCHAR(500) DEFAULT NULL",
+            'google_maps_embed'   => "ALTER TABLE configuracion_clinica ADD COLUMN google_maps_embed TEXT DEFAULT NULL",
+            'website'             => "ALTER TABLE configuracion_clinica ADD COLUMN website VARCHAR(255) DEFAULT NULL",
+            'contacto_emergencias'=> "ALTER TABLE configuracion_clinica ADD COLUMN contacto_emergencias VARCHAR(100) DEFAULT NULL",
+            'paciente_sexo_default' => "ALTER TABLE configuracion_clinica ADD COLUMN paciente_sexo_default VARCHAR(10) NOT NULL DEFAULT 'M'",
+            'agenda_inteligente_cotizacion_v1' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_inteligente_cotizacion_v1 TINYINT(1) NOT NULL DEFAULT 0",
+            'duracion_slot_min' => "ALTER TABLE configuracion_clinica ADD COLUMN duracion_slot_min INT NOT NULL DEFAULT 30",
+            'agenda_programacion_modo' => "ALTER TABLE configuracion_clinica ADD COLUMN agenda_programacion_modo VARCHAR(20) NOT NULL DEFAULT 'mixed'",
+        ];
+        foreach ($late_columns as $col => $sql) {
+            try {
+                $exists = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE '$col'");
+                if (!$exists || !$exists->fetch()) {
+                    $pdo->exec($sql);
+                }
+            } catch (Throwable $e) {
+                $msg = strtolower((string)$e->getMessage());
+                if (strpos($msg, 'duplicate column name') !== false || strpos($msg, '42s21') !== false) {
+                    continue;
+                }
+                // No bloquear una API de lectura por una migración tardía puntual.
                 continue;
             }
-            // No bloquear una API de lectura por una migración tardía puntual.
-            continue;
         }
     }
 
-    // Obtener configuración actual sin restricciones de usuario
-    // Esta API es solo de lectura para la información pública de la clínica
-    $stmt = $pdo->query("SELECT * FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1");
+    if ($liteMode) {
+        $cols = cfg_table_columns($pdo, 'configuracion_clinica');
+        $selNombre = !empty($cols['nombre_clinica']) ? 'nombre_clinica' : "'Mi Clínica' AS nombre_clinica";
+        $selLogo = !empty($cols['logo_url']) ? 'logo_url' : 'NULL AS logo_url';
+        $selLogoSize = !empty($cols['logo_size_sistema']) ? 'logo_size_sistema' : 'NULL AS logo_size_sistema';
+        $selLogoShape = !empty($cols['logo_shape_sistema']) ? 'logo_shape_sistema' : "'auto' AS logo_shape_sistema";
+        $selUpdatedAt = !empty($cols['updated_at']) ? 'updated_at' : 'NULL AS updated_at';
+        $orderBy = !empty($cols['created_at']) ? 'created_at DESC' : (!empty($cols['id']) ? 'id DESC' : '1 DESC');
+        $sqlLite = "SELECT {$selNombre}, {$selLogo}, {$selLogoSize}, {$selLogoShape}, {$selUpdatedAt} FROM configuracion_clinica ORDER BY {$orderBy} LIMIT 1";
+        $stmt = $pdo->query($sqlLite);
+    } else {
+        // Obtener configuración actual sin restricciones de usuario
+        // Esta API es solo de lectura para la información pública de la clínica
+        $stmt = $pdo->query("SELECT * FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1");
+    }
     $configuracion = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if (!$configuracion) {
-        // Si no hay configuración, devolver valores por defecto
-        $configuracion = [
-            'nombre_clinica' => 'Mi Clínica',
-            'direccion' => '',
-            'telefono' => '',
-            'email' => '',
-            'horario_atencion' => 'Lunes a Viernes: 7:00 AM - 8:00 PM\nSábados: 7:00 AM - 2:00 PM',
-            'logo_url' => null,
-            'logo_laboratorio_url' => null,
-            'website' => null,
-            'ruc' => null,
-            'especialidades' => null,
-            'mision' => null,
-            'vision' => null,
-            'valores' => null,
-            'director_general' => null,
-            'jefe_enfermeria' => null,
-            'contacto_emergencias' => null,
-            'celular' => null,
-            'google_maps_embed' => null,
-            'slogan' => null,
-            'slogan_color' => null,
-            'nombre_color' => null,
-            'nombre_font_size' => null,
-            'logo_size_sistema' => null,
-            'logo_size_publico' => null,
-            'logo_shape_sistema' => 'auto',
-            'caratula_fondo_url' => null,
-            'hc_template_mode' => 'auto',
-            'hc_template_single_id' => null,
-            'paciente_sexo_default' => 'M',
-            'agenda_inteligente_cotizacion_v1' => 0,
-            'duracion_slot_min' => 30,
-            'agenda_programacion_modo' => 'mixed',
-        ];
+        if ($liteMode) {
+            $configuracion = [
+                'nombre_clinica' => 'Mi Clínica',
+                'logo_url' => null,
+                'logo_size_sistema' => null,
+                'logo_shape_sistema' => 'auto',
+                'updated_at' => null,
+            ];
+        } else {
+            // Si no hay configuración, devolver valores por defecto
+            $configuracion = [
+                'nombre_clinica' => 'Mi Clínica',
+                'direccion' => '',
+                'telefono' => '',
+                'email' => '',
+                'horario_atencion' => 'Lunes a Viernes: 7:00 AM - 8:00 PM\nSábados: 7:00 AM - 2:00 PM',
+                'logo_url' => null,
+                'logo_laboratorio_url' => null,
+                'website' => null,
+                'ruc' => null,
+                'especialidades' => null,
+                'mision' => null,
+                'vision' => null,
+                'valores' => null,
+                'director_general' => null,
+                'jefe_enfermeria' => null,
+                'contacto_emergencias' => null,
+                'celular' => null,
+                'google_maps_embed' => null,
+                'slogan' => null,
+                'slogan_color' => null,
+                'nombre_color' => null,
+                'nombre_font_size' => null,
+                'logo_size_sistema' => null,
+                'logo_size_publico' => null,
+                'logo_shape_sistema' => 'auto',
+                'caratula_fondo_url' => null,
+                'hc_template_mode' => 'auto',
+                'hc_template_single_id' => null,
+                'paciente_sexo_default' => 'M',
+                'agenda_inteligente_cotizacion_v1' => 0,
+                'duracion_slot_min' => 30,
+                'agenda_programacion_modo' => 'mixed',
+            ];
+        }
     }
 
-    $configuracion['paciente_sexo_default'] = cfg_normalize_paciente_sexo_default($configuracion['paciente_sexo_default'] ?? 'M');
-    $configuracion['agenda_inteligente_cotizacion_v1'] = (int)($configuracion['agenda_inteligente_cotizacion_v1'] ?? 0);
-    $slot = (int)($configuracion['duracion_slot_min'] ?? 30);
-    $configuracion['duracion_slot_min'] = max(5, min(120, $slot));
-    $configuracion['agenda_programacion_modo'] = cfg_normalize_agenda_programacion_modo($configuracion['agenda_programacion_modo'] ?? 'mixed');
+    if (!$liteMode) {
+        $configuracion['paciente_sexo_default'] = cfg_normalize_paciente_sexo_default($configuracion['paciente_sexo_default'] ?? 'M');
+        $configuracion['agenda_inteligente_cotizacion_v1'] = (int)($configuracion['agenda_inteligente_cotizacion_v1'] ?? 0);
+        $slot = (int)($configuracion['duracion_slot_min'] ?? 30);
+        $configuracion['duracion_slot_min'] = max(5, min(120, $slot));
+        $configuracion['agenda_programacion_modo'] = cfg_normalize_agenda_programacion_modo($configuracion['agenda_programacion_modo'] ?? 'mixed');
+    } else {
+        $configuracion['logo_shape_sistema'] = String($configuracion['logo_shape_sistema'] ?? 'auto');
+    }
     
     echo json_encode([
         'success' => true,

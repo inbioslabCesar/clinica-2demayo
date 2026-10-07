@@ -1,12 +1,13 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL, SECURITY_CONFIG, fetchConfigSingleton } from "../../config/config";
+import { BASE_URL, SECURITY_CONFIG } from "../../config/config";
 import { Icon } from '@fluentui/react';
 import { normalizePermisos } from "../../config/recepcionPermisos";
 import { authFetch } from "../../utils/apiClient";
 
 const LOGIN_BRAND_CACHE_KEY = 'login_brand_cache_v1';
+const LOGIN_BRAND_CACHE_LOCAL_KEY = 'login_brand_cache_v1_local';
 const LOGIN_BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
 const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
 const LOGIN_REQUEST_TIMEOUT_MS = Math.max(8000, Number(SECURITY_CONFIG?.requestTimeout || 10000));
@@ -77,7 +78,7 @@ function toAbsoluteLogoUrl(rawLogo) {
 
 function readCachedBrand() {
   try {
-    const raw = sessionStorage.getItem(LOGIN_BRAND_CACHE_KEY);
+    const raw = sessionStorage.getItem(LOGIN_BRAND_CACHE_KEY) || localStorage.getItem(LOGIN_BRAND_CACHE_LOCAL_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const clinicName = String(parsed?.clinicName || '').trim();
@@ -94,17 +95,43 @@ function readCachedBrand() {
 }
 
 function writeCachedBrand(brand) {
+  const payload = JSON.stringify({
+    clinicName: String(brand?.clinicName || '').trim(),
+    logoSrc: String(brand?.logoSrc || '').trim(),
+    logoSizeSistema: String(brand?.logoSizeSistema || '').trim().toLowerCase(),
+    logoShapeSistema: String(brand?.logoShapeSistema || 'auto').trim().toLowerCase(),
+    logoRatio: Number(brand?.logoRatio || 1),
+    ts: Date.now(),
+  });
   try {
-    sessionStorage.setItem(LOGIN_BRAND_CACHE_KEY, JSON.stringify({
-      clinicName: String(brand?.clinicName || '').trim(),
-      logoSrc: String(brand?.logoSrc || '').trim(),
-      logoSizeSistema: String(brand?.logoSizeSistema || '').trim().toLowerCase(),
-      logoShapeSistema: String(brand?.logoShapeSistema || 'auto').trim().toLowerCase(),
-      logoRatio: Number(brand?.logoRatio || 1),
-      ts: Date.now(),
-    }));
+    sessionStorage.setItem(LOGIN_BRAND_CACHE_KEY, payload);
   } catch {
     // ignore cache write issues
+  }
+  try {
+    localStorage.setItem(LOGIN_BRAND_CACHE_LOCAL_KEY, payload);
+  } catch {
+    // ignore cache write issues
+  }
+}
+
+async function fetchLoginBranding() {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await authFetch('api_get_configuracion.php?lite=1', {
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { success: false };
+    }
+    return await response.json().catch(() => ({ success: false }));
+  } catch {
+    return { success: false };
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
@@ -203,7 +230,7 @@ function Login({ onLogin }) {
     let mounted = true;
     const loadLogo = async () => {
       try {
-        const data = await fetchConfigSingleton();
+        const data = await fetchLoginBranding();
         if (!mounted || !data?.success) return;
         const cfg = data.data || {};
         const configuredName = String(cfg.nombre_clinica || '').trim();
@@ -229,15 +256,21 @@ function Login({ onLogin }) {
           const candidate = versionToken
             ? `${absolute}${absolute.includes('?') ? '&' : '?'}v=${versionToken}`
             : absolute;
+          resolvedLogo = candidate;
+          if (mounted) {
+            setLogoSrc((prev) => (prev === candidate ? prev : candidate));
+          }
 
           try {
             const preloaded = await preloadImage(candidate);
-            resolvedLogo = preloaded.src;
             if (preloaded.width > 0 && preloaded.height > 0) {
               resolvedRatio = preloaded.width / preloaded.height;
             }
           } catch {
             resolvedLogo = '';
+            if (mounted) {
+              setLogoSrc('');
+            }
           }
         }
 
@@ -295,54 +328,6 @@ function Login({ onLogin }) {
       };
     }
     return { isValid: true };
-  };
-
-  const hydrateFromBackendSession = async () => {
-    try {
-      const res = await authFetch("api_auth_status.php", {
-        cache: "no-store",
-      });
-      const data = await res.json().catch(() => null);
-      const autenticado = Boolean(res.ok && data?.success && data?.authenticated);
-      if (!autenticado) {
-        return false;
-      }
-
-      const backendUsuario = data?.usuario && typeof data.usuario === "object"
-        ? data.usuario
-        : {
-            id: data?.usuario_id ?? null,
-            nombre: data?.nombre ?? "",
-            rol: data?.rol ?? "",
-            usuario: typeof data?.usuario === "string" ? data.usuario : "",
-            permisos: Array.isArray(data?.permisos) ? data.permisos : [],
-          };
-
-      const usuarioNormalizado = {
-        ...backendUsuario,
-        permisos: normalizePermisos(backendUsuario?.permisos || []),
-      };
-
-      if (usuarioNormalizado.rol === 'medico') {
-        sessionStorage.removeItem('usuario');
-        sessionStorage.removeItem('user_role');
-        sessionStorage.setItem('medico', JSON.stringify(usuarioNormalizado));
-      } else {
-        sessionStorage.removeItem('medico');
-        sessionStorage.setItem('usuario', JSON.stringify(usuarioNormalizado));
-        if (usuarioNormalizado.rol) {
-          sessionStorage.setItem('user_role', usuarioNormalizado.rol);
-        } else {
-          sessionStorage.setItem('user_role', 'recepcionista');
-        }
-      }
-
-      onLogin && onLogin(usuarioNormalizado);
-      navigate("/");
-      return true;
-    } catch {
-      return false;
-    }
   };
 
   const handleSubmit = async (e) => {
@@ -496,9 +481,6 @@ function Login({ onLogin }) {
         }
       }
 
-      if (await hydrateFromBackendSession()) {
-        return;
-      }
       setError("Usuario o contraseña incorrectos");
     } catch {
       setError("Error de conexión con el servidor");
