@@ -7,8 +7,10 @@ const emptyDetalle = {
   frecuenciaTipo: "intervalo_horas",
   frecuenciaValor: "8",
   frecuenciaHoras: "",
+  frecuenciaTexto: "",
   duracionValor: "5",
   duracionUnidad: "dias",
+  duracionTexto: "",
   observaciones: "",
 };
 
@@ -223,16 +225,18 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
     const cantidadDispensacionFinal = parsePositiveInteger(cantidadDispensacion) || 1;
     const unidadDispensacionFinal = unidadDispensacion || inferUnidadDispensacion(medicamentoSel?.presentacion || "");
 
-    const frecuencia = buildFrequencyText({
+    const frecuenciaPredeterminada = buildFrequencyText({
       frecuenciaTipo,
       frecuenciaValor,
       frecuenciaHoras,
     });
+    const frecuencia = String(detalle.frecuenciaTexto || "").trim() || frecuenciaPredeterminada;
 
-    const duracion = buildDurationText({
+    const duracionPredeterminada = buildDurationText({
       duracionValor,
       duracionUnidad: detalle.duracionUnidad,
     });
+    const duracion = String(detalle.duracionTexto || "").trim() || duracionPredeterminada;
 
     const cantidad_total = calcularCantidadTotalReceta({
       frecuencia_tipo: frecuenciaTipo,
@@ -290,6 +294,18 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
       idx === idxEditar
         ? { ...item, cantidad_dispensacion: parsed > 0 ? parsed : 1 }
         : item
+    )));
+  };
+
+  const actualizarFrecuencia = (idxEditar, frecuenciaTexto) => {
+    setReceta((prev) => prev.map((item, idx) => (
+      idx === idxEditar ? { ...item, frecuencia: frecuenciaTexto } : item
+    )));
+  };
+
+  const actualizarDuracion = (idxEditar, duracionTexto) => {
+    setReceta((prev) => prev.map((item, idx) => (
+      idx === idxEditar ? { ...item, duracion: duracionTexto } : item
     )));
   };
 
@@ -869,6 +885,29 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
               <span className="ml-1 text-gray-500">La pauta clínica y la unidad se autocompletan.</span>
             </div>
 
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Frecuencia (editable)</label>
+                <input
+                  type="text"
+                  className="w-full rounded border p-2 text-sm"
+                  placeholder="Ej: Cada 12 horas"
+                  value={detalle.frecuenciaTexto}
+                  onChange={(e) => setDetalle((prev) => ({ ...prev, frecuenciaTexto: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Duración (editable)</label>
+                <input
+                  type="text"
+                  className="w-full rounded border p-2 text-sm"
+                  placeholder="Ej: 7 días"
+                  value={detalle.duracionTexto}
+                  onChange={(e) => setDetalle((prev) => ({ ...prev, duracionTexto: e.target.value }))}
+                />
+              </div>
+            </div>
+
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Indicaciones</label>
               <textarea
@@ -922,6 +961,8 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
             <thead>
               <tr className="bg-blue-100">
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Medicamento</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Frecuencia</th>
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Duración</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Indicaciones</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Cantidad</th>
                 <th className="px-2 py-1 whitespace-nowrap w-16 text-xs text-gray-700 font-semibold">Quitar</th>
@@ -935,6 +976,24 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
                       <div className="truncate" title={`${m.nombre} (${m.codigo || "SIN-CODIGO"})`}>
                         {m.nombre} {m.codigo && <span className="text-gray-500">({m.codigo})</span>}
                       </div>
+                    </td>
+                    <td className="border px-2 py-1 min-w-[140px]">
+                      <input
+                        type="text"
+                        className="w-full border rounded p-1 text-xs"
+                        placeholder="Ej: Cada 12 horas"
+                        value={m.frecuencia || ""}
+                        onChange={(e) => actualizarFrecuencia(idx, e.target.value)}
+                      />
+                    </td>
+                    <td className="border px-2 py-1 min-w-[120px]">
+                      <input
+                        type="text"
+                        className="w-full border rounded p-1 text-xs"
+                        placeholder="Ej: 7 días"
+                        value={m.duracion || ""}
+                        onChange={(e) => actualizarDuracion(idx, e.target.value)}
+                      />
                     </td>
                     <td className="border px-2 py-1 min-w-[220px]">
                       <textarea
@@ -968,7 +1027,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
                 ))
               ) : (
                 <tr>
-                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={4}>
+                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={6}>
                     No hay medicamentos seleccionados
                   </td>
                 </tr>
