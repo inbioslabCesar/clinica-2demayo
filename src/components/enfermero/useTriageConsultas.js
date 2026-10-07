@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
 
 export default function useTriageConsultas() {
@@ -18,9 +18,24 @@ export default function useTriageConsultas() {
   const [fechaHasta, setFechaHasta] = useState("");
   const [totalRows, setTotalRows] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const lastRequestRef = useRef(0);
 
-  const recargarConsultas = () => {
-    setLoading(true);
+  const limpiarListado = () => {
+    setConsultas([]);
+    setTriajeStatus({});
+    setTriajeStats({ pendientes: 0, completados: 0 });
+    setTotalRows(0);
+    setTotalPages(1);
+  };
+
+  const esErrorConexionBD = (mensaje) => /error de conexión a la base de datos/i.test(String(mensaje || ""));
+
+  const recargarConsultas = (intento = 0) => {
+    const requestId = Date.now();
+    lastRequestRef.current = requestId;
+    if (intento === 0) {
+      setLoading(true);
+    }
     const params = new URLSearchParams({
       vista: "triaje_panel",
       solo_activas: "1",
@@ -36,6 +51,9 @@ export default function useTriageConsultas() {
     authFetch(`api_consultas.php?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
+        if (lastRequestRef.current !== requestId) {
+          return;
+        }
         if (data.success) {
           const listaConsultas = Array.isArray(data.consultas) ? data.consultas : [];
           setConsultas(listaConsultas);
@@ -57,22 +75,26 @@ export default function useTriageConsultas() {
           setTotalPages(totalPagesSrv);
           setError(null);
         } else {
-          setError(data.error || "Error al cargar consultas");
-          setConsultas([]);
-          setTriajeStatus({});
-          setTriajeStats({ pendientes: 0, completados: 0 });
-          setTotalRows(0);
-          setTotalPages(1);
+          const mensaje = data.error || "Error al cargar consultas";
+          if (esErrorConexionBD(mensaje) && intento < 2) {
+            setTimeout(() => recargarConsultas(intento + 1), 550 * (intento + 1));
+            return;
+          }
+          setError(mensaje);
+          limpiarListado();
         }
         setLoading(false);
       })
       .catch((_err) => {
+        if (lastRequestRef.current !== requestId) {
+          return;
+        }
+        if (intento < 2) {
+          setTimeout(() => recargarConsultas(intento + 1), 450 * (intento + 1));
+          return;
+        }
         setError("Error de red");
-        setConsultas([]);
-        setTriajeStatus({});
-        setTriajeStats({ pendientes: 0, completados: 0 });
-        setTotalRows(0);
-        setTotalPages(1);
+        limpiarListado();
         setLoading(false);
       });
   };
