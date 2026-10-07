@@ -116,23 +116,32 @@ function writeCachedBrand(brand) {
 }
 
 async function fetchLoginBranding() {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 4500);
-  try {
-    const response = await authFetch('api_get_configuracion.php?lite=1', {
-      credentials: 'include',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    if (!response.ok) {
+  const requestBranding = async (path, timeoutMs) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await authFetch(path, {
+        credentials: 'include',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        return { success: false };
+      }
+      return await response.json().catch(() => ({ success: false }));
+    } catch {
       return { success: false };
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-    return await response.json().catch(() => ({ success: false }));
-  } catch {
-    return { success: false };
-  } finally {
-    window.clearTimeout(timeoutId);
+  };
+
+  const lite = await requestBranding('api_get_configuracion.php?lite=1', 4500);
+  if (lite?.success) {
+    return lite;
   }
+
+  return requestBranding('api_get_configuracion.php', 7000);
 }
 
 function preloadImage(src) {
