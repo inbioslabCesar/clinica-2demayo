@@ -266,6 +266,7 @@ export default function DetalleCotizacionPage() {
   const [paciente, setPaciente] = useState(null);
   const [pagos, setPagos] = useState([]);
   const [ajustandoDetalleId, setAjustandoDetalleId] = useState(0);
+  const [eliminandoDetalleId, setEliminandoDetalleId] = useState(0);
   const [agregandoMedicamento, setAgregandoMedicamento] = useState(false);
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
@@ -1041,6 +1042,72 @@ export default function DetalleCotizacionPage() {
     }
   };
 
+  const eliminarDetalleFarmaciaInline = async (detalle) => {
+    const cotizacionActualId = Number(cotizacion?.id || 0);
+    const detalleId = Number(detalle?.id || 0);
+    const cantidadActual = Math.max(0, Number(detalle?.cantidad || 0));
+    const servicioTipo = normalizarServicio(detalle?.servicio_tipo);
+    const estadoActual = String(cotizacion?.estado || "").toLowerCase();
+    if (cotizacionActualId <= 0 || detalleId <= 0 || cantidadActual <= 0) return;
+    if (servicioTipo !== "farmacia") return;
+    if (!(estadoActual === "pendiente" || estadoActual === "parcial")) {
+      await Swal.fire("No permitido", "Solo puedes quitar ítems en cotizaciones pendientes o parciales.", "info");
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: "Quitar medicamento de la cotización",
+      width: 680,
+      html: `
+        <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+          <div><b>Ítem:</b> ${String(detalle?.descripcion || "Medicamento").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div><b>Cantidad actual:</b> ${cantidadActual}</div>
+          <label for="swal-motivo-quitar">Motivo de eliminación</label>
+          <input id="swal-motivo-quitar" type="text" class="swal2-input" placeholder="Ej. paciente ya no desea este medicamento" />
+        </div>
+      `,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Quitar",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const motivo = String(document.getElementById("swal-motivo-quitar")?.value || "").trim();
+        if (motivo.length < 4) {
+          Swal.showValidationMessage("Ingresa un motivo (mínimo 4 caracteres).");
+          return false;
+        }
+        return { motivo };
+      },
+    });
+    if (!confirm.isConfirmed || !confirm.value) return;
+
+    try {
+      setEliminandoDetalleId(detalleId);
+      const res = await authFetch("api_cotizaciones.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "eliminar_detalle",
+          cotizacion_id: cotizacionActualId,
+          detalle_id: detalleId,
+          expected_version: Number(cotizacion?.version_actual || 0),
+          motivo: confirm.value.motivo,
+        }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo quitar el medicamento");
+      }
+
+      await refrescarCotizacionActual(cotizacionActualId);
+      await Swal.fire("Eliminado", "El medicamento se quitó correctamente.", "success");
+    } catch (err) {
+      await Swal.fire("Error", err?.message || "No se pudo quitar el medicamento", "error");
+    } finally {
+      setEliminandoDetalleId(0);
+    }
+  };
+
   const agregarMedicamentoFarmaciaInline = async () => {
     const cotizacionActualId = Number(cotizacion?.id || 0);
     const estadoActual = String(cotizacion?.estado || "").toLowerCase();
@@ -1445,13 +1512,22 @@ export default function DetalleCotizacionPage() {
                         && (estado === "pendiente" || estado === "parcial")
                         && normalizarServicio(d?.servicio_tipo) === "farmacia"
                         && Number(d?.cantidad || 0) > 0 && (
-                          <button
-                            onClick={() => ajustarCantidadFarmaciaInline(d)}
-                            disabled={ajustandoDetalleId === Number(d?.id || 0)}
-                            className="text-[11px] px-2 py-1 rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
-                          >
-                            {ajustandoDetalleId === Number(d?.id || 0) ? "Guardando..." : "Ajustar"}
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => ajustarCantidadFarmaciaInline(d)}
+                              disabled={ajustandoDetalleId === Number(d?.id || 0) || eliminandoDetalleId === Number(d?.id || 0)}
+                              className="text-[11px] px-2 py-1 rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              {ajustandoDetalleId === Number(d?.id || 0) ? "Guardando..." : "Ajustar"}
+                            </button>
+                            <button
+                              onClick={() => eliminarDetalleFarmaciaInline(d)}
+                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0)}
+                              className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              {eliminandoDetalleId === Number(d?.id || 0) ? "Quitando..." : "Quitar"}
+                            </button>
+                          </div>
                         )}
                     </div>
                   </td>
