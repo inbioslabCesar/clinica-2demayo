@@ -764,23 +764,45 @@ function HistoriaClinicaPage() {
 
   const hcTemplateDebug = useMemo(() => {
     const tplId = String(hcTemplateMeta?.id || '').trim();
+    const tplName = String(hcTemplateMeta?.nombre || '').trim();
     const tplVersion = String(hcTemplateMeta?.version || '').trim();
     const source = String(hcTemplateMeta?.source || '').trim();
     const resolvedBy = String(hcTemplateResolution?.resolved_by || '').trim();
     const policyMode = String(hcTemplateResolution?.policy_mode || '').trim();
+    const especialidadDetectada = String(hcTemplateResolution?.especialidad_detectada || '').trim();
 
     const sourceLabelMap = {
       clinica_override: 'Clínica',
       clinica_default: 'Clínica (default)',
       builtin: 'Sistema',
     };
+    const autoResolvedBySet = new Set([
+      'consulta_especialidad',
+      'especialidad',
+      'clinic_single_template',
+      'clinica_default_fallback',
+      'default',
+    ]);
+    const resolvedByLabelMap = {
+      explicit_template_id: 'Manual',
+      consulta_especialidad: 'Automática por especialidad de consulta',
+      especialidad: 'Automática por especialidad',
+      clinic_single_template: 'Automática por plantilla única',
+      clinica_default_fallback: 'Automática por plantilla default',
+      default: 'Automática',
+    };
+    const templateReadableName = tplName || tplId || 'Sin plantilla';
 
     return {
       hasTemplate: tplId !== '',
+      templateReadableName,
       templateLabel: tplVersion ? `${tplId} v${tplVersion}` : tplId,
       sourceLabel: sourceLabelMap[source] || source || 'No definido',
       resolvedBy: resolvedBy || 'default',
+      resolvedByLabel: resolvedByLabelMap[resolvedBy] || resolvedByLabelMap.default,
       policyMode: policyMode || 'auto',
+      especialidadDetectada,
+      isAutoResolved: autoResolvedBySet.has(resolvedBy || 'default'),
       isFallbackBuiltin: source === 'builtin',
       isDefaultFallback: resolvedBy === 'clinica_default_fallback',
     };
@@ -3275,13 +3297,35 @@ function HistoriaClinicaPage() {
               <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                 {hcTemplateDebug.hasTemplate ? (
                   <>
-                    <span className="font-semibold text-slate-800">Plantilla activa:</span> {hcTemplateDebug.templateLabel}
-                    <span className="mx-2 text-slate-400">|</span>
-                    <span className="font-semibold text-slate-800">Origen:</span> {hcTemplateDebug.sourceLabel}
-                    <span className="mx-2 text-slate-400">|</span>
-                    <span className="font-semibold text-slate-800">Resolución:</span> {hcTemplateDebug.resolvedBy}
-                    <span className="mx-2 text-slate-400">|</span>
-                    <span className="font-semibold text-slate-800">Modo:</span> {hcTemplateDebug.policyMode}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-slate-800">Plantilla aplicada:</span>
+                      <span className="rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-800 font-semibold">
+                        {hcTemplateDebug.templateReadableName}
+                      </span>
+                      <span className={`rounded-md border px-2 py-0.5 font-semibold ${hcTemplateDebug.isAutoResolved ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                        {hcTemplateDebug.isAutoResolved ? `Asignación automática` : 'Asignación manual'}
+                      </span>
+                      {hcTemplateDebug.especialidadDetectada && (
+                        <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-800">
+                          Especialidad: {hcTemplateDebug.especialidadDetectada}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      {hcTemplateDebug.resolvedByLabel}
+                    </p>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[11px] text-slate-500 hover:text-slate-700">Ver detalle técnico</summary>
+                      <div className="mt-1 text-[11px] text-slate-600">
+                        <span className="font-semibold text-slate-700">ID/versión:</span> {hcTemplateDebug.templateLabel || '-'}
+                        <span className="mx-2 text-slate-400">|</span>
+                        <span className="font-semibold text-slate-700">Origen:</span> {hcTemplateDebug.sourceLabel}
+                        <span className="mx-2 text-slate-400">|</span>
+                        <span className="font-semibold text-slate-700">Resolución:</span> {hcTemplateDebug.resolvedBy}
+                        <span className="mx-2 text-slate-400">|</span>
+                        <span className="font-semibold text-slate-700">Modo:</span> {hcTemplateDebug.policyMode}
+                      </div>
+                    </details>
                     {(hcTemplateDebug.isFallbackBuiltin || hcTemplateDebug.isDefaultFallback) && (
                       <span className="ml-2 inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
                         Fallback activo
