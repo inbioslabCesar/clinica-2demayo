@@ -6538,6 +6538,95 @@ function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
     return $map;
 }
 
+function cargar_medico_solicitante_map_por_cotizaciones($conn, $cotizacionIds) {
+    $map = [];
+    $ids = array_values(array_filter(array_map('intval', (array)$cotizacionIds), function($id) {
+        return $id > 0;
+    }));
+    if (empty($ids) || !table_exists($conn, 'cotizaciones_detalle') || !table_exists($conn, 'medicos')) {
+        return $map;
+    }
+
+    $hasConsultaId = column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+    $hasMedicoId = column_exists($conn, 'cotizaciones_detalle', 'medico_id');
+    if (!$hasConsultaId && !$hasMedicoId) {
+        return $map;
+    }
+
+    $whereDetalleActivo = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND LOWER(TRIM(COALESCE(cd.estado_item, 'activo'))) <> 'eliminado'"
+        : '';
+    $joinConsulta = $hasConsultaId ? ' LEFT JOIN consultas c ON c.id = cd.consulta_id ' : '';
+    $exprMedicoDirecto = $hasMedicoId ? "MAX(CASE WHEN cd.medico_id IS NOT NULL AND cd.medico_id > 0 THEN cd.medico_id END)" : 'NULL';
+    $exprMedicoDesdeConsulta = $hasConsultaId ? "MAX(CASE WHEN c.medico_id IS NOT NULL AND c.medico_id > 0 THEN c.medico_id END)" : 'NULL';
+    $exprMedico = "COALESCE({$exprMedicoDirecto}, {$exprMedicoDesdeConsulta}, 0)";
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+
+    $sql = "SELECT cd.cotizacion_id, {$exprMedico} AS medico_id
+            FROM cotizaciones_detalle cd
+            {$joinConsulta}
+            WHERE cd.cotizacion_id IN ({$placeholders}){$whereDetalleActivo}
+            GROUP BY cd.cotizacion_id";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $map;
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $medicoIds = [];
+    $medicoByCotizacion = [];
+    foreach ($rows as $row) {
+        $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+        $medicoId = (int)($row['medico_id'] ?? 0);
+        if ($cotizacionId <= 0 || $medicoId <= 0) continue;
+        $medicoByCotizacion[$cotizacionId] = $medicoId;
+        $medicoIds[$medicoId] = true;
+    }
+
+    if (empty($medicoByCotizacion)) {
+        return $map;
+    }
+
+    $medicoIds = array_values(array_map('intval', array_keys($medicoIds)));
+    $placeholdersMed = implode(',', array_fill(0, count($medicoIds), '?'));
+    $typesMed = str_repeat('i', count($medicoIds));
+    $stmtMed = $conn->prepare("SELECT id, nombre, apellido FROM medicos WHERE id IN ({$placeholdersMed})");
+    if (!$stmtMed) {
+        return $map;
+    }
+    $stmtMed->bind_param($typesMed, ...$medicoIds);
+    $stmtMed->execute();
+    $medRows = $stmtMed->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmtMed->close();
+
+    $medicos = [];
+    foreach ($medRows as $med) {
+        $id = (int)($med['id'] ?? 0);
+        if ($id <= 0) continue;
+        $nombre = trim((string)($med['nombre'] ?? ''));
+        $apellido = trim((string)($med['apellido'] ?? ''));
+        $completo = trim($nombre . ' ' . $apellido);
+        if ($completo === '') continue;
+        $medicos[$id] = $completo;
+    }
+
+    foreach ($medicoByCotizacion as $cotizacionId => $medicoId) {
+        $nombre = trim((string)($medicos[$medicoId] ?? ''));
+        if ($nombre === '') continue;
+        $map[(int)$cotizacionId] = [
+            'usuario_nombre' => $nombre,
+            'usuario_rol' => 'medico',
+        ];
+    }
+
+    return $map;
+}
+
 function reporte_atenciones_detallado($conn) {
     $fechaInicioRaw = $_GET['fecha_inicio'] ?? '';
     $fechaFinRaw = $_GET['fecha_fin'] ?? '';
@@ -6650,6 +6739,7 @@ function reporte_atenciones_detallado($conn) {
     }, $cotizaciones);
     $detallesPorCotizacion = cargar_detalles_cotizaciones($conn, $ids);
     $pagosPorCotizacion = cargar_pagos_cotizaciones_map($conn, $ids);
+    $medicoSolicitantePorCotizacion = cargar_medico_solicitante_map_por_cotizaciones($conn, $ids);
 
     $resumenPorRol = [];
     $detalle = [];
@@ -6660,6 +6750,17 @@ function reporte_atenciones_detallado($conn) {
 
         $cotizacionId = (int)($cot['id'] ?? 0);
         if ($cotizacionId <= 0) continue;
+
+        if ((int)($cot['usuario_id'] ?? 0) <= 0) {
+            $actorMedico = $medicoSolicitantePorCotizacion[$cotizacionId] ?? null;
+            if (is_array($actorMedico)) {
+                $nombreMedico = trim((string)($actorMedico['usuario_nombre'] ?? ''));
+                if ($nombreMedico !== '') {
+                    $cot['usuario_nombre'] = $nombreMedico;
+                    $cot['usuario_rol'] = (string)($actorMedico['usuario_rol'] ?? 'medico');
+                }
+            }
+        }
 
         $rolNormalizado = normalizar_rol_usuario_reporte($cot['usuario_rol'] ?? '');
         $rolLabel = etiqueta_rol_usuario_reporte($rolNormalizado);
