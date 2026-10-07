@@ -266,6 +266,7 @@ export default function DetalleCotizacionPage() {
   const [paciente, setPaciente] = useState(null);
   const [pagos, setPagos] = useState([]);
   const [ajustandoDetalleId, setAjustandoDetalleId] = useState(0);
+  const [agregandoMedicamento, setAgregandoMedicamento] = useState(false);
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
     logo: "",
@@ -603,6 +604,36 @@ export default function DetalleCotizacionPage() {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  };
+
+  const parseDecimal = (value) => {
+    if (value === null || value === undefined || value === "") return 0;
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    const normalized = String(value).replace(",", ".").trim();
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const getUnidadesPorCaja = (med) => {
+    const candidate = Number(
+      med?.unidades_por_caja
+      ?? med?.cantidad_por_caja
+      ?? med?.unidadesCaja
+      ?? 30
+    );
+    return Number.isFinite(candidate) && candidate > 0 ? candidate : 30;
+  };
+
+  const getPrecioVenta = (med) => {
+    if (!med) return 0;
+    const precioCompra = parseDecimal(med.precio_compra);
+    const margen = parseDecimal(med.margen_ganancia);
+    const precioConMargen = precioCompra > 0
+      ? Number((precioCompra * (1 + margen / 100)).toFixed(2))
+      : 0;
+    if (precioConMargen > 0) return precioConMargen;
+    const precioDirecto = parseDecimal(med.precio_venta ?? med.precio ?? 0);
+    return Number(precioDirecto.toFixed(2));
   };
 
   const emitirTicket = async () => {
@@ -1009,6 +1040,184 @@ export default function DetalleCotizacionPage() {
     }
   };
 
+  const agregarMedicamentoFarmaciaInline = async () => {
+    const cotizacionActualId = Number(cotizacion?.id || 0);
+    const estadoActual = String(cotizacion?.estado || "").toLowerCase();
+    if (cotizacionActualId <= 0) return;
+    if (!(estadoActual === "pendiente" || estadoActual === "parcial")) {
+      await Swal.fire("No permitido", "Solo puedes agregar ítems en cotizaciones pendientes o parciales.", "info");
+      return;
+    }
+
+    let medicamentosDisponibles = [];
+    let debounceId = null;
+
+    const cargarMedicamentos = async (busqueda = "") => {
+      const q = String(busqueda || "").trim();
+      const params = new URLSearchParams();
+      if (q.length >= 2) {
+        params.set("busqueda", q);
+      }
+      params.set("limite", "80");
+
+      const res = await authFetch(`api_medicamentos.php?${params.toString()}`, { cache: "no-store" });
+      const data = await res.json();
+      const meds = Array.isArray(data?.medicamentos)
+        ? data.medicamentos
+        : (Array.isArray(data) ? data : []);
+      medicamentosDisponibles = meds;
+      return meds;
+    };
+
+    const renderOpciones = (meds = []) => {
+      const select = document.getElementById("swal-med-select");
+      if (!select) return;
+      if (!Array.isArray(meds) || meds.length === 0) {
+        select.innerHTML = `<option value="">Sin resultados</option>`;
+        return;
+      }
+      select.innerHTML = meds.map((med) => {
+        const nombre = escapeHtml(String(med?.nombre || "Medicamento"));
+        const stock = Number(med?.stock || 0);
+        return `<option value="${Number(med?.id || 0)}">${nombre} (Stock: ${stock})</option>`;
+      }).join("");
+    };
+
+    try {
+      setAgregandoMedicamento(true);
+      const iniciales = await cargarMedicamentos("");
+
+      const modal = await Swal.fire({
+        title: "Agregar medicamento (farmacia)",
+        width: 760,
+        html: `
+          <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+            <label for="swal-med-busqueda">Buscar medicamento</label>
+            <input id="swal-med-busqueda" type="text" class="swal2-input" placeholder="Escribe al menos 2 letras para filtrar" />
+            <label for="swal-med-select">Medicamento</label>
+            <select id="swal-med-select" class="swal2-select"></select>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div>
+                <label for="swal-med-tipo">Tipo de venta</label>
+                <select id="swal-med-tipo" class="swal2-select">
+                  <option value="unidad">Unidad</option>
+                  <option value="caja">Caja</option>
+                </select>
+              </div>
+              <div>
+                <label for="swal-med-cantidad">Cantidad</label>
+                <input id="swal-med-cantidad" type="number" min="1" step="1" class="swal2-input" value="1" />
+              </div>
+            </div>
+            <label for="swal-med-motivo">Motivo</label>
+            <input id="swal-med-motivo" type="text" class="swal2-input" placeholder="Ej. complemento indicado por médico" />
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: "Agregar",
+        cancelButtonText: "Cancelar",
+        didOpen: () => {
+          renderOpciones(iniciales);
+          const inputBusqueda = document.getElementById("swal-med-busqueda");
+          if (inputBusqueda) {
+            inputBusqueda.addEventListener("input", () => {
+              const term = String(inputBusqueda.value || "");
+              if (debounceId) window.clearTimeout(debounceId);
+              debounceId = window.setTimeout(async () => {
+                try {
+                  const lista = await cargarMedicamentos(term);
+                  renderOpciones(lista);
+                } catch {
+                  renderOpciones([]);
+                }
+              }, 280);
+            });
+          }
+        },
+        preConfirm: () => {
+          const select = document.getElementById("swal-med-select");
+          const tipoInput = document.getElementById("swal-med-tipo");
+          const cantidadInput = document.getElementById("swal-med-cantidad");
+          const motivoInput = document.getElementById("swal-med-motivo");
+
+          const medId = Number(select?.value || 0);
+          const tipo = String(tipoInput?.value || "unidad");
+          const cantidad = Number(cantidadInput?.value || 0);
+          const motivo = String(motivoInput?.value || "").trim();
+          const med = medicamentosDisponibles.find((item) => Number(item?.id || 0) === medId);
+
+          if (!medId || !med) {
+            Swal.showValidationMessage("Selecciona un medicamento válido.");
+            return false;
+          }
+          if (!Number.isInteger(cantidad) || cantidad <= 0) {
+            Swal.showValidationMessage("Ingresa una cantidad válida (entero mayor a 0).");
+            return false;
+          }
+          if (motivo.length < 4) {
+            Swal.showValidationMessage("Ingresa un motivo (mínimo 4 caracteres).");
+            return false;
+          }
+
+          const stockUnidades = Number(med?.stock || 0);
+          const unidadesCaja = getUnidadesPorCaja(med);
+          const stockCajas = Math.floor(stockUnidades / unidadesCaja);
+          if (tipo === "unidad" && cantidad > stockUnidades) {
+            Swal.showValidationMessage(`Stock insuficiente. Disponible: ${stockUnidades} unidad(es).`);
+            return false;
+          }
+          if (tipo === "caja" && cantidad > stockCajas) {
+            Swal.showValidationMessage(`Stock insuficiente. Disponible: ${stockCajas} caja(s).`);
+            return false;
+          }
+
+          const precioVenta = getPrecioVenta(med);
+          const descripcion = `${String(med?.nombre || "Medicamento").trim() || "Medicamento"} (${tipo === "caja" ? "Caja" : "Unidad"})`;
+          const subtotal = tipo === "caja"
+            ? Number((precioVenta * unidadesCaja * cantidad).toFixed(2))
+            : Number((precioVenta * cantidad).toFixed(2));
+
+          return {
+            motivo,
+            detalle: {
+              servicio_tipo: "farmacia",
+              servicio_id: medId,
+              descripcion,
+              cantidad,
+              precio_unitario: precioVenta,
+              subtotal,
+            },
+          };
+        },
+      });
+
+      if (!modal.isConfirmed || !modal.value) return;
+
+      const res = await authFetch("api_cotizaciones.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "agregar_detalle",
+          cotizacion_id: cotizacionActualId,
+          motivo: modal.value.motivo,
+          detalle: modal.value.detalle,
+        }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo agregar el medicamento");
+      }
+
+      await refrescarCotizacionActual(cotizacionActualId);
+      await Swal.fire("Agregado", "El medicamento se agregó correctamente.", "success");
+    } catch (err) {
+      await Swal.fire("Error", err?.message || "No se pudo agregar el medicamento", "error");
+    } finally {
+      if (debounceId) window.clearTimeout(debounceId);
+      setAgregandoMedicamento(false);
+    }
+  };
+
   if (loading) return <Spinner />;
 
   if (error) {
@@ -1060,6 +1269,15 @@ export default function DetalleCotizacionPage() {
                 className="text-white px-4 py-2 rounded"
                 style={themeGradient}
               >Editar cotizacion</button>
+            )}
+            {!esVistaGrupo && puedeEditar && (estado === "pendiente" || estado === "parcial") && (
+              <button
+                onClick={agregarMedicamentoFarmaciaInline}
+                disabled={agregandoMedicamento}
+                className="bg-indigo-100 text-indigo-800 px-4 py-2 rounded border border-indigo-300 hover:bg-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {agregandoMedicamento ? "Abriendo..." : "Agregar medicamento"}
+              </button>
             )}
             {puedeCobrar && (
               <button
