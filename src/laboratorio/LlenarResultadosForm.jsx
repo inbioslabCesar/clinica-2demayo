@@ -1169,6 +1169,7 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
     const fieldName = String(e?.target?.name || '');
     const fieldValue = e?.target?.value ?? '';
     const updates = { [fieldName]: fieldValue };
+    let aliasSync = null;
 
     // Mantener sincronizadas claves por nombre y por codigo_interno.
     // El renderer prioriza codigo_interno cuando existe; si no se actualiza en cada tecla,
@@ -1180,10 +1181,11 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
       const examIdNum = parseInt(examIdText, 10);
 
       if (Number.isFinite(examIdNum) && paramToken) {
+        const aliasTokens = new Set([normalizeParamToken(paramToken)].filter(Boolean));
         const paramsList = getEffectiveParamsListForExam(examIdNum);
         const paramTokenNorm = normalizeParamToken(paramToken);
 
-        const matchedParam = paramsList.find((param) => {
+        const matchedParams = paramsList.filter((param) => {
           const nombre = String(param?.nombre || '').trim();
           const codigo = String(param?.codigo_interno || '').trim();
           if (!nombre && !codigo) return false;
@@ -1195,9 +1197,13 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
           return paramTokenNorm && (paramTokenNorm === nombreNorm || paramTokenNorm === codigoNorm);
         });
 
-        if (matchedParam) {
-          const canonicalName = String(matchedParam.nombre || '').trim();
-          const internalCode = String(matchedParam.codigo_interno || '').trim();
+        matchedParams.forEach((matchedParam) => {
+          const canonicalName = String(matchedParam?.nombre || '').trim();
+          const internalCode = String(matchedParam?.codigo_interno || '').trim();
+          const canonicalToken = normalizeParamToken(canonicalName);
+          const codeToken = normalizeParamToken(internalCode);
+          if (canonicalToken) aliasTokens.add(canonicalToken);
+          if (codeToken) aliasTokens.add(codeToken);
 
           if (canonicalName) {
             updates[`${examIdNum}__${canonicalName}`] = fieldValue;
@@ -1205,11 +1211,31 @@ function LlenarResultadosForm({ orden, onVolver, onGuardado }) {
           if (internalCode) {
             updates[`${examIdNum}__${internalCode}`] = fieldValue;
           }
-        }
+        });
+
+        aliasSync = {
+          examPrefix: `${examIdNum}__`,
+          tokens: Array.from(aliasTokens).filter(Boolean),
+        };
       }
     }
 
-    setResultados(prev => ({ ...prev, ...updates }));
+    setResultados(prev => {
+      const next = { ...prev, ...updates };
+
+      if (aliasSync?.examPrefix && Array.isArray(aliasSync.tokens) && aliasSync.tokens.length > 0) {
+        Object.keys(next).forEach((key) => {
+          if (!String(key).startsWith(aliasSync.examPrefix)) return;
+          const suffix = String(key).slice(aliasSync.examPrefix.length);
+          const suffixToken = normalizeParamToken(suffix);
+          if (suffixToken && aliasSync.tokens.includes(suffixToken)) {
+            next[key] = fieldValue;
+          }
+        });
+      }
+
+      return next;
+    });
   };
 
   const handlePrintToggle = (examId, checked) => {
