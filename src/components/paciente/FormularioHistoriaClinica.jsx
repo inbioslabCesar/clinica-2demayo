@@ -100,7 +100,9 @@ export default function FormularioHistoriaClinica({ hc, setHc, templateSections 
     <>
       {renderableSections.map(({ sectionKey, fields }) => (
         <div key={sectionKey}>
-          <h3 className="text-lg font-semibold mb-2 mt-4">{formatFieldLabel(sectionKey)}</h3>
+          <div className="mb-2 mt-4 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
+            <h3 className="text-lg font-bold text-violet-900">{formatFieldLabel(sectionKey)}</h3>
+          </div>
           <div className="mb-3 grid grid-cols-12 gap-2">
             {fields.flatMap(({ fieldKey, meta }) => {
               const nodes = [

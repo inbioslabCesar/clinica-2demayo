@@ -699,171 +699,221 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
         </div>
       )}
 
-      <div className="mb-2 flex flex-col sm:flex-row gap-2 items-stretch">
-        <input
-          type="text"
-          className="border rounded p-1 flex-1"
-          placeholder="Buscar medicamento por nombre o código"
-          value={busqueda}
-          onChange={(e) => {
-            setBusqueda(e.target.value);
-            setMedicamentoSel(null);
-            setModoManual(false);
-            setManualNombre("");
-          }}
-        />
-        {loading && <span className="text-xs text-gray-500">Buscando...</span>}
-      </div>
+      <div className="mb-3 rounded-xl border-2 border-blue-300 bg-blue-50/70 p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h4 className="text-sm font-bold text-blue-900">🔎 Buscar y agregar medicamento</h4>
+          <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-medium text-blue-700">
+            Paso clave de la receta
+          </span>
+        </div>
+        <p className="mb-3 text-xs text-blue-800">
+          Escribe al menos 2 caracteres por nombre o código. Luego selecciona un resultado y completa indicaciones.
+        </p>
+        <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg border border-blue-200 bg-white px-2.5 py-2 text-xs font-semibold text-blue-800">
+            <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[11px] text-white">1</span>
+            Buscar medicamento
+          </div>
+          <div className="rounded-lg border border-blue-200 bg-white px-2.5 py-2 text-xs font-semibold text-blue-800">
+            <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[11px] text-white">2</span>
+            Seleccionar resultado
+          </div>
+          <div className="rounded-lg border border-blue-200 bg-white px-2.5 py-2 text-xs font-semibold text-blue-800">
+            <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[11px] text-white">3</span>
+            Completar indicaciones
+          </div>
+          <div className="rounded-lg border border-blue-200 bg-white px-2.5 py-2 text-xs font-semibold text-blue-800">
+            <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[11px] text-white">4</span>
+            Agregar a receta
+          </div>
+        </div>
 
-      {!medicamentoSel && !modoManual && (
-        <div className="mb-2">
-          <button
-            type="button"
-            className="text-xs sm:text-sm bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded"
-            onClick={() => {
-              setModoManual(true);
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">Paso 1: búsqueda</p>
+        <div className="mb-2 flex flex-col items-stretch gap-2 sm:flex-row">
+          <input
+            type="text"
+            className="flex-1 rounded-lg border-2 border-blue-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+            placeholder="Buscar medicamento por nombre o código"
+            value={busqueda}
+            onChange={(e) => {
+              setBusqueda(e.target.value);
               setMedicamentoSel(null);
-              setResultados([]);
+              setModoManual(false);
+              setManualNombre("");
             }}
-          >
-            No encuentro el medicamento, agregar manualmente
-          </button>
+          />
+          {loading && (
+            <span className="inline-flex items-center rounded-md border border-blue-200 bg-white px-2 py-1 text-xs text-blue-700">
+              Buscando...
+            </span>
+          )}
         </div>
-      )}
 
-      {resultados.length > 0 && !medicamentoSel && (
-        <div className="border rounded bg-white shadow max-h-60 overflow-y-auto mb-2">
-          {resultados.map((m) => (
-            (() => {
-              const stock = Number(m?.stock || 0);
-              const sinStock = stock <= 0;
-              const inactivo = String(m?.estado || "").trim().toLowerCase() === "inactivo";
-              return (
-                <div
-                  key={m.id || m.codigo}
-                  className={`px-3 py-2 text-sm flex flex-col gap-1 ${inactivo ? "bg-gray-100 text-gray-500 cursor-not-allowed" : (sinStock ? "bg-amber-50 text-gray-700 hover:bg-amber-100 cursor-pointer" : "hover:bg-blue-100 cursor-pointer")}`}
-                  onClick={() => {
-                    if (inactivo) return;
-                    setMedicamentoSel(m);
-                    setModoManual(false);
-                    setManualNombre("");
-                  }}
-                  title={inactivo ? "Medicamento inactivo" : (sinStock ? "Sin stock en farmacia (se puede recetar)" : "Seleccionar medicamento")}
-                  aria-disabled={inactivo}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold">
-                      {m.nombre} <span className="text-gray-500 text-xs">({m.codigo})</span>
-                    </span>
-                    {inactivo ? (
-                      <span className="text-[11px] font-semibold text-gray-700 bg-gray-200 border border-gray-300 rounded px-2 py-0.5">
-                        Inactivo
+        {String(busqueda || "").trim().length > 0 && String(busqueda || "").trim().length < 2 && (
+          <p className="mb-2 text-xs text-amber-700">Ingrese mínimo 2 caracteres para buscar.</p>
+        )}
+
+        {!loading && String(busqueda || "").trim().length >= 2 && resultados.length === 0 && !medicamentoSel && !modoManual && (
+          <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            No se encontraron resultados con ese término.
+          </p>
+        )}
+
+        {!medicamentoSel && !modoManual && (
+          <div className="mb-2">
+            <button
+              type="button"
+              className="rounded bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-700 sm:text-sm"
+              onClick={() => {
+                setModoManual(true);
+                setMedicamentoSel(null);
+                setResultados([]);
+              }}
+            >
+              No encuentro el medicamento, agregar manualmente
+            </button>
+          </div>
+        )}
+
+        {resultados.length > 0 && !medicamentoSel && (
+          <>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">Paso 2: selecciona un medicamento</p>
+          <div className="mb-2 max-h-60 overflow-y-auto rounded border border-blue-200 bg-white shadow">
+            {resultados.map((m) => (
+              (() => {
+                const stock = Number(m?.stock || 0);
+                const sinStock = stock <= 0;
+                const inactivo = String(m?.estado || "").trim().toLowerCase() === "inactivo";
+                return (
+                  <div
+                    key={m.id || m.codigo}
+                    className={`flex flex-col gap-1 px-3 py-2 text-sm ${inactivo ? "cursor-not-allowed bg-gray-100 text-gray-500" : (sinStock ? "cursor-pointer bg-amber-50 text-gray-700 hover:bg-amber-100" : "cursor-pointer hover:bg-blue-100")}`}
+                    onClick={() => {
+                      if (inactivo) return;
+                      setMedicamentoSel(m);
+                      setModoManual(false);
+                      setManualNombre("");
+                    }}
+                    title={inactivo ? "Medicamento inactivo" : (sinStock ? "Sin stock en farmacia (se puede recetar)" : "Seleccionar medicamento")}
+                    aria-disabled={inactivo}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">
+                        {m.nombre} <span className="text-xs text-gray-500">({m.codigo})</span>
                       </span>
-                    ) : sinStock ? (
-                      <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
-                        Sin Stock
-                      </span>
-                    ) : null}
+                      {inactivo ? (
+                        <span className="rounded border border-gray-300 bg-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-700">
+                          Inactivo
+                        </span>
+                      ) : sinStock ? (
+                        <span className="rounded border border-amber-200 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                          Sin Stock
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="ml-2 space-y-0.5 text-xs text-gray-700">
+                      {m.presentacion && (
+                        <div><strong>Presentación:</strong> {m.presentacion}</div>
+                      )}
+                      {m.concentracion && (
+                        <div><strong>Concentración:</strong> {m.concentracion}</div>
+                      )}
+                      {m.laboratorio && (
+                        <div><strong>Laboratorio:</strong> {m.laboratorio}</div>
+                      )}
+                      {m.stock !== undefined && (
+                        <div className={sinStock ? "text-amber-600" : "text-green-600"}><strong>Stock:</strong> {stock}</div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-700 ml-2 space-y-0.5">
-                    {m.presentacion && (
-                      <div><strong>Presentación:</strong> {m.presentacion}</div>
-                    )}
-                    {m.concentracion && (
-                      <div><strong>Concentración:</strong> {m.concentracion}</div>
-                    )}
-                    {m.laboratorio && (
-                      <div><strong>Laboratorio:</strong> {m.laboratorio}</div>
-                    )}
-                    {m.stock !== undefined && (
-                      <div className={sinStock ? "text-amber-600" : "text-green-600"}><strong>Stock:</strong> {stock}</div>
-                    )}
+                );
+              })()
+            ))}
+          </div>
+          </>
+        )}
+
+        {(medicamentoSel || modoManual) && (
+          <div className="mb-2 space-y-3 rounded border border-blue-300 bg-blue-100/60 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-800">Paso 3: completa indicaciones y cantidad</p>
+            <div className="text-xs text-gray-600">
+              {modoManual ? (
+                <>
+                  <span className="font-semibold">Medicamento manual</span>
+                  <input
+                    type="text"
+                    className="mt-2 w-full rounded border p-1 text-sm font-normal"
+                    placeholder="Nombre del medicamento"
+                    value={manualNombre}
+                    onChange={(e) => setManualNombre(e.target.value)}
+                  />
+                </>
+              ) : (
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-gray-800">{medicamentoSel.nombre}</div>
+                  <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+                    {medicamentoSel.codigo && <span>Código: {medicamentoSel.codigo}</span>}
+                    {medicamentoSel.presentacion && <span>•</span>}
+                    {medicamentoSel.presentacion && <span>Pres: {medicamentoSel.presentacion}</span>}
+                    {medicamentoSel.concentracion && <span>•</span>}
+                    {medicamentoSel.concentracion && <span>Conc: {medicamentoSel.concentracion}</span>}
+                    {medicamentoSel.laboratorio && <span>•</span>}
+                    {medicamentoSel.laboratorio && <span>Lab: {medicamentoSel.laboratorio}</span>}
                   </div>
                 </div>
-              );
-            })()
-          ))}
-        </div>
-      )}
+              )}
+            </div>
 
-      {(medicamentoSel || modoManual) && (
-        <div className="border rounded p-3 bg-blue-50 mb-2 space-y-3">
-          <div className="text-xs text-gray-600">
-            {modoManual ? (
-              <>
-                <span className="font-semibold">Medicamento manual</span>
-                <input
-                  type="text"
-                  className="border rounded p-1 w-full mt-2 font-normal text-sm"
-                  placeholder="Nombre del medicamento"
-                  value={manualNombre}
-                  onChange={(e) => setManualNombre(e.target.value)}
-                />
-              </>
-            ) : (
-              <div className="space-y-0.5">
-                <div className="font-semibold text-gray-800">{medicamentoSel.nombre}</div>
-                <div className="text-xs text-gray-500 flex flex-wrap gap-2">
-                  {medicamentoSel.codigo && <span>Código: {medicamentoSel.codigo}</span>}
-                  {medicamentoSel.presentacion && <span>•</span>}
-                  {medicamentoSel.presentacion && <span>Pres: {medicamentoSel.presentacion}</span>}
-                  {medicamentoSel.concentracion && <span>•</span>}
-                  {medicamentoSel.concentracion && <span>Conc: {medicamentoSel.concentracion}</span>}
-                  {medicamentoSel.laboratorio && <span>•</span>}
-                  {medicamentoSel.laboratorio && <span>Lab: {medicamentoSel.laboratorio}</span>}
-                </div>
-              </div>
-            )}
-          </div>
+            <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs text-gray-600">
+              <span className="font-medium">Modo práctico:</span> solo completa indicaciones y cantidad.
+              <span className="ml-1 text-gray-500">La pauta clínica y la unidad se autocompletan.</span>
+            </div>
 
-          <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs text-gray-600">
-            <span className="font-medium">Modo práctico:</span> solo completa indicaciones y cantidad.
-            <span className="ml-1 text-gray-500">La pauta clínica y la unidad se autocompletan.</span>
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-500 mb-1 font-medium">Indicaciones</label>
-            <textarea
-              className="border rounded p-2 w-full text-sm"
-              placeholder="Ej: aplicar capa fina en zona afectada por 30 días, interdiarios"
-              value={detalle.observaciones}
-              onChange={(e) => setDetalle((prev) => ({ ...prev, observaciones: e.target.value }))}
-              rows={2}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="block text-xs text-gray-500 mb-1 font-medium">Cantidad</label>
-              <input
-                type="number"
-                min="1"
-                className="border rounded p-2 w-full text-sm"
-                placeholder="Ej: 1"
-                value={cantidadDispensacion}
-                onChange={(e) => setCantidadDispensacion(e.target.value)}
+              <label className="mb-1 block text-xs font-medium text-gray-500">Indicaciones</label>
+              <textarea
+                className="w-full rounded border p-2 text-sm"
+                placeholder="Ej: aplicar capa fina en zona afectada por 30 días, interdiarios"
+                value={detalle.observaciones}
+                onChange={(e) => setDetalle((prev) => ({ ...prev, observaciones: e.target.value }))}
+                rows={2}
               />
             </div>
-          </div>
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium"
-              onClick={agregarMedicamento}
-            >
-              Agregar a receta
-            </button>
-            <button
-              type="button"
-              className="bg-gray-400 text-white px-3 py-2 rounded text-sm font-medium"
-              onClick={resetFormulario}
-            >
-              Cancelar
-            </button>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Cantidad</label>
+                <input
+                  type="number"
+                  min="1"
+                  className="w-full rounded border p-2 text-sm"
+                  placeholder="Ej: 1"
+                  value={cantidadDispensacion}
+                  onChange={(e) => setCantidadDispensacion(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white"
+                onClick={agregarMedicamento}
+                title="Paso 4: agregar medicamento a la receta"
+              >
+                Agregar a receta
+              </button>
+              <button
+                type="button"
+                className="rounded bg-gray-400 px-3 py-2 text-sm font-medium text-white"
+                onClick={resetFormulario}
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="mt-2">
         <h4 className="text-xs text-gray-600 font-medium mb-2">Medicamentos seleccionados:</h4>

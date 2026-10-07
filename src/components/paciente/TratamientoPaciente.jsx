@@ -5,7 +5,9 @@ import SelectorRecomendacionesProtocolos from "../comunes/SelectorRecomendacione
 export default function TratamientoPaciente({ receta, setReceta, tratamiento, setTratamiento, recomendaciones, setRecomendaciones, sugerenciasReceta, consultaId }) {
   return (
     <>
-      <h3 className="text-lg font-semibold mb-2 mt-4">Tratamiento</h3>
+      <div className="mb-2 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+        <h3 className="text-lg font-bold text-blue-900">Tratamiento</h3>
+      </div>
       <div className="mb-2">
         <textarea
           className="w-full border rounded p-1"
@@ -27,7 +29,9 @@ export default function TratamientoPaciente({ receta, setReceta, tratamiento, se
           setRecomendaciones={setRecomendaciones}
           consultaId={consultaId}
         />
-        <label className="block text-sm font-semibold mb-1">Recomendaciones</label>
+        <div className="mb-2 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <label className="block text-sm font-bold text-amber-900">Recomendaciones</label>
+        </div>
         <textarea
           className="w-full border rounded p-2"
           rows={3}
