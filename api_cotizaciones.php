@@ -6051,10 +6051,55 @@ function eliminar_detalle_cotizacion($conn, $data) {
     }
 }
 
+function validar_stock_disponible_para_detalle_farmacia($conn, $detalle) {
+    $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+    if ($servicioTipo !== 'farmacia') {
+        return;
+    }
+
+    $servicioId = isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : 0;
+    $cantidad = isset($detalle['cantidad']) ? (int)$detalle['cantidad'] : 0;
+    $descripcion = strtolower(trim((string)($detalle['descripcion'] ?? '')));
+    $esCaja = strpos($descripcion, '(caja)') !== false;
+
+    if ($servicioId <= 0) {
+        throw new Exception('El medicamento seleccionado no es válido');
+    }
+    if ($cantidad <= 0) {
+        throw new Exception('La cantidad del medicamento debe ser mayor a 0');
+    }
+
+    $stmtMed = $conn->prepare("SELECT id, nombre, stock, unidades_por_caja FROM medicamentos WHERE id = ? LIMIT 1 FOR UPDATE");
+    if (!$stmtMed) {
+        throw new Exception('No se pudo validar stock del medicamento');
+    }
+    $stmtMed->bind_param("i", $servicioId);
+    $stmtMed->execute();
+    $med = $stmtMed->get_result()->fetch_assoc();
+    $stmtMed->close();
+
+    if (!$med) {
+        throw new Exception('El medicamento seleccionado no existe');
+    }
+
+    $stockUnidades = max(0, (int)($med['stock'] ?? 0));
+    $unidadesPorCaja = max(1, (int)($med['unidades_por_caja'] ?? 30));
+    $unidadesSolicitadas = $esCaja ? ($cantidad * $unidadesPorCaja) : $cantidad;
+
+    if ($unidadesSolicitadas > $stockUnidades) {
+        $nombre = trim((string)($med['nombre'] ?? 'Medicamento'));
+        $disponibleMsg = $esCaja
+            ? floor($stockUnidades / $unidadesPorCaja) . ' caja(s)'
+            : $stockUnidades . ' unidad(es)';
+        throw new Exception("Stock insuficiente para {$nombre}. Disponible: {$disponibleMsg}");
+    }
+}
+
 function agregar_detalle_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $usuarioId    = isset($data['usuario_id'])    ? (int)$data['usuario_id']    : get_user_id_from_session();
     $motivo       = trim((string)($data['motivo'] ?? 'Agregar consulta a cotización'));
+    $expectedVersion = isset($data['expected_version']) ? (int)$data['expected_version'] : 0;
     $detalle      = $data['detalle'] ?? null;
 
     if ($cotizacionId <= 0 || !is_array($detalle) || empty($detalle)) {
@@ -6074,6 +6119,17 @@ function agregar_detalle_cotizacion($conn, $data) {
         if (!in_array($estadoActual, ['pendiente', 'parcial'])) {
             throw new Exception('Solo se puede agregar ítems a cotizaciones pendientes o parciales');
         }
+        if (column_exists($conn, 'cotizaciones', 'version_actual') && $expectedVersion > 0) {
+            $versionActual = (int)($cot['version_actual'] ?? 0);
+            if ($versionActual !== $expectedVersion) {
+                respond([
+                    'success' => false,
+                    'error' => 'La cotización cambió mientras editabas. Recarga la vista e inténtalo de nuevo.'
+                ], 409);
+            }
+        }
+
+        validar_stock_disponible_para_detalle_farmacia($conn, $detalle);
 
         insertar_detalles_cotizacion($conn, $cotizacionId, [$detalle], $usuarioId, $motivo);
         cotizacion_asegurar_consulta_asociada_si_aplica(
@@ -6095,16 +6151,41 @@ function agregar_detalle_cotizacion($conn, $data) {
             $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $nuevoTotal, $pagado);
             $saldo = max(0, (float)($finanzas['saldo'] ?? 0));
             $nuevoEstado = (string)($finanzas['estado'] ?? 'pendiente');
-            $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
-            $stmtUp->bind_param('ddsi', $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
+            if (column_exists($conn, 'cotizaciones', 'version_actual')) {
+                $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ?, version_actual = version_actual + 1, updated_at = NOW() WHERE id = ?');
+                $stmtUp->bind_param('ddsi', $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
+            } else {
+                $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
+                $stmtUp->bind_param('ddsi', $nuevoTotal, $saldo, $nuevoEstado, $cotizacionId);
+            }
         } else {
             $stmtUp = $conn->prepare('UPDATE cotizaciones SET total = ? WHERE id = ?');
             $stmtUp->bind_param('di', $nuevoTotal, $cotizacionId);
         }
         $stmtUp->execute();
 
+        $version = 1;
+        if (column_exists($conn, 'cotizaciones', 'version_actual')) {
+            $stmtVersion = $conn->prepare("SELECT version_actual FROM cotizaciones WHERE id = ?");
+            $stmtVersion->bind_param("i", $cotizacionId);
+            $stmtVersion->execute();
+            $rowVersion = $stmtVersion->get_result()->fetch_assoc();
+            $version = (int)($rowVersion['version_actual'] ?? 1);
+            $stmtVersion->close();
+        }
+
+        insertar_evento_cotizacion($conn, $cotizacionId, 'editada', $usuarioId, $motivo, [
+            'accion' => 'agregar_detalle',
+            'servicio_tipo' => (string)($detalle['servicio_tipo'] ?? ''),
+            'servicio_id' => isset($detalle['servicio_id']) ? (int)$detalle['servicio_id'] : 0,
+            'cantidad' => isset($detalle['cantidad']) ? (int)$detalle['cantidad'] : 0,
+            'precio_unitario' => isset($detalle['precio_unitario']) ? (float)$detalle['precio_unitario'] : 0,
+            'subtotal' => isset($detalle['subtotal']) ? (float)$detalle['subtotal'] : 0,
+            'total_nuevo' => $nuevoTotal,
+        ], $version);
+
         $conn->commit();
-        echo json_encode(['success' => true, 'nuevo_total' => $nuevoTotal]);
+        echo json_encode(['success' => true, 'nuevo_total' => $nuevoTotal, 'version_actual' => $version]);
         exit;
     } catch (Exception $e) {
         $conn->rollback();
@@ -6202,6 +6283,7 @@ function ajustar_cantidad_detalle_cotizacion($conn, $data) {
     $cantidadNueva = isset($data['cantidad_nueva']) ? (int)$data['cantidad_nueva'] : -1;
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
     $motivo = trim((string)($data['motivo'] ?? ''));
+    $expectedVersion = isset($data['expected_version']) ? (int)$data['expected_version'] : 0;
 
     if ($cotizacionId <= 0 || $detalleId <= 0 || $usuarioId <= 0 || $cantidadNueva < 0 || $motivo === '') {
         respond(['success' => false, 'error' => 'Datos incompletos para ajustar el detalle'], 400);
@@ -6218,6 +6300,15 @@ function ajustar_cantidad_detalle_cotizacion($conn, $data) {
         $estadoActual = strtolower((string)($cot['estado'] ?? 'pendiente'));
         if (!in_array($estadoActual, ['pendiente', 'parcial'])) {
             throw new Exception('Solo se puede ajustar cantidades en cotizaciones pendientes o parciales');
+        }
+        if (column_exists($conn, 'cotizaciones', 'version_actual') && $expectedVersion > 0) {
+            $versionActual = (int)($cot['version_actual'] ?? 0);
+            if ($versionActual !== $expectedVersion) {
+                respond([
+                    'success' => false,
+                    'error' => 'La cotización cambió mientras editabas. Recarga la vista e inténtalo de nuevo.'
+                ], 409);
+            }
         }
 
         $sqlDet = "SELECT * FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";

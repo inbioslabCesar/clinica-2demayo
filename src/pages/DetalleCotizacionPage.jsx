@@ -1023,6 +1023,7 @@ export default function DetalleCotizacionPage() {
           cotizacion_id: cotizacionActualId,
           cotizacion_detalle_id: detalleId,
           cantidad_nueva: Number(result.value.cantidadNueva),
+          expected_version: Number(cotizacion?.version_actual || 0),
           motivo: result.value.motivo,
         }),
       });
@@ -1199,6 +1200,7 @@ export default function DetalleCotizacionPage() {
         body: JSON.stringify({
           accion: "agregar_detalle",
           cotizacion_id: cotizacionActualId,
+          expected_version: Number(cotizacion?.version_actual || 0),
           motivo: modal.value.motivo,
           detalle: modal.value.detalle,
         }),
