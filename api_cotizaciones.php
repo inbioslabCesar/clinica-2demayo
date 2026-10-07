@@ -6196,6 +6196,154 @@ function vincular_consulta_a_cotizacion($conn, $data) {
     exit;
 }
 
+function ajustar_cantidad_detalle_cotizacion($conn, $data) {
+    $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
+    $detalleId = isset($data['cotizacion_detalle_id']) ? (int)$data['cotizacion_detalle_id'] : 0;
+    $cantidadNueva = isset($data['cantidad_nueva']) ? (int)$data['cantidad_nueva'] : -1;
+    $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
+    $motivo = trim((string)($data['motivo'] ?? ''));
+
+    if ($cotizacionId <= 0 || $detalleId <= 0 || $usuarioId <= 0 || $cantidadNueva < 0 || $motivo === '') {
+        respond(['success' => false, 'error' => 'Datos incompletos para ajustar el detalle'], 400);
+    }
+
+    $conn->begin_transaction();
+    try {
+        $stmtCot = $conn->prepare("SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE");
+        $stmtCot->bind_param("i", $cotizacionId);
+        $stmtCot->execute();
+        $cot = $stmtCot->get_result()->fetch_assoc();
+        if (!$cot) throw new Exception('Cotización no encontrada');
+
+        $estadoActual = strtolower((string)($cot['estado'] ?? 'pendiente'));
+        if (!in_array($estadoActual, ['pendiente', 'parcial'])) {
+            throw new Exception('Solo se puede ajustar cantidades en cotizaciones pendientes o parciales');
+        }
+
+        $sqlDet = "SELECT * FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";
+        if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
+            $sqlDet .= " AND COALESCE(estado_item, 'activo') <> 'eliminado'";
+        }
+        $sqlDet .= " FOR UPDATE";
+        $stmtDet = $conn->prepare($sqlDet);
+        $stmtDet->bind_param("ii", $detalleId, $cotizacionId);
+        $stmtDet->execute();
+        $det = $stmtDet->get_result()->fetch_assoc();
+        if (!$det) throw new Exception('Detalle de cotización no encontrado');
+
+        $servicioTipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
+        if ($servicioTipo !== 'farmacia') {
+            throw new Exception('Este ajuste inline solo está permitido para ítems de farmacia');
+        }
+
+        $cantidadActual = max(0, (int)($det['cantidad'] ?? 0));
+        if ($cantidadActual <= 0) throw new Exception('El ítem no tiene cantidad válida para ajustar');
+        if ($cantidadNueva >= $cantidadActual) {
+            throw new Exception('La nueva cantidad debe ser menor a la actual');
+        }
+
+        $precioUnitario = (float)($det['precio_unitario'] ?? 0);
+        $subtotalAnterior = (float)($det['subtotal'] ?? ($precioUnitario * $cantidadActual));
+        $subtotalNuevo = (float)($precioUnitario * $cantidadNueva);
+        $cantidadReducida = $cantidadActual - $cantidadNueva;
+
+        ContratoModule::revertirConsumoDesdeCotizacionDetalle($conn, $detalleId, (float)$cantidadReducida);
+
+        if ($cantidadNueva <= 0) {
+            if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
+                $stmtUpdDet = $conn->prepare("UPDATE cotizaciones_detalle SET estado_item = 'eliminado', editado_por = ?, editado_en = NOW(), motivo_edicion = ? WHERE id = ?");
+                $stmtUpdDet->bind_param("isi", $usuarioId, $motivo, $detalleId);
+            } else {
+                $stmtUpdDet = $conn->prepare("DELETE FROM cotizaciones_detalle WHERE id = ?");
+                $stmtUpdDet->bind_param("i", $detalleId);
+            }
+        } else {
+            if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
+                $stmtUpdDet = $conn->prepare("UPDATE cotizaciones_detalle SET cantidad = ?, subtotal = ?, editado_por = ?, editado_en = NOW(), motivo_edicion = ? WHERE id = ?");
+                $stmtUpdDet->bind_param("idisi", $cantidadNueva, $subtotalNuevo, $usuarioId, $motivo, $detalleId);
+            } else {
+                $stmtUpdDet = $conn->prepare("UPDATE cotizaciones_detalle SET cantidad = ?, subtotal = ? WHERE id = ?");
+                $stmtUpdDet->bind_param("idi", $cantidadNueva, $subtotalNuevo, $detalleId);
+            }
+        }
+        $stmtUpdDet->execute();
+
+        $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'"
+            : '';
+        $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(subtotal),0) AS total FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereEstado}");
+        $stmtTotal->bind_param("i", $cotizacionId);
+        $stmtTotal->execute();
+        $totalNuevo = (float)($stmtTotal->get_result()->fetch_assoc()['total'] ?? 0);
+
+        $pagadoAnterior = column_exists($conn, 'cotizaciones', 'total_pagado')
+            ? (float)($cot['total_pagado'] ?? 0)
+            : 0.0;
+        $pagadoNuevo = min($pagadoAnterior, $totalNuevo);
+        $finanzas = resolver_estado_financiero_cotizacion($conn, $cotizacionId, $totalNuevo, $pagadoNuevo);
+        $saldoNuevo = max(0, (float)($finanzas['saldo'] ?? 0));
+        $estadoNuevo = (string)($finanzas['estado'] ?? 'pendiente');
+
+        if (column_exists($conn, 'cotizaciones', 'total_pagado') && column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+            if (column_exists($conn, 'cotizaciones', 'version_actual')) {
+                $stmtUpCot = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ?, version_actual = version_actual + 1, updated_at = NOW() WHERE id = ?");
+                $stmtUpCot->bind_param("dddsi", $totalNuevo, $pagadoNuevo, $saldoNuevo, $estadoNuevo, $cotizacionId);
+            } else {
+                $stmtUpCot = $conn->prepare("UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?");
+                $stmtUpCot->bind_param("dddsi", $totalNuevo, $pagadoNuevo, $saldoNuevo, $estadoNuevo, $cotizacionId);
+            }
+        } else {
+            $stmtUpCot = $conn->prepare("UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?");
+            $stmtUpCot->bind_param("dsi", $totalNuevo, $estadoNuevo, $cotizacionId);
+        }
+        $stmtUpCot->execute();
+
+        if (table_exists($conn, 'cotizacion_item_ajustes')) {
+            $servicioId = isset($det['servicio_id']) ? (int)$det['servicio_id'] : 0;
+            $accionAjuste = 'quitar';
+            $stmtAdj = $conn->prepare("INSERT INTO cotizacion_item_ajustes (cotizacion_id, cotizacion_detalle_id, servicio_tipo, servicio_id, accion, cantidad_anterior, cantidad_nueva, precio_anterior, precio_nuevo, subtotal_anterior, subtotal_nuevo, motivo, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmtAdj->bind_param("iisisiiddddsi", $cotizacionId, $detalleId, $servicioTipo, $servicioId, $accionAjuste, $cantidadActual, $cantidadNueva, $precioUnitario, $precioUnitario, $subtotalAnterior, $subtotalNuevo, $motivo, $usuarioId);
+            $stmtAdj->execute();
+        }
+
+        $version = 1;
+        if (column_exists($conn, 'cotizaciones', 'version_actual')) {
+            $stmtVersion = $conn->prepare("SELECT version_actual FROM cotizaciones WHERE id = ?");
+            $stmtVersion->bind_param("i", $cotizacionId);
+            $stmtVersion->execute();
+            $rowVersion = $stmtVersion->get_result()->fetch_assoc();
+            $version = (int)($rowVersion['version_actual'] ?? 1);
+            $stmtVersion->close();
+        }
+
+        insertar_evento_cotizacion($conn, $cotizacionId, 'editada', $usuarioId, $motivo, [
+            'cotizacion_detalle_id' => $detalleId,
+            'servicio_tipo' => $servicioTipo,
+            'cantidad_anterior' => $cantidadActual,
+            'cantidad_nueva' => $cantidadNueva,
+            'subtotal_anterior' => $subtotalAnterior,
+            'subtotal_nuevo' => $subtotalNuevo
+        ], $version);
+
+        $conn->commit();
+        respond([
+            'success' => true,
+            'message' => 'Cantidad ajustada correctamente',
+            'cotizacion_id' => $cotizacionId,
+            'detalle_id' => $detalleId,
+            'cantidad_anterior' => $cantidadActual,
+            'cantidad_nueva' => $cantidadNueva,
+            'total' => $totalNuevo,
+            'total_pagado' => $pagadoNuevo,
+            'saldo_pendiente' => $saldoNuevo,
+            'estado' => $estadoNuevo
+        ]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        respond(['success' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 function devolucion_item_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $detalleId = isset($data['cotizacion_detalle_id']) ? (int)$data['cotizacion_detalle_id'] : 0;
@@ -6998,6 +7146,9 @@ switch ($method) {
         }
         if ($accion === 'devolucion_item') {
             devolucion_item_cotizacion($conn, $data);
+        }
+        if ($accion === 'ajustar_cantidad_detalle') {
+            ajustar_cantidad_detalle_cotizacion($conn, $data);
         }
         if ($accion === 'vincular_consulta') {
             vincular_consulta_a_cotizacion($conn, $data);

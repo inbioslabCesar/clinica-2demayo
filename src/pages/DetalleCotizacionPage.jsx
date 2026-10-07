@@ -265,6 +265,7 @@ export default function DetalleCotizacionPage() {
   const [cotizacion, setCotizacion] = useState(null);
   const [paciente, setPaciente] = useState(null);
   const [pagos, setPagos] = useState([]);
+  const [ajustandoDetalleId, setAjustandoDetalleId] = useState(0);
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
     logo: "",
@@ -891,6 +892,123 @@ export default function DetalleCotizacionPage() {
     navigate(`/cotizaciones?accion=anular&cotizacion_id=${Number(cotizacion?.id || 0)}`);
   };
 
+  const refrescarCotizacionActual = async (targetCotizacionId) => {
+    const id = Number(targetCotizacionId || 0);
+    if (id <= 0) return;
+
+    const cacheBuster = Date.now();
+    const resCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${id}&_t=${cacheBuster}`, {
+      cache: "no-store",
+    });
+    const dataCot = await resCot.json();
+    if (!dataCot?.success || !dataCot?.cotizacion) {
+      throw new Error(dataCot?.error || "No se pudo refrescar la cotizacion");
+    }
+
+    const cotRefrescada = dataCot.cotizacion;
+    setCotizacion(cotRefrescada);
+    setPaciente({
+      id: Number(cotRefrescada?.paciente_id || 0),
+      nombre: String(cotRefrescada?.nombre || ""),
+      apellido: String(cotRefrescada?.apellido || ""),
+      dni: String(cotRefrescada?.dni || ""),
+      historia_clinica: String(cotRefrescada?.historia_clinica || ""),
+    });
+
+    const pagosEmbebidos = Array.isArray(cotRefrescada?.pagos) ? cotRefrescada.pagos : null;
+    if (Array.isArray(pagosEmbebidos) && pagosEmbebidos.length > 0) {
+      setPagos(pagosEmbebidos);
+      return;
+    }
+
+    const resPagos = await authFetch(`api_cotizaciones.php?accion=pagos&cotizacion_id=${id}&_t=${cacheBuster}`, {
+      cache: "no-store",
+    });
+    const dataPagos = await resPagos.json();
+    setPagos(dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : []);
+  };
+
+  const ajustarCantidadFarmaciaInline = async (detalle) => {
+    const cotizacionActualId = Number(cotizacion?.id || 0);
+    const detalleId = Number(detalle?.id || 0);
+    const cantidadActual = Math.max(0, Number(detalle?.cantidad || 0));
+    const servicioTipo = normalizarServicio(detalle?.servicio_tipo);
+    const estadoActual = String(cotizacion?.estado || "").toLowerCase();
+
+    if (cotizacionActualId <= 0 || detalleId <= 0 || cantidadActual <= 0) return;
+    if (servicioTipo !== "farmacia") return;
+    if (!(estadoActual === "pendiente" || estadoActual === "parcial")) {
+      await Swal.fire("No permitido", "Solo puedes ajustar ítems en cotizaciones pendientes o parciales.", "info");
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: "Ajustar cantidad de farmacia",
+      width: 680,
+      html: `
+        <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+          <div><b>Ítem:</b> ${String(detalle?.descripcion || "Medicamento").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div><b>Cantidad actual:</b> ${cantidadActual}</div>
+          <label for="swal-cantidad-nueva">Nueva cantidad (solo disminuir)</label>
+          <input id="swal-cantidad-nueva" type="number" min="0" max="${Math.max(0, cantidadActual - 1)}" step="1" class="swal2-input" value="${Math.max(0, cantidadActual - 1)}" />
+          <label for="swal-motivo-ajuste">Motivo del ajuste</label>
+          <input id="swal-motivo-ajuste" type="text" class="swal2-input" placeholder="Ej. paciente decide llevar menos unidades" />
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: "Guardar ajuste",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const cantidadRaw = document.getElementById("swal-cantidad-nueva")?.value;
+        const motivoRaw = document.getElementById("swal-motivo-ajuste")?.value;
+        const cantidadNueva = Number(cantidadRaw);
+        const motivo = String(motivoRaw || "").trim();
+
+        if (!Number.isInteger(cantidadNueva) || cantidadNueva < 0) {
+          Swal.showValidationMessage("Ingresa una cantidad válida (entero >= 0).");
+          return false;
+        }
+        if (cantidadNueva >= cantidadActual) {
+          Swal.showValidationMessage("La nueva cantidad debe ser menor a la actual.");
+          return false;
+        }
+        if (motivo.length < 4) {
+          Swal.showValidationMessage("Ingresa un motivo (mínimo 4 caracteres).");
+          return false;
+        }
+        return { cantidadNueva, motivo };
+      },
+    });
+
+    if (!result.isConfirmed || !result.value) return;
+
+    try {
+      setAjustandoDetalleId(detalleId);
+      const res = await authFetch("api_cotizaciones.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "ajustar_cantidad_detalle",
+          cotizacion_id: cotizacionActualId,
+          cotizacion_detalle_id: detalleId,
+          cantidad_nueva: Number(result.value.cantidadNueva),
+          motivo: result.value.motivo,
+        }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo ajustar la cantidad del ítem");
+      }
+
+      await refrescarCotizacionActual(cotizacionActualId);
+      await Swal.fire("Actualizado", "La cantidad se ajustó correctamente.", "success");
+    } catch (err) {
+      await Swal.fire("Error", err?.message || "No se pudo ajustar la cantidad", "error");
+    } finally {
+      setAjustandoDetalleId(0);
+    }
+  };
+
   if (loading) return <Spinner />;
 
   if (error) {
@@ -1099,7 +1217,24 @@ export default function DetalleCotizacionPage() {
                     </div>
                   </td>
                   <td className="px-3 py-2">{String(d?.medico_nombre_completo || `${d?.medico_nombre || ""} ${d?.medico_apellido || ""}`).trim() || "-"}</td>
-                  <td className="px-3 py-2 text-right">{Number(d.cantidad || 0)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex flex-col items-end gap-1">
+                      <span>{Number(d.cantidad || 0)}</span>
+                      {!esVistaGrupo
+                        && puedeEditar
+                        && (estado === "pendiente" || estado === "parcial")
+                        && normalizarServicio(d?.servicio_tipo) === "farmacia"
+                        && Number(d?.cantidad || 0) > 0 && (
+                          <button
+                            onClick={() => ajustarCantidadFarmaciaInline(d)}
+                            disabled={ajustandoDetalleId === Number(d?.id || 0)}
+                            className="text-[11px] px-2 py-1 rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {ajustandoDetalleId === Number(d?.id || 0) ? "Guardando..." : "Ajustar"}
+                          </button>
+                        )}
+                    </div>
+                  </td>
                   <td className="px-3 py-2 text-right">
                     S/ {Number(d.precio_unitario || 0).toFixed(2)}
                     {Number(d.descuento_item || 0) > 0 && (
