@@ -765,7 +765,7 @@ if (tipoDescuento === 'porcentaje') {
         }
         // Callback para continuar con el flujo
         if (onCobroCompleto) {
-          onCobroCompleto(result.cobro_id, servicio, {
+          await onCobroCompleto(result.cobro_id, servicio, {
             monto_original: Number(montoOriginal || 0),
             monto_descuento: Number(descuento || 0),
             total_cobrado: Number(payloadCobro.total || 0),

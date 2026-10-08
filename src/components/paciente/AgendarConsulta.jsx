@@ -1242,8 +1242,6 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   };
 
   const manejarCobroCompleto = async (cobroId, _servicio, cobroResumen = null) => {
-    setMostrarCobro(false);
-
     let cotizacionId = consultaCreada?.cotizacion_id
       ? Number(consultaCreada.cotizacion_id)
       : null;
@@ -1263,7 +1261,19 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       errorCotizacion = error?.message || "No se pudo sincronizar la cotización con el cobro";
     }
 
-    MySwal.fire({
+    if (errorCotizacion) {
+      await MySwal.fire({
+        icon: "warning",
+        title: "Pago registrado con observación",
+        text: `${errorCotizacion}. Revisa la cotización de esta consulta en el módulo de Atenciones.`,
+        confirmButtonText: "Entendido",
+      });
+
+      navigate("/cotizaciones", { replace: true });
+      return;
+    }
+
+    await MySwal.fire({
       icon: "success",
       title: "¡Consulta Agendada y Pagada!",
       html: `
@@ -1280,29 +1290,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       confirmButtonText: "Aceptar",
     });
 
-    if (errorCotizacion) {
-      await MySwal.fire({
-        icon: "warning",
-        title: "Pago registrado con observación",
-        text: `${errorCotizacion}. Revisa la cotización de esta consulta en el módulo de Atenciones.`,
-        confirmButtonText: "Entendido",
-      });
-
-      // Aunque haya observación en la sincronización, llevar al listado de cotizaciones
-      navigate("/cotizaciones");
-      return;
-    }
-
-    // Resetear formulario
-    setFecha(getLimaDate());
-    setHora("");
-    setMedicoId("");
-    setDetallesConsulta([]);
-    setTotalConsulta(0);
-    setConsultaCreada(null);
-
-    // Flujo esperado: luego de cobrar una consulta, regresar a Cotizaciones.
-    navigate("/cotizaciones");
+    navigate("/cotizaciones", { replace: true });
   };
 
   const manejarCancelarCobro = () => {
