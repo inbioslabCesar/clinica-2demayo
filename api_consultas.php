@@ -150,6 +150,76 @@ function consultas_table_exists($conn, $table) {
     return $exists;
 }
 
+function consultas_ensure_auditoria_estado_schema($conn) {
+    $sql = "CREATE TABLE IF NOT EXISTS consultas_estado_auditoria (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        consulta_id INT NOT NULL,
+        estado_anterior VARCHAR(30) NULL,
+        estado_nuevo VARCHAR(30) NOT NULL,
+        motivo VARCHAR(255) NULL,
+        origen VARCHAR(60) NULL,
+        usuario_id INT NULL,
+        usuario_rol VARCHAR(40) NULL,
+        usuario_nombre VARCHAR(120) NULL,
+        ip VARCHAR(45) NULL,
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_cea_consulta (consulta_id),
+        KEY idx_cea_estado_nuevo (estado_nuevo),
+        KEY idx_cea_creado (creado_en)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+    @mysqli_query($conn, $sql);
+}
+
+function consultas_registrar_auditoria_estado($conn, $consultaId, $estadoAnterior, $estadoNuevo, $usuarioSesion, $motivo = '', $origen = '') {
+    $consultaId = (int)$consultaId;
+    $estadoAnteriorNorm = strtolower(trim((string)$estadoAnterior));
+    $estadoNuevoNorm = strtolower(trim((string)$estadoNuevo));
+
+    if ($consultaId <= 0 || $estadoNuevoNorm === '' || $estadoAnteriorNorm === $estadoNuevoNorm) {
+        return;
+    }
+
+    consultas_ensure_auditoria_estado_schema($conn);
+
+    $stmt = $conn->prepare(
+        'INSERT INTO consultas_estado_auditoria
+            (consulta_id, estado_anterior, estado_nuevo, motivo, origen, usuario_id, usuario_rol, usuario_nombre, ip)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    if (!$stmt) {
+        return;
+    }
+
+    $estadoAnteriorVal = $estadoAnteriorNorm !== '' ? $estadoAnteriorNorm : null;
+    $motivoVal = trim((string)$motivo);
+    $motivoVal = $motivoVal !== '' ? mb_substr($motivoVal, 0, 255) : null;
+    $origenVal = trim((string)$origen);
+    $origenVal = $origenVal !== '' ? mb_substr($origenVal, 0, 60) : null;
+    $usuarioId = consultas_actor_usuario_id($usuarioSesion);
+    $usuarioRol = is_array($usuarioSesion) ? mb_substr(trim((string)($usuarioSesion['rol'] ?? '')), 0, 40) : '';
+    $usuarioRol = $usuarioRol !== '' ? $usuarioRol : null;
+    $usuarioNombre = mb_substr(consultas_actor_nombre($usuarioSesion), 0, 120);
+    $ip = mb_substr(trim((string)($_SERVER['REMOTE_ADDR'] ?? '')), 0, 45);
+    $ip = $ip !== '' ? $ip : null;
+
+    $stmt->bind_param(
+        'issssisss',
+        $consultaId,
+        $estadoAnteriorVal,
+        $estadoNuevoNorm,
+        $motivoVal,
+        $origenVal,
+        $usuarioId,
+        $usuarioRol,
+        $usuarioNombre,
+        $ip
+    );
+    @$stmt->execute();
+    $stmt->close();
+}
+
 function consultas_ensure_habilitacion_anticipada_schema($conn) {
     $sql = "CREATE TABLE IF NOT EXISTS consultas_habilitaciones_anticipadas (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -3545,6 +3615,8 @@ switch ($method) {
         }
 
         $actualizarEstado = ($estado !== null && $estado !== '');
+        $motivoCambioEstado = isset($data['motivo_estado']) ? trim((string)$data['motivo_estado']) : '';
+        $origenCambioEstado = isset($data['origen_cambio']) ? trim((string)$data['origen_cambio']) : '';
         $camposReprogramacion = [
             'medico_id' => $medico_id,
             'fecha' => $fecha,
@@ -3582,7 +3654,7 @@ switch ($method) {
             $hora = $hora . ':00';
         }
 
-        $stmtOwner = $conn->prepare('SELECT medico_id, fecha, hora FROM consultas WHERE id = ? LIMIT 1');
+        $stmtOwner = $conn->prepare('SELECT medico_id, fecha, hora, estado FROM consultas WHERE id = ? LIMIT 1');
         $stmtOwner->bind_param('i', $id);
         $stmtOwner->execute();
         $ownerRow = $stmtOwner->get_result()->fetch_assoc();
@@ -3683,6 +3755,18 @@ switch ($method) {
         }
 
         $ok = $stmt->execute();
+
+        if ($ok && $actualizarEstado) {
+            consultas_registrar_auditoria_estado(
+                $conn,
+                $id,
+                (string)($ownerRow['estado'] ?? ''),
+                (string)$estado,
+                $sessionUsuario,
+                $motivoCambioEstado,
+                $origenCambioEstado
+            );
+        }
 
         if ($ok && $actualizarAgenda && $esReprogramacion && $turnoAhoraReprogramacion > 0 && columna_existe_local($conn, 'consultas', 'correlativo_dia_medico')) {
             $stmtCorr = $conn->prepare('UPDATE consultas SET correlativo_dia_medico = ? WHERE id = ? LIMIT 1');

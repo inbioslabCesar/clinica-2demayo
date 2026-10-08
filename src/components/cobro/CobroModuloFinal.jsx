@@ -27,6 +27,9 @@ function CobroModulo({
   servicio,
   onCobroCompleto,
   onCancelar,
+  onCobrarDespues,
+  labelCancelar = "Cancelar",
+  cancelarEsDestructivo = false,
   detalles,
   detallesSeleccionados,
   total: _total,
@@ -1463,13 +1466,38 @@ if (tipoDescuento === 'porcentaje') {
             >
               {loading ? 'Procesando...' : `💳 Cobrar S/ ${totalCobro.toFixed(2)}`}
             </button>
+            {typeof onCobrarDespues === "function" && (
+              <button
+                onClick={onCobrarDespues}
+                disabled={loading}
+                title="Mantiene la cita agendada y el horario reservado. La cotización queda pendiente de pago."
+                className="flex-1 bg-amber-500 text-white py-3 px-6 rounded-lg font-bold text-lg hover:bg-amber-600 disabled:bg-gray-400 transition-all shadow-md"
+              >
+                🕒 Cobrar después
+              </button>
+            )}
             <button 
               onClick={onCancelar}
-              className="flex-1 bg-gray-500 text-white py-3 px-6 rounded-lg font-bold text-lg hover:bg-gray-600 transition-all shadow-md"
+              disabled={loading}
+              title={cancelarEsDestructivo
+                ? "Cancela la cita y libera el horario del médico."
+                : "Cierra el módulo de cobro."}
+              className={`flex-1 text-white py-3 px-6 rounded-lg font-bold text-lg disabled:bg-gray-400 transition-all shadow-md ${
+                cancelarEsDestructivo
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-gray-500 hover:bg-gray-600"
+              }`}
             >
-              Cancelar
+              {labelCancelar}
             </button>
           </div>
+          {typeof onCobrarDespues === "function" && (
+            <p className="mt-3 text-sm text-gray-600 leading-snug">
+              <strong>Cobrar después</strong> conserva la cita y el horario reservado; la cotización queda pendiente de pago.
+              <br />
+              <strong>{labelCancelar}</strong> elimina la cita de la agenda y <strong>libera el horario</strong>.
+            </p>
+          )}
         </div>
       </div>
     </div>

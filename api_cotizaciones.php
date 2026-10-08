@@ -4523,6 +4523,71 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
     }
 }
 
+function cotizaciones_auditar_estado_consulta($conn, $consultaId, $estadoAnterior, $estadoNuevo, $motivo = '', $origen = '') {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0) {
+        return;
+    }
+
+    @mysqli_query($conn, "CREATE TABLE IF NOT EXISTS consultas_estado_auditoria (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        consulta_id INT NOT NULL,
+        estado_anterior VARCHAR(30) NULL,
+        estado_nuevo VARCHAR(30) NOT NULL,
+        motivo VARCHAR(255) NULL,
+        origen VARCHAR(60) NULL,
+        usuario_id INT NULL,
+        usuario_rol VARCHAR(40) NULL,
+        usuario_nombre VARCHAR(120) NULL,
+        ip VARCHAR(45) NULL,
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_cea_consulta (consulta_id),
+        KEY idx_cea_estado_nuevo (estado_nuevo),
+        KEY idx_cea_creado (creado_en)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $stmt = $conn->prepare(
+        'INSERT INTO consultas_estado_auditoria
+            (consulta_id, estado_anterior, estado_nuevo, motivo, origen, usuario_id, usuario_rol, usuario_nombre, ip)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    if (!$stmt) {
+        return;
+    }
+
+    $usuario = $_SESSION['usuario'] ?? [];
+    $estadoAnteriorVal = trim((string)$estadoAnterior);
+    $estadoAnteriorVal = $estadoAnteriorVal !== '' ? mb_substr(strtolower($estadoAnteriorVal), 0, 30) : null;
+    $estadoNuevoVal = mb_substr(strtolower(trim((string)$estadoNuevo)), 0, 30);
+    $motivoVal = trim((string)$motivo);
+    $motivoVal = $motivoVal !== '' ? mb_substr($motivoVal, 0, 255) : null;
+    $origenVal = trim((string)$origen);
+    $origenVal = $origenVal !== '' ? mb_substr($origenVal, 0, 60) : null;
+    $usuarioId = (int)($usuario['id'] ?? 0);
+    $usuarioRol = mb_substr(trim((string)($usuario['rol'] ?? '')), 0, 40);
+    $usuarioRol = $usuarioRol !== '' ? $usuarioRol : null;
+    $usuarioNombre = mb_substr(trim((string)($usuario['nombre'] ?? $usuario['usuario'] ?? '')), 0, 120);
+    $usuarioNombre = $usuarioNombre !== '' ? $usuarioNombre : null;
+    $ip = mb_substr(trim((string)($_SERVER['REMOTE_ADDR'] ?? '')), 0, 45);
+    $ip = $ip !== '' ? $ip : null;
+
+    $stmt->bind_param(
+        'issssisss',
+        $consultaId,
+        $estadoAnteriorVal,
+        $estadoNuevoVal,
+        $motivoVal,
+        $origenVal,
+        $usuarioId,
+        $usuarioRol,
+        $usuarioNombre,
+        $ip
+    );
+    @$stmt->execute();
+    $stmt->close();
+}
+
 function cotizacion_requiere_consulta_asociada(array $detalles): bool {
     foreach ($detalles as $detalle) {
         $tipo = correlativo_operativo_normalizar_servicio_tipo((string)($detalle['servicio_tipo'] ?? ''));
@@ -5651,6 +5716,14 @@ function anular_cotizacion($conn, $data) {
                     $stmtUpdConsulta->execute();
                     if ($stmtUpdConsulta->affected_rows > 0) {
                         $consultasCanceladas++;
+                        cotizaciones_auditar_estado_consulta(
+                            $conn,
+                            $consultaId,
+                            '',
+                            'cancelada',
+                            "Anulación de cotización #{$cotizacionId}: {$motivo}",
+                            'api_cotizaciones:anular_cotizacion'
+                        );
                     }
                 }
                 $stmtUpdConsulta->close();

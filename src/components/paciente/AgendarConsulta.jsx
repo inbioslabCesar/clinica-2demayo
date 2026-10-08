@@ -277,7 +277,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     }
   };
 
-  const cancelarConsultaAgendada = async (consultaId) => {
+  const cancelarConsultaAgendada = async (consultaId, motivo = "") => {
     const response = await authFetch(`${BASE_URL}api_consultas.php`, {
       method: "PUT",
       credentials: "include",
@@ -285,6 +285,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       body: JSON.stringify({
         id: Number(consultaId),
         estado: "cancelada",
+        motivo_estado: motivo || "Cancelación manual de cita antes del pago",
+        origen_cambio: "paciente:agendar_consulta",
       }),
     });
 
@@ -1293,13 +1295,71 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     navigate("/cotizaciones", { replace: true });
   };
 
-  const manejarCancelarCobro = () => {
+  const manejarCobrarDespues = () => {
+    const consultaId = consultaCreada?.id;
+    const cotizacionId = consultaCreada?.cotizacion_id;
+    const fechaCita = consultaCreada?.fecha || "";
+    const horaCita = consultaCreada?.hora || "";
+    const saldo = Number(totalConsulta || 0);
+
     MySwal.fire({
-      title: "Cancelar proceso",
-      text: "Se cancelará la cita y se anulará la cotización asociada. ¿Deseas continuar?",
+      title: "Dejar pendiente de pago",
+      html: `
+        <div class="text-left text-sm">
+          <p>La cita <strong>se mantiene agendada</strong> y el horario sigue reservado.</p>
+          <p class="mt-2"><strong>Fecha:</strong> ${fechaCita} - <strong>Hora:</strong> ${horaCita}</p>
+          <p><strong>Saldo pendiente:</strong> S/ ${saldo.toFixed(2)}</p>
+          <p class="mt-2">Podrás cobrarla luego desde <strong>Atenciones</strong> o cuando el paciente llegue.</p>
+        </div>
+      `,
+      icon: "info",
+      showCancelButton: true,
+      confirmButtonText: "Sí, dejar pendiente",
+      cancelButtonText: "Volver al cobro",
+      confirmButtonColor: "#2563eb",
+    }).then(async (decision) => {
+      if (!decision.isConfirmed) return;
+
+      setMostrarCobro(false);
+      setDetallesConsulta([]);
+      setTotalConsulta(0);
+      setConsultaCreada(null);
+
+      await MySwal.fire({
+        icon: "success",
+        title: "Cita agendada y pendiente de pago",
+        html: `
+          <div class="text-left">
+            <p><strong>Consulta ID:</strong> ${consultaId || "-"}</p>
+            ${cotizacionId ? `<p><strong>Cotización ID:</strong> ${cotizacionId}</p>` : ""}
+            <p><strong>Fecha:</strong> ${fechaCita} - <strong>Hora:</strong> ${horaCita}</p>
+            <p class="mt-2">El horario queda reservado. La cotización aparece como pendiente en Atenciones.</p>
+          </div>
+        `,
+        confirmButtonText: "Aceptar",
+        confirmButtonColor: "#2563eb",
+      });
+
+      navigate("/cotizaciones", { replace: true });
+    });
+  };
+
+  const manejarCancelarCobro = () => {
+    const fechaCita = consultaCreada?.fecha || "";
+    const horaCita = consultaCreada?.hora || "";
+
+    MySwal.fire({
+      title: "¿Cancelar la cita?",
+      html: `
+        <div class="text-left text-sm">
+          <p>Esta acción <strong>elimina la cita de la agenda</strong> y <strong>libera el horario ${horaCita}</strong> del ${fechaCita}.</p>
+          <p class="mt-2">También se anulará la cotización asociada.</p>
+          <p class="mt-2 text-amber-700"><strong>¿Solo querías dejarla pendiente de pago?</strong> Vuelve y usa <strong>Cobrar después</strong>: la cita se conserva.</p>
+        </div>
+      `,
       icon: "warning",
       showCancelButton: true,
-      confirmButtonText: "Sí, cancelar todo",
+      confirmButtonText: "Sí, cancelar la cita",
       cancelButtonText: "Volver",
       confirmButtonColor: "#dc2626",
     }).then(async (decision) => {
@@ -1344,8 +1404,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       }
 
       await MySwal.fire({
-        title: "Proceso cancelado",
-        text: "La cita y la cotización fueron canceladas correctamente.",
+        title: "Cita cancelada",
+        text: "La cita fue cancelada, el horario quedó libre y la cotización fue anulada.",
         icon: "success",
         confirmButtonText: "Entendido",
       });
@@ -1362,6 +1422,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         totalConsulta={totalConsulta}
         manejarCobroCompleto={manejarCobroCompleto}
         manejarCancelarCobro={manejarCancelarCobro}
+        manejarCobrarDespues={manejarCobrarDespues}
       />
     );
   }

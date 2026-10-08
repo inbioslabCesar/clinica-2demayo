@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import CobroModuloFinal from "../cobro/CobroModuloFinal";
 
-function ResumenConsultaAgendada({ consultaCreada, pacienteInfo, detallesConsulta, totalConsulta, manejarCobroCompleto, manejarCancelarCobro }) {
+function ResumenConsultaAgendada({ consultaCreada, pacienteInfo, detallesConsulta, totalConsulta, manejarCobroCompleto, manejarCancelarCobro, manejarCobrarDespues }) {
   const tieneContexto = Boolean(consultaCreada && pacienteInfo);
   const consulta = consultaCreada || {};
   const paciente = pacienteInfo || {};
@@ -101,6 +101,9 @@ function ResumenConsultaAgendada({ consultaCreada, pacienteInfo, detallesConsult
         onSetCobrarMitad={() => setMontoAbonoInput((saldoPendiente / 2).toFixed(2))}
         onCobroCompleto={manejarCobroCompleto}
         onCancelar={manejarCancelarCobro}
+        onCobrarDespues={manejarCobrarDespues}
+        labelCancelar="Cancelar cita"
+        cancelarEsDestructivo
       />
     </div>
   );
