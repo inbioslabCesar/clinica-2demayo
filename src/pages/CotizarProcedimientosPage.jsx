@@ -1,10 +1,10 @@
-import { authFetch } from "../utils/apiClient";
+﻿import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor, getMedicoSoftColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
@@ -571,7 +571,7 @@ export default function CotizarProcedimientosPage() {
       return;
     }
 
-    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaEntries = aplicarExclusionConsultaDelCarrito(buildAgendaGuardEntriesFromDetalles(detalles), cart?.items);
     const agendaCheck = await validarAgendaAntesDeCotizar({
       authFetch,
       baseUrl: BASE_URL,
@@ -650,7 +650,7 @@ export default function CotizarProcedimientosPage() {
       fallbackHora: getDefaultTime(),
       stepMinutes: 30,
     });
-    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaEntries = aplicarExclusionConsultaDelCarrito(buildAgendaGuardEntriesFromDetalles(detalles), cart?.items);
     const agendaCheck = await validarAgendaAntesDeCotizar({
       authFetch,
       baseUrl: BASE_URL,

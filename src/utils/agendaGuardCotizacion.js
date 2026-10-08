@@ -61,60 +61,27 @@ function safeParseJson(rawValue) {
   }
 }
 
-function buildOccupiedAgendaRowsFromCartItems(items) {
-  const out = [];
-  const seen = new Set();
-  const step = resolveAgendaStepMinutes(30);
+function getAttentionReference(items) {
+  const list = Array.isArray(items) ? items : [];
+  const extract = (item) => ({
+    fecha: normalizeDateYmd(item?.fechaProgramada || item?.fecha_programada || item?.consultaFecha || item?.fecha || ""),
+    hora: normalizeHourHm(item?.horaProgramada || item?.hora_programada || item?.consultaHora || item?.hora || ""),
+  });
 
-  for (const item of Array.isArray(items) ? items : []) {
-    const medicoId = Number(item?.medicoId || item?.medico_id || item?.consultaMedicoId || 0);
-    const fecha = normalizeDateYmd(item?.fechaProgramada || item?.fecha_programada || item?.consultaFecha || "");
-    const hora = normalizeHourHm(item?.horaProgramada || item?.hora_programada || item?.consultaHora || "");
-    const baseMin = hmToMinutes(hora);
-    if (medicoId <= 0 || !fecha || baseMin === null) continue;
-
-    const serviceType = normalizeServiceType(item?.serviceType || item?.servicio_tipo || "");
-    const componentes = Array.isArray(item?.componentes) ? item.componentes : [];
-    const componentesAgendables = componentes.filter((comp) => {
-      const tipoComp = normalizeServiceType(comp?.servicio_tipo || comp?.source_type || comp?.serviceType || "");
-      return AGENDABLE_SERVICE_TYPES.has(tipoComp);
-    });
-
-    const componentesMismoMedico = componentesAgendables.filter((comp) => {
-      const mid = Number(comp?.medico_id || comp?.medicoId || 0);
-      return mid === medicoId;
-    });
-
-    const listaBase = (serviceType === "paquete" || serviceType === "perfil")
-      ? (componentesMismoMedico.length > 0 ? componentesMismoMedico : componentesAgendables)
-      : componentesMismoMedico;
-    const expectedSlots = Math.max(1, listaBase.length || 1);
-
-    const minutes = new Set([baseMin]);
-    for (const comp of listaBase) {
-      const fechaComp = normalizeDateYmd(comp?.fecha_programada || comp?.fechaProgramada || fecha);
-      if (fechaComp !== fecha) continue;
-      const horaComp = normalizeHourHm(comp?.hora_programada || comp?.horaProgramada || "");
-      const minComp = hmToMinutes(horaComp);
-      if (minComp !== null) minutes.add(minComp);
-    }
-
-    if (minutes.size < expectedSlots) {
-      for (let i = 0; i < expectedSlots; i += 1) {
-        minutes.add(baseMin + (i * step));
-      }
-    }
-
-    for (const min of minutes) {
-      const horaSlot = minutesToHm(min);
-      const key = `${medicoId}|${fecha}|${horaSlot}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ medicoId, fecha, hora: horaSlot });
-    }
+  for (const item of list) {
+    if (normalizeServiceType(item?.serviceType || item?.servicio_tipo || "") !== "consulta") continue;
+    const slot = extract(item);
+    if (slot.fecha && slot.hora) return slot;
   }
+  for (const item of list) {
+    const slot = extract(item);
+    if (slot.fecha && slot.hora) return slot;
+  }
+  return { fecha: "", hora: "" };
+}
 
-  return out;
+function buildOccupiedAgendaRowsFromCartItems(items) {
+  return buildAgendaGuardEntriesFromDetalles(items);
 }
 
 function getCartEntriesFromSessionStorage() {
@@ -130,6 +97,13 @@ function isHourOccupiedInCartSession(entry, hourCandidate, requestedDate) {
   const fecha = normalizeDateYmd(requestedDate || entry?.fecha || "");
   const hora = normalizeHourHm(hourCandidate || "");
   if (medicoId <= 0 || !fecha || !hora) return false;
+
+  const raw = window.sessionStorage.getItem(QUOTE_CART_STORAGE_KEY);
+  const parsed = safeParseJson(raw);
+  const reference = getAttentionReference(parsed?.items);
+  if (reference.fecha === fecha && reference.hora === hora) {
+    return false;
+  }
 
   const cartEntries = getCartEntriesFromSessionStorage();
   return cartEntries.some((row) => (
@@ -281,110 +255,6 @@ function buildSlotMinutesFromBloques(bloques) {
   return slots.sort((a, b) => a - b);
 }
 
-function addDaysYmdSafe(fechaYmd, daysToAdd) {
-  const base = new Date(`${String(fechaYmd || "").trim()}T00:00:00`);
-  if (Number.isNaN(base.getTime())) return "";
-  base.setDate(base.getDate() + Number(daysToAdd || 0));
-  const y = base.getFullYear();
-  const m = String(base.getMonth() + 1).padStart(2, "0");
-  const d = String(base.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function collectOccupiedSlotsFromDetalles(detalles, patientSet, doctorSet, parentFecha = "", parentHora = "") {
-  for (const detalle of Array.isArray(detalles) ? detalles : []) {
-    if (!detalle || typeof detalle !== "object") continue;
-    const tipo = normalizeServiceType(detalle?.servicio_tipo || detalle?.source_type || detalle?.serviceType || "");
-    const fecha = normalizeDateYmd(detalle?.fecha_programada || detalle?.fechaProgramada || detalle?.fecha || parentFecha || "");
-    const hora = normalizeHourHm(detalle?.hora_programada || detalle?.horaProgramada || detalle?.hora || parentHora || "");
-    const medicoId = Number(detalle?.medico_id || detalle?.medicoId || detalle?.consultaMedicoId || 0);
-
-    if (AGENDABLE_SERVICE_TYPES.has(tipo) && fecha && hora) {
-      patientSet.add(`${fecha}|${hora}`);
-      if (medicoId > 0) {
-        doctorSet.add(`${medicoId}|${fecha}|${hora}`);
-      }
-    }
-
-    const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
-    if (componentes.length > 0) {
-      const componentesAgendables = componentes
-        .map((comp) => {
-          const tipoComp = normalizeServiceType(comp?.servicio_tipo || comp?.source_type || comp?.serviceType || "");
-          if (!AGENDABLE_SERVICE_TYPES.has(tipoComp)) return null;
-          const fechaComp = normalizeDateYmd(comp?.fecha_programada || comp?.fechaProgramada || comp?.fecha || fecha || "");
-          const horaComp = normalizeHourHm(comp?.hora_programada || comp?.horaProgramada || comp?.hora || hora || "");
-          const medicoComp = Number(comp?.medico_id || comp?.medicoId || comp?.consultaMedicoId || 0);
-          return { fecha: fechaComp, hora: horaComp, medicoId: medicoComp };
-        })
-        .filter(Boolean);
-
-      const uniqueSlots = new Set(
-        componentesAgendables
-          .filter((it) => it.fecha && it.hora)
-          .map((it) => `${it.fecha}|${it.hora}`)
-      );
-      const baseFecha = normalizeDateYmd(fecha || componentesAgendables[0]?.fecha || "");
-      const baseHora = normalizeHourHm(hora || componentesAgendables[0]?.hora || "");
-      const baseMinute = hmToMinutes(baseHora);
-
-      const needsSequentialInference = componentesAgendables.length > 1
-        && uniqueSlots.size <= 1
-        && baseFecha
-        && baseMinute !== null;
-
-      if (needsSequentialInference) {
-        const step = resolveAgendaStepMinutes(30);
-        for (let idx = 0; idx < componentesAgendables.length; idx += 1) {
-          const comp = componentesAgendables[idx];
-          const totalMin = baseMinute + idx * step;
-          const dayShift = Math.floor(totalMin / (24 * 60));
-          const minuteOfDay = ((totalMin % (24 * 60)) + (24 * 60)) % (24 * 60);
-          const fechaSeq = addDaysYmdSafe(baseFecha, dayShift);
-          const horaSeq = minutesToHm(minuteOfDay);
-          patientSet.add(`${fechaSeq}|${horaSeq}`);
-          if (Number(comp?.medicoId || 0) > 0) {
-            doctorSet.add(`${Number(comp.medicoId)}|${fechaSeq}|${horaSeq}`);
-          }
-        }
-        continue;
-      }
-
-      collectOccupiedSlotsFromDetalles(componentes, patientSet, doctorSet, fecha, hora);
-    }
-  }
-}
-
-function findNextFreePatientSlot({ fechaBase, minuteBase, medicoId, occupiedPatient, occupiedDoctor, stepMinutes = 30 }) {
-  let fecha = normalizeDateYmd(fechaBase);
-  let minute = Number.isFinite(minuteBase) ? minuteBase : 8 * 60;
-  const step = Math.max(5, Number(stepMinutes) || 30);
-
-  for (let guard = 0; guard < 400; guard += 1) {
-    if (!fecha) return null;
-
-    if (minute > 23 * 60 + 30) {
-      fecha = addDaysYmdSafe(fecha, 1);
-      minute = 0;
-      continue;
-    }
-
-    const hora = minutesToHm(minute);
-    const patientBusy = occupiedPatient.has(`${fecha}|${hora}`);
-    const doctorBusy = Number(medicoId || 0) > 0
-      ? occupiedDoctor.has(`${Number(medicoId || 0)}|${fecha}|${hora}`)
-      : false;
-
-    if (!patientBusy && !doctorBusy) {
-      return { fecha, hora };
-    }
-
-    minute += step;
-  }
-
-  return null;
-}
-
 async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, consultaIdExcluir = 0, maxFutureDays = 14 }) {
   const fechaNorm = normalizeDateYmd(fecha);
   const horaNorm = normalizeHourHm(hora);
@@ -520,11 +390,12 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
   };
 }
 
-function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "") {
+function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "", parentConsultaId = 0) {
   const tipo = normalizeServiceType(detalle?.servicio_tipo || detalle?.source_type || detalle?.serviceType || "");
   const medicoId = Number(detalle?.medico_id || detalle?.medicoId || 0);
   const fecha = normalizeDateYmd(detalle?.fecha_programada || detalle?.fechaProgramada || detalle?.fecha || parentFecha || "");
   const hora = normalizeHourHm(detalle?.hora_programada || detalle?.horaProgramada || detalle?.hora || parentHora || "");
+  const consultaId = Number(detalle?.consulta_id || detalle?.consultaId || parentConsultaId || 0);
 
   if (AGENDABLE_SERVICE_TYPES.has(tipo) && medicoId > 0 && fecha && hora) {
     acc.push({
@@ -532,12 +403,13 @@ function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "") {
       medicoId,
       fecha,
       hora,
+      consultaIdExcluir: consultaId > 0 ? consultaId : 0,
     });
   }
 
   const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
   for (const comp of componentes) {
-    collectFromDetail(comp, acc, fecha, hora);
+    collectFromDetail(comp, acc, fecha, hora, consultaId);
   }
 }
 
@@ -551,11 +423,46 @@ export function buildAgendaGuardEntriesFromDetalles(detalles) {
   const out = [];
   for (const row of acc) {
     const key = `${row.medicoId}|${row.fecha}|${row.hora}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(row);
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(row);
+      continue;
+    }
+    if (Number(row?.consultaIdExcluir || 0) > 0) {
+      const existente = out.find((entry) => (
+        Number(entry?.medicoId || 0) === Number(row?.medicoId || 0)
+        && entry?.fecha === row?.fecha
+        && entry?.hora === row?.hora
+      ));
+      if (existente && Number(existente?.consultaIdExcluir || 0) <= 0) {
+        existente.consultaIdExcluir = Number(row.consultaIdExcluir);
+      }
+    }
   }
   return out;
+}
+
+export function aplicarExclusionConsultaDelCarrito(entries, cartItems) {
+  const consultas = (Array.isArray(cartItems) ? cartItems : [])
+    .map((item) => ({
+      consultaId: Number(item?.consultaId || item?.consulta_id || 0),
+      medicoId: Number(item?.consultaMedicoId || item?.medicoId || item?.medico_id || 0),
+      fecha: normalizeDateYmd(item?.consultaFecha || item?.fechaProgramada || item?.fecha_programada || ""),
+      hora: normalizeHourHm(item?.consultaHora || item?.horaProgramada || item?.hora_programada || ""),
+    }))
+    .filter((item) => item.consultaId > 0 && item.medicoId > 0 && item.fecha && item.hora);
+
+  return (Array.isArray(entries) ? entries : []).map((entry) => {
+    if (Number(entry?.consultaIdExcluir || 0) > 0) return entry;
+    const consulta = consultas.find((item) => (
+      item.medicoId === Number(entry?.medicoId || 0)
+      && item.fecha === String(entry?.fecha || "")
+      && item.hora === String(entry?.hora || "")
+    ));
+    return consulta
+      ? { ...entry, consultaIdExcluir: consulta.consultaId }
+      : entry;
+  });
 }
 
 export function secuenciarDetallesPacienteSinCruce({
@@ -563,80 +470,39 @@ export function secuenciarDetallesPacienteSinCruce({
   cartItems,
   fallbackFecha = "",
   fallbackHora = "",
-  stepMinutes = 30,
 }) {
   const baseDetalles = Array.isArray(detalles) ? detalles : [];
   if (baseDetalles.length === 0) return [];
 
   const out = baseDetalles.map((d) => ({ ...d }));
-  const occupiedPatient = new Set();
-  const occupiedDoctor = new Set();
-  collectOccupiedSlotsFromDetalles(cartItems, occupiedPatient, occupiedDoctor);
-
-  const resolverReferenciaProgramacionCarrito = (items) => {
-    const lista = Array.isArray(items) ? items : [];
-    const extraerSlot = (it) => ({
-      fecha: normalizeDateYmd(it?.fechaProgramada || it?.fecha_programada || it?.consultaFecha || ""),
-      hora: normalizeHourHm(it?.horaProgramada || it?.hora_programada || it?.consultaHora || ""),
-    });
-
-    for (const it of lista) {
-      const tipo = normalizeServiceType(it?.serviceType || it?.servicio_tipo || "");
-      if (tipo !== "consulta") continue;
-      const slot = extraerSlot(it);
-      if (slot.fecha && slot.hora) return slot;
-    }
-    for (const it of lista) {
-      const slot = extraerSlot(it);
-      if (slot.fecha && slot.hora) return slot;
-    }
-    return { fecha: "", hora: "" };
-  };
-
-  const slotReferencia = resolverReferenciaProgramacionCarrito(cartItems);
+  const slotCarrito = getAttentionReference(cartItems);
   const fallbackFechaNorm = normalizeDateYmd(fallbackFecha);
   const fallbackHoraNorm = normalizeHourHm(fallbackHora);
+  const primerDetalleAgendable = out.find((row) => (
+    AGENDABLE_SERVICE_TYPES.has(normalizeServiceType(row?.servicio_tipo || row?.source_type || row?.serviceType || ""))
+    && normalizeDateYmd(row?.fecha_programada || row?.fechaProgramada || row?.fecha || "")
+    && normalizeHourHm(row?.hora_programada || row?.horaProgramada || row?.hora || "")
+  ));
+  const slotDetalle = primerDetalleAgendable
+    ? {
+        fecha: normalizeDateYmd(primerDetalleAgendable?.fecha_programada || primerDetalleAgendable?.fechaProgramada || primerDetalleAgendable?.fecha || ""),
+        hora: normalizeHourHm(primerDetalleAgendable?.hora_programada || primerDetalleAgendable?.horaProgramada || primerDetalleAgendable?.hora || ""),
+      }
+    : { fecha: "", hora: "" };
+  const fechaGrupo = slotCarrito.fecha || slotDetalle.fecha || fallbackFechaNorm;
+  const horaGrupo = slotCarrito.hora || slotDetalle.hora || fallbackHoraNorm;
 
   for (let i = 0; i < out.length; i += 1) {
     const row = out[i];
     const tipo = normalizeServiceType(row?.servicio_tipo || row?.source_type || row?.serviceType || "");
     if (!AGENDABLE_SERVICE_TYPES.has(tipo)) continue;
-
-    const rowFecha = normalizeDateYmd(row?.fecha_programada || row?.fechaProgramada || row?.fecha || "");
-    const rowHora = normalizeHourHm(row?.hora_programada || row?.horaProgramada || row?.hora || "");
-    const coincideFallback = rowFecha && rowHora && rowFecha === fallbackFechaNorm && rowHora === fallbackHoraNorm;
-    const sinProgramacionPropia = !rowFecha && !rowHora;
-    const usarReferenciaCarrito = Boolean(slotReferencia.fecha && slotReferencia.hora) && (coincideFallback || sinProgramacionPropia);
-
-    const fechaBase = usarReferenciaCarrito
-      ? slotReferencia.fecha
-      : normalizeDateYmd(rowFecha || fallbackFechaNorm || "");
-    const horaBase = usarReferenciaCarrito
-      ? slotReferencia.hora
-      : normalizeHourHm(rowHora || fallbackHoraNorm || "");
-    const minuteBase = hmToMinutes(horaBase);
-    if (!fechaBase) continue;
-
-    const medicoId = Number(row?.medico_id || row?.medicoId || row?.consultaMedicoId || 0);
-    const slot = findNextFreePatientSlot({
-      fechaBase,
-      minuteBase: minuteBase === null ? 8 * 60 : minuteBase,
-      medicoId,
-      occupiedPatient,
-      occupiedDoctor,
-      stepMinutes: resolveAgendaStepMinutes(stepMinutes),
-    });
-    if (!slot) continue;
+    if (!fechaGrupo || !horaGrupo) continue;
 
     out[i] = {
       ...row,
-      fecha_programada: slot.fecha,
-      hora_programada: slot.hora,
+      fecha_programada: fechaGrupo,
+      hora_programada: horaGrupo,
     };
-    occupiedPatient.add(`${slot.fecha}|${slot.hora}`);
-    if (medicoId > 0) {
-      occupiedDoctor.add(`${medicoId}|${slot.fecha}|${slot.hora}`);
-    }
   }
 
   return out;
@@ -649,6 +515,10 @@ export function detectarCruceConCarrito({ cartItems, nuevosDetalles }) {
     return null;
   }
 
+  const reference = getAttentionReference(cartItems);
+  const referenceKey = reference.fecha && reference.hora
+    ? `${reference.fecha}|${reference.hora}`
+    : "";
   const existentesMap = new Map();
   for (const row of existentes) {
     const key = `${Number(row.medicoId || 0)}|${String(row.fecha || "")}|${String(row.hora || "")}`;
@@ -660,6 +530,9 @@ export function detectarCruceConCarrito({ cartItems, nuevosDetalles }) {
   for (const row of nuevos) {
     const key = `${Number(row.medicoId || 0)}|${String(row.fecha || "")}|${String(row.hora || "")}`;
     if (existentesMap.has(key)) {
+      if (`${String(row.fecha || "")}|${String(row.hora || "")}` === referenceKey) {
+        continue;
+      }
       return {
         key,
         existente: existentesMap.get(key),

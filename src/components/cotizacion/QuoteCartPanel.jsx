@@ -3,8 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQuoteCart } from "../../context/QuoteCartContext";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
-import { validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
-import { getCachedAgendaSlotMinutes } from "../../config/config";
+import { aplicarExclusionConsultaDelCarrito, validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 import { getReferenceHorarioFromCart } from "../../utils/cartScheduling";
 
 function getLimaDate() {
@@ -93,7 +92,7 @@ function getMedicoIdProgramacionItem(it) {
   return Number(it?.medicoId || it?.medico_id || it?.consultaMedicoId || 0);
 }
 
-function buildProgramacionConflictKey(it) {
+function buildProgramacionSlotKey(it) {
   const medicoId = getMedicoIdProgramacionItem(it);
   const slot = getProgramacionItem(it);
   if (medicoId <= 0 || !slot.fecha || !slot.hora) return "";
@@ -110,62 +109,6 @@ function formatProgramacionItem(fecha, hora) {
   return `Programado: ${fechaFmt}${h ? ` ${h}` : ""}`;
 }
 
-function normalizeHourHm(value) {
-  const raw = String(value || "").trim();
-  const m = raw.match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return "";
-  const hh = Number(m[1]);
-  const mm = Number(m[2]);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return "";
-  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-}
-
-function hmToMinutes(hm) {
-  const norm = normalizeHourHm(hm);
-  if (!norm) return null;
-  const [h, m] = norm.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function minutesToHm(total) {
-  const safe = Math.max(0, Math.min(23 * 60 + 59, Number(total) || 0));
-  const h = Math.floor(safe / 60);
-  const m = safe % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function resolveAgendaStepMinutes() {
-  const configured = Number(getCachedAgendaSlotMinutes() || 30);
-  return Math.max(5, Math.min(120, Math.round(configured)));
-}
-
-function getProgramacionBloquesItem(it) {
-  const tipo = String(it?.serviceType || "").toLowerCase();
-  if (tipo !== "paquete" && tipo !== "perfil") return [];
-
-  const { fecha, hora } = getProgramacionItem(it);
-  const medicoId = getMedicoIdProgramacionItem(it);
-  const baseMin = hmToMinutes(hora);
-  if (!fecha || !hora || baseMin === null || medicoId <= 0) return [];
-
-  const componentes = Array.isArray(it?.componentes) ? it.componentes : [];
-  const agendables = componentes.filter((comp) => {
-    const t = String(comp?.servicio_tipo || comp?.source_type || "").toLowerCase();
-    return t === "consulta" || t === "ecografia" || t === "rayosx" || t === "rayos x" || t === "procedimiento" || t === "operacion";
-  });
-  const mismoMedico = agendables.filter((comp) => Number(comp?.medico_id || comp?.medicoId || 0) === medicoId);
-  const base = mismoMedico.length > 0 ? mismoMedico : agendables;
-  const bloques = Math.max(1, base.length || 1);
-  if (bloques <= 1) return [];
-
-  const step = resolveAgendaStepMinutes();
-  const out = [];
-  for (let i = 0; i < bloques; i += 1) {
-    out.push(minutesToHm(baseMin + (i * step)));
-  }
-  return out;
-}
-
 function buildResumenProgramacionHtml(items) {
   const rows = [];
   for (const item of Array.isArray(items) ? items : []) {
@@ -173,11 +116,7 @@ function buildResumenProgramacionHtml(items) {
     const slot = getProgramacionItem(item);
     const base = formatProgramacionItem(slot.fecha, slot.hora);
     if (!base) continue;
-    const bloques = getProgramacionBloquesItem(item);
-    const bloquesTxt = Array.isArray(bloques) && bloques.length > 1
-      ? ` · Bloques (${bloques.length}): ${bloques.join(" · ")}`
-      : "";
-    rows.push(`<div style="padding:4px 0;border-bottom:1px solid #eef2ff;"><b>${desc}</b><br/><span style="font-size:12px;color:#334155;">${base}${bloquesTxt}</span></div>`);
+    rows.push(`<div style="padding:4px 0;border-bottom:1px solid #eef2ff;"><b>${desc}</b><br/><span style="font-size:12px;color:#334155;">${base}</span></div>`);
   }
   if (rows.length === 0) return "";
   return `<div style="margin-top:8px;text-align:left;max-height:200px;overflow:auto;">${rows.join("")}</div>`;
@@ -239,10 +178,10 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
     return cart.items.slice().sort((a, b) => String(a.source).localeCompare(String(b.source)));
   }, [cart.items]);
 
-  const conflictoProgramacionMap = useMemo(() => {
+  const agrupacionProgramacionMap = useMemo(() => {
     const out = {};
     for (const it of Array.isArray(cart?.items) ? cart.items : []) {
-      const key = buildProgramacionConflictKey(it);
+      const key = buildProgramacionSlotKey(it);
       if (!key) continue;
       out[key] = Number(out[key] || 0) + 1;
     }
@@ -577,11 +516,17 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         medicoId,
         fecha,
         hora,
-        consultaIdExcluir: tipo === "consulta" ? Number(d.consulta_id || 0) : 0,
+        consultaIdExcluir: Number(d.consulta_id || cartItem?.consultaId || 0) || 0,
         __index: i,
       };
       const dedupeKey = buildEntryKey(entry);
       if (agendaSeen.has(dedupeKey)) {
+        if (Number(entry.consultaIdExcluir) > 0) {
+          const existente = agendaEntries.find((e) => buildEntryKey(e) === dedupeKey);
+          if (existente && Number(existente.consultaIdExcluir || 0) <= 0) {
+            existente.consultaIdExcluir = Number(entry.consultaIdExcluir);
+          }
+        }
         continue;
       }
       agendaSeen.add(dedupeKey);
@@ -593,7 +538,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         authFetch,
         baseUrl: "",
         Swal,
-        entries: agendaEntries,
+        entries: aplicarExclusionConsultaDelCarrito(agendaEntries, cart?.items),
         onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
           const idx = Number(entry?.__index);
           if (!Number.isFinite(idx) || idx < 0 || idx >= detalles.length) {
@@ -1080,21 +1025,12 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
                   return <div className="text-[11px] text-indigo-700 mt-0.5">{label}</div>;
                 })()}
                 {(() => {
-                  const bloques = getProgramacionBloquesItem(it);
-                  if (!Array.isArray(bloques) || bloques.length <= 1) return null;
+                  const key = buildProgramacionSlotKey(it);
+                  const agrupados = key ? Number(agrupacionProgramacionMap[key] || 0) : 0;
+                  if (agrupados <= 1) return null;
                   return (
-                    <div className="text-[11px] text-sky-700 mt-0.5">
-                      Bloques reservados ({bloques.length}): {bloques.join(" · ")}
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const key = buildProgramacionConflictKey(it);
-                  const conflicts = key ? Number(conflictoProgramacionMap[key] || 0) : 0;
-                  if (conflicts <= 1) return null;
-                  return (
-                    <div className="mt-1 inline-flex items-center rounded bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                      Cruce detectado: mismo medico y horario
+                    <div className="mt-1 inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                      Atención agrupada: {agrupados} servicios en el mismo horario
                     </div>
                   );
                 })()}

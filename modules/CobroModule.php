@@ -2897,6 +2897,7 @@ class CobroModule
         $conflictos = [];
         $cacheMedico = [];
         $cacheOrigenHc = [];
+        $cacheConsultasCotizacion = [];
         foreach ((array)$detalles as $detalle) {
             if (!is_array($detalle)) continue;
 
@@ -2984,23 +2985,53 @@ class CobroModule
 
             $choqueConsultas = false;
             if (self::tableExists($conn, 'consultas')) {
+                if (!isset($cacheConsultasCotizacion[$cotizacionId])) {
+                    $cacheConsultasCotizacion[$cotizacionId] = [];
+                    if ($cotizacionId > 0
+                        && self::tableExists($conn, 'cotizaciones_detalle')
+                        && self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+                        $stmtConsultasCot = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
+                        if ($stmtConsultasCot) {
+                            $stmtConsultasCot->bind_param('i', $cotizacionId);
+                            $stmtConsultasCot->execute();
+                            $resConsultasCot = $stmtConsultasCot->get_result();
+                            while ($resConsultasCot && ($rowConsultaCot = $resConsultasCot->fetch_assoc())) {
+                                $cacheConsultasCotizacion[$cotizacionId][(int)$rowConsultaCot['consulta_id']] = true;
+                            }
+                            $stmtConsultasCot->close();
+                        }
+                    }
+                }
+                $consultasMismaCotizacion = $cacheConsultasCotizacion[$cotizacionId] ?? [];
                 if ($consultaId > 0) {
-                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada") LIMIT 1');
+                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
                     if ($stmtChkC) {
                         $stmtChkC->bind_param('issi', $medicoId, $fecha, $hora, $consultaId);
                         $stmtChkC->execute();
-                        $rowChkC = $stmtChkC->get_result()->fetch_assoc();
+                        $resChkC = $stmtChkC->get_result();
+                        while ($resChkC && ($rowChkC = $resChkC->fetch_assoc())) {
+                            $consultaChoqueId = (int)($rowChkC['id'] ?? 0);
+                            if ($consultaChoqueId > 0 && !isset($consultasMismaCotizacion[$consultaChoqueId])) {
+                                $choqueConsultas = true;
+                                break;
+                            }
+                        }
                         $stmtChkC->close();
-                        $choqueConsultas = (bool)$rowChkC;
                     }
                 } else {
-                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada") LIMIT 1');
+                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
                     if ($stmtChkC) {
                         $stmtChkC->bind_param('iss', $medicoId, $fecha, $hora);
                         $stmtChkC->execute();
-                        $rowChkC = $stmtChkC->get_result()->fetch_assoc();
+                        $resChkC = $stmtChkC->get_result();
+                        while ($resChkC && ($rowChkC = $resChkC->fetch_assoc())) {
+                            $consultaChoqueId = (int)($rowChkC['id'] ?? 0);
+                            if ($consultaChoqueId > 0 && !isset($consultasMismaCotizacion[$consultaChoqueId])) {
+                                $choqueConsultas = true;
+                                break;
+                            }
+                        }
                         $stmtChkC->close();
-                        $choqueConsultas = (bool)$rowChkC;
                     }
                 }
             }
@@ -3023,8 +3054,7 @@ class CobroModule
                             continue;
                         }
                         $mismaCot = (int)($rowA['cotizacion_id'] ?? 0) === $cotizacionId;
-                        $mismoDet = $detalleId > 0 && (int)($rowA['cotizacion_detalle_id'] ?? 0) === $detalleId;
-                        if ($mismaCot && $mismoDet) {
+                        if ($cotizacionId > 0 && $mismaCot) {
                             continue;
                         }
                         $choqueAgenda = true;
@@ -3220,9 +3250,7 @@ class CobroModule
             $stmtExiste->bind_param('ii', $cotizacionId, $detalleId);
             $stmtExiste->execute();
             $exists = $stmtExiste->get_result()->fetch_assoc();
-            if ($exists) {
-                continue;
-            }
+            $agendaExistenteId = (int)($exists['id'] ?? 0);
 
             $consultaFecha = null;
             $consultaHora = null;
@@ -3237,7 +3265,10 @@ class CobroModule
                 $consultaMedicoId = (int)($rowConsulta['medico_id'] ?? 0);
             }
 
-            $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha_programada'] ?? null);
+            $fechaProgramada = $consultaFecha;
+            if ($fechaProgramada === null) {
+                $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha_programada'] ?? null);
+            }
             if ($fechaProgramada === null) {
                 $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha_programada_servicio'] ?? null);
             }
@@ -3245,13 +3276,16 @@ class CobroModule
                 $fechaProgramada = self::normalizarFechaProgramadaAgenda($detalle['fecha'] ?? null);
             }
             if ($fechaProgramada === null) {
-                $fechaProgramada = $consultaFecha ?: $fechaCotizacion;
+                $fechaProgramada = $fechaCotizacion;
             }
             if ($fechaProgramada === null) {
                 continue;
             }
 
-            $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora_programada'] ?? null);
+            $horaProgramada = $consultaHora;
+            if ($horaProgramada === null) {
+                $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora_programada'] ?? null);
+            }
             if ($horaProgramada === null) {
                 $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora_programada_servicio'] ?? null);
             }
@@ -3259,7 +3293,7 @@ class CobroModule
                 $horaProgramada = self::normalizarHoraProgramadaAgenda($detalle['hora'] ?? null);
             }
             if ($horaProgramada === null) {
-                $horaProgramada = $consultaHora ?: $horaCotizacion;
+                $horaProgramada = $horaCotizacion;
             }
 
             $medicoId = (int)($detalle['medico_id'] ?? 0);
@@ -3271,6 +3305,38 @@ class CobroModule
             $titulo = trim((string)($detalle['descripcion'] ?? ''));
             if ($titulo === '') {
                 $titulo = 'Servicio programado';
+            }
+
+            if ($agendaExistenteId > 0) {
+                $setsAgenda = ['fecha_programada = ?'];
+                $typesAgenda = 's';
+                $paramsAgenda = [$fechaProgramada];
+                if ($usaHora) {
+                    $setsAgenda[] = 'hora_programada = ?';
+                    $typesAgenda .= 's';
+                    $paramsAgenda[] = $horaProgramada;
+                }
+                if ($usaMedico && $medicoId > 0) {
+                    $setsAgenda[] = 'medico_id = ?';
+                    $typesAgenda .= 'i';
+                    $paramsAgenda[] = $medicoId;
+                }
+                if ($usaUpdatedBy) {
+                    $setsAgenda[] = 'updated_by = ?';
+                    $typesAgenda .= 'i';
+                    $paramsAgenda[] = $usuarioId;
+                }
+                $typesAgenda .= 'i';
+                $paramsAgenda[] = $agendaExistenteId;
+                $stmtUpdateAgenda = $conn->prepare(
+                    'UPDATE agenda_servicios_cotizacion SET ' . implode(', ', $setsAgenda) . ' WHERE id = ?'
+                );
+                if ($stmtUpdateAgenda) {
+                    $stmtUpdateAgenda->bind_param($typesAgenda, ...$paramsAgenda);
+                    $stmtUpdateAgenda->execute();
+                    $stmtUpdateAgenda->close();
+                }
+                continue;
             }
 
             $cols = [

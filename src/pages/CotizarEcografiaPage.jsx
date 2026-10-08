@@ -1,10 +1,10 @@
-import { authFetch } from "../utils/apiClient";
+﻿import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
-import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo, getCachedAgendaSlotMinutes } from "../config/config";
+import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
@@ -16,21 +16,6 @@ function normalizeHourHm(value) {
   const h = Number(match[1]);
   const m = Number(match[2]);
   if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function hourToMinutes(value) {
-  const hm = normalizeHourHm(value);
-  if (!hm) return null;
-  const [h, m] = hm.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function minutesToHour(totalMinutes) {
-  if (!Number.isFinite(totalMinutes)) return "";
-  const rounded = Math.max(0, Math.floor(totalMinutes));
-  const h = Math.floor(rounded / 60) % 24;
-  const m = rounded % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
@@ -727,7 +712,6 @@ export default function CotizarEcografiaPage() {
       fallbackHora: getHoraProgramadaDefault(),
       stepMinutes: 30,
     });
-    const agendaStepMinutes = Math.max(5, Number(getCachedAgendaSlotMinutes() || 30));
     const consultaShiftsByKey = new Map();
 
     const cruceEnCarrito = detectarCruceConCarrito({
@@ -744,7 +728,7 @@ export default function CotizarEcografiaPage() {
       return;
     }
 
-    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaEntries = aplicarExclusionConsultaDelCarrito(buildAgendaGuardEntriesFromDetalles(detalles), cart?.items);
     const agendaCheck = await validarAgendaAntesDeCotizar({
       authFetch,
       baseUrl: BASE_URL,
@@ -762,19 +746,12 @@ export default function CotizarEcografiaPage() {
             }
             if (meta?.isAdicional) {
               const nuevaHoraNormalizada = String(nuevaHora || "").slice(0, 5);
-              const minutosOriginales = hourToMinutes(horaDetOriginal);
-              const minutosConsultaOriginal = Number.isFinite(minutosOriginales)
-                ? minutosOriginales - agendaStepMinutes
-                : null;
-              const horaConsultaOriginal = Number.isFinite(minutosConsultaOriginal)
-                ? minutesToHour(minutosConsultaOriginal)
-                : "";
               const consultaRelacionada = Array.isArray(cart?.items)
                 ? cart.items.find((it) => (
                   String(it?.serviceType || "").toLowerCase() === "consulta"
                   && Number(it?.medicoId || 0) === Number(entry.medicoId)
                   && String(it?.fechaProgramada || "").slice(0, 10) === entry.fecha
-                  && String(it?.horaProgramada || "").slice(0, 5) === horaConsultaOriginal
+                  && String(it?.horaProgramada || "").slice(0, 5) === horaDetOriginal
                 ))
                 : null;
               if (consultaRelacionada?.key) {
@@ -782,14 +759,8 @@ export default function CotizarEcografiaPage() {
                   fecha: String(nuevaFecha || "").slice(0, 10) || entry.fecha,
                   hora: nuevaHoraNormalizada,
                 });
-                const minutosNuevaHora = hourToMinutes(nuevaHoraNormalizada);
-                const horaEcoReprogramada = Number.isFinite(minutosNuevaHora)
-                  ? minutesToHour(minutosNuevaHora + agendaStepMinutes)
-                  : nuevaHoraNormalizada;
-                d.hora_programada = horaEcoReprogramada || nuevaHoraNormalizada;
-              } else {
-                d.hora_programada = nuevaHoraNormalizada;
               }
+              d.hora_programada = nuevaHoraNormalizada;
               d.adicional_autorizado = true;
               d.observacion_programacion = "Adicional autorizado por recepción";
               if (!/adicional autorizado/i.test(String(d.descripcion || ""))) {
@@ -899,7 +870,7 @@ export default function CotizarEcografiaPage() {
       fallbackHora: getHoraProgramadaDefault(),
       stepMinutes: 30,
     });
-    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaEntries = aplicarExclusionConsultaDelCarrito(buildAgendaGuardEntriesFromDetalles(detalles), cart?.items);
     const agendaCheck = await validarAgendaAntesDeCotizar({
       authFetch,
       baseUrl: BASE_URL,

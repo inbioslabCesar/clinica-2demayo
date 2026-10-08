@@ -1,4 +1,4 @@
-import { authFetch } from "../utils/apiClient";
+﻿import { authFetch } from "../utils/apiClient";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
@@ -8,7 +8,7 @@ import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
-import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
 export default function CotizarLaboratorioPage() {
   const safeText = (value) => String(value || "");
@@ -946,7 +946,7 @@ export default function CotizarLaboratorioPage() {
       return;
     }
 
-    const agendaEntries = buildAgendaGuardEntriesFromDetalles(detalles);
+    const agendaEntries = aplicarExclusionConsultaDelCarrito(buildAgendaGuardEntriesFromDetalles(detalles), cart?.items);
     const agendaCheck = await validarAgendaAntesDeCotizar({
       authFetch,
       baseUrl: BASE_URL,

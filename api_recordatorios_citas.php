@@ -589,7 +589,6 @@ function rc_construir_plan_turnos_reprogramacion($agendaItems, $horaInicioHms, $
     if ($inicioMin === null) {
         return [];
     }
-    $duracion = rc_normalizar_duracion_turno_min($duracionTurnoMin);
     $plan = [];
     foreach (array_values((array)$agendaItems) as $idx => $it) {
         $itemTipo = trim((string)($it['tipo_item'] ?? 'agenda'));
@@ -599,8 +598,8 @@ function rc_construir_plan_turnos_reprogramacion($agendaItems, $horaInicioHms, $
             'item_id' => (int)($it['registro_id'] ?? $it['id'] ?? 0),
             'medico_id' => (int)($it['medico_id'] ?? 0),
             'servicio_label' => trim((string)($it['servicio_label'] ?? 'Servicio')),
-            'turno_numero' => $idx + 1,
-            'hora_hms' => rc_minutos_a_hora_hms($inicioMin + ($idx * $duracion)),
+            'turno_numero' => 1,
+            'hora_hms' => rc_minutos_a_hora_hms($inicioMin),
         ];
     }
     return $plan;
@@ -1299,7 +1298,7 @@ if ($method === 'GET') {
         }
 
         $duracionTurnoMin = rc_obtener_duracion_turno_min($conn);
-        $turnosRequeridos = count($agendaItems);
+        $turnosRequeridos = 1;
         $excludeConsultaIds = [];
         foreach ($agendaItems as $it) {
             if (trim((string)($it['tipo_item'] ?? '')) !== 'consulta') continue;
@@ -2746,7 +2745,7 @@ if ($method === 'POST' || $method === 'PUT') {
         }
 
         $duracionTurnoMin = rc_obtener_duracion_turno_min($conn);
-        $turnosRequeridos = count($agendaItems);
+        $turnosRequeridos = 1;
         $excludeConsultaIds = [];
         foreach ($agendaItems as $it) {
             if (trim((string)($it['tipo_item'] ?? '')) !== 'consulta') continue;
@@ -2802,7 +2801,7 @@ if ($method === 'POST' || $method === 'PUT') {
             if ($horaAdicionalSugerida === '') {
                 echo json_encode([
                     'success' => false,
-                    'error' => 'No existe bloque adicional consecutivo libre para esta fecha. Elige otra fecha.',
+                    'error' => 'No existe horario adicional libre para esta fecha. Elige otra fecha.',
                     'diagnostico' => [
                         'duracion_turno_min' => $duracionTurnoMin,
                         'turnos_requeridos' => $turnosRequeridos,
@@ -2873,10 +2872,8 @@ if ($method === 'POST' || $method === 'PUT') {
             }
 
             $mensaje = sprintf(
-                'Se requieren %d turnos consecutivos (%d min) y solo hay %d turno(s) consecutivos disponibles desde %s. %s.',
-                $turnosRequeridos,
-                $turnosRequeridos * $duracionTurnoMin,
-                $turnosDisponibles,
+                'El bloque solicitado de %d min no está disponible desde %s. %s.',
+                $duracionTurnoMin,
                 substr($nuevaHora, 0, 5),
                 $motivo
             );
@@ -2899,7 +2896,7 @@ if ($method === 'POST' || $method === 'PUT') {
                 }
             }
             if ($sugerenciaAdicionalHora !== '') {
-                $mensaje .= ' Si el médico autoriza adicional, el primer bloque consecutivo libre sugerido inicia a las '
+                $mensaje .= ' Si el médico autoriza adicional, el primer horario libre sugerido es a las '
                     . substr($sugerenciaAdicionalHora, 0, 5) . '.';
             }
 
@@ -3016,12 +3013,11 @@ if ($method === 'POST' || $method === 'PUT') {
 
         // UPSERT en recordatorios_agenda_servicios con trazabilidad de turno
         $observacionReprog = sprintf(
-            'Cita reprogramada para %s. Bloque: %s a %s (%d turnos de %d min). Turno: Antes N°%d -> Ahora N°%d.',
+            'Cita reprogramada para %s. Bloque único: %s (%d min, %d servicio(s) en el mismo horario). Turno: Antes N°%d -> Ahora N°%d.',
             $nuevaFecha,
             substr($horaInicioBloque, 0, 5),
-            substr($horaFinBloque, 0, 5),
-            $turnosRequeridos,
             $duracionTurnoMin,
+            count($planTurnos),
             max(1, (int)$turnoAntes),
             max(1, (int)$turnoVigenteNuevo)
         );

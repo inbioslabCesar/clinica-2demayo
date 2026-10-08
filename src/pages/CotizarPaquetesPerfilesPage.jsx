@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo, getCachedAgendaSlotMinutes } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { aplicarExclusionConsultaDelCarrito as aplicarExclusionConsultaDelCarritoShared, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
 
@@ -62,30 +62,6 @@ function normalizeHourHm(value) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-function hmToMinutes(hm) {
-  const norm = normalizeHourHm(hm);
-  if (!norm) return null;
-  const [h, m] = norm.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function minutesToHm(totalMinutes) {
-  const clamped = Math.max(0, Math.min(23 * 60 + 59, Number(totalMinutes) || 0));
-  const h = Math.floor(clamped / 60);
-  const m = clamped % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function addDaysYmd(fechaYmd, daysToAdd) {
-  const base = new Date(`${String(fechaYmd || "").trim()}T00:00:00`);
-  if (Number.isNaN(base.getTime())) return "";
-  base.setDate(base.getDate() + Number(daysToAdd || 0));
-  const y = base.getFullYear();
-  const m = String(base.getMonth() + 1).padStart(2, "0");
-  const d = String(base.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
 function normalizeServiceType(value) {
   const base = String(value || "").toLowerCase().trim();
   if (!base) return "procedimiento";
@@ -99,184 +75,71 @@ function isPresentialAgendableType(value) {
   return PRESENTIAL_AGENDABLE_TYPES.has(normalizeServiceType(value));
 }
 
-function collectOccupiedSlotsFromDetails(details, occupiedPatient, occupiedDoctor, parentFecha = "", parentHora = "") {
-  for (const detail of Array.isArray(details) ? details : []) {
-    if (!detail || typeof detail !== "object") continue;
-    const tipo = normalizeServiceType(detail?.servicio_tipo || detail?.source_type || detail?.serviceType || "");
-    const fecha = normalizeDateYmd(detail?.fecha_programada || detail?.fechaProgramada || detail?.fecha || parentFecha || "");
-    const hora = normalizeHourHm(detail?.hora_programada || detail?.horaProgramada || detail?.hora || parentHora || "");
-    const medicoId = Number(detail?.medico_id || detail?.medicoId || detail?.consultaMedicoId || 0);
-
-    if (isPresentialAgendableType(tipo) && fecha && hora) {
-      occupiedPatient.add(`${fecha}|${hora}`);
-      if (medicoId > 0) {
-        occupiedDoctor.add(`${medicoId}|${fecha}|${hora}`);
-      }
-    }
-
-    const componentes = Array.isArray(detail?.componentes) ? detail.componentes : [];
-    if (componentes.length > 0) {
-      const componentesAgendables = componentes
-        .map((comp) => {
-          const tipoComp = normalizeServiceType(comp?.servicio_tipo || comp?.source_type || comp?.serviceType || "");
-          if (!isPresentialAgendableType(tipoComp)) return null;
-          const fechaComp = normalizeDateYmd(comp?.fecha_programada || comp?.fechaProgramada || comp?.fecha || fecha || "");
-          const horaComp = normalizeHourHm(comp?.hora_programada || comp?.horaProgramada || comp?.hora || hora || "");
-          const medicoComp = Number(comp?.medico_id || comp?.medicoId || comp?.consultaMedicoId || 0);
-          return { fecha: fechaComp, hora: horaComp, medicoId: medicoComp };
-        })
-        .filter(Boolean);
-
-      const uniqueSlots = new Set(
-        componentesAgendables
-          .filter((it) => it.fecha && it.hora)
-          .map((it) => `${it.fecha}|${it.hora}`)
-      );
-      const baseFecha = normalizeDateYmd(fecha || componentesAgendables[0]?.fecha || "");
-      const baseHora = normalizeHourHm(hora || componentesAgendables[0]?.hora || "");
-      const baseMinute = hmToMinutes(baseHora);
-
-      const needsSequentialInference = componentesAgendables.length > 1
-        && uniqueSlots.size <= 1
-        && baseFecha
-        && baseMinute !== null;
-
-      if (needsSequentialInference) {
-        const step = resolveAgendaStepMinutes(30);
-        for (let idx = 0; idx < componentesAgendables.length; idx += 1) {
-          const comp = componentesAgendables[idx];
-          const totalMin = baseMinute + idx * step;
-          const dayShift = Math.floor(totalMin / (24 * 60));
-          const minuteOfDay = ((totalMin % (24 * 60)) + (24 * 60)) % (24 * 60);
-          const fechaSeq = addDaysYmd(baseFecha, dayShift);
-          const horaSeq = minutesToHm(minuteOfDay);
-          occupiedPatient.add(`${fechaSeq}|${horaSeq}`);
-          if (Number(comp?.medicoId || 0) > 0) {
-            occupiedDoctor.add(`${Number(comp.medicoId)}|${fechaSeq}|${horaSeq}`);
-          }
-        }
-        continue;
-      }
-
-      collectOccupiedSlotsFromDetails(componentes, occupiedPatient, occupiedDoctor, fecha, hora);
-    }
-  }
-}
-
-function findNextFreeSlot({ fechaBase, minuteBase, medicoId, occupiedPatient, occupiedDoctor, stepMinutes = 30 }) {
-  let fecha = normalizeDateYmd(fechaBase);
-  let minute = Number.isFinite(minuteBase) ? minuteBase : 8 * 60;
-  const step = resolveAgendaStepMinutes(stepMinutes);
-
-  for (let guard = 0; guard < 300; guard += 1) {
-    if (!fecha) return null;
-
-    if (minute > 23 * 60 + 30) {
-      fecha = addDaysYmd(fecha, 1);
-      minute = 0;
-      continue;
-    }
-
-    const hora = minutesToHm(minute);
-    const patientKey = `${fecha}|${hora}`;
-    const doctorKey = `${Number(medicoId || 0)}|${fecha}|${hora}`;
-    const patientBusy = occupiedPatient.has(patientKey);
-    const doctorBusy = Number(medicoId || 0) > 0 ? occupiedDoctor.has(doctorKey) : false;
-
-    if (!patientBusy && !doctorBusy) {
-      return { fecha, hora, minute };
-    }
-
-    minute += step;
-  }
-
-  return null;
+function aplicarExclusionConsultaDelCarrito(entries, cartItems) {
+  return aplicarExclusionConsultaDelCarritoShared(entries, cartItems);
 }
 
 function secuenciarComponentesPaquete({
   componentes,
   fechaBase,
   horaBase,
-  occupiedPatient,
-  occupiedDoctor,
-  stepMinutes = 30,
 }) {
   const cloned = Array.isArray(componentes) ? componentes.map((c) => ({ ...c })) : [];
-  const step = resolveAgendaStepMinutes(stepMinutes);
-  const priority = { consulta: 10, ecografia: 20, rayosx: 30, procedimiento: 40, operacion: 50, laboratorio: 60, farmacia: 70 };
-
-  const indexed = cloned
-    .map((comp, idx) => ({ comp, idx }))
-    .filter(({ comp }) => isPresentialAgendableType(comp?.servicio_tipo || comp?.source_type))
-    .sort((a, b) => {
-      const pa = Number(priority[normalizeServiceType(a.comp?.servicio_tipo || a.comp?.source_type)] || 999);
-      const pb = Number(priority[normalizeServiceType(b.comp?.servicio_tipo || b.comp?.source_type)] || 999);
-      if (pa !== pb) return pa - pb;
-      return a.idx - b.idx;
-    });
-
-  let cursorFecha = normalizeDateYmd(fechaBase);
-  let cursorMinute = hmToMinutes(horaBase);
-  if (!cursorFecha) return { componentes: cloned, startFecha: "", startHora: "" };
-  if (cursorMinute === null) cursorMinute = 8 * 60;
-
-  let firstSlot = null;
-  for (const item of indexed) {
-    const medicoId = Number(item?.comp?.medico_id || 0);
-    const slot = findNextFreeSlot({
-      fechaBase: cursorFecha,
-      minuteBase: cursorMinute,
-      medicoId,
-      occupiedPatient,
-      occupiedDoctor,
-      stepMinutes: step,
-    });
-    if (!slot) continue;
-
-    cloned[item.idx] = {
-      ...cloned[item.idx],
-      fecha_programada: slot.fecha,
-      hora_programada: slot.hora,
-    };
-    occupiedPatient.add(`${slot.fecha}|${slot.hora}`);
-    if (medicoId > 0) {
-      occupiedDoctor.add(`${medicoId}|${slot.fecha}|${slot.hora}`);
-    }
-
-    if (!firstSlot) firstSlot = slot;
-    cursorFecha = slot.fecha;
-    cursorMinute = slot.minute + step;
+  const fechaInicial = normalizeDateYmd(fechaBase);
+  const horaInicial = normalizeHourHm(horaBase);
+  if (!fechaInicial || !horaInicial) {
+    return { componentes: cloned, startFecha: fechaInicial, startHora: horaInicial };
   }
+
+  cloned.forEach((comp, idx) => {
+    if (!isPresentialAgendableType(comp?.servicio_tipo || comp?.source_type)) return;
+    cloned[idx] = {
+      ...cloned[idx],
+      fecha_programada: fechaInicial,
+      hora_programada: horaInicial,
+    };
+  });
 
   return {
     componentes: cloned,
-    startFecha: firstSlot?.fecha || normalizeDateYmd(fechaBase),
-    startHora: firstSlot?.hora || normalizeHourHm(horaBase),
+    startFecha: fechaInicial,
+    startHora: horaInicial,
   };
 }
 
 function normalizarPaquetesSecuenciales(detailItems, cartItems, fallbackDate, fallbackTime) {
-  const occupiedPatient = new Set();
-  const occupiedDoctor = new Set();
-  collectOccupiedSlotsFromDetails(cartItems, occupiedPatient, occupiedDoctor);
+  const referencia = getReferenceHorarioFromCart(cartItems);
+  const primerPaqueteProgramado = (Array.isArray(detailItems) ? detailItems : []).find((item) => (
+    normalizeDateYmd(item?.fechaProgramada || item?.fecha_programada || "")
+    && normalizeHourHm(item?.horaProgramada || item?.hora_programada || "")
+  ));
+  const fechaGrupo = normalizeDateYmd(
+    referencia?.fecha
+    || primerPaqueteProgramado?.fechaProgramada
+    || primerPaqueteProgramado?.fecha_programada
+    || fallbackDate
+    || ""
+  );
+  const horaGrupo = normalizeHourHm(
+    referencia?.hora
+    || primerPaqueteProgramado?.horaProgramada
+    || primerPaqueteProgramado?.hora_programada
+    || fallbackTime
+    || ""
+  );
 
   const out = [];
   for (const item of Array.isArray(detailItems) ? detailItems : []) {
-    const fechaBase = normalizeDateYmd(item?.fechaProgramada || item?.fecha_programada || fallbackDate || "");
-    const horaBase = normalizeHourHm(item?.horaProgramada || item?.hora_programada || fallbackTime || "");
     const scheduled = secuenciarComponentesPaquete({
       componentes: item?.componentes,
-      fechaBase,
-      horaBase,
-      occupiedPatient,
-      occupiedDoctor,
-      stepMinutes: 30,
+      fechaBase: fechaGrupo,
+      horaBase: horaGrupo,
     });
     out.push({
       ...item,
       componentes: scheduled.componentes,
-      fechaProgramada: String(scheduled.startFecha || fechaBase || "").slice(0, 10),
-      horaProgramada: String(scheduled.startHora || horaBase || "").slice(0, 5),
+      fechaProgramada: String(scheduled.startFecha || fechaGrupo || "").slice(0, 10),
+      horaProgramada: String(scheduled.startHora || horaGrupo || "").slice(0, 5),
     });
   }
   return out;
@@ -392,36 +255,17 @@ function buildDetalleKey(detalle) {
 
 function countPresentialBlocksForPackage(pkg, cotizacionId) {
   const componentes = buildPackageComponents(pkg, cotizacionId);
-  const bloques = componentes.filter((it) => isPresentialAgendableType(it?.servicio_tipo || it?.source_type)).length;
-  return Math.max(1, bloques);
+  const tieneAgenda = componentes.some((it) => isPresentialAgendableType(it?.servicio_tipo || it?.source_type));
+  return tieneAgenda ? 1 : 0;
 }
 
-function computeValidStartHours(horasLibres, bloquesRequeridos, stepMinutes = 30) {
-  const step = resolveAgendaStepMinutes(stepMinutes);
-  const libres = Array.isArray(horasLibres)
+function computeValidStartHours(horasLibres) {
+  const normalizadas = Array.isArray(horasLibres)
     ? horasLibres
       .map((h) => normalizeHourHm(h))
       .filter(Boolean)
     : [];
-  const libresSet = new Set(libres);
-  const out = [];
-
-  for (const hora of libres) {
-    const baseMin = hmToMinutes(hora);
-    if (baseMin === null) continue;
-
-    let cumple = true;
-    for (let i = 1; i < Math.max(1, Number(bloquesRequeridos || 1)); i += 1) {
-      const next = minutesToHm(baseMin + i * step);
-      if (!libresSet.has(next)) {
-        cumple = false;
-        break;
-      }
-    }
-    if (cumple) out.push(hora);
-  }
-
-  return Array.from(new Set(out));
+  return Array.from(new Set(normalizadas));
 }
 
 function normalizeAgendaProgramacionModo(value) {
@@ -703,23 +547,18 @@ export default function CotizarPaquetesPerfilesPage() {
 
   useEffect(() => {
     setProgramacionPorPaquete((prev) => {
-      const occupiedPatient = new Set();
-      const occupiedDoctor = new Set();
-      collectOccupiedSlotsFromDetails(cart?.items, occupiedPatient, occupiedDoctor);
+      const referencia = getReferenceHorarioFromCart(cart?.items);
 
       const next = {};
       selectedRows.forEach((row) => {
         const current = prev?.[row.id];
-        const fechaBase = String(current?.fecha_programada || getLimaDate()).slice(0, 10);
-        const horaBase = String(current?.hora_programada || getDefaultTime()).slice(0, 5);
+        const fechaBase = String(referencia?.fecha || current?.fecha_programada || getLimaDate()).slice(0, 10);
+        const horaBase = String(referencia?.hora || current?.hora_programada || getDefaultTime()).slice(0, 5);
         const components = buildPackageComponents(row, cotizacionId);
         const scheduled = secuenciarComponentesPaquete({
           componentes: components,
           fechaBase,
           horaBase,
-          occupiedPatient,
-          occupiedDoctor,
-          stepMinutes: 30,
         });
 
         next[row.id] = {
@@ -935,7 +774,10 @@ export default function CotizarPaquetesPerfilesPage() {
     }
 
     if (normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free") {
-      const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
+      const agendaEntries = aplicarExclusionConsultaDelCarrito(
+        buildAgendaGuardEntriesFromDetalles(detallesPaquete),
+        cart?.items
+      );
       const agendaCheck = await validarAgendaAntesDeCotizar({
         authFetch,
         baseUrl: BASE_URL,
@@ -1026,7 +868,10 @@ export default function CotizarPaquetesPerfilesPage() {
       }));
 
       if (normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free") {
-        const agendaEntries = buildAgendaGuardEntriesFromDetalles(detallesPaquete);
+        const agendaEntries = aplicarExclusionConsultaDelCarrito(
+          buildAgendaGuardEntriesFromDetalles(detallesPaquete),
+          cart?.items
+        );
         const agendaCheck = await validarAgendaAntesDeCotizar({
           authFetch,
           baseUrl: BASE_URL,

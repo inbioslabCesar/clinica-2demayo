@@ -718,10 +718,37 @@ function obtener_medico_id_desde_consulta($conn, $consultaId) {
     return (int)($row['medico_id'] ?? 0);
 }
 
+function obtener_programacion_desde_consulta($conn, $consultaId) {
+    $consultaId = (int)$consultaId;
+    if ($consultaId <= 0) {
+        return ['consulta_id' => 0, 'medico_id' => 0, 'fecha_programada' => null, 'hora_programada' => null];
+    }
+
+    $stmt = $conn->prepare("SELECT medico_id, fecha, hora FROM consultas WHERE id = ? LIMIT 1");
+    if (!$stmt) {
+        return ['consulta_id' => 0, 'medico_id' => 0, 'fecha_programada' => null, 'hora_programada' => null];
+    }
+    $stmt->bind_param("i", $consultaId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row) {
+        return ['consulta_id' => 0, 'medico_id' => 0, 'fecha_programada' => null, 'hora_programada' => null];
+    }
+
+    return [
+        'consulta_id' => $consultaId,
+        'medico_id' => max(0, (int)($row['medico_id'] ?? 0)),
+        'fecha_programada' => normalizar_fecha_programada_agenda($row['fecha'] ?? null),
+        'hora_programada' => normalizar_hora_programada_agenda($row['hora'] ?? null),
+    ];
+}
+
 function resolver_contexto_clinico_base_cotizacion($conn, $cotizacionId) {
     $cotizacionId = (int)$cotizacionId;
     if ($cotizacionId <= 0) {
-        return ['consulta_id' => 0, 'medico_id' => 0];
+        return ['consulta_id' => 0, 'medico_id' => 0, 'fecha_programada' => null, 'hora_programada' => null];
     }
 
     $consultaId = 0;
@@ -767,13 +794,16 @@ function resolver_contexto_clinico_base_cotizacion($conn, $cotizacionId) {
 
     // Seguridad clínica: NO usar fallback por paciente/fecha para enlazar detalles.
     // Solo se permite heredar contexto ya persistido dentro de la misma cotización.
-    if ($medicoId <= 0 && $consultaId > 0) {
-        $medicoId = obtener_medico_id_desde_consulta($conn, $consultaId);
+    $programacionConsulta = obtener_programacion_desde_consulta($conn, $consultaId);
+    if ($medicoId <= 0) {
+        $medicoId = (int)($programacionConsulta['medico_id'] ?? 0);
     }
 
     return [
         'consulta_id' => max(0, (int)$consultaId),
         'medico_id' => max(0, (int)$medicoId),
+        'fecha_programada' => $programacionConsulta['fecha_programada'] ?? null,
+        'hora_programada' => $programacionConsulta['hora_programada'] ?? null,
     ];
 }
 
@@ -2255,6 +2285,14 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
         $fechaValidacionBase = date('Y-m-d');
     }
     $contextoBaseCotizacion = resolver_contexto_clinico_base_cotizacion($conn, (int)$cotizacionId);
+    if ((int)($contextoBaseCotizacion['consulta_id'] ?? 0) <= 0) {
+        foreach ($detalles as $detalleContexto) {
+            $consultaIdContexto = (int)($detalleContexto['consulta_id'] ?? 0);
+            if ($consultaIdContexto <= 0) continue;
+            $contextoBaseCotizacion = obtener_programacion_desde_consulta($conn, $consultaIdContexto);
+            break;
+        }
+    }
     $medicoPorConsultaCache = [];
 
     foreach ($detalles as $detalle) {
@@ -2521,7 +2559,14 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
 
             // Persistir agenda para servicios no-consulta cuando UI envía fecha/hora programada.
             if ($detalleId > 0 && !$modoInformativo) {
-                agenda_servicios_guardar_detalle($conn, (int)$cotizacionId, $detalleId, (int)$pacienteIdCotizacion, (array)$detalle, (int)$usuarioId);
+                $detalleAgenda = (array)$detalle;
+                $fechaGrupo = normalizar_fecha_programada_agenda($contextoBaseCotizacion['fecha_programada'] ?? null);
+                $horaGrupo = normalizar_hora_programada_agenda($contextoBaseCotizacion['hora_programada'] ?? null);
+                if ($fechaGrupo !== null && $horaGrupo !== null) {
+                    $detalleAgenda['fecha_programada'] = $fechaGrupo;
+                    $detalleAgenda['hora_programada'] = $horaGrupo;
+                }
+                agenda_servicios_guardar_detalle($conn, (int)$cotizacionId, $detalleId, (int)$pacienteIdCotizacion, $detalleAgenda, (int)$usuarioId);
             }
 
             $versionIdDetalle = get_exam_version_id_from_payload($detalle);

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+﻿import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
@@ -1587,7 +1587,6 @@ export default function RecordatoriosCitasPage() {
     const horaActual = item.hora ? String(item.hora).slice(0, 5) : "";
     let iniciosValidos = [];
     let turnosLibresMedicoActual = [];
-    let turnosRequeridosActual = 1;
     
     const modal = await Swal.fire({
       title: "Reprogramar servicios",
@@ -1640,7 +1639,7 @@ export default function RecordatoriosCitasPage() {
             const esInicioValido = Array.isArray(horasInicioValidas) && horasInicioValidas.includes(hh);
             const opt = document.createElement("option");
             opt.value = hh;
-            opt.textContent = esInicioValido ? `${hh} (inicio válido)` : `${hh} (no alcanza bloque)`;
+            opt.textContent = esInicioValido ? `${hh} (disponible)` : `${hh} (no disponible)`;
             selectEl.appendChild(opt);
           });
         };
@@ -1666,10 +1665,8 @@ export default function RecordatoriosCitasPage() {
 
             const turnosLibresMedico = Array.isArray(data?.turnos_libres_medico) ? data.turnos_libres_medico : [];
             const turnos = Array.isArray(data?.turnos_libres_inicio) ? data.turnos_libres_inicio : [];
-            const turnosRequeridos = Number(data?.turnos_requeridos || 1);
             iniciosValidos = [...turnos];
             turnosLibresMedicoActual = [...turnosLibresMedico];
-            turnosRequeridosActual = turnosRequeridos > 0 ? turnosRequeridos : 1;
             llenarSelect(turnosLibresMedico, turnos);
             if (turnosLibresMedico.length > 0) {
               const horaActualInput = String(horaEl.value || "").slice(0, 5);
@@ -1683,8 +1680,8 @@ export default function RecordatoriosCitasPage() {
               selectEl.value = horaSeleccionada;
               const libresTxt = `Turnos libres del médico: ${turnosLibresMedico.join(", ")}.`;
               const iniciosTxt = turnos.length > 0
-                ? ` Inicios válidos para ${turnosRequeridos} turno(s) consecutivos: ${turnos.join(", ")}.`
-                : ` No hay inicio válido para ${turnosRequeridos} turno(s) consecutivos en esta fecha.`;
+                ? ` Todos los servicios de la cotización se reprograman al mismo horario. Horarios válidos: ${turnos.join(", ")}.`
+                : ` No hay horario disponible para reprogramar en esta fecha.`;
               hintEl.textContent = `${libresTxt}${iniciosTxt}`;
             } else {
               const sugerencias = Array.isArray(data?.sugerencias_otras_fechas) ? data.sugerencias_otras_fechas : [];
@@ -1789,8 +1786,8 @@ export default function RecordatoriosCitasPage() {
       if (!data?.success && Number(data?.diagnostico?.permite_forzar_adicional || 0) === 1) {
         const horaAdicionalSugerida = String(data?.diagnostico?.sugerencia_adicional_hora || "").slice(0, 5);
         const textoAdicional = horaAdicionalSugerida
-          ? `${data?.error || "No hay bloque regular completo."} Si el médico autoriza, puedo reprogramar como adicional al primer bloque consecutivo libre (${horaAdicionalSugerida}).`
-          : `${data?.error || "No hay bloque regular completo."} Si el médico autoriza, puedo reprogramar como adicional solo después de su última hora regular.`;
+          ? `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar toda la cotización como adicional en el primer horario libre (${horaAdicionalSugerida}).`
+          : `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar como adicional solo después de su última hora regular.`;
         const confirmAdicional = await Swal.fire({
           icon: "question",
           title: "¿Programar como adicional?",
