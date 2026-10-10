@@ -151,6 +151,7 @@ jobs:
             --exclude "config/" \
             --exclude ".env" \
             --exclude ".env.*" \
+            --exclude ".gitignore" \
             --exclude "config.php" \
             --exclude "db.php" \
             --exclude "data.php" \
@@ -179,6 +180,21 @@ jobs:
           rsync -az --mkpath \
             -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
             ./deploy_version_backend.txt "$SSH_USER@$SSH_HOST:$REMOTE_PUBLIC_HTML/sistema/deploy_version_backend.txt"
+
+      - name: Limpiar artefactos no runtime heredados en /sistema
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          [[ -n "${REMOTE_PUBLIC_HTML:-}" ]] || { echo "REMOTE_PUBLIC_HTML no fue resuelto"; exit 1; }
+          ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "set -euo pipefail
+            cd '$REMOTE_PUBLIC_HTML/sistema'
+            rm -rf .git .github .vscode .idea docs src tests node_modules public-site deploy backups db data sql scripts migraciones || true
+            rm -f .gitignore README.md LICENSE package.json package-lock.json vite.config.js vite.public.config.js tailwind.config.js postcss.config.cjs eslint.config.js || true
+            rm -f CAMBIOS_PHP_DETALLADOS.js GUIA_IMPLEMENTACION_ASISTENTE_IA.js TEST_SUITE_VALIDACION.js HOSTINGER_UPLOAD_LIST_2026-08-12.txt || true
+          "
 
       - name: Publicar build de sistema (dist -> public_html/sistema)
         env:
