@@ -2521,7 +2521,10 @@ export default function CotizacionesPage() {
           <div className="text-sm text-gray-600">Total registros: <b>{total}</b> · Filas operativas visibles: <b>{rowsOperativos.length}</b></div>
         </div>
 
-        <QuickAccessNav keys={["pacientes", "recordatorios", "reporteCaja"]} />
+        <QuickAccessNav
+          keys={["pacientes", "recordatorios", "reporteCaja"]}
+          variant="modern"
+        />
 
         <CotizadorRapido />
 
