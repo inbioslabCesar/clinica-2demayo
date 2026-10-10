@@ -81,8 +81,26 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
+          RESOLVED_REMOTE_PUBLIC_HTML=$(ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "set -euo pipefail
+            if [ -n \"\${REMOTE_PUBLIC_HTML:-}\" ] && [ -d \"\$REMOTE_PUBLIC_HTML\" ]; then
+              printf '%s' \"\$REMOTE_PUBLIC_HTML\"
+            elif [ -d \"domains/$SSH_HOST/public_html\" ]; then
+              printf '%s' \"domains/$SSH_HOST/public_html\"
+            elif [ -d \"public_html\" ]; then
+              printf '%s' \"public_html\"
+            else
+              exit 1
+            fi")
+
+          if [ -z "$RESOLVED_REMOTE_PUBLIC_HTML" ]; then
+            echo "No se pudo resolver la carpeta web remota."
+            exit 1
+          fi
+
+          echo "REMOTE_PUBLIC_HTML=$RESOLVED_REMOTE_PUBLIC_HTML" >> "$GITHUB_ENV"
+          echo "Ruta web remota detectada: $RESOLVED_REMOTE_PUBLIC_HTML"
           ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            'pwd; ls -la; test -d public_html && ls -la public_html || { echo "No existe public_html en esta cuenta SSH"; exit 1; }'
+            "pwd; ls -la; test -d '$RESOLVED_REMOTE_PUBLIC_HTML' && ls -la '$RESOLVED_REMOTE_PUBLIC_HTML' || { echo 'No existe la ruta web remota detectada'; exit 1; }"
 
       - name: Escribir marcadores de version de deploy
         env:
@@ -100,6 +118,7 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
+          [[ -n "${REMOTE_PUBLIC_HTML:-}" ]] || { echo "REMOTE_PUBLIC_HTML no fue resuelto"; exit 1; }
           rsync -az --mkpath \
             -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
             --exclude ".git/" \
@@ -125,11 +144,11 @@ jobs:
             --exclude "*.log" \
             --exclude "*.sql" \
             --exclude "*.sql.backup" \
-            ./ "$SSH_USER@$SSH_HOST:public_html/sistema/"
+            ./ "$SSH_USER@$SSH_HOST:$REMOTE_PUBLIC_HTML/sistema/"
 
           rsync -az --mkpath \
             -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
-            ./deploy_version_backend.txt "$SSH_USER@$SSH_HOST:public_html/sistema/deploy_version_backend.txt"
+            ./deploy_version_backend.txt "$SSH_USER@$SSH_HOST:$REMOTE_PUBLIC_HTML/sistema/deploy_version_backend.txt"
 
       - name: Publicar build de sistema (dist -> public_html/sistema)
         env:
@@ -138,9 +157,10 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
+          [[ -n "${REMOTE_PUBLIC_HTML:-}" ]] || { echo "REMOTE_PUBLIC_HTML no fue resuelto"; exit 1; }
           rsync -az --mkpath \
             -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
-            ./dist/ "$SSH_USER@$SSH_HOST:public_html/sistema/"
+            ./dist/ "$SSH_USER@$SSH_HOST:$REMOTE_PUBLIC_HTML/sistema/"
 
       - name: Publicar landing (dist-public -> public_html)
         env:
@@ -149,6 +169,7 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
+          [[ -n "${REMOTE_PUBLIC_HTML:-}" ]] || { echo "REMOTE_PUBLIC_HTML no fue resuelto"; exit 1; }
           rsync -az --mkpath \
             -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
-            ./dist-public/ "$SSH_USER@$SSH_HOST:public_html/"
+            ./dist-public/ "$SSH_USER@$SSH_HOST:$REMOTE_PUBLIC_HTML/"
