@@ -80,7 +80,7 @@ export default function ListaConsultasPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [fechaDesde, setFechaDesde] = useState(formatDateInput(new Date()));
-  const [fechaHasta, setFechaHasta] = useState("");
+  const [fechaHasta, setFechaHasta] = useState(formatDateInput(new Date()));
   const [busqueda, setBusqueda] = useState("");
   const [busquedaDebounced, setBusquedaDebounced] = useState("");
   const [allRows, setAllRows] = useState([]);
@@ -92,6 +92,12 @@ export default function ListaConsultasPage() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [busqueda]);
+
+  useEffect(() => {
+    if (String(fechaDesde || "").trim() && !String(fechaHasta || "").trim()) {
+      setFechaHasta(String(fechaDesde || "").trim());
+    }
+  }, [fechaDesde, fechaHasta]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -400,7 +406,7 @@ export default function ListaConsultasPage() {
               <button
                 onClick={() => {
                   setFechaDesde(formatDateInput(new Date()));
-                  setFechaHasta("");
+                  setFechaHasta(formatDateInput(new Date()));
                   setBusqueda("");
                   setPage(1);
                 }}
