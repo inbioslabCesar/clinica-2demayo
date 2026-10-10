@@ -28,6 +28,41 @@ function labelMontoTipo(m) {
   return formatMonto(montoLiquidacion);
 }
 
+function labelMetodoPago(value) {
+  const key = String(value || "").toLowerCase().trim();
+  if (!key) return "-";
+  if (key === "efectivo") return "Efectivo";
+  if (key === "yape") return "Yape";
+  if (key === "plin") return "Plin";
+  if (key === "transferencia") return "Transferencia";
+  if (key === "tarjeta") return "Tarjeta";
+  if (key === "cheque") return "Cheque";
+  if (key === "deposito") return "Depósito";
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+function labelFuenteFondos(value) {
+  const key = String(value || "").toLowerCase().trim();
+  if (!key) return "";
+  if (key === "clinica") return "Clínica";
+  if (key === "tercero_directo") return "Tercero directo";
+  if (key === "tercero_fondeo") return "Tercero fondeo";
+  return key;
+}
+
+function movimientoEstaPagado(m) {
+  return String(m?.estado || "").toLowerCase().trim() === "pagado";
+}
+
+function metodoPagoVisible(m) {
+  if (!movimientoEstaPagado(m)) return "-";
+  return labelMetodoPago(m?.metodo_pago_liquidacion);
+}
+
+function fuentePagoVisible(m) {
+  if (!movimientoEstaPagado(m)) return "-";
+  return labelFuenteFondos(m?.fuente_fondos_liquidacion) || "-";
+}
 
 export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVerDetalles, onMarcarPagado, onAnular, canAnular = false }) {
   const estadoClass = (estado) => {
@@ -61,6 +96,10 @@ export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVer
               <div className="flex gap-2 text-xs text-gray-500 mb-1">
                 <span>Usuario Cobro: {m.cobrado_por || '-'}</span>
                 <span>Usuario Liquidó: {m.liquidado_por || '-'}</span>
+              </div>
+              <div className="flex gap-2 text-xs text-gray-500 mb-1">
+                <span>Forma pago: {metodoPagoVisible(m)}</span>
+                <span>Fuente: {fuentePagoVisible(m)}</span>
               </div>
               <div className="flex gap-2 text-xs text-gray-500 mb-1">
                 <span>Turno Liquidación: {m.turno_liquidacion || '-'}</span>
@@ -108,6 +147,7 @@ export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVer
               <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Usuario Cobro</th>
               <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Turno Cobro</th>
               <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Hora Cobro</th>
+              <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Forma pago</th>
               <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Usuario Liquidó</th>
               <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Turno Liquidación</th>
               <th className="hidden sm:table-cell px-3 py-2 font-semibold border-b border-gray-200">Hora Liquidación</th>
@@ -126,6 +166,13 @@ export default function LiquidacionLaboratorioReferenciaTable({ paginated, onVer
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.cobrado_por || '-'}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.turno_cobro || '-'}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.hora_cobro || '-'}</td>
+                <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">
+                  <div>{metodoPagoVisible(m)}</div>
+                  <div className="text-xs text-gray-500">{fuentePagoVisible(m)}</div>
+                  {movimientoEstaPagado(m) && m.referencia_pago_liquidacion && (
+                    <div className="text-xs text-gray-400">{String(m.referencia_pago_liquidacion)}</div>
+                  )}
+                </td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.liquidado_por || '-'}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.turno_liquidacion || '-'}</td>
                 <td className="hidden sm:table-cell px-3 py-2 border-b border-gray-100 whitespace-nowrap">{m.hora_liquidacion || '-'}</td>

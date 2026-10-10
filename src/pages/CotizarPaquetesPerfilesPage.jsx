@@ -1476,12 +1476,14 @@ export default function CotizarPaquetesPerfilesPage() {
               >
                 {isEditingCotizacion ? "Actualizar cotizacion" : "Registrar cotizacion"}
               </button>
-              <button
-                onClick={() => registrarCotizacion({ irACobro: true })}
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-              >
-                {isEditingCotizacion ? "Actualizar y cobrar" : "Registrar y cobrar"}
-              </button>
+              {!isEditingCotizacion && (
+                <button
+                  onClick={() => registrarCotizacion({ irACobro: true })}
+                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                >
+                  Registrar y cobrar
+                </button>
+              )}
             </div>
           </div>
         )}

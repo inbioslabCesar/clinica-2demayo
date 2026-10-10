@@ -396,6 +396,11 @@ function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "", pare
   const fecha = normalizeDateYmd(detalle?.fecha_programada || detalle?.fechaProgramada || detalle?.fecha || parentFecha || "");
   const hora = normalizeHourHm(detalle?.hora_programada || detalle?.horaProgramada || detalle?.hora || parentHora || "");
   const consultaId = Number(detalle?.consulta_id || detalle?.consultaId || parentConsultaId || 0);
+  const omitirAlertaFueraHorario = Boolean(
+    Number(detalle?.omitir_alerta_fuera_horario || detalle?.omit_outside_regular_warning || 0) > 0
+    || detalle?.omitirAlertaFueraHorario === true
+    || detalle?.omitOutsideRegularWarning === true
+  );
 
   if (AGENDABLE_SERVICE_TYPES.has(tipo) && medicoId > 0 && fecha && hora) {
     acc.push({
@@ -404,6 +409,7 @@ function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "", pare
       fecha,
       hora,
       consultaIdExcluir: consultaId > 0 ? consultaId : 0,
+      omitirAlertaFueraHorario,
     });
   }
 
@@ -837,6 +843,7 @@ export async function validarAgendaAntesDeCotizar({
         medicoId: Number(entry.medicoId),
         fecha: entry.fecha,
         hora: entry.hora,
+        consultaIdExcluir: Number(entry?.consultaIdExcluir || 0),
         maxFutureDays,
       });
 
@@ -845,6 +852,9 @@ export async function validarAgendaAntesDeCotizar({
       }
 
       const isOutsideRegular = String(advisory?.warningType || "") === "outside_regular";
+      if (isOutsideRegular && entry?.omitirAlertaFueraHorario) {
+        break;
+      }
       const outsideKey = isOutsideRegular ? buildOutsideRegularDecisionKey(entry, advisory) : "";
       const alreadyApproved = Boolean(outsideKey) && outsideRegularApproved.has(outsideKey);
       const outsideRegularPrompt = isOutsideRegular

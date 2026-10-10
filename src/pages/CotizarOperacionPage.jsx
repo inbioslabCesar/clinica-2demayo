@@ -39,6 +39,7 @@ export default function CotizarOperacionPage() {
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora}
   const [programacionPorOperacion, setProgramacionPorOperacion] = useState({});
   const [manualProgramacionByOperacion, setManualProgramacionByOperacion] = useState({});
   const [agendaProgramacionModo, setAgendaProgramacionModo] = useState(() => getCachedAgendaProgramacionModo());
@@ -48,6 +49,11 @@ export default function CotizarOperacionPage() {
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
   const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
   const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
+  const cotizacionIdEdicion = useMemo(() => {
+    const sp = new URLSearchParams(location.search);
+    const value = Number(sp.get("cotizacion_id") || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }, [location.search]);
 
   const getLimaDate = () => {
     const now = new Date();
@@ -76,6 +82,36 @@ export default function CotizarOperacionPage() {
     return `${hour}:${minute}`;
   };
 
+  const programacionBaseEdicion = useMemo(() => {
+    if (cotizacionIdEdicion <= 0) return null;
+
+    if (programacionConsultaCotizacion?.fecha && programacionConsultaCotizacion?.hora) {
+      return {
+        fecha: String(programacionConsultaCotizacion.fecha).slice(0, 10),
+        hora: String(programacionConsultaCotizacion.hora).slice(0, 5),
+      };
+    }
+
+    if (!Array.isArray(cotizacionDetallesOriginales) || cotizacionDetallesOriginales.length === 0) {
+      return null;
+    }
+
+    const detallesActivos = cotizacionDetallesOriginales.filter((d) =>
+      String(d?.estado_item || "activo").toLowerCase() !== "eliminado"
+    );
+    const pickHorario = (detalle) => {
+      const fecha = String(detalle?.fecha_programada || "").slice(0, 10);
+      const hora = normalizeHourHm(detalle?.hora_programada || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !hora) return null;
+      return { fecha, hora };
+    };
+
+    const detalleConConsultaId = detallesActivos.find((d) => Number(d?.consulta_id || d?.consultaId || 0) > 0);
+    const detalleConHorario = detalleConConsultaId || detallesActivos.find((d) => pickHorario(d));
+    if (!detalleConHorario) return null;
+    return pickHorario(detalleConHorario);
+  }, [cotizacionIdEdicion, programacionConsultaCotizacion, cotizacionDetallesOriginales]);
+
   const getProgramacionOperacion = (operacionId) => {
     const oid = Number(operacionId || 0);
     const actual = programacionPorOperacion[oid];
@@ -83,7 +119,12 @@ export default function CotizarOperacionPage() {
     const fuente = [...(Array.isArray(preloadedItems) ? preloadedItems : [])].reverse().find((it) => Number(it?.servicio_id || 0) === oid);
     const tarifa = tarifas.find((t) => Number(t.id) === oid);
     const medicoId = Number(tarifa?.medico_id || 0);
-    const fechaBase = String(fuente?.fecha_programada || fuente?.fecha_programada_servicio || '').slice(0, 10) || getLimaDate();
+    const fechaBase = String(
+      fuente?.fecha_programada
+      || fuente?.fecha_programada_servicio
+      || programacionBaseEdicion?.fecha
+      || ''
+    ).slice(0, 10) || getLimaDate();
     const sugerida = suggestNextHorarioFromCart(cart?.items, {
       medicoId,
       fechaBase,
@@ -91,8 +132,20 @@ export default function CotizarOperacionPage() {
     });
     const referencia = getReferenceHorarioFromCart(cart?.items);
     return {
-      fecha_programada: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
-      hora_programada: String(fuente?.hora_programada || fuente?.hora_programada_servicio || '').slice(0, 5) || String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
+      fecha_programada: String(
+        cotizacionIdEdicion > 0
+          ? (programacionBaseEdicion?.fecha || sugerida?.fecha || referencia?.fecha || fechaBase)
+          : (sugerida?.fecha || referencia?.fecha || fechaBase)
+      ).slice(0, 10),
+      hora_programada: String(
+        fuente?.hora_programada
+        || fuente?.hora_programada_servicio
+        || (
+          cotizacionIdEdicion > 0
+            ? (programacionBaseEdicion?.hora || sugerida?.hora || referencia?.hora || getDefaultTime())
+            : (sugerida?.hora || referencia?.hora || getDefaultTime())
+        )
+      ).slice(0, 5),
     };
   };
 
@@ -205,6 +258,29 @@ export default function CotizarOperacionPage() {
   }, [seleccionados, preloadedItems]);
 
   useEffect(() => {
+    if (cotizacionIdEdicion <= 0) return;
+    const fechaBase = String(programacionBaseEdicion?.fecha || "").slice(0, 10);
+    const horaBase = String(programacionBaseEdicion?.hora || "").slice(0, 5);
+    if (!fechaBase || !horaBase || !Array.isArray(seleccionados) || seleccionados.length === 0) return;
+
+    setProgramacionPorOperacion((prev) => {
+      const next = { ...(prev || {}) };
+      let changed = false;
+      seleccionados.forEach((id) => {
+        const key = Number(id);
+        const actual = next[key] || {};
+        const fechaActual = String(actual?.fecha_programada || "").slice(0, 10);
+        const horaActual = String(actual?.hora_programada || "").slice(0, 5);
+        if (fechaActual !== fechaBase || horaActual !== horaBase) {
+          next[key] = { ...actual, fecha_programada: fechaBase, hora_programada: horaBase };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [cotizacionIdEdicion, programacionBaseEdicion, seleccionados]);
+
+  useEffect(() => {
     setManualProgramacionByOperacion((prev) => {
       const selectedIds = new Set(seleccionados.map((id) => Number(id)));
       const next = {};
@@ -222,7 +298,11 @@ export default function CotizarOperacionPage() {
     const cobroId = params.get("cobro_id");
     const cotizacionId = params.get("cotizacion_id");
     const loaders = [];
-    if (cobroId || cotizacionId) setPreloadedItems([]);
+    if (cobroId || cotizacionId) {
+      setPreloadedItems([]);
+      setProgramacionPorOperacion({});
+      setProgramacionConsultaCotizacion(null);
+    }
     if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null; if (!data.success || !cobro) return;
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
@@ -253,6 +333,24 @@ export default function CotizarOperacionPage() {
         setPreloadedCounts(map);
       }
     }));
+    if (cotizacionId) loaders.push(
+      authFetch(`${BASE_URL}api_consultas.php?cotizacion_id=${cotizacionId}&no_cache=1`, { credentials: "include", cache: "no-store" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data?.success) return;
+          const consulta = Array.isArray(data.consultas) ? data.consultas[0] : (data.consulta || null);
+          const consultaId = Number(consulta?.id || consulta?.consulta_id || 0);
+          const fecha = String(consulta?.fecha || "").slice(0, 10);
+          const hora = normalizeHourHm(consulta?.hora || "");
+          if (/^\d{4}-\d{2}-\d{2}$/.test(fecha) && hora) {
+            setProgramacionConsultaCotizacion({
+              consultaId: consultaId > 0 ? consultaId : 0,
+              fecha,
+              hora,
+            });
+          }
+        })
+    );
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
   }, [location.search]);
 
@@ -496,6 +594,9 @@ export default function CotizarOperacionPage() {
   };
 
   const construirDetallesSeleccionados = () => {
+    const fechaBaseConsulta = String(programacionBaseEdicion?.fecha || "").slice(0, 10);
+    const horaBaseConsulta = String(programacionBaseEdicion?.hora || "").slice(0, 5);
+    const consultaBaseId = Number(programacionConsultaCotizacion?.consultaId || 0);
     return seleccionados.map(tid => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
       const cantidad = Number(cantidades[tid] || 1);
@@ -508,6 +609,15 @@ export default function CotizarOperacionPage() {
           medico_nombre = `${medico.nombres || medico.nombre} ${medico.apellidos || medico.apellido}`;
         }
       }
+      const programacion = getProgramacionOperacion(tid);
+      const coincideProgramacionBase = (
+        cotizacionIdEdicion > 0
+        && consultaBaseId > 0
+        && fechaBaseConsulta
+        && horaBaseConsulta
+        && String(programacion?.fecha_programada || "").slice(0, 10) === fechaBaseConsulta
+        && String(programacion?.hora_programada || "").slice(0, 5) === horaBaseConsulta
+      );
       return tarifa ? {
         servicio_tipo: "operacion",
         servicio_id: tid,
@@ -515,7 +625,9 @@ export default function CotizarOperacionPage() {
         cantidad,
         precio_unitario: Number(tarifa.precio_particular || 0),
         subtotal: Number(tarifa.precio_particular || 0) * cantidad,
-        ...getProgramacionOperacion(tid),
+        ...programacion,
+        consulta_id: cotizacionIdEdicion > 0 ? consultaBaseId : 0,
+        omitir_alerta_fuera_horario: coincideProgramacionBase ? 1 : 0,
         medico_id: tarifa.medico_id || "",
         medico_nombre,
         especialidad: tarifa.especialidad || ""
@@ -565,8 +677,8 @@ export default function CotizarOperacionPage() {
     const detalles = secuenciarDetallesPacienteSinCruce({
       detalles: detallesIniciales,
       cartItems: cart?.items,
-      fallbackFecha: getLimaDate(),
-      fallbackHora: getDefaultTime(),
+      fallbackFecha: String(programacionBaseEdicion?.fecha || getLimaDate()).slice(0, 10),
+      fallbackHora: String(programacionBaseEdicion?.hora || getDefaultTime()).slice(0, 5),
       stepMinutes: 30,
     });
 
@@ -662,8 +774,8 @@ export default function CotizarOperacionPage() {
     const detalles = secuenciarDetallesPacienteSinCruce({
       detalles: construirDetallesSeleccionados(),
       cartItems: cart?.items,
-      fallbackFecha: getLimaDate(),
-      fallbackHora: getDefaultTime(),
+      fallbackFecha: String(programacionBaseEdicion?.fecha || getLimaDate()).slice(0, 10),
+      fallbackHora: String(programacionBaseEdicion?.hora || getDefaultTime()).slice(0, 5),
       stepMinutes: 30,
     });
     const agendaEntries = aplicarExclusionConsultaDelCarrito(buildAgendaGuardEntriesFromDetalles(detalles), cart?.items);
@@ -982,6 +1094,11 @@ export default function CotizarOperacionPage() {
               <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
                 <span>📝</span>Resumen de Cotización
               </h4>
+              {cotizacionIdEdicion > 0 && programacionBaseEdicion?.fecha && programacionBaseEdicion?.hora && (
+                <div className="mb-3 rounded-lg border border-blue-200 bg-blue-100/60 px-3 py-2 text-xs text-blue-800">
+                  Edición activa: por defecto las nuevas operaciones se programan con la cita base {programacionBaseEdicion.fecha} {programacionBaseEdicion.hora} para mantener coherencia con la atención.
+                </div>
+              )}
               <ul className="divide-y divide-gray-100 mb-2">
                 {seleccionados.map(tid => {
                   const tarifa = tarifas.find(t => t.id === tid);
@@ -998,7 +1115,14 @@ export default function CotizarOperacionPage() {
                   const manualEnabled = Boolean(manualProgramacionByOperacion[Number(tid)]) && isModeMixed;
                   const horasLibres = Array.isArray(availability?.horasLibres) ? availability.horasLibres : [];
                   const horasOcupadas = Array.isArray(availability?.horasOcupadas) ? availability.horasOcupadas : [];
-                  const iniciosValidos = horasLibres;
+                  const horaBaseEdicion = cotizacionIdEdicion > 0
+                    ? String(programacionBaseEdicion?.hora || "").slice(0, 5)
+                    : "";
+                  const iniciosValidos = (() => {
+                    if (!horaBaseEdicion) return horasLibres;
+                    if (horasLibres.includes(horaBaseEdicion)) return horasLibres;
+                    return [horaBaseEdicion, ...horasLibres];
+                  })();
                   return tarifa ? (
                     <li key={tid} className="py-2 flex flex-col gap-2">
                       <div className="flex justify-between items-center gap-2">
@@ -1038,7 +1162,10 @@ export default function CotizarOperacionPage() {
                               className="border rounded-lg px-2 py-1 bg-white"
                             >
                               {iniciosValidos.map((hora) => (
-                                <option key={`${tid}-${hora}`} value={hora}>{hora}</option>
+                                <option key={`${tid}-${hora}`} value={hora}>
+                                  {hora}
+                                  {horaBaseEdicion && hora === horaBaseEdicion ? " (hora base)" : ""}
+                                </option>
                               ))}
                             </select>
                           ) : (
@@ -1131,13 +1258,15 @@ export default function CotizarOperacionPage() {
                   >
                     {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}
                   </button>
-                  <button
-                    onClick={() => cotizar({ irACobro: true })}
-                    disabled={cajaEstado === 'cerrada'}
-                    className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
-                  >
-                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}
-                  </button>
+                  {!new URLSearchParams(location.search).get('cotizacion_id') && (
+                    <button
+                      onClick={() => cotizar({ irACobro: true })}
+                      disabled={cajaEstado === 'cerrada'}
+                      className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                    >
+                      Registrar y cobrar
+                    </button>
+                  )}
                 </>
               )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (

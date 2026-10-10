@@ -128,6 +128,40 @@ function LiquidacionHonorariosPage() {
     return "bg-slate-100 text-slate-700";
   };
 
+  const labelMetodoPago = (value) => {
+    const key = String(value || "").toLowerCase().trim();
+    if (!key) return "-";
+    if (key === "yape") return "Yape";
+    if (key === "plin") return "Plin";
+    if (key === "transferencia") return "Transferencia";
+    if (key === "tarjeta") return "Tarjeta";
+    if (key === "cheque") return "Cheque";
+    if (key === "deposito") return "Depósito";
+    if (key === "efectivo") return "Efectivo";
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  };
+
+  const labelFuentePago = (value) => {
+    const key = String(value || "").toLowerCase().trim();
+    if (!key) return "";
+    if (key === "clinica") return "Clínica";
+    if (key === "tercero_directo") return "Tercero directo";
+    if (key === "tercero_fondeo") return "Tercero fondeo";
+    return key;
+  };
+
+  const isHonorarioLiquidado = (item) => String(item?.estado_pago_medico || "").toLowerCase().trim() === "pagado";
+
+  const getMetodoPagoVisible = (item) => {
+    if (!isHonorarioLiquidado(item)) return "-";
+    return labelMetodoPago(item?.metodo_pago_resumen);
+  };
+
+  const getFuentePagoVisible = (item) => {
+    if (!isHonorarioLiquidado(item)) return "-";
+    return labelFuentePago(item?.fuente_fondos_resumen) || "-";
+  };
+
   const labelOrigen = (value) => {
     const key = (value || "").toLowerCase();
     if (key === "contrato") return "Contrato";
@@ -539,6 +573,10 @@ function LiquidacionHonorariosPage() {
                       <span>Liquidado por: {h.liquidado_por_nombre ? h.liquidado_por_nombre.toUpperCase() : "-"}</span>
                     </div>
                     <div className="flex gap-2 text-xs text-gray-500">
+                      <span>Forma pago: {getMetodoPagoVisible(h)}</span>
+                      <span>Fuente: {getFuentePagoVisible(h)}</span>
+                    </div>
+                    <div className="flex gap-2 text-xs text-gray-500">
                       <span>Fecha Liquidación: {h.fecha_liquidacion ? h.fecha_liquidacion.toUpperCase() : "-"}</span>
                     </div>
                     {h.estado_pago_medico === "cancelado" && h.motivo_anulacion && (
@@ -575,6 +613,7 @@ function LiquidacionHonorariosPage() {
                   <th className="hidden sm:table-cell px-4 py-2">Turno</th>
                   <th className="px-4 py-2">Monto</th>
                   <th className="px-4 py-2">Estado</th>
+                  <th className="hidden sm:table-cell px-4 py-2">Forma pago</th>
                   <th className="hidden sm:table-cell px-4 py-2">Cobrado por</th>
                   <th className="hidden sm:table-cell px-4 py-2">Liquidado por</th>
                   <th className="hidden sm:table-cell px-4 py-2">Fecha Liquidación</th>
@@ -583,7 +622,7 @@ function LiquidacionHonorariosPage() {
               </thead>
               <tbody>
                 {honorariosUnicos.length === 0 ? (
-                  <tr><td colSpan={14} className="text-center py-8 text-gray-500">No hay honorarios {etiquetaListaVacia}</td></tr>
+                  <tr><td colSpan={15} className="text-center py-8 text-gray-500">No hay honorarios {etiquetaListaVacia}</td></tr>
                 ) : honorariosUnicos.map(h => {
                   const antiguedad = badgeAntiguedad(h.antiguedad_dias);
                   return (
@@ -601,6 +640,13 @@ function LiquidacionHonorariosPage() {
                         <span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeEstadoClass(h.estado_pago_medico)}`}>{estadoLabel(h.estado_pago_medico)}</span>
                         {h.estado_pago_medico === "cancelado" && h.motivo_anulacion && (
                           <div className="mt-1 max-w-[220px] text-[11px] text-rose-700" title={h.motivo_anulacion}>{h.motivo_anulacion}</div>
+                        )}
+                      </td>
+                      <td className="hidden sm:table-cell px-4 py-2">
+                        <div>{getMetodoPagoVisible(h)}</div>
+                        <div className="text-xs text-gray-500">{getFuentePagoVisible(h)}</div>
+                        {isHonorarioLiquidado(h) && h.referencia_pago_resumen && (
+                          <div className="text-xs text-gray-400">{String(h.referencia_pago_resumen)}</div>
                         )}
                       </td>
                       <td className="hidden sm:table-cell px-4 py-2">

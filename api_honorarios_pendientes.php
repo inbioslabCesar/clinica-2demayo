@@ -36,6 +36,27 @@ function resumir_descripcion_honorario(string $descripcion): string
     return $raw;
 }
 
+function tabla_tiene_columna(PDO $pdo, string $tabla, string $columna): bool
+{
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = :tabla
+              AND column_name = :columna
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':tabla' => $tabla,
+            ':columna' => $columna,
+        ]);
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 $hasHonorariosPorCobrar = false;
 try {
     $stmtTbl = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'honorarios_por_cobrar' LIMIT 1");
@@ -145,6 +166,44 @@ if (!$incluirAnuladas) {
     }
 }
 
+$hasHonorarioMetodoPago = tabla_tiene_columna($pdo, 'honorarios_medicos_movimientos', 'metodo_pago_medico');
+$hasHonorarioFuentePago = tabla_tiene_columna($pdo, 'honorarios_medicos_movimientos', 'fuente_pago_medico');
+$hasHonorarioRefPago = tabla_tiene_columna($pdo, 'honorarios_medicos_movimientos', 'referencia_pago_medico');
+$hasEgresoMetodoPago = tabla_tiene_columna($pdo, 'egresos', 'metodo_pago');
+$hasEgresoFuenteFondos = tabla_tiene_columna($pdo, 'egresos', 'fuente_fondos');
+$hasEgresoRefPago = tabla_tiene_columna($pdo, 'egresos', 'referencia_pago');
+
+$metodoPagoExpr = "NULL";
+if ($hasHonorarioMetodoPago && $hasEgresoMetodoPago) {
+    $metodoPagoExpr = "COALESCE(NULLIF(h.metodo_pago_medico, ''), NULLIF(e.metodo_pago, ''))";
+} elseif ($hasHonorarioMetodoPago) {
+    $metodoPagoExpr = "NULLIF(h.metodo_pago_medico, '')";
+} elseif ($hasEgresoMetodoPago) {
+    $metodoPagoExpr = "NULLIF(e.metodo_pago, '')";
+}
+
+$fuenteFondosExpr = "NULL";
+if ($hasHonorarioFuentePago && $hasEgresoFuenteFondos) {
+    $fuenteFondosExpr = "COALESCE(NULLIF(h.fuente_pago_medico, ''), NULLIF(e.fuente_fondos, ''))";
+} elseif ($hasHonorarioFuentePago) {
+    $fuenteFondosExpr = "NULLIF(h.fuente_pago_medico, '')";
+} elseif ($hasEgresoFuenteFondos) {
+    $fuenteFondosExpr = "NULLIF(e.fuente_fondos, '')";
+}
+
+$referenciaPagoExpr = "NULL";
+if ($hasHonorarioRefPago && $hasEgresoRefPago) {
+    $referenciaPagoExpr = "COALESCE(NULLIF(h.referencia_pago_medico, ''), NULLIF(e.referencia_pago, ''))";
+} elseif ($hasHonorarioRefPago) {
+    $referenciaPagoExpr = "NULLIF(h.referencia_pago_medico, '')";
+} elseif ($hasEgresoRefPago) {
+    $referenciaPagoExpr = "NULLIF(e.referencia_pago, '')";
+}
+
+$metodoPagoLiquidadoExpr = "CASE WHEN h.estado_pago_medico = 'pagado' THEN {$metodoPagoExpr} ELSE NULL END";
+$fuenteFondosLiquidadoExpr = "CASE WHEN h.estado_pago_medico = 'pagado' THEN {$fuenteFondosExpr} ELSE NULL END";
+$referenciaPagoLiquidadoExpr = "CASE WHEN h.estado_pago_medico = 'pagado' THEN {$referenciaPagoExpr} ELSE NULL END";
+
 $where = $whereBase;
 $params = $paramsBase;
 if (in_array($estado, ['pendiente', 'pagado', 'cancelado'], true)) {
@@ -207,6 +266,7 @@ $totalPaginas = $limit > 0 ? (int)ceil($totalRegistros / $limit) : 1;
 
 $sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medico_apellido, h.descripcion, h.tipo_servicio, h.paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, h.fecha, h.turno, h.monto_medico, h.estado_pago_medico, h.observaciones,
     e.usuario_id AS liquidado_por_id, u.nombre AS liquidado_por_nombre, u.rol AS liquidado_por_rol, e.created_at AS fecha_liquidacion,
+    $metodoPagoLiquidadoExpr AS metodo_pago_resumen, $fuenteFondosLiquidadoExpr AS fuente_fondos_resumen, $referenciaPagoLiquidadoExpr AS referencia_pago_resumen,
     $cobradoPorExpr AS cobrado_por_id, $cobradoPorNombreExpr AS cobrado_por_nombre, $cobradoPorRolExpr AS cobrado_por_rol,
     $origenExpr AS origen_resumen,
     DATEDIFF(CURDATE(), {$fechaFiltroExpr}) AS antiguedad_dias

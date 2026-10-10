@@ -166,7 +166,7 @@ const ImpresionRecetaMedicamentos = ({
           </header>
 
           <div className="mt-1 flex shrink-0 items-center justify-between border-b border-blue-300 pb-1">
-            <p className="text-[22px] font-bold leading-none tracking-tight text-blue-700">Rx</p>
+            <p className="text-[22px] font-bold leading-none tracking-tight text-blue-700">Rp</p>
             <div className="text-[11px] text-slate-700">
               <span className="mr-3">Fecha: {formatearFecha(new Date())}</span>
               <span>Hora: {formatearHora(new Date())}</span>

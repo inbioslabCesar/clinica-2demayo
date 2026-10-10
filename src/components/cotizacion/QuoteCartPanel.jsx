@@ -468,6 +468,9 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
 
   const registrarCotizacionCarrito = async (irACobro = false) => {
     if (saving) return;
+    if (isEditingCotizacion && irACobro) {
+      irACobro = false;
+    }
 
     // En móvil, cerrar el panel del carrito antes de abrir modales de registro/cobro.
     if (!isDesktopViewport && mobileOpen) {
@@ -732,7 +735,9 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       const resumenServicios = Array.from(new Set(detalles.map((d) => String(d.servicio_tipo || "otros"))));
       const resumenProgramacionHtml = buildResumenProgramacionHtml(cart.items);
       const confirm = await Swal.fire({
-        title: irACobro ? "Registrar y cobrar cotización" : "Registrar nueva cotización",
+        title: irACobro
+          ? "Registrar y cobrar cotización"
+          : (isEditingCotizacion ? "Actualizar cotización" : "Registrar nueva cotización"),
         html: `
           <div style="text-align:left;font-size:13px;">
             ${pacienteRegistradoId > 0 ? `Paciente #${pacienteRegistradoId}` : pacienteNombreParaPayload} | ${detalles.length} item(s) | Servicios: ${resumenServicios.join(", ")}
@@ -741,7 +746,9 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         `,
         icon: "question",
         showCancelButton: true,
-        confirmButtonText: irACobro ? "Registrar y cobrar" : "Registrar cotización",
+        confirmButtonText: irACobro
+          ? "Registrar y cobrar"
+          : (isEditingCotizacion ? "Actualizar cotización" : "Registrar cotización"),
         cancelButtonText: "Cancelar",
       });
       if (!confirm.isConfirmed) {
@@ -1114,21 +1121,23 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       )}
 
       <div className="mt-3 grid grid-cols-1 gap-2">
-        <button
-          type="button"
-          onClick={() => registrarCotizacionCarrito(true)}
-          disabled={saving}
-          className={`w-full py-2 rounded font-semibold ${saving ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
-        >
-          {saving ? "Procesando..." : "Registrar y cobrar"}
-        </button>
+        {!isEditingCotizacion && (
+          <button
+            type="button"
+            onClick={() => registrarCotizacionCarrito(true)}
+            disabled={saving}
+            className={`w-full py-2 rounded font-semibold ${saving ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
+          >
+            {saving ? "Procesando..." : "Registrar y cobrar"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => registrarCotizacionCarrito(false)}
           disabled={saving}
           className={`w-full py-2 rounded font-semibold ${saving ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700"}`}
         >
-          Registrar cotizacion
+          {isEditingCotizacion ? "Actualizar cotización" : "Registrar cotización"}
         </button>
         <button
           type="button"

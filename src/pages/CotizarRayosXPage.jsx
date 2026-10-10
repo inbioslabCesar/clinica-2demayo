@@ -1,5 +1,5 @@
 ﻿import { authFetch } from "../utils/apiClient";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -8,6 +8,16 @@ import { useQuoteCart } from "../context/QuoteCartContext";
 import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+
+function normalizeHourHm(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 
 export default function CotizarRayosXPage() {
   const [busqueda, setBusqueda] = useState("");
@@ -28,6 +38,7 @@ export default function CotizarRayosXPage() {
   const [pendingRxItems, setPendingRxItems] = useState([]); // ítems crudos para resolver contra tarifas actuales
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora}
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
@@ -39,6 +50,12 @@ export default function CotizarRayosXPage() {
       .toLowerCase()
       .trim()
       .replace(/\s+/g, " ");
+
+  const cotizacionIdEdicion = useMemo(() => {
+    const sp = new URLSearchParams(location.search);
+    const value = Number(sp.get("cotizacion_id") || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }, [location.search]);
 
   const getLimaDate = () => {
     const now = new Date();
@@ -67,6 +84,37 @@ export default function CotizarRayosXPage() {
     return `${hour}:${minute}`;
   };
 
+  const programacionBaseEdicion = useMemo(() => {
+    if (cotizacionIdEdicion <= 0) return null;
+
+    if (programacionConsultaCotizacion?.fecha && programacionConsultaCotizacion?.hora) {
+      return {
+        fecha: String(programacionConsultaCotizacion.fecha).slice(0, 10),
+        hora: String(programacionConsultaCotizacion.hora).slice(0, 5),
+      };
+    }
+
+    if (!Array.isArray(cotizacionDetallesOriginales) || cotizacionDetallesOriginales.length === 0) {
+      return null;
+    }
+
+    const detallesActivos = cotizacionDetallesOriginales.filter((d) =>
+      String(d?.estado_item || "activo").toLowerCase() !== "eliminado"
+    );
+
+    const detalleConConsultaId = detallesActivos.find((d) => Number(d?.consulta_id || d?.consultaId || 0) > 0);
+    const pickHorario = (detalle) => {
+      const fecha = String(detalle?.fecha_programada || "").slice(0, 10);
+      const hora = normalizeHourHm(detalle?.hora_programada || detalle?.hora || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !hora) return null;
+      return { fecha, hora };
+    };
+
+    const detalleConHorario = detalleConConsultaId || detallesActivos.find((d) => pickHorario(d));
+    if (!detalleConHorario) return null;
+    return pickHorario(detalleConHorario);
+  }, [cotizacionIdEdicion, programacionConsultaCotizacion, cotizacionDetallesOriginales]);
+
   const obtenerNombreMedicoTarifa = (tarifa) => {
     if (!tarifa) return "";
 
@@ -87,7 +135,7 @@ export default function CotizarRayosXPage() {
   const getProgramacionSugeridaEstudio = (tarifaId, fechaPreferida = "") => {
     const tarifa = tarifas.find((t) => Number(t.id) === Number(tarifaId));
     const medicoId = Number(tarifa?.medico_id || 0);
-    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const fechaBase = String(fechaPreferida || programacionBaseEdicion?.fecha || getLimaDate()).slice(0, 10);
     const sugerida = suggestNextHorarioFromCart(cart?.items, {
       medicoId,
       fechaBase,
@@ -95,8 +143,16 @@ export default function CotizarRayosXPage() {
     });
     const referencia = getReferenceHorarioFromCart(cart?.items);
     return {
-      fecha: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
-      hora: String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
+      fecha: String(
+        cotizacionIdEdicion > 0
+          ? (programacionBaseEdicion?.fecha || sugerida?.fecha || referencia?.fecha || fechaBase)
+          : (sugerida?.fecha || referencia?.fecha || fechaBase)
+      ).slice(0, 10),
+      hora: String(
+        cotizacionIdEdicion > 0
+          ? (programacionBaseEdicion?.hora || sugerida?.hora || referencia?.hora || getDefaultTime())
+          : (sugerida?.hora || referencia?.hora || getDefaultTime())
+      ).slice(0, 5),
     };
   };
 
@@ -159,6 +215,8 @@ export default function CotizarRayosXPage() {
     if (cobroId || cotizacionId) {
       setPreloadedItems([]);
       setPendingRxItems([]);
+      setProgramacionPorEstudio({});
+      setProgramacionConsultaCotizacion(null);
     }
     if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null; if (!data.success || !cobro) return;
@@ -178,6 +236,24 @@ export default function CotizarRayosXPage() {
         setPendingRxItems(prev => [...prev, ...itemsRx]);
       }
     }));
+    if (cotizacionId) loaders.push(
+      authFetch(`${BASE_URL}api_consultas.php?cotizacion_id=${cotizacionId}&no_cache=1`, { credentials: "include", cache: "no-store" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data?.success) return;
+          const consulta = Array.isArray(data.consultas) ? data.consultas[0] : (data.consulta || null);
+          const consultaId = Number(consulta?.id || consulta?.consulta_id || 0);
+          const fecha = String(consulta?.fecha || "").slice(0, 10);
+          const hora = normalizeHourHm(consulta?.hora || "");
+          if (/^\d{4}-\d{2}-\d{2}$/.test(fecha) && hora) {
+            setProgramacionConsultaCotizacion({
+              consultaId: consultaId > 0 ? consultaId : 0,
+              fecha,
+              hora,
+            });
+          }
+        })
+    );
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
   }, [location.search]);
 
@@ -429,6 +505,29 @@ export default function CotizarRayosXPage() {
     });
   }, [seleccionados]);
 
+  useEffect(() => {
+    if (cotizacionIdEdicion <= 0) return;
+    const fechaBase = String(programacionBaseEdicion?.fecha || "").slice(0, 10);
+    const horaBase = String(programacionBaseEdicion?.hora || "").slice(0, 5);
+    if (!fechaBase || !horaBase || !Array.isArray(seleccionados) || seleccionados.length === 0) return;
+
+    setProgramacionPorEstudio((prev) => {
+      const next = { ...(prev || {}) };
+      let changed = false;
+      seleccionados.forEach((id) => {
+        const key = Number(id);
+        const actual = next[key] || {};
+        const fechaActual = String(actual?.fecha || "").slice(0, 10);
+        const horaActual = String(actual?.hora || "").slice(0, 5);
+        if (fechaActual !== fechaBase || horaActual !== horaBase) {
+          next[key] = { ...actual, fecha: fechaBase, hora: horaBase };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [cotizacionIdEdicion, programacionBaseEdicion, seleccionados]);
+
   const actualizarProgramacion = (estudioId, campo, valor) => {
     const key = Number(estudioId);
     const sugerida = getProgramacionSugeridaEstudio(key, "");
@@ -482,11 +581,22 @@ export default function CotizarRayosXPage() {
   };
 
   const construirDetallesSeleccionados = () => {
+    const fechaBaseConsulta = String(programacionBaseEdicion?.fecha || "").slice(0, 10);
+    const horaBaseConsulta = String(programacionBaseEdicion?.hora || "").slice(0, 5);
+    const consultaBaseId = Number(programacionConsultaCotizacion?.consultaId || 0);
     return seleccionados.map(tid => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
       const cantidad = Number(cantidades[tid] || 1);
       const nombreMedico = obtenerNombreMedicoTarifa(tarifa);
       const programacion = programacionPorEstudio[Number(tid)] || getProgramacionSugeridaEstudio(Number(tid));
+      const coincideProgramacionBase = (
+        cotizacionIdEdicion > 0
+        && consultaBaseId > 0
+        && fechaBaseConsulta
+        && horaBaseConsulta
+        && String(programacion?.fecha || "").slice(0, 10) === fechaBaseConsulta
+        && String(programacion?.hora || "").slice(0, 5) === horaBaseConsulta
+      );
       return tarifa ? {
         servicio_tipo: "rayosx",
         servicio_id: tid,
@@ -496,6 +606,8 @@ export default function CotizarRayosXPage() {
         subtotal: tarifa.precio_particular * cantidad,
         medico_id: tarifa.medico_id || "",
         medico_nombre: nombreMedico,
+        consulta_id: cotizacionIdEdicion > 0 ? consultaBaseId : 0,
+        omitir_alerta_fuera_horario: coincideProgramacionBase ? 1 : 0,
         fecha_programada: programacion.fecha,
         hora_programada: programacion.hora,
       } : null;
@@ -929,7 +1041,7 @@ export default function CotizarRayosXPage() {
                   const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
                   const cantidad = cantidades[tid] || 1;
                   const subtotal = Number(tarifa?.precio_particular || 0) * cantidad;
-                  const programacion = programacionPorEstudio[Number(tid)] || { fecha: getLimaDate(), hora: getDefaultTime() };
+                  const programacion = programacionPorEstudio[Number(tid)] || getProgramacionSugeridaEstudio(Number(tid));
                   return tarifa ? (
                     <li key={tid} className="py-2 flex flex-col gap-2">
                       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
@@ -990,7 +1102,9 @@ export default function CotizarRayosXPage() {
                 ) : (
                   <>
                     <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}</button>
-                    <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar'}</button>
+                    {!new URLSearchParams(location.search).get('cotizacion_id') && (
+                      <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Registrar y cobrar</button>
+                    )}
                   </>
                 )}
                 {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (

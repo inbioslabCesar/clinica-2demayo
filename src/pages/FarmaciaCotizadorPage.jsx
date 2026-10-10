@@ -108,39 +108,48 @@ export default function FarmaciaCotizadorPage({ usuario }) {
       return;
     }
     // Construir detalles para cotización, respetando stock disponible
-    const detalles = seleccionados
-      .map(mid => {
-        const med = medicamentos.find(m => String(m.id) === String(mid));
-        if (!med) return null;
-        const tipo = tiposVenta[mid] || "unidad";
-        const unidadesCaja = unidadesPorCaja[mid] || 30;
-        const stockUnidades = Number(med.stock || 0);
-        const stockCajas = Math.floor(stockUnidades / unidadesCaja);
-        let cantidad = Number(cantidades[mid] ?? 0);
-        if (tipo === 'caja') cantidad = Math.min(cantidad, stockCajas);
-        else cantidad = Math.min(cantidad, stockUnidades);
-        if (cantidad <= 0) return null;
-        const precioVenta = getPrecioVenta(med);
-        let subtotal = 0;
-        let nombreMed = (med && med.nombre && med.nombre !== "0") ? med.nombre : "Medicamento sin nombre";
-        let descripcion = nombreMed;
-        if (tipo === "caja") {
-          subtotal = precioVenta * unidadesCaja * cantidad;
-          descripcion += " (Caja)";
-        } else {
-          subtotal = precioVenta * cantidad;
-          descripcion += " (Unidad)";
-        }
-        return {
+    const detalles = cotizacionId
+      ? construirFilasEdicionFarmacia().map((row) => ({
           servicio_tipo: "farmacia",
-          servicio_id: Number(mid),
-          descripcion,
-          cantidad,
-          precio_unitario: precioVenta,
-          subtotal
-        };
-      })
-      .filter(Boolean);
+          servicio_id: Number(row.servicio_id),
+          descripcion: String(row.descripcion || "").trim() || "Medicamento (Unidad)",
+          cantidad: Number(row.cantidad || 0),
+          precio_unitario: Number(row.precio_unitario || 0),
+          subtotal: Number(row.subtotal || 0),
+        }))
+      : seleccionados
+          .map(mid => {
+            const med = medicamentos.find(m => String(m.id) === String(mid));
+            if (!med) return null;
+            const tipo = tiposVenta[mid] || "unidad";
+            const unidadesCaja = unidadesPorCaja[mid] || 30;
+            const stockUnidades = Number(med.stock || 0);
+            const stockCajas = Math.floor(stockUnidades / unidadesCaja);
+            let cantidad = Number(cantidades[mid] ?? 0);
+            if (tipo === 'caja') cantidad = Math.min(cantidad, stockCajas);
+            else cantidad = Math.min(cantidad, stockUnidades);
+            if (cantidad <= 0) return null;
+            const precioVenta = getPrecioVenta(med);
+            let subtotal = 0;
+            let nombreMed = (med && med.nombre && med.nombre !== "0") ? med.nombre : "Medicamento sin nombre";
+            let descripcion = nombreMed;
+            if (tipo === "caja") {
+              subtotal = precioVenta * unidadesCaja * cantidad;
+              descripcion += " (Caja)";
+            } else {
+              subtotal = precioVenta * cantidad;
+              descripcion += " (Unidad)";
+            }
+            return {
+              servicio_tipo: "farmacia",
+              servicio_id: Number(mid),
+              descripcion,
+              cantidad,
+              precio_unitario: precioVenta,
+              subtotal
+            };
+          })
+          .filter(Boolean);
     if (!cotizacionId && detalles.length === 0) {
       setMensaje("No hay cantidades válidas para cotizar. Verifica el stock disponible.");
       return;
@@ -374,6 +383,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const [pacienteDatos, setPacienteDatos] = useState(null); // {dni, nombre}
   const isEditing = Boolean(new URLSearchParams(location.search).get('cobro_id'));
   const isCotizacionEditMode = Boolean(new URLSearchParams(location.search).get('cotizacion_id'));
+  const isAnyEditMode = isEditing || isCotizacionEditMode;
   const roleNormalizado = String(usuario?.rol || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -484,10 +494,10 @@ export default function FarmaciaCotizadorPage({ usuario }) {
       const detalles = Array.isArray(cobro.detalles) ? cobro.detalles : [];
       const itemsFarm = [];
       detalles.forEach(cd => {
-        if ((cd.servicio_tipo || '').toLowerCase() === 'farmacia') {
+        if (esDetalleFarmaciaEditable(cd)) {
           try {
             const arr = JSON.parse(cd.descripcion);
-            if (Array.isArray(arr)) itemsFarm.push(...arr);
+            if (Array.isArray(arr)) itemsFarm.push(...arr.filter(esDetalleFarmaciaEditable));
           } catch {
             // La descripción puede no ser JSON (p.ej. texto plano). Ignoramos el error.
             void 0;
@@ -507,7 +517,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
       const cot = data.cotizacion || null; if (!data.success || !cot) return;
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
       setCotizacionDetallesOriginales(detalles);
-      const itemsFarm = detalles.filter(d => (d.servicio_tipo || '').toLowerCase() === 'farmacia');
+      const itemsFarm = detalles.filter(esDetalleFarmaciaEditable);
       if (itemsFarm.length) {
         setPreloadedFarmaciaRaw(itemsFarm);
         const idsUnicos = Array.from(new Set(itemsFarm.map(it => String(it.servicio_id)).filter(Boolean)));
@@ -541,6 +551,14 @@ export default function FarmaciaCotizadorPage({ usuario }) {
 
     const precioDirecto = parseDecimal(med.precio_venta ?? med.precio ?? 0);
     return precioDirecto > 0 ? precioDirecto : 0;
+  };
+
+  const esDetalleFarmaciaEditable = (detalle) => {
+    const tipo = String(detalle?.servicio_tipo || "").toLowerCase().trim();
+    const estado = String(detalle?.estado_item || "activo").toLowerCase().trim();
+    const cantidad = Number(detalle?.cantidad || 0);
+    const servicioId = Number(detalle?.servicio_id || 0);
+    return tipo === "farmacia" && estado !== "eliminado" && cantidad > 0 && servicioId > 0;
   };
 
   const construirDetallesSeleccionados = () => {
@@ -577,6 +595,75 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         };
       })
       .filter(Boolean);
+  };
+
+  const construirFilasEdicionFarmacia = () => {
+    const map = {};
+    if (Array.isArray(_preloadedFarmaciaRaw)) {
+      _preloadedFarmaciaRaw.forEach((it) => {
+        const tipo = String(it?.descripcion || "").toLowerCase().includes("(caja)") ? "caja" : "unidad";
+        const servicioId = Number(it?.servicio_id || 0);
+        if (servicioId <= 0) return;
+        const key = `${servicioId}::${tipo}`;
+        const cantidad = Number(it?.cantidad || 0);
+        const subtotal = Number(it?.subtotal || 0);
+        const precioPreload = Number(it?.precio_unitario || 0);
+        if (!map[key]) {
+          map[key] = {
+            servicio_id: servicioId,
+            descripcion: String(it?.descripcion || "").trim(),
+            cantidad: 0,
+            subtotal: 0,
+            precio_unitario: precioPreload,
+            tipo,
+          };
+        }
+        map[key].cantidad += cantidad;
+        map[key].subtotal += subtotal;
+        if (map[key].precio_unitario <= 0 && precioPreload > 0) {
+          map[key].precio_unitario = precioPreload;
+        }
+      });
+    }
+
+    seleccionados.forEach((mid) => {
+      const desiredTipo = tiposVenta[mid] || "unidad";
+      const desiredCantidad = Number(cantidades[mid] ?? 0);
+      const med = medicamentos.find((m) => String(m.id) === String(mid));
+      const unidadesCaja = unidadesPorCaja[mid] || 30;
+      const desiredKey = `${mid}::${desiredTipo}`;
+      const keysMismoMedicamento = Object.keys(map).filter(
+        (key) => String(map[key]?.servicio_id) === String(mid)
+      );
+
+      if (desiredCantidad <= 0) {
+        keysMismoMedicamento.forEach((key) => delete map[key]);
+        return;
+      }
+
+      if (!med) return;
+
+      const precioVenta = getPrecioVenta(med);
+      const subtotalCalc = desiredTipo === "caja"
+        ? precioVenta * unidadesCaja * desiredCantidad
+        : precioVenta * desiredCantidad;
+
+      keysMismoMedicamento.forEach((key) => {
+        if (key !== desiredKey) delete map[key];
+      });
+
+      const descripcion = `${med?.nombre || "Medicamento"} ${desiredTipo === "caja" ? "(Caja)" : "(Unidad)"}`;
+      map[desiredKey] = {
+        servicio_id: Number(mid),
+        descripcion,
+        cantidad: desiredCantidad,
+        subtotal: subtotalCalc,
+        precio_unitario: precioVenta,
+        tipo: desiredTipo,
+      };
+    });
+
+    return Object.values(map).filter((row) => Number(row?.cantidad || 0) > 0 && Number(row?.servicio_id || 0) > 0);
   };
 
   const agregarAlCarrito = () => {
@@ -807,36 +894,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const calcularTotal = () => {
     // Calcular total teniendo en cuenta: en edición, la fuente de verdad
     // (`_preloadedFarmaciaRaw`) + overlay de selecciones actuales (añadidos/ajustes).
-    if (isEditing) {
-      const map = {};
-      // partir de lo precargado
-      if (Array.isArray(_preloadedFarmaciaRaw)) {
-        _preloadedFarmaciaRaw.forEach(it => {
-          const tipo = (it.descripcion || '').toLowerCase().includes('(caja)') ? 'caja' : 'unidad';
-          const key = `${it.servicio_id}::${tipo}`;
-          if (!map[key]) map[key] = { servicio_id: it.servicio_id, tipo, subtotal: 0 };
-          map[key].subtotal += Number(it.subtotal || 0);
-        });
-      }
-
-      // overlay: aplicar las selecciones actuales (reemplaza subtotal de la línea correspondiente)
-      seleccionados.forEach(mid => {
-        const tipoSel = tiposVenta[mid] || 'unidad';
-        const unidadesCaja = unidadesPorCaja[mid] || 30;
-        const med = medicamentos.find(m => String(m.id) === String(mid));
-        const precioVenta = getPrecioVenta(med);
-        const cantidadSel = Number(cantidades[mid] ?? 0);
-        const subtotalCalc = tipoSel === 'caja' ? precioVenta * unidadesCaja * cantidadSel : precioVenta * cantidadSel;
-        const key = `${mid}::${tipoSel}`;
-        if (cantidadSel > 0) {
-          map[key] = { servicio_id: mid, tipo: tipoSel, subtotal: subtotalCalc };
-        } else {
-          // si el usuario puso 0, asegurarse de eliminar del map
-          if (map[key]) delete map[key];
-        }
-      });
-
-      return Object.values(map).reduce((t, r) => t + Number(r.subtotal || 0), 0);
+    if (isAnyEditMode) {
+      return construirFilasEdicionFarmacia().reduce((t, r) => t + Number(r.subtotal || 0), 0);
     }
 
     // modo nuevo/venta normal: calcular desde seleccionados respetando stock
@@ -1082,10 +1141,10 @@ export default function FarmaciaCotizadorPage({ usuario }) {
         const detalles = Array.isArray(data.cobro.detalles) ? data.cobro.detalles : [];
         const itemsFarm = [];
         detalles.forEach(cd => {
-          if ((cd.servicio_tipo || '').toLowerCase() === 'farmacia') {
+          if (esDetalleFarmaciaEditable(cd)) {
             try {
               const arr = JSON.parse(cd.descripcion);
-              if (Array.isArray(arr)) itemsFarm.push(...arr);
+              if (Array.isArray(arr)) itemsFarm.push(...arr.filter(esDetalleFarmaciaEditable));
             } catch {
               void 0;
             }
@@ -1225,7 +1284,7 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                     // Precargar ítems farmacia de esa cotización
                     const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
                     setCotizacionDetallesOriginales(detalles);
-                    const itemsFarm = detalles.filter(d => (d.servicio_tipo || '').toLowerCase() === 'farmacia');
+                    const itemsFarm = detalles.filter(esDetalleFarmaciaEditable);
                     if (itemsFarm.length) {
                       setPreloadedFarmaciaRaw(itemsFarm);
                       const idsUnicos = Array.from(new Set(itemsFarm.map(it => String(it.servicio_id)).filter(Boolean)));
@@ -1495,39 +1554,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                 <ul className="divide-y divide-gray-200 bg-gray-50 rounded-lg shadow p-4 max-h-[68vh] overflow-y-auto">
                   {(() => {
                     // Si estamos editando un cobro, usar la fuente de verdad `preloadedFarmaciaRaw`
-                    if (isEditing && Array.isArray(_preloadedFarmaciaRaw) && _preloadedFarmaciaRaw.length > 0) {
-                      // Construir mapa desde lo precargado (fuente de verdad)
-                      const map = {};
-                      _preloadedFarmaciaRaw.forEach(it => {
-                        const tipo = (it.descripcion || '').toLowerCase().includes('(caja)') ? 'caja' : 'unidad';
-                        const key = `${it.servicio_id}::${tipo}`;
-                        if (!map[key]) map[key] = { servicio_id: it.servicio_id, descripcion: it.descripcion, cantidad: 0, subtotal: 0, tipo };
-                        map[key].cantidad += Number(it.cantidad ?? 1);
-                        map[key].subtotal += Number(it.subtotal ?? 0);
-                      });
-
-                      // Overlay: reflejar selecciones/ajustes en tiempo real (cantidad/tipo) sobre lo precargado
-                      seleccionados.forEach(mid => {
-                        const desiredTipo = tiposVenta[mid] || 'unidad';
-                        const desiredCantidad = Number(cantidades[mid] ?? 0);
-                        const med = medicamentos.find(m => String(m.id) === String(mid));
-                        const unidadesCaja = unidadesPorCaja[mid] || 30;
-                        const precioVenta = getPrecioVenta(med);
-                        const subtotalCalc = desiredTipo === 'caja' ? precioVenta * unidadesCaja * desiredCantidad : precioVenta * desiredCantidad;
-
-                        const existingKey = Object.keys(map).find(k => String(map[k].servicio_id) === String(mid) && map[k].tipo === desiredTipo);
-                        if (existingKey) {
-                          // Si el usuario ajustó la cantidad, mostrar el valor deseado
-                          map[existingKey].cantidad = desiredCantidad;
-                          map[existingKey].subtotal = subtotalCalc;
-                        } else if (desiredCantidad > 0) {
-                          const descripcion = (med?.nombre || 'Medicamento') + (desiredTipo === 'caja' ? ' (Caja)' : ' (Unidad)');
-                          const key = `${mid}::${desiredTipo}`;
-                          map[key] = { servicio_id: mid, descripcion, cantidad: desiredCantidad, subtotal: subtotalCalc, tipo: desiredTipo };
-                        }
-                      });
-
-                      return Object.values(map).map((row, idx) => (
+                    if (isAnyEditMode && Array.isArray(_preloadedFarmaciaRaw) && _preloadedFarmaciaRaw.length > 0) {
+                      return construirFilasEdicionFarmacia().map((row, idx) => (
                         <li key={idx} className="py-2 flex justify-between items-center">
                           <span className="flex items-center gap-1"><span>💊</span>{row.descripcion}</span>
                           <span>{row.cantidad} {row.tipo === 'caja' ? 'caja(s)' : 'unidad(es)'}</span>
@@ -1589,8 +1617,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
                             ? 'Confirmar receta y enviar a recepción'
                             : (isRolQuimico ? 'Enviar a recepción' : 'Registrar cotización')}
                       </button>
-                      {!isRolQuimico && (
-                        <button onClick={() => handleRegistrarVenta({ irACobro: true })} className="px-6 py-2 rounded font-bold bg-green-600 text-white hover:bg-green-700">{isCotizacionEditMode ? 'Actualizar y cobrar' : 'Registrar y cobrar'}</button>
+                      {!isRolQuimico && !isCotizacionEditMode && (
+                        <button onClick={() => handleRegistrarVenta({ irACobro: true })} className="px-6 py-2 rounded font-bold bg-green-600 text-white hover:bg-green-700">Registrar y cobrar</button>
                       )}
                     </>
                   )}

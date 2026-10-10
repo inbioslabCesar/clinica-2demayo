@@ -57,12 +57,18 @@ export default function CotizarEcografiaPage() {
     const [pendingEcoItems, setPendingEcoItems] = useState([]); // items pendientes para mapear contra tarifas
     const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
     const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+    const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora} en edición
     const [isSaving, setIsSaving] = useState(false);
     const { cart, addItems, replaceCart, clearCart, count: cartCount } = useQuoteCart();
     const pacienteTemporal = location.state?.pacienteTemporal || null;
     const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
     const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
     const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
+    const cotizacionIdEdicion = useMemo(() => {
+      const sp = new URLSearchParams(location.search);
+      const value = Number(sp.get("cotizacion_id") || 0);
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    }, [location.search]);
 
     const getLimaDate = () => {
       const now = new Date();
@@ -127,7 +133,47 @@ export default function CotizarEcografiaPage() {
     ? 0
     : Number(tarifa?.precio_particular || 0);
 
+  const programacionBaseEdicion = useMemo(() => {
+    if (cotizacionIdEdicion <= 0) {
+      return null;
+    }
+
+    if (programacionConsultaCotizacion?.fecha && programacionConsultaCotizacion?.hora) {
+      return {
+        fecha: String(programacionConsultaCotizacion.fecha).slice(0, 10),
+        hora: String(programacionConsultaCotizacion.hora).slice(0, 5),
+      };
+    }
+
+    if (!Array.isArray(cotizacionDetallesOriginales) || cotizacionDetallesOriginales.length === 0) {
+      return null;
+    }
+
+    const detallesActivos = cotizacionDetallesOriginales.filter((d) =>
+      String(d?.estado_item || "activo").toLowerCase() !== "eliminado"
+    );
+    const pickHorario = (detalle) => {
+      const fecha = String(detalle?.fecha_programada || "").slice(0, 10);
+      const hora = normalizeHourHm(detalle?.hora_programada || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !hora) return null;
+      return { fecha, hora };
+    };
+
+    const detalleConsulta = detallesActivos.find((d) => String(d?.servicio_tipo || "").toLowerCase().trim() === "consulta");
+    const horarioConsulta = pickHorario(detalleConsulta);
+    if (horarioConsulta) return horarioConsulta;
+
+    const detalleClinico = detallesActivos.find((d) => {
+      const tipo = String(d?.servicio_tipo || "").toLowerCase().trim();
+      return ["ecografia", "rayosx", "rayos x", "rayos_x", "procedimiento", "procedimientos", "operacion", "operaciones", "consulta"].includes(tipo);
+    });
+    return pickHorario(detalleClinico);
+  }, [cotizacionDetallesOriginales, cotizacionIdEdicion, programacionConsultaCotizacion]);
+
   const getHoraProgramadaDefault = () => {
+    if (programacionBaseEdicion?.hora) {
+      return String(programacionBaseEdicion.hora).slice(0, 5);
+    }
     const now = new Date();
     const parts = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'America/Lima',
@@ -140,24 +186,40 @@ export default function CotizarEcografiaPage() {
     return `${hour}:${minute}`;
   };
 
+  const getFechaProgramadaDefault = () => {
+    if (programacionBaseEdicion?.fecha) {
+      return String(programacionBaseEdicion.fecha).slice(0, 10);
+    }
+    return getLimaDate();
+  };
+
   const crearProgramacionDefault = () => ({
-    fecha: getLimaDate(),
+    fecha: getFechaProgramadaDefault(),
     hora: getHoraProgramadaDefault(),
   });
 
   const getProgramacionSugeridaTarifa = (tarifaId, fechaPreferida = "") => {
     const tarifa = tarifas.find((t) => Number(t.id) === Number(tarifaId));
     const medicoId = Number(tarifa?.medico_id || 0);
-    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const fechaBase = String(fechaPreferida || programacionBaseEdicion?.fecha || getLimaDate()).slice(0, 10);
     const sugerida = suggestNextHorarioFromCart(cart?.items, {
       medicoId,
       fechaBase,
       stepMinutes: 30,
     });
     const referencia = getReferenceHorarioFromCart(cart?.items);
+    const priorizarBaseEdicion = cotizacionIdEdicion > 0;
     return {
-      fecha: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
-      hora: String(sugerida?.hora || referencia?.hora || getHoraProgramadaDefault()).slice(0, 5),
+      fecha: String(
+        priorizarBaseEdicion
+          ? (programacionBaseEdicion?.fecha || sugerida?.fecha || referencia?.fecha || fechaBase)
+          : (sugerida?.fecha || referencia?.fecha || fechaBase)
+      ).slice(0, 10),
+      hora: String(
+        priorizarBaseEdicion
+          ? (programacionBaseEdicion?.hora || sugerida?.hora || referencia?.hora || getHoraProgramadaDefault())
+          : (sugerida?.hora || referencia?.hora || getHoraProgramadaDefault())
+      ).slice(0, 5),
     };
   };
 
@@ -305,7 +367,12 @@ export default function CotizarEcografiaPage() {
     const cobroId = params.get("cobro_id");
     const cotizacionId = params.get("cotizacion_id");
     const loaders = [];
-    if (cobroId || cotizacionId) setPreloadedItems([]);
+    if (cobroId || cotizacionId) {
+      setPreloadedItems([]);
+      setPendingEcoItems([]);
+      setProgramacionPorTarifa({});
+      setProgramacionConsultaCotizacion(null);
+    }
     if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(res => res.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null;
       if (!data.success || !cobro) return;
@@ -343,6 +410,24 @@ export default function CotizarEcografiaPage() {
       if (itemsEco.length) setPendingEcoItems(prev => [...prev, ...itemsEco]);
       if (itemsEco.length) setPreloadedItems(prev => [...prev, ...itemsEco]);
     }));
+    if (cotizacionId) loaders.push(
+      authFetch(`${BASE_URL}api_consultas.php?cotizacion_id=${cotizacionId}&no_cache=1`, { credentials: "include", cache: "no-store" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data?.success) return;
+          const consulta = Array.isArray(data.consultas) ? data.consultas[0] : (data.consulta || null);
+          const consultaId = Number(consulta?.id || consulta?.consulta_id || 0);
+          const fecha = String(consulta?.fecha || "").slice(0, 10);
+          const hora = normalizeHourHm(consulta?.hora || "");
+          if (/^\d{4}-\d{2}-\d{2}$/.test(fecha) && hora) {
+            setProgramacionConsultaCotizacion({
+              consultaId: consultaId > 0 ? consultaId : 0,
+              fecha,
+              hora,
+            });
+          }
+        })
+    );
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
   }, [location.search]);
 
@@ -593,6 +678,29 @@ export default function CotizarEcografiaPage() {
     });
   }, [seleccionados]);
 
+  useEffect(() => {
+    if (cotizacionIdEdicion <= 0) return;
+    const fechaBase = String(programacionBaseEdicion?.fecha || "").slice(0, 10);
+    const horaBase = String(programacionBaseEdicion?.hora || "").slice(0, 5);
+    if (!fechaBase || !horaBase || !Array.isArray(seleccionados) || seleccionados.length === 0) return;
+
+    setProgramacionPorTarifa((prev) => {
+      const next = { ...(prev || {}) };
+      let changed = false;
+      seleccionados.forEach((id) => {
+        const key = Number(id);
+        const actual = next[key] || {};
+        const fechaActual = String(actual?.fecha || "").slice(0, 10);
+        const horaActual = String(actual?.hora || "").slice(0, 5);
+        if (fechaActual !== fechaBase || horaActual !== horaBase) {
+          next[key] = { ...actual, fecha: fechaBase, hora: horaBase };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [cotizacionIdEdicion, programacionBaseEdicion, seleccionados]);
+
   const actualizarProgramacion = (tarifaId, campo, valor) => {
     const key = Number(tarifaId);
     const sugerida = getProgramacionSugeridaTarifa(key, "");
@@ -660,6 +768,7 @@ export default function CotizarEcografiaPage() {
         medico_nombre,
         especialidad: tarifa.especialidad || "",
         paciente_id: paciente?.id,
+        consulta_id: cotizacionIdEdicion > 0 ? Number(programacionConsultaCotizacion?.consultaId || 0) : 0,
         fecha_programada: programacion.fecha,
         hora_programada: programacion.hora,
       } : null;
@@ -1179,6 +1288,11 @@ export default function CotizarEcografiaPage() {
               <h4 className="font-semibold text-blue-700 mb-4 flex items-center gap-2">
                 <span>📝</span>Resumen de Cotización
               </h4>
+              {cotizacionIdEdicion > 0 && programacionBaseEdicion?.fecha && programacionBaseEdicion?.hora && (
+                <div className="mb-3 rounded-lg border border-blue-200 bg-blue-100/60 px-3 py-2 text-xs text-blue-800">
+                  Edición activa: por defecto los nuevos servicios se programan con la cita base {programacionBaseEdicion.fecha} {programacionBaseEdicion.hora} para mantener coherencia con la atención.
+                </div>
+              )}
               <ul className="divide-y divide-gray-100 mb-2">
                 {seleccionados.map(tid => {
                   const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
@@ -1195,7 +1309,14 @@ export default function CotizarEcografiaPage() {
                   const manualEnabled = Boolean(manualProgramacionByTarifa[Number(tid)]) && isModeMixed;
                   const horasLibres = Array.isArray(availability?.horasLibres) ? availability.horasLibres : [];
                   const horasOcupadas = Array.isArray(availability?.horasOcupadas) ? availability.horasOcupadas : [];
-                  const iniciosValidos = horasLibres;
+                  const horaBaseEdicion = cotizacionIdEdicion > 0
+                    ? String(programacionBaseEdicion?.hora || "").slice(0, 5)
+                    : "";
+                  const iniciosValidos = (() => {
+                    if (!horaBaseEdicion) return horasLibres;
+                    if (horasLibres.includes(horaBaseEdicion)) return horasLibres;
+                    return [horaBaseEdicion, ...horasLibres];
+                  })();
                   return tarifa ? (
                     <li key={tid} className="py-2">
                       <div className="flex justify-between items-center gap-3">
@@ -1230,7 +1351,10 @@ export default function CotizarEcografiaPage() {
                               className="border rounded-lg px-2 py-1 bg-white"
                             >
                               {iniciosValidos.map((hora) => (
-                                <option key={`${tid}-${hora}`} value={hora}>{hora}</option>
+                                <option key={`${tid}-${hora}`} value={hora}>
+                                  {hora}
+                                  {horaBaseEdicion && hora === horaBaseEdicion ? " (hora base)" : ""}
+                                </option>
                               ))}
                             </select>
                           ) : (
@@ -1324,13 +1448,15 @@ export default function CotizarEcografiaPage() {
                   >
                     {isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización')}
                   </button>
-                  <button
-                    onClick={() => cotizar({ irACobro: true })}
-                    disabled={cajaEstado === 'cerrada' || isSaving}
-                    className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
-                  >
-                    {isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar y cobrar' : 'Registrar y cobrar')}
-                  </button>
+                  {!new URLSearchParams(location.search).get('cotizacion_id') && (
+                    <button
+                      onClick={() => cotizar({ irACobro: true })}
+                      disabled={cajaEstado === 'cerrada' || isSaving}
+                      className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                    >
+                      {isSaving ? 'Guardando...' : 'Registrar y cobrar'}
+                    </button>
+                  )}
                 </>
               )}
               {(new URLSearchParams(location.search).get('cobro_id') || !new URLSearchParams(location.search).get('cobro_id')) && cajaEstado === 'cerrada' && (
