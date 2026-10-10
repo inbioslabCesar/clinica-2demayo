@@ -79,23 +79,29 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
+          REMOTE_PUBLIC_HTML: ${{ secrets.REMOTE_PUBLIC_HTML }}
         run: |
           set -euo pipefail
-          RESOLVED_REMOTE_PUBLIC_HTML=$(ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "set -euo pipefail
-            if [ -n \"\${REMOTE_PUBLIC_HTML:-}\" ] && [ -d \"\$REMOTE_PUBLIC_HTML\" ]; then
-              printf '%s' \"\$REMOTE_PUBLIC_HTML\"
-            elif [ -d \"domains/$SSH_HOST/public_html\" ]; then
-              printf '%s' \"domains/$SSH_HOST/public_html\"
-            elif [ -d \"public_html\" ]; then
-              printf '%s' \"public_html\"
-            else
-              exit 1
-            fi")
+          if [[ -n "${REMOTE_PUBLIC_HTML:-}" ]]; then
+            RESOLVED_REMOTE_PUBLIC_HTML="$REMOTE_PUBLIC_HTML"
+          else
+            RESOLVED_REMOTE_PUBLIC_HTML=$(ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "set -euo pipefail
+              if [ -d \"domains/$SSH_HOST/public_html\" ]; then
+                printf '%s' \"domains/$SSH_HOST/public_html\"
+              elif [ -d \"public_html\" ]; then
+                printf '%s' \"public_html\"
+              else
+                exit 1
+              fi")
+          fi
 
           if [ -z "$RESOLVED_REMOTE_PUBLIC_HTML" ]; then
             echo "No se pudo resolver la carpeta web remota."
             exit 1
           fi
+
+          ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "test -d '$RESOLVED_REMOTE_PUBLIC_HTML'" || { echo "La ruta REMOTE_PUBLIC_HTML no existe en el servidor: $RESOLVED_REMOTE_PUBLIC_HTML"; exit 1; }
 
           echo "REMOTE_PUBLIC_HTML=$RESOLVED_REMOTE_PUBLIC_HTML" >> "$GITHUB_ENV"
           echo "Ruta web remota detectada: $RESOLVED_REMOTE_PUBLIC_HTML"
