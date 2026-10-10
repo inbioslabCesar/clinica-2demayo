@@ -2517,7 +2517,7 @@ export default function CotizacionesPage() {
     <div className="max-w-full mx-auto p-4 md:p-8">
       <div className="bg-white rounded-xl shadow border border-gray-200 p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-          <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Atenciones</h2>
+          <h2 className="text-2xl font-bold" style={{ color: "var(--color-primary-dark)" }}>Atenciones/Cotizaciones</h2>
           <div className="text-sm text-gray-600">Total registros: <b>{total}</b> · Filas operativas visibles: <b>{rowsOperativos.length}</b></div>
         </div>
 
