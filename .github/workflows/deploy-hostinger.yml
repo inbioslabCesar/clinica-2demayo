@@ -134,19 +134,43 @@ jobs:
             --exclude ".idea/" \
             --exclude "dist/" \
             --exclude "dist-public/" \
+            --exclude "deploy/" \
             --exclude "public-site/" \
             --exclude "src/" \
             --exclude "tests/" \
             --exclude "docs/" \
             --exclude "tmp/" \
+            --exclude "backups/" \
+            --exclude "db/" \
+            --exclude "data/" \
+            --exclude "sql/" \
+            --exclude "scripts/" \
+            --exclude "migraciones/" \
             --exclude "vendor/" \
             --exclude "uploads/" \
+            --exclude "config/" \
             --exclude ".env" \
             --exclude ".env.*" \
             --exclude "config.php" \
+            --exclude "db.php" \
+            --exclude "data.php" \
             --exclude "config/instance.local.php" \
             --exclude "clinica-config/" \
             --exclude "backup/" \
+            --exclude "README.md" \
+            --exclude "LICENSE" \
+            --exclude "*.md" \
+            --exclude "*.txt" \
+            --exclude "*.js" \
+            --exclude "*.cjs" \
+            --exclude "*.mjs" \
+            --exclude "package.json" \
+            --exclude "package-lock.json" \
+            --exclude "vite.config.js" \
+            --exclude "vite.public.config.js" \
+            --exclude "tailwind.config.js" \
+            --exclude "postcss.config.cjs" \
+            --exclude "eslint.config.js" \
             --exclude "*.log" \
             --exclude "*.sql" \
             --exclude "*.sql.backup" \
