@@ -1,14 +1,14 @@
-name: Deploy a Hostinger
+name: Deploy a Hostinger (Test)
 
 on:
   workflow_dispatch:
     inputs:
       confirm_production:
-        description: 'Escribe EXACTAMENTE: DEPLOY_CARDIOVIDA_PROD'
+        description: 'Escribe EXACTAMENTE: DEPLOY_HOSTINGER_TEST'
         required: true
         type: string
       confirm_host:
-        description: 'Escribe EXACTAMENTE: cardiovidaiquitos.com'
+        description: 'Escribe EXACTAMENTE el host configurado en el secret SSH_HOST'
         required: true
         type: string
 
@@ -27,8 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${{ github.ref_name }}" == "main" ]] || { echo "Este deploy solo puede ejecutarse desde main"; exit 1; }
-          [[ "${{ github.event.inputs.confirm_production }}" == "DEPLOY_CARDIOVIDA_PROD" ]] || { echo "Confirmacion de produccion invalida"; exit 1; }
-          [[ "${{ github.event.inputs.confirm_host }}" == "cardiovidaiquitos.com" ]] || { echo "Confirmacion de host invalida"; exit 1; }
+          [[ "${{ github.event.inputs.confirm_production }}" == "DEPLOY_HOSTINGER_TEST" ]] || { echo "Confirmacion de despliegue invalida"; exit 1; }
+          [[ "${{ github.event.inputs.confirm_host }}" == "${{ secrets.SSH_HOST }}" ]] || { echo "Confirmacion de host invalida"; exit 1; }
           echo "Confirmaciones validas. Continuando deploy..."
 
       - name: Setup Node
@@ -43,34 +43,46 @@ jobs:
       - name: Build frontend (sistema + landing)
         run: npm run build
 
-      - name: Validar secrets SFTP requeridos
+      - name: Validar secrets SSH requeridos
         env:
-          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          [[ -n "$SFTP_HOST" ]] || { echo "Falta secret HOSTINGER_SFTP_HOST"; exit 1; }
-          [[ -n "$SFTP_PORT" ]] || { echo "Falta secret HOSTINGER_SFTP_PORT"; exit 1; }
-          [[ -n "$SFTP_USER" ]] || { echo "Falta secret HOSTINGER_FTP_USER"; exit 1; }
-          [[ -n "$SFTP_PASS" ]] || { echo "Falta secret HOSTINGER_FTP_PASSWORD"; exit 1; }
+          [[ -n "$SSH_HOST" ]] || { echo "Falta secret SSH_HOST"; exit 1; }
+          [[ -n "$SSH_PORT" ]] || { echo "Falta secret SSH_PORT"; exit 1; }
+          [[ -n "$SSH_USER" ]] || { echo "Falta secret SSH_USER"; exit 1; }
+          [[ -n "$SSH_PRIVATE_KEY" ]] || { echo "Falta secret SSH_PRIVATE_KEY"; exit 1; }
 
-      - name: Instalar utilidades SFTP
+      - name: Configurar llave SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Instalar utilidades de sincronizacion
         run: |
           sudo apt-get update
-          sudo apt-get install -y sshpass rsync
+          sudo apt-get install -y rsync
 
-      - name: Preflight remoto SFTP (validar public_html)
+      - name: Preflight remoto SSH (validar public_html)
         env:
-          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" ssh -p "$SFTP_PORT" -o StrictHostKeyChecking=no "$SFTP_USER@$SFTP_HOST" \
-            'pwd; ls -la; test -d public_html && ls -la public_html || { echo "No existe public_html en esta cuenta SFTP"; exit 1; }'
+          ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            'pwd; ls -la; test -d public_html && ls -la public_html || { echo "No existe public_html en esta cuenta SSH"; exit 1; }'
 
       - name: Escribir marcadores de version de deploy
         env:
@@ -81,16 +93,15 @@ jobs:
           printf "commit=%s\ndate=%s\n" "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist-public/deploy_version.txt
           printf "commit=%s\ndate=%s\n" "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > deploy_version_backend.txt
 
-      - name: Publicar backend PHP en public_html/sistema (SFTP)
+      - name: Publicar backend PHP en public_html/sistema (SSH)
         env:
-          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
+          rsync -az --mkpath \
+            -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude "node_modules/" \
@@ -103,6 +114,7 @@ jobs:
             --exclude "tests/" \
             --exclude "docs/" \
             --exclude "tmp/" \
+            --exclude "vendor/" \
             --exclude "uploads/" \
             --exclude ".env" \
             --exclude ".env.*" \
@@ -113,32 +125,30 @@ jobs:
             --exclude "*.log" \
             --exclude "*.sql" \
             --exclude "*.sql.backup" \
-            ./ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
+            ./ "$SSH_USER@$SSH_HOST:public_html/sistema/"
 
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./deploy_version_backend.txt "$SFTP_USER@$SFTP_HOST:public_html/sistema/deploy_version_backend.txt"
+          rsync -az --mkpath \
+            -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
+            ./deploy_version_backend.txt "$SSH_USER@$SSH_HOST:public_html/sistema/deploy_version_backend.txt"
 
       - name: Publicar build de sistema (dist -> public_html/sistema)
         env:
-          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist/ "$SFTP_USER@$SFTP_HOST:public_html/sistema/"
+          rsync -az --mkpath \
+            -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
+            ./dist/ "$SSH_USER@$SSH_HOST:public_html/sistema/"
 
       - name: Publicar landing (dist-public -> public_html)
         env:
-          SFTP_HOST: ${{ secrets.HOSTINGER_SFTP_HOST }}
-          SFTP_PORT: ${{ secrets.HOSTINGER_SFTP_PORT }}
-          SFTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
-          SFTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
-          sshpass -p "$SFTP_PASS" rsync -az --mkpath \
-            -e "ssh -p $SFTP_PORT -o StrictHostKeyChecking=no" \
-            ./dist-public/ "$SFTP_USER@$SFTP_HOST:public_html/"
+          rsync -az --mkpath \
+            -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
+            ./dist-public/ "$SSH_USER@$SSH_HOST:public_html/"
