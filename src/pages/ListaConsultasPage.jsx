@@ -1,28 +1,95 @@
 import { authFetch } from "../utils/apiClient";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
-// Lazy loading de librerías pesadas para exportar
+
+function formatDateInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDaysHorizon(fechaHasta) {
+  const hasta = String(fechaHasta || "").trim();
+  if (!hasta) return 30;
+
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  const to = new Date(`${hasta}T00:00:00`);
+  if (Number.isNaN(to.getTime())) return 30;
+
+  const diffMs = to.getTime() - hoy.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  return Math.max(1, Math.min(365, diffDays + 1));
+}
+
+function inDateRange(value, desde, hasta) {
+  const ymd = String(value || "").trim().slice(0, 10);
+  if (!ymd) return false;
+  if (desde && ymd < desde) return false;
+  if (hasta && ymd > hasta) return false;
+  return true;
+}
+
+function estadoBadgeClasses(estadoRaw) {
+  const estado = String(estadoRaw || "").toLowerCase().trim();
+  if (["completada", "completado", "atendida", "atendido"].includes(estado)) return "bg-emerald-100 text-emerald-800";
+  if (["cancelada", "cancelado", "anulada", "anulado"].includes(estado)) return "bg-rose-100 text-rose-800";
+  if (estado === "falta_cancelar") return "bg-amber-100 text-amber-800";
+  return "bg-sky-100 text-sky-800";
+}
+
+function origenLabel(origenRaw) {
+  const origen = String(origenRaw || "").toLowerCase().trim();
+  if (origen === "agenda_servicio") return "Agenda";
+  if (origen === "cotizador") return "Cotizador";
+  if (origen === "hc_proxima") return "HC próxima";
+  if (origen === "reservada_sin_turno") return "Reservada sin turno";
+  return "Consulta";
+}
+
+function estadoCobroLabel(estadoCotizacionRaw, saldoRaw) {
+  const estadoCot = String(estadoCotizacionRaw || "").toLowerCase().trim();
+  const saldo = Number(saldoRaw || 0);
+  if (saldo > 0.00001) return "Con saldo";
+  if (["pagado", "pagada", "control", "completado", "completada"].includes(estadoCot)) return "Pagado";
+  if (!estadoCot) return "Sin cobro";
+  return estadoCot;
+}
+
+function normalizarConsultaPura(row) {
+  return {
+    ...row,
+    consulta_id_ref: Number(row?.id || 0),
+    estado_consulta: String(row?.estado || "").trim(),
+    estado_gestion: "-",
+    origen_consulta: "consulta",
+    cotizacion_estado: null,
+    saldo_pendiente: 0,
+  };
+}
 
 export default function ListaConsultasPage() {
   const navigate = useNavigate();
   const [consultas, setConsultas] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(3);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaDesde, setFechaDesde] = useState(formatDateInput(new Date()));
   const [fechaHasta, setFechaHasta] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [busquedaDebounced, setBusquedaDebounced] = useState("");
+  const [allRows, setAllRows] = useState([]);
+  const [modoVista, setModoVista] = useState("operativa");
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setBusquedaDebounced(busqueda.trim());
     }, 350);
-
     return () => window.clearTimeout(timer);
   }, [busqueda]);
 
@@ -30,52 +97,127 @@ export default function ListaConsultasPage() {
     const controller = new AbortController();
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({
-      page,
-      per_page: rowsPerPage,
-      search: busquedaDebounced,
-      fecha_desde: fechaDesde,
-      fecha_hasta: fechaHasta
-    });
-    authFetch(`${BASE_URL}api_consultas.php?${params.toString()}`, {
-      credentials: "include",
-      signal: controller.signal,
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setConsultas(data.consultas || []);
-          setTotalRows(data.pagination?.total || data.total || 0);
-        } else {
-          setError(data.error || "Error al cargar consultas");
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (err?.name === "AbortError") return;
-        setError("Error de conexión con el servidor");
-        setLoading(false);
+    if (modoVista === "operativa") {
+      const params = new URLSearchParams({
+        tipo_recordatorio: "citas",
+        dias: String(getDaysHorizon(fechaHasta)),
+        busqueda: busquedaDebounced,
+        _t: String(Date.now()),
       });
 
+      authFetch(`${BASE_URL}api_recordatorios_citas.php?${params.toString()}`, {
+        credentials: "include",
+        signal: controller.signal,
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data?.success) {
+            setError(data?.error || "Error al cargar consultas");
+            setAllRows([]);
+            setConsultas([]);
+            setTotalRows(0);
+            return;
+          }
+
+          const items = Array.isArray(data.items) ? data.items : [];
+          const desde = String(fechaDesde || "").trim();
+          const hasta = String(fechaHasta || "").trim();
+          const filtrados = items.filter((it) => inDateRange(it?.fecha, desde, hasta));
+
+          setAllRows(filtrados);
+          setTotalRows(filtrados.length);
+        })
+        .catch((err) => {
+          if (err?.name === "AbortError") return;
+          setError("Error de conexión con el servidor");
+          setAllRows([]);
+          setConsultas([]);
+          setTotalRows(0);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setLoading(false);
+          }
+        });
+    } else {
+      const params = new URLSearchParams({
+        page: String(page),
+        per_page: String(rowsPerPage),
+        search: busquedaDebounced,
+        fecha_desde: fechaDesde,
+        fecha_hasta: fechaHasta,
+        _t: String(Date.now()),
+      });
+
+      authFetch(`${BASE_URL}api_consultas.php?${params.toString()}`, {
+        credentials: "include",
+        signal: controller.signal,
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data?.success) {
+            setError(data?.error || "Error al cargar consultas");
+            setAllRows([]);
+            setConsultas([]);
+            setTotalRows(0);
+            return;
+          }
+
+          const rows = Array.isArray(data.consultas) ? data.consultas.map(normalizarConsultaPura) : [];
+          setAllRows([]);
+          setConsultas(rows);
+          setTotalRows(Number(data?.pagination?.total ?? data?.total ?? rows.length ?? 0));
+        })
+        .catch((err) => {
+          if (err?.name === "AbortError") return;
+          setError("Error de conexión con el servidor");
+          setAllRows([]);
+          setConsultas([]);
+          setTotalRows(0);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setLoading(false);
+          }
+        });
+    }
+
     return () => controller.abort();
-  }, [page, rowsPerPage, busquedaDebounced, fechaDesde, fechaHasta]);
+  }, [busquedaDebounced, fechaDesde, fechaHasta, modoVista, page, rowsPerPage]);
 
-  // Filtrar por rango de fecha y búsqueda dinámica
-  // Los datos ya vienen filtrados y paginados del backend
+  useEffect(() => {
+    if (modoVista !== "operativa") return;
+    const totalPagesLocal = Math.max(1, Math.ceil(totalRows / rowsPerPage));
+    if (page > totalPagesLocal) {
+      setPage(totalPagesLocal);
+      return;
+    }
+    const offset = (page - 1) * rowsPerPage;
+    setConsultas(allRows.slice(offset, offset + rowsPerPage));
+  }, [allRows, modoVista, page, rowsPerPage, totalRows]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [modoVista]);
+
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
-  const pagedConsultas = consultas;
 
-  // Exportar a Excel con lazy loading
+  const exportRows = useMemo(() => (
+    modoVista === "operativa" ? allRows : consultas
+  ), [allRows, consultas, modoVista]);
+
   const exportarExcel = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.json_to_sheet(
-      consultas.map((c) => ({
+      exportRows.map((c) => ({
         ID: c.id,
-        Fecha: c.fecha?.slice(0, 16).replace("T", " "),
-        Paciente: c.paciente_nombre + " " + c.paciente_apellido,
-        Medico: c.medico_nombre + " " + c.medico_apellido,
-        Especialidad: c.medico_especialidad || "",
-        Estado: c.estado,
+        Fecha: `${String(c.fecha || "")} ${String(c.hora || "").slice(0, 5)}`.trim(),
+        Paciente: `${c.paciente_nombre || ""} ${c.paciente_apellido || ""}`.trim(),
+        Medico: `${c.medico_nombre || ""} ${c.medico_apellido || ""}`.trim(),
+        Estado: c.estado_consulta || "",
+        "Estado gestión": c.estado_gestion || "",
+        Origen: origenLabel(c.origen_consulta),
+        Cobro: estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente),
       }))
     );
     const wb = XLSX.utils.book_new();
@@ -85,34 +227,63 @@ export default function ListaConsultasPage() {
     const fecha = new Date().toISOString().slice(0, 10);
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `consultas_${fecha}.xlsx`;
+    link.download = `${modoVista === "operativa" ? "consultas_operativas" : "consultas_puras"}_${fecha}.xlsx`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Exportar a PDF con lazy loading
   const exportarPDF = async () => {
-    const jsPDF = (await import('jspdf')).default;
-    const autoTable = (await import('jspdf-autotable')).default;
+    const jsPDF = (await import("jspdf")).default;
+    const autoTable = (await import("jspdf-autotable")).default;
     const doc = new jsPDF();
-    doc.text("Lista de Consultas", 14, 10);
+    doc.text(modoVista === "operativa" ? "Lista de Consultas Operativas" : "Lista de Consultas Puras", 14, 10);
     autoTable(doc, {
-      head: [["ID", "Fecha", "Paciente", "Médico", "Especialidad", "Estado"]],
-      body: consultas.map((c) => [
+      head: [["ID", "Fecha", "Paciente", "Médico", "Estado", "Gestión", "Origen", "Cobro"]],
+      body: exportRows.map((c) => [
         c.id,
-        c.fecha?.slice(0, 16).replace("T", " "),
-        c.paciente_nombre + " " + c.paciente_apellido,
-        c.medico_nombre + " " + c.medico_apellido,
-        c.medico_especialidad || "",
-        c.estado,
+        `${String(c.fecha || "")} ${String(c.hora || "").slice(0, 5)}`.trim(),
+        `${c.paciente_nombre || ""} ${c.paciente_apellido || ""}`.trim(),
+        `${c.medico_nombre || ""} ${c.medico_apellido || ""}`.trim(),
+        c.estado_consulta || "",
+        c.estado_gestion || "",
+        origenLabel(c.origen_consulta),
+        estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente),
       ]),
       startY: 18,
-      styles: { fontSize: 9 },
+      styles: { fontSize: 8.5 },
       headStyles: { fillColor: [59, 130, 246] },
     });
     const fecha = new Date().toISOString().slice(0, 10);
-    doc.save(`consultas_${fecha}.pdf`);
+    doc.save(`${modoVista === "operativa" ? "consultas_operativas" : "consultas_puras"}_${fecha}.pdf`);
+  };
+
+  const goEditar = (row) => {
+    const pacienteId = Number(row?.paciente_id || 0);
+    const consultaIdRef = Number(row?.consulta_id_ref || 0);
+    const consultaId = Number(row?.id || 0);
+    const cotizacionId = Number(row?.cotizacion_id || 0);
+    const origen = String(row?.origen_consulta || "").trim().toLowerCase();
+
+    if (origen === "agenda_servicio") {
+      if (consultaIdRef > 0 && pacienteId > 0) {
+        navigate(`/agendar-consulta?paciente_id=${pacienteId}&consulta_id=${consultaIdRef}`);
+        return;
+      }
+      if (cotizacionId > 0) {
+        navigate(`/cotizaciones?cotizacion_id=${cotizacionId}`);
+        return;
+      }
+    }
+
+    if (pacienteId > 0 && consultaId > 0) {
+      navigate(`/agendar-consulta?paciente_id=${pacienteId}&consulta_id=${consultaId}`);
+      return;
+    }
+
+    if (cotizacionId > 0) {
+      navigate(`/cotizaciones?cotizacion_id=${cotizacionId}`);
+    }
   };
 
   return (
@@ -128,13 +299,36 @@ export default function ListaConsultasPage() {
           Lista de Consultas
         </h1>
         <p className="mt-1 text-center text-sm" style={{ color: "color-mix(in srgb, var(--color-primary-dark) 70%, #334155)" }}>
-          Seguimiento de atenciones por paciente, médico y estado
+          {modoVista === "operativa"
+            ? "Vista operativa alineada con Recordatorios y Atenciones"
+            : "Vista de consultas puras (tabla de consultas)"}
         </p>
       </div>
 
       <QuickAccessNav keys={["pacientes", "recordatorios", "cotizaciones", "reporteCaja"]} />
 
       <div className="rounded-2xl border bg-white p-3 shadow-sm md:p-4" style={{ borderColor: "var(--color-primary-light)" }}>
+        <div className="mb-3 flex flex-wrap gap-2">
+          <button
+            onClick={() => setModoVista("operativa")}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${modoVista === "operativa" ? "text-white" : "text-slate-700 hover:bg-slate-100"}`}
+            style={modoVista === "operativa"
+              ? { backgroundColor: "var(--color-primary)", borderColor: "var(--color-primary)" }
+              : { borderColor: "var(--color-primary-light)", backgroundColor: "white" }}
+          >
+            Ver vista operativa unificada
+          </button>
+          <button
+            onClick={() => setModoVista("puras")}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${modoVista === "puras" ? "text-white" : "text-slate-700 hover:bg-slate-100"}`}
+            style={modoVista === "puras"
+              ? { backgroundColor: "var(--color-secondary)", borderColor: "var(--color-secondary)" }
+              : { borderColor: "var(--color-primary-light)", backgroundColor: "white" }}
+          >
+            Ver solo consultas puras
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
           <div className="xl:col-span-1">
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-primary-dark)" }}>
@@ -148,16 +342,16 @@ export default function ListaConsultasPage() {
               }}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             >
-              <option value={3}>3</option>
               <option value={5}>5</option>
               <option value={10}>10</option>
               <option value={25}>25</option>
+              <option value={50}>50</option>
             </select>
           </div>
 
           <div className="xl:col-span-2">
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-primary-dark)" }}>
-              Busqueda
+              Búsqueda
             </label>
             <input
               type="text"
@@ -166,7 +360,7 @@ export default function ListaConsultasPage() {
                 setBusqueda(e.target.value);
                 setPage(1);
               }}
-              placeholder="Paciente, medico, especialidad, estado o ID"
+              placeholder="Paciente, médico, DNI, teléfono o ID"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
@@ -205,7 +399,7 @@ export default function ListaConsultasPage() {
             {(fechaDesde || fechaHasta || busqueda) && (
               <button
                 onClick={() => {
-                  setFechaDesde("");
+                  setFechaDesde(formatDateInput(new Date()));
                   setFechaHasta("");
                   setBusqueda("");
                   setPage(1);
@@ -255,23 +449,28 @@ export default function ListaConsultasPage() {
                     <th className="px-3 py-3 text-left font-semibold">ID</th>
                     <th className="px-3 py-3 text-left font-semibold">Fecha</th>
                     <th className="px-3 py-3 text-left font-semibold">Paciente</th>
-                    <th className="px-3 py-3 text-left font-semibold">Medico</th>
+                    <th className="px-3 py-3 text-left font-semibold">Médico</th>
                     <th className="px-3 py-3 text-left font-semibold">Estado</th>
+                    <th className="px-3 py-3 text-left font-semibold">Gestión</th>
+                    <th className="px-3 py-3 text-left font-semibold">Origen</th>
+                    <th className="px-3 py-3 text-left font-semibold">Cobro</th>
                     <th className="px-3 py-3 text-center font-semibold">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {consultas.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-8 text-center text-slate-500">
-                        No hay consultas registradas
+                      <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
+                        No hay consultas en el rango seleccionado
                       </td>
                     </tr>
                   ) : (
-                    pagedConsultas.map((c) => (
-                      <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
+                    consultas.map((c) => (
+                      <tr key={`${String(c.origen_consulta || "consulta")}-${Number(c.id || 0)}`} className="border-t border-slate-100 hover:bg-slate-50">
                         <td className="px-3 py-3 font-semibold" style={{ color: "var(--color-primary-dark)" }}>{c.id}</td>
-                        <td className="px-3 py-3 text-slate-600">{c.fecha?.slice(0, 16).replace("T", " ")}</td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {String(c.fecha || "").trim()} {String(c.hora || "").slice(0, 5)}
+                        </td>
                         <td className="px-3 py-3 font-medium text-slate-700">
                           {c.paciente_nombre} {c.paciente_apellido}
                         </td>
@@ -283,40 +482,27 @@ export default function ListaConsultasPage() {
                             >
                               {c.medico_nombre} {c.medico_apellido}
                             </span>
-                            {c.medico_especialidad && (
-                              <span
-                                className="inline-block w-fit rounded-full px-3 py-1 text-xs font-medium"
-                                style={{
-                                  backgroundColor: "color-mix(in srgb, var(--color-accent) 18%, white)",
-                                  color: "var(--color-secondary)",
-                                }}
-                              >
-                                {c.medico_especialidad}
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <span
-                            className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
-                              c.estado === "completada"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : c.estado === "cancelada"
-                                  ? "bg-rose-100 text-rose-800"
-                                  : c.estado === "falta_cancelar"
-                                    ? "bg-amber-100 text-amber-800"
-                                    : "text-slate-700"
-                            }`}
-                            style={c.estado === "pendiente" ? { backgroundColor: "color-mix(in srgb, var(--color-secondary) 16%, white)", color: "var(--color-secondary)" } : undefined}
-                          >
-                            {c.estado}
+                          <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${estadoBadgeClasses(c.estado_consulta)}`}>
+                            {String(c.estado_consulta || "").trim() || "-"}
                           </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className="inline-block rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+                            {String(c.estado_gestion || "").trim() || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-slate-700">
+                          {origenLabel(c.origen_consulta)}
+                        </td>
+                        <td className="px-3 py-3 text-slate-700">
+                          {estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente)}
                         </td>
                         <td className="px-3 py-3 text-center">
                           <button
-                            onClick={() =>
-                              navigate(`/agendar-consulta?paciente_id=${Number(c.paciente_id || 0)}&consulta_id=${Number(c.id || 0)}`)
-                            }
+                            onClick={() => goEditar(c)}
                             className="rounded-md px-3 py-1.5 text-xs font-semibold text-white transition"
                             style={{ backgroundColor: "var(--color-primary)" }}
                           >
@@ -347,11 +533,11 @@ export default function ListaConsultasPage() {
                 className="rounded-md px-3 py-1.5 text-sm font-semibold"
                 style={{ backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}
               >
-                Pagina {page} de {totalPages}
+                Página {page} de {totalPages}
               </span>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
+                disabled={page >= totalPages}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Siguiente
