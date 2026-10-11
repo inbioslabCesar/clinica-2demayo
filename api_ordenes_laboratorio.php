@@ -912,6 +912,334 @@ if (!function_exists('ol_recalcular_total_cotizacion')) {
     }
 }
 
+if (!function_exists('ol_cotizacion_examenes_laboratorio_activos')) {
+    function ol_cotizacion_examenes_laboratorio_activos(mysqli $conn, array $cotizacionIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !ol_table_exists($conn, 'cotizaciones_detalle')) {
+            return [];
+        }
+
+        $hasCotizaciones = ol_table_exists($conn, 'cotizaciones');
+        $hasCotizacionPadreId = $hasCotizaciones && ol_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id');
+
+        $padreCache = [];
+        $resolverRaiz = function (int $cotizacionId) use ($conn, &$padreCache, $hasCotizacionPadreId): int {
+            if (!$hasCotizacionPadreId) {
+                return $cotizacionId;
+            }
+            $actual = $cotizacionId;
+            $guard = 0;
+            while ($actual > 0 && $guard < 25) {
+                $guard++;
+                if (!array_key_exists($actual, $padreCache)) {
+                    $stmtPad = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+                    $padre = 0;
+                    if ($stmtPad) {
+                        $stmtPad->bind_param('i', $actual);
+                        $stmtPad->execute();
+                        $rowPad = $stmtPad->get_result()->fetch_assoc();
+                        $stmtPad->close();
+                        $padre = intval($rowPad['cotizacion_padre_id'] ?? 0);
+                    }
+                    $padreCache[$actual] = $padre;
+                }
+                $padre = intval($padreCache[$actual] ?? 0);
+                if ($padre <= 0) {
+                    break;
+                }
+                $actual = $padre;
+            }
+            return $actual > 0 ? $actual : $cotizacionId;
+        };
+
+        $roots = [];
+        foreach ($ids as $cid) {
+            $roots[$cid] = $resolverRaiz($cid);
+        }
+
+        $relacionadasPorSolicitada = [];
+        foreach ($ids as $cid) {
+            $root = intval($roots[$cid] ?? $cid);
+            $relIds = [$cid => true];
+            if ($hasCotizacionPadreId) {
+                $stmtRel = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? OR cotizacion_padre_id = ?');
+                if ($stmtRel) {
+                    $stmtRel->bind_param('ii', $root, $root);
+                    $stmtRel->execute();
+                    $resRel = $stmtRel->get_result();
+                    while ($rowRel = $resRel->fetch_assoc()) {
+                        $rid = intval($rowRel['id'] ?? 0);
+                        if ($rid > 0) {
+                            $relIds[$rid] = true;
+                        }
+                    }
+                    $stmtRel->close();
+                }
+            }
+            $relacionadasPorSolicitada[$cid] = array_keys($relIds);
+        }
+
+        $idsBusqueda = [];
+        foreach ($relacionadasPorSolicitada as $relIds) {
+            foreach ((array)$relIds as $rid) {
+                $rid = intval($rid);
+                if ($rid > 0) $idsBusqueda[$rid] = true;
+            }
+        }
+        $idsBusqueda = array_keys($idsBusqueda);
+        if (empty($idsBusqueda)) {
+            return [];
+        }
+
+        $whereEstado = ol_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'"
+            : '';
+
+        $placeholders = implode(',', array_fill(0, count($idsBusqueda), '?'));
+        $sql = "SELECT cotizacion_id, servicio_id
+                FROM cotizaciones_detalle
+                WHERE LOWER(TRIM(COALESCE(servicio_tipo, ''))) = 'laboratorio'
+                  AND cotizacion_id IN ($placeholders)
+                  AND servicio_id IS NOT NULL
+                  AND servicio_id > 0{$whereEstado}";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return [];
+        }
+
+        $stmt->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $activosPorCotizacionDetalle = [];
+        foreach ($rows as $row) {
+            $cid = intval($row['cotizacion_id'] ?? 0);
+            $sid = intval($row['servicio_id'] ?? 0);
+            if ($cid <= 0 || $sid <= 0) {
+                continue;
+            }
+            if (!isset($activosPorCotizacionDetalle[$cid])) {
+                $activosPorCotizacionDetalle[$cid] = [];
+            }
+            $activosPorCotizacionDetalle[$cid][$sid] = true;
+        }
+
+        $map = [];
+        foreach ($ids as $cid) {
+            $map[$cid] = [];
+            $activosDirectos = $activosPorCotizacionDetalle[$cid] ?? [];
+
+            // Priorizar la cotización exacta de la orden: si existe detalle activo ahí,
+            // no mezclar con padre/hijas para evitar reintroducir exámenes eliminados.
+            if (!empty($activosDirectos)) {
+                foreach ($activosDirectos as $sid => $_ok) {
+                    $map[$cid][intval($sid)] = true;
+                }
+                continue;
+            }
+
+            // Fallback para órdenes históricas: usar cotizaciones relacionadas cuando la
+            // cotización exacta no tiene detalles activos de laboratorio.
+            foreach ((array)($relacionadasPorSolicitada[$cid] ?? []) as $rid) {
+                $rid = intval($rid);
+                if ($rid <= 0 || !isset($activosPorCotizacionDetalle[$rid])) {
+                    continue;
+                }
+                foreach ($activosPorCotizacionDetalle[$rid] as $sid => $_ok) {
+                    $map[$cid][intval($sid)] = true;
+                }
+            }
+        }
+        return $map;
+    }
+}
+
+if (!function_exists('ol_cotizacion_pago_laboratorio_activo')) {
+    function ol_cotizacion_pago_laboratorio_activo(mysqli $conn, array $cotizacionIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !ol_table_exists($conn, 'cotizaciones')) {
+            return [];
+        }
+
+        $hasCotizacionPadreId = ol_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id');
+        $hasEstadoCot = ol_column_exists($conn, 'cotizaciones', 'estado');
+        $hasSaldoCot = ol_column_exists($conn, 'cotizaciones', 'saldo_pendiente');
+        $hasTotalPagadoCot = ol_column_exists($conn, 'cotizaciones', 'total_pagado');
+
+        $padreCache = [];
+        $resolverRaiz = function (int $cotizacionId) use ($conn, &$padreCache, $hasCotizacionPadreId): int {
+            if (!$hasCotizacionPadreId) {
+                return $cotizacionId;
+            }
+            $actual = $cotizacionId;
+            $guard = 0;
+            while ($actual > 0 && $guard < 25) {
+                $guard++;
+                if (!array_key_exists($actual, $padreCache)) {
+                    $stmtPad = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+                    $padre = 0;
+                    if ($stmtPad) {
+                        $stmtPad->bind_param('i', $actual);
+                        $stmtPad->execute();
+                        $rowPad = $stmtPad->get_result()->fetch_assoc();
+                        $stmtPad->close();
+                        $padre = intval($rowPad['cotizacion_padre_id'] ?? 0);
+                    }
+                    $padreCache[$actual] = $padre;
+                }
+                $padre = intval($padreCache[$actual] ?? 0);
+                if ($padre <= 0) {
+                    break;
+                }
+                $actual = $padre;
+            }
+            return $actual > 0 ? $actual : $cotizacionId;
+        };
+
+        $roots = [];
+        foreach ($ids as $cid) {
+            $roots[$cid] = $resolverRaiz($cid);
+        }
+
+        $relacionadasPorSolicitada = [];
+        foreach ($ids as $cid) {
+            $root = intval($roots[$cid] ?? $cid);
+            $relIds = [$cid => true];
+            if ($hasCotizacionPadreId) {
+                $stmtRel = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? OR cotizacion_padre_id = ?');
+                if ($stmtRel) {
+                    $stmtRel->bind_param('ii', $root, $root);
+                    $stmtRel->execute();
+                    $resRel = $stmtRel->get_result();
+                    while ($rowRel = $resRel->fetch_assoc()) {
+                        $rid = intval($rowRel['id'] ?? 0);
+                        if ($rid > 0) {
+                            $relIds[$rid] = true;
+                        }
+                    }
+                    $stmtRel->close();
+                }
+            }
+            $relacionadasPorSolicitada[$cid] = array_keys($relIds);
+        }
+
+        $idsBusqueda = [];
+        foreach ($relacionadasPorSolicitada as $relIds) {
+            foreach ((array)$relIds as $rid) {
+                $rid = intval($rid);
+                if ($rid > 0) {
+                    $idsBusqueda[$rid] = true;
+                }
+            }
+        }
+        $idsBusqueda = array_keys($idsBusqueda);
+        if (empty($idsBusqueda)) {
+            return [];
+        }
+
+        $cotizacionesConLabActivo = [];
+        if (ol_table_exists($conn, 'cotizaciones_detalle')
+            && ol_column_exists($conn, 'cotizaciones_detalle', 'cotizacion_id')
+            && ol_column_exists($conn, 'cotizaciones_detalle', 'servicio_tipo')) {
+            $whereEstado = ol_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+                ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'"
+                : '';
+            $phLab = implode(',', array_fill(0, count($idsBusqueda), '?'));
+            $sqlLab = "SELECT DISTINCT cotizacion_id
+                       FROM cotizaciones_detalle
+                       WHERE LOWER(TRIM(COALESCE(servicio_tipo, ''))) = 'laboratorio'
+                         AND cotizacion_id IN ($phLab){$whereEstado}";
+            $stmtLab = $conn->prepare($sqlLab);
+            if ($stmtLab) {
+                $stmtLab->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+                $stmtLab->execute();
+                $rowsLab = $stmtLab->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmtLab->close();
+                foreach ($rowsLab as $rowLab) {
+                    $rid = intval($rowLab['cotizacion_id'] ?? 0);
+                    if ($rid > 0) {
+                        $cotizacionesConLabActivo[$rid] = true;
+                    }
+                }
+            }
+        }
+
+        $phCot = implode(',', array_fill(0, count($idsBusqueda), '?'));
+        $estadoExpr = $hasEstadoCot ? 'estado' : "'' AS estado";
+        $saldoExpr = $hasSaldoCot ? 'COALESCE(saldo_pendiente, 0) AS saldo_pendiente' : '0 AS saldo_pendiente';
+        $pagadoExpr = $hasTotalPagadoCot ? 'COALESCE(total_pagado, 0) AS total_pagado' : '0 AS total_pagado';
+        $sqlCot = "SELECT id, {$estadoExpr}, {$saldoExpr}, {$pagadoExpr}
+                   FROM cotizaciones
+                   WHERE id IN ($phCot)";
+        $stmtCot = $conn->prepare($sqlCot);
+        if (!$stmtCot) {
+            return [];
+        }
+        $stmtCot->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+        $stmtCot->execute();
+        $rowsCot = $stmtCot->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmtCot->close();
+
+        $pagoPorCotizacion = [];
+        foreach ($rowsCot as $rowCot) {
+            $rid = intval($rowCot['id'] ?? 0);
+            if ($rid <= 0) {
+                continue;
+            }
+            $pagoPorCotizacion[$rid] = [
+                'estado' => trim((string)($rowCot['estado'] ?? '')),
+                'saldo_pendiente' => round((float)($rowCot['saldo_pendiente'] ?? 0), 2),
+                'total_pagado' => round((float)($rowCot['total_pagado'] ?? 0), 2),
+            ];
+        }
+
+        $map = [];
+        foreach ($ids as $cid) {
+            $relIds = array_values(array_unique(array_map('intval', (array)($relacionadasPorSolicitada[$cid] ?? [$cid]))));
+            $relConLab = [];
+            foreach ($relIds as $rid) {
+                if ($rid > 0 && isset($cotizacionesConLabActivo[$rid])) {
+                    $relConLab[] = $rid;
+                }
+            }
+            rsort($relConLab, SORT_NUMERIC);
+
+            $cotPagoId = $cid;
+            if (!empty($relConLab)) {
+                if (in_array($cid, $relConLab, true)) {
+                    $cotPagoId = $cid;
+                } else {
+                    $cotPagoId = intval($relConLab[0]);
+                }
+            } else {
+                foreach ($relIds as $rid) {
+                    if ($rid > 0 && isset($pagoPorCotizacion[$rid])) {
+                        $cotPagoId = $rid;
+                        break;
+                    }
+                }
+            }
+
+            $pago = $pagoPorCotizacion[$cotPagoId] ?? ($pagoPorCotizacion[$cid] ?? ['estado' => '', 'saldo_pendiente' => 0.0, 'total_pagado' => 0.0]);
+            $map[$cid] = [
+                'cotizacion_pago_id' => intval($cotPagoId),
+                'cotizacion_estado_pago' => (string)($pago['estado'] ?? ''),
+                'cotizacion_saldo_pendiente_pago' => round((float)($pago['saldo_pendiente'] ?? 0), 2),
+                'cotizacion_total_pagado_pago' => round((float)($pago['total_pagado'] ?? 0), 2),
+            ];
+        }
+
+        return $map;
+    }
+}
+
 if (!function_exists('ol_examenes_con_resultados_en_orden')) {
     function ol_examenes_con_resultados_en_orden(mysqli $conn, int $ordenId, array $examIds): array
     {
@@ -1550,14 +1878,36 @@ switch ($method) {
             $stmtFast->close();
 
             $allExamIds = [];
+            $allCotizacionIdsFast = [];
             $examIdsByOrder = [];
             foreach ($rowsFast as $rowFast) {
                 $orderId = intval($rowFast['id'] ?? 0);
                 if ($orderId <= 0) {
                     continue;
                 }
+                $cotizIdRow = intval($rowFast['cotizacion_id'] ?? 0);
+                if ($cotizIdRow > 0) {
+                    $allCotizacionIdsFast[] = $cotizIdRow;
+                }
+            }
+
+            $labActivosPorCotizacionFast = ol_cotizacion_examenes_laboratorio_activos($conn, $allCotizacionIdsFast);
+
+            foreach ($rowsFast as $rowFast) {
+                $orderId = intval($rowFast['id'] ?? 0);
+                if ($orderId <= 0) {
+                    continue;
+                }
+                $cotizIdRow = intval($rowFast['cotizacion_id'] ?? 0);
+                $labActivosRow = $cotizIdRow > 0 ? ($labActivosPorCotizacionFast[$cotizIdRow] ?? null) : null;
                 $decoded = json_decode((string)($rowFast['examenes'] ?? '[]'), true);
                 $ids = ol_normalize_examenes_ids(is_array($decoded) ? $decoded : []);
+                if (is_array($labActivosRow)) {
+                    $ids = array_values(array_filter($ids, function ($eid) use ($labActivosRow) {
+                        $eid = intval($eid);
+                        return $eid > 0 && isset($labActivosRow[$eid]);
+                    }));
+                }
                 $examIdsByOrder[$orderId] = $ids;
                 foreach ($ids as $eid) {
                     $allExamIds[] = $eid;
@@ -1997,10 +2347,15 @@ switch ($method) {
         if ($listado_ligero) {
             $allOrderIds = [];
             $allExamIds = [];
+            $allCotizacionIdsLight = [];
             foreach ($rowsBase as $rowBase) {
                 $orderId = intval($rowBase['id'] ?? 0);
                 if ($orderId > 0) {
                     $allOrderIds[] = $orderId;
+                }
+                $cotizIdRow = intval($rowBase['cotizacion_id'] ?? 0);
+                if ($cotizIdRow > 0) {
+                    $allCotizacionIdsLight[] = $cotizIdRow;
                 }
                 $rawExam = json_decode((string)($rowBase['examenes'] ?? '[]'), true);
                 if (is_array($rawExam)) {
@@ -2013,6 +2368,8 @@ switch ($method) {
                 }
             }
 
+            $labActivosPorCotizacionLight = ol_cotizacion_examenes_laboratorio_activos($conn, $allCotizacionIdsLight);
+            $pagoLabPorCotizacionLight = ol_cotizacion_pago_laboratorio_activo($conn, $allCotizacionIdsLight);
             $allExamIds = array_values(array_unique($allExamIds));
             $catalogoLigero = [];
             if (!empty($allExamIds)) {
@@ -2061,6 +2418,9 @@ switch ($method) {
             $ordenesLigero = [];
             foreach ($rowsBase as $row) {
                 $orderId = intval($row['id'] ?? 0);
+                $cotizIdRow = intval($row['cotizacion_id'] ?? 0);
+                $labActivosRow = $cotizIdRow > 0 ? ($labActivosPorCotizacionLight[$cotizIdRow] ?? null) : null;
+                $pagoLabRow = $cotizIdRow > 0 ? ($pagoLabPorCotizacionLight[$cotizIdRow] ?? null) : null;
                 $rawExamenes = json_decode((string)($row['examenes'] ?? '[]'), true);
                 if (!is_array($rawExamenes)) {
                     $rawExamenes = [];
@@ -2072,6 +2432,9 @@ switch ($method) {
                 foreach ($rawExamenes as $it) {
                     $eid = is_array($it) && isset($it['id']) ? intval($it['id']) : intval($it);
                     if ($eid <= 0) {
+                        continue;
+                    }
+                    if (is_array($labActivosRow) && !isset($labActivosRow[$eid])) {
                         continue;
                     }
                     if (!in_array($eid, $examIds, true)) {
@@ -2130,6 +2493,10 @@ switch ($method) {
                     }
                 }
 
+                if ($solo_visibles_panel && empty($examIds)) {
+                    continue;
+                }
+
                 $resultadoRow = $resultadoPorOrden[$orderId] ?? null;
                 $resultadosJson = null;
                 if ($resultadoRow && isset($resultadoRow['resultados'])) {
@@ -2158,6 +2525,18 @@ switch ($method) {
                     $row['estado_visual'] = $progressSummary['completos'] >= $progressSummary['total'] ? 'completado' : 'pendiente';
                 } else {
                     $row['estado_visual'] = $row['estado'];
+                }
+
+                if (is_array($pagoLabRow)) {
+                    $row['cotizacion_pago_id'] = intval($pagoLabRow['cotizacion_pago_id'] ?? 0);
+                    $row['cotizacion_estado_pago'] = (string)($pagoLabRow['cotizacion_estado_pago'] ?? '');
+                    $row['cotizacion_saldo_pendiente_pago'] = round((float)($pagoLabRow['cotizacion_saldo_pendiente_pago'] ?? 0), 2);
+                    $row['cotizacion_total_pagado_pago'] = round((float)($pagoLabRow['cotizacion_total_pagado_pago'] ?? 0), 2);
+                } else {
+                    $row['cotizacion_pago_id'] = $cotizIdRow;
+                    $row['cotizacion_estado_pago'] = (string)($row['cotizacion_estado'] ?? '');
+                    $row['cotizacion_saldo_pendiente_pago'] = round((float)($row['cotizacion_saldo_pendiente'] ?? 0), 2);
+                    $row['cotizacion_total_pagado_pago'] = round((float)($row['cotizacion_total_pagado'] ?? 0), 2);
                 }
 
                 if ($filtro_alerta !== '' && in_array($filtro_alerta, ['vencido', 'por_vencer', 'en_tiempo'], true)) {
@@ -2315,6 +2694,7 @@ switch ($method) {
         $allCotizacionIds = array_values(array_unique($allCotizacionIds));
         $allCobroIds = array_values(array_unique($allCobroIds));
         $allOrderIds = array_values(array_unique($allOrderIds));
+        $labActivosPorCotizacion = ol_cotizacion_examenes_laboratorio_activos($conn, $allCotizacionIds);
 
         $examenCatalogo = [];
         if (!empty($allExamenesIds)) {
@@ -2415,7 +2795,10 @@ switch ($method) {
         if (!empty($allCotizacionIds)) {
             $placeholders = implode(',', array_fill(0, count($allCotizacionIds), '?'));
             $selectSnapshotJson = $hasSnapshotJsonDetalle ? ', snapshot_json' : '';
-            $sqlLabSnap = "SELECT cotizacion_id, servicio_id, descripcion{$selectSnapshotJson} FROM cotizaciones_detalle WHERE servicio_tipo = 'laboratorio' AND cotizacion_id IN ($placeholders) ORDER BY cotizacion_id ASC, id ASC";
+            $whereEstadoLabSnap = ol_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+                ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'"
+                : '';
+            $sqlLabSnap = "SELECT cotizacion_id, servicio_id, descripcion{$selectSnapshotJson} FROM cotizaciones_detalle WHERE servicio_tipo = 'laboratorio' AND cotizacion_id IN ($placeholders){$whereEstadoLabSnap} ORDER BY cotizacion_id ASC, id ASC";
             $stmtLabSnap = $conn->prepare($sqlLabSnap);
             if ($stmtLabSnap) {
                 $stmtLabSnap->bind_param(str_repeat('i', count($allCotizacionIds)), ...$allCotizacionIds);
@@ -2471,13 +2854,21 @@ switch ($method) {
 
         foreach ($rowsBase as $row) {
             $orderId = intval($row['id'] ?? 0);
-            $examenes_ids = $examenesIdsPorOrden[$orderId] ?? [];
+            $cotizId = intval($row['cotizacion_id'] ?? 0);
+            $labActivosRow = $cotizId > 0 ? ($labActivosPorCotizacion[$cotizId] ?? null) : null;
+            $examenes_ids = array_values(array_filter(($examenesIdsPorOrden[$orderId] ?? []), function ($eid) use ($labActivosRow) {
+                $eid = intval($eid);
+                if ($eid <= 0) return false;
+                if (is_array($labActivosRow)) {
+                    return isset($labActivosRow[$eid]);
+                }
+                return true;
+            }));
             $examenes_detalle = [];
             foreach ($examenes_ids as $eid) {
                 $catalogoActual = $examenCatalogo[$eid] ?? null;
                 $snapshotOrden = $examenesRawPorOrden[$orderId][$eid] ?? null;
                 $snapshotCotizacion = null;
-                $cotizId = intval($row['cotizacion_id'] ?? 0);
                 if ($cotizId > 0 && isset($cotizacionSnapshotsPorId[$cotizId][$eid])) {
                     $snapshotCotizacion = $cotizacionSnapshotsPorId[$cotizId][$eid];
                 }
@@ -2518,6 +2909,10 @@ switch ($method) {
                 }
 
                 $examenes_detalle[] = $detalleBase;
+            }
+
+            if ($solo_visibles_panel && empty($examenes_ids)) {
+                continue;
             }
 
             $derivadoMap = [];

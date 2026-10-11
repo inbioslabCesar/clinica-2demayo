@@ -23,7 +23,12 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
   const egreso_electronico = egreso_electronico_backend > 0 ? egreso_electronico_backend : egreso_electronico_datos;
   const total_egresos = totalesBackend?.total_egresos ?? (egreso_honorarios + egreso_lab_ref + egreso_operativo);
   const efectivo_esperado = Number(totalesBackend?.efectivo_esperado ?? datos.efectivo_esperado ?? 0);
-  const virtual_esperado = Number(totalesBackend?.virtual_esperado ?? datos.virtual_esperado ?? 0);
+  const virtual_esperado_neto = Number(totalesBackend?.virtual_esperado ?? datos.virtual_esperado ?? 0);
+  const virtual_esperado_cuadre = Number(
+    totalesBackend?.virtual_esperado_cuadre
+      ?? datos.virtual_esperado_cuadre
+      ?? Math.max(0, virtual_esperado_neto)
+  );
   const virtual_cobrado = Number(totalesBackend?.virtual_cobrado ?? datos.virtual_cobrado ?? (total_yape + total_plin + total_tarjetas + total_transferencias));
   const egresos_virtuales_clinica = Number(totalesBackend?.egresos_virtuales_clinica ?? datos.egresos_virtuales_clinica ?? 0);
   const monto_contado = Number(datos.monto_contado ?? 0);
@@ -31,7 +36,7 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
     ? Number(datos.monto_virtual_contado)
     : null;
   const diferencia_efectivo = monto_contado - efectivo_esperado;
-  const diferencia_virtual = monto_virtual_contado === null ? null : (monto_virtual_contado - virtual_esperado);
+  const diferencia_virtual = monto_virtual_contado === null ? null : (monto_virtual_contado - virtual_esperado_cuadre);
 
   // Lógica para explicación automática de diferencia negativa
   let explicacionDiferencia = "";
@@ -225,7 +230,8 @@ function mostrarEtiquetaImpresion(datos, totalesBackend = null, clinicBrand = nu
       <div class="t-row"><span class="label">Dif. efectivo</span><span class="value">S/ ${diferencia_efectivo.toFixed(2)}</span></div>
       <div class="t-row"><span class="label">Virtual cobrado</span><span class="value">S/ ${virtual_cobrado.toFixed(2)}</span></div>
       <div class="t-row"><span class="label">Egr. virtual clinica</span><span class="value">S/ ${egresos_virtuales_clinica.toFixed(2)}</span></div>
-      <div class="t-row"><span class="label">Virtual esperado</span><span class="value">S/ ${virtual_esperado.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Virtual neto</span><span class="value">S/ ${virtual_esperado_neto.toFixed(2)}</span></div>
+      <div class="t-row"><span class="label">Virtual esperado (cuadre)</span><span class="value">S/ ${virtual_esperado_cuadre.toFixed(2)}</span></div>
       <div class="t-row"><span class="label">Virtual contado</span><span class="value">${monto_virtual_contado === null ? '-' : `S/ ${monto_virtual_contado.toFixed(2)}`}</span></div>
       <div class="t-row"><span class="label">Dif. virtual</span><span class="value">${diferencia_virtual === null ? '-' : `S/ ${diferencia_virtual.toFixed(2)}`}</span></div>
 
@@ -562,11 +568,12 @@ export default function CerrarCajaView() {
   const efectivoEsperado = Number(resumen.monto_apertura || 0) + efectivoCobrado - egresosEfectivo;
   const virtualCobrado = Number(resumen?.virtual_cobrado || 0);
   const egresosVirtualesClinica = Number(resumen?.egresos_virtuales_clinica || 0);
-  const virtualEsperado = Number(resumen?.virtual_esperado ?? (virtualCobrado - egresosVirtualesClinica));
+  const virtualEsperadoNeto = Number(resumen?.virtual_esperado ?? (virtualCobrado - egresosVirtualesClinica));
+  const virtualEsperadoCuadre = Number(resumen?.virtual_esperado_cuadre ?? Math.max(0, virtualEsperadoNeto));
 
   // Diferencia: efectivo contado - efectivo esperado
   const diferencia = parseFloat(montoContado || 0) - efectivoEsperado;
-  const diferenciaVirtual = parseFloat(montoVirtualContado || 0) - virtualEsperado;
+  const diferenciaVirtual = parseFloat(montoVirtualContado || 0) - virtualEsperadoCuadre;
 
   return (
     <>
@@ -666,12 +673,18 @@ export default function CerrarCajaView() {
               </span>
             </div>
             <div className="flex-1 bg-purple-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
-              <span className="text-xs text-purple-700 font-semibold">Virtual esperado</span>
-              <span className="font-bold text-purple-800 text-3xl">S/ {virtualEsperado.toFixed(2)}</span>
+              <span className="text-xs text-purple-700 font-semibold">Virtual esperado (cuadre)</span>
+              <span className="font-bold text-purple-800 text-3xl">S/ {virtualEsperadoCuadre.toFixed(2)}</span>
               <span className="text-xs text-gray-700 mt-1">(Cobros virtuales - egresos virtuales de clínica)</span>
               <span className="text-xs text-gray-700 mt-1">Cobros virtuales: S/ {virtualCobrado.toFixed(2)}</span>
               <span className="text-xs text-gray-700 mt-1">Egresos virtuales clínica: S/ {egresosVirtualesClinica.toFixed(2)}</span>
               <span className="text-xs text-gray-700 mt-1">Externos: S/ {Number(resumen.egresos_externos || 0).toFixed(2)}</span>
+              <span className="text-xs text-gray-700 mt-1">Virtual neto del día: S/ {virtualEsperadoNeto.toFixed(2)}</span>
+              {virtualEsperadoNeto < 0 && (
+                <span className="text-[11px] text-amber-700 mt-2 text-center font-semibold">
+                  Hubo más devoluciones virtuales que cobros virtuales (saldo neto negativo). Para cuadre operativo, el virtual contado esperado es S/ 0.00.
+                </span>
+              )}
             </div>
             <div className="flex-1 bg-green-100 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg">
               <span className="text-xs text-green-700 font-semibold">Efectivo contado</span>
@@ -707,6 +720,11 @@ export default function CerrarCajaView() {
                 placeholder="S/ 0.00"
               />
               <span className="text-xs text-gray-600 mt-2">Suma real en Yape/Plin/Tarjeta/Transferencia</span>
+              {virtualEsperadoNeto < 0 && (
+                <span className="text-[11px] text-amber-700 mt-1 text-center">
+                  Recomendado para este cierre: ingresar S/ 0.00.
+                </span>
+              )}
             </div>
             <div className={`flex-1 rounded-xl px-6 py-5 flex flex-col items-center shadow-lg ${montoVirtualContado === "" ? "bg-gray-100" : diferenciaVirtual === 0 ? "bg-green-200" : diferenciaVirtual > 0 ? "bg-blue-100" : "bg-red-100"}`}>
               <span className="text-xs font-semibold mb-1">Diferencia virtual</span>

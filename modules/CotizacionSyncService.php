@@ -2,6 +2,24 @@
 
 class CotizacionSyncService
 {
+    private static function normalizarMetodoPago($metodoRaw)
+    {
+        $metodo = strtolower(trim((string)$metodoRaw));
+        if ($metodo === '') {
+            return '';
+        }
+        if (in_array($metodo, ['tarjeta_debito', 'tarjeta_credito', 'visa', 'mastercard'], true)) {
+            return 'tarjeta';
+        }
+        if ($metodo === 'transferencia_bancaria' || $metodo === 'transferencia bancaria') {
+            return 'transferencia';
+        }
+        if (in_array($metodo, ['efectivo', 'yape', 'plin', 'transferencia', 'tarjeta', 'deposito', 'cheque', 'otros'], true)) {
+            return $metodo;
+        }
+        return 'otros';
+    }
+
     private static function tableExists($conn, $table)
     {
         $stmt = $conn->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1");
@@ -459,7 +477,7 @@ class CotizacionSyncService
         ];
     }
 
-    public static function reversarMontoParcialPorCotizacion($conn, $cotizacionId, $servicioTipo, $monto, $usuarioId, $motivo)
+    public static function reversarMontoParcialPorCotizacion($conn, $cotizacionId, $servicioTipo, $monto, $usuarioId, $motivo, $metodoDevolucion = '', $servicioDescripcion = '')
     {
         $monto = round((float)$monto, 2);
         if ($monto <= 0) {
@@ -507,7 +525,11 @@ class CotizacionSyncService
         }
 
         $tag = '[REVERSA_PARCIAL cotizacion_id=' . (int)$cotizacionId . ']';
-        $descripcion = trim(($base['descripcion'] ?? 'Ingreso') . ' ' . $tag . ' Motivo: ' . $motivo);
+        $descripcionBase = trim((string)$servicioDescripcion);
+        if ($descripcionBase === '') {
+            $descripcionBase = trim((string)($base['descripcion'] ?? 'Ingreso'));
+        }
+        $descripcion = trim($descripcionBase . ' ' . $tag . ' Motivo: ' . $motivo);
 
         $stmtIns = $conn->prepare(
             "INSERT INTO ingresos_diarios (
@@ -523,7 +545,10 @@ class CotizacionSyncService
         $cajaId = isset($base['caja_id']) ? (int)$base['caja_id'] : null;
         $area = (string)($base['area'] ?? 'Ajuste');
         $montoNegativo = -1 * $montoAplicado;
-        $metodoPago = (string)($base['metodo_pago'] ?? 'otros');
+        $metodoPago = self::normalizarMetodoPago($metodoDevolucion);
+        if ($metodoPago === '') {
+            $metodoPago = self::normalizarMetodoPago((string)($base['metodo_pago'] ?? 'otros'));
+        }
         $referenciaId = isset($base['referencia_id']) ? (int)$base['referencia_id'] : null;
         $referenciaTabla = (string)($base['referencia_tabla'] ?? 'cobros');
         $pacienteId = isset($base['paciente_id']) ? (int)$base['paciente_id'] : null;

@@ -2016,7 +2016,61 @@ function obtener_pagos_cotizacion_rows($conn, $cotizacionId) {
     }
     $stmt->bind_param("i", $cotizacionId);
     $stmt->execute();
-    return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $detallesPorId = [];
+    if (table_exists($conn, 'cotizaciones_detalle')) {
+        $stmtDet = $conn->prepare("SELECT id, servicio_tipo, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = ?");
+        if ($stmtDet) {
+            $stmtDet->bind_param("i", $cotizacionId);
+            $stmtDet->execute();
+            $rowsDet = $stmtDet->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtDet->close();
+            foreach ($rowsDet as $rowDet) {
+                $idDet = (int)($rowDet['id'] ?? 0);
+                if ($idDet <= 0) continue;
+                $detallesPorId[$idDet] = [
+                    'servicio_tipo' => (string)($rowDet['servicio_tipo'] ?? ''),
+                    'descripcion' => trim((string)($rowDet['descripcion'] ?? '')),
+                ];
+            }
+        }
+    }
+
+    foreach ($rows as &$rowPago) {
+        $tipoMov = strtolower(trim((string)($rowPago['tipo_movimiento'] ?? '')));
+        if ($tipoMov !== 'devolucion') continue;
+
+        $descripcion = trim((string)($rowPago['descripcion'] ?? ''));
+        $metodoActual = normalizar_metodo_pago_cotizacion($rowPago['metodo_pago'] ?? '');
+        if ($metodoActual === '' && $descripcion !== '') {
+            if (preg_match('/metodo devolucion:\s*([a-z0-9_]+)/iu', $descripcion, $mMetodo)) {
+                $metodoParseado = normalizar_metodo_pago_cotizacion($mMetodo[1] ?? '');
+                if ($metodoParseado !== '') {
+                    $rowPago['metodo_pago'] = $metodoParseado;
+                }
+            }
+        }
+        if ($descripcion === '' || stripos($descripcion, 'Servicio:') !== false) continue;
+
+        $detalleId = 0;
+        if (preg_match('/\bítem\s*#\s*(\d+)/iu', $descripcion, $mId)) {
+            $detalleId = (int)($mId[1] ?? 0);
+        } elseif (preg_match('/#\s*(\d+)/', $descripcion, $mIdAlt)) {
+            $detalleId = (int)($mIdAlt[1] ?? 0);
+        }
+        if ($detalleId <= 0 || !isset($detallesPorId[$detalleId])) continue;
+
+        $detInfo = $detallesPorId[$detalleId];
+        $tipoLabel = etiqueta_tipo_servicio_cotizacion($detInfo['servicio_tipo'] ?? '');
+        $itemDescripcion = trim((string)($detInfo['descripcion'] ?? ''));
+        $refServicio = $itemDescripcion !== '' ? ($tipoLabel . ' - ' . $itemDescripcion) : $tipoLabel;
+        $rowPago['descripcion'] = $descripcion . ' | Servicio: ' . $refServicio;
+    }
+    unset($rowPago);
+
+    return $rows;
 }
 
 function buscar_cotizacion_pendiente_farmacia($conn, $pacienteId) {
@@ -2996,6 +3050,21 @@ function normalizar_tipo_servicio_cotizacion($servicioTipo) {
     if ($tipo === 'operaciones') return 'operacion';
     if ($tipo === 'procedimientos') return 'procedimiento';
     return $tipo;
+}
+
+function etiqueta_tipo_servicio_cotizacion($servicioTipo) {
+    $tipo = normalizar_tipo_servicio_cotizacion($servicioTipo);
+    if ($tipo === 'consulta') return 'Consulta';
+    if ($tipo === 'laboratorio') return 'Laboratorio';
+    if ($tipo === 'ecografia') return 'Ecografia';
+    if ($tipo === 'farmacia') return 'Farmacia';
+    if ($tipo === 'rayosx') return 'Rayos X';
+    if ($tipo === 'procedimiento') return 'Procedimiento';
+    if ($tipo === 'operacion') return 'Operacion';
+    if ($tipo === 'paquete') return 'Paquete';
+    if ($tipo === 'perfil') return 'Perfil';
+    if ($tipo === '') return 'Servicio';
+    return ucfirst($tipo);
 }
 
 function expandir_detalles_paquetes_cotizacion($detalles) {
@@ -5187,6 +5256,42 @@ function editar_cotizacion($conn, $data) {
                 ], 409);
             }
         }
+        $esAdenda = (int)($cot['es_adenda'] ?? 0) === 1 || (int)($cot['cotizacion_padre_id'] ?? 0) > 0;
+        if ($esAdenda) {
+            $cotizacionBaseId = (int)($cot['cotizacion_padre_id'] ?? 0);
+            if ($cotizacionBaseId <= 0) {
+                $cotizacionBaseId = $cotizacionId;
+            }
+
+            $consultaBaseId = (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionBaseId);
+            if ($consultaBaseId <= 0) {
+                $consultaBaseId = (int)resolver_consulta_referente_por_cotizacion($conn, $cotizacionBaseId);
+            }
+            $medicoBaseId = 0;
+            $fechaBase = null;
+            $horaBase = null;
+
+            if ($consultaBaseId > 0) {
+                $programacionBase = obtener_programacion_desde_consulta($conn, $consultaBaseId);
+                $medicoBaseId = (int)($programacionBase['medico_id'] ?? 0);
+                $fechaBase = $programacionBase['fecha_programada'] ?? null;
+                $horaBase = $programacionBase['hora_programada'] ?? null;
+            } else {
+                $contextoBase = resolver_contexto_clinico_base_cotizacion($conn, $cotizacionBaseId);
+                $consultaBaseId = (int)($contextoBase['consulta_id'] ?? 0);
+                $medicoBaseId = (int)($contextoBase['medico_id'] ?? 0);
+                $fechaBase = $contextoBase['fecha_programada'] ?? null;
+                $horaBase = $contextoBase['hora_programada'] ?? null;
+            }
+
+            $detalles = cotizacion_alinear_detalles_adenda_hora_base(
+                $detalles,
+                $consultaBaseId,
+                $medicoBaseId,
+                $fechaBase,
+                $horaBase
+            );
+        }
 
         $detallesAntes = cargar_detalles_cotizacion($conn, $cotizacionId);
 
@@ -5305,7 +5410,9 @@ function editar_cotizacion($conn, $data) {
         try {
             $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
             if ($bloqueId > 0) {
-                bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+                if (!$esAdenda) {
+                    bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
+                }
                 bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
             }
         } catch (Throwable $bloqueError) {
@@ -5563,6 +5670,59 @@ function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, 
     return $delta;
 }
 
+function cotizacion_alinear_detalles_adenda_hora_base($detalles, $consultaId, $medicoId, $fechaBase, $horaBase) {
+    $consultaId = (int)$consultaId;
+    $medicoId = (int)$medicoId;
+    $fechaBase = normalizar_fecha_programada_agenda($fechaBase);
+    $horaBase = normalizar_hora_programada_agenda($horaBase);
+    if ($consultaId <= 0 || $fechaBase === null || $horaBase === null) {
+        return $detalles;
+    }
+
+    $tiposAgendables = [
+        'laboratorio' => true,
+        'ecografia' => true,
+        'rayosx' => true,
+        'rayos_x' => true,
+        'rx' => true,
+        'imagenologia' => true,
+        'tomografia' => true,
+        'procedimiento' => true,
+        'procedimientos' => true,
+        'operacion' => true,
+        'operaciones' => true,
+        'hospitalizacion' => true,
+    ];
+
+    $alineados = [];
+    foreach ((array)$detalles as $detalle) {
+        if (!is_array($detalle)) {
+            continue;
+        }
+        $item = $detalle;
+        $tipo = normalizar_tipo_servicio_cotizacion($item['servicio_tipo'] ?? '');
+        if (!isset($tiposAgendables[$tipo])) {
+            $alineados[] = $item;
+            continue;
+        }
+
+        $item['consulta_id'] = $consultaId;
+        if ((int)($item['medico_id'] ?? 0) <= 0 && $medicoId > 0) {
+            $item['medico_id'] = $medicoId;
+        }
+
+        // Regla de adendas: mantener los nuevos servicios del episodio en la hora de la consulta raíz.
+        $item['fecha_programada'] = $fechaBase;
+        $item['hora_programada'] = $horaBase;
+        $item['fecha_programada_servicio'] = $fechaBase;
+        $item['hora_programada_servicio'] = $horaBase;
+
+        $alineados[] = $item;
+    }
+
+    return $alineados;
+}
+
 function crear_adenda_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
@@ -5622,6 +5782,38 @@ function crear_adenda_cotizacion($conn, $data) {
             throw new Exception('No hay servicios nuevos para adicionar. Si requiere repetir una prueba ya realizada/pagada, registre una nueva cotización.', 409);
         }
 
+        $consultaOrigenId = (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionId);
+        if ($consultaOrigenId <= 0) {
+            $consultaOrigenId = (int)resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
+        }
+        if ($consultaOrigenId <= 0 && $raizId > 0 && $raizId !== $cotizacionId) {
+            $consultaOrigenId = (int)resolver_consulta_referente_por_cotizacion($conn, $raizId);
+        }
+
+        $medicoOrigenId = 0;
+        $fechaProgramadaBase = null;
+        $horaProgramadaBase = null;
+        if ($consultaOrigenId > 0) {
+            $programacionBase = obtener_programacion_desde_consulta($conn, $consultaOrigenId);
+            $medicoOrigenId = (int)($programacionBase['medico_id'] ?? 0);
+            $fechaProgramadaBase = $programacionBase['fecha_programada'] ?? null;
+            $horaProgramadaBase = $programacionBase['hora_programada'] ?? null;
+        } else {
+            $contextoBase = resolver_contexto_clinico_base_cotizacion($conn, $raizId > 0 ? $raizId : $cotizacionId);
+            $consultaOrigenId = (int)($contextoBase['consulta_id'] ?? 0);
+            $medicoOrigenId = (int)($contextoBase['medico_id'] ?? 0);
+            $fechaProgramadaBase = $contextoBase['fecha_programada'] ?? null;
+            $horaProgramadaBase = $contextoBase['hora_programada'] ?? null;
+        }
+
+        $detallesDelta = cotizacion_alinear_detalles_adenda_hora_base(
+            $detallesDelta,
+            $consultaOrigenId,
+            $medicoOrigenId,
+            $fechaProgramadaBase,
+            $horaProgramadaBase
+        );
+
         $total = total_detalles($detallesDelta);
         $observacionesBase = $data['observaciones'] ?? '';
         $obs = trim("ADENDA de #{$cotizacionId}. {$observacionesBase}");
@@ -5666,18 +5858,7 @@ function crear_adenda_cotizacion($conn, $data) {
 
         insertar_detalles_cotizacion($conn, $nuevaId, $detallesDelta, $usuarioId, $motivo, $fechaOperacion);
 
-        $consultaOrigenId = (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionId);
-        if ($consultaOrigenId <= 0) {
-            $consultaOrigenId = (int)resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
-        }
-        if ($consultaOrigenId <= 0 && $raizId > 0 && $raizId !== $cotizacionId) {
-            $consultaOrigenId = (int)resolver_consulta_referente_por_cotizacion($conn, $raizId);
-        }
-        if ($consultaOrigenId <= 0) {
-            $contextoBase = resolver_contexto_clinico_base_cotizacion($conn, $raizId > 0 ? $raizId : $cotizacionId);
-            $consultaOrigenId = (int)($contextoBase['consulta_id'] ?? 0);
-            $medicoOrigenId = (int)($contextoBase['medico_id'] ?? 0);
-        } else {
+        if ($consultaOrigenId > 0 && $medicoOrigenId <= 0) {
             $medicoOrigenId = (int)obtener_medico_id_desde_consulta($conn, $consultaOrigenId);
         }
 
@@ -5742,7 +5923,6 @@ function crear_adenda_cotizacion($conn, $data) {
             ]);
             if ($bloqueId > 0) {
                 bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
-                bloque_atencion_optimizar_agenda($conn, $bloqueId, $usuarioId);
                 bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);
             }
         } catch (Throwable $bloqueError) {
@@ -6847,9 +7027,10 @@ function devolucion_item_cotizacion($conn, $data) {
     $cantidadEliminar = isset($data['cantidad_eliminar']) ? (int)$data['cantidad_eliminar'] : 0;
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
     $motivo = trim((string)($data['motivo'] ?? ''));
+    $metodoDevolucion = normalizar_metodo_pago_cotizacion($data['metodo_devolucion'] ?? '');
 
-    if (!$cotizacionId || !$detalleId || !$usuarioId || $cantidadEliminar <= 0 || $motivo === '') {
-        respond(['success' => false, 'error' => 'Datos incompletos para devolución/ajuste'], 400);
+    if (!$cotizacionId || !$detalleId || !$usuarioId || $cantidadEliminar <= 0 || $motivo === '' || $metodoDevolucion === '') {
+        respond(['success' => false, 'error' => 'Datos incompletos para devolución/ajuste (incluye método de devolución)'], 400);
     }
 
     if (!column_exists($conn, 'cotizaciones', 'total_pagado') || !column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
@@ -6914,6 +7095,274 @@ function devolucion_item_cotizacion($conn, $data) {
         }
         $stmtUpdDet->execute();
 
+        $agendaEventosCancelados = 0;
+        $honorariosPorCobrarAjustados = 0;
+        $honorariosMovAjustados = 0;
+        $honorariosPagadosSinReversa = 0;
+        $marcaAjuste = " | AJUSTE DEVOLUCION COTIZACION #{$cotizacionId} ITEM #{$detalleId}: {$motivo}";
+
+        if ($cantidadNueva <= 0
+            && table_exists($conn, 'agenda_servicios_cotizacion')
+            && column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+            && column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+            $setAgenda = ["estado_evento = 'cancelado'"];
+            $usaAgendaUpdatedBy = column_exists($conn, 'agenda_servicios_cotizacion', 'updated_by');
+            $usaAgendaObs = column_exists($conn, 'agenda_servicios_cotizacion', 'observaciones');
+            $usaAgendaUpdatedAt = column_exists($conn, 'agenda_servicios_cotizacion', 'updated_at');
+            if ($usaAgendaUpdatedBy) {
+                $setAgenda[] = 'updated_by = ?';
+            }
+            if ($usaAgendaObs) {
+                $setAgenda[] = "observaciones = CONCAT(COALESCE(observaciones, ''), ?)";
+            }
+            if ($usaAgendaUpdatedAt) {
+                $setAgenda[] = 'updated_at = NOW()';
+            }
+            $sqlAgenda = "UPDATE agenda_servicios_cotizacion
+                          SET " . implode(', ', $setAgenda) . "
+                          WHERE cotizacion_id = ?
+                            AND cotizacion_detalle_id = ?
+                            AND LOWER(TRIM(COALESCE(estado_evento, ''))) IN ('pendiente', 'confirmado', 'reprogramado')";
+            $stmtAgenda = $conn->prepare($sqlAgenda);
+            if ($stmtAgenda) {
+                if ($usaAgendaUpdatedBy && $usaAgendaObs) {
+                    $stmtAgenda->bind_param('isii', $usuarioId, $marcaAjuste, $cotizacionId, $detalleId);
+                } elseif ($usaAgendaUpdatedBy) {
+                    $stmtAgenda->bind_param('iii', $usuarioId, $cotizacionId, $detalleId);
+                } elseif ($usaAgendaObs) {
+                    $stmtAgenda->bind_param('sii', $marcaAjuste, $cotizacionId, $detalleId);
+                } else {
+                    $stmtAgenda->bind_param('ii', $cotizacionId, $detalleId);
+                }
+                $stmtAgenda->execute();
+                $agendaEventosCancelados = max(0, (int)$stmtAgenda->affected_rows);
+                $stmtAgenda->close();
+            }
+        }
+
+        $factorCantidad = $cantidadActual > 0 ? max(0, ((float)$cantidadNueva / (float)$cantidadActual)) : 0;
+        $honorarioIdsAjustar = [];
+        if (table_exists($conn, 'honorarios_por_cobrar')) {
+            $hpcRows = [];
+            $usaOrigenUidHpc = column_exists($conn, 'honorarios_por_cobrar', 'origen_uid');
+            $tarifaDetalle = isset($det['servicio_id']) ? (int)$det['servicio_id'] : 0;
+            $tipoDetalle = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
+            $descDetalle = strtolower(trim((string)($det['descripcion'] ?? '')));
+
+            if ($usaOrigenUidHpc) {
+                $origenUid = 'cot:' . $cotizacionId . '|det:' . $detalleId;
+                $stmtHpcSel = $conn->prepare("SELECT id, estado_consolidacion, honorario_movimiento_id_final, tarifa_total, monto_clinica, monto_medico
+                                              FROM honorarios_por_cobrar
+                                              WHERE cotizacion_id = ?
+                                                AND origen_uid = ?
+                                                AND LOWER(TRIM(COALESCE(estado_consolidacion, ''))) <> 'anulado'
+                                              ORDER BY id DESC");
+                if ($stmtHpcSel) {
+                    $stmtHpcSel->bind_param('is', $cotizacionId, $origenUid);
+                    $stmtHpcSel->execute();
+                    $hpcRows = $stmtHpcSel->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtHpcSel->close();
+                }
+            }
+
+            if (empty($hpcRows) && $tarifaDetalle > 0) {
+                $stmtHpcSelAlt = $conn->prepare("SELECT id, estado_consolidacion, honorario_movimiento_id_final, tarifa_total, monto_clinica, monto_medico
+                                                 FROM honorarios_por_cobrar
+                                                 WHERE cotizacion_id = ?
+                                                   AND COALESCE(tarifa_id, 0) = ?
+                                                   AND LOWER(TRIM(COALESCE(tipo_servicio, ''))) = ?
+                                                   AND LOWER(TRIM(COALESCE(descripcion, ''))) = ?
+                                                   AND LOWER(TRIM(COALESCE(estado_consolidacion, ''))) <> 'anulado'
+                                                 ORDER BY id DESC");
+                if ($stmtHpcSelAlt) {
+                    $stmtHpcSelAlt->bind_param('iiss', $cotizacionId, $tarifaDetalle, $tipoDetalle, $descDetalle);
+                    $stmtHpcSelAlt->execute();
+                    $hpcRows = $stmtHpcSelAlt->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtHpcSelAlt->close();
+                }
+            }
+
+            foreach ($hpcRows as $hpcRow) {
+                $hpcId = (int)($hpcRow['id'] ?? 0);
+                if ($hpcId <= 0) {
+                    continue;
+                }
+                $hmFinalId = (int)($hpcRow['honorario_movimiento_id_final'] ?? 0);
+                if ($hmFinalId > 0) {
+                    $honorarioIdsAjustar[] = $hmFinalId;
+                }
+
+                $stmtHmByObs = $conn->prepare("SELECT id
+                                               FROM honorarios_medicos_movimientos
+                                               WHERE observaciones LIKE ?");
+                if ($stmtHmByObs) {
+                    $likeHpc = '%[hpc_id=' . $hpcId . ']%';
+                    $stmtHmByObs->bind_param('s', $likeHpc);
+                    $stmtHmByObs->execute();
+                    $rowsHmObs = $stmtHmByObs->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtHmByObs->close();
+                    foreach ($rowsHmObs as $rowHmObs) {
+                        $hmIdObs = (int)($rowHmObs['id'] ?? 0);
+                        if ($hmIdObs > 0) {
+                            $honorarioIdsAjustar[] = $hmIdObs;
+                        }
+                    }
+                }
+
+                if ($cantidadNueva <= 0) {
+                    $setHpc = ["estado_consolidacion = 'anulado'"];
+                    $usaAnuladoAt = column_exists($conn, 'honorarios_por_cobrar', 'anulado_at');
+                    $usaAnuladoPor = column_exists($conn, 'honorarios_por_cobrar', 'anulado_por');
+                    $usaMotivoAnul = column_exists($conn, 'honorarios_por_cobrar', 'motivo_anulacion');
+                    $usaObsHpc = column_exists($conn, 'honorarios_por_cobrar', 'observaciones');
+                    $usaUpdatedAtHpc = column_exists($conn, 'honorarios_por_cobrar', 'updated_at');
+                    if ($usaAnuladoAt) {
+                        $setHpc[] = 'anulado_at = NOW()';
+                    }
+                    if ($usaAnuladoPor) {
+                        $setHpc[] = 'anulado_por = ?';
+                    }
+                    if ($usaMotivoAnul) {
+                        $setHpc[] = 'motivo_anulacion = ?';
+                    }
+                    if ($usaObsHpc) {
+                        $setHpc[] = "observaciones = CONCAT(COALESCE(observaciones, ''), ?)";
+                    }
+                    if ($usaUpdatedAtHpc) {
+                        $setHpc[] = 'updated_at = NOW()';
+                    }
+                    $sqlUpHpc = "UPDATE honorarios_por_cobrar
+                                 SET " . implode(', ', $setHpc) . "
+                                 WHERE id = ?
+                                   AND LOWER(TRIM(COALESCE(estado_consolidacion, ''))) <> 'anulado'";
+                    $stmtUpHpc = $conn->prepare($sqlUpHpc);
+                    if ($stmtUpHpc) {
+                        if ($usaAnuladoPor && $usaMotivoAnul && $usaObsHpc) {
+                            $stmtUpHpc->bind_param('issi', $usuarioId, $motivo, $marcaAjuste, $hpcId);
+                        } elseif ($usaAnuladoPor && $usaMotivoAnul) {
+                            $stmtUpHpc->bind_param('isi', $usuarioId, $motivo, $hpcId);
+                        } elseif ($usaAnuladoPor && $usaObsHpc) {
+                            $stmtUpHpc->bind_param('isi', $usuarioId, $marcaAjuste, $hpcId);
+                        } elseif ($usaMotivoAnul && $usaObsHpc) {
+                            $stmtUpHpc->bind_param('ssi', $motivo, $marcaAjuste, $hpcId);
+                        } elseif ($usaAnuladoPor) {
+                            $stmtUpHpc->bind_param('ii', $usuarioId, $hpcId);
+                        } elseif ($usaMotivoAnul) {
+                            $stmtUpHpc->bind_param('si', $motivo, $hpcId);
+                        } elseif ($usaObsHpc) {
+                            $stmtUpHpc->bind_param('si', $marcaAjuste, $hpcId);
+                        } else {
+                            $stmtUpHpc->bind_param('i', $hpcId);
+                        }
+                        $stmtUpHpc->execute();
+                        if ((int)$stmtUpHpc->affected_rows > 0) {
+                            $honorariosPorCobrarAjustados++;
+                        }
+                        $stmtUpHpc->close();
+                    }
+                } else {
+                    $tarifaHpcNueva = round(((float)($hpcRow['tarifa_total'] ?? 0)) * $factorCantidad, 2);
+                    $montoCliHpcNuevo = round(((float)($hpcRow['monto_clinica'] ?? 0)) * $factorCantidad, 2);
+                    $montoMedHpcNuevo = round(((float)($hpcRow['monto_medico'] ?? 0)) * $factorCantidad, 2);
+                    $usaObsHpc = column_exists($conn, 'honorarios_por_cobrar', 'observaciones');
+                    $usaUpdatedAtHpc = column_exists($conn, 'honorarios_por_cobrar', 'updated_at');
+                    $sqlUpHpc = "UPDATE honorarios_por_cobrar
+                                 SET tarifa_total = ?, monto_clinica = ?, monto_medico = ?"
+                        . ($usaObsHpc ? ", observaciones = CONCAT(COALESCE(observaciones, ''), ?)" : "")
+                        . ($usaUpdatedAtHpc ? ", updated_at = NOW()" : "")
+                        . " WHERE id = ?
+                            AND LOWER(TRIM(COALESCE(estado_consolidacion, ''))) <> 'anulado'";
+                    $stmtUpHpc = $conn->prepare($sqlUpHpc);
+                    if ($stmtUpHpc) {
+                        if ($usaObsHpc) {
+                            $stmtUpHpc->bind_param('dddsi', $tarifaHpcNueva, $montoCliHpcNuevo, $montoMedHpcNuevo, $marcaAjuste, $hpcId);
+                        } else {
+                            $stmtUpHpc->bind_param('dddi', $tarifaHpcNueva, $montoCliHpcNuevo, $montoMedHpcNuevo, $hpcId);
+                        }
+                        $stmtUpHpc->execute();
+                        if ((int)$stmtUpHpc->affected_rows > 0) {
+                            $honorariosPorCobrarAjustados++;
+                        }
+                        $stmtUpHpc->close();
+                    }
+                }
+            }
+        }
+
+        $honorarioIdsAjustar = array_values(array_unique(array_filter(array_map('intval', $honorarioIdsAjustar), function ($id) {
+            return $id > 0;
+        })));
+        if (!empty($honorarioIdsAjustar) && table_exists($conn, 'honorarios_medicos_movimientos')) {
+            $usaObsHm = column_exists($conn, 'honorarios_medicos_movimientos', 'observaciones');
+            foreach ($honorarioIdsAjustar as $hmId) {
+                $stmtHmSel = $conn->prepare("SELECT id, estado_pago_medico, tarifa_total, monto_clinica, monto_medico
+                                             FROM honorarios_medicos_movimientos
+                                             WHERE id = ?
+                                             LIMIT 1");
+                if (!$stmtHmSel) {
+                    continue;
+                }
+                $stmtHmSel->bind_param('i', $hmId);
+                $stmtHmSel->execute();
+                $hmRow = $stmtHmSel->get_result()->fetch_assoc();
+                $stmtHmSel->close();
+                if (!$hmRow) {
+                    continue;
+                }
+                $estadoHm = strtolower(trim((string)($hmRow['estado_pago_medico'] ?? 'pendiente')));
+                if ($estadoHm === 'pagado') {
+                    $honorariosPagadosSinReversa++;
+                    continue;
+                }
+                if ($estadoHm === 'cancelado') {
+                    continue;
+                }
+
+                if ($cantidadNueva <= 0) {
+                    $sqlHmUp = "UPDATE honorarios_medicos_movimientos
+                                SET estado_pago_medico = 'cancelado'"
+                        . ($usaObsHm ? ", observaciones = CONCAT(COALESCE(observaciones, ''), ?)" : "")
+                        . " WHERE id = ?
+                            AND LOWER(TRIM(COALESCE(estado_pago_medico, ''))) = 'pendiente'";
+                    $stmtHmUp = $conn->prepare($sqlHmUp);
+                    if ($stmtHmUp) {
+                        if ($usaObsHm) {
+                            $stmtHmUp->bind_param('si', $marcaAjuste, $hmId);
+                        } else {
+                            $stmtHmUp->bind_param('i', $hmId);
+                        }
+                        $stmtHmUp->execute();
+                        if ((int)$stmtHmUp->affected_rows > 0) {
+                            $honorariosMovAjustados++;
+                        }
+                        $stmtHmUp->close();
+                    }
+                } else {
+                    $tarifaHmNueva = round(((float)($hmRow['tarifa_total'] ?? 0)) * $factorCantidad, 2);
+                    $montoCliHmNuevo = round(((float)($hmRow['monto_clinica'] ?? 0)) * $factorCantidad, 2);
+                    $montoMedHmNuevo = round(((float)($hmRow['monto_medico'] ?? 0)) * $factorCantidad, 2);
+                    $sqlHmUp = "UPDATE honorarios_medicos_movimientos
+                                SET tarifa_total = ?, monto_clinica = ?, monto_medico = ?"
+                        . ($usaObsHm ? ", observaciones = CONCAT(COALESCE(observaciones, ''), ?)" : "")
+                        . " WHERE id = ?
+                            AND LOWER(TRIM(COALESCE(estado_pago_medico, ''))) = 'pendiente'";
+                    $stmtHmUp = $conn->prepare($sqlHmUp);
+                    if ($stmtHmUp) {
+                        if ($usaObsHm) {
+                            $stmtHmUp->bind_param('dddsi', $tarifaHmNueva, $montoCliHmNuevo, $montoMedHmNuevo, $marcaAjuste, $hmId);
+                        } else {
+                            $stmtHmUp->bind_param('dddi', $tarifaHmNueva, $montoCliHmNuevo, $montoMedHmNuevo, $hmId);
+                        }
+                        $stmtHmUp->execute();
+                        if ((int)$stmtHmUp->affected_rows > 0) {
+                            $honorariosMovAjustados++;
+                        }
+                        $stmtHmUp->close();
+                    }
+                }
+            }
+        }
+
         $totalAnterior = (float)($cot['total'] ?? 0);
         $pagadoAnterior = (float)($cot['total_pagado'] ?? 0);
         $saldoAnterior = (float)($cot['saldo_pendiente'] ?? 0);
@@ -6952,7 +7401,17 @@ function devolucion_item_cotizacion($conn, $data) {
 
         if (table_exists($conn, 'cotizacion_movimientos')) {
             $tipoMov = 'devolucion';
-            $descripcion = "Devolución/ajuste de ítem #{$detalleId}: {$motivo}";
+            $servicioLabelMov = etiqueta_tipo_servicio_cotizacion((string)($det['servicio_tipo'] ?? ''));
+            $detalleDescripcionMov = trim((string)($det['descripcion'] ?? ''));
+            $descripcion = "Devolución/ajuste de ítem #{$detalleId}";
+            if ($servicioLabelMov !== '' || $detalleDescripcionMov !== '') {
+                $servicioRefMov = $servicioLabelMov;
+                if ($detalleDescripcionMov !== '') {
+                    $servicioRefMov = ($servicioRefMov !== '' ? ($servicioRefMov . ' - ') : '') . $detalleDescripcionMov;
+                }
+                $descripcion .= " ({$servicioRefMov})";
+            }
+            $descripcion .= ": {$motivo} | Metodo devolucion: {$metodoDevolucion}";
             $stmtMov = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)");
             $stmtMov->bind_param("isdddsi", $cotizacionId, $tipoMov, $montoDevuelto, $saldoAnterior, $saldoNuevo, $descripcion, $usuarioId);
             $stmtMov->execute();
@@ -6964,7 +7423,9 @@ function devolucion_item_cotizacion($conn, $data) {
             (string)($det['servicio_tipo'] ?? ''),
             $montoDevuelto,
             $usuarioId,
-            $motivo
+            $motivo,
+            $metodoDevolucion,
+            (string)($det['descripcion'] ?? '')
         );
 
         if (table_exists($conn, 'log_eliminaciones')) {
@@ -7033,6 +7494,10 @@ function devolucion_item_cotizacion($conn, $data) {
             'saldo_anterior' => $saldoAnterior,
             'saldo_nuevo' => $saldoNuevo,
             'estado_nuevo' => $nuevoEstado,
+            'agenda_eventos_cancelados' => $agendaEventosCancelados,
+            'honorarios_por_cobrar_ajustados' => $honorariosPorCobrarAjustados,
+            'honorarios_movimientos_ajustados' => $honorariosMovAjustados,
+            'honorarios_pagados_sin_reversa' => $honorariosPagadosSinReversa,
             'sync' => $syncParcial
         ], 1);
 
@@ -7044,7 +7509,11 @@ function devolucion_item_cotizacion($conn, $data) {
             'estado' => $nuevoEstado,
             'total' => round($totalNuevo, 2),
             'total_pagado' => round($pagadoNuevo, 2),
-            'saldo_pendiente' => round($saldoNuevo, 2)
+            'saldo_pendiente' => round($saldoNuevo, 2),
+            'agenda_eventos_cancelados' => $agendaEventosCancelados,
+            'honorarios_por_cobrar_ajustados' => $honorariosPorCobrarAjustados,
+            'honorarios_movimientos_ajustados' => $honorariosMovAjustados,
+            'honorarios_pagados_sin_reversa' => $honorariosPagadosSinReversa
         ]);
     } catch (Exception $e) {
         $conn->rollback();
@@ -7758,6 +8227,80 @@ switch ($method) {
             $cotizacion = obtener_cotizacion($conn, (int)$_GET['cotizacion_id']);
             if (!$cotizacion) {
                 respond(['success' => false, 'error' => 'Cotización no encontrada'], 404);
+            }
+
+            $includeCadena = isset($_GET['include_cadena']) && (string)$_GET['include_cadena'] === '1';
+            if ($includeCadena) {
+                $cadenaIds = cotizacion_resolver_cadena_adenda_ids($conn, (int)$_GET['cotizacion_id']);
+                if (empty($cadenaIds)) {
+                    $cadenaIds = [(int)$_GET['cotizacion_id']];
+                }
+
+                $cadenaIds = array_values(array_unique(array_filter(array_map('intval', $cadenaIds), function ($id) {
+                    return $id > 0;
+                })));
+
+                if (!empty($cadenaIds)) {
+                    $detallesPorCotizacionCadena = cargar_detalles_cotizaciones($conn, $cadenaIds);
+                    $placeholdersCadena = implode(',', array_fill(0, count($cadenaIds), '?'));
+                    $hasCotPadreCadena = column_exists($conn, 'cotizaciones', 'cotizacion_padre_id');
+                    $hasEsAdendaCadena = column_exists($conn, 'cotizaciones', 'es_adenda');
+                    $selectCotPadreCadena = $hasCotPadreCadena ? 'cotizacion_padre_id' : '0 AS cotizacion_padre_id';
+                    $selectEsAdendaCadena = $hasEsAdendaCadena ? 'es_adenda' : '0 AS es_adenda';
+                    $sqlCadena = "SELECT id, total, estado, {$selectCotPadreCadena}, {$selectEsAdendaCadena}
+                                  FROM cotizaciones
+                                  WHERE id IN ($placeholdersCadena)";
+                    $stmtCadena = $conn->prepare($sqlCadena);
+                    $rowsCadena = [];
+                    if ($stmtCadena) {
+                        $stmtCadena->bind_param(str_repeat('i', count($cadenaIds)), ...$cadenaIds);
+                        $stmtCadena->execute();
+                        $rowsCadena = $stmtCadena->get_result()->fetch_all(MYSQLI_ASSOC);
+                        $stmtCadena->close();
+                    }
+
+                    $metaCadenaPorId = [];
+                    foreach ($rowsCadena as $rowCadena) {
+                        $cid = (int)($rowCadena['id'] ?? 0);
+                        if ($cid <= 0) continue;
+                        $metaCadenaPorId[$cid] = $rowCadena;
+                    }
+
+                    $cotizacionesCadena = [];
+                    $detallesCadena = [];
+                    $totalCadena = 0.0;
+                    foreach ($cadenaIds as $cid) {
+                        $meta = $metaCadenaPorId[$cid] ?? null;
+                        $detallesCid = $detallesPorCotizacionCadena[$cid] ?? [];
+                        if (!$meta && empty($detallesCid)) {
+                            continue;
+                        }
+                        if ($meta) {
+                            $totalCadena += (float)($meta['total'] ?? 0);
+                        } else {
+                            $totalCadena += (float)total_detalles($detallesCid);
+                        }
+
+                        $cotizacionesCadena[] = [
+                            'id' => $cid,
+                            'total' => (float)($meta['total'] ?? total_detalles($detallesCid)),
+                            'estado' => (string)($meta['estado'] ?? ''),
+                            'cotizacion_padre_id' => (int)($meta['cotizacion_padre_id'] ?? 0),
+                            'es_adenda' => (int)($meta['es_adenda'] ?? 0),
+                        ];
+
+                        foreach ($detallesCid as $detalleCadena) {
+                            if (!is_array($detalleCadena)) continue;
+                            $detalleCadena['cotizacion_id'] = $cid;
+                            $detallesCadena[] = $detalleCadena;
+                        }
+                    }
+
+                    $cotizacion['cotizacion_cadena_ids'] = $cadenaIds;
+                    $cotizacion['cotizaciones_cadena'] = $cotizacionesCadena;
+                    $cotizacion['detalles_cadena'] = $detallesCadena;
+                    $cotizacion['total_cadena'] = (float)$totalCadena;
+                }
             }
             respond(['success' => true, 'cotizacion' => $cotizacion]);
         }

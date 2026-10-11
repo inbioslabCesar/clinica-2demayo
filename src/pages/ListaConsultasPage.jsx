@@ -59,6 +59,29 @@ function estadoCobroLabel(estadoCotizacionRaw, saldoRaw) {
   return estadoCot;
 }
 
+function servicioTipoLabel(tipoRaw) {
+  const tipo = String(tipoRaw || "").toLowerCase().trim();
+  if (tipo === "consulta") return "Consulta";
+  if (tipo === "ecografia") return "Ecografía";
+  if (tipo === "laboratorio") return "Laboratorio";
+  if (tipo === "procedimiento" || tipo === "procedimientos") return "Procedimiento";
+  if (tipo === "operacion" || tipo === "operaciones" || tipo === "cirugia" || tipo === "cirugias") return "Operación";
+  if (tipo === "rayosx" || tipo === "rayos_x" || tipo === "rayos x" || tipo === "rx") return "Rayos X";
+  if (tipo === "hospitalizacion") return "Hospitalización";
+  return "Servicio";
+}
+
+function servicioAgendaLabel(row) {
+  const origen = String(row?.origen_consulta || "").toLowerCase().trim();
+  if (origen !== "agenda_servicio") return "Consulta";
+
+  const serviciosLabel = String(row?.servicios_label || "").trim();
+  if (serviciosLabel) {
+    return serviciosLabel;
+  }
+  return servicioTipoLabel(row?.servicio_tipo);
+}
+
 function normalizarConsultaPura(row) {
   return {
     ...row,
@@ -222,6 +245,7 @@ export default function ListaConsultasPage() {
         Medico: `${c.medico_nombre || ""} ${c.medico_apellido || ""}`.trim(),
         Estado: c.estado_consulta || "",
         "Estado gestión": c.estado_gestion || "",
+        "Servicio agendable": servicioAgendaLabel(c),
         Origen: origenLabel(c.origen_consulta),
         Cobro: estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente),
       }))
@@ -245,7 +269,7 @@ export default function ListaConsultasPage() {
     const doc = new jsPDF();
     doc.text(modoVista === "operativa" ? "Lista de Consultas Operativas" : "Lista de Consultas Puras", 14, 10);
     autoTable(doc, {
-      head: [["ID", "Fecha", "Paciente", "Médico", "Estado", "Gestión", "Origen", "Cobro"]],
+      head: [["ID", "Fecha", "Paciente", "Médico", "Estado", "Gestión", "Servicio", "Origen", "Cobro"]],
       body: exportRows.map((c) => [
         c.id,
         `${String(c.fecha || "")} ${String(c.hora || "").slice(0, 5)}`.trim(),
@@ -253,6 +277,7 @@ export default function ListaConsultasPage() {
         `${c.medico_nombre || ""} ${c.medico_apellido || ""}`.trim(),
         c.estado_consulta || "",
         c.estado_gestion || "",
+        servicioAgendaLabel(c),
         origenLabel(c.origen_consulta),
         estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente),
       ]),
@@ -458,6 +483,7 @@ export default function ListaConsultasPage() {
                     <th className="px-3 py-3 text-left font-semibold">Médico</th>
                     <th className="px-3 py-3 text-left font-semibold">Estado</th>
                     <th className="px-3 py-3 text-left font-semibold">Gestión</th>
+                    <th className="px-3 py-3 text-left font-semibold">Servicio</th>
                     <th className="px-3 py-3 text-left font-semibold">Origen</th>
                     <th className="px-3 py-3 text-left font-semibold">Cobro</th>
                     <th className="px-3 py-3 text-center font-semibold">Acciones</th>
@@ -466,7 +492,7 @@ export default function ListaConsultasPage() {
                 <tbody>
                   {consultas.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
+                      <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
                         No hay consultas en el rango seleccionado
                       </td>
                     </tr>
@@ -499,6 +525,16 @@ export default function ListaConsultasPage() {
                           <span className="inline-block rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
                             {String(c.estado_gestion || "").trim() || "-"}
                           </span>
+                        </td>
+                        <td className="px-3 py-3 text-slate-700">
+                          <div className="flex flex-col gap-1">
+                            <span className="font-semibold text-slate-700">{servicioAgendaLabel(c)}</span>
+                            {String(c.origen_consulta || "").toLowerCase().trim() === "agenda_servicio" && (
+                              <span className="text-[11px] text-slate-500">
+                                {servicioTipoLabel(c.servicio_tipo)} {Number(c?.cotizacion_id || 0) > 0 ? `· Cotización #${Number(c.cotizacion_id)}` : ""}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-slate-700">
                           {origenLabel(c.origen_consulta)}

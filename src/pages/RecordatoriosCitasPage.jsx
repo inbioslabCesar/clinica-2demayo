@@ -310,19 +310,22 @@ function agruparRecordatoriosAgendaServicio(items) {
     let mejorGrupo = null;
     let mejorDistancia = Number.POSITIVE_INFINITY;
     let mejorCoincideCotizacion = false;
+    let mejorCoincideConsultaRef = false;
     const cotizacionItem = Number(item?.cotizacion_grupo_id || item?.cotizacion_id || 0);
+    const consultaRefItem = Number(item?.consulta_id_ref || item?.id || 0);
     for (const candidato of salida) {
       if (!esRecordatorioAgendaServicio(candidato)) continue;
       const mismoPaciente = Number(candidato?.paciente_id || 0) > 0 && Number(candidato?.paciente_id || 0) === Number(item?.paciente_id || 0);
       if (!mismoPaciente) continue;
-      const tienePaquete = String(candidato?.servicios_label || "").includes("+");
-      if (!tienePaquete) continue;
-
       const cotizacionCandidato = Number(candidato?.cotizacion_grupo_id || candidato?.cotizacion_id || 0);
       const coincideCotizacion = cotizacionItem > 0 && cotizacionCandidato > 0 && cotizacionItem === cotizacionCandidato;
+      const consultaRefCandidato = Number(candidato?.consulta_id_ref || candidato?.id || 0);
+      const coincideConsultaRef = consultaRefItem > 0 && consultaRefCandidato > 0 && consultaRefItem === consultaRefCandidato;
+      const tienePaquete = String(candidato?.servicios_label || "").includes("+");
+      if (!tienePaquete && !coincideCotizacion && !coincideConsultaRef) continue;
 
       // Si la consulta tiene cotización y es distinta, nunca se fusiona al paquete.
-      if (cotizacionItem > 0 && cotizacionCandidato > 0 && !coincideCotizacion) {
+      if (cotizacionItem > 0 && cotizacionCandidato > 0 && !coincideCotizacion && !coincideConsultaRef) {
         continue;
       }
 
@@ -332,17 +335,26 @@ function agruparRecordatoriosAgendaServicio(items) {
         mejorGrupo = candidato;
         mejorDistancia = 0;
         mejorCoincideCotizacion = true;
+        mejorCoincideConsultaRef = coincideConsultaRef;
+        break;
+      }
+
+      if (coincideConsultaRef) {
+        mejorGrupo = candidato;
+        mejorDistancia = 0;
+        mejorCoincideConsultaRef = true;
         break;
       }
 
       if (distancia < mejorDistancia) {
         mejorDistancia = distancia;
         mejorGrupo = candidato;
+        mejorCoincideConsultaRef = false;
       }
     }
 
     // Sin misma cotización, permitir fusión solo en ventana corta para evitar cruces de atenciones.
-    if (mejorGrupo && (mejorCoincideCotizacion || mejorDistancia <= (12 * 60))) {
+    if (mejorGrupo && (mejorCoincideCotizacion || mejorCoincideConsultaRef || mejorDistancia <= (12 * 60))) {
       const agendaItems = Array.isArray(mejorGrupo._agenda_items) ? mejorGrupo._agenda_items : [{ ...mejorGrupo }];
       agendaItems.push({ ...item, _fusionado_desde_consulta: true });
       mejorGrupo._agenda_items = agendaItems;
@@ -364,8 +376,8 @@ function agruparRecordatoriosAgendaServicio(items) {
     agendas.sort(compararFechaHoraItem);
     const agendasReferencia = agendas.filter((ag) => !ag?._fusionado_desde_consulta);
     const agendasBase = agendasReferencia.length > 0 ? agendasReferencia : agendas;
-    const agendaInicio = agendas[0] || agendasBase[0] || null;
-    const agendaFin = agendas[agendas.length - 1] || agendasBase[agendasBase.length - 1] || null;
+    const agendaInicio = agendasBase[0] || agendas[0] || null;
+    const agendaFin = agendasBase[agendasBase.length - 1] || agendas[agendas.length - 1] || null;
     const serviciosTokens = agendas.flatMap(servicioTokensDesdeItem);
     const serviciosUnicos = Array.from(new Set(serviciosTokens));
     const medicosUnicos = Array.from(new Set(agendas.map((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim()).filter(Boolean)));
@@ -619,6 +631,7 @@ export default function RecordatoriosCitasPage() {
   const [vistaRapida, setVistaRapida] = useState("todas");
   const [ordenCitas, setOrdenCitas] = useState(initialOrdenCitas);
   const [filaActivaId, setFilaActivaId] = useState(null);
+  const [filaFlashId, setFilaFlashId] = useState(null);
   const [detalleExpandedRows, setDetalleExpandedRows] = useState({});
   const [detalleTipoFiltroRows, setDetalleTipoFiltroRows] = useState({});
   const [detalleCotizacionCache, setDetalleCotizacionCache] = useState({});
@@ -637,12 +650,53 @@ export default function RecordatoriosCitasPage() {
   const [agendaMedicoLoading, setAgendaMedicoLoading] = useState(false);
   const [agendaMedicoError, setAgendaMedicoError] = useState("");
   const [agendaMedicoData, setAgendaMedicoData] = useState(null);
+  const [mostrarTodasHorasLibres, setMostrarTodasHorasLibres] = useState(false);
+  const [mostrarTodasHorasOcupadas, setMostrarTodasHorasOcupadas] = useState(false);
   const [pacienteFoco, setPacienteFoco] = useState(null);
   const [nombreClinicaRemitente, setNombreClinicaRemitente] = useState("MI CLINICA");
   const skipFirstPaginationFetchRef = useRef(true);
   const skipNextPaginationFetchRef = useRef(false);
+  const filaFlashTimerRef = useRef(null);
   const usandoVistaUnificada = tipoRecordatorio === "todos";
   const usaPaginacionCliente = usandoVistaUnificada;
+
+  useEffect(() => {
+    return () => {
+      if (filaFlashTimerRef.current) {
+        window.clearTimeout(filaFlashTimerRef.current);
+        filaFlashTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const enfocarFilaVisual = (rowKey, options = {}) => {
+    if (!rowKey) return;
+    const texto = String(options?.mensaje || "").trim();
+    setFilaActivaId(rowKey);
+    setFilaFlashId(rowKey);
+    if (texto) setMensaje(texto);
+
+    if (filaFlashTimerRef.current) {
+      window.clearTimeout(filaFlashTimerRef.current);
+    }
+    filaFlashTimerRef.current = window.setTimeout(() => {
+      setFilaFlashId((prev) => (prev === rowKey ? null : prev));
+      filaFlashTimerRef.current = null;
+    }, 5000);
+
+    const scrollToRow = () => {
+      const el = document.getElementById(`rc-row-${rowKey}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return true;
+      }
+      return false;
+    };
+
+    if (!scrollToRow()) {
+      window.setTimeout(scrollToRow, 220);
+    }
+  };
 
   const cargar = async () => {
     setLoading(true);
@@ -1013,14 +1067,41 @@ export default function RecordatoriosCitasPage() {
     };
   }, [agendaMedicoData]);
 
+  const horasLibresResumen = useMemo(() => {
+    const horas = Array.isArray(agendaMedicoData?.horas_libres)
+      ? agendaMedicoData.horas_libres
+      : [];
+    const total = horas.length;
+    const limite = 8;
+    const visible = mostrarTodasHorasLibres ? horas : horas.slice(0, limite);
+    const ocultas = Math.max(0, total - visible.length);
+    return { total, visible, ocultas, limite };
+  }, [agendaMedicoData, mostrarTodasHorasLibres]);
+
+  const horasOcupadasResumen = useMemo(() => {
+    const horas = Array.isArray(agendaMedicoData?.horas_ocupadas)
+      ? agendaMedicoData.horas_ocupadas
+      : [];
+    const total = horas.length;
+    const limite = 8;
+    const visible = mostrarTodasHorasOcupadas ? horas : horas.slice(0, limite);
+    const ocultas = Math.max(0, total - visible.length);
+    return { total, visible, ocultas, limite };
+  }, [agendaMedicoData, mostrarTodasHorasOcupadas]);
+
   const bloquesDisponibilidad = useMemo(() => {
     const bloques = [];
-    const porCotizacion = new Map();
+    const porGrupo = new Map();
 
     for (const cita of citasDisponibilidadFiltradas) {
       const cotId = Number(cita?.cotizacion_id || 0);
+      const cotGrupoId = Number(cita?.cotizacion_grupo_id || cotId || 0);
+      const consultaRefId = Number(cita?.consulta_id_ref || 0);
+      const groupKey = cotGrupoId > 0
+        ? `cot-grupo-${cotGrupoId}`
+        : (consultaRefId > 0 ? `consulta-ref-${consultaRefId}` : "");
 
-      if (cotId <= 0) {
+      if (!groupKey) {
         bloques.push({
           key: `single-${String(cita?.origen || "x")}-${Number(cita?.id || 0)}`,
           cotizacion_id: 0,
@@ -1029,22 +1110,27 @@ export default function RecordatoriosCitasPage() {
         continue;
       }
 
-      if (!porCotizacion.has(cotId)) {
+      if (!porGrupo.has(groupKey)) {
         const bloque = {
-          key: `cot-${cotId}`,
-          cotizacion_id: cotId,
+          key: groupKey,
+          cotizacion_id: cotGrupoId > 0 ? cotGrupoId : cotId,
           citas: [cita],
         };
-        porCotizacion.set(cotId, bloque);
+        porGrupo.set(groupKey, bloque);
         bloques.push(bloque);
         continue;
       }
 
-      porCotizacion.get(cotId).citas.push(cita);
+      porGrupo.get(groupKey).citas.push(cita);
     }
 
     return bloques;
   }, [citasDisponibilidadFiltradas]);
+
+  useEffect(() => {
+    setMostrarTodasHorasLibres(false);
+    setMostrarTodasHorasOcupadas(false);
+  }, [agendaMedicoData?.medico_id, agendaMedicoData?.fecha, filtroPagoDisponibilidad]);
 
   const irAAgendarConHora = (hora) => {
     const medicoId = Number(medicoDisponibilidadId || 0);
@@ -1213,13 +1299,12 @@ export default function RecordatoriosCitasPage() {
     setPage(1);
 
     if (matchLocal?._rowKey) {
-      setFilaActivaId(matchLocal._rowKey);
-      window.setTimeout(() => {
-        const el = document.getElementById(`rc-row-${matchLocal._rowKey}`);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }, 80);
+      enfocarFilaVisual(
+        matchLocal._rowKey,
+        { mensaje: `Redirección aplicada: fila de ${nombre || "paciente"} resaltada en la tabla principal.` }
+      );
+    } else {
+      setMensaje(`Redirección aplicada: buscando y resaltando la fila de ${nombre || "paciente"}...`);
     }
   };
 
@@ -1341,13 +1426,7 @@ export default function RecordatoriosCitasPage() {
     const target = itemsPriorizados.find((it) => Number(it?.paciente_id || 0) === pacienteId) || null;
     if (!target?._rowKey) return;
 
-    setFilaActivaId(target._rowKey);
-    window.setTimeout(() => {
-      const el = document.getElementById(`rc-row-${target._rowKey}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 90);
+    enfocarFilaVisual(target._rowKey);
   }, [itemsPriorizados, pacienteFoco]);
 
   useEffect(() => {
@@ -1358,13 +1437,23 @@ export default function RecordatoriosCitasPage() {
 
   const enfocarSiguienteLlamada = () => {
     if (!siguienteLlamada) return;
-    setFilaActivaId(siguienteLlamada._rowKey);
-    window.setTimeout(() => {
-      const el = document.getElementById(`rc-row-${siguienteLlamada._rowKey}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 50);
+    enfocarFilaVisual(siguienteLlamada._rowKey, { mensaje: "Fila de siguiente llamada resaltada." });
+  };
+
+  const resolverCotizacionesDetalleRow = (item) => {
+    const ids = new Set();
+    const principal = Number(item?.cotizacion_id || 0);
+    const grupo = Number(item?.cotizacion_grupo_id || 0);
+    if (principal > 0) ids.add(principal);
+    if (grupo > 0) ids.add(grupo);
+
+    const agendaItems = Array.isArray(item?._agenda_items) ? item._agenda_items : [];
+    for (const agendaItem of agendaItems) {
+      const idAgenda = Number(agendaItem?.cotizacion_id || 0);
+      if (idAgenda > 0) ids.add(idAgenda);
+    }
+
+    return Array.from(ids).sort((a, b) => a - b);
   };
 
   const cargarDetalleCotizacion = async (cotizacionId) => {
@@ -1421,9 +1510,13 @@ export default function RecordatoriosCitasPage() {
     }
 
     setDetalleExpandedRows((prev) => ({ ...prev, [rowKey]: true }));
-    const cotId = Number(item?.cotizacion_id || 0);
-    if (cotId > 0 && !detalleCotizacionCache[cotId]) {
-      await cargarDetalleCotizacion(cotId);
+    const cotizacionesDetalle = resolverCotizacionesDetalleRow(item);
+    if (cotizacionesDetalle.length > 0) {
+      await Promise.all(
+        cotizacionesDetalle
+          .filter((cotId) => !detalleCotizacionCache[cotId])
+          .map((cotId) => cargarDetalleCotizacion(cotId))
+      );
     }
   };
 
@@ -1848,6 +1941,10 @@ export default function RecordatoriosCitasPage() {
           observacion: `Cita reprogramada para ${fecha} ${horaTurno}`,
         };
       }));
+      await cargar();
+      if (agendaMedicoData) {
+        await cargarAgendaPorMedico();
+      }
       return true;
     } catch (err) {
       setError(err.message || "No se pudo reprogramar los servicios");
@@ -2220,10 +2317,23 @@ export default function RecordatoriosCitasPage() {
 
                 <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">Horas libres</div>
-                    {Array.isArray(agendaMedicoData.horas_libres) && agendaMedicoData.horas_libres.length > 0 ? (
+                    <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold uppercase tracking-wide text-emerald-700">Horas libres</span>
+                      {horasLibresResumen.total > horasLibresResumen.limite && (
+                        <button
+                          type="button"
+                          onClick={() => setMostrarTodasHorasLibres((prev) => !prev)}
+                          className="rounded-full border border-emerald-300 bg-white px-2 py-0.5 font-semibold text-emerald-700 hover:bg-emerald-100"
+                        >
+                          {mostrarTodasHorasLibres
+                            ? "Ver menos"
+                            : `Ver todas (+${horasLibresResumen.ocultas})`}
+                        </button>
+                      )}
+                    </div>
+                    {horasLibresResumen.total > 0 ? (
                       <div className="flex flex-wrap gap-2">
-                        {agendaMedicoData.horas_libres.map((hora) => (
+                        {horasLibresResumen.visible.map((hora) => (
                           <button
                             key={`libre-${hora}`}
                             type="button"
@@ -2234,6 +2344,11 @@ export default function RecordatoriosCitasPage() {
                             {horaHm(hora)}
                           </button>
                         ))}
+                        {!mostrarTodasHorasLibres && horasLibresResumen.ocultas > 0 && (
+                          <span className="rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                            +{horasLibresResumen.ocultas} más
+                          </span>
+                        )}
                       </div>
                     ) : (
                       <div className="text-xs text-emerald-700">No hay horas libres para esta fecha.</div>
@@ -2241,10 +2356,23 @@ export default function RecordatoriosCitasPage() {
                   </div>
 
                   <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-700">Horas ocupadas</div>
-                    {Array.isArray(agendaMedicoData.horas_ocupadas) && agendaMedicoData.horas_ocupadas.length > 0 ? (
+                    <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold uppercase tracking-wide text-rose-700">Horas ocupadas</span>
+                      {horasOcupadasResumen.total > horasOcupadasResumen.limite && (
+                        <button
+                          type="button"
+                          onClick={() => setMostrarTodasHorasOcupadas((prev) => !prev)}
+                          className="rounded-full border border-rose-300 bg-white px-2 py-0.5 font-semibold text-rose-700 hover:bg-rose-100"
+                        >
+                          {mostrarTodasHorasOcupadas
+                            ? "Ver menos"
+                            : `Ver todas (+${horasOcupadasResumen.ocultas})`}
+                        </button>
+                      )}
+                    </div>
+                    {horasOcupadasResumen.total > 0 ? (
                       <div className="flex flex-wrap gap-2">
-                        {agendaMedicoData.horas_ocupadas.map((hora) => (
+                        {horasOcupadasResumen.visible.map((hora) => (
                           <span
                             key={`ocupada-${hora}`}
                             className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700"
@@ -2252,6 +2380,11 @@ export default function RecordatoriosCitasPage() {
                             {horaHm(hora)}
                           </span>
                         ))}
+                        {!mostrarTodasHorasOcupadas && horasOcupadasResumen.ocultas > 0 && (
+                          <span className="rounded-full border border-rose-300 bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                            +{horasOcupadasResumen.ocultas} más
+                          </span>
+                        )}
                       </div>
                     ) : (
                       <div className="text-xs text-rose-700">No hay horas ocupadas para esta fecha.</div>
@@ -2259,9 +2392,13 @@ export default function RecordatoriosCitasPage() {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto rounded-xl border border-indigo-200 bg-white">
+                <div className="rounded-xl border border-indigo-200 bg-white">
+                  <div className="border-b border-indigo-100 px-3 py-2 text-[11px] text-indigo-700">
+                    Lista compacta: usa scroll dentro de la tabla para ver más filas.
+                  </div>
+                  <div className="max-h-[430px] overflow-auto">
                   <table className="min-w-full text-xs">
-                    <thead className="bg-indigo-100 text-indigo-900">
+                    <thead className="sticky top-0 z-10 bg-indigo-100 text-indigo-900">
                       <tr>
                         <th className="p-2 text-left">Hora</th>
                         <th className="p-2 text-left">Paciente</th>
@@ -2302,10 +2439,11 @@ export default function RecordatoriosCitasPage() {
                                       <button
                                         type="button"
                                         onClick={() => enfocarPacienteRecordatorio(cabecera)}
-                                        className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
-                                        title="Ir al recordatorio de este paciente"
+                                        className="inline-flex items-center gap-1 rounded-md border border-indigo-300 bg-indigo-100 px-2 py-0.5 font-semibold text-indigo-800 hover:border-indigo-500 hover:bg-indigo-200"
+                                        title="Ir al recordatorio de este paciente y resaltar su fila"
                                       >
-                                        {cabecera.paciente_nombre || "-"}
+                                        <span>Ver en tabla</span>
+                                        <span className="underline">{cabecera.paciente_nombre || "-"}</span>
                                       </button>
                                     ) : (
                                       <span>{cabecera?.paciente_nombre || "-"}</span>
@@ -2336,10 +2474,11 @@ export default function RecordatoriosCitasPage() {
                                         <button
                                           type="button"
                                           onClick={() => enfocarPacienteRecordatorio(cita)}
-                                          className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
-                                          title="Ir al recordatorio de este paciente"
+                                          className="inline-flex items-center gap-1 rounded-md border border-indigo-300 bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-800 hover:border-indigo-500 hover:bg-indigo-100"
+                                          title="Ir al recordatorio de este paciente y resaltar su fila"
                                         >
-                                          {cita.paciente_nombre || "-"}
+                                          <span>Ver</span>
+                                          <span className="underline">{cita.paciente_nombre || "-"}</span>
                                         </button>
                                       ) : (
                                         <span>{cita.paciente_nombre || "-"}</span>
@@ -2377,6 +2516,7 @@ export default function RecordatoriosCitasPage() {
                       )}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -2520,10 +2660,19 @@ export default function RecordatoriosCitasPage() {
                     && !esControl
                     && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);
                   const cotizacionId = Number(item?.cotizacion_id || 0);
+                  const cotizacionesDetalle = resolverCotizacionesDetalleRow(item);
                   const detalleExpanded = Boolean(detalleExpandedRows[item._rowKey]);
-                  const detalleCache = cotizacionId > 0 ? detalleCotizacionCache[cotizacionId] : null;
-                  const detalleLoading = cotizacionId > 0 && Boolean(detalleCotizacionLoading[cotizacionId]);
-                  const detalleItems = Array.isArray(detalleCache?.items) ? detalleCache.items : [];
+                  const detalleLoading = cotizacionesDetalle.some((id) => Boolean(detalleCotizacionLoading[id]));
+                  const detalleCaches = cotizacionesDetalle
+                    .map((id) => detalleCotizacionCache[id])
+                    .filter(Boolean);
+                  const detalleErrores = detalleCaches.filter((cache) => cache?.ok === false);
+                  const detalleCache = detalleErrores.length > 0
+                    ? detalleErrores[0]
+                    : { ok: true };
+                  const detalleItems = detalleCaches
+                    .filter((cache) => cache?.ok && Array.isArray(cache?.items))
+                    .flatMap((cache) => cache.items);
                   const detallesPorTipo = detalleItems.reduce((acc, det) => {
                     const key = String(det?.tipo_label || "Servicio");
                     acc[key] = (acc[key] || 0) + 1;
@@ -2547,7 +2696,10 @@ export default function RecordatoriosCitasPage() {
                     : `Ref consulta #${Number(item?.id || 0)}`;
                   return (
                     <Fragment key={item._rowKey}>
-                      <tr id={`rc-row-${item._rowKey}`} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-300 bg-indigo-50/40" : ""}`}>
+                      <tr
+                        id={`rc-row-${item._rowKey}`}
+                        className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${item.prioridad.nivel === "critico" ? "bg-rose-50/30" : ""} ${filaActivaId === item._rowKey ? "ring-2 ring-indigo-400 bg-indigo-50/60" : ""} ${filaFlashId === item._rowKey ? "ring-4 ring-amber-400 bg-amber-100/80 shadow-[0_0_0_4px_rgba(251,191,36,0.25)] animate-pulse" : ""}`}
+                      >
                         <td className="p-3">
                           <div className="mt-1 text-[11px] text-slate-500">{referenciaOrigen}</div>
                           <div className="mt-1">
@@ -2870,7 +3022,7 @@ export default function RecordatoriosCitasPage() {
                       {detalleExpanded && (
                         <tr className="border-t border-indigo-100 bg-indigo-50/30">
                           <td colSpan={10} className="p-3">
-                            {cotizacionId <= 0 ? (
+                            {cotizacionesDetalle.length === 0 ? (
                               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
                                 Esta fila no tiene cotización vinculada para mostrar detalle.
                               </div>
@@ -2889,7 +3041,11 @@ export default function RecordatoriosCitasPage() {
                             ) : (
                               <div className="rounded-lg border border-indigo-200 bg-white p-3">
                                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                                  <span className="font-semibold text-indigo-700">Cotización #{cotizacionId}</span>
+                                  <span className="font-semibold text-indigo-700">
+                                    {cotizacionesDetalle.length > 1
+                                      ? `Grupo episodio: ${cotizacionesDetalle.map((id) => `#${id}`).join(", ")}`
+                                      : `Cotización #${cotizacionId}`}
+                                  </span>
                                   <button
                                     type="button"
                                     onClick={() => cambiarFiltroDetalleRow(item._rowKey, "todos")}

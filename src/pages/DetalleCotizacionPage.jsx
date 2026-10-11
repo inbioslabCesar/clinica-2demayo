@@ -267,6 +267,7 @@ export default function DetalleCotizacionPage() {
   const [pagos, setPagos] = useState([]);
   const [ajustandoDetalleId, setAjustandoDetalleId] = useState(0);
   const [eliminandoDetalleId, setEliminandoDetalleId] = useState(0);
+  const [devolviendoDetalleId, setDevolviendoDetalleId] = useState(0);
   const [agregandoMedicamento, setAgregandoMedicamento] = useState(false);
   const [agregandoAnalisis, setAgregandoAnalisis] = useState(false);
   const [clinicBrand, setClinicBrand] = useState({
@@ -597,6 +598,7 @@ export default function DetalleCotizacionPage() {
   const estado = String(cotizacion?.estado || "").toLowerCase();
   const esVistaGrupo = Number(cotizacion?.vista_grupo || 0) === 1;
   const puedeEditar = !esVistaGrupo && estado !== "anulada";
+  const puedeGestionarDevolucion = estado !== "anulada";
   const puedeCobrar = (estado === "pendiente" || estado === "parcial") && Number(cotizacion?.saldo_pendiente || 0) > 0;
 
   const escapeHtml = (value) => {
@@ -1142,6 +1144,130 @@ export default function DetalleCotizacionPage() {
       await Swal.fire("Error", err?.message || `No se pudo quitar el ${nombreTipo}`, "error");
     } finally {
       setEliminandoDetalleId(0);
+    }
+  };
+
+  const devolverDetallePagadoInline = async (detalle) => {
+    const cotizacionActualId = Number(cotizacion?.id || 0);
+    const cotizacionOrigenId = Number(detalle?.cotizacion_origen_id || 0);
+    const cotizacionObjetivoId = esVistaGrupo ? cotizacionOrigenId : cotizacionActualId;
+    const detalleId = Number(detalle?.id || 0);
+    const cantidadActual = Math.max(0, Number(detalle?.cantidad || 0));
+    const precioUnitario = Number(detalle?.precio_unitario || 0);
+    const estadoActual = String(cotizacion?.estado || "").toLowerCase();
+    const esExterno = Number(detalle?.es_externo || 0) === 1 || Number(detalle?.incluir_en_cobro ?? 1) === 0;
+
+    if (cotizacionObjetivoId <= 0 || detalleId <= 0 || cantidadActual <= 0) return;
+    if (esExterno) {
+      await Swal.fire("No permitido", "Este ítem no es cobrable, por lo tanto no requiere devolución monetaria.", "info");
+      return;
+    }
+    if (!(estadoActual === "pagado" || estadoActual === "parcial")) {
+      await Swal.fire("No permitido", "La devolución parcial aplica solo para cotizaciones pagadas o parciales.", "info");
+      return;
+    }
+
+    const descripcion = String(detalle?.descripcion || labelServicio(detalle?.servicio_tipo) || "Servicio")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const servicioLabel = labelServicio(detalle?.servicio_tipo);
+
+    const confirm = await Swal.fire({
+      title: `Devolver / quitar ${servicioLabel}`,
+      width: 720,
+      icon: "warning",
+      html: `
+        <div style="text-align:left;font-size:13px;display:grid;gap:8px;">
+          <div><b>Ítem:</b> ${descripcion}</div>
+          <div><b>Cantidad actual:</b> ${cantidadActual}</div>
+          <div><b>Precio unitario:</b> S/ ${Number(precioUnitario || 0).toFixed(2)}</div>
+          <label for="swal-cantidad-devolver">Cantidad a devolver/quitar</label>
+          <input id="swal-cantidad-devolver" type="number" min="1" max="${cantidadActual}" step="1" class="swal2-input" value="1" />
+          <label for="swal-motivo-devolucion">Motivo de devolución</label>
+          <input id="swal-motivo-devolucion" type="text" class="swal2-input" placeholder="Ej. paciente decide no realizar este servicio" />
+          <label for="swal-metodo-devolucion">Método de devolución</label>
+          <select id="swal-metodo-devolucion" class="swal2-input">
+            <option value="efectivo">efectivo</option>
+            <option value="yape">yape</option>
+            <option value="plin">plin</option>
+            <option value="transferencia">transferencia</option>
+            <option value="tarjeta">tarjeta</option>
+            <option value="otros">otros</option>
+          </select>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: "Aplicar devolución",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const cantidadRaw = document.getElementById("swal-cantidad-devolver")?.value;
+        const motivoRaw = document.getElementById("swal-motivo-devolucion")?.value;
+        const metodoRaw = document.getElementById("swal-metodo-devolucion")?.value;
+        const cantidadEliminar = Number(cantidadRaw);
+        const motivo = String(motivoRaw || "").trim();
+        const metodoDevolucion = String(metodoRaw || "").trim().toLowerCase();
+
+        if (!Number.isInteger(cantidadEliminar) || cantidadEliminar <= 0) {
+          Swal.showValidationMessage("Ingresa una cantidad válida (entero mayor a 0).");
+          return false;
+        }
+        if (cantidadEliminar > cantidadActual) {
+          Swal.showValidationMessage("La cantidad a devolver no puede superar la cantidad actual.");
+          return false;
+        }
+        if (motivo.length < 4) {
+          Swal.showValidationMessage("Ingresa un motivo (mínimo 4 caracteres).");
+          return false;
+        }
+        if (!metodoDevolucion) {
+          Swal.showValidationMessage("Selecciona el método de devolución.");
+          return false;
+        }
+        return { cantidadEliminar, motivo, metodoDevolucion };
+      },
+    });
+
+    if (!confirm.isConfirmed || !confirm.value) return;
+
+    try {
+      setDevolviendoDetalleId(detalleId);
+      const res = await authFetch("api_cotizaciones.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "devolucion_item",
+          cotizacion_id: cotizacionObjetivoId,
+          cotizacion_detalle_id: detalleId,
+          cantidad_eliminar: Number(confirm.value.cantidadEliminar),
+          motivo: String(confirm.value.motivo || "").trim(),
+          metodo_devolucion: String(confirm.value.metodoDevolucion || "").trim().toLowerCase(),
+        }),
+      });
+      const status = Number(res?.status || 0);
+      const data = await res.json();
+      if (!data?.success) {
+        if (esConflictoVersionCotizacion({ status, data })) {
+          await manejarConflictoVersionCotizacion(cotizacionActualId);
+          return;
+        }
+        throw new Error(data?.error || "No se pudo aplicar la devolución parcial del ítem");
+      }
+
+      if (esVistaGrupo) {
+        window.location.reload();
+      } else {
+        await refrescarCotizacionActual(cotizacionActualId);
+      }
+      const montoDevuelto = Number(data?.monto_devuelto || 0);
+      await Swal.fire(
+        "Devolución aplicada",
+        `Se devolvió S/ ${montoDevuelto.toFixed(2)} y la cotización se recalculó correctamente.`,
+        "success"
+      );
+    } catch (err) {
+      await Swal.fire("Error", err?.message || "No se pudo aplicar la devolución del ítem", "error");
+    } finally {
+      setDevolviendoDetalleId(0);
     }
   };
 
@@ -1804,20 +1930,20 @@ export default function DetalleCotizacionPage() {
                       <span>{Number(d.cantidad || 0)}</span>
                       {!esVistaGrupo
                         && puedeEditar
-                        && (estado === "pendiente" || estado === "parcial")
+                        && estado === "pendiente"
                         && normalizarServicio(d?.servicio_tipo) === "farmacia"
                         && Number(d?.cantidad || 0) > 0 && (
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => ajustarCantidadFarmaciaInline(d)}
-                              disabled={ajustandoDetalleId === Number(d?.id || 0) || eliminandoDetalleId === Number(d?.id || 0)}
+                              disabled={ajustandoDetalleId === Number(d?.id || 0) || eliminandoDetalleId === Number(d?.id || 0) || devolviendoDetalleId === Number(d?.id || 0)}
                               className="text-[11px] px-2 py-1 rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
                               {ajustandoDetalleId === Number(d?.id || 0) ? "Guardando..." : "Ajustar"}
                             </button>
                             <button
                               onClick={() => eliminarDetalleInline(d)}
-                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0)}
+                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0) || devolviendoDetalleId === Number(d?.id || 0)}
                               className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
                               {eliminandoDetalleId === Number(d?.id || 0) ? "Quitando..." : "Quitar"}
@@ -1826,16 +1952,31 @@ export default function DetalleCotizacionPage() {
                         )}
                       {!esVistaGrupo
                         && puedeEditar
-                        && (estado === "pendiente" || estado === "parcial")
+                        && estado === "pendiente"
                         && normalizarServicio(d?.servicio_tipo) === "laboratorio"
                         && Number(d?.cantidad || 0) > 0 && (
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => eliminarDetalleInline(d)}
-                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0)}
+                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0) || devolviendoDetalleId === Number(d?.id || 0)}
                               className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
                               {eliminandoDetalleId === Number(d?.id || 0) ? "Quitando..." : "Quitar"}
+                            </button>
+                          </div>
+                        )}
+                      {puedeGestionarDevolucion
+                        && (estado === "pagado" || estado === "parcial")
+                        && Number(d?.cantidad || 0) > 0
+                        && Number(d?.es_externo || 0) !== 1
+                        && Number(d?.incluir_en_cobro ?? 1) !== 0 && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => devolverDetallePagadoInline(d)}
+                              disabled={devolviendoDetalleId === Number(d?.id || 0) || eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0)}
+                              className="text-[11px] px-2 py-1 rounded border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              {devolviendoDetalleId === Number(d?.id || 0) ? "Devolviendo..." : "Devolver / Quitar"}
                             </button>
                           </div>
                         )}

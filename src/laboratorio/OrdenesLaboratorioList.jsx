@@ -223,8 +223,26 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     const cotizacionId = Number(orden?.cotizacion_id || 0);
     if (cotizacionId <= 0) return false;
     if (Number(orden?.carga_anticipada || 0) === 1) return false;
-    const estadoCotizacion = String(orden?.cotizacion_estado || '').trim().toLowerCase();
-    return estadoCotizacion !== 'pagado';
+
+    const saldoPago = Number(
+      orden?.cotizacion_saldo_pendiente_pago
+      ?? orden?.cotizacion_saldo_pendiente
+      ?? NaN
+    );
+    if (Number.isFinite(saldoPago)) {
+      return saldoPago > 0.00001;
+    }
+
+    const estadoCotizacion = String(
+      orden?.cotizacion_estado_pago
+      ?? orden?.cotizacion_estado
+      ?? ''
+    ).trim().toLowerCase();
+
+    if (!estadoCotizacion) return false;
+    if (estadoCotizacion === 'pagado') return false;
+    if (estadoCotizacion === 'anulado' || estadoCotizacion === 'anulada') return false;
+    return true;
   };
 
   const handleCompararResultados = (orden) => {

@@ -1329,7 +1329,7 @@ if (empty($examenes_detalle)) {
 
 $bodyCss = '<style>
 body { font-family: dejavusanscondensed, DejaVu Sans, Arial, sans-serif; font-size: 10px; color: #1f2937; }
-.results-title { font-family: Courier, "Courier New", monospace; font-size: 12px; font-weight: bold; letter-spacing: 0.2px; color: #1f2937; margin: 4px 0 5px 0; text-transform: uppercase; text-align: center; }
+.results-title { font-family: Courier, "Courier New", monospace; font-size: 12px; font-weight: bold; letter-spacing: 0.2px; color: #1f2937; margin: 12px 0 6px 0; text-transform: uppercase; text-align: center; }
 .results-table { width: 100%; border-collapse: collapse; border: 1px solid #d5dbe1; }
 .results-table thead { display: table-header-group; }
 .results-table th { font-family: Courier, "Courier New", monospace; background: #eaf0f7; color: #111827; border-bottom: 1px solid #d5dbe1; padding: 5px 7px; font-size: 9.8px; text-align: left; letter-spacing: 0.15px; }
@@ -1449,7 +1449,7 @@ if (class_exists('\Mpdf\Mpdf')) {
             'default_font' => 'dejavusanscondensed',
             'margin_left' => 8,
             'margin_right' => 8,
-            'margin_top' => 55,
+            'margin_top' => 64,
             'margin_bottom' => 54,
             'tempDir' => $mpdfTempDir,
         ]);

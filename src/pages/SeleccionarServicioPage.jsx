@@ -156,7 +156,8 @@ export default function SeleccionarServicioPage() {
     }
 
     setLoadingResumen(true);
-    authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}`)
+    const incluirCadenaAdendas = modoCotizacion === "adenda" ? "&include_cadena=1" : "";
+    authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}${incluirCadenaAdendas}`)
       .then((r) => r.json())
       .then((data) => {
         const cot = data?.cotizacion;
@@ -180,7 +181,13 @@ export default function SeleccionarServicioPage() {
           setPacienteTemporalInferido(null);
         }
 
-        const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+        let detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
+        if (modoCotizacion === "adenda") {
+          const detallesCadena = Array.isArray(cot?.detalles_cadena) ? cot.detalles_cadena : [];
+          if (detallesCadena.length > 0) {
+            detalles = detallesCadena;
+          }
+        }
         const map = {};
         for (const d of detalles) {
           const tipo = normalizarServicio(d?.servicio_tipo);
@@ -193,7 +200,17 @@ export default function SeleccionarServicioPage() {
 
         const resumen = Object.values(map).sort((a, b) => a.label.localeCompare(b.label));
         setResumenServicios(resumen);
-        setTotalCotizacion(Number(cot?.total || 0));
+        if (modoCotizacion === "adenda") {
+          const totalCadena = Number(cot?.total_cadena || 0);
+          if (Number.isFinite(totalCadena) && totalCadena > 0) {
+            setTotalCotizacion(totalCadena);
+          } else {
+            const totalResumen = resumen.reduce((acc, item) => acc + Number(item?.total || 0), 0);
+            setTotalCotizacion(totalResumen);
+          }
+        } else {
+          setTotalCotizacion(Number(cot?.total || 0));
+        }
       })
       .catch(() => {
         setPacienteTemporalInferido(null);
@@ -201,7 +218,7 @@ export default function SeleccionarServicioPage() {
         setTotalCotizacion(0);
       })
       .finally(() => setLoadingResumen(false));
-  }, [isEditCotizacion, cotizacionId]);
+  }, [isEditCotizacion, cotizacionId, modoCotizacion]);
 
   // Aquí puedes mostrar los servicios disponibles
   // Por ejemplo: Consulta médica, Laboratorio, Farmacia, etc.

@@ -90,24 +90,36 @@ if (!function_exists('reorder_order_exam_items')) {
         }
         $currentIds = array_values(array_unique($currentIds));
 
-        if (empty($currentIds) || count($normalizedRequested) !== count($currentIds)) {
+        if (empty($currentIds) || empty($normalizedRequested)) {
             return null;
         }
 
-        sort($normalizedRequested);
-        $currentIdsSorted = $currentIds;
-        sort($currentIdsSorted);
-        if ($normalizedRequested !== $currentIdsSorted) {
-            return null;
+        $currentIdSet = array_fill_keys($currentIds, true);
+        foreach ($normalizedRequested as $requestedId) {
+            if (!isset($currentIdSet[$requestedId])) {
+                return null;
+            }
         }
 
         $reordered = [];
+        $addedById = [];
         foreach ($requestedIds as $rid) {
             $id = intval($rid);
-            if ($id <= 0 || !isset($itemsById[$id])) {
+            if ($id <= 0 || !isset($itemsById[$id]) || isset($addedById[$id])) {
                 continue;
             }
             $reordered[] = $itemsById[$id];
+            $addedById[$id] = true;
+        }
+
+        // Conserva al final cualquier examen histórico que no venga en el payload
+        // (p.ej. ítems eliminados/ocultos en la UI), sin bloquear el reordenamiento visible.
+        foreach ($currentIds as $id) {
+            if (isset($addedById[$id]) || !isset($itemsById[$id])) {
+                continue;
+            }
+            $reordered[] = $itemsById[$id];
+            $addedById[$id] = true;
         }
 
         return count($reordered) === count($currentIds) ? $reordered : null;

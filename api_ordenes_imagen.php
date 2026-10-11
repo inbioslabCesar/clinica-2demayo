@@ -259,6 +259,68 @@ if (!function_exists('oi_resolver_cadena_cotizacion_ids')) {
     }
 }
 
+if (!function_exists('oi_where_tipo_detalle_imagen')) {
+    function oi_where_tipo_detalle_imagen(string $tipoOrden): string {
+        $tipo = strtolower(trim($tipoOrden));
+        if ($tipo === 'ecografia') {
+            return " AND (LOWER(TRIM(servicio_tipo)) = 'ecografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND LOWER(descripcion) LIKE '%ecograf%'))";
+        }
+        if ($tipo === 'rx') {
+            return " AND (LOWER(TRIM(servicio_tipo)) IN ('rayosx','rayos_x','rayos x','rx') OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%rayos x%' OR LOWER(descripcion) REGEXP '(^|[^a-z])rx([^a-z]|$)')))";
+        }
+        if ($tipo === 'tomografia') {
+            return " AND (LOWER(TRIM(servicio_tipo)) = 'tomografia' OR (LOWER(TRIM(servicio_tipo)) IN ('procedimiento','procedimientos') AND (LOWER(descripcion) LIKE '%tomograf%' OR LOWER(descripcion) LIKE '% tac %' OR LOWER(descripcion) LIKE 'tac %' OR LOWER(descripcion) LIKE '% tac')))";
+        }
+        return '';
+    }
+}
+
+if (!function_exists('oi_orden_imagen_activa_en_cotizacion')) {
+    function oi_orden_imagen_activa_en_cotizacion(mysqli $conn, array $orden): bool {
+        $cotizId = (int)($orden['cotizacion_id'] ?? 0);
+        if ($cotizId <= 0) {
+            return true;
+        }
+
+        $hasEstadoItem = oi_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
+        $whereEstado = $hasEstadoItem ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'" : '';
+        $tipoOrden = strtolower(trim((string)($orden['tipo'] ?? '')));
+
+        $detalleTokenId = 0;
+        $indicaciones = (string)($orden['indicaciones'] ?? '');
+        if ($indicaciones !== '' && preg_match('/detalle\s*#\s*(\d+)/i', $indicaciones, $m)) {
+            $detalleTokenId = (int)($m[1] ?? 0);
+        }
+
+        if ($detalleTokenId > 0) {
+            $stmtDetalle = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND id = ?{$whereEstado} LIMIT 1");
+            if (!$stmtDetalle) {
+                return false;
+            }
+            $stmtDetalle->bind_param('ii', $cotizId, $detalleTokenId);
+            $stmtDetalle->execute();
+            $row = $stmtDetalle->get_result()->fetch_assoc();
+            $stmtDetalle->close();
+            return (bool)$row;
+        }
+
+        $whereTipo = oi_where_tipo_detalle_imagen($tipoOrden);
+        if ($whereTipo === '') {
+            return true;
+        }
+
+        $stmtTipo = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ?{$whereTipo}{$whereEstado} LIMIT 1");
+        if (!$stmtTipo) {
+            return false;
+        }
+        $stmtTipo->bind_param('i', $cotizId);
+        $stmtTipo->execute();
+        $rowTipo = $stmtTipo->get_result()->fetch_assoc();
+        $stmtTipo->close();
+        return (bool)$rowTipo;
+    }
+}
+
 if (!function_exists('oi_parse_date_safe')) {
     function oi_parse_date_safe($value): ?DateTime {
         $raw = trim((string)$value);
@@ -1785,6 +1847,10 @@ if ($method === 'GET') {
 
         $rows = [];
         foreach ($rowsBase as $r) {
+            if (!oi_orden_imagen_activa_en_cotizacion($conn, $r)) {
+                continue;
+            }
+
             if (!$isHcFast) {
                 $oid = (int)($r['id'] ?? 0);
                 $r['archivos'] = $archivosMap[$oid] ?? [];
@@ -1870,6 +1936,9 @@ if ($method === 'GET') {
         $res = $conn->query("SELECT * FROM ordenes_imagen WHERE cotizacion_id IN ($inGrupo) ORDER BY fecha ASC, id ASC");
         $rowsBase = [];
         while ($res && ($r = $res->fetch_assoc())) {
+            if (!oi_orden_imagen_activa_en_cotizacion($conn, $r)) {
+                continue;
+            }
             if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
                 continue;
             }
@@ -2199,6 +2268,9 @@ if ($method === 'GET') {
         $res  = $conn->query("SELECT * FROM ordenes_imagen WHERE paciente_id = $paciente_id $wheresTipo ORDER BY fecha DESC");
         $rows = [];
         while ($r = $res->fetch_assoc()) {
+            if (!oi_orden_imagen_activa_en_cotizacion($conn, $r)) {
+                continue;
+            }
             adjuntarArchivos($conn, $r);
             $rows[] = $r;
         }

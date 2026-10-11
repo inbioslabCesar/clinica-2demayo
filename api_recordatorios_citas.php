@@ -826,17 +826,9 @@ function rc_evaluar_plan_reprogramacion($conn, $agendaItems, $planTurnos, $fecha
                 ];
                 break;
             }
-            $horaMin = rc_hora_a_minutos($horaHms);
-            $finRegular = $metaMedico['fin_regular'];
-            if ($horaMin === null || $finRegular === null || $horaMin < $finRegular) {
-                $errores[] = [
-                    'tipo' => 'adicional_antes_de_fin_regular',
-                    'turno' => $idx + 1,
-                    'hora' => $horaHms,
-                    'medico_id' => $medicoId,
-                ];
-                break;
-            }
+            // En modo adicional autorizado por recepción/médico, se permite fuera de horario
+            // sin exigir que sea posterior al último tramo regular. La validación de conflicto
+            // real queda cubierta por rc_medico_esta_ocupado_en_turno.
         }
 
         if (rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, $cotizacionId, $excludeConsultaIds)) {
@@ -985,6 +977,13 @@ function rc_sugerir_inicio_adicional_reprogramacion($conn, $agendaItems, $fechaY
 function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
     $cotizacionId = (int)$cotizacionId;
     if ($cotizacionId <= 0) return [];
+    $cotizacionesGrupo = rc_resolver_cotizaciones_del_grupo($conn, $cotizacionId);
+    if (empty($cotizacionesGrupo)) {
+        $cotizacionesGrupo = [$cotizacionId];
+    }
+    $cotizacionesGrupo = array_values(array_unique(array_map('intval', $cotizacionesGrupo)));
+    $placeholders = implode(',', array_fill(0, count($cotizacionesGrupo), '?'));
+    $typesGrupo = str_repeat('i', count($cotizacionesGrupo));
 
     $itemsAgenda = [];
     $stmtAgenda = $conn->prepare(
@@ -999,13 +998,13 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
          FROM agenda_servicios_cotizacion a
          LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
          LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)
-         WHERE a.cotizacion_id = ?
+         WHERE a.cotizacion_id IN (' . $placeholders . ')
            AND a.estado_evento IN ("pendiente", "confirmado")
            AND LOWER(TRIM(COALESCE(a.servicio_tipo, ""))) <> "consulta"
          ORDER BY a.fecha_programada ASC, a.hora_programada ASC, a.id ASC'
     );
     if ($stmtAgenda) {
-        $stmtAgenda->bind_param('i', $cotizacionId);
+        $stmtAgenda->bind_param($typesGrupo, ...$cotizacionesGrupo);
         $stmtAgenda->execute();
         $resAgenda = $stmtAgenda->get_result();
         while ($row = $resAgenda->fetch_assoc()) {
@@ -1030,21 +1029,21 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
         $stmtConsulta = $conn->prepare(
             'SELECT c.id AS consulta_id,
                     c.paciente_id,
-                    ? AS cotizacion_id,
+                    cd.cotizacion_id AS cotizacion_id,
                     COALESCE(c.medico_id, cd.medico_id, t.medico_id, 0) AS medico_id,
                     c.fecha AS fecha_programada,
                     c.hora AS hora_programada
              FROM cotizaciones_detalle cd
              INNER JOIN consultas c ON c.id = cd.consulta_id
              LEFT JOIN tarifas t ON t.id = cd.servicio_id
-             WHERE cd.cotizacion_id = ?
+             WHERE cd.cotizacion_id IN (' . $placeholders . ')
                AND LOWER(TRIM(COALESCE(cd.servicio_tipo, ""))) = "consulta"
                AND LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) <> "eliminado"
                AND LOWER(TRIM(COALESCE(c.estado, ""))) NOT IN ("cancelada", "anulada", "completada")
              ORDER BY c.fecha ASC, c.hora ASC, c.id ASC'
         );
         if ($stmtConsulta) {
-            $stmtConsulta->bind_param('ii', $cotizacionId, $cotizacionId);
+            $stmtConsulta->bind_param($typesGrupo, ...$cotizacionesGrupo);
             $stmtConsulta->execute();
             $resConsulta = $stmtConsulta->get_result();
             $consultaIds = [];
@@ -1143,6 +1142,11 @@ function rc_servicio_pretty_label($value) {
 }
 
 function rc_where_servicios_medicos_agenda($alias = 'a') {
+    $col = $alias . ".servicio_tipo";
+    return "LOWER(TRIM(COALESCE({$col}, ''))) IN ('consulta','laboratorio','rayosx','rayos x','rayos_x','rx','ecografia','procedimiento','procedimientos','operacion','operaciones','cirugia','cirugias')";
+}
+
+function rc_where_servicios_agendables_disponibilidad($alias = 'a') {
     $col = $alias . ".servicio_tipo";
     return "LOWER(TRIM(COALESCE({$col}, ''))) IN ('consulta','rayosx','rayos x','rayos_x','rx','ecografia','procedimiento','procedimientos','operacion','operaciones','cirugia','cirugias')";
 }
@@ -1500,6 +1504,7 @@ if ($method === 'GET') {
         }
 
         $citas = [];
+        $cotizacionGrupoCacheDisp = [];
 
                 if (rc_table_exists($conn, 'consultas')) {
                         $hasCotizaciones = rc_table_exists($conn, 'cotizaciones');
@@ -1559,6 +1564,14 @@ if ($method === 'GET') {
                         $duracionTurnoMinConsultaDisp,
                         $turnosRegularesCacheConsultaDisp
                     );
+                    $cotizacionIdConsulta = isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : 0;
+                    $cotizacionGrupoIdConsulta = null;
+                    if ($cotizacionIdConsulta > 0) {
+                        if (!array_key_exists($cotizacionIdConsulta, $cotizacionGrupoCacheDisp)) {
+                            $cotizacionGrupoCacheDisp[$cotizacionIdConsulta] = rc_resolver_cotizacion_grupo_id($conn, $cotizacionIdConsulta);
+                        }
+                        $cotizacionGrupoIdConsulta = (int)$cotizacionGrupoCacheDisp[$cotizacionIdConsulta];
+                    }
                     $citas[] = [
                         'id' => (int)($row['id'] ?? 0),
                         'hora' => (string)($row['hora'] ?? ''),
@@ -1567,7 +1580,9 @@ if ($method === 'GET') {
                         'servicio' => 'Consulta',
                         'origen' => 'consulta',
                         'estado' => (string)($row['estado'] ?? ''),
-                        'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
+                        'cotizacion_id' => $cotizacionIdConsulta > 0 ? $cotizacionIdConsulta : null,
+                        'cotizacion_grupo_id' => $cotizacionGrupoIdConsulta,
+                        'consulta_id_ref' => (int)($row['id'] ?? 0),
                         'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
                         'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
                         'es_adicional_dinamico' => $esAdicionalConsulta ? 1 : 0,
@@ -1591,6 +1606,7 @@ if ($method === 'GET') {
             $hasDetalleId = $hasDetalle && rc_column_exists($conn, 'cotizaciones_detalle', 'id');
             $hasDetalleMed = $hasDetalle && rc_column_exists($conn, 'cotizaciones_detalle', 'medico_id');
             $hasDetalleServ = $hasDetalle && rc_column_exists($conn, 'cotizaciones_detalle', 'servicio_id');
+            $hasDetalleConsulta = $hasDetalle && rc_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
 
             $hasTarifas = rc_table_exists($conn, 'tarifas');
             $hasTarifaId = $hasTarifas && rc_column_exists($conn, 'tarifas', 'id');
@@ -1616,9 +1632,10 @@ if ($method === 'GET') {
                 ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")'
                 : '';
 
-            $whereServicioMedico = ' AND ' . rc_where_servicios_medicos_agenda('a');
+            $whereServicioMedico = ' AND ' . rc_where_servicios_agendables_disponibilidad('a');
 
             $estadoSelect = $hasAgendaEstado ? 'a.estado_evento' : '"" AS estado_evento';
+            $selectConsultaRefAgenda = $hasDetalleConsulta ? 'COALESCE(cd.consulta_id, 0) AS consulta_id_ref' : '0 AS consulta_id_ref';
 
             $joinCotAgenda = rc_table_exists($conn, 'cotizaciones')
                 ? ' LEFT JOIN cotizaciones cot ON cot.id = a.cotizacion_id'
@@ -1632,6 +1649,7 @@ if ($method === 'GET') {
                 : 'NULL AS saldo_pendiente';
 
             $sqlAgenda = 'SELECT a.id, a.hora_programada, a.fecha_programada, ' . $medicoExpr . ' AS medico_id, a.servicio_tipo, a.titulo_evento, a.paciente_id, a.cotizacion_id, ' . $estadoSelect . ',
+                                 ' . $selectConsultaRefAgenda . ',
                                  ' . $selectCotAgendaEstado . ',
                                  ' . $selectCotAgendaSaldo . ',
                                  p.nombre AS paciente_nombre, p.apellido AS paciente_apellido
@@ -1669,6 +1687,14 @@ if ($method === 'GET') {
                         $turnosRegularesCache
                     );
                     $detalle = $esAdicionalDinamico ? ($tituloBase . ' · Adicional autorizado') : $tituloBase;
+                    $cotizacionIdAgenda = (int)($row['cotizacion_id'] ?? 0);
+                    $cotizacionGrupoIdAgenda = null;
+                    if ($cotizacionIdAgenda > 0) {
+                        if (!array_key_exists($cotizacionIdAgenda, $cotizacionGrupoCacheDisp)) {
+                            $cotizacionGrupoCacheDisp[$cotizacionIdAgenda] = rc_resolver_cotizacion_grupo_id($conn, $cotizacionIdAgenda);
+                        }
+                        $cotizacionGrupoIdAgenda = (int)$cotizacionGrupoCacheDisp[$cotizacionIdAgenda];
+                    }
 
                     $citas[] = [
                         'id' => (int)($row['id'] ?? 0),
@@ -1681,7 +1707,9 @@ if ($method === 'GET') {
                         'es_adicional_dinamico' => $esAdicionalDinamico ? 1 : 0,
                         'origen' => 'agenda_servicio',
                         'estado' => (string)($row['estado_evento'] ?? ''),
-                        'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+                        'cotizacion_id' => $cotizacionIdAgenda > 0 ? $cotizacionIdAgenda : null,
+                        'cotizacion_grupo_id' => $cotizacionGrupoIdAgenda,
+                        'consulta_id_ref' => (int)($row['consulta_id_ref'] ?? 0),
                         'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
                         'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
                         'referencia' => 'Agenda #' . (int)($row['id'] ?? 0),
@@ -2977,7 +3005,7 @@ if ($method === 'POST' || $method === 'PUT') {
             $excludeConsultaIds
         );
         $horaSolicitudHm = substr($nuevaHora, 0, 5);
-        if (!empty($turnosLibresMedico) && !in_array($horaSolicitudHm, $turnosLibresMedico, true)) {
+        if (!$forzarAdicional && !empty($turnosLibresMedico) && !in_array($horaSolicitudHm, $turnosLibresMedico, true)) {
             $sugerenciasDiasFueraHorario = rc_sugerir_dias_reprogramacion(
                 $conn,
                 $agendaItems,
@@ -3012,7 +3040,9 @@ if ($method === 'POST' || $method === 'PUT') {
                 $excludeConsultaIds,
                 160
             );
-            if ($horaAdicionalSugerida === '') {
+            // En modo adicional se respeta la hora solicitada por recepción (ej. 15:00).
+            // Solo se usa la sugerida para diagnóstico/fallback cuando no hay disponibilidad.
+            if ($horaAdicionalSugerida === '' && $horaSolicitudHm === '') {
                 echo json_encode([
                     'success' => false,
                     'error' => 'No existe horario adicional libre para esta fecha. Elige otra fecha.',
@@ -3024,7 +3054,6 @@ if ($method === 'POST' || $method === 'PUT') {
                 ]);
                 exit;
             }
-            $nuevaHora = $horaAdicionalSugerida;
         }
         $planTurnos = rc_construir_plan_turnos_reprogramacion($agendaItems, $nuevaHora, $duracionTurnoMin);
         if (empty($planTurnos)) {

@@ -115,6 +115,144 @@ if (!function_exists('op_normalize_procedimientos_ids')) {
     }
 }
 
+if (!function_exists('op_procedimientos_activos_por_cotizacion')) {
+    function op_procedimientos_activos_por_cotizacion(mysqli $conn, array $cotizacionIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !op_table_exists($conn, 'cotizaciones_detalle')) {
+            return [];
+        }
+
+        $hasCotizaciones = op_table_exists($conn, 'cotizaciones');
+        $hasCotizacionPadreId = $hasCotizaciones && op_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id');
+
+        $padreCache = [];
+        $resolverRaiz = function (int $cotizacionId) use ($conn, &$padreCache, $hasCotizacionPadreId): int {
+            if (!$hasCotizacionPadreId) {
+                return $cotizacionId;
+            }
+            $actual = $cotizacionId;
+            $guard = 0;
+            while ($actual > 0 && $guard < 25) {
+                $guard++;
+                if (!array_key_exists($actual, $padreCache)) {
+                    $stmtPad = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+                    $padre = 0;
+                    if ($stmtPad) {
+                        $stmtPad->bind_param('i', $actual);
+                        $stmtPad->execute();
+                        $rowPad = $stmtPad->get_result()->fetch_assoc();
+                        $stmtPad->close();
+                        $padre = (int)($rowPad['cotizacion_padre_id'] ?? 0);
+                    }
+                    $padreCache[$actual] = $padre;
+                }
+                $padre = (int)($padreCache[$actual] ?? 0);
+                if ($padre <= 0) {
+                    break;
+                }
+                $actual = $padre;
+            }
+            return $actual > 0 ? $actual : $cotizacionId;
+        };
+
+        $relacionadasPorSolicitada = [];
+        foreach ($ids as $cid) {
+            $root = $resolverRaiz($cid);
+            $relIds = [$cid => true];
+            if ($hasCotizacionPadreId) {
+                $stmtRel = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? OR cotizacion_padre_id = ?');
+                if ($stmtRel) {
+                    $stmtRel->bind_param('ii', $root, $root);
+                    $stmtRel->execute();
+                    $resRel = $stmtRel->get_result();
+                    while ($rowRel = $resRel->fetch_assoc()) {
+                        $rid = (int)($rowRel['id'] ?? 0);
+                        if ($rid > 0) {
+                            $relIds[$rid] = true;
+                        }
+                    }
+                    $stmtRel->close();
+                }
+            }
+            $relacionadasPorSolicitada[$cid] = array_keys($relIds);
+        }
+
+        $idsBusqueda = [];
+        foreach ($relacionadasPorSolicitada as $relIds) {
+            foreach ((array)$relIds as $rid) {
+                $rid = (int)$rid;
+                if ($rid > 0) {
+                    $idsBusqueda[$rid] = true;
+                }
+            }
+        }
+        $idsBusqueda = array_keys($idsBusqueda);
+        if (empty($idsBusqueda)) {
+            return [];
+        }
+
+        $whereEstado = op_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'"
+            : '';
+        $placeholders = implode(',', array_fill(0, count($idsBusqueda), '?'));
+        $sql = "SELECT cotizacion_id, servicio_id
+                FROM cotizaciones_detalle
+                WHERE LOWER(TRIM(COALESCE(servicio_tipo, ''))) IN ('procedimiento', 'procedimientos')
+                  AND cotizacion_id IN ($placeholders)
+                  AND servicio_id IS NOT NULL
+                  AND servicio_id > 0{$whereEstado}";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return [];
+        }
+        $stmt->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $activosPorCotizacionDetalle = [];
+        foreach ($rows as $row) {
+            $cid = (int)($row['cotizacion_id'] ?? 0);
+            $sid = (int)($row['servicio_id'] ?? 0);
+            if ($cid <= 0 || $sid <= 0) {
+                continue;
+            }
+            if (!isset($activosPorCotizacionDetalle[$cid])) {
+                $activosPorCotizacionDetalle[$cid] = [];
+            }
+            $activosPorCotizacionDetalle[$cid][$sid] = true;
+        }
+
+        $map = [];
+        foreach ($ids as $cid) {
+            $map[$cid] = [];
+            $activosDirectos = $activosPorCotizacionDetalle[$cid] ?? [];
+
+            if (!empty($activosDirectos)) {
+                foreach ($activosDirectos as $sid => $_ok) {
+                    $map[$cid][(int)$sid] = true;
+                }
+                continue;
+            }
+
+            foreach ((array)($relacionadasPorSolicitada[$cid] ?? []) as $rid) {
+                $rid = (int)$rid;
+                if ($rid <= 0 || !isset($activosPorCotizacionDetalle[$rid])) {
+                    continue;
+                }
+                foreach ($activosPorCotizacionDetalle[$rid] as $sid => $_ok) {
+                    $map[$cid][(int)$sid] = true;
+                }
+            }
+        }
+
+        return $map;
+    }
+}
+
 if (!function_exists('op_fetch_tarifas_procedimientos')) {
     function op_fetch_tarifas_procedimientos(mysqli $conn, array $ids)
     {
@@ -332,11 +470,17 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
         $stmt->close();
 
         $allIds = [];
+        $allCotizacionIds = [];
         foreach ($rows as $r) {
+            $cotizId = (int)($r['cotizacion_id'] ?? 0);
+            if ($cotizId > 0) {
+                $allCotizacionIds[] = $cotizId;
+            }
             $ids = op_normalize_procedimientos_ids(json_decode((string)($r['procedimientos_json'] ?? '[]'), true) ?: []);
             foreach ($ids as $id) $allIds[] = $id;
         }
         $catalog = op_fetch_tarifas_procedimientos($conn, $allIds);
+        $activosPorCotizacion = op_procedimientos_activos_por_cotizacion($conn, $allCotizacionIds);
         $cotizacionIds = [];
         foreach ($rows as $rCot) {
             $cid = (int)($rCot['cotizacion_id'] ?? 0);
@@ -377,6 +521,17 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
                 }
             }
             $ids = op_normalize_procedimientos_ids(json_decode((string)($r['procedimientos_json'] ?? '[]'), true) ?: []);
+            $cotizIdOrden = (int)($r['cotizacion_id'] ?? 0);
+            $activosOrden = $cotizIdOrden > 0 ? ($activosPorCotizacion[$cotizIdOrden] ?? null) : null;
+            if (is_array($activosOrden)) {
+                $ids = array_values(array_filter($ids, function ($id) use ($activosOrden) {
+                    $id = (int)$id;
+                    return $id > 0 && isset($activosOrden[$id]);
+                }));
+                if (empty($ids)) {
+                    continue;
+                }
+            }
             $items = [];
             foreach ($ids as $id) {
                 if (isset($catalog[$id])) {

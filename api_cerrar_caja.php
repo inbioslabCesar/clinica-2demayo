@@ -193,8 +193,12 @@ $total_egresos = floatval($egreso_honorarios) + floatval($egreso_lab_ref) + floa
 $efectivo_esperado = floatval($caja['monto_apertura']) + floatval($total_efectivo) - $egresosPorMetodo['efectivo'];
 $virtual_cobrado = floatval($total_yape) + floatval($total_plin) + floatval($total_tarjetas) + floatval($total_transferencias);
 $egresos_virtuales_clinica = floatval($egresosPorMetodo['yape']) + floatval($egresosPorMetodo['plin']) + floatval($egresosPorMetodo['tarjeta']) + floatval($egresosPorMetodo['transferencia']);
-$virtual_esperado = $virtual_cobrado - $egresos_virtuales_clinica;
-$diferencia_virtual = $monto_virtual_contado === null ? null : ($monto_virtual_contado - $virtual_esperado);
+$virtual_esperado_neto = $virtual_cobrado - $egresos_virtuales_clinica;
+// Para cuadre operativo no se exige "contar" un saldo virtual negativo.
+// Si las devoluciones virtuales superan a los cobros virtuales, el esperado
+// cuadrable se toma como 0 y el saldo negativo queda como referencia neta.
+$virtual_esperado_cuadre = max(0.0, $virtual_esperado_neto);
+$diferencia_virtual = $monto_virtual_contado === null ? null : ($monto_virtual_contado - $virtual_esperado_cuadre);
 $diferencia = $monto_contado - $efectivo_esperado;
 
 // Calcular ingreso total del día (todos los métodos de pago)
@@ -316,7 +320,8 @@ echo json_encode([
         'efectivo_esperado' => $efectivo_esperado,
         'virtual_cobrado' => $virtual_cobrado,
         'egresos_virtuales_clinica' => $egresos_virtuales_clinica,
-        'virtual_esperado' => $virtual_esperado,
+        'virtual_esperado' => $virtual_esperado_neto,
+        'virtual_esperado_cuadre' => $virtual_esperado_cuadre,
         'virtual_contado' => $monto_virtual_contado,
         'diferencia_virtual' => $diferencia_virtual,
         'total_egresos' => $total_egresos,
