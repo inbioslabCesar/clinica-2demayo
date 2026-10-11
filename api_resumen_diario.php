@@ -134,11 +134,39 @@ try {
             $cobradoTurno = 0.0;
         }
 
+        $usaConsultaCotizacion = false;
+        try {
+            $stmtColConsulta = $pdo->prepare(
+                "SELECT 1
+                 FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'cotizaciones_detalle'
+                   AND column_name = 'consulta_id'
+                 LIMIT 1"
+            );
+            $stmtColConsulta->execute();
+            $usaConsultaCotizacion = (bool)$stmtColConsulta->fetchColumn();
+        } catch (Throwable $e) {
+            $usaConsultaCotizacion = false;
+        }
+
+        $joinConsultaCotExpr = '';
+        $atencionIdExpr = 'cc.cotizacion_id';
+        if ($usaConsultaCotizacion) {
+            $joinConsultaCotExpr = 'LEFT JOIN ('
+                . '  SELECT cotizacion_id, MIN(consulta_id) AS consulta_id_ref '
+                . '  FROM cotizaciones_detalle '
+                . '  WHERE consulta_id IS NOT NULL AND consulta_id > 0 '
+                . '  GROUP BY cotizacion_id'
+                . ') cdx ON cdx.cotizacion_id = cc.cotizacion_id ';
+            $atencionIdExpr = 'COALESCE(NULLIF(cdx.consulta_id_ref, 0), cc.cotizacion_id)';
+        }
+
         try {
             $stmtAtenciones = $pdo->prepare(
                 'SELECT '
                 . '  COALESCE(SUM(COALESCE(cc.monto_aplicado, 0)), 0) AS total_atenciones, '
-                . '  COUNT(DISTINCT cc.cotizacion_id) AS cantidad_atenciones '
+                . '  COUNT(DISTINCT ' . $atencionIdExpr . ') AS cantidad_atenciones '
                 . 'FROM cobros_cotizaciones cc '
                 . 'INNER JOIN ('
                 . '  SELECT referencia_id AS cobro_id '
@@ -154,6 +182,7 @@ try {
                 . '    ) '
                 . '  GROUP BY referencia_id '
                 . ') asientos ON asientos.cobro_id = cc.cobro_id '
+                . $joinConsultaCotExpr
                 . 'WHERE COALESCE(cc.estado_resultado, "ok") <> "anulado" '
                 . '  AND COALESCE(cc.monto_aplicado, 0) > 0'
             );
@@ -375,7 +404,23 @@ try {
         return $resultado;
     };
 
-    $calcularIngresosPorServicioCaja = function (int $cajaId) use ($pdo, $normalizarTipoIngresoServicio) {
+    $usaEstadoItemCotDetalle = false;
+    try {
+        $stmtColEstadoItem = $pdo->prepare(
+            "SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = 'cotizaciones_detalle'
+               AND column_name = 'estado_item'
+             LIMIT 1"
+        );
+        $stmtColEstadoItem->execute();
+        $usaEstadoItemCotDetalle = (bool)$stmtColEstadoItem->fetchColumn();
+    } catch (Throwable $e) {
+        $usaEstadoItemCotDetalle = false;
+    }
+
+    $calcularIngresosPorServicioCaja = function (int $cajaId) use ($pdo, $normalizarTipoIngresoServicio, $usaEstadoItemCotDetalle) {
         $acumulado = [];
         if ($cajaId <= 0) {
             return [];
@@ -479,6 +524,7 @@ try {
                 . "WHERE cm.cobro_id IN ($placeholders) "
                 . '  AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ""))) = "abono" '
                 . '  AND COALESCE(cm.monto, 0) > 0 '
+                . ($usaEstadoItemCotDetalle ? '  AND LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) <> "eliminado" ' : '')
                 . 'GROUP BY cm.cobro_id'
             );
             $stmtTiposCot->execute($ids);

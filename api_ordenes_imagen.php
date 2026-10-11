@@ -143,6 +143,122 @@ if (!function_exists('oi_table_exists')) {
     }
 }
 
+if (!function_exists('oi_resolver_cadena_cotizacion_ids')) {
+    function oi_resolver_cadena_cotizacion_ids(mysqli $conn, int $cotizacionId): array {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return [];
+        }
+        if (!oi_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+            return [$cotizacionId];
+        }
+
+        $rootId = $cotizacionId;
+        $vistos = [];
+        while ($rootId > 0) {
+            if (isset($vistos[$rootId])) {
+                break;
+            }
+            $vistos[$rootId] = true;
+            $stmtRoot = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+            if (!$stmtRoot) {
+                break;
+            }
+            $stmtRoot->bind_param('i', $rootId);
+            $stmtRoot->execute();
+            $rowRoot = $stmtRoot->get_result()->fetch_assoc();
+            $stmtRoot->close();
+            $parentId = (int)($rowRoot['cotizacion_padre_id'] ?? 0);
+            if ($parentId <= 0 || $parentId === $rootId) {
+                break;
+            }
+            $rootId = $parentId;
+        }
+
+        $ids = [$rootId => true];
+        $queue = [$rootId];
+        while (!empty($queue)) {
+            $current = (int)array_shift($queue);
+            $stmtChildren = $conn->prepare('SELECT id FROM cotizaciones WHERE cotizacion_padre_id = ?');
+            if (!$stmtChildren) {
+                continue;
+            }
+            $stmtChildren->bind_param('i', $current);
+            $stmtChildren->execute();
+            $children = $stmtChildren->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtChildren->close();
+
+            foreach ($children as $child) {
+                $childId = (int)($child['id'] ?? 0);
+                if ($childId <= 0 || isset($ids[$childId])) {
+                    continue;
+                }
+                $ids[$childId] = true;
+                $queue[] = $childId;
+            }
+        }
+
+        if (!function_exists('oi_resolver_consulta_para_cotizacion')) {
+            function oi_resolver_consulta_para_cotizacion(mysqli $conn, int $cotizacionId): int {
+                $cotizacionId = (int)$cotizacionId;
+                if ($cotizacionId <= 0) {
+                    return 0;
+                }
+
+                $ids = oi_resolver_cadena_cotizacion_ids($conn, $cotizacionId);
+                if (empty($ids)) {
+                    $ids = [$cotizacionId];
+                }
+                $ph = implode(',', array_fill(0, count($ids), '?'));
+
+                if (oi_column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+                    $hasEstadoItem = oi_column_exists($conn, 'cotizaciones_detalle', 'estado_item');
+                    $whereEstado = $hasEstadoItem ? " AND (estado_item IS NULL OR estado_item <> 'eliminado')" : '';
+                    $sql = "SELECT consulta_id
+                            FROM cotizaciones_detalle
+                            WHERE cotizacion_id IN ({$ph})
+                              AND consulta_id IS NOT NULL
+                              AND consulta_id > 0{$whereEstado}
+                            ORDER BY CASE WHEN LOWER(TRIM(servicio_tipo)) = 'consulta' THEN 0 ELSE 1 END, id ASC
+                            LIMIT 1";
+                    $stmt = $conn->prepare($sql);
+                    if ($stmt) {
+                        $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+                        $stmt->execute();
+                        $row = $stmt->get_result()->fetch_assoc();
+                        $stmt->close();
+                        $consultaId = (int)($row['consulta_id'] ?? 0);
+                        if ($consultaId > 0) {
+                            return $consultaId;
+                        }
+                    }
+                }
+
+                $stmtObs = $conn->prepare('SELECT observaciones FROM cotizaciones WHERE id = ? LIMIT 1');
+                if ($stmtObs) {
+                    $stmtObs->bind_param('i', $cotizacionId);
+                    $stmtObs->execute();
+                    $rowObs = $stmtObs->get_result()->fetch_assoc();
+                    $stmtObs->close();
+                    $obs = trim((string)($rowObs['observaciones'] ?? ''));
+                    if ($obs !== '' && preg_match('/consulta\s*#\s*(\d+)/i', $obs, $m)) {
+                        $consultaObs = (int)($m[1] ?? 0);
+                        if ($consultaObs > 0) {
+                            return $consultaObs;
+                        }
+                    }
+                }
+
+                return 0;
+            }
+        }
+
+        $out = array_values(array_map('intval', array_keys($ids)));
+        sort($out);
+        return $out;
+    }
+}
+
 if (!function_exists('oi_parse_date_safe')) {
     function oi_parse_date_safe($value): ?DateTime {
         $raw = trim((string)$value);
@@ -1726,7 +1842,13 @@ if ($method === 'GET') {
             exit;
         }
 
-        $res = $conn->query("SELECT * FROM ordenes_imagen WHERE cotizacion_id = $cotizacion_id ORDER BY fecha ASC, id ASC");
+        $cotizacionIdsGrupo = oi_resolver_cadena_cotizacion_ids($conn, $cotizacion_id);
+        if (empty($cotizacionIdsGrupo)) {
+            $cotizacionIdsGrupo = [$cotizacion_id];
+        }
+        $inGrupo = implode(',', array_map('intval', $cotizacionIdsGrupo));
+
+        $res = $conn->query("SELECT * FROM ordenes_imagen WHERE cotizacion_id IN ($inGrupo) ORDER BY fecha ASC, id ASC");
         $rowsBase = [];
         while ($res && ($r = $res->fetch_assoc())) {
             if (!usuarioPuedeVerOrdenImagen($conn, $r, (string)$rol, (int)$usuarioId, $contextConsultaId, $contextPacienteId)) {
@@ -1748,7 +1870,11 @@ if ($method === 'GET') {
             $rows[] = $r;
         }
 
-        echo json_encode(['success' => true, 'ordenes' => $rows]);
+        echo json_encode([
+            'success' => true,
+            'ordenes' => $rows,
+            'cotizacion_ids_grupo' => $cotizacionIdsGrupo,
+        ]);
 
     } elseif ($medico_id > 0) {
         // Esta vista puede sincronizar órdenes desde agenda (write path), por eso asegura esquema.
@@ -2520,6 +2646,8 @@ if ($method === 'POST') {
                 exit;
             }
 
+            $consultaFallbackCotizacion = oi_resolver_consulta_para_cotizacion($conn, $cotizacion_id);
+
             $creadas = 0;
             $tiposCreados = [];
             $omitidasSinMedico = [];
@@ -2533,6 +2661,9 @@ if ($method === 'POST') {
                     continue;
                 }
                 $consultaRelacionadaId = (int)($detImg['consulta_id'] ?? 0);
+                if ($consultaRelacionadaId <= 0) {
+                    $consultaRelacionadaId = $consultaFallbackCotizacion;
+                }
                 if ($descOrden === '') {
                     $descOrden = strtoupper($tipoOrden);
                 }

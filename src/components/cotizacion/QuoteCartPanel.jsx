@@ -155,6 +155,8 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
   const editingCotizacionId = searchParams.get("cotizacion_id");
   const isEditingCobro = Boolean(searchParams.get("cobro_id"));
   const isEditingCotizacion = Boolean(editingCotizacionId) && !isEditingCobro;
+  const editingMode = String(searchParams.get("modo") || "editar").toLowerCase().trim();
+  const isAdendaMode = isEditingCotizacion && editingMode === "adenda";
 
   const hasItems = cart.items.length > 0;
   const hayServiciosProgramables = useMemo(
@@ -864,18 +866,27 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
           throw new Error("El carrito pertenece a otro paciente y no puede actualizar esta cotizacion.");
         }
 
-        const baseDetalles = Array.isArray(cotizacionActual.detalles) ? cotizacionActual.detalles : [];
-        const detallesFinales = mergeDetalles(baseDetalles, detalles);
-        const totalFinal = detallesFinales.reduce((acc, d) => acc + Number(d?.subtotal || 0), 0);
+        if (isAdendaMode) {
+          payload = {
+            accion: "adenda",
+            cotizacion_id: Number(editingCotizacionId),
+            detalles,
+            motivo: "Migracion de plan desde carrito en modo adenda",
+          };
+        } else {
+          const baseDetalles = Array.isArray(cotizacionActual.detalles) ? cotizacionActual.detalles : [];
+          const detallesFinales = mergeDetalles(baseDetalles, detalles);
+          const totalFinal = detallesFinales.reduce((acc, d) => acc + Number(d?.subtotal || 0), 0);
 
-        payload = {
-          accion: "editar",
-          cotizacion_id: Number(editingCotizacionId),
-          detalles: detallesFinales,
-          total: Number(totalFinal || 0),
-          motivo: "Actualizacion de cotizacion desde carrito en modo edicion",
-        };
-        cotizacionIdDestino = Number(editingCotizacionId);
+          payload = {
+            accion: "editar",
+            cotizacion_id: Number(editingCotizacionId),
+            detalles: detallesFinales,
+            total: Number(totalFinal || 0),
+            motivo: "Actualizacion de cotizacion desde carrito en modo edicion",
+          };
+          cotizacionIdDestino = Number(editingCotizacionId);
+        }
       } else {
         const esCotizacionInformativa = pacienteRegistradoId <= 0;
         const detallesPaquete = detalles.filter((d) => {
@@ -999,7 +1010,9 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       await Swal.fire(
         "Listo",
         isEditingCotizacion
-          ? `Cotizacion #${cotizacionIdFinal} actualizada correctamente.`
+          ? (isAdendaMode
+            ? `Adenda de cotizacion #${cotizacionIdFinal} registrada correctamente.`
+            : `Cotizacion #${cotizacionIdFinal} actualizada correctamente.`)
           : `Cotizacion #${cotizacionIdFinal} registrada correctamente.`,
         "success"
       );

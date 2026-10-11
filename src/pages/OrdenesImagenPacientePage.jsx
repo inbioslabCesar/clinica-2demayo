@@ -257,6 +257,11 @@ const OrdenCard = React.memo(function OrdenCard({ orden, onSubir, onRecargar, na
                 Orden creada desde cotización #{orden.cotizacion_id}
               </p>
             )}
+            {String(medicoNombre || "").trim() !== "" && (
+              <p className="text-[11px] text-indigo-700 mt-0.5 font-medium">
+                Médico responsable: {medicoNombre}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -419,7 +424,20 @@ export default function OrdenesImagenPacientePage() {
   const [ordenSubir, setOrdenSubir]   = useState(null); // orden para el modal
   const [intentadoGenerarDesdeCotizacion, setIntentadoGenerarDesdeCotizacion] = useState(false);
   const ordenesRef = useRef([]);
-  const cotizacionIdFiltro = Number(new URLSearchParams(location.search).get("cotizacion_id") || 0);
+  const searchParams = React.useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const cotizacionIdFiltro = Number(searchParams.get("cotizacion_id") || 0);
+  const cotizacionIdsFiltro = React.useMemo(() => {
+    const idsRaw = String(searchParams.get("ids") || "").trim();
+    const ids = idsRaw
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    if (Number.isFinite(cotizacionIdFiltro) && cotizacionIdFiltro > 0) {
+      ids.unshift(cotizacionIdFiltro);
+    }
+    return Array.from(new Set(ids));
+  }, [searchParams, cotizacionIdFiltro]);
+  const cotizacionIdsFiltroSet = React.useMemo(() => new Set(cotizacionIdsFiltro), [cotizacionIdsFiltro]);
 
   const cargar = useCallback((silent = false) => {
     if (!silent) setLoading(true);
@@ -458,23 +476,29 @@ export default function OrdenesImagenPacientePage() {
       if (intentadoGenerarDesdeCotizacion) return;
 
       const existeOrden = ordenesRef.current.some(
-        (o) => Number(o.cotizacion_id || 0) === Number(cotizacionIdFiltro)
+        (o) => cotizacionIdsFiltroSet.has(Number(o.cotizacion_id || 0))
       );
       if (existeOrden) return;
 
       setIntentadoGenerarDesdeCotizacion(true);
       try {
-        const res = await authFetch(`api_ordenes_imagen.php`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "crear_desde_cotizacion",
-            cotizacion_id: Number(cotizacionIdFiltro),
-            paciente_id: Number(pacienteId || 0),
-          }),
-        });
-        const data = await res.json();
-        if (data?.success && Number(data.creadas || 0) > 0) {
+        let creadas = 0;
+        for (const cotizacionId of cotizacionIdsFiltro) {
+          const res = await authFetch(`api_ordenes_imagen.php`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "crear_desde_cotizacion",
+              cotizacion_id: Number(cotizacionId),
+              paciente_id: Number(pacienteId || 0),
+            }),
+          });
+          const data = await res.json();
+          if (data?.success) {
+            creadas += Number(data.creadas || 0);
+          }
+        }
+        if (creadas > 0) {
           cargar(true); // silent: no mostrar spinner en la recarga
         }
       } catch {
@@ -483,10 +507,10 @@ export default function OrdenesImagenPacientePage() {
     };
 
     generarSiCorresponde();
-  }, [loading, cotizacionIdFiltro, intentadoGenerarDesdeCotizacion, pacienteId, cargar]);
+  }, [loading, cotizacionIdFiltro, cotizacionIdsFiltro, cotizacionIdsFiltroSet, intentadoGenerarDesdeCotizacion, pacienteId, cargar]);
 
   const ordenesBase = cotizacionIdFiltro > 0
-    ? ordenes.filter((o) => Number(o.cotizacion_id || 0) === Number(cotizacionIdFiltro))
+    ? ordenes.filter((o) => cotizacionIdsFiltroSet.has(Number(o.cotizacion_id || 0)))
     : ordenes;
 
   const ordenesFiltradas = tabActivo === "todos"
@@ -543,7 +567,9 @@ export default function OrdenesImagenPacientePage() {
       {cotizacionIdFiltro > 0 && (
         <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-4">
           <div className="rounded-xl border border-blue-200 bg-blue-50 text-blue-800 px-4 py-2 text-sm font-medium">
-            Mostrando imágenes de la cotización #{cotizacionIdFiltro}
+            {cotizacionIdsFiltro.length > 1
+              ? `Mostrando imágenes del episodio (${cotizacionIdsFiltro.map((id) => `#${id}`).join(", ")})`
+              : `Mostrando imágenes de la cotización #${cotizacionIdFiltro}`}
           </div>
         </div>
       )}

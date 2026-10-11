@@ -807,6 +807,140 @@ function resolver_contexto_clinico_base_cotizacion($conn, $cotizacionId) {
     ];
 }
 
+function cotizacion_vincular_detalles_clinicos_a_consulta(mysqli $conn, int $cotizacionId, int $consultaId, int $medicoId = 0): void {
+    if ($cotizacionId <= 0 || $consultaId <= 0) {
+        return;
+    }
+
+    $hasConsultaId = column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+    $hasMedicoId = column_exists($conn, 'cotizaciones_detalle', 'medico_id');
+    if (!$hasConsultaId && !$hasMedicoId) {
+        return;
+    }
+
+    $tiposClinicos = ['laboratorio', 'ecografia', 'rayosx', 'rayos_x', 'rayos x', 'rx', 'tomografia', 'procedimiento', 'procedimientos', 'operacion', 'operaciones'];
+    $placeholders = implode(',', array_fill(0, count($tiposClinicos), '?'));
+    $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND (estado_item IS NULL OR estado_item <> 'eliminado')"
+        : '';
+
+    $sets = [];
+    $types = '';
+    $params = [];
+
+    if ($hasConsultaId) {
+        $sets[] = 'consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END';
+        $types .= 'i';
+        $params[] = $consultaId;
+    }
+    if ($hasMedicoId && $medicoId > 0) {
+        $sets[] = 'medico_id = CASE WHEN medico_id IS NULL OR medico_id = 0 THEN ? ELSE medico_id END';
+        $types .= 'i';
+        $params[] = $medicoId;
+    }
+
+    if (empty($sets)) {
+        return;
+    }
+
+    $sql = "UPDATE cotizaciones_detalle
+            SET " . implode(', ', $sets) . "
+            WHERE cotizacion_id = ?
+              AND LOWER(TRIM(COALESCE(servicio_tipo, ''))) IN ($placeholders)" . $whereEstado;
+
+    $types .= 'i' . str_repeat('s', count($tiposClinicos));
+    $params[] = $cotizacionId;
+    foreach ($tiposClinicos as $tipo) {
+        $params[] = $tipo;
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return;
+    }
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $stmt->close();
+}
+
+function cotizacion_resolver_consulta_para_ordenes(mysqli $conn, int $cotizacionId, int $consultaPreferida = 0, array $detalles = [], array $cotizacionIdsExtras = []): int {
+    if ($consultaPreferida > 0) {
+        return $consultaPreferida;
+    }
+
+    foreach ($detalles as $det) {
+        if (!is_array($det)) {
+            continue;
+        }
+        $consultaDet = (int)($det['consulta_id'] ?? 0);
+        if ($consultaDet > 0) {
+            return $consultaDet;
+        }
+    }
+
+    $ids = [];
+    if ($cotizacionId > 0) {
+        $ids[] = $cotizacionId;
+    }
+    foreach ((array)$cotizacionIdsExtras as $idExtra) {
+        $idExtra = (int)$idExtra;
+        if ($idExtra > 0) {
+            $ids[] = $idExtra;
+        }
+    }
+
+    if ($cotizacionId > 0 && column_exists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+        $idsCadena = cotizacion_resolver_cadena_adenda_ids($conn, $cotizacionId);
+        foreach ($idsCadena as $idCadena) {
+            $idCadena = (int)$idCadena;
+            if ($idCadena > 0) {
+                $ids[] = $idCadena;
+            }
+        }
+    }
+
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return 0;
+    }
+
+    if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+        $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND (estado_item IS NULL OR estado_item <> 'eliminado')"
+            : '';
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $sql = "SELECT consulta_id
+                FROM cotizaciones_detalle
+                WHERE cotizacion_id IN ({$ph})
+                  AND consulta_id IS NOT NULL
+                  AND consulta_id > 0{$whereEstado}
+                ORDER BY CASE WHEN LOWER(TRIM(servicio_tipo)) = 'consulta' THEN 0 ELSE 1 END, id ASC
+                LIMIT 1";
+        $stmt = $conn->prepare($sql);
+        if ($stmt) {
+            $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $consultaId = (int)($row['consulta_id'] ?? 0);
+            if ($consultaId > 0) {
+                return $consultaId;
+            }
+        }
+    }
+
+    foreach ($ids as $idCand) {
+        $consultaCand = (int)resolver_consulta_referente_por_cotizacion($conn, $idCand);
+        if ($consultaCand > 0) {
+            return $consultaCand;
+        }
+    }
+
+    return 0;
+}
+
 function obtener_medico_desde_tarifa($conn, $tarifaId) {
     $tarifaId = (int)$tarifaId;
     if ($tarifaId <= 0) return null;
@@ -1129,13 +1263,26 @@ function sugerir_grupo_cobro_unificado($conn, $cotizacionId) {
 
     $pacienteId = (int)($cotizacion['paciente_id'] ?? 0);
     $consultaRef = (int)($cotizacion['consulta_ref_id'] ?? resolver_consulta_referente_por_cotizacion($conn, $cotizacionId));
-    $estadoBase = strtolower(trim((string)($cotizacion['estado'] ?? '')));
-    $fechaVencBase = trim((string)($cotizacion['fecha_vencimiento'] ?? ''));
-    $baseVencida = $fechaVencBase !== '' && in_array($estadoBase, ['pendiente', 'parcial'], true)
-        ? (($tsBase = strtotime($fechaVencBase)) !== false && time() > $tsBase)
-        : false;
+    $cadenaIds = cotizacion_resolver_cadena_adenda_ids($conn, $cotizacionId);
+    if (empty($cadenaIds)) {
+        $cadenaIds = [$cotizacionId];
+    }
 
-    if ($pacienteId <= 0 || $consultaRef <= 0 || $baseVencida || !in_array($estadoBase, ['pendiente', 'parcial'], true)) {
+    if ($consultaRef <= 0) {
+        foreach ($cadenaIds as $candCadenaId) {
+            $candCadenaId = (int)$candCadenaId;
+            if ($candCadenaId <= 0) {
+                continue;
+            }
+            $consultaCadena = (int)resolver_consulta_referente_por_cotizacion($conn, $candCadenaId);
+            if ($consultaCadena > 0) {
+                $consultaRef = $consultaCadena;
+                break;
+            }
+        }
+    }
+
+    if ($pacienteId <= 0 || $consultaRef <= 0) {
         respond([
             'success' => true,
             'ids' => [$cotizacionId],
@@ -3675,6 +3822,8 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
         $sourceCotizacionIds = [$cotizacionId];
     }
 
+    $consultaCandidata = cotizacion_resolver_consulta_para_ordenes($conn, $cotizacionId, $consultaId, $detalles, $sourceCotizacionIds);
+
     // Mantener una sola orden interna por episodio con todos los exámenes de laboratorio,
     // incluso los derivados, para permitir carga documental y de resultados en panel.
     $examIds = [];
@@ -3814,10 +3963,10 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
         }
 
         if ($ordenId > 0) {
-            if ($hasConsultaCol && $consultaId > 0) {
+            if ($hasConsultaCol && $consultaCandidata > 0) {
                 $stmtUpd = $conn->prepare("UPDATE ordenes_laboratorio SET cotizacion_id = ?, examenes = ?, paciente_id = ?, consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END, estado = CASE WHEN estado = 'cancelada' THEN 'pendiente' ELSE estado END WHERE id = ?");
                 if ($stmtUpd) {
-                    $stmtUpd->bind_param("isiii", $rootCotizacionId, $json, $pacienteId, $consultaId, $ordenId);
+                    $stmtUpd->bind_param("isiii", $rootCotizacionId, $json, $pacienteId, $consultaCandidata, $ordenId);
                     $stmtUpd->execute();
                     $stmtUpd->close();
                 }
@@ -3832,7 +3981,7 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
         } else if ($hasConsultaCol) {
             $stmt = $conn->prepare("INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, consulta_id) VALUES (?, ?, ?, ?)");
             if ($stmt) {
-                $consultaInsert = $consultaId > 0 ? $consultaId : null;
+                $consultaInsert = $consultaCandidata > 0 ? $consultaCandidata : null;
                 $stmt->bind_param("isii", $rootCotizacionId, $json, $pacienteId, $consultaInsert);
                 $stmt->execute();
                 $stmt->close();
@@ -3892,7 +4041,7 @@ function crear_ordenes_lab_cotizacion(mysqli $conn, int $cotizacionId, int $paci
         if ($hasConsultaCol) {
             $stmt = $conn->prepare("INSERT INTO ordenes_laboratorio (examenes, paciente_id, consulta_id) VALUES (?, ?, ?)");
             if ($stmt) {
-                $consultaInsert = $consultaId > 0 ? $consultaId : null;
+                $consultaInsert = $consultaCandidata > 0 ? $consultaCandidata : null;
                 $stmt->bind_param("sii", $json, $pacienteId, $consultaInsert);
                 $stmt->execute();
                 $stmt->close();
@@ -3967,6 +4116,7 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
     $hasSolicitadoPor = column_exists($conn, 'ordenes_imagen', 'solicitado_por');
     $hasCargaAnticipada = column_exists($conn, 'ordenes_imagen', 'carga_anticipada');
     $hasMedicoId = column_exists($conn, 'ordenes_imagen', 'medico_id');
+    $consultaEpisodioId = cotizacion_resolver_consulta_para_ordenes($conn, $cotizacionId, $consultaId, $detalles);
     $consultaColumn = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
     $consultaAdmiteNull = $consultaColumn && ($consultaMeta = $consultaColumn->fetch_assoc())
         && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) === 'YES';
@@ -3980,7 +4130,7 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
         $servicioIdDetalle = (int)($detImg['servicio_id'] ?? 0);
         $cantidadDetalle = max(1, (int)($detImg['cantidad'] ?? 1));
         $consultaDetalleId = (int)($detImg['consulta_id'] ?? 0);
-        $consultaOrigen = $consultaId > 0 ? $consultaId : $consultaDetalleId;
+        $consultaOrigen = $consultaDetalleId > 0 ? $consultaDetalleId : $consultaEpisodioId;
 
         // Al sincronizar tras un abono, priorizar el vínculo ya persistido en el detalle.
         if ($medicoResponsableId <= 0 && $detalleId > 0 && column_exists($conn, 'cotizaciones_detalle', 'medico_id')) {
@@ -3998,6 +4148,10 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
                 }
                 $stmtMedicoDetalle->close();
             }
+        }
+
+        if ($consultaOrigen <= 0) {
+            $consultaOrigen = $consultaEpisodioId > 0 ? $consultaEpisodioId : 0;
         }
 
         if ($medicoResponsableId <= 0
@@ -4118,6 +4272,15 @@ function crear_ordenes_imagen_cotizacion(mysqli $conn, int $cotizacionId, int $p
                 $stmtIns->execute();
                 $stmtIns->close();
             }
+        }
+    }
+
+    if ($hasCotizacionId && column_exists($conn, 'ordenes_imagen', 'consulta_id') && $consultaEpisodioId > 0) {
+        $stmtFixConsulta = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = ? WHERE cotizacion_id = ? AND (consulta_id IS NULL OR consulta_id = 0)');
+        if ($stmtFixConsulta) {
+            $stmtFixConsulta->bind_param('ii', $consultaEpisodioId, $cotizacionId);
+            $stmtFixConsulta->execute();
+            $stmtFixConsulta->close();
         }
     }
 }
@@ -5502,6 +5665,30 @@ function crear_adenda_cotizacion($conn, $data) {
         }
 
         insertar_detalles_cotizacion($conn, $nuevaId, $detallesDelta, $usuarioId, $motivo, $fechaOperacion);
+
+        $consultaOrigenId = (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionId);
+        if ($consultaOrigenId <= 0) {
+            $consultaOrigenId = (int)resolver_consulta_referente_por_cotizacion($conn, $cotizacionId);
+        }
+        if ($consultaOrigenId <= 0 && $raizId > 0 && $raizId !== $cotizacionId) {
+            $consultaOrigenId = (int)resolver_consulta_referente_por_cotizacion($conn, $raizId);
+        }
+        if ($consultaOrigenId <= 0) {
+            $contextoBase = resolver_contexto_clinico_base_cotizacion($conn, $raizId > 0 ? $raizId : $cotizacionId);
+            $consultaOrigenId = (int)($contextoBase['consulta_id'] ?? 0);
+            $medicoOrigenId = (int)($contextoBase['medico_id'] ?? 0);
+        } else {
+            $medicoOrigenId = (int)obtener_medico_id_desde_consulta($conn, $consultaOrigenId);
+        }
+
+        if ($consultaOrigenId > 0) {
+            cotizacion_vincular_detalles_clinicos_a_consulta($conn, $nuevaId, $consultaOrigenId, max(0, (int)$medicoOrigenId));
+            $detallesAdenda = cargar_detalles_cotizacion($conn, $nuevaId);
+            crear_ordenes_procedimientos_cotizacion($conn, $nuevaId, (int)$base['paciente_id'], $detallesAdenda, $consultaOrigenId);
+            crear_ordenes_lab_cotizacion($conn, $nuevaId, (int)$base['paciente_id'], $detallesAdenda, $consultaOrigenId);
+            crear_ordenes_imagen_cotizacion($conn, $nuevaId, (int)$base['paciente_id'], $detallesAdenda, $consultaOrigenId);
+        }
+
         $totalReal = total_detalles_cotizacion_activos($conn, $nuevaId);
         $estadoAdenda = 'pendiente';
         if ($hasSaldoV2) {

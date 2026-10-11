@@ -297,7 +297,10 @@ export default function CotizarPaquetesPerfilesPage() {
 
   const sp = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const cotizacionId = Number(sp.get("cotizacion_id") || 0);
+  const modoRaw = String(location.state?.modo || sp.get("modo") || "editar").toLowerCase().trim();
+  const modoCotizacion = (modoRaw === "adenda" || modoRaw === "editar") ? modoRaw : "editar";
   const isEditingCotizacion = cotizacionId > 0 && !sp.get("cobro_id");
+  const isAdendaMode = isEditingCotizacion && modoCotizacion === "adenda";
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
   const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
@@ -945,16 +948,80 @@ export default function CotizarPaquetesPerfilesPage() {
         }
         const base = Array.isArray(dataGet.cotizacion.detalles) ? dataGet.cotizacion.detalles : [];
 
+        const consultasBaseActivas = base.filter((d) => (
+          normalizeServiceType(d?.servicio_tipo || "") === "consulta"
+          && String(d?.estado_item || "activo").toLowerCase() !== "eliminado"
+        ));
+        const consultaBasePorMedico = new Map();
+        consultasBaseActivas.forEach((d) => {
+          const medicoId = Number(d?.medico_id || 0);
+          if (medicoId <= 0 || consultaBasePorMedico.has(medicoId)) return;
+          consultaBasePorMedico.set(medicoId, d);
+        });
+
+        const detallesPaqueteConReferencia = detallesPaqueteNormalizados.map((detalle) => {
+          const componentes = Array.isArray(detalle?.componentes) ? detalle.componentes : [];
+          const componentesAjustados = componentes.map((comp) => {
+            if (normalizeServiceType(comp?.servicio_tipo || comp?.source_type || "") !== "consulta") {
+              return comp;
+            }
+            const medicoConsulta = Number(comp?.medico_id || 0);
+            if (medicoConsulta <= 0) return comp;
+            const refConsulta = consultaBasePorMedico.get(medicoConsulta);
+            if (!refConsulta) return comp;
+
+            const fechaRef = String(refConsulta?.fecha_programada || "").slice(0, 10);
+            const horaRef = String(refConsulta?.hora_programada || "").slice(0, 5);
+            const consultaIdRef = Number(refConsulta?.consulta_id || 0);
+
+            return {
+              ...comp,
+              consulta_id: consultaIdRef > 0 ? consultaIdRef : (Number(comp?.consulta_id || 0) > 0 ? Number(comp.consulta_id) : undefined),
+              fecha_programada: fechaRef || String(comp?.fecha_programada || ""),
+              hora_programada: horaRef || String(comp?.hora_programada || ""),
+            };
+          });
+          return {
+            ...detalle,
+            componentes: componentesAjustados,
+          };
+        });
+
         const componentKeys = new Set();
-        for (const p of detallesPaqueteNormalizados) {
+        for (const p of detallesPaqueteConReferencia) {
           const comps = Array.isArray(p?.componentes) ? p.componentes : [];
           for (const c of comps) {
             componentKeys.add(buildDetalleKey(c));
           }
         }
 
-        const baseSinComponentesRepetidos = base.filter((d) => !componentKeys.has(buildDetalleKey(d)));
-        detallesFinales = [...baseSinComponentesRepetidos, ...detallesPaqueteNormalizados];
+        const consultaIdsEntrantes = new Set();
+        const consultaMedicosEntrantes = new Set();
+        for (const p of detallesPaqueteConReferencia) {
+          const comps = Array.isArray(p?.componentes) ? p.componentes : [];
+          for (const c of comps) {
+            if (normalizeServiceType(c?.servicio_tipo || c?.source_type || "") !== "consulta") continue;
+            const consultaId = Number(c?.consulta_id || 0);
+            const medicoId = Number(c?.medico_id || 0);
+            if (consultaId > 0) consultaIdsEntrantes.add(consultaId);
+            if (medicoId > 0) consultaMedicosEntrantes.add(medicoId);
+          }
+        }
+
+        const baseSinComponentesRepetidos = base.filter((d) => {
+          if (componentKeys.has(buildDetalleKey(d))) return false;
+
+          if (normalizeServiceType(d?.servicio_tipo || "") !== "consulta") return true;
+
+          const consultaIdBase = Number(d?.consulta_id || 0);
+          if (consultaIdBase > 0 && consultaIdsEntrantes.has(consultaIdBase)) return false;
+
+          const medicoIdBase = Number(d?.medico_id || 0);
+          if (medicoIdBase > 0 && consultaMedicosEntrantes.has(medicoIdBase)) return false;
+
+          return true;
+        });
+        detallesFinales = [...baseSinComponentesRepetidos, ...detallesPaqueteConReferencia];
       }
 
       const totalFinal = detallesFinales.reduce((acc, d) => acc + Number(d?.subtotal || 0), 0);
@@ -1027,12 +1094,14 @@ export default function CotizarPaquetesPerfilesPage() {
 
       const payload = isEditingCotizacion && cotizacionId > 0
         ? {
-            accion: "editar",
+            accion: isAdendaMode ? "adenda" : "editar",
             cotizacion_id: Number(cotizacionId),
             detalles: detallesFinales,
             total: Number(totalFinal.toFixed(2)),
             fecha_ref: fechaRef,
-            motivo: "Edicion desde cotizador de Paquetes/Perfiles",
+            motivo: isAdendaMode
+              ? "Adenda desde cotizador de Paquetes/Perfiles"
+              : "Edicion desde cotizador de Paquetes/Perfiles",
           }
         : {
             paciente_id: Number(pacienteId),
@@ -1060,15 +1129,21 @@ export default function CotizarPaquetesPerfilesPage() {
       }
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
-      Swal.fire("Listo", isEditingCotizacion ? "Cotizacion actualizada." : "Cotizacion registrada.", "success").then(() => {
+      Swal.fire(
+        "Listo",
+        isEditingCotizacion
+          ? (isAdendaMode ? "Adenda registrada." : "Cotizacion actualizada.")
+          : "Cotizacion registrada.",
+        "success"
+      ).then(() => {
         if (irACobro && cotizacionDestino > 0) {
           navigate(`/cobrar-cotizacion/${cotizacionDestino}`);
           return;
         }
 
         if (isEditingCotizacion && cotizacionDestino > 0) {
-          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${cotizacionDestino}&modo=editar&back_to=/cotizaciones`, {
-            state: { pacienteId: Number(pacienteId), cotizacionId: cotizacionDestino, backTo: "/cotizaciones", modo: "editar" },
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${cotizacionDestino}&modo=${modoCotizacion}&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId), cotizacionId: cotizacionDestino, backTo: "/cotizaciones", modo: modoCotizacion },
           });
           return;
         }
@@ -1088,15 +1163,15 @@ export default function CotizarPaquetesPerfilesPage() {
           <h2 className="text-2xl font-bold text-blue-800">Cotizador de Paquetes y Perfiles</h2>
           {isEditingCotizacion && (
             <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded border border-yellow-300">
-              Editando cotizacion #{cotizacionId}
+              {isAdendaMode ? `Adenda sobre cotización #${cotizacionId}` : `Editando cotizacion #${cotizacionId}`}
             </span>
           )}
         </div>
         <button
           onClick={() => {
             if (isEditingCotizacion) {
-              navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${cotizacionId}&modo=editar&back_to=/cotizaciones`, {
-                state: { pacienteId: Number(pacienteId), cotizacionId, backTo: "/cotizaciones", modo: "editar" },
+              navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${cotizacionId}&modo=${modoCotizacion}&back_to=/cotizaciones`, {
+                state: { pacienteId: Number(pacienteId), cotizacionId, backTo: "/cotizaciones", modo: modoCotizacion },
               });
             } else {
               navigate("/seleccionar-servicio", {

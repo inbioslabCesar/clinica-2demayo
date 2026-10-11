@@ -275,6 +275,10 @@ export default function SolicitudProcedimientos({ consultaId, readOnly = false }
       {ordenes.map((o) => {
         const estado = String(o.estado || "pendiente").toLowerCase();
         const procs = Array.isArray(o.procedimientos) ? o.procedimientos : [];
+        const medicoResponsable = [o?.medico_responsable_nombre, o?.medico_responsable_apellido]
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .join(" ");
         const cotizacion = o.cotizacion || null;
         const esPagada = ["pagado", "completado", "control", "contrato"].includes(
           String(cotizacion?.estado || "").toLowerCase()
@@ -306,6 +310,11 @@ export default function SolicitudProcedimientos({ consultaId, readOnly = false }
                   </li>
                 ))}
               </ul>
+            )}
+            {medicoResponsable && (
+              <p className="text-xs text-indigo-700 mt-1.5 pl-7">
+                Médico responsable: {medicoResponsable}
+              </p>
             )}
             {o.fecha && (
               <p className="text-[10px] text-gray-400 mt-1.5 pl-7">

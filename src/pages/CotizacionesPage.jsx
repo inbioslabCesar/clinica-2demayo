@@ -6,7 +6,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
-import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter, FiMessageCircle } from "react-icons/fi";
+import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter, FiMessageCircle, FiRepeat } from "react-icons/fi";
 import { authFetch } from "../utils/apiClient";
 import { BASE_URL } from "../config/config";
 import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../utils/pacienteRegistroEstado";
@@ -711,7 +711,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud, paqueteResumenFallback }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud, paqueteResumenFallback }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const estadoRow = useMemo(() => {
     const estadoBase = String(row.estado || "").toLowerCase();
@@ -778,6 +778,14 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   }, [correlativosServiciosList, correlativoFechaAtencion]);
 
   const servicios = useMemo(() => parseServiciosTipos(row.servicios_tipos || ""), [row.servicios_tipos]);
+  const cotizacionIdsGrupo = useMemo(() => {
+    if (!Array.isArray(row?.cotizacion_ids_grupo)) return [];
+    return Array.from(new Set(
+      row.cotizacion_ids_grupo
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    ));
+  }, [row?.cotizacion_ids_grupo]);
   const paquetesResumen = useMemo(
     () => parsePaquetesResumen(String(row.paquetes_resumen || "").trim() || String(paqueteResumenFallback || "").trim()),
     [row.paquetes_resumen, paqueteResumenFallback]
@@ -1109,16 +1117,13 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-2">
           {(() => {
-            const idsGrupo = Array.isArray(row?.cotizacion_ids_grupo)
-              ? row.cotizacion_ids_grupo.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
-              : [];
-            const detalleQuery = idsGrupo.length > 1 ? `?grupo=${idsGrupo.join(",")}` : "";
+            const detalleQuery = cotizacionIdsGrupo.length > 1 ? `?grupo=${cotizacionIdsGrupo.join(",")}` : "";
             return (
               <button
                 onClick={() => onNavigate(`/cotizaciones/${row.id}/detalle${detalleQuery}`)}
                 className={ACTION_BTN_BASE}
                 style={THEME_OUTLINE}
-                title={idsGrupo.length > 1 ? "Ver detalle consolidado del episodio" : "Ver detalle"}
+                title={cotizacionIdsGrupo.length > 1 ? "Ver detalle consolidado del episodio" : "Ver detalle"}
                 aria-label="Ver detalle"
               >
                 <FiEye className="text-sm" />
@@ -1165,7 +1170,14 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
           )}
           {["pagado", "completado", "control", "contrato"].includes(estadoRow) && tieneServicioImagen(servicios) && (
             <button
-              onClick={() => onNavigate(`/imagenes-paciente/${row.paciente_id}?cotizacion_id=${row.id}`)}
+              onClick={() => {
+                const query = new URLSearchParams();
+                query.set("cotizacion_id", String(Number(row.id || 0)));
+                if (cotizacionIdsGrupo.length > 1) {
+                  query.set("ids", cotizacionIdsGrupo.join(","));
+                }
+                onNavigate(`/imagenes-paciente/${row.paciente_id}?${query.toString()}`);
+              }}
               className={`${ACTION_BTN_BASE} bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-200`}
               title="Subir / ver imágenes"
               aria-label="Subir / ver imágenes"
@@ -1217,6 +1229,16 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               }
             >
               <span className="text-sm font-bold">⚡</span>
+            </button>
+          )}
+          {estadoRow !== "anulada" && (
+            <button
+              onClick={() => onMigrarPlan(row)}
+              className={`${ACTION_BTN_BASE} bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-200`}
+              title="Migrar plan (consulta ↔ paquete / agregar-quitar servicios)"
+              aria-label="Migrar plan"
+            >
+              <FiRepeat className="text-sm" />
             </button>
           )}
           {estadoRow !== "anulada" && (
@@ -2178,6 +2200,33 @@ export default function CotizacionesPage() {
     }
   }, [cargar]);
 
+  const migrarPlanCotizacion = useCallback((cotizacion) => {
+    const pacienteId = Number(cotizacion?.paciente_id || 0);
+    const nombre = String(cotizacion?.nombre || "").trim();
+    const apellido = String(cotizacion?.apellido || "").trim();
+    const dni = String(cotizacion?.dni || "").trim();
+    const pacienteTemporal = pacienteId <= 0
+      ? {
+          nombre: [nombre, apellido].filter(Boolean).join(" ").trim() || "Particular",
+          apellido: "",
+          dni,
+        }
+      : null;
+
+    navigate(
+      `/seleccionar-servicio?paciente_id=${pacienteId}&cotizacion_id=${cotizacion.id}&modo=adenda&back_to=/cotizaciones`,
+      {
+        state: {
+          pacienteId,
+          cotizacionId: Number(cotizacion?.id || 0),
+          backTo: "/cotizaciones",
+          modo: "adenda",
+          ...(pacienteTemporal ? { pacienteTemporal } : {}),
+        },
+      }
+    );
+  }, [navigate]);
+
   const imprimirTicketDirecto = useCallback(async (row) => {
     try {
       const cotizacionId = Number(row?.id || 0);
@@ -2725,6 +2774,7 @@ export default function CotizacionesPage() {
                     onPrintTicket={imprimirTicketDirecto}
                     onSendWhatsApp={compartirPorWhatsApp}
                     onToggleAnticipado={toggleAnticipado}
+                    onMigrarPlan={migrarPlanCotizacion}
                     badgeEstado={badgeEstado}
                     labelEstado={labelEstado}
                     anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}

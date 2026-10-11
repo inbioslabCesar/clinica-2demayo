@@ -137,8 +137,11 @@ export default function CotizarLaboratorioPage() {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const cotizacionId = searchParams.get('cotizacion_id');
   const cobroId = searchParams.get('cobro_id');
+  const modoRaw = String(location.state?.modo || searchParams.get('modo') || 'editar').toLowerCase().trim();
+  const modoCotizacion = (modoRaw === 'adenda' || modoRaw === 'editar') ? modoRaw : 'editar';
   const pacienteIdNum = Number(pacienteId || 0);
   const isEditingCotizacion = Boolean(cotizacionId) && !cobroId;
+  const isAdendaMode = isEditingCotizacion && modoCotizacion === 'adenda';
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = pacienteIdNum <= 0;
   const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
@@ -1077,7 +1080,7 @@ export default function CotizarLaboratorioPage() {
       fallbackHora: getDefaultTime(),
       stepMinutes: 30,
     });
-    const detallesFinales = cotizacionId
+    const detallesFinales = cotizacionId && !isAdendaMode
       ? await construirDetallesEditados(detallesLaboratorio)
       : detallesLaboratorio;
 
@@ -1091,13 +1094,15 @@ export default function CotizarLaboratorioPage() {
       const fechaRef = getLimaDate();
       const payload = cotizacionId
       ? {
-          accion: 'editar',
+          accion: isAdendaMode ? 'adenda' : 'editar',
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
-          expected_version: Number(cotizacionVersionActual || 0),
+          expected_version: isAdendaMode ? undefined : Number(cotizacionVersionActual || 0),
           fecha_ref: fechaRef,
-          motivo: 'Edición de cotización (merge seguro) desde cotizador de Laboratorio'
+          motivo: isAdendaMode
+            ? 'Adenda de cotización desde cotizador de Laboratorio'
+            : 'Edición de cotización (merge seguro) desde cotizador de Laboratorio'
         }
       : {
           paciente_id: Number(pacienteId),
@@ -1124,8 +1129,11 @@ export default function CotizarLaboratorioPage() {
       const status = Number(res?.status || 0);
       data = await res.json();
 
-      const esConflictoVersion = status === 409 || /cambió mientras editabas|recarga la vista/i.test(String(data?.error || ''));
-      if (!data?.success && cotizacionId && esConflictoVersion) {
+      const errorMsg = String(data?.error || '');
+      const noEditable = /no esta en estado editable|no está en estado editable/i.test(errorMsg);
+      const esConflictoVersion = (status === 409 && !noEditable)
+        || /cambió mientras editabas|recarga la vista/i.test(errorMsg);
+      if (!data?.success && cotizacionId && !isAdendaMode && esConflictoVersion) {
         const detallesRefrescados = await obtenerDetallesCotizacion(cotizacionId);
         setCotizacionDetallesOriginales(detallesRefrescados);
         const itemsLabRefrescados = (Array.isArray(detallesRefrescados) ? detallesRefrescados : [])
@@ -1149,8 +1157,7 @@ export default function CotizarLaboratorioPage() {
         return;
       }
 
-      const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
-      if (!data?.success && cotizacionId && noEditable) {
+      if (!data?.success && cotizacionId && !isAdendaMode && noEditable) {
         const detallesAdendaDelta = await construirDetallesAdendaDelta(detallesLaboratorio);
         const repetidos = Math.max(0, detallesLaboratorio.length - detallesAdendaDelta.length);
 
@@ -1238,8 +1245,8 @@ export default function CotizarLaboratorioPage() {
         }
 
         if (cotizacionDestino > 0 && cotizacionId) {
-          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionDestino)}&modo=editar&back_to=/cotizaciones`, {
-            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionDestino), backTo: '/cotizaciones', modo: 'editar' },
+          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionDestino)}&modo=${modoCotizacion}&back_to=/cotizaciones`, {
+            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionDestino), backTo: '/cotizaciones', modo: modoCotizacion },
           });
           return;
         }
@@ -1292,8 +1299,8 @@ export default function CotizarLaboratorioPage() {
             }
             if (cotizacionId && !cobroId) {
               return (
-                <button onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
-                  state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
+                <button onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=${modoCotizacion}&back_to=/cotizaciones`, {
+                  state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: modoCotizacion },
                 })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">← Volver a Servicios</button>
               );
             }
@@ -1604,7 +1611,9 @@ export default function CotizarLaboratorioPage() {
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : isEditingCotizacion ? (
                   <>
-                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Actualizar cotización</button>
+                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                      {isAdendaMode ? 'Agregar por adenda' : 'Actualizar cotización'}
+                    </button>
                   </>
                 ) : (
                   <>
