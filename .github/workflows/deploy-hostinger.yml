@@ -9,7 +9,7 @@ on:
         type: choice
         options:
           - prod-cardiovidaiquitos
-          - prod-centromedicosantoniodepadua
+          - prod-centromedicosanantoniodepadua
       confirm_production:
         description: 'Escribe EXACTAMENTE: DEPLOY_HOSTINGER_TEST'
         required: true
