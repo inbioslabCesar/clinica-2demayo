@@ -10,6 +10,11 @@ on:
         options:
           - prod-cardiovidaiquitos
           - prod-centromedicosanantoniodepadua
+          - prod-clinicanutrimedperu
+          - prod-deepskyblue-porpoise-463614-hostingersite-com
+          - prod-dorcassalud
+          - prod-femcarepucallpa
+          - prod-maternofetalsanjuan
       confirm_production:
         description: 'Escribe EXACTAMENTE: DEPLOY_HOSTINGER_TEST'
         required: true
