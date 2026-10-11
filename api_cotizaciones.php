@@ -2019,8 +2019,21 @@ function obtener_pagos_cotizacion_rows($conn, $cotizacionId) {
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 
+    $requiereDetallesServicio = false;
+    foreach ($rows as $rowPagoCheck) {
+        $tipoMovCheck = strtolower(trim((string)($rowPagoCheck['tipo_movimiento'] ?? '')));
+        if ($tipoMovCheck !== 'devolucion') {
+            continue;
+        }
+        $descripcionCheck = trim((string)($rowPagoCheck['descripcion'] ?? ''));
+        if ($descripcionCheck !== '' && stripos($descripcionCheck, 'Servicio:') === false) {
+            $requiereDetallesServicio = true;
+            break;
+        }
+    }
+
     $detallesPorId = [];
-    if (table_exists($conn, 'cotizaciones_detalle')) {
+    if ($requiereDetallesServicio && table_exists($conn, 'cotizaciones_detalle')) {
         $stmtDet = $conn->prepare("SELECT id, servicio_tipo, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = ?");
         if ($stmtDet) {
             $stmtDet->bind_param("i", $cotizacionId);
@@ -2224,7 +2237,12 @@ function construir_paquetes_resumen_desde_detalles($detalles) {
     return implode(' | ', array_values($labels));
 }
 
-function obtener_cotizacion($conn, $cotizacionId) {
+function obtener_cotizacion($conn, $cotizacionId, $options = []) {
+    $includeBloque = true;
+    if (is_array($options) && array_key_exists('include_bloque', $options)) {
+        $includeBloque = (bool)$options['include_bloque'];
+    }
+
     $stmt = $conn->prepare("
         SELECT c.*, p.nombre, p.apellido, p.dni, p.historia_clinica, p.telefono, p.tipo_seguro,
                COALESCE(u.nombre, 'Sistema') as usuario_nombre,
@@ -2260,17 +2278,27 @@ function obtener_cotizacion($conn, $cotizacionId) {
         $cot['usuario_rol'] = 'medico';
     }
 
-    $mapBloque = bloque_atencion_map_por_cotizaciones($conn, [$cotizacionId], get_user_id_from_session());
-    $metaBloque = $mapBloque[(int)$cotizacionId] ?? null;
-    $mapConflicto = bloque_atencion_conflictos_map_por_cotizaciones($conn, [$cotizacionId], get_user_id_from_session());
-    $metaConflicto = $mapConflicto[(int)$cotizacionId] ?? null;
-    $cot['bloque_id'] = (int)($metaBloque['bloque_id'] ?? 0);
-    $cot['bloque_estado_global'] = (string)($metaBloque['estado_global'] ?? '');
-    $cot['bloque_fecha_base'] = (string)($metaBloque['fecha_base'] ?? '');
-    $cot['bloque_hora_objetivo'] = (string)($metaBloque['hora_objetivo'] ?? '');
-    $cot['bloque_conflicto'] = (int)($metaConflicto['bloque_conflicto'] ?? 0);
-    $cot['bloque_conflicto_items'] = (int)($metaConflicto['bloque_conflicto_items'] ?? 0);
-    $cot['bloque_eventos_items'] = (int)($metaConflicto['bloque_eventos_items'] ?? 0);
+    if ($includeBloque) {
+        $mapBloque = bloque_atencion_map_por_cotizaciones($conn, [$cotizacionId], get_user_id_from_session());
+        $metaBloque = $mapBloque[(int)$cotizacionId] ?? null;
+        $mapConflicto = bloque_atencion_conflictos_map_por_cotizaciones($conn, [$cotizacionId], get_user_id_from_session());
+        $metaConflicto = $mapConflicto[(int)$cotizacionId] ?? null;
+        $cot['bloque_id'] = (int)($metaBloque['bloque_id'] ?? 0);
+        $cot['bloque_estado_global'] = (string)($metaBloque['estado_global'] ?? '');
+        $cot['bloque_fecha_base'] = (string)($metaBloque['fecha_base'] ?? '');
+        $cot['bloque_hora_objetivo'] = (string)($metaBloque['hora_objetivo'] ?? '');
+        $cot['bloque_conflicto'] = (int)($metaConflicto['bloque_conflicto'] ?? 0);
+        $cot['bloque_conflicto_items'] = (int)($metaConflicto['bloque_conflicto_items'] ?? 0);
+        $cot['bloque_eventos_items'] = (int)($metaConflicto['bloque_eventos_items'] ?? 0);
+    } else {
+        $cot['bloque_id'] = 0;
+        $cot['bloque_estado_global'] = '';
+        $cot['bloque_fecha_base'] = '';
+        $cot['bloque_hora_objetivo'] = '';
+        $cot['bloque_conflicto'] = 0;
+        $cot['bloque_conflicto_items'] = 0;
+        $cot['bloque_eventos_items'] = 0;
+    }
 
     return $cot;
 }
@@ -8224,7 +8252,8 @@ switch ($method) {
         }
 
         if (isset($_GET['cotizacion_id'])) {
-            $cotizacion = obtener_cotizacion($conn, (int)$_GET['cotizacion_id']);
+            $includeBloque = !isset($_GET['include_bloque']) || (string)$_GET['include_bloque'] !== '0';
+            $cotizacion = obtener_cotizacion($conn, (int)$_GET['cotizacion_id'], ['include_bloque' => $includeBloque]);
             if (!$cotizacion) {
                 respond(['success' => false, 'error' => 'Cotización no encontrada'], 404);
             }

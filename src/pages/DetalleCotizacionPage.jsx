@@ -290,6 +290,8 @@ export default function DetalleCotizacionPage() {
     borderColor: "var(--color-primary-light)",
     color: "var(--color-primary-dark)",
   };
+  const buildCotizacionDetalleUrl = (id, cacheBuster) =>
+    `api_cotizaciones.php?cotizacion_id=${Number(id)}&include_bloque=0&_t=${cacheBuster}`;
 
   useEffect(() => {
     let mounted = true;
@@ -306,7 +308,7 @@ export default function DetalleCotizacionPage() {
         if (grupoIds.length > 1) {
           const respuestasCot = await Promise.all(
             grupoIds.map(async (id) => {
-              const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(id)}&_t=${cacheBuster}`, { cache: "no-store" });
+              const res = await authFetch(buildCotizacionDetalleUrl(id, cacheBuster), { cache: "no-store" });
               const data = await res.json();
               if (!data?.success || !data?.cotizacion) return null;
               return data.cotizacion;
@@ -376,7 +378,7 @@ export default function DetalleCotizacionPage() {
             detalles: detallesGrupo,
           };
         } else {
-          const resCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`, {
+          const resCot = await authFetch(buildCotizacionDetalleUrl(cotizacionId, cacheBuster), {
             cache: "no-store",
           });
           const dataCot = await resCot.json();
@@ -584,6 +586,28 @@ export default function DetalleCotizacionPage() {
 
     return salida;
   }, [detallesActivos, descuentoAplicado, totalItemsBruto]);
+
+  const detallesRender = useMemo(() => {
+    return detallesConNeto.map((d, idx) => {
+      const servicioNorm = normalizarServicio(d?.servicio_tipo);
+      const descripcionDetalle = resolverDescripcionDetalle(d);
+      const descripcionVisible = servicioNorm === "consulta"
+        ? limpiarDescripcionConsulta(descripcionDetalle)
+        : descripcionDetalle;
+      return {
+        raw: d,
+        key: `${d.servicio_tipo}-${d.servicio_id}-${Number(d?.id || 0)}-${idx}`,
+        servicioNorm,
+        servicioLabel: labelServicio(d?.servicio_tipo),
+        descripcionVisible,
+        infoPaquete: obtenerInfoPaqueteDetalle(d),
+        esExternoNoCobrable: Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0,
+        esDerivado: Number(d?.derivado || 0) === 1,
+        esAdicionalAutorizado: esDetalleAdicionalAutorizado(d),
+        medicoVisible: String(d?.medico_nombre_completo || `${d?.medico_nombre || ""} ${d?.medico_apellido || ""}`).trim() || "-",
+      };
+    });
+  }, [detallesConNeto]);
 
   const pagosRender = useMemo(() => {
     if (Array.isArray(pagos) && pagos.length > 0) {
@@ -932,7 +956,7 @@ export default function DetalleCotizacionPage() {
     if (id <= 0) return;
 
     const cacheBuster = Date.now();
-    const resCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${id}&_t=${cacheBuster}`, {
+    const resCot = await authFetch(buildCotizacionDetalleUrl(id, cacheBuster), {
       cache: "no-store",
     });
     const dataCot = await resCot.json();
@@ -1884,54 +1908,45 @@ export default function DetalleCotizacionPage() {
                 <tr>
                   <td colSpan={esVistaGrupo ? 7 : 6} className="px-3 py-6 text-center text-gray-500">Sin items activos en la cotizacion.</td>
                 </tr>
-              ) : detallesConNeto.map((d, idx) => (
-                <tr key={`${d.servicio_tipo}-${d.servicio_id}-${idx}`} className="border-t">
+              ) : detallesRender.map((row) => {
+                const d = row.raw;
+                return (
+                <tr key={row.key} className="border-t">
                   {esVistaGrupo && <td className="px-3 py-2 whitespace-nowrap">#{Number(d?.cotizacion_origen_id || 0)}</td>}
-                  <td className="px-3 py-2">{labelServicio(d.servicio_tipo)}</td>
+                  <td className="px-3 py-2">{row.servicioLabel}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {(() => {
-                        const descripcionDetalle = resolverDescripcionDetalle(d);
-                        const texto = normalizarServicio(d?.servicio_tipo) === "consulta"
-                          ? limpiarDescripcionConsulta(descripcionDetalle)
-                          : descripcionDetalle;
-                        const infoPaquete = obtenerInfoPaqueteDetalle(d);
-                        return (
-                          <>
-                            <span>{texto}</span>
-                            {infoPaquete && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "#eff6ff", color: "#1e40af", borderColor: "#bfdbfe" }}>
-                                {infoPaquete.tipoLabel}: {infoPaquete.codigo ? `${infoPaquete.codigo} - ` : ""}{infoPaquete.nombre}
-                              </span>
-                            )}
-                          </>
-                        );
-                      })()}
-                      {(Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0) && (
+                      <span>{row.descripcionVisible}</span>
+                      {row.infoPaquete && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "#eff6ff", color: "#1e40af", borderColor: "#bfdbfe" }}>
+                          {row.infoPaquete.tipoLabel}: {row.infoPaquete.codigo ? `${row.infoPaquete.codigo} - ` : ""}{row.infoPaquete.nombre}
+                        </span>
+                      )}
+                      {row.esExternoNoCobrable && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap bg-slate-100 text-slate-700 border-slate-200">
                           Externo / no cobrable
                         </span>
                       )}
-                      {(Number(d.derivado) === 1) && (
+                      {row.esDerivado && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "var(--color-primary-light)", color: "var(--color-primary-dark)", borderColor: "var(--color-primary-light)" }}>
                           🔗 Referenciado
                         </span>
                       )}
-                      {esDetalleAdicionalAutorizado(d) && (
+                      {row.esAdicionalAutorizado && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200">
                           Adicional autorizado
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2">{String(d?.medico_nombre_completo || `${d?.medico_nombre || ""} ${d?.medico_apellido || ""}`).trim() || "-"}</td>
+                  <td className="px-3 py-2">{row.medicoVisible}</td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex flex-col items-end gap-1">
                       <span>{Number(d.cantidad || 0)}</span>
                       {!esVistaGrupo
                         && puedeEditar
                         && estado === "pendiente"
-                        && normalizarServicio(d?.servicio_tipo) === "farmacia"
+                        && row.servicioNorm === "farmacia"
                         && Number(d?.cantidad || 0) > 0 && (
                           <div className="flex items-center gap-1">
                             <button
@@ -1953,7 +1968,7 @@ export default function DetalleCotizacionPage() {
                       {!esVistaGrupo
                         && puedeEditar
                         && estado === "pendiente"
-                        && normalizarServicio(d?.servicio_tipo) === "laboratorio"
+                        && row.servicioNorm === "laboratorio"
                         && Number(d?.cantidad || 0) > 0 && (
                           <div className="flex items-center gap-1">
                             <button
@@ -1990,7 +2005,7 @@ export default function DetalleCotizacionPage() {
                   </td>
                   <td className="px-3 py-2 text-right font-semibold">S/ {Number(d.subtotal_neto || d.subtotal || 0).toFixed(2)}</td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

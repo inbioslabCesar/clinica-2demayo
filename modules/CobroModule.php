@@ -3908,6 +3908,8 @@ class CobroModule
                 }
                 // Modificar el registro de honorarios para guardar el id retornado
                 if (!empty($data['detalles'])) {
+                    $cacheMedicoConsultaHonorarios = [];
+                    $cacheContextoCotizacionHonorarios = [];
                     foreach ($data['detalles'] as $i => $detalleServicio) {
                         $detalleServicioKey = self::normalizarServicioTipo($detalleServicio['servicio_tipo'] ?? $servicio_key);
                         if (!in_array($detalleServicioKey, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento'], true)) {
@@ -3945,6 +3947,42 @@ class CobroModule
                         // Rehidratar metadata clínica/paquete desde cotizaciones_detalle para que
                         // el cálculo de honorarios respete reglas de campaña en cobros mixtos.
                         $detalleServicio = self::enriquecerDetalleDesdeCotizacionDetalle($conn, $detalleServicio);
+
+                        $consultaIdDetalle = isset($detalleServicio['consulta_id']) ? (int)$detalleServicio['consulta_id'] : 0;
+                        $medicoIdDetalle = isset($detalleServicio['medico_id']) ? (int)$detalleServicio['medico_id'] : 0;
+                        if ($medicoIdDetalle <= 0 && $consultaIdDetalle > 0) {
+                            if (!array_key_exists($consultaIdDetalle, $cacheMedicoConsultaHonorarios)) {
+                                $cacheMedicoConsultaHonorarios[$consultaIdDetalle] = self::resolverMedicoDesdeConsulta($conn, $consultaIdDetalle);
+                            }
+                            $medicoIdDetalle = (int)$cacheMedicoConsultaHonorarios[$consultaIdDetalle];
+                            if ($medicoIdDetalle > 0) {
+                                $detalleServicio['medico_id'] = $medicoIdDetalle;
+                            }
+                        }
+
+                        if ($medicoIdDetalle <= 0) {
+                            $cotizacionCtxId = isset($detalleServicio['cotizacion_id']) ? (int)$detalleServicio['cotizacion_id'] : 0;
+                            if ($cotizacionCtxId <= 0) {
+                                $cotizacionCtxId = (int)($cotizacionId ?? 0);
+                            }
+                            if ($cotizacionCtxId > 0) {
+                                if (!array_key_exists($cotizacionCtxId, $cacheContextoCotizacionHonorarios)) {
+                                    $cacheContextoCotizacionHonorarios[$cotizacionCtxId] = self::resolverContextoClinicoCotizacion($conn, $cotizacionCtxId, $cacheMedicoConsultaHonorarios);
+                                }
+                                $ctxHonor = $cacheContextoCotizacionHonorarios[$cotizacionCtxId];
+                                $consultaCtx = (int)($ctxHonor['consulta_id'] ?? 0);
+                                $medicoCtx = (int)($ctxHonor['medico_id'] ?? 0);
+                                if ($consultaIdDetalle <= 0 && $consultaCtx > 0) {
+                                    $detalleServicio['consulta_id'] = $consultaCtx;
+                                    $consultaIdDetalle = $consultaCtx;
+                                }
+                                if ($medicoIdDetalle <= 0 && $medicoCtx > 0) {
+                                    $detalleServicio['medico_id'] = $medicoCtx;
+                                    $medicoIdDetalle = $medicoCtx;
+                                }
+                            }
+                        }
+
                         $data['detalles'][$i] = $detalleServicio;
 
                         $tarifa = null;
