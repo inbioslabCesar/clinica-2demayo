@@ -104,6 +104,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const [adendaReferencia, setAdendaReferencia] = useState(null);
   const [precioConsultaReferencia, setPrecioConsultaReferencia] = useState(null);
   const coberturaConsultaCacheRef = useRef(new Map());
+  const actionLockRef = useRef(false);
   const adendaPrefillAplicadoRef = useRef(false);
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
@@ -144,6 +145,18 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       throw new Error(result?.error || "No se pudo sincronizar el recordatorio tras reprogramar");
     }
     return { ok: true };
+  };
+
+  const iniciarAccion = (accion) => {
+    if (actionLockRef.current) return false;
+    actionLockRef.current = true;
+    setProcessingAction(String(accion || "procesando"));
+    return true;
+  };
+
+  const finalizarAccion = () => {
+    actionLockRef.current = false;
+    setProcessingAction("");
   };
 
   useEffect(() => {
@@ -791,7 +804,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       setMsg("Completa todos los campos para agregar la consulta");
       return;
     }
-    setProcessingAction("agregar");
+    if (!iniciarAccion("agregar")) return;
     setMsg("");
     try {
       const tarifa = await obtenerTarifaConsulta(medicoId);
@@ -868,7 +881,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     } catch (err) {
       setMsg(err.message || "Error al agregar la consulta");
     } finally {
-      setProcessingAction("");
+      finalizarAccion();
     }
   };
 
@@ -877,6 +890,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       setMsg("Completa todos los campos");
       return;
     }
+    if (!iniciarAccion("editar")) return;
 
     let fechaSeleccionada = String(fecha || "").slice(0, 10);
     let horaSeleccionada = String(hora || "").slice(0, 5);
@@ -906,8 +920,6 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     if (!agendaCheck?.ok) {
       return;
     }
-
-    setProcessingAction("editar");
     setMsg("");
     try {
       let consultaFinalId = consultaIdNum;
@@ -1031,7 +1043,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     } catch (error) {
       setMsg(error?.message || "Error al actualizar la consulta");
     } finally {
-      setProcessingAction("");
+      finalizarAccion();
     }
   };
 
@@ -1114,6 +1126,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       setMsg("Completa todos los campos");
       return;
     }
+    if (!iniciarAccion(accion)) return;
 
     let horaSeleccionada = String(hora || "").slice(0, 5);
     const agendaCheck = await validarAgendaAntesDeCotizar({
@@ -1133,14 +1146,14 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       },
     });
     if (!agendaCheck?.ok) {
+      finalizarAccion();
       return;
     }
 
     if (!(await validarCajaParaEspontanea())) {
+      finalizarAccion();
       return;
     }
-
-    setProcessingAction(accion);
     try {
       const { consultaInfo, detalleConsulta, total } = await crearConsultaYDetalle({
         horaProgramadaOverride: horaSeleccionada,
@@ -1204,7 +1217,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       console.error("Error:", error);
       setMsg(error?.message || "Error de conexión");
     } finally {
-      setProcessingAction("");
+      finalizarAccion();
     }
   };
 
@@ -1252,10 +1265,12 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   };
 
   const agregarConsultaAlCarrito = async () => {
+    if (!iniciarAccion("carrito")) return;
     setMsg("");
 
     if (!medicoId || !fecha || !hora) {
       setMsg("Completa todos los campos para agregar al carrito");
+      finalizarAccion();
       return;
     }
 
@@ -1268,6 +1283,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         text: "El carrito actual pertenece a otro paciente. Finaliza o limpia el carrito para continuar.",
         confirmButtonText: "Entendido",
       });
+      finalizarAccion();
       return;
     }
 
@@ -1342,6 +1358,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         },
       });
       if (!agendaCheck?.ok) {
+        finalizarAccion();
         return;
       }
 
@@ -1380,6 +1397,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       });
     } catch (error) {
       setMsg(error?.message || "No se pudo agregar la consulta al carrito");
+    } finally {
+      finalizarAccion();
     }
   };
 
