@@ -76,6 +76,88 @@ function rc_table_exists($conn, $table) {
     return $exists;
 }
 
+function rc_resolver_cotizacion_grupo_id($conn, $cotizacionId) {
+    static $cacheGrupo = [];
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return 0;
+    }
+    if (array_key_exists($cotizacionId, $cacheGrupo)) {
+        return (int)$cacheGrupo[$cotizacionId];
+    }
+    if (!rc_table_exists($conn, 'cotizaciones') || !rc_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+        $cacheGrupo[$cotizacionId] = $cotizacionId;
+        return $cotizacionId;
+    }
+
+    $actual = $cotizacionId;
+    $vistos = [];
+    while ($actual > 0) {
+        if (isset($vistos[$actual])) {
+            break;
+        }
+        $vistos[$actual] = true;
+        $stmt = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            break;
+        }
+        $stmt->bind_param('i', $actual);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $padre = (int)($row['cotizacion_padre_id'] ?? 0);
+        if ($padre <= 0 || $padre === $actual) {
+            break;
+        }
+        $actual = $padre;
+    }
+
+    $grupo = $actual > 0 ? $actual : $cotizacionId;
+    foreach (array_keys($vistos) as $idVisto) {
+        $cacheGrupo[(int)$idVisto] = $grupo;
+    }
+    $cacheGrupo[$cotizacionId] = $grupo;
+    return $grupo;
+}
+
+function rc_resolver_cotizaciones_del_grupo($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return [];
+    }
+    $grupoId = rc_resolver_cotizacion_grupo_id($conn, $cotizacionId);
+    if ($grupoId <= 0) {
+        return [$cotizacionId];
+    }
+    if (!rc_table_exists($conn, 'cotizaciones') || !rc_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+        return [$grupoId];
+    }
+
+    $ids = [$grupoId => true];
+    $queue = [$grupoId];
+    while (!empty($queue)) {
+        $actual = (int)array_shift($queue);
+        $stmt = $conn->prepare('SELECT id FROM cotizaciones WHERE cotizacion_padre_id = ?');
+        if (!$stmt) {
+            continue;
+        }
+        $stmt->bind_param('i', $actual);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+        foreach ($rows as $row) {
+            $hijoId = (int)($row['id'] ?? 0);
+            if ($hijoId <= 0 || isset($ids[$hijoId])) {
+                continue;
+            }
+            $ids[$hijoId] = true;
+            $queue[] = $hijoId;
+        }
+    }
+
+    return array_map('intval', array_keys($ids));
+}
+
 function rc_ensure_cola_medico_schema($conn) {
     $sql = "CREATE TABLE IF NOT EXISTS recordatorios_cola_medico (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -100,6 +182,36 @@ function rc_ensure_cola_medico_schema($conn) {
         KEY idx_rcm_estado (estado_cola)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     @mysqli_query($conn, $sql);
+}
+
+function rc_seed_recordatorios_agenda_servicios($conn, $cotizacionIds, $usuarioId = 0) {
+    if (!rc_table_exists($conn, 'recordatorios_agenda_servicios')) {
+        return;
+    }
+    $ids = array_values(array_unique(array_map('intval', (array)$cotizacionIds)));
+    $ids = array_values(array_filter($ids, function ($id) { return $id > 0; }));
+    if (empty($ids)) {
+        return;
+    }
+
+    $stmt = $conn->prepare(
+        'INSERT INTO recordatorios_agenda_servicios (cotizacion_id, estado, observacion, fecha_ultimo_contacto, intentos, actualizado_por)
+         VALUES (?, "pendiente", "Auto-registrado desde agenda", NULL, 0, ?)
+         ON DUPLICATE KEY UPDATE
+           actualizado_por = COALESCE(recordatorios_agenda_servicios.actualizado_por, VALUES(actualizado_por)),
+           updated_at = CURRENT_TIMESTAMP'
+    );
+    if (!$stmt) {
+        return;
+    }
+
+    $uid = (int)$usuarioId;
+    foreach ($ids as $cotId) {
+        $cid = (int)$cotId;
+        $stmt->bind_param('ii', $cid, $uid);
+        $stmt->execute();
+    }
+    $stmt->close();
 }
 
 function rc_cola_source_key($consultaId, $cotizacionId) {
@@ -1735,6 +1847,7 @@ if ($method === 'GET') {
 
         $items = [];
         while ($row = $res->fetch_assoc()) {
+            $cotizacionIdItem = isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : 0;
             $items[] = [
                 'id' => (int)($row['id'] ?? 0),
                 'paciente_id' => (int)($row['paciente_id'] ?? 0),
@@ -2092,7 +2205,8 @@ if ($method === 'GET') {
             'fecha_ultimo_contacto' => $row['fecha_ultimo_contacto'],
             'intentos' => (int)($row['intentos'] ?? 0),
             'gestion_updated_at' => $row['gestion_updated_at'],
-            'cotizacion_id' => isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : null,
+            'cotizacion_id' => $cotizacionIdItem > 0 ? $cotizacionIdItem : null,
+            'cotizacion_grupo_id' => $cotizacionIdItem > 0 ? rc_resolver_cotizacion_grupo_id($conn, $cotizacionIdItem) : null,
             'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
             'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
             'correlativo_estable' => (int)($row['correlativo_estable'] ?? 0) > 0 ? (int)$row['correlativo_estable'] : null,
@@ -2183,6 +2297,8 @@ if ($method === 'GET') {
         $stmtAgenda = $conn->prepare($agendaSql);
         if ($stmtAgenda) {
             $agendaTurnoCache = [];
+            $cotizacionGrupoCache = [];
+            $cotizacionesAgendaSembrar = [];
             $duracionTurnoMin = rc_obtener_duracion_turno_min($conn);
             $consultaBaseCache = [];
             $adicionalSeqMap = [];
@@ -2192,6 +2308,14 @@ if ($method === 'GET') {
             $resAgenda = $stmtAgenda->get_result();
             while ($row = $resAgenda->fetch_assoc()) {
                 $cotizacionIdAgenda = isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : 0;
+                $cotizacionGrupoId = 0;
+                if ($cotizacionIdAgenda > 0) {
+                    if (!array_key_exists($cotizacionIdAgenda, $cotizacionGrupoCache)) {
+                        $cotizacionGrupoCache[$cotizacionIdAgenda] = rc_resolver_cotizacion_grupo_id($conn, $cotizacionIdAgenda);
+                    }
+                    $cotizacionGrupoId = (int)$cotizacionGrupoCache[$cotizacionIdAgenda];
+                    $cotizacionesAgendaSembrar[$cotizacionIdAgenda] = true;
+                }
                 $correlativoEstable = (int)($row['correlativo_estable'] ?? 0);
                 $correlativoVigenteRaw = (int)($row['correlativo_vigente_raw'] ?? 0);
                 if ($correlativoVigenteRaw <= 0 && $cotizacionIdAgenda > 0 && $hasRasTurnoVigente) {
@@ -2253,6 +2377,7 @@ if ($method === 'GET') {
                     'intentos' => (int)($row['ras_intentos'] ?? 0),
                     'gestion_updated_at' => null,
                     'cotizacion_id' => $cotizacionIdAgenda > 0 ? $cotizacionIdAgenda : null,
+                    'cotizacion_grupo_id' => $cotizacionGrupoId > 0 ? $cotizacionGrupoId : null,
                     'cotizacion_estado' => !empty($row['cotizacion_estado']) ? (string)$row['cotizacion_estado'] : null,
                     'saldo_pendiente' => isset($row['saldo_pendiente']) ? round((float)$row['saldo_pendiente'], 2) : null,
                     'correlativo_estable' => $correlativoEstable > 0 ? $correlativoEstable : null,
@@ -2260,6 +2385,14 @@ if ($method === 'GET') {
                 ];
             }
             $stmtAgenda->close();
+
+            if (!empty($cotizacionesAgendaSembrar)) {
+                rc_seed_recordatorios_agenda_servicios(
+                    $conn,
+                    array_keys($cotizacionesAgendaSembrar),
+                    (int)($_SESSION['usuario']['id'] ?? 0)
+                );
+            }
         }
     }
 
@@ -2620,21 +2753,47 @@ if ($method === 'POST' || $method === 'PUT') {
             exit;
         }
 
-        // Verificar que existen items pendiente/confirmado de agenda para esa cotización
-        $stmtAgenda = $conn->prepare('SELECT id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND estado_evento IN ("pendiente", "confirmado") LIMIT 1');
-        $stmtAgenda->bind_param('i', $cotizacionId);
+        $cotizacionesGrupo = rc_resolver_cotizaciones_del_grupo($conn, $cotizacionId);
+        if (empty($cotizacionesGrupo)) {
+            $cotizacionesGrupo = [$cotizacionId];
+        }
+        $phGrupo = implode(',', array_fill(0, count($cotizacionesGrupo), '?'));
+        $typesGrupo = str_repeat('i', count($cotizacionesGrupo));
+
+        // Verificar items pendiente/confirmado de agenda en toda la cadena (base + adendas)
+        $sqlAgendaGrupo = "SELECT DISTINCT cotizacion_id
+                           FROM agenda_servicios_cotizacion
+                           WHERE cotizacion_id IN ($phGrupo)
+                             AND estado_evento IN ('pendiente', 'confirmado')";
+        $stmtAgenda = $conn->prepare($sqlAgendaGrupo);
+        if (!$stmtAgenda) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo validar agenda del episodio']);
+            exit;
+        }
+        $stmtAgenda->bind_param($typesGrupo, ...$cotizacionesGrupo);
         $stmtAgenda->execute();
-        $agendaExiste = $stmtAgenda->get_result()->fetch_assoc();
+        $agendaIdsGrupo = [];
+        $resAgendaGrupo = $stmtAgenda->get_result();
+        while ($resAgendaGrupo && ($rowAgendaGrupo = $resAgendaGrupo->fetch_assoc())) {
+            $cidAgenda = (int)($rowAgendaGrupo['cotizacion_id'] ?? 0);
+            if ($cidAgenda > 0) {
+                $agendaIdsGrupo[$cidAgenda] = true;
+            }
+        }
         $stmtAgenda->close();
 
-        if (!$agendaExiste) {
+        if (empty($agendaIdsGrupo)) {
             http_response_code(404);
-            echo json_encode(['success' => false, 'error' => 'No hay servicios agendados pendientes para esta cotización']);
+            echo json_encode(['success' => false, 'error' => 'No hay servicios agendados pendientes para este episodio']);
             exit;
         }
 
         $usuarioId = (int)($_SESSION['usuario']['id'] ?? 0);
-        rc_ensure_turno_original_agenda($conn, $cotizacionId, $usuarioId, $hasRasTurnoOriginal);
+        $idsGestion = array_map('intval', array_keys($agendaIdsGrupo));
+        foreach ($idsGestion as $cotIdGestion) {
+            rc_ensure_turno_original_agenda($conn, $cotIdGestion, $usuarioId, $hasRasTurnoOriginal);
+        }
         $fechaProximoValue = null;
         if ($fechaProximoContacto !== '') {
             $ts = strtotime($fechaProximoContacto);
@@ -2663,8 +2822,14 @@ if ($method === 'POST' || $method === 'PUT') {
             exit;
         }
 
-        $stmt->bind_param('isssii', $cotizacionId, $estado, $observacion, $fechaProximoValue, $sumarIntento, $usuarioId);
-        $ok = $stmt->execute();
+        $ok = true;
+        foreach ($idsGestion as $cotIdGestion) {
+            $stmt->bind_param('isssii', $cotIdGestion, $estado, $observacion, $fechaProximoValue, $sumarIntento, $usuarioId);
+            if (!$stmt->execute()) {
+                $ok = false;
+                break;
+            }
+        }
         $stmt->close();
 
         if (!$ok) {
@@ -2677,6 +2842,8 @@ if ($method === 'POST' || $method === 'PUT') {
             'success' => true,
             'saved' => [
                 'cotizacion_id' => $cotizacionId,
+                'cotizacion_grupo_id' => rc_resolver_cotizacion_grupo_id($conn, $cotizacionId),
+                'cotizaciones_actualizadas' => $idsGestion,
                 'estado' => $estado,
                 'observacion' => $observacion,
                 'fecha_proximo_contacto' => $fechaProximoValue,

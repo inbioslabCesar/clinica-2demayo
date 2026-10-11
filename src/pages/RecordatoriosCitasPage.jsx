@@ -276,7 +276,8 @@ function agruparRecordatoriosAgendaServicio(items) {
       continue;
     }
 
-    const key = `cotizacion-${Number(item.cotizacion_id || 0)}`;
+    const cotizacionGrupoId = Number(item.cotizacion_grupo_id || item.cotizacion_id || 0);
+    const key = `cotizacion-grupo-${cotizacionGrupoId > 0 ? cotizacionGrupoId : Number(item.cotizacion_id || 0)}`;
     const existente = grupos.get(key);
     if (!existente) {
       const base = { ...item, _agenda_items: [{ ...item }] };
@@ -309,7 +310,7 @@ function agruparRecordatoriosAgendaServicio(items) {
     let mejorGrupo = null;
     let mejorDistancia = Number.POSITIVE_INFINITY;
     let mejorCoincideCotizacion = false;
-    const cotizacionItem = Number(item?.cotizacion_id || 0);
+    const cotizacionItem = Number(item?.cotizacion_grupo_id || item?.cotizacion_id || 0);
     for (const candidato of salida) {
       if (!esRecordatorioAgendaServicio(candidato)) continue;
       const mismoPaciente = Number(candidato?.paciente_id || 0) > 0 && Number(candidato?.paciente_id || 0) === Number(item?.paciente_id || 0);
@@ -317,7 +318,7 @@ function agruparRecordatoriosAgendaServicio(items) {
       const tienePaquete = String(candidato?.servicios_label || "").includes("+");
       if (!tienePaquete) continue;
 
-      const cotizacionCandidato = Number(candidato?.cotizacion_id || 0);
+      const cotizacionCandidato = Number(candidato?.cotizacion_grupo_id || candidato?.cotizacion_id || 0);
       const coincideCotizacion = cotizacionItem > 0 && cotizacionCandidato > 0 && cotizacionItem === cotizacionCandidato;
 
       // Si la consulta tiene cotización y es distinta, nunca se fusiona al paquete.
@@ -370,7 +371,7 @@ function agruparRecordatoriosAgendaServicio(items) {
     const medicosUnicos = Array.from(new Set(agendas.map((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim()).filter(Boolean)));
     const primerAgendaConMedico = agendas.find((ag) => `${String(ag.medico_nombre || "").trim()} ${String(ag.medico_apellido || "").trim()}`.trim() !== "") || null;
     const fechasUnicas = Array.from(new Set(agendasBase.map((ag) => String(ag.fecha || "").trim()).filter(Boolean)));
-    const pagoConsolidado = consolidarPagoGrupo(agendas, Number(item?.cotizacion_id || 0));
+    const pagoConsolidado = consolidarPagoGrupo(agendas);
     const correlativosEstables = agendas
       .map((ag) => Number(ag?.correlativo_estable || 0))
       .filter((n) => Number.isFinite(n) && n > 0)
@@ -1259,7 +1260,7 @@ export default function RecordatoriosCitasPage() {
       const prioridad = obtenerPrioridad(item);
       const diasRestantes = diasParaCita(item.fecha);
       const rowKey = esRecordatorioAgendaServicio(item)
-        ? `agenda-${Number(item.cotizacion_id || 0)}`
+        ? `agenda-${Number(item?.cotizacion_grupo_id || item?.cotizacion_id || 0)}`
         : `${String(item?.recordatorio_tipo || "cita")}-${Number(item?.id || 0)}`;
       return { ...item, prioridad, diasRestantes, _rowKey: rowKey };
     });
