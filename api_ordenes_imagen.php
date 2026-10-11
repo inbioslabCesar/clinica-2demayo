@@ -1721,11 +1721,30 @@ if ($method === 'GET') {
         echo json_encode(['success' => true, 'orden' => $row]);
 
     } elseif ($consulta_id > 0) {
-        // Todas las órdenes de una consulta
-        $res = $conn->query("SELECT * FROM ordenes_imagen WHERE consulta_id = $consulta_id ORDER BY fecha DESC");
+        // Todas las órdenes de una consulta.
+        // Incluye también órdenes heredadas con consulta_id nulo/0 cuando
+        // su cotización sí pertenece a la consulta (casos antiguos de adenda).
+        $res = $conn->query(
+            "SELECT * FROM ordenes_imagen
+             WHERE consulta_id = $consulta_id
+                OR ((consulta_id IS NULL OR consulta_id = 0) AND cotizacion_id IS NOT NULL AND cotizacion_id > 0)
+             ORDER BY fecha DESC"
+        );
         $rowsBase = [];
         $orderIds = [];
         while ($r = $res->fetch_assoc()) {
+            $consultaOrden = (int)($r['consulta_id'] ?? 0);
+            if ($consultaOrden <= 0) {
+                $cotizacionOrden = (int)($r['cotizacion_id'] ?? 0);
+                if ($cotizacionOrden <= 0 || !function_exists('oi_resolver_consulta_para_cotizacion')) {
+                    continue;
+                }
+                $consultaResuelta = (int)oi_resolver_consulta_para_cotizacion($conn, $cotizacionOrden);
+                if ($consultaResuelta !== $consulta_id) {
+                    continue;
+                }
+                $r['consulta_id'] = $consulta_id;
+            }
             $rowsBase[] = $r;
             $orderIds[] = (int)($r['id'] ?? 0);
         }
