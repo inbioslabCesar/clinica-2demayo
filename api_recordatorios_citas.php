@@ -2213,6 +2213,7 @@ if ($method === 'GET') {
     $duracionTurnoMinConsultas = rc_obtener_duracion_turno_min($conn);
     $turnosRegularesCacheConsultas = [];
     while ($row = $res->fetch_assoc()) {
+        $cotizacionIdItem = isset($row['cotizacion_id']) && (int)$row['cotizacion_id'] > 0 ? (int)$row['cotizacion_id'] : 0;
         $medicoIdRow = (int)($row['medico_id'] ?? 0);
         $fechaRow = (string)($row['fecha'] ?? '');
         $horaRow = (string)($row['hora'] ?? '');
