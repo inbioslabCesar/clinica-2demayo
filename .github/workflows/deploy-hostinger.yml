@@ -6,7 +6,10 @@ on:
       target_environment:
         description: 'Environment de GitHub (ej: prod-cardiovidaiquitos)'
         required: true
-        type: string
+        type: choice
+        options:
+          - prod-cardiovidaiquitos
+          - prod-centromedicosantoniodepadua
       confirm_production:
         description: 'Escribe EXACTAMENTE: DEPLOY_HOSTINGER_TEST'
         required: true
