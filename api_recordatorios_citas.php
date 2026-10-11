@@ -194,24 +194,70 @@ function rc_seed_recordatorios_agenda_servicios($conn, $cotizacionIds, $usuarioI
         return;
     }
 
-    $stmt = $conn->prepare(
-        'INSERT INTO recordatorios_agenda_servicios (cotizacion_id, estado, observacion, fecha_ultimo_contacto, intentos, actualizado_por)
-         VALUES (?, "pendiente", "Auto-registrado desde agenda", NULL, 0, ?)
-         ON DUPLICATE KEY UPDATE
-           actualizado_por = COALESCE(recordatorios_agenda_servicios.actualizado_por, VALUES(actualizado_por)),
-           updated_at = CURRENT_TIMESTAMP'
-    );
-    if (!$stmt) {
-        return;
+    $hasActualizadoPor = rc_column_exists($conn, 'recordatorios_agenda_servicios', 'actualizado_por');
+    $hasUpdatedAt = rc_column_exists($conn, 'recordatorios_agenda_servicios', 'updated_at');
+    $hasEstado = rc_column_exists($conn, 'recordatorios_agenda_servicios', 'estado');
+    $hasObservacion = rc_column_exists($conn, 'recordatorios_agenda_servicios', 'observacion');
+    $hasFechaUltimo = rc_column_exists($conn, 'recordatorios_agenda_servicios', 'fecha_ultimo_contacto');
+    $hasIntentos = rc_column_exists($conn, 'recordatorios_agenda_servicios', 'intentos');
+
+    $cols = ['cotizacion_id'];
+    $vals = ['?'];
+    $types = 'i';
+    $paramsBase = [];
+    if ($hasEstado) {
+        $cols[] = 'estado';
+        $vals[] = '"pendiente"';
+    }
+    if ($hasObservacion) {
+        $cols[] = 'observacion';
+        $vals[] = '"Auto-registrado desde agenda"';
+    }
+    if ($hasFechaUltimo) {
+        $cols[] = 'fecha_ultimo_contacto';
+        $vals[] = 'NULL';
+    }
+    if ($hasIntentos) {
+        $cols[] = 'intentos';
+        $vals[] = '0';
+    }
+    if ($hasActualizadoPor) {
+        $cols[] = 'actualizado_por';
+        $vals[] = '?';
+        $types .= 'i';
+        $paramsBase[] = (int)$usuarioId;
     }
 
-    $uid = (int)$usuarioId;
-    foreach ($ids as $cotId) {
-        $cid = (int)$cotId;
-        $stmt->bind_param('ii', $cid, $uid);
-        $stmt->execute();
+    $updates = [];
+    if ($hasActualizadoPor) {
+        $updates[] = 'actualizado_por = COALESCE(recordatorios_agenda_servicios.actualizado_por, VALUES(actualizado_por))';
     }
-    $stmt->close();
+    if ($hasUpdatedAt) {
+        $updates[] = 'updated_at = CURRENT_TIMESTAMP';
+    }
+    if (empty($updates)) {
+        $updates[] = 'cotizacion_id = VALUES(cotizacion_id)';
+    }
+
+    $sql = 'INSERT INTO recordatorios_agenda_servicios (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')'
+        . ' ON DUPLICATE KEY UPDATE ' . implode(', ', $updates);
+
+    try {
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return;
+        }
+
+        foreach ($ids as $cotId) {
+            $cid = (int)$cotId;
+            $params = array_merge([$cid], $paramsBase);
+            $stmt->bind_param($types, ...$params);
+            $stmt->execute();
+        }
+        $stmt->close();
+    } catch (Throwable $e) {
+        error_log('[recordatorios] seed recordatorios_agenda_servicios omitido: ' . $e->getMessage());
+    }
 }
 
 function rc_cola_source_key($consultaId, $cotizacionId) {
