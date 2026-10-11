@@ -3,6 +3,10 @@ name: Deploy a Hostinger (Test)
 on:
   workflow_dispatch:
     inputs:
+      target_environment:
+        description: 'Environment de GitHub (ej: prod-cardiovidaiquitos)'
+        required: true
+        type: string
       confirm_production:
         description: 'Escribe EXACTAMENTE: DEPLOY_HOSTINGER_TEST'
         required: true
@@ -19,6 +23,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_environment }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +33,7 @@ jobs:
           set -euo pipefail
           [[ "${{ github.ref_name }}" == "main" ]] || { echo "Este deploy solo puede ejecutarse desde main"; exit 1; }
           [[ "${{ github.event.inputs.confirm_production }}" == "DEPLOY_HOSTINGER_TEST" ]] || { echo "Confirmacion de despliegue invalida"; exit 1; }
+          [[ -n "${{ secrets.SSH_HOST }}" ]] || { echo "SSH_HOST no esta disponible. Verifica que exista como Environment secret en '${{ github.event.inputs.target_environment }}'."; exit 1; }
           [[ "${{ github.event.inputs.confirm_host }}" == "${{ secrets.SSH_HOST }}" ]] || { echo "Confirmacion de host invalida"; exit 1; }
           echo "Confirmaciones validas. Continuando deploy..."
 
