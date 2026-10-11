@@ -38,7 +38,13 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const medicoIdPrefill = Number(qs.get("medico_id") || 0);
   const fechaPrefill = String(qs.get("fecha") || "").trim();
   const horaPrefill = String(qs.get("hora") || "").trim().slice(0, 5);
-  const hasEditIntent = Boolean(isEditIntent || consultaId || (qs.get("modo") === "editar" && cotizacionIdNum > 0));
+  const modoQuery = String(qs.get("modo") || "").toLowerCase();
+  const hasEditIntent = Boolean(
+    isEditIntent ||
+    consultaId ||
+    ((modoQuery === "editar" || modoQuery === "adenda") && cotizacionIdNum > 0)
+  );
+  const isAdendaMode = String(qs.get("modo") || "").toLowerCase() === "adenda";
   const pacienteIdNum = Number(pacienteId || 0);
   const esPacienteTemporal = pacienteIdNum <= 0;
   const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
@@ -95,7 +101,10 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const [cargandoConsultaEdicion, setCargandoConsultaEdicion] = useState(false);
   const [consultasDisponibles, setConsultasDisponibles] = useState([]);
   const [modoAgregarConsulta, setModoAgregarConsulta] = useState(false);
+  const [adendaReferencia, setAdendaReferencia] = useState(null);
+  const [precioConsultaReferencia, setPrecioConsultaReferencia] = useState(null);
   const coberturaConsultaCacheRef = useRef(new Map());
+  const adendaPrefillAplicadoRef = useRef(false);
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
@@ -566,6 +575,125 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   }, [isEditingConsulta, medicoIdPrefill, fechaPrefill, horaPrefill]);
 
   useEffect(() => {
+    if (!isAdendaMode || cotizacionIdNum <= 0) return;
+    if (adendaPrefillAplicadoRef.current) return;
+
+    let cancelado = false;
+    adendaPrefillAplicadoRef.current = true;
+
+    const hidratarReferenciaAdenda = async () => {
+      try {
+        const resCot = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionIdNum}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const dataCot = await resCot.json();
+        const cot = dataCot?.cotizacion || {};
+        const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
+
+        let consultaRef = Number(cot?.consulta_ref_id || 0);
+        let medicoRef = 0;
+        let fechaRef = "";
+        let horaRef = "";
+
+        const detalleConsulta = detalles.find((d) => String(d?.servicio_tipo || "").toLowerCase() === "consulta");
+        const detalleConConsulta = detalles.find((d) => Number(d?.consulta_id || 0) > 0);
+        const detalleRef = detalleConsulta || detalleConConsulta || null;
+        const subtotalRef = Number(detalleRef?.subtotal ?? detalleRef?.precio_unitario);
+
+        if (consultaRef <= 0 && detalleRef) {
+          consultaRef = Number(detalleRef?.consulta_id || 0);
+        }
+
+        if (consultaRef > 0) {
+          const resConsulta = await authFetch(`${BASE_URL}api_consultas.php?consulta_id=${consultaRef}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          const dataConsulta = await resConsulta.json();
+          const consulta = dataConsulta?.consultas?.[0] || null;
+          if (consulta) {
+            medicoRef = Number(consulta?.medico_id || 0);
+            fechaRef = String(consulta?.fecha || "").slice(0, 10);
+            horaRef = String(consulta?.hora || "").slice(0, 5);
+          }
+        }
+
+        if ((!fechaRef || !horaRef) && detalleRef) {
+          const match = String(detalleRef?.descripcion || "").match(/\((\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\)/);
+          if (match) {
+            if (!fechaRef) fechaRef = match[1];
+            if (!horaRef) horaRef = match[2];
+          }
+        }
+        if (!medicoRef && detalleRef) {
+          medicoRef = Number(detalleRef?.medico_id || 0);
+        }
+
+        if (!cancelado) {
+          setAdendaReferencia({
+            consultaId: consultaRef > 0 ? consultaRef : 0,
+            medicoId: medicoRef > 0 ? medicoRef : 0,
+            fecha: fechaRef,
+            hora: horaRef,
+          });
+          setPrecioConsultaReferencia(Number.isFinite(subtotalRef) && subtotalRef >= 0 ? subtotalRef : null);
+
+          if (!medicoIdPrefill && medicoRef > 0) setMedicoId(String(medicoRef));
+          if (!fechaPrefill && /^\d{4}-\d{2}-\d{2}$/.test(fechaRef)) setFecha(fechaRef);
+          if (!horaPrefill && /^\d{2}:\d{2}$/.test(horaRef)) setHora(horaRef);
+        }
+      } catch {
+        if (!cancelado) setAdendaReferencia(null);
+      }
+    };
+
+    hidratarReferenciaAdenda();
+    return () => {
+      cancelado = true;
+    };
+  }, [isAdendaMode, cotizacionIdNum, medicoIdPrefill, fechaPrefill, horaPrefill]);
+
+  useEffect(() => {
+    if (!isAdendaMode || !isEditingConsulta || cotizacionIdNum <= 0) return;
+
+    let cancelado = false;
+    const hidratarPrecioReferencia = async () => {
+      try {
+        const resCot = await authFetch(`${BASE_URL}api_cotizaciones.php?cotizacion_id=${cotizacionIdNum}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const dataCot = await resCot.json();
+        const detalles = Array.isArray(dataCot?.cotizacion?.detalles) ? dataCot.cotizacion.detalles : [];
+        const detallesConsulta = detalles.filter((d) => String(d?.servicio_tipo || "").toLowerCase() === "consulta");
+        if (detallesConsulta.length === 0) {
+          if (!cancelado) setPrecioConsultaReferencia(null);
+          return;
+        }
+
+        let detalleRef = null;
+        if (consultaIdNum > 0) {
+          detalleRef = detallesConsulta.find((d) => Number(d?.consulta_id || 0) === Number(consultaIdNum)) || null;
+        }
+        if (!detalleRef) detalleRef = detallesConsulta[0];
+
+        const subtotalRef = Number(detalleRef?.subtotal ?? detalleRef?.precio_unitario);
+        if (!cancelado) {
+          setPrecioConsultaReferencia(Number.isFinite(subtotalRef) && subtotalRef >= 0 ? subtotalRef : null);
+        }
+      } catch {
+        if (!cancelado) setPrecioConsultaReferencia(null);
+      }
+    };
+
+    hidratarPrecioReferencia();
+    return () => {
+      cancelado = true;
+    };
+  }, [isAdendaMode, isEditingConsulta, cotizacionIdNum, consultaIdNum]);
+
+  useEffect(() => {
     if (tipoConsulta !== "espontanea") return;
     const hoy = getLimaDate();
     if (String(fecha || "").slice(0, 10) !== hoy) {
@@ -744,7 +872,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     }
   };
 
-  const actualizarConsultaExistente = async () => {
+  const actualizarConsultaExistente = async (accion = "cotizar") => {
     if (!pacienteId || !medicoId || !fecha || !hora) {
       setMsg("Completa todos los campos");
       return;
@@ -866,6 +994,12 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         title: "Consulta actualizada",
         text: syncFallida
           ? `Se actualizó la consulta #${consultaIdNum}, pero no se pudo sincronizar el precio de la cotización (${cotizacionSync?.reason || "sin detalle"}).`
+          : accion === "cobrar" && Number(cotizacionSync?.saldo_pendiente || 0) > 0
+          ? `Se actualizó la consulta #${consultaIdNum}. Quedó un saldo pendiente de S/ ${Number(cotizacionSync?.saldo_pendiente || 0).toFixed(2)} y se abrirá el cobro.`
+          : accion === "cobrar"
+          ? `Se actualizó la consulta #${consultaIdNum}. No quedó diferencia por cobrar.`
+          : Number(cotizacionSync?.saldo_pendiente || 0) > 0
+          ? `Se actualizó la consulta #${consultaIdNum}. Saldo pendiente actual: S/ ${Number(cotizacionSync?.saldo_pendiente || 0).toFixed(2)}.`
           : `Se actualizó la consulta #${consultaIdNum} correctamente.`,
         confirmButtonText: "Aceptar",
         confirmButtonColor: "#2563eb",
@@ -885,6 +1019,12 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           text: e?.message || "No se pudo sincronizar el recordatorio automáticamente.",
           confirmButtonText: "Entendido",
         });
+      }
+
+      const saldoPendiente = Number(cotizacionSync?.saldo_pendiente || 0);
+      if (!syncFallida && accion === "cobrar" && cotizacionIdNum > 0 && saldoPendiente > 0) {
+        navigate(`/cobrar-cotizacion/${cotizacionIdNum}`);
+        return;
       }
 
       navigate(backTo || (cotizacionIdNum > 0 ? "/cotizaciones" : "/lista-consultas"));
@@ -1083,7 +1223,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       return;
     }
     if (isEditingConsulta) {
-      await actualizarConsultaExistente();
+      await actualizarConsultaExistente("cotizar");
       return;
     }
     await procesarAgendaConsulta("cotizar");
@@ -1105,7 +1245,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       return;
     }
     if (isEditingConsulta) {
-      await actualizarConsultaExistente();
+      await actualizarConsultaExistente("cobrar");
       return;
     }
     await procesarAgendaConsulta("cobrar");
@@ -1457,6 +1597,19 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         </div>
         {/* Tarjeta formulario / selector */}
         <div className="w-full xl:max-w-[430px]">
+          {isAdendaMode && (
+            <div className="mb-3 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+              <div className="font-semibold mb-1">Cambio de médico (migración de consulta)</div>
+              <div>
+                {adendaReferencia?.fecha && adendaReferencia?.hora
+                  ? `Horario original: ${adendaReferencia.fecha} ${adendaReferencia.hora}.`
+                  : "Se mantiene el horario previo cuando existe referencia de consulta."}
+              </div>
+              <div className="mt-1">
+                Al guardar, el sistema valida turnos/cruces del médico nuevo. Si no tiene turno libre, puedes cambiar a una hora libre o usar hora manual con autorización.
+              </div>
+            </div>
+          )}
           {isEditingConsulta && cargandoConsultaEdicion && (
             <div className="mb-3 rounded border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm">
               Cargando datos de la consulta para edición...
@@ -1553,6 +1706,8 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             onAgregarCarrito={agregarConsultaAlCarrito}
             isEditingConsulta={isEditingConsulta && !modoAgregarConsulta}
             isEditingCotizacion={cotizacionIdNum > 0}
+            isAdendaMode={isAdendaMode}
+            precioReferenciaConsulta={precioConsultaReferencia}
             processingAction={processingAction}
             msg={msg}
           />

@@ -82,9 +82,11 @@ export default function SeleccionarServicioPage() {
   const cobroId = qs.get('cobro_id');
   const cotizacionId = location.state?.cotizacionId || qs.get('cotizacion_id');
   const isEditCotizacion = Boolean(cotizacionId);
-  const editSuffix = isEditCotizacion ? `?cotizacion_id=${cotizacionId}&modo=editar&back_to=/seleccionar-servicio` : '';
+  const modoRaw = String(location.state?.modo || qs.get('modo') || 'editar').toLowerCase().trim();
+  const modoCotizacion = (modoRaw === 'adenda' || modoRaw === 'editar') ? modoRaw : 'editar';
+  const editSuffix = isEditCotizacion ? `?cotizacion_id=${cotizacionId}&modo=${modoCotizacion}&back_to=/seleccionar-servicio` : '';
   const consultaSuffix = isEditCotizacion
-    ? `?paciente_id=${paciente?.id || pacienteId}&cotizacion_id=${cotizacionId}&modo=editar&back_to=/cotizaciones`
+    ? `?paciente_id=${paciente?.id || pacienteId}&cotizacion_id=${cotizacionId}&modo=${modoCotizacion}&back_to=/cotizaciones`
     : (cobroId ? `?cobro_id=${cobroId}` : '');
   const rutaVolver = useMemo(() => {
     const fromState = location.state?.backTo || location.state?.from;

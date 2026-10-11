@@ -24,6 +24,8 @@ function FormularioAgendarConsulta({
   onAgregarCarrito,
   isEditingConsulta = false,
   isEditingCotizacion = false,
+  isAdendaMode = false,
+  precioReferenciaConsulta = null,
   processingAction = "",
   msg,
 }) {
@@ -34,7 +36,14 @@ function FormularioAgendarConsulta({
   const tieneCoberturaContrato = String(coberturaTarifa?.origen_cobro || "") === "contrato";
   const precioBaseConsulta = Number(tarifaSeleccionada?.precio_particular || 0);
   const precioConsulta = tieneCoberturaContrato ? 0 : precioBaseConsulta;
-  const esTarifaCubiertaPorContrato = (tarifa) => String(coverageByTarifa[Number(tarifa?.id)]?.origen_cobro || "") === "contrato";
+  const precioReferenciaNum = Number(precioReferenciaConsulta);
+  const mostrarComparativoAdenda =
+    isAdendaMode &&
+    isEditingConsulta &&
+    medicoId &&
+    Number.isFinite(precioReferenciaNum) &&
+    precioReferenciaNum >= 0;
+  const diferenciaAdenda = mostrarComparativoAdenda ? Number((precioConsulta - precioReferenciaNum).toFixed(2)) : 0;
 
   return (
     <div className="w-full flex flex-col items-stretch">
@@ -74,6 +83,28 @@ function FormularioAgendarConsulta({
                 Cubierta hoy por contrato
               </span>
             ) : null}
+          </div>
+        ) : null}
+        {mostrarComparativoAdenda ? (
+          <div
+            className={`rounded border px-3 py-2 text-sm ${
+              diferenciaAdenda > 0
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : diferenciaAdenda < 0
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-slate-200 bg-slate-50 text-slate-800"
+            }`}
+          >
+            <div className="font-semibold">Comparativo de cambio de médico</div>
+            <div>Precio original: S/ {precioReferenciaNum.toFixed(2)}</div>
+            <div>Precio nuevo: S/ {precioConsulta.toFixed(2)}</div>
+            {diferenciaAdenda > 0 ? (
+              <div>Diferencia por cobrar: S/ {diferenciaAdenda.toFixed(2)}</div>
+            ) : diferenciaAdenda < 0 ? (
+              <div>Reducción aplicada: S/ {Math.abs(diferenciaAdenda).toFixed(2)}</div>
+            ) : (
+              <div>Sin diferencia de precio.</div>
+            )}
           </div>
         ) : null}
 
@@ -170,7 +201,7 @@ function FormularioAgendarConsulta({
         )}
 
         {isEditingConsulta ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <div className={`grid grid-cols-1 ${isAdendaMode ? "md:grid-cols-3" : "md:grid-cols-2"} gap-2`}>
             <button
               type="button"
               onClick={onAgregarCarrito}
@@ -180,16 +211,30 @@ function FormularioAgendarConsulta({
               Agregar al carrito
             </button>
             <button
-              type="submit"
+              type="button"
+              onClick={onCotizar}
               disabled={processingAction !== ""}
-              className="bg-blue-700 text-white rounded px-4 py-2 md:px-6 md:py-3 font-bold text-base md:text-lg disabled:opacity-60"
+              className={`${isAdendaMode ? "bg-blue-600" : "bg-blue-700"} text-white rounded px-4 py-2 md:px-6 md:py-3 font-bold text-base md:text-lg disabled:opacity-60`}
             >
               {processingAction === "editar"
                 ? "Actualizando..."
+                : isAdendaMode
+                ? "Guardar cambio sin cobro"
                 : isEditingCotizacion
                 ? "Actualizar cotización"
                 : "Actualizar consulta"}
             </button>
+            {isAdendaMode && (
+              <button
+                type="submit"
+                disabled={processingAction !== ""}
+                className="bg-green-600 text-white rounded px-4 py-2 md:px-6 md:py-3 font-bold text-base md:text-lg disabled:opacity-60"
+              >
+                {processingAction === "editar"
+                  ? "Actualizando..."
+                  : "Guardar cambio y cobrar diferencia"}
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -209,6 +254,8 @@ function FormularioAgendarConsulta({
             >
               {processingAction === "cotizar"
                 ? "Procesando..."
+                : isAdendaMode
+                ? "Guardar cambio sin cobro"
                 : isEditingCotizacion
                 ? "Actualizar cotización"
                 : "Registrar cotización"}
@@ -220,10 +267,17 @@ function FormularioAgendarConsulta({
             >
               {processingAction === "cobrar"
                 ? "Procesando..."
+                : isAdendaMode
+                ? "Guardar cambio y cobrar (si aplica)"
                 : isEditingCotizacion
                 ? "Actualizar y cobrar"
                 : "Registrar y cobrar"}
             </button>
+          </div>
+        )}
+        {isAdendaMode && (
+          <div className="mt-1 text-xs text-slate-600">
+            Si el cambio de médico genera diferencia, puedes cobrarla de inmediato; si no hay diferencia, solo se guarda el cambio.
           </div>
         )}
         {msg && (

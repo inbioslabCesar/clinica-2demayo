@@ -95,18 +95,51 @@ $paramsBase = [];
 
 $estadoNormalizado = strtolower(trim((string)$estado));
 $usarFechaPagoComoFiltro = ($estadoNormalizado === 'pagado');
-$fechaAtencionExpr = "DATE(h.fecha)";
-if ($hasCotizacionMovimientos) {
-    $fechaAtencionExpr = "DATE(COALESCE((
-        SELECT c_ref.fecha
-        FROM cotizacion_movimientos cm_ref
-        INNER JOIN cotizaciones c_ref ON c_ref.id = cm_ref.cotizacion_id
-        WHERE cm_ref.cobro_id = h.cobro_id
-          AND cm_ref.tipo_movimiento = 'abono'
-          AND cm_ref.cotizacion_id IS NOT NULL
-        ORDER BY cm_ref.id DESC
+$fechaAtencionExpr = "DATE(COALESCE(
+    (
+        SELECT cns_ref.fecha
+        FROM consultas cns_ref
+        WHERE cns_ref.id = h.consulta_id
         LIMIT 1
-    ), h.fecha))";
+    ),
+    (
+        SELECT c_ref_hpc.fecha
+        FROM honorarios_por_cobrar hpc_ref
+        INNER JOIN cotizaciones c_ref_hpc ON c_ref_hpc.id = hpc_ref.cotizacion_id
+        WHERE hpc_ref.honorario_movimiento_id_final = h.id
+        ORDER BY hpc_ref.id DESC
+        LIMIT 1
+    ),
+    h.fecha
+))";
+if ($hasCotizacionMovimientos) {
+    $fechaAtencionExpr = "DATE(COALESCE(
+        (
+            SELECT cns_ref.fecha
+            FROM consultas cns_ref
+            WHERE cns_ref.id = h.consulta_id
+            LIMIT 1
+        ),
+        (
+            SELECT c_ref_hpc.fecha
+            FROM honorarios_por_cobrar hpc_ref
+            INNER JOIN cotizaciones c_ref_hpc ON c_ref_hpc.id = hpc_ref.cotizacion_id
+            WHERE hpc_ref.honorario_movimiento_id_final = h.id
+            ORDER BY hpc_ref.id DESC
+            LIMIT 1
+        ),
+        (
+            SELECT c_ref.fecha
+            FROM cotizacion_movimientos cm_ref
+            INNER JOIN cotizaciones c_ref ON c_ref.id = cm_ref.cotizacion_id
+            WHERE cm_ref.cobro_id = h.cobro_id
+              AND cm_ref.tipo_movimiento = 'abono'
+              AND cm_ref.cotizacion_id IS NOT NULL
+            ORDER BY cm_ref.id DESC
+            LIMIT 1
+        ),
+        h.fecha
+    ))";
 }
 $fechaMovimientoExpr = $usarFechaPagoComoFiltro
     ? "DATE(COALESCE(h.fecha_pago_medico, h.fecha))"

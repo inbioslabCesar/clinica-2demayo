@@ -293,6 +293,34 @@ if (!function_exists('op_crear_cotizacion_procedimientos')) {
 if (!function_exists('op_listar_ordenes_por_consulta')) {
     function op_listar_ordenes_por_consulta(mysqli $conn, int $consultaId, bool $filtrarPorMedico = false, int $medicoSesionId = 0, bool $lite = false)
     {
+        $medicoInfo = [
+            'medico_responsable_id' => 0,
+            'medico_responsable_nombre' => '',
+            'medico_responsable_apellido' => '',
+            'medico_responsable_especialidad' => '',
+        ];
+        $stmtMedico = $conn->prepare(
+            'SELECT m.id AS medico_id, m.nombre, m.apellido, m.especialidad
+             FROM consultas c
+             LEFT JOIN medicos m ON m.id = c.medico_id
+             WHERE c.id = ?
+             LIMIT 1'
+        );
+        if ($stmtMedico) {
+            $stmtMedico->bind_param('i', $consultaId);
+            $stmtMedico->execute();
+            $rowMedico = $stmtMedico->get_result()->fetch_assoc();
+            $stmtMedico->close();
+            if ($rowMedico) {
+                $medicoInfo = [
+                    'medico_responsable_id' => (int)($rowMedico['medico_id'] ?? 0),
+                    'medico_responsable_nombre' => trim((string)($rowMedico['nombre'] ?? '')),
+                    'medico_responsable_apellido' => trim((string)($rowMedico['apellido'] ?? '')),
+                    'medico_responsable_especialidad' => trim((string)($rowMedico['especialidad'] ?? '')),
+                ];
+            }
+        }
+
         $stmt = $conn->prepare('SELECT * FROM ordenes_procedimientos WHERE consulta_id = ? ORDER BY fecha ASC, id ASC');
         if (!$stmt) {
             echo json_encode(['success' => true, 'ordenes' => []]);
@@ -309,6 +337,35 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
             foreach ($ids as $id) $allIds[] = $id;
         }
         $catalog = op_fetch_tarifas_procedimientos($conn, $allIds);
+        $cotizacionIds = [];
+        foreach ($rows as $rCot) {
+            $cid = (int)($rCot['cotizacion_id'] ?? 0);
+            if ($cid > 0) {
+                $cotizacionIds[$cid] = true;
+            }
+        }
+        $cotizacionMap = [];
+        if (!empty($cotizacionIds)) {
+            $idsCot = array_keys($cotizacionIds);
+            $phCot = implode(',', array_fill(0, count($idsCot), '?'));
+            $stmtCot = $conn->prepare("SELECT id, estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id IN ({$phCot})");
+            if ($stmtCot) {
+                $stmtCot->bind_param(str_repeat('i', count($idsCot)), ...$idsCot);
+                $stmtCot->execute();
+                $rowsCot = $stmtCot->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmtCot->close();
+                foreach ($rowsCot as $rowCot) {
+                    $cid = (int)($rowCot['id'] ?? 0);
+                    if ($cid <= 0) continue;
+                    $cotizacionMap[$cid] = [
+                        'estado' => (string)($rowCot['estado'] ?? ''),
+                        'numero_comprobante' => (string)($rowCot['numero_comprobante'] ?? ''),
+                        'total' => (float)($rowCot['total'] ?? 0),
+                        'saldo_pendiente' => (float)($rowCot['saldo_pendiente'] ?? 0),
+                    ];
+                }
+            }
+        }
 
         $filtradas = [];
 
@@ -333,10 +390,21 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
                     'paciente_id' => (int)($r['paciente_id'] ?? 0),
                     'estado' => (string)($r['estado'] ?? ''),
                     'fecha' => (string)($r['fecha'] ?? ''),
+                    'cotizacion_id' => (int)($r['cotizacion_id'] ?? 0),
+                    'cotizacion' => $cotizacionMap[(int)($r['cotizacion_id'] ?? 0)] ?? null,
                     'procedimientos' => $items,
+                    'medico_responsable_id' => $medicoInfo['medico_responsable_id'],
+                    'medico_responsable_nombre' => $medicoInfo['medico_responsable_nombre'],
+                    'medico_responsable_apellido' => $medicoInfo['medico_responsable_apellido'],
+                    'medico_responsable_especialidad' => $medicoInfo['medico_responsable_especialidad'],
                 ];
             } else {
                 $r['procedimientos'] = $items;
+                $r['cotizacion'] = $cotizacionMap[(int)($r['cotizacion_id'] ?? 0)] ?? null;
+                $r['medico_responsable_id'] = $medicoInfo['medico_responsable_id'];
+                $r['medico_responsable_nombre'] = $medicoInfo['medico_responsable_nombre'];
+                $r['medico_responsable_apellido'] = $medicoInfo['medico_responsable_apellido'];
+                $r['medico_responsable_especialidad'] = $medicoInfo['medico_responsable_especialidad'];
                 $filtradas[] = $r;
             }
         }
@@ -347,7 +415,7 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
             return;
         }
 
-        echo json_encode(['success' => true, 'ordenes' => $filtrarPorMedico ? $filtradas : $rows]);
+        echo json_encode(['success' => true, 'ordenes' => $filtradas]);
     }
 }
 
