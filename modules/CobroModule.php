@@ -2101,6 +2101,18 @@ class CobroModule
             $detalleId   = $item['detalle_id'];
             $descripcion = $item['descripcion'];
             $medicoId    = (int)($item['medico_id'] ?? 0);
+            $consultaDetalleId = 0;
+            if ($detalleId > 0 && self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+                $stmtConsultaDetalle = $conn->prepare('SELECT consulta_id FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ? LIMIT 1');
+                if ($stmtConsultaDetalle) {
+                    $stmtConsultaDetalle->bind_param('ii', $detalleId, $cotizacionId);
+                    $stmtConsultaDetalle->execute();
+                    $rowConsultaDetalle = $stmtConsultaDetalle->get_result()->fetch_assoc();
+                    $consultaDetalleId = (int)($rowConsultaDetalle['consulta_id'] ?? 0);
+                    $stmtConsultaDetalle->close();
+                }
+            }
+            $consultaRelacionadaId = $consultaId > 0 ? $consultaId : $consultaDetalleId;
 
             if ($medicoId <= 0 && $detalleId > 0 && self::columnExists($conn, 'cotizaciones_detalle', 'medico_id')) {
                 $stmtMedicoDetalle = $conn->prepare('SELECT medico_id FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ? LIMIT 1');
@@ -2139,10 +2151,10 @@ class CobroModule
                             }
                         }
                         // Actualizar consulta_id si aún no está asignado
-                        if ($hasConsultaId && $consultaId > 0) {
+                        if ($hasConsultaId && $consultaRelacionadaId > 0) {
                             $stmtUp = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
                             if ($stmtUp) {
-                                $stmtUp->bind_param('ii', $consultaId, $ordenId);
+                                $stmtUp->bind_param('ii', $consultaRelacionadaId, $ordenId);
                                 $stmtUp->execute();
                                 $stmtUp->close();
                             }
@@ -2155,7 +2167,7 @@ class CobroModule
             $cols   = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
             $vals   = ['?', '?', '?', '?', "'pendiente'"];
             $types  = 'iiss';
-            $params = [$consultaId > 0 ? $consultaId : 0, $pacienteId, $tipo, $indicaciones];
+            $params = [$consultaRelacionadaId > 0 ? $consultaRelacionadaId : 0, $pacienteId, $tipo, $indicaciones];
 
             if ($hasSolicitadoPor) {
                 $cols[]   = 'solicitado_por';
