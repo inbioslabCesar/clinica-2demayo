@@ -2912,6 +2912,9 @@ class CobroModule
         $cacheConsultasCotizacion = [];
         foreach ((array)$detalles as $detalle) {
             if (!is_array($detalle)) continue;
+            if ((int)($detalle['solo_cobro_diferencia'] ?? 0) === 1 || (int)($detalle['_lectura_comercial_paquete'] ?? 0) === 1) {
+                continue;
+            }
 
             $servicioTipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
             if (!self::servicioTipoRequiereValidacionHorarioCobro($servicioTipo)) {
@@ -3936,8 +3939,19 @@ class CobroModule
                             'procedimiento' => 'Procedimientos',
                             'operacion' => 'Operaciones',
                         ];
-                        $tipo_ingreso_detalle = $tipo_ingreso_map_detalle[$detalleServicioKey] ?? 'otros';
-                        $area_servicio_detalle = $area_servicio_map_detalle[$detalleServicioKey] ?? ($area_servicio ?: 'Otros servicios');
+                        $descripcionDetalleIngreso = (string)($detalleServicio['descripcion'] ?? '');
+                        $esSoloCobroDiferenciaPaquete = (
+                            (int)($detalleServicio['solo_cobro_diferencia'] ?? 0) === 1
+                            || (int)($detalleServicio['_lectura_comercial_paquete'] ?? 0) === 1
+                            || stripos($descripcionDetalleIngreso, 'diferencia pendiente del paquete') !== false
+                            || stripos($descripcionDetalleIngreso, 'pago de diferencia de paquete') !== false
+                        );
+                        $tipo_ingreso_detalle = $esSoloCobroDiferenciaPaquete
+                            ? 'paquete'
+                            : ($tipo_ingreso_map_detalle[$detalleServicioKey] ?? 'otros');
+                        $area_servicio_detalle = $esSoloCobroDiferenciaPaquete
+                            ? 'Paquetes'
+                            : ($area_servicio_map_detalle[$detalleServicioKey] ?? ($area_servicio ?: 'Otros servicios'));
 
                         // Asegurar que cada detalle tenga paciente_id
                         if (!isset($detalleServicio['paciente_id']) || $detalleServicio['paciente_id'] === null) {
@@ -4169,7 +4183,7 @@ class CobroModule
                                 'caja_id' => $caja_id,
                                 'tipo_ingreso' => $tipo_ingreso_detalle,
                                 'area_servicio' => $area_servicio_detalle,
-                                'descripcion_ingreso' => $detalleServicio['descripcion'] ?? $descripcion_ingreso,
+                                'descripcion_ingreso' => $descripcionDetalleIngreso !== '' ? $descripcionDetalleIngreso : $descripcion_ingreso,
                                 'total_param' => $monto_detalle,
                                 'metodo_pago' => $metodo_pago,
                                 'cobro_id' => $cobro_id,

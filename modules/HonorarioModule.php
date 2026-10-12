@@ -342,14 +342,15 @@ class HonorarioModule {
         if ($modoHonorarioPaquete === 'monto_fijo_medico_paquete') {
             $montoFijo = max(0.0, self::toFloatFlexible($reglaObjetivo['monto_fijo_medico'] ?? 0));
             $montoFijoEscalado = $montoFijo * $cantidadObjetivo;
-            $montoMedicoObjetivo = round(min($montoFijoEscalado, $tarifaTotalObjetivo), 2);
-            $porcentajeMedicoObjetivo = $tarifaTotalObjetivo > 0 ? round(($montoMedicoObjetivo * 100) / $tarifaTotalObjetivo, 2) : 0.0;
+            $montoMedicoObjetivo = round(max(0.0, $montoFijoEscalado), 2);
         } else {
             $porcentaje = self::toFloatFlexible($reglaObjetivo['porcentaje_medico'] ?? 0);
             $porcentaje = min(max($porcentaje, 0.0), 100.0);
             $montoMedicoObjetivo = round($tarifaTotalObjetivo * $porcentaje / 100, 2);
-            $porcentajeMedicoObjetivo = $porcentaje;
         }
+
+        $tarifaTotalObjetivo = round(max($tarifaTotalObjetivo, $montoMedicoObjetivo), 2);
+        $porcentajeMedicoObjetivo = $tarifaTotalObjetivo > 0 ? round(($montoMedicoObjetivo * 100) / $tarifaTotalObjetivo, 2) : 0.0;
 
         $montoClinicaObjetivo = round(max(0.0, $tarifaTotalObjetivo - $montoMedicoObjetivo), 2);
         $porcentajeClinicaObjetivo = $tarifaTotalObjetivo > 0 ? round(($montoClinicaObjetivo * 100) / $tarifaTotalObjetivo, 2) : 0.0;
@@ -500,6 +501,122 @@ class HonorarioModule {
         return $paqueteId > 0;
     }
 
+    private static function esValorVerdadero($valor) {
+        if (is_bool($valor)) {
+            return $valor;
+        }
+        if (is_numeric($valor)) {
+            return ((float)$valor) > 0;
+        }
+        if (is_string($valor)) {
+            $normalizado = strtolower(trim($valor));
+            return in_array($normalizado, ['1', 'true', 'si', 'sí', 'yes', 'on'], true);
+        }
+        return false;
+    }
+
+    private static function esCobroDiferenciaPaqueteComercial($detalleConsulta, $snapshot) {
+        $marcadores = [
+            $detalleConsulta['solo_cobro_diferencia'] ?? null,
+            $detalleConsulta['_lectura_comercial_paquete'] ?? null,
+            $detalleConsulta['lectura_comercial_paquete'] ?? null,
+            $snapshot['solo_cobro_diferencia'] ?? null,
+            $snapshot['_lectura_comercial_paquete'] ?? null,
+            $snapshot['lectura_comercial_paquete'] ?? null,
+        ];
+
+        foreach ($marcadores as $marcador) {
+            if (self::esValorVerdadero($marcador)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function consolidarPendientePorCobrarPorId($conn, $hpcId) {
+        $hpcId = (int)$hpcId;
+        if ($hpcId <= 0 || !self::tableExists($conn, 'honorarios_por_cobrar')) {
+            return false;
+        }
+
+        $stmtSel = $conn->prepare("SELECT * FROM honorarios_por_cobrar WHERE id = ? AND estado_consolidacion = 'pendiente' LIMIT 1");
+        if (!$stmtSel) {
+            return false;
+        }
+        $stmtSel->bind_param('i', $hpcId);
+        $stmtSel->execute();
+        $row = $stmtSel->get_result()->fetch_assoc();
+        $stmtSel->close();
+        if (!$row) {
+            return false;
+        }
+
+        if ((float)($row['monto_medico'] ?? 0) <= 0.00001) {
+            $stmtAnular = $conn->prepare("UPDATE honorarios_por_cobrar SET estado_consolidacion = 'anulado', updated_at = NOW() WHERE id = ?");
+            if ($stmtAnular) {
+                $stmtAnular->bind_param('i', $hpcId);
+                $stmtAnular->execute();
+            }
+            return true;
+        }
+
+        $stmtDup = $conn->prepare("SELECT id FROM honorarios_medicos_movimientos WHERE cobro_id = ? AND medico_id = ? AND paciente_id <=> ? AND tipo_servicio = ? AND ABS(monto_medico - ?) < 0.01 AND observaciones LIKE ? ORDER BY id DESC LIMIT 1");
+        if ($stmtDup) {
+            $cobroIdDup = (int)($row['cobro_id'] ?? 0);
+            $medicoIdDup = (int)($row['medico_id'] ?? 0);
+            $pacienteIdDup = isset($row['paciente_id']) ? (int)$row['paciente_id'] : null;
+            $tipoServicioDup = (string)($row['tipo_servicio'] ?? 'consulta');
+            $montoMedicoDup = (float)($row['monto_medico'] ?? 0);
+            $likeObs = '%[hpc_id=' . $hpcId . ']%';
+            $stmtDup->bind_param('iiisds', $cobroIdDup, $medicoIdDup, $pacienteIdDup, $tipoServicioDup, $montoMedicoDup, $likeObs);
+            $stmtDup->execute();
+            $dup = $stmtDup->get_result()->fetch_assoc();
+            $stmtDup->close();
+            if ($dup && !empty($dup['id'])) {
+                $movExistente = (int)$dup['id'];
+                $stmtUpDup = $conn->prepare("UPDATE honorarios_por_cobrar SET estado_consolidacion = 'consolidado', honorario_movimiento_id_final = ?, consolidado_at = NOW(), updated_at = NOW() WHERE id = ?");
+                if ($stmtUpDup) {
+                    $stmtUpDup->bind_param('ii', $movExistente, $hpcId);
+                    $stmtUpDup->execute();
+                }
+                return true;
+            }
+        }
+
+        $datos = [
+            'consulta_id' => isset($row['consulta_id']) ? (int)$row['consulta_id'] : null,
+            'medico_id' => (int)($row['medico_id'] ?? 0),
+            'paciente_id' => isset($row['paciente_id']) ? (int)$row['paciente_id'] : null,
+            'tarifa_id' => isset($row['tarifa_id']) ? (int)$row['tarifa_id'] : null,
+            'tipo_precio' => (string)($row['tipo_precio'] ?? 'particular'),
+            'tipo_servicio' => (string)($row['tipo_servicio'] ?? 'consulta'),
+            'descripcion' => (string)($row['descripcion'] ?? 'Servicio médico'),
+            'tarifa_total' => (float)($row['tarifa_total'] ?? 0),
+            'monto_clinica' => (float)($row['monto_clinica'] ?? 0),
+            'monto_medico' => (float)($row['monto_medico'] ?? 0),
+            'porcentaje_aplicado_clinica' => (float)($row['porcentaje_aplicado_clinica'] ?? 0),
+            'porcentaje_aplicado_medico' => (float)($row['porcentaje_aplicado_medico'] ?? 0),
+            'metodo_pago_medico' => self::normalizarMetodoPagoMedico($row['metodo_pago_medico'] ?? 'efectivo')
+        ];
+
+        $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+        $obs = trim((string)($row['observaciones'] ?? ''));
+        $obsConsolidacion = trim($obs . ' [cotizacion_id=' . $cotizacionId . '][hpc_id=' . $hpcId . ']');
+        $movId = self::insertarMovimientoDesdeDatos($conn, $datos, (int)($row['cobro_id'] ?? 0), $obsConsolidacion);
+        if ($movId <= 0) {
+            return false;
+        }
+
+        $stmtUp = $conn->prepare("UPDATE honorarios_por_cobrar SET estado_consolidacion = 'consolidado', honorario_movimiento_id_final = ?, consolidado_at = NOW(), updated_at = NOW() WHERE id = ?");
+        if ($stmtUp) {
+            $stmtUp->bind_param('ii', $movId, $hpcId);
+            $stmtUp->execute();
+        }
+
+        return true;
+    }
+
     private static function construirDescripcionPaquete($descripcionBase, $detalleConsulta, $snapshot, $modoHonorario, $montoMedico, $montoClinica) {
         $paqueteId = (int)($detalleConsulta['paquete_id'] ?? ($snapshot['paquete_id'] ?? 0));
         $paqueteCodigo = trim((string)($detalleConsulta['paquete_codigo'] ?? ($snapshot['paquete_codigo'] ?? '')));
@@ -647,13 +764,11 @@ class HonorarioModule {
             if ($modoHonorarioPaquete === 'monto_fijo_medico_paquete') {
                 $montoFijo = max(0.0, self::toFloatFlexible($reglaPaquete['monto_fijo_medico'] ?? 0));
                 $montoFijoEscalado = $montoFijo * $cantidadDetalle;
-                $monto_medico = round(min($montoFijoEscalado, max(0.0, $tarifa_total)), 2);
-                $porcentaje_aplicado_medico = $tarifa_total > 0 ? round(($monto_medico * 100) / $tarifa_total, 2) : 0.0;
+                $monto_medico = round(max(0.0, $montoFijoEscalado), 2);
             } else {
                 $porcentaje = self::toFloatFlexible($reglaPaquete['porcentaje_medico'] ?? 0);
                 $porcentaje = min(max($porcentaje, 0.0), 100.0);
                 $monto_medico = round($tarifa_total * $porcentaje / 100, 2);
-                $porcentaje_aplicado_medico = $porcentaje;
             }
         } elseif ($monto_medico === null && !empty($tarifa['monto_medico'])) {
             $monto_medico = round(floatval($tarifa['monto_medico']) * $cantidadDetalle, 2);
@@ -664,6 +779,11 @@ class HonorarioModule {
         } elseif ($monto_medico === null) {
             $monto_medico = 0;
             $porcentaje_aplicado_medico = 0;
+        }
+
+        if ($esPaquete && $monto_medico !== null) {
+            $tarifa_total = round(max((float)$tarifa_total, (float)$monto_medico), 2);
+            $porcentaje_aplicado_medico = $tarifa_total > 0 ? round(($monto_medico * 100) / $tarifa_total, 2) : 0.0;
         }
 
         if ($monto_clinica !== null) {
@@ -826,6 +946,8 @@ class HonorarioModule {
         if (!($datos['success'] ?? false)) {
             return $datos;
         }
+        $snapshotDetalle = self::decodificarSnapshotDetalle($detalleConsulta);
+        $autoConsolidarPaqueteComercial = self::esCobroDiferenciaPaqueteComercial($detalleConsulta, $snapshotDetalle);
 
         $cotizacionId = (int)$cotizacion_id;
         $cobroId = (int)$cobro_id;
@@ -905,6 +1027,9 @@ class HonorarioModule {
                 'turno' => $turnoVal,
                 'observaciones' => $observaciones,
             ]);
+            if ($actualizado && $autoConsolidarPaqueteComercial) {
+                self::consolidarPendientePorCobrarPorId($conn, $pendienteExistenteId);
+            }
             return ['success' => true, 'ya_existia' => true, 'actualizado' => $actualizado];
         }
 
@@ -1002,6 +1127,13 @@ class HonorarioModule {
                 'success' => false,
                 'error' => 'No se pudo registrar honorario por cobrar'
             ];
+        }
+
+        if ($autoConsolidarPaqueteComercial) {
+            $nuevoHpcId = (int)$stmt->insert_id;
+            if ($nuevoHpcId > 0) {
+                self::consolidarPendientePorCobrarPorId($conn, $nuevoHpcId);
+            }
         }
 
         return ['success' => true];

@@ -61,6 +61,82 @@ class CajaModule {
         return $ok;
     }
 
+    private static function valoresEnumTipoIngreso($conn) {
+        static $cache = null;
+        if (is_array($cache)) {
+            return $cache;
+        }
+
+        $cache = [];
+        $stmt = $conn->prepare(
+            "SELECT COLUMN_TYPE
+             FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = 'ingresos_diarios'
+               AND COLUMN_NAME = 'tipo_ingreso'
+             LIMIT 1"
+        );
+        if (!$stmt) {
+            return $cache;
+        }
+
+        $stmt->execute();
+        $res = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $columnType = strtolower((string)($res['COLUMN_TYPE'] ?? ''));
+
+        if (preg_match("/^enum\\((.*)\\)$/", $columnType, $m)) {
+            $raw = (string)($m[1] ?? '');
+            if ($raw !== '') {
+                $partes = explode(',', $raw);
+                foreach ($partes as $p) {
+                    $val = trim($p, " \t\n\r\0\x0B'\"");
+                    if ($val !== '') {
+                        $cache[$val] = true;
+                    }
+                }
+            }
+        }
+
+        return $cache;
+    }
+
+    private static function normalizarTipoIngresoParaIngresoDiario($conn, $tipoRaw) {
+        $tipo = strtolower(trim((string)$tipoRaw));
+        if ($tipo === '') {
+            return 'otros';
+        }
+
+        $map = [
+            'consulta_medica' => 'consulta',
+            'rayos_x' => 'rayosx',
+            'rayos x' => 'rayosx',
+            'rx' => 'rayosx',
+            'procedimientos' => 'procedimiento',
+            'operacion' => 'operaciones',
+            'cirugia' => 'operaciones',
+            'cirugias' => 'operaciones',
+            'cirugia_mayor' => 'operaciones',
+            'perfil' => 'paquete',
+        ];
+        if (isset($map[$tipo])) {
+            $tipo = $map[$tipo];
+        }
+
+        $permitidos = self::valoresEnumTipoIngreso($conn);
+        if (isset($permitidos[$tipo])) {
+            return $tipo;
+        }
+
+        if ($tipo === 'paquete') {
+            error_log('CajaModule::registrarIngreso - tipo_ingreso=paquete no soportado por ENUM de ingresos_diarios; se registra como "otros" para evitar fallo de cobro.');
+            return 'otros';
+        }
+
+        error_log('CajaModule::registrarIngreso - tipo_ingreso no soportado por ENUM de ingresos_diarios: ' . $tipo . '. Se registra como "otros".');
+        return 'otros';
+    }
+
     // --- Obtener la caja abierta del usuario ---
     // Obtener la caja abierta del usuario, filtrando por fecha y turno
     public static function obtenerCajaAbierta($conn, $usuario_id, $fecha = null, $turno = null) {
@@ -93,6 +169,7 @@ class CajaModule {
     public static function registrarIngreso($conn, $params) {
         // Logging para depuración de ingresos diarios
             // ...eliminado log de depuración...
+        $tipoIngresoSeguro = self::normalizarTipoIngresoParaIngresoDiario($conn, $params['tipo_ingreso'] ?? 'otros');
         $sql = "INSERT INTO ingresos_diarios (
             caja_id, tipo_ingreso, area, descripcion, monto, metodo_pago, referencia_id, referencia_tabla, paciente_id, paciente_nombre, usuario_id, turno, honorario_movimiento_id, cobrado_por, liquidado_por, fecha_liquidacion, fecha_hora
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))";
@@ -104,7 +181,7 @@ class CajaModule {
         if (!$stmt_ingreso->bind_param(
             "isssdsisisisiiiss",
             $params['caja_id'],
-            $params['tipo_ingreso'],
+            $tipoIngresoSeguro,
             $params['area_servicio'],
             $params['descripcion_ingreso'],
             $params['total_param'],

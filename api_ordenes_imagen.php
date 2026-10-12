@@ -275,6 +275,92 @@ if (!function_exists('oi_where_tipo_detalle_imagen')) {
     }
 }
 
+if (!function_exists('oi_estado_cotizacion_es_pagado')) {
+    function oi_estado_cotizacion_es_pagado(string $estado): bool {
+        $st = strtolower(trim($estado));
+        return in_array($st, ['pagado', 'pagada', 'completado', 'completada', 'control', 'contrato'], true);
+    }
+}
+
+if (!function_exists('oi_resolver_cotizacion_pago_comercial')) {
+    function oi_resolver_cotizacion_pago_comercial(mysqli $conn, int $cotizacionId): ?array {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return null;
+        }
+
+        $ids = oi_resolver_cadena_cotizacion_ids($conn, $cotizacionId);
+        if (empty($ids)) {
+            $ids = [$cotizacionId];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $hasTotalPagado = oi_column_exists($conn, 'cotizaciones', 'total_pagado');
+        $selectTotalPagado = $hasTotalPagado
+            ? 'COALESCE(total_pagado, 0) AS total_pagado'
+            : '0 AS total_pagado';
+        $sql = "SELECT id, estado, numero_comprobante, total, saldo_pendiente, {$selectTotalPagado}
+                FROM cotizaciones
+                WHERE id IN ($placeholders)";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return null;
+        }
+
+        $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        if (empty($rows)) {
+            return null;
+        }
+
+        $byId = [];
+        $paidIds = [];
+        foreach ($rows as $row) {
+            $rid = (int)($row['id'] ?? 0);
+            if ($rid <= 0) {
+                continue;
+            }
+            $byId[$rid] = $row;
+            if (oi_estado_cotizacion_es_pagado((string)($row['estado'] ?? ''))) {
+                $paidIds[] = $rid;
+            }
+        }
+
+        if (empty($byId)) {
+            return null;
+        }
+
+        $selectedId = 0;
+        if (!empty($paidIds)) {
+            sort($paidIds, SORT_NUMERIC);
+            $selectedId = (int)$paidIds[0];
+        } elseif (isset($byId[$cotizacionId])) {
+            $selectedId = $cotizacionId;
+        } else {
+            $keys = array_keys($byId);
+            sort($keys, SORT_NUMERIC);
+            $selectedId = (int)$keys[0];
+        }
+
+        $selected = $byId[$selectedId] ?? null;
+        if (!is_array($selected)) {
+            return null;
+        }
+
+        return [
+            'id' => (int)($selected['id'] ?? 0),
+            'estado' => (string)($selected['estado'] ?? ''),
+            'numero_comprobante' => (string)($selected['numero_comprobante'] ?? ''),
+            'total' => round((float)($selected['total'] ?? 0), 2),
+            'saldo_pendiente' => round((float)($selected['saldo_pendiente'] ?? 0), 2),
+            'total_pagado' => round((float)($selected['total_pagado'] ?? 0), 2),
+        ];
+    }
+}
+
 if (!function_exists('oi_orden_imagen_activa_en_cotizacion')) {
     function oi_orden_imagen_activa_en_cotizacion(mysqli $conn, array $orden): bool {
         $cotizId = (int)($orden['cotizacion_id'] ?? 0);
@@ -1184,6 +1270,33 @@ if (!function_exists('usuarioPuedeVerOrdenImagen')) {
     }
 }
 
+if (!function_exists('oi_cumple_filtro_pago_panel')) {
+    function oi_cumple_filtro_pago_panel(mysqli $conn, array $orden, string $filtroPagoPanel): bool {
+        $filtro = strtolower(trim($filtroPagoPanel));
+        if ($filtro === '' || $filtro === 'todas') {
+            return true;
+        }
+
+        $cotizId = (int)($orden['cotizacion_id'] ?? 0);
+        if ($cotizId <= 0) {
+            return true;
+        }
+
+        $cotizacionPago = oi_resolver_cotizacion_pago_comercial($conn, $cotizId);
+        $estado = strtolower(trim((string)($cotizacionPago['estado'] ?? '')));
+        $esPagada = oi_estado_cotizacion_es_pagado($estado);
+
+        if ($filtro === 'solo_pagadas') {
+            return $esPagada;
+        }
+        if ($filtro === 'solo_no_pagadas') {
+            return !$esPagada;
+        }
+
+        return true;
+    }
+}
+
 // ─── Helper: adjuntar archivos a una orden ────────────────────────────────────
 function adjuntarArchivos(mysqli $conn, array &$orden): void {
     $oid     = (int)$orden['id'];
@@ -1236,7 +1349,7 @@ function completarMetadatosOrdenImagen(mysqli $conn, array &$orden): void {
 
     $cotizId = (int)($orden['cotizacion_id'] ?? 0);
     if ($cotizId > 0) {
-        $cRow = $conn->query("SELECT estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id = $cotizId")->fetch_assoc();
+        $cRow = oi_resolver_cotizacion_pago_comercial($conn, $cotizId);
         $orden['cotizacion'] = $cRow ?: null;
 
         $descs = [];
@@ -1874,7 +1987,7 @@ if ($method === 'GET') {
             if (!$isHcFast) {
                 $cotizId = (int)($r['cotizacion_id'] ?? 0);
                 if ($cotizId > 0) {
-                    $cRow = $conn->query("SELECT estado, numero_comprobante, total, saldo_pendiente FROM cotizaciones WHERE id = $cotizId")->fetch_assoc();
+                    $cRow = oi_resolver_cotizacion_pago_comercial($conn, $cotizId);
                     $r['cotizacion'] = $cRow ?: null;
 
                     $descs = [];
@@ -2016,32 +2129,16 @@ if ($method === 'GET') {
         if ($estado_panel !== 'canceladas_excluidas') {
             switch ($filtro_pago_panel) {
                 case 'solo_no_pagadas':
-                    $wherePagoPanel = " AND (
-                        oi.cotizacion_id IS NULL
-                        OR oi.cotizacion_id <= 0
-                        OR NOT EXISTS (
-                            SELECT 1
-                            FROM cotizaciones c_pago
-                            WHERE c_pago.id = oi.cotizacion_id
-                              AND LOWER(TRIM(COALESCE(c_pago.estado, ''))) IN ('pagado', 'pagada', 'control')
-                        )
-                    )";
+                    // Se aplica en memoria con lectura comercial de episodio.
+                    $wherePagoPanel = '';
                     break;
                 case 'todas':
                     $wherePagoPanel = '';
                     break;
                 case 'solo_pagadas':
                 default:
-                    $wherePagoPanel = " AND (
-                        oi.cotizacion_id IS NULL
-                        OR oi.cotizacion_id <= 0
-                        OR EXISTS (
-                            SELECT 1
-                            FROM cotizaciones c_pago
-                            WHERE c_pago.id = oi.cotizacion_id
-                              AND LOWER(TRIM(COALESCE(c_pago.estado, ''))) IN ('pagado', 'pagada', 'control')
-                        )
-                    )";
+                    // Se aplica en memoria con lectura comercial de episodio.
+                    $wherePagoPanel = '';
                     break;
             }
         }
@@ -2150,17 +2247,24 @@ if ($method === 'GET') {
                         AND {$agendaTipoMatchExpr}
                         )
                             ) $wheresTipo $whereCotizacionVigente $whereEstadoPanel $wherePagoPanel $whereSemaforoPanel $whereFechaPanel $whereBusquedaPanel";
-        $totalRes = $conn->query("SELECT COUNT(*) AS total FROM ordenes_imagen oi WHERE $whereMedico");
-        $total = (int)(($totalRes ? $totalRes->fetch_assoc() : [])['total'] ?? 0);
+        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY DATE({$fechaOperativaExpr}) DESC, oi.fecha DESC");
+        $rowsBaseFiltradas = [];
+        while ($res && ($r = $res->fetch_assoc())) {
+            if ($estado_panel !== 'canceladas_excluidas' && !oi_cumple_filtro_pago_panel($conn, $r, $filtro_pago_panel)) {
+                continue;
+            }
+            $rowsBaseFiltradas[] = $r;
+        }
+
+        $total = count($rowsBaseFiltradas);
         $totalPaginas = max(1, (int)ceil($total / $limite));
         $pagina = min($pagina, $totalPaginas);
         $offset = ($pagina - 1) * $limite;
-        $res = $conn->query("SELECT oi.* FROM ordenes_imagen oi WHERE $whereMedico ORDER BY DATE({$fechaOperativaExpr}) DESC, oi.fecha DESC LIMIT $limite OFFSET $offset");
-        $rowsBase = [];
+        $rowsBase = array_slice($rowsBaseFiltradas, $offset, $limite);
+
         $orderIds = [];
         $pacienteIds = [];
-        while ($r = $res->fetch_assoc()) {
-            $rowsBase[] = $r;
+        foreach ($rowsBase as $r) {
             $orderIds[] = (int)($r['id'] ?? 0);
             $pid = (int)($r['paciente_id'] ?? 0);
             if ($pid > 0) {
@@ -2313,9 +2417,9 @@ if ($method === 'POST') {
         // ── Verificar permiso de subida: cotización pagada o carga anticipada ───
         $puedeSubir = (intval($orden['carga_anticipada']) === 1);
         if (!$puedeSubir && !empty($orden['cotizacion_id'])) {
-            $cotizRow = $conn->query("SELECT estado FROM cotizaciones WHERE id = " . intval($orden['cotizacion_id']))->fetch_assoc();
+            $cotizRow = oi_resolver_cotizacion_pago_comercial($conn, (int)$orden['cotizacion_id']);
             $estadoCot = strtolower(trim((string)($cotizRow['estado'] ?? '')));
-            if (in_array($estadoCot, ['completado', 'pagado', 'control', 'contrato'], true)) $puedeSubir = true;
+            if (oi_estado_cotizacion_es_pagado($estadoCot)) $puedeSubir = true;
         } elseif (!$puedeSubir && empty($orden['cotizacion_id'])) {
             // Sin cotización → permitir subida sin restricción (orden sin pago asignado)
             $puedeSubir = true;

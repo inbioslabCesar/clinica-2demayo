@@ -83,6 +83,95 @@ function clampMonto(value, min = 0, max = Number.POSITIVE_INFINITY) {
   return Math.min(max, Math.max(min, Number(value || 0)));
 }
 
+function contieneTexto(value, needle) {
+  const texto = String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const aguja = String(needle || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return texto.includes(aguja);
+}
+
+function calcularSaldoComercialCambioPaquete({ totalCadena, pagosCadena, detallesCadena }) {
+  const pagos = Array.isArray(pagosCadena) ? pagosCadena : [];
+  if (!(Number(totalCadena) > 0) || pagos.length === 0) {
+    return null;
+  }
+
+  const ajustes = pagos.filter((pago) => {
+    const tipo = String(pago?.tipo_movimiento || "").toLowerCase();
+    if (tipo !== "devolucion") return false;
+    const descripcion = String(pago?.descripcion || "");
+    return (
+      contieneTexto(descripcion, "conversion a paquete")
+      || contieneTexto(descripcion, "conversión a paquete")
+    );
+  });
+  if (ajustes.length === 0) {
+    return null;
+  }
+
+  const ajustesTs = ajustes
+    .map((pago) => new Date(pago?.created_at || 0).getTime())
+    .filter((ts) => Number.isFinite(ts) && ts > 0)
+    .sort((a, b) => a - b);
+  if (ajustesTs.length === 0) {
+    return null;
+  }
+  const tsAjuste = ajustesTs[0];
+
+  const netoPorRango = (includeTs) => {
+    return Number(
+      pagos.reduce((acc, pago) => {
+        const ts = new Date(pago?.created_at || 0).getTime();
+        if (!Number.isFinite(ts) || !includeTs(ts)) return acc;
+        const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
+        const monto = Number(pago?.monto || 0);
+        if (!Number.isFinite(monto) || monto <= 0) return acc;
+        return tipo === "devolucion" ? (acc - monto) : (acc + monto);
+      }, 0).toFixed(2)
+    );
+  };
+
+  const detalles = Array.isArray(detallesCadena) ? detallesCadena : [];
+  const totalPaqueteDetectado = detalles
+    .filter((d) => esDetallePaquete(d))
+    .reduce((acc, d) => acc + Math.max(0, Number(d?.subtotal || 0)), 0);
+  const totalPaquete = Math.max(
+    0,
+    Number(totalPaqueteDetectado > 0 ? totalPaqueteDetectado : totalCadena || 0)
+  );
+  const abonadoPrevio = Math.max(0, netoPorRango((ts) => ts < tsAjuste));
+  const porCobrarUpgrade = Math.max(0, Number((totalPaquete - abonadoPrevio).toFixed(2)));
+  const netoPosterior = Math.max(0, netoPorRango((ts) => ts >= tsAjuste));
+  const abonoUpgrade = Math.min(porCobrarUpgrade, netoPosterior);
+  const saldoComercial = Math.max(0, Number((porCobrarUpgrade - abonoUpgrade).toFixed(2)));
+
+  const devolucionAjusteCambio = Number(
+    ajustes.reduce((acc, pago) => acc + Math.max(0, Number(pago?.monto || 0)), 0).toFixed(2)
+  );
+  return {
+    saldoComercial: Number(saldoComercial.toFixed(2)),
+    ajusteDetectado: devolucionAjusteCambio,
+  };
+}
+
+function esDetallePaquete(detalle) {
+  const snap = parseSnapshotJson(detalle?.snapshot_json);
+  const paqueteTipo = String(detalle?.paquete_tipo || snap?.paquete_tipo || "").trim().toLowerCase();
+  const paqueteId = Number(detalle?.paquete_id || snap?.paquete_id || 0);
+  const paqueteCodigo = String(detalle?.paquete_codigo || snap?.paquete_codigo || "").trim();
+  const paqueteNombre = String(detalle?.paquete_nombre || snap?.paquete_nombre || "").trim();
+  return paqueteTipo === "paquete"
+    || paqueteTipo === "perfil"
+    || paqueteId > 0
+    || paqueteCodigo !== ""
+    || paqueteNombre !== "";
+}
+
 export default function CobrarCotizacionPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -131,24 +220,88 @@ export default function CobrarCotizacionPage() {
         const cacheBuster = Date.now();
         const cargas = await Promise.all(
           cotizacionIds.map(async (id) => {
-            const [dataCot, dataPagos] = await Promise.all([
-              authFetch(`api_cotizaciones.php?cotizacion_id=${Number(id)}&_t=${cacheBuster}`, {
+            const dataCot = await authFetch(`api_cotizaciones.php?cotizacion_id=${Number(id)}&include_cadena=1&_t=${cacheBuster}`, {
                 cache: "no-store",
-              }).then((res) => res.json()),
-              authFetch(`api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(id)}&_t=${cacheBuster}`, {
-                cache: "no-store",
-              }).then((res) => res.json()),
-            ]);
+              }).then((res) => res.json());
 
             if (!dataCot?.success || !dataCot?.cotizacion) {
               throw new Error(dataCot?.error || `No se pudo cargar la atención #${id}`);
             }
 
+            const cotRaw = dataCot.cotizacion;
+            const cadenaIds = Array.from(
+              new Set(
+                (Array.isArray(cotRaw?.cotizacion_cadena_ids) ? cotRaw.cotizacion_cadena_ids : [id])
+                  .map((value) => Number(value))
+                  .filter((value) => Number.isFinite(value) && value > 0)
+              )
+            );
+
+            const pagosCadenaResp = await Promise.all(
+              cadenaIds.map(async (cid) => {
+                const dataPagos = await authFetch(`api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cid)}&_t=${cacheBuster}`, {
+                  cache: "no-store",
+                }).then((res) => res.json());
+                return {
+                  cotizacionId: cid,
+                  pagos: dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [],
+                };
+              })
+            );
+
+            const pagosPorCotizacion = {};
+            pagosCadenaResp.forEach((item) => {
+              pagosPorCotizacion[String(item.cotizacionId)] = item.pagos;
+            });
+
+            const pagosCadena = pagosCadenaResp.flatMap((item) => item.pagos || []);
+            const totalCadena = Number(
+              cotRaw?.total_cadena
+              || (Array.isArray(cotRaw?.cotizaciones_cadena)
+                ? cotRaw.cotizaciones_cadena.reduce((acc, c) => acc + Number(c?.total || 0), 0)
+                : Number(cotRaw?.total || 0))
+            );
+            const lecturaComercialCambio = calcularSaldoComercialCambioPaquete({
+              totalCadena,
+              pagosCadena,
+              detallesCadena: Array.isArray(cotRaw?.detalles_cadena) ? cotRaw.detalles_cadena : (Array.isArray(cotRaw?.detalles) ? cotRaw.detalles : []),
+            });
+            const detallesCotizacionActual = Array.isArray(cotRaw?.detalles) ? cotRaw.detalles : [];
+            const cotizacionTienePaquete = detallesCotizacionActual.some((detalle) => esDetallePaquete(detalle));
+
+            const esAdenda = Number(cotRaw?.es_adenda || 0) === 1 || Number(cotRaw?.cotizacion_padre_id || 0) > 0;
+            const saldoTecnico = Number(cotRaw?.saldo_pendiente);
+            const saldoComercial = Number(lecturaComercialCambio?.saldoComercial);
+            const ajusteDetectado = Number(lecturaComercialCambio?.ajusteDetectado || 0);
+            const saldoOperativoPorAjuste = Number.isFinite(saldoTecnico)
+              ? Math.max(0, Number((saldoTecnico - ajusteDetectado).toFixed(2)))
+              : saldoTecnico;
+            const usarSaldoOperativoAjuste = esAdenda && cotizacionTienePaquete && ajusteDetectado > 0;
+            const usarSaldoComercial = esAdenda
+              && cotizacionTienePaquete
+              && Number.isFinite(saldoComercial)
+              && saldoComercial >= 0;
+            const saldoOperativoFinal = (usarSaldoComercial && usarSaldoOperativoAjuste)
+              ? Math.max(0, Number(saldoComercial))
+              : (usarSaldoComercial
+                  ? saldoComercial
+                  : (usarSaldoOperativoAjuste ? saldoOperativoPorAjuste : saldoTecnico));
+            const lecturaComercialActiva = usarSaldoComercial || usarSaldoOperativoAjuste;
+
+            const cotizacionAjustada = {
+              ...cotRaw,
+              saldo_pendiente_operativo: saldoOperativoFinal,
+              saldo_comercial_cambio_paquete: lecturaComercialActiva ? saldoOperativoFinal : null,
+              ajuste_cambio_paquete_detectado: ajusteDetectado,
+              lectura_comercial_cambio_paquete: lecturaComercialActiva ? 1 : 0,
+              pagos: Array.isArray(pagosPorCotizacion[String(Number(cotRaw?.id || id))])
+                ? pagosPorCotizacion[String(Number(cotRaw?.id || id))]
+                : [],
+            };
+
             return {
-              cotizacion: dataCot.cotizacion,
-              pagos: Array.isArray(dataCot?.cotizacion?.pagos)
-                ? dataCot.cotizacion.pagos
-                : (dataPagos?.success && Array.isArray(dataPagos.pagos) ? dataPagos.pagos : []),
+              cotizacion: cotizacionAjustada,
+              pagos: cotizacionAjustada.pagos,
             };
           })
         );
@@ -178,7 +331,7 @@ export default function CobrarCotizacionPage() {
         const total = cotizacionesCargadas.reduce((acc, item) => acc + Number(item?.total || 0), 0);
         const totalPagado = cotizacionesCargadas.reduce((acc, item) => acc + Number(item?.total_pagado || 0), 0);
         const saldoPendiente = cotizacionesCargadas.reduce((acc, item) => {
-          const saldo = Number(item?.saldo_pendiente);
+          const saldo = Number(item?.saldo_pendiente_operativo ?? item?.saldo_pendiente);
           if (Number.isFinite(saldo)) {
             return acc + Math.max(0, saldo);
           }
@@ -192,6 +345,7 @@ export default function CobrarCotizacionPage() {
               es_unificado: cotizacionIds.length > 1,
               total,
               total_pagado: totalPagado,
+              saldo_pendiente_operativo: saldoPendiente,
               saldo_pendiente: saldoPendiente,
               estado: saldoPendiente <= 0 ? "pagado" : (totalPagado > 0 ? "parcial" : "pendiente"),
             }
@@ -228,9 +382,13 @@ export default function CobrarCotizacionPage() {
     return cotizacionesSeleccionadas.filter((c) => selectedIds.has(String(c.id)));
   }, [cotizacionesSeleccionadas, selectedIds]);
 
+  const hayLecturaComercialActiva = useMemo(() => {
+    return cotizacionesActivas.some((cot) => Number(cot?.lectura_comercial_cambio_paquete || 0) === 1);
+  }, [cotizacionesActivas]);
+
   const saldoBaseActivo = useMemo(() => {
     return cotizacionesActivas.reduce((acc, c) => {
-      const s = Number(c?.saldo_pendiente);
+      const s = Number(c?.saldo_pendiente_operativo ?? c?.saldo_pendiente);
       return acc + (Number.isFinite(s) ? Math.max(0, s) : Math.max(0, Number(c?.total || 0) - Number(c?.total_pagado || 0)));
     }, 0);
   }, [cotizacionesActivas]);
@@ -251,7 +409,7 @@ export default function CobrarCotizacionPage() {
   const cotizacionesActivasResumen = useMemo(() => {
     return cotizacionesActivas.map((cot) => {
       const id = Number(cot?.id || 0);
-      const saldo = Math.max(0, Number(cot?.saldo_pendiente ?? cot?.total ?? 0));
+      const saldo = Math.max(0, Number(cot?.saldo_pendiente_operativo ?? cot?.saldo_pendiente ?? cot?.total ?? 0));
       const meta = cotizacionMetaMap[String(id)] || {};
       return {
         id,
@@ -298,7 +456,7 @@ export default function CobrarCotizacionPage() {
   const detallesCotizacionActivos = useMemo(() => {
     return cotizacionesActivas.flatMap((cot) => {
       const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
-      return detalles
+      const detallesNormalizados = detalles
         .filter((d) => {
           const estadoItem = String(d?.estado_item || "activo").toLowerCase();
           const esExterno = Number(d?.es_externo || 0) === 1;
@@ -332,7 +490,47 @@ export default function CobrarCotizacionPage() {
           hora_programada: d.hora_programada || undefined,
           es_externo: Number(d.es_externo || 0) === 1,
           incluir_en_cobro: d.incluir_en_cobro === undefined ? 1 : Number(d.incluir_en_cobro || 0),
+          snapshot_json: d.snapshot_json || null,
+          paquete_tipo: d.paquete_tipo || null,
+          paquete_id: Number(d.paquete_id || 0) || null,
+          paquete_codigo: d.paquete_codigo || null,
+          paquete_nombre: d.paquete_nombre || null,
         }));
+
+      const usaLecturaComercial = Number(cot?.lectura_comercial_cambio_paquete || 0) === 1;
+      if (!usaLecturaComercial) {
+        return detallesNormalizados;
+      }
+
+      const detallesPaquete = detallesNormalizados.filter((d) => esDetallePaquete(d));
+      if (detallesPaquete.length === 0) {
+        return detallesNormalizados;
+      }
+
+      const detallesNoPaquete = detallesNormalizados.filter((d) => !esDetallePaquete(d));
+      const subtotalNoPaquete = detallesNoPaquete.reduce((acc, d) => acc + Math.max(0, Number(d?.subtotal || 0)), 0);
+      const saldoOperativoCot = Math.max(0, Number(cot?.saldo_pendiente_operativo ?? cot?.saldo_pendiente ?? 0));
+      const montoComercialPaquete = Math.max(0, Number((saldoOperativoCot - subtotalNoPaquete).toFixed(2)));
+
+      if (montoComercialPaquete <= 0) {
+        return detallesNoPaquete;
+      }
+
+      const detalleBasePaquete = detallesPaquete[0];
+      const cantidadBase = Math.max(1, Number(detalleBasePaquete?.cantidad || 1));
+      const paqueteLabel = String(buildPaqueteLabelCotizacion(cot) || "Paquete").trim();
+      const detallePaqueteComercial = {
+        ...detalleBasePaquete,
+        descripcion: `Diferencia pendiente del paquete (${paqueteLabel})`,
+        cantidad: 1,
+        precio_unitario: Number((montoComercialPaquete / 1).toFixed(2)),
+        subtotal: Number(montoComercialPaquete.toFixed(2)),
+        _lectura_comercial_paquete: 1,
+        solo_cobro_diferencia: 1,
+        _cantidad_original_paquete: cantidadBase,
+      };
+
+      return [detallePaqueteComercial, ...detallesNoPaquete];
     });
   }, [cotizacionesActivas]);
 
@@ -341,10 +539,13 @@ export default function CobrarCotizacionPage() {
   }, [detallesCotizacionActivos]);
 
   const saldoPendiente = useMemo(() => {
+    if (hayLecturaComercialActiva && Number(totalDetallesActivos || 0) > 0) {
+      return Math.max(0, Number(totalDetallesActivos || 0));
+    }
     // Para cobro unificado, usar el saldo filtrado de las cotizaciones activas seleccionadas
     if (esCobroUnificado && saldoBaseActivo > 0) return saldoBaseActivo;
     const estadoCot = String(cotizacion?.estado || "").toLowerCase();
-    const saldo = Number(cotizacion?.saldo_pendiente);
+    const saldo = Number(cotizacion?.saldo_pendiente_operativo ?? cotizacion?.saldo_pendiente);
     if (Number.isFinite(saldo)) {
       const saldoNormalizado = Math.max(0, saldo);
       if (saldoNormalizado > 0) return saldoNormalizado;
@@ -373,7 +574,11 @@ export default function CobrarCotizacionPage() {
     }
 
     return Math.max(0, totalDetallesActivos);
-  }, [cotizacion?.saldo_pendiente, cotizacion?.estado, cotizacion?.total, cotizacion?.total_pagado, totalDetallesActivos, esCobroUnificado, saldoBaseActivo]);
+  }, [cotizacion?.saldo_pendiente_operativo, cotizacion?.saldo_pendiente, cotizacion?.estado, cotizacion?.total, cotizacion?.total_pagado, totalDetallesActivos, esCobroUnificado, saldoBaseActivo, hayLecturaComercialActiva]);
+
+  const usaLecturaComercialCambioPaquete = useMemo(() => {
+    return cotizacionesActivas.some((cot) => Number(cot?.lectura_comercial_cambio_paquete || 0) === 1);
+  }, [cotizacionesActivas]);
 
   useEffect(() => {
     if (!Number.isFinite(Number(saldoPendiente)) || Number(saldoPendiente) <= 0) {
@@ -428,6 +633,40 @@ export default function CobrarCotizacionPage() {
       return detallesCotizacionActivos;
     }
 
+    const recortarDetallesPorObjetivo = (detallesBase, objetivo) => {
+      const recortados = [];
+      let restante = Number(Math.max(0, objetivo).toFixed(2));
+      for (const item of detallesBase) {
+        if (restante <= 0) break;
+        const subtotalItem = Math.max(0, Number(item.subtotal || 0));
+        const montoAplicado = Math.min(subtotalItem, restante);
+        if (montoAplicado <= 0) continue;
+        const cantidadBase = Math.max(1, Number(item.cantidad || 1));
+        const precioAplicado = Number((montoAplicado / cantidadBase).toFixed(2));
+        recortados.push({
+          ...item,
+          precio_unitario: precioAplicado,
+          subtotal: Number(montoAplicado.toFixed(2)),
+        });
+        restante = Number((restante - montoAplicado).toFixed(2));
+      }
+      return recortados;
+    };
+
+    const ordenarDetallesComerciales = (detallesBase) => {
+      const adicionales = [];
+      const paquete = [];
+      for (const item of detallesBase) {
+        const esLineaPaquete = Number(item?._lectura_comercial_paquete || 0) === 1 || esDetallePaquete(item);
+        if (esLineaPaquete) {
+          paquete.push(item);
+        } else {
+          adicionales.push(item);
+        }
+      }
+      return [...adicionales, ...paquete];
+    };
+
     const construirPendientesPorCotizacion = (detallesBase, pagadoInicial, objetivo) => {
       const source = criterioImputacion === "lifo"
         ? [...detallesBase].reverse()
@@ -462,24 +701,7 @@ export default function CobrarCotizacionPage() {
         }];
       }
 
-      const recortados = [];
-      let restante = Number(Math.max(0, objetivo).toFixed(2));
-      for (const item of pendientes) {
-        if (restante <= 0) break;
-        const subtotalItem = Math.max(0, Number(item.subtotal || 0));
-        const montoAplicado = Math.min(subtotalItem, restante);
-        if (montoAplicado <= 0) continue;
-        const cantidadBase = Math.max(1, Number(item.cantidad || 1));
-        const precioAplicado = Number((montoAplicado / cantidadBase).toFixed(2));
-        recortados.push({
-          ...item,
-          precio_unitario: precioAplicado,
-          subtotal: Number(montoAplicado.toFixed(2)),
-        });
-        restante = Number((restante - montoAplicado).toFixed(2));
-      }
-
-      return recortados;
+      return recortarDetallesPorObjetivo(pendientes, objetivo);
     };
 
     if (esCobroUnificado && modoCobro === "parcial" && usarDistribucionPorAtencion) {
@@ -500,8 +722,48 @@ export default function CobrarCotizacionPage() {
         const objetivoCot = clampMonto(parseMontoInput(abonoPorAtencion[String(cid)]), 0, Number(row.saldo || 0));
         if (objetivoCot <= 0) continue;
         const cotRow = cotizacionesActivas.find((c) => Number(c?.id || 0) === cid) || null;
+        const usaLecturaComercialCot = Number(cotRow?.lectura_comercial_cambio_paquete || 0) === 1;
+        if (usaLecturaComercialCot) {
+          const detallesComerciales = ordenarDetallesComerciales(detallesCot);
+          out.push(...recortarDetallesPorObjetivo(detallesComerciales, objetivoCot));
+          continue;
+        }
         const pagadoCot = Number(cotRow?.total_pagado || 0);
         out.push(...construirPendientesPorCotizacion(detallesCot, pagadoCot, objetivoCot));
+      }
+      return out;
+    }
+
+    if (modoCobro === "parcial" && hayLecturaComercialActiva) {
+      const byCot = new Map();
+      for (const d of detallesCotizacionActivos) {
+        const cid = Number(d?.cotizacion_id || 0);
+        if (cid <= 0) continue;
+        if (!byCot.has(cid)) byCot.set(cid, []);
+        byCot.get(cid).push(d);
+      }
+
+      const out = [];
+      let restanteGlobal = Number(saldoObjetivo.toFixed(2));
+      for (const row of cotizacionesActivasResumen) {
+        if (restanteGlobal <= 0) break;
+        const cid = Number(row.id || 0);
+        if (cid <= 0) continue;
+        const detallesCot = byCot.get(cid) || [];
+        if (!detallesCot.length) continue;
+        const cupoCot = Math.min(Number(row.saldo || 0), restanteGlobal);
+        if (cupoCot <= 0) continue;
+
+        const cotRow = cotizacionesActivas.find((c) => Number(c?.id || 0) === cid) || null;
+        const usaLecturaComercialCot = Number(cotRow?.lectura_comercial_cambio_paquete || 0) === 1;
+        if (usaLecturaComercialCot) {
+          const detallesComerciales = ordenarDetallesComerciales(detallesCot);
+          out.push(...recortarDetallesPorObjetivo(detallesComerciales, cupoCot));
+        } else {
+          const pagadoCot = Number(cotRow?.total_pagado || 0);
+          out.push(...construirPendientesPorCotizacion(detallesCot, pagadoCot, cupoCot));
+        }
+        restanteGlobal = Number((restanteGlobal - cupoCot).toFixed(2));
       }
       return out;
     }
@@ -527,6 +789,7 @@ export default function CobrarCotizacionPage() {
     criterioImputacion,
     esCobroUnificado,
     modoCobro,
+    hayLecturaComercialActiva,
     usarDistribucionPorAtencion,
     abonoPorAtencion,
     cotizacionesActivasResumen,
@@ -764,7 +1027,14 @@ export default function CobrarCotizacionPage() {
         </div>
         <div><b>{esCobroUnificado ? "Atenciones" : "Atención"}:</b> {cotizacionIds.map((id) => `#${id}`).join(", ")}</div>
         <div><b>Paciente:</b> {paciente.nombre} {paciente.apellido}</div>
-        <div><b>Saldo actual:</b> S/ {Number(saldoPendiente).toFixed(2)}</div>
+        <div>
+          <b>{usaLecturaComercialCambioPaquete ? "Saldo por diferencia de cambio a paquete:" : "Saldo actual:"}</b> S/ {Number(saldoPendiente).toFixed(2)}
+        </div>
+        {usaLecturaComercialCambioPaquete && (
+          <div className="mt-2 rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-800">
+            Monto sugerido para cobrar en recepción: solo la diferencia pendiente del paquete.
+          </div>
+        )}
         {pacienteRegistroIncompleto && (
           <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
             Paciente con registro mínimo pendiente de completar. El cobro puede continuar, pero recepción debe completar la ficha luego.
@@ -780,7 +1050,7 @@ export default function CobrarCotizacionPage() {
             <div className="flex flex-col gap-1">
               {cotizacionesSeleccionadas.map((cot) => {
                 const isSelected = selectedIds.has(String(cot.id));
-                const saldoCot = Math.max(0, Number(cot?.saldo_pendiente ?? cot?.total ?? 0));
+                const saldoCot = Math.max(0, Number(cot?.saldo_pendiente_operativo ?? cot?.saldo_pendiente ?? cot?.total ?? 0));
                 const tipoLabel = buildTipoLabelCotizacion(cot);
                 const paqueteLabel = buildPaqueteLabelCotizacion(cot);
                 const isLast = isSelected && selectedIds.size === 1;
@@ -987,7 +1257,7 @@ export default function CobrarCotizacionPage() {
         paciente={paciente}
         servicio={servicioPago}
         detalles={detallesCobro}
-        detallesSeleccionados={detallesCotizacionActivos}
+        detallesSeleccionados={modoCobro === "parcial" ? detallesCotizacionActivos : detallesCobro}
         total={totalCobro}
         modoCobro={modoCobro}
         onModoCobroChange={setModoCobro}
@@ -998,6 +1268,7 @@ export default function CobrarCotizacionPage() {
         onSetCobrarTodo={() => setMontoAbonoInput(Number(saldoPendiente).toFixed(2))}
         onSetCobrarMitad={() => setMontoAbonoInput((Math.max(0, Number(saldoPendiente || 0)) / 2).toFixed(2))}
         onCobroCompleto={manejarCobroCompleto}
+        labelCancelar={usaLecturaComercialCambioPaquete ? "Cancelar (queda pendiente solo la diferencia)" : "Cancelar"}
         onCancelar={() => navigate("/cotizaciones")}
       />
     </div>

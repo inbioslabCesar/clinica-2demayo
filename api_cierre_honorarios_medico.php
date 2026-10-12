@@ -81,6 +81,148 @@ function cierre_obtener_monto_fijo_consulta($conn, $medicoId, $fechaRef) {
     return ($monto === null || $monto === '') ? null : (float)$monto;
 }
 
+function cierre_estado_cotizacion_pagada($estado) {
+    $st = strtolower(trim((string)$estado));
+    return in_array($st, ['pagado', 'pagada', 'completado', 'completada', 'control', 'contrato'], true);
+}
+
+function cierre_columna_existe($conn, $tabla, $columna) {
+    static $cache = [];
+    $key = $tabla . '.' . $columna;
+    if (array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+    $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
+    if (!$stmt) {
+        $cache[$key] = false;
+        return false;
+    }
+    $stmt->bind_param('ss', $tabla, $columna);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = $res && $res->num_rows > 0;
+    $stmt->close();
+    $cache[$key] = $exists;
+    return $exists;
+}
+
+function cierre_resolver_cadena_cotizacion_ids($conn, $cotizacionId) {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return [];
+    }
+    if (!cierre_columna_existe($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+        return [$cotizacionId];
+    }
+
+    $rootId = $cotizacionId;
+    $vistos = [];
+    while ($rootId > 0) {
+        if (isset($vistos[$rootId])) break;
+        $vistos[$rootId] = true;
+        $stmtRoot = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+        if (!$stmtRoot) break;
+        $stmtRoot->bind_param('i', $rootId);
+        $stmtRoot->execute();
+        $rowRoot = $stmtRoot->get_result()->fetch_assoc();
+        $stmtRoot->close();
+        $parentId = (int)($rowRoot['cotizacion_padre_id'] ?? 0);
+        if ($parentId <= 0 || $parentId === $rootId) break;
+        $rootId = $parentId;
+    }
+
+    $ids = [$rootId => true];
+    $queue = [$rootId];
+    while (!empty($queue)) {
+        $current = (int)array_shift($queue);
+        $stmtChildren = $conn->prepare('SELECT id FROM cotizaciones WHERE cotizacion_padre_id = ?');
+        if (!$stmtChildren) continue;
+        $stmtChildren->bind_param('i', $current);
+        $stmtChildren->execute();
+        $children = $stmtChildren->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmtChildren->close();
+        foreach ($children as $child) {
+            $childId = (int)($child['id'] ?? 0);
+            if ($childId <= 0 || isset($ids[$childId])) continue;
+            $ids[$childId] = true;
+            $queue[] = $childId;
+        }
+    }
+
+    $out = array_values(array_map('intval', array_keys($ids)));
+    sort($out);
+    return $out;
+}
+
+function cierre_resolver_pago_comercial($conn, $cotizacionId) {
+    static $cache = [];
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) return null;
+    if (array_key_exists($cotizacionId, $cache)) {
+        return $cache[$cotizacionId];
+    }
+
+    $ids = cierre_resolver_cadena_cotizacion_ids($conn, $cotizacionId);
+    if (empty($ids)) {
+        $ids = [$cotizacionId];
+    }
+
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = $conn->prepare("SELECT id, estado, COALESCE(saldo_pendiente, 0) AS saldo_pendiente FROM cotizaciones WHERE id IN ({$ph})");
+    if (!$stmt) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+    if (empty($rows)) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+
+    $byId = [];
+    $paidIds = [];
+    foreach ($rows as $row) {
+        $rid = (int)($row['id'] ?? 0);
+        if ($rid <= 0) continue;
+        $byId[$rid] = $row;
+        if (cierre_estado_cotizacion_pagada((string)($row['estado'] ?? ''))) {
+            $paidIds[] = $rid;
+        }
+    }
+    if (empty($byId)) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+
+    if (!empty($paidIds)) {
+        sort($paidIds, SORT_NUMERIC);
+        $selectedId = (int)$paidIds[0];
+    } elseif (isset($byId[$cotizacionId])) {
+        $selectedId = $cotizacionId;
+    } else {
+        $keys = array_keys($byId);
+        sort($keys, SORT_NUMERIC);
+        $selectedId = (int)$keys[0];
+    }
+
+    $selected = $byId[$selectedId] ?? null;
+    if (!is_array($selected)) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+
+    $resolved = [
+        'id' => (int)($selected['id'] ?? 0),
+        'estado' => (string)($selected['estado'] ?? ''),
+        'saldo_pendiente' => round((float)($selected['saldo_pendiente'] ?? 0), 2),
+    ];
+    $cache[$cotizacionId] = $resolved;
+    return $resolved;
+}
+
 function cierre_obtener_detalle($conn, $medicoId, $fechaRef) {
     $hasEstadoItem = false;
     $stmtCol = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
@@ -132,6 +274,15 @@ function cierre_obtener_detalle($conn, $medicoId, $fechaRef) {
         $estadoConsulta = strtolower(trim((string)($row['estado_consulta'] ?? '')));
         $estadoItem = strtolower(trim((string)($row['estado_item'] ?? 'activo')));
         $estadoCot = strtolower(trim((string)($row['estado_cotizacion'] ?? '')));
+        $saldoPendiente = round((float)($row['saldo_pendiente'] ?? 0), 2);
+        $cotizacionId = (int)($row['cotizacion_id'] ?? 0);
+        if ($cotizacionId > 0) {
+            $pagoComercial = cierre_resolver_pago_comercial($conn, $cotizacionId);
+            if (is_array($pagoComercial)) {
+                $estadoCot = strtolower(trim((string)($pagoComercial['estado'] ?? $estadoCot)));
+                $saldoPendiente = round((float)($pagoComercial['saldo_pendiente'] ?? $saldoPendiente), 2);
+            }
+        }
 
         $categoria = 'pendiente_cobro';
         $motivo = 'cotizacion_no_pagada';
@@ -142,10 +293,10 @@ function cierre_obtener_detalle($conn, $medicoId, $fechaRef) {
         } elseif ($estadoItem === 'eliminado') {
             $categoria = 'excluida';
             $motivo = 'detalle_consulta_eliminado';
-        } elseif ((int)($row['cotizacion_id'] ?? 0) <= 0) {
+        } elseif ($cotizacionId <= 0) {
             $categoria = 'pendiente_cobro';
             $motivo = 'sin_cotizacion_consulta';
-        } elseif (in_array($estadoConsulta, ['completada', 'completado'], true) && $estadoCot === 'pagado') {
+        } elseif (in_array($estadoConsulta, ['completada', 'completado'], true) && cierre_estado_cotizacion_pagada($estadoCot)) {
             $categoria = 'pagable';
             $motivo = 'ok_pagable';
         }
@@ -158,10 +309,10 @@ function cierre_obtener_detalle($conn, $medicoId, $fechaRef) {
             'paciente_nombre' => trim((string)($row['paciente_nombre'] ?? '')),
             'paciente_apellido' => trim((string)($row['paciente_apellido'] ?? '')),
             'detalle_id' => (int)($row['detalle_id'] ?? 0),
-            'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+            'cotizacion_id' => $cotizacionId,
             'estado_item' => (string)($row['estado_item'] ?? 'activo'),
-            'estado_cotizacion' => (string)($row['estado_cotizacion'] ?? ''),
-            'saldo_pendiente' => round((float)($row['saldo_pendiente'] ?? 0), 2),
+            'estado_cotizacion' => $estadoCot,
+            'saldo_pendiente' => $saldoPendiente,
             'categoria_cierre' => $categoria,
             'motivo' => $motivo,
         ];

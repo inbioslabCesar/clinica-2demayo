@@ -36,7 +36,11 @@ const MAX_TOTAL_MB_POR_SUBIDA = 500;
 function firmaArchivoLocal(f) {
   return `${String(f?.name || "").toLowerCase()}::${Number(f?.size || 0)}::${Number(f?.lastModified || 0)}`;
 }
-const cotizEstadoPagado = (cot) => cot && (cot.estado === "completado" || cot.estado === "pagado");
+const cotizEstadoPagado = (cot) => {
+  if (!cot) return false;
+  const estado = String(cot.estado || "").trim().toLowerCase();
+  return ["completado", "completada", "pagado", "pagada", "control", "contrato"].includes(estado);
+};
 
 // ── Modal de subida de archivos ───────────────────────────────────────────────
 export function ModalSubir({ orden, onClose, onSubido }) {

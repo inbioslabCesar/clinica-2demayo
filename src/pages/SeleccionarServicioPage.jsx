@@ -44,6 +44,7 @@ export default function SeleccionarServicioPage() {
   const [paciente, setPaciente] = useState(null);
   const [pacienteTemporalInferido, setPacienteTemporalInferido] = useState(null);
   const [resumenServicios, setResumenServicios] = useState([]);
+  const [paquetesResumenNombres, setPaquetesResumenNombres] = useState([]);
   const [totalCotizacion, setTotalCotizacion] = useState(0);
   const [loadingResumen, setLoadingResumen] = useState(false);
   const qs = new URLSearchParams(location.search);
@@ -151,6 +152,7 @@ export default function SeleccionarServicioPage() {
     if (!isEditCotizacion || !cotizacionId) {
       setPacienteTemporalInferido(null);
       setResumenServicios([]);
+      setPaquetesResumenNombres([]);
       setTotalCotizacion(0);
       return;
     }
@@ -164,6 +166,7 @@ export default function SeleccionarServicioPage() {
         if (!data?.success || !cot) {
           setPacienteTemporalInferido(null);
           setResumenServicios([]);
+          setPaquetesResumenNombres([]);
           setTotalCotizacion(0);
           return;
         }
@@ -188,18 +191,50 @@ export default function SeleccionarServicioPage() {
             detalles = detallesCadena;
           }
         }
+
+        const parseSnapshotJson = (raw) => {
+          if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+          const txt = String(raw || "").trim();
+          if (!txt) return null;
+          try {
+            const parsed = JSON.parse(txt);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+          } catch {
+            return null;
+          }
+        };
+
         const map = {};
+        const paquetesSet = new Set();
         for (const d of detalles) {
           const tipo = normalizarServicio(d?.servicio_tipo);
           if (!map[tipo]) {
-            map[tipo] = { tipo, label: labelServicio(tipo), items: 0, total: 0 };
+            map[tipo] = { tipo, label: labelServicio(tipo), items: 0, total: 0, nombres: [] };
           }
           map[tipo].items += 1;
           map[tipo].total += Number(d?.subtotal || 0);
+
+          const descripcion = String(d?.descripcion || "").trim();
+          if (descripcion && !map[tipo].nombres.includes(descripcion)) {
+            map[tipo].nombres.push(descripcion);
+          }
+
+          const snapshot = parseSnapshotJson(d?.snapshot_json);
+          const nombrePaquete = String(
+            d?.paquete_nombre
+            || snapshot?.paquete_nombre
+            || d?.paquete_codigo
+            || snapshot?.paquete_codigo
+            || ""
+          ).trim();
+          if (nombrePaquete) {
+            paquetesSet.add(nombrePaquete);
+          }
         }
 
         const resumen = Object.values(map).sort((a, b) => a.label.localeCompare(b.label));
         setResumenServicios(resumen);
+        setPaquetesResumenNombres(Array.from(paquetesSet));
         if (modoCotizacion === "adenda") {
           const totalCadena = Number(cot?.total_cadena || 0);
           if (Number.isFinite(totalCadena) && totalCadena > 0) {
@@ -215,6 +250,7 @@ export default function SeleccionarServicioPage() {
       .catch(() => {
         setPacienteTemporalInferido(null);
         setResumenServicios([]);
+        setPaquetesResumenNombres([]);
         setTotalCotizacion(0);
       })
       .finally(() => setLoadingResumen(false));
@@ -294,12 +330,20 @@ export default function SeleccionarServicioPage() {
                   ) : resumenServicios.length === 0 ? (
                     <div className="text-xs text-gray-500">Sin ítems en la cotización.</div>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {resumenServicios.map((s) => (
-                        <span key={s.tipo} className="text-xs border rounded px-2 py-1" style={{ ...themePrimarySoft, ...themePrimaryBorder }}>
-                          {s.label}: {s.items} item(s) | S/ {Number(s.total || 0).toFixed(2)}
-                        </span>
-                      ))}
+                    <div className="space-y-2">
+                      {paquetesResumenNombres.length > 0 && (
+                        <div className="text-xs">
+                          <span className="font-semibold text-indigo-700">Paquete:</span>{" "}
+                          <span className="text-indigo-700">{paquetesResumenNombres.join(" | ")}</span>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {resumenServicios.map((s) => (
+                          <span key={s.tipo} className="text-xs border rounded px-2 py-1" style={{ ...themePrimarySoft, ...themePrimaryBorder }}>
+                            <b>{s.label}</b>: {Array.isArray(s.nombres) && s.nombres.length > 0 ? s.nombres.join(", ") : `${s.items} item(s)`}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

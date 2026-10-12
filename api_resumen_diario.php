@@ -293,9 +293,33 @@ try {
             'cirugia' => 'operaciones',
             'cirugias' => 'operaciones',
             'cirugia_mayor' => 'operaciones',
+            'paquete' => 'paquete',
+            'perfil' => 'paquete',
         ];
 
         return $map[$tipo] ?? $tipo;
+    };
+    $esTextoCambioPaquete = function (string $texto): bool {
+        $txt = strtolower(trim($texto));
+        if ($txt === '') return false;
+        return (
+            strpos($txt, 'diferencia pendiente del paquete') !== false
+            || strpos($txt, 'pago de diferencia de paquete') !== false
+            || strpos($txt, 'conversion a paquete') !== false
+            || strpos($txt, 'conversión a paquete') !== false
+        );
+    };
+    $esAjusteTecnicoConversionPaquete = function (string $texto): bool {
+        $txt = strtolower(trim($texto));
+        if ($txt === '') return false;
+        return (
+            strpos($txt, 'reversa_parcial') !== false
+            && (
+                strpos($txt, 'conversion a paquete') !== false
+                || strpos($txt, 'conversión a paquete') !== false
+                || strpos($txt, 'paquete') !== false
+            )
+        );
     };
 
     $calcularSinAsientoPorServicio = function (int $usuarioId, string $fechaOperativa, int $cajaId) use ($pdo, $normalizarTipoIngresoServicio) {
@@ -420,14 +444,14 @@ try {
         $usaEstadoItemCotDetalle = false;
     }
 
-    $calcularIngresosPorServicioCaja = function (int $cajaId) use ($pdo, $normalizarTipoIngresoServicio, $usaEstadoItemCotDetalle) {
+    $calcularIngresosPorServicioCaja = function (int $cajaId) use ($pdo, $normalizarTipoIngresoServicio, $usaEstadoItemCotDetalle, $esTextoCambioPaquete, $esAjusteTecnicoConversionPaquete) {
         $acumulado = [];
         if ($cajaId <= 0) {
             return [];
         }
 
         $stmtIngresos = $pdo->prepare(
-            'SELECT tipo_ingreso, monto, referencia_tabla, referencia_id '
+            'SELECT tipo_ingreso, monto, referencia_tabla, referencia_id, descripcion '
             . 'FROM ingresos_diarios '
             . 'WHERE caja_id = ?'
         );
@@ -449,7 +473,7 @@ try {
         $cobroTipoUnico = [];
         $cacheDistribucionMixtaCobro = [];
 
-        $obtenerDistribucionMixtaCobro = function (int $cobroId) use ($pdo, $normalizarTipoIngresoServicio, &$cacheDistribucionMixtaCobro) {
+        $obtenerDistribucionMixtaCobro = function (int $cobroId) use ($pdo, $normalizarTipoIngresoServicio, $esTextoCambioPaquete, &$cacheDistribucionMixtaCobro) {
             if ($cobroId <= 0) {
                 return [];
             }
@@ -468,6 +492,7 @@ try {
                 $descripcion = (string)($det['descripcion'] ?? '');
                 $itemsJson = json_decode($descripcion, true);
                 $jsonAportoItems = false;
+                $filaEsCambioPaquete = $esTextoCambioPaquete($descripcion);
 
                 if (is_array($itemsJson)) {
                     foreach ($itemsJson as $item) {
@@ -475,6 +500,15 @@ try {
                             continue;
                         }
                         $tipoItem = $normalizarTipoIngresoServicio((string)($item['servicio_tipo'] ?? ''));
+                        $itemDescripcion = (string)($item['descripcion'] ?? '');
+                        $itemEsCambioPaquete = (
+                            (int)($item['solo_cobro_diferencia'] ?? 0) === 1
+                            || (int)($item['_lectura_comercial_paquete'] ?? 0) === 1
+                            || $esTextoCambioPaquete($itemDescripcion)
+                        );
+                        if ($itemEsCambioPaquete) {
+                            $tipoItem = 'paquete';
+                        }
                         $subtotalItem = 0.0;
                         if (isset($item['subtotal'])) {
                             $subtotalItem = (float)$item['subtotal'];
@@ -491,6 +525,9 @@ try {
                     }
                 }
 
+                if ($filaEsCambioPaquete) {
+                    $tipoFila = 'paquete';
+                }
                 if (!$jsonAportoItems && !in_array($tipoFila, ['mixto', 'otros', ''], true) && $subtotalFila > 0) {
                     $componentes[] = ['tipo' => $tipoFila, 'monto_base' => $subtotalFila];
                 }
@@ -563,6 +600,19 @@ try {
             }
         }
 
+        $cobrosConCambioPaquete = [];
+        foreach ($rowsIngresos as $rowIngreso) {
+            $tablaRef = strtolower(trim((string)($rowIngreso['referencia_tabla'] ?? '')));
+            $refId = (int)($rowIngreso['referencia_id'] ?? 0);
+            if ($tablaRef !== 'cobros' || $refId <= 0) {
+                continue;
+            }
+            $descripcionIngreso = (string)($rowIngreso['descripcion'] ?? '');
+            if ($esTextoCambioPaquete($descripcionIngreso) || $esAjusteTecnicoConversionPaquete($descripcionIngreso)) {
+                $cobrosConCambioPaquete[$refId] = true;
+            }
+        }
+
         foreach ($rowsIngresos as $rowIngreso) {
             $monto = (float)($rowIngreso['monto'] ?? 0);
             if (abs($monto) < 0.01) {
@@ -572,10 +622,26 @@ try {
             $tipoIngreso = $normalizarTipoIngresoServicio((string)($rowIngreso['tipo_ingreso'] ?? 'otros'));
             $tablaRef = strtolower(trim((string)($rowIngreso['referencia_tabla'] ?? '')));
             $refId = (int)($rowIngreso['referencia_id'] ?? 0);
+            $descripcionIngreso = (string)($rowIngreso['descripcion'] ?? '');
+            $filaEsCambioPaquete = $esTextoCambioPaquete($descripcionIngreso);
+            $filaEsAjusteTecnicoConversion = $esAjusteTecnicoConversionPaquete($descripcionIngreso);
+
+            // Ocultar ajuste técnico de reversa parcial en lectura comercial de servicios.
+            if ($filaEsAjusteTecnicoConversion) {
+                continue;
+            }
 
             // Si el cobro asociado solo tiene un tipo de servicio, usar ese tipo como fuente canónica.
             if ($tablaRef === 'cobros' && $refId > 0 && isset($cobroTipoUnico[$refId])) {
                 $tipoIngreso = (string)$cobroTipoUnico[$refId];
+            }
+
+            // Regla comercial: diferencia de paquete (y sus ajustes) no debe caer en consulta/ecografía.
+            if ($tablaRef === 'cobros' && $refId > 0) {
+                $esClinicoNoLab = in_array($tipoIngreso, ['consulta', 'ecografia', 'rayosx', 'procedimiento', 'operaciones', 'mixto', 'otros'], true);
+                if ($filaEsCambioPaquete || (!empty($cobrosConCambioPaquete[$refId]) && $esClinicoNoLab)) {
+                    $tipoIngreso = 'paquete';
+                }
             }
 
             // Si llega como mixto/otros, intentar descomponerlo con el detalle real del cobro.
@@ -630,6 +696,31 @@ try {
         });
 
         return $rows;
+    };
+
+    $obtenerIngresosComercialesCaja = function (int $cajaId) use ($pdo, $esAjusteTecnicoConversionPaquete) {
+        if ($cajaId <= 0) return [];
+        $stmt = $pdo->prepare(
+            'SELECT tipo_ingreso, monto, metodo_pago, referencia_tabla, referencia_id, descripcion '
+            . 'FROM ingresos_diarios WHERE caja_id = ?'
+        );
+        $stmt->execute([$cajaId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (!$rows) return [];
+
+        $filtrados = [];
+        foreach ($rows as $row) {
+            $monto = (float)($row['monto'] ?? 0);
+            if (abs($monto) < 0.01) {
+                continue;
+            }
+            $descripcion = (string)($row['descripcion'] ?? '');
+            if ($esAjusteTecnicoConversionPaquete($descripcion)) {
+                continue;
+            }
+            $filtrados[] = $row;
+        }
+        return $filtrados;
     };
 
     $fusionarIngresosPorServicio = function (array $rowsPorServicio, array $sinAsientoPorServicio): array {
@@ -688,9 +779,12 @@ try {
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM laboratorio_referencia_movimientos WHERE caja_id = ? AND estado = "pagado"');
         $stmt->execute([$caja_id_actual]);
         $egreso_lab_ref = floatval($stmt->fetchColumn());
-        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ?');
-        $stmt->execute([$caja_id_actual]);
-        $total = floatval($stmt->fetchColumn());
+        $rowsIngresosComerciales = $obtenerIngresosComercialesCaja($caja_id_actual);
+        $total = 0.0;
+        foreach ($rowsIngresosComerciales as $ingreso) {
+            $total += (float)($ingreso['monto'] ?? 0);
+        }
+        $total = round($total, 2);
 
         // Mostrar por_servicio en base a asientos reales de caja.
         // El faltante sin asiento ya se expone en monto_sin_asiento_caja para auditoria.
@@ -700,9 +794,20 @@ try {
         $stmt->execute([$caja_id_actual]);
         $ingresos_por_area = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $stmt = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total_pago FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
-        $stmt->execute([$caja_id_actual]);
-        $ingresos_por_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $acumPago = [];
+        foreach ($rowsIngresosComerciales as $ingreso) {
+            $metodo = strtolower(trim((string)($ingreso['metodo_pago'] ?? 'otros')));
+            if ($metodo === '') $metodo = 'otros';
+            $acumPago[$metodo] = ($acumPago[$metodo] ?? 0.0) + (float)($ingreso['monto'] ?? 0);
+        }
+        $ingresos_por_pago = [];
+        foreach ($acumPago as $metodo => $montoMetodo) {
+            if (abs($montoMetodo) < 0.01) continue;
+            $ingresos_por_pago[] = [
+                'metodo_pago' => $metodo,
+                'total_pago' => round($montoMetodo, 2),
+            ];
+        }
 
         $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto), 0) FROM ingresos_diarios WHERE caja_id = ? AND (tipo_ingreso = ? OR referencia_tabla = ?)');
         $stmt->execute([$caja_id_actual, 'contrato_abono', 'paciente_seguimiento_pagos']);

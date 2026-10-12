@@ -84,6 +84,161 @@ function mp_normalize_estado_atencion(string $raw): string
     return 'pendiente';
 }
 
+function mp_estado_cotizacion_es_pagado(string $estado): bool
+{
+    $st = strtolower(trim($estado));
+    return in_array($st, ['pagado', 'pagada', 'completado', 'completada', 'control', 'contrato'], true);
+}
+
+function mp_resolver_cadena_cotizacion_ids(mysqli $conn, int $cotizacionId): array
+{
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return [];
+    }
+    if (!mp_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+        return [$cotizacionId];
+    }
+
+    $rootId = $cotizacionId;
+    $vistos = [];
+    while ($rootId > 0) {
+        if (isset($vistos[$rootId])) break;
+        $vistos[$rootId] = true;
+        $stmtRoot = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
+        if (!$stmtRoot) break;
+        $stmtRoot->bind_param('i', $rootId);
+        $stmtRoot->execute();
+        $rowRoot = $stmtRoot->get_result()->fetch_assoc();
+        $stmtRoot->close();
+        $parentId = (int)($rowRoot['cotizacion_padre_id'] ?? 0);
+        if ($parentId <= 0 || $parentId === $rootId) break;
+        $rootId = $parentId;
+    }
+
+    $ids = [$rootId => true];
+    $queue = [$rootId];
+    while (!empty($queue)) {
+        $current = (int)array_shift($queue);
+        $stmtChildren = $conn->prepare('SELECT id FROM cotizaciones WHERE cotizacion_padre_id = ?');
+        if (!$stmtChildren) continue;
+        $stmtChildren->bind_param('i', $current);
+        $stmtChildren->execute();
+        $children = $stmtChildren->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmtChildren->close();
+        foreach ($children as $child) {
+            $childId = (int)($child['id'] ?? 0);
+            if ($childId <= 0 || isset($ids[$childId])) continue;
+            $ids[$childId] = true;
+            $queue[] = $childId;
+        }
+    }
+
+    $out = array_values(array_map('intval', array_keys($ids)));
+    sort($out);
+    return $out;
+}
+
+function mp_resolver_cotizacion_pago_comercial(mysqli $conn, int $cotizacionId): ?array
+{
+    static $cache = [];
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) return null;
+    if (array_key_exists($cotizacionId, $cache)) {
+        return $cache[$cotizacionId];
+    }
+
+    $ids = mp_resolver_cadena_cotizacion_ids($conn, $cotizacionId);
+    if (empty($ids)) {
+        $ids = [$cotizacionId];
+    }
+
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "SELECT id, estado, total, saldo_pendiente FROM cotizaciones WHERE id IN ({$ph})";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    if (empty($rows)) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+
+    $byId = [];
+    $paidIds = [];
+    foreach ($rows as $row) {
+        $rid = (int)($row['id'] ?? 0);
+        if ($rid <= 0) continue;
+        $byId[$rid] = $row;
+        if (mp_estado_cotizacion_es_pagado((string)($row['estado'] ?? ''))) {
+            $paidIds[] = $rid;
+        }
+    }
+    if (empty($byId)) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+
+    $selectedId = 0;
+    if (!empty($paidIds)) {
+        sort($paidIds, SORT_NUMERIC);
+        $selectedId = (int)$paidIds[0];
+    } elseif (isset($byId[$cotizacionId])) {
+        $selectedId = $cotizacionId;
+    } else {
+        $keys = array_keys($byId);
+        sort($keys, SORT_NUMERIC);
+        $selectedId = (int)$keys[0];
+    }
+
+    $selected = $byId[$selectedId] ?? null;
+    if (!is_array($selected)) {
+        $cache[$cotizacionId] = null;
+        return null;
+    }
+
+    $resolved = [
+        'id' => (int)($selected['id'] ?? 0),
+        'estado' => (string)($selected['estado'] ?? ''),
+        'total' => round((float)($selected['total'] ?? 0), 2),
+        'saldo_pendiente' => round((float)($selected['saldo_pendiente'] ?? 0), 2),
+    ];
+    $cache[$cotizacionId] = $resolved;
+    return $resolved;
+}
+
+function mp_cumple_filtro_pago_panel(mysqli $conn, array $item, string $filtroPago): bool
+{
+    $filtro = strtolower(trim($filtroPago));
+    if ($filtro === '' || $filtro === 'todas') {
+        return true;
+    }
+
+    $cotizId = (int)($item['cotizacion_id'] ?? 0);
+    if ($cotizId <= 0) {
+        return true;
+    }
+
+    $pago = mp_resolver_cotizacion_pago_comercial($conn, $cotizId);
+    $estado = strtolower(trim((string)($pago['estado'] ?? ($item['cotizacion_estado'] ?? ''))));
+    $esPagada = mp_estado_cotizacion_es_pagado($estado);
+
+    if (in_array($filtro, ['solo_pagadas', 'pagadas'], true)) {
+        return $esPagada;
+    }
+    if (in_array($filtro, ['solo_no_pagadas', 'no_pagadas'], true)) {
+        return !$esPagada;
+    }
+
+    return true;
+}
+
 function mp_attach_cola_medico(mysqli $conn, array &$items): void
 {
     if (empty($items)) return;
@@ -388,6 +543,11 @@ $canJoinAgendaProgramada = mp_table_exists($conn, 'agenda_servicios_cotizacion')
     && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada');
 $agendaHasHoraProgramada = $canJoinAgendaProgramada
     && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada');
+$canFilterByAgendaMedico = mp_table_exists($conn, 'agenda_servicios_cotizacion')
+    && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+    && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'medico_id');
+$agendaHasEstadoEvento = $canFilterByAgendaMedico
+    && mp_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento');
 
 $joinAgendaProgramada = '';
 $fechaConsultaExpr = 'NULLIF(LEFT(TRIM(CAST(c.fecha AS CHAR)), 10), "")';
@@ -439,15 +599,23 @@ if ($hasCdEstadoItem) {
 }
 $where[] = "LOWER(TRIM(COALESCE(pa.estado, 'pendiente'))) <> 'cancelado'";
 
-$where[] = $medicoResponsableExpr . ' = ?';
+$whereMedicoResponsable = $medicoResponsableExpr . ' = ?';
 $params[] = $medicoSesionId;
 $types .= 'i';
-
-if (in_array($filtroPago, ['solo_pagadas', 'pagadas'], true)) {
-    $where[] = "LOWER(TRIM(COALESCE(ct.estado, ''))) IN ('pagado', 'pagada', 'control')";
-} elseif (in_array($filtroPago, ['solo_no_pagadas', 'no_pagadas'], true)) {
-    $where[] = "LOWER(TRIM(COALESCE(ct.estado, ''))) NOT IN ('pagado', 'pagada', 'control')";
+if ($canFilterByAgendaMedico) {
+    $whereAgendaEstado = $agendaHasEstadoEvento
+        ? " AND LOWER(TRIM(COALESCE(agm.estado_evento, 'pendiente'))) NOT IN ('cancelado', 'anulada', 'no_asistio')"
+        : '';
+    $whereMedicoResponsable .= " OR EXISTS (
+        SELECT 1
+        FROM agenda_servicios_cotizacion agm
+        WHERE agm.cotizacion_detalle_id = cd.id
+          AND agm.medico_id = ?{$whereAgendaEstado}
+    )";
+    $params[] = $medicoSesionId;
+    $types .= 'i';
 }
+$where[] = '(' . $whereMedicoResponsable . ')';
 
 switch ($estadoPanel) {
     case 'pendientes':
@@ -528,20 +696,6 @@ $fromSql = ' FROM cotizaciones_detalle cd '
     . 'LEFT JOIN pacientes p ON p.id = COALESCE(c.paciente_id, ct.paciente_id)'
     . $joinAgendaProgramada;
 
-$countSql = 'SELECT COUNT(*) AS total' . $fromSql . $whereSql;
-$stmtCount = $conn->prepare($countSql);
-if (!$stmtCount) {
-    http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'No se pudo preparar conteo']);
-    exit;
-}
-if ($types !== '') {
-    $stmtCount->bind_param($types, ...$params);
-}
-$stmtCount->execute();
-$total = (int)(($stmtCount->get_result()->fetch_assoc()['total'] ?? 0));
-$stmtCount->close();
-
 $selectSql = 'SELECT '
     . 'cd.id AS detalle_id, '
     . 'cd.cotizacion_id, '
@@ -568,8 +722,7 @@ $selectSql = 'SELECT '
     . 'p.id AS paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, p.dni, p.historia_clinica '
     . $fromSql
     . $whereSql
-    . " ORDER BY {$fechaOperativaKeyExpr} DESC, {$horaOperativaExpr} DESC, cd.id DESC "
-    . ' LIMIT ? OFFSET ?';
+    . " ORDER BY {$fechaOperativaKeyExpr} DESC, {$horaOperativaExpr} DESC, cd.id DESC ";
 
 $stmt = $conn->prepare($selectSql);
 if (!$stmt) {
@@ -579,16 +732,16 @@ if (!$stmt) {
 }
 
 $paramsQuery = $params;
-$typesQuery = $types . 'ii';
-$paramsQuery[] = $limit;
-$paramsQuery[] = $offset;
-$stmt->bind_param($typesQuery, ...$paramsQuery);
+$typesQuery = $types;
+if ($typesQuery !== '') {
+    $stmt->bind_param($typesQuery, ...$paramsQuery);
+}
 $stmt->execute();
 $res = $stmt->get_result();
 
-$items = [];
+$itemsFiltrados = [];
 while ($row = $res->fetch_assoc()) {
-    $items[] = [
+    $item = [
         'detalle_id' => (int)($row['detalle_id'] ?? 0),
         'correlativo_atencion' => 0,
         'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
@@ -618,8 +771,28 @@ while ($row = $res->fetch_assoc()) {
         'dni' => (string)($row['dni'] ?? ''),
         'historia_clinica' => (string)($row['historia_clinica'] ?? ''),
     ];
+
+    $cotizacionIdItem = (int)($item['cotizacion_id'] ?? 0);
+    if ($cotizacionIdItem > 0) {
+        $pagoComercial = mp_resolver_cotizacion_pago_comercial($conn, $cotizacionIdItem);
+        if (is_array($pagoComercial)) {
+            $item['cotizacion_estado'] = (string)($pagoComercial['estado'] ?? $item['cotizacion_estado']);
+            $item['saldo_pendiente'] = round((float)($pagoComercial['saldo_pendiente'] ?? $item['saldo_pendiente']), 2);
+        }
+    }
+
+    if (!mp_cumple_filtro_pago_panel($conn, $item, $filtroPago)) {
+        continue;
+    }
+    $itemsFiltrados[] = $item;
 }
 $stmt->close();
+
+$total = count($itemsFiltrados);
+$totalPaginas = max(1, (int)ceil($total / max(1, $limit)));
+$page = min($page, $totalPaginas);
+$offset = ($page - 1) * $limit;
+$items = array_slice($itemsFiltrados, $offset, $limit);
 
 // Paridad con Atenciones: correlativo operativo por agenda (mismo modulo compartido).
 if (!empty($items)

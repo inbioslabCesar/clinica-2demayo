@@ -62,6 +62,9 @@ try {
     foreach ($stmtCols->fetchAll(PDO::FETCH_ASSOC) as $col) {
         $columnasCajas[(string)$col['Field']] = true;
     }
+    $stmtTablaIngresos = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'ingresos_diarios' LIMIT 1");
+    $stmtTablaIngresos->execute();
+    $hasIngresosDiarios = (bool)$stmtTablaIngresos->fetchColumn();
 
     $columnaSeguro = static function (string $nombre, string $alias = null) use ($columnasCajas): string {
         $aliasFinal = $alias ?: $nombre;
@@ -103,11 +106,34 @@ try {
 
     $selectExtras[] = $exprMontoContadoNormalizado . ' AS monto_contado';
 
-    $exprTotalEfectivo = isset($columnasCajas['total_efectivo']) ? 'COALESCE(c.total_efectivo, 0)' : '0';
-    $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';
-    $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'COALESCE(c.total_plin, 0)' : '0';
-    $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'COALESCE(c.total_tarjetas, 0)' : '0';
-    $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'COALESCE(c.total_transferencias, 0)' : '0';
+    $exprAjusteTecnico = "LOWER(TRIM(COALESCE(i.descripcion, ''))) LIKE '%reversa_parcial%'
+        AND (
+            LOWER(TRIM(COALESCE(i.descripcion, ''))) LIKE '%conversion a paquete%'
+            OR LOWER(TRIM(COALESCE(i.descripcion, ''))) LIKE '%conversión a paquete%'
+            OR LOWER(TRIM(COALESCE(i.descripcion, ''))) LIKE '%paquete%'
+        )";
+
+    $exprTotalPorMetodoComercial = static function (string $metodo) use ($hasIngresosDiarios, $columnasCajas, $exprAjusteTecnico): string {
+        if ($hasIngresosDiarios) {
+            $metodoSql = str_replace("'", "''", strtolower(trim($metodo)));
+            return "COALESCE((
+                SELECT SUM(i.monto)
+                FROM ingresos_diarios i
+                WHERE i.caja_id = c.id
+                  AND LOWER(TRIM(COALESCE(i.metodo_pago, ''))) = '{$metodoSql}'
+                  AND COALESCE(i.monto, 0) <> 0
+                  AND NOT ({$exprAjusteTecnico})
+            ), 0)";
+        }
+        $columna = 'total_' . $metodo;
+        return isset($columnasCajas[$columna]) ? "COALESCE(c.{$columna}, 0)" : '0';
+    };
+
+    $exprTotalEfectivo = $exprTotalPorMetodoComercial('efectivo');
+    $exprTotalYape = $exprTotalPorMetodoComercial('yape');
+    $exprTotalPlin = $exprTotalPorMetodoComercial('plin');
+    $exprTotalTarjetas = $exprTotalPorMetodoComercial('tarjeta');
+    $exprTotalTransferencias = $exprTotalPorMetodoComercial('transferencia');
     $exprIngresoCaja = "({$exprTotalEfectivo} + {$exprTotalYape} + {$exprTotalPlin} + {$exprTotalTarjetas} + {$exprTotalTransferencias})";
 
     // Usar egresos reales por caja para evitar snapshots desactualizados en c.total_egresos.
@@ -226,10 +252,6 @@ try {
     $exprMontoContado = $exprMontoContadoNormalizado;
     $exprVirtualContado = isset($columnasCajas['virtual_contado']) ? 'c.virtual_contado' : 'NULL';
     $exprDiferenciaVirtual = isset($columnasCajas['diferencia_virtual']) ? 'c.diferencia_virtual' : 'NULL';
-    $exprTotalYape = isset($columnasCajas['total_yape']) ? 'COALESCE(c.total_yape, 0)' : '0';
-    $exprTotalPlin = isset($columnasCajas['total_plin']) ? 'COALESCE(c.total_plin, 0)' : '0';
-    $exprTotalTarjetas = isset($columnasCajas['total_tarjetas']) ? 'COALESCE(c.total_tarjetas, 0)' : '0';
-    $exprTotalTransferencias = isset($columnasCajas['total_transferencias']) ? 'COALESCE(c.total_transferencias, 0)' : '0';
 
     $sqlResumenRealDiario = "SELECT
         c.fecha,

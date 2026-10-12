@@ -151,6 +151,24 @@ function clavePagoServicio(tipo, servicioId) {
   return `${normalizarServicio(tipo)}:${Number(servicioId || 0)}`;
 }
 
+function esMovimientoDescuento(pago) {
+  const tipo = String(pago?.tipo_movimiento || "").toLowerCase().trim();
+  if (tipo !== "devolucion") return false;
+  const descripcion = String(pago?.descripcion || "").toLowerCase();
+  return descripcion.includes("descuento aplicado")
+    || descripcion.startsWith("descuento");
+}
+
+function esMovimientoAjusteConversionPaquete(pago) {
+  const descripcion = String(pago?.descripcion || "").toLowerCase();
+  return descripcion.includes("ajuste por conversión a paquete en adenda")
+    || descripcion.includes("ajuste por conversion a paquete en adenda");
+}
+
+function esMovimientoAbono(pago) {
+  return String(pago?.tipo_movimiento || "abono").toLowerCase() === "abono";
+}
+
 function construirPagosFallbackDesdeCobros(cotizacion, cobros) {
   const detalles = Array.isArray(cotizacion?.detalles) ? cotizacion.detalles : [];
   const detallesActivos = detalles.filter(
@@ -290,8 +308,8 @@ export default function DetalleCotizacionPage() {
     borderColor: "var(--color-primary-light)",
     color: "var(--color-primary-dark)",
   };
-  const buildCotizacionDetalleUrl = (id, cacheBuster) =>
-    `api_cotizaciones.php?cotizacion_id=${Number(id)}&include_bloque=0&_t=${cacheBuster}`;
+  const buildCotizacionDetalleUrl = (id, cacheBuster, includeCadena = false) =>
+    `api_cotizaciones.php?cotizacion_id=${Number(id)}&include_bloque=0${includeCadena ? "&include_cadena=1" : ""}&_t=${cacheBuster}`;
 
   useEffect(() => {
     let mounted = true;
@@ -305,9 +323,18 @@ export default function DetalleCotizacionPage() {
         let pacienteData = null;
         let pagosCargados = [];
 
-        if (grupoIds.length > 1) {
+        const construirVistaGrupo = async (idsGrupoRaw) => {
+          const idsGrupoNormalizados = Array.from(new Set(
+            (Array.isArray(idsGrupoRaw) ? idsGrupoRaw : [])
+              .map((value) => Number(value))
+              .filter((value) => Number.isFinite(value) && value > 0)
+          ));
+          if (idsGrupoNormalizados.length <= 1) {
+            return null;
+          }
+
           const respuestasCot = await Promise.all(
-            grupoIds.map(async (id) => {
+            idsGrupoNormalizados.map(async (id) => {
               const res = await authFetch(buildCotizacionDetalleUrl(id, cacheBuster), { cache: "no-store" });
               const data = await res.json();
               if (!data?.success || !data?.cotizacion) return null;
@@ -331,21 +358,21 @@ export default function DetalleCotizacionPage() {
             }));
           });
 
-          const respuestasPagos = await Promise.all(
-            cotizacionesGrupo.map(async (item) => {
-              const id = Number(item?.id || 0);
-              const pagosEmbebidos = Array.isArray(item?.pagos) ? item.pagos : [];
-              if (pagosEmbebidos.length > 0) {
-                return pagosEmbebidos.map((pago, idx) => ({
-                  ...pago,
-                  id: `${id}-${pago?.id || idx}`,
-                  cotizacion_origen_id: id,
-                }));
-              }
+          const cotizacionesById = {};
+          cotizacionesGrupo.forEach((item) => {
+            const id = Number(item?.id || 0);
+            if (id > 0) cotizacionesById[id] = item;
+          });
 
+          const respuestasPagos = await Promise.all(
+            idsGrupoNormalizados.map(async (id) => {
               const resPagos = await authFetch(`api_cotizaciones.php?accion=pagos&cotizacion_id=${id}&_t=${cacheBuster}`, { cache: "no-store" });
               const dataPagos = await resPagos.json();
-              const list = dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [];
+              let list = dataPagos?.success && Array.isArray(dataPagos?.pagos) ? dataPagos.pagos : [];
+              if (list.length === 0) {
+                const pagosEmbebidos = Array.isArray(cotizacionesById[id]?.pagos) ? cotizacionesById[id].pagos : [];
+                list = pagosEmbebidos;
+              }
               return list.map((pago, idx) => ({
                 ...pago,
                 id: `${id}-${pago?.id || idx}`,
@@ -354,12 +381,13 @@ export default function DetalleCotizacionPage() {
             })
           );
 
-          pagosCargados = respuestasPagos.flat().sort((a, b) => {
+          const pagosGrupo = respuestasPagos.flat().sort((a, b) => {
             const ta = new Date(a?.created_at || 0).getTime();
             const tb = new Date(b?.created_at || 0).getTime();
             if (ta !== tb) return ta - tb;
             return String(a?.id || "").localeCompare(String(b?.id || ""));
           });
+          pagosCargados = pagosGrupo;
 
           const totalGrupo = cotizacionesGrupo.reduce((acc, item) => acc + Number(item?.total || 0), 0);
           const pagadoGrupo = cotizacionesGrupo.reduce((acc, item) => acc + Number(item?.total_pagado || 0), 0);
@@ -367,7 +395,7 @@ export default function DetalleCotizacionPage() {
           const estadoGrupo = resolverEstadoGrupoCotizacion(cotizacionesGrupo);
           const idsGrupo = cotizacionesGrupo.map((item) => Number(item?.id || 0)).filter((id) => id > 0).sort((a, b) => a - b);
 
-          cot = {
+          return {
             ...cotizacionBase,
             vista_grupo: 1,
             grupo_ids: idsGrupo,
@@ -376,9 +404,14 @@ export default function DetalleCotizacionPage() {
             saldo_pendiente: Number(saldoGrupo.toFixed(2)),
             estado: estadoGrupo,
             detalles: detallesGrupo,
+            pagos: pagosGrupo,
           };
+        };
+
+        if (grupoIds.length > 1) {
+          cot = await construirVistaGrupo(grupoIds);
         } else {
-          const resCot = await authFetch(buildCotizacionDetalleUrl(cotizacionId, cacheBuster), {
+          const resCot = await authFetch(buildCotizacionDetalleUrl(cotizacionId, cacheBuster, true), {
             cache: "no-store",
           });
           const dataCot = await resCot.json();
@@ -387,8 +420,14 @@ export default function DetalleCotizacionPage() {
           }
 
           cot = dataCot.cotizacion;
+          const cadenaIds = Array.isArray(cot?.cotizacion_cadena_ids) ? cot.cotizacion_cadena_ids : [];
+          if (cadenaIds.length > 1) {
+            cot = await construirVistaGrupo(cadenaIds);
+          }
           const pagosEmbebidos = Array.isArray(cot?.pagos) ? cot.pagos : null;
-          pagosCargados = Array.isArray(pagosEmbebidos) ? pagosEmbebidos : null;
+          if (Number(cot?.vista_grupo || 0) !== 1 || !Array.isArray(pagosCargados) || pagosCargados.length === 0) {
+            pagosCargados = Array.isArray(pagosEmbebidos) ? pagosEmbebidos : null;
+          }
           if (!Array.isArray(pagosCargados) || pagosCargados.length === 0) {
             const resPagos = await authFetch(
               `api_cotizaciones.php?accion=pagos&cotizacion_id=${Number(cotizacionId)}&_t=${cacheBuster}`,
@@ -619,11 +658,176 @@ export default function DetalleCotizacionPage() {
     return [];
   }, [pagos, cotizacion?.pagos]);
 
+  const pagosVisibles = useMemo(() => {
+    const base = pagosRender.filter((pago) => {
+      const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
+      const esCobroAnulado = String(pago?.cobro_estado || "").toLowerCase() === "anulado";
+      if (tipo === "abono" && esCobroAnulado) return false;
+      return true;
+    });
+
+    const salida = [...base];
+    const ajustes = salida
+      .map((pago, idx) => ({ pago, idx }))
+      .filter(({ pago }) => String(pago?.tipo_movimiento || "").toLowerCase() === "devolucion" && esMovimientoAjusteConversionPaquete(pago))
+      .sort((a, b) => b.idx - a.idx);
+
+    for (const { pago: ajuste, idx: idxAjuste } of ajustes) {
+      const montoAjuste = Number(ajuste?.monto || 0);
+      if (!Number.isFinite(montoAjuste) || montoAjuste <= 0) continue;
+
+      let idxAbonoPosterior = -1;
+      for (let i = idxAjuste + 1; i < salida.length; i += 1) {
+        const candidato = salida[i];
+        if (!esMovimientoAbono(candidato)) continue;
+        const montoAbono = Number(candidato?.monto || 0);
+        if (!Number.isFinite(montoAbono) || montoAbono <= 0) continue;
+        idxAbonoPosterior = i;
+        break;
+      }
+      if (idxAbonoPosterior === -1) continue;
+
+      const abonoPosterior = salida[idxAbonoPosterior];
+      const montoAbonoPosterior = Number(abonoPosterior?.monto || 0);
+      const montoNetoUpgrade = Number((montoAbonoPosterior - montoAjuste).toFixed(2));
+      if (!Number.isFinite(montoNetoUpgrade) || montoNetoUpgrade <= 0) continue;
+      const saldoAnteriorTecnico = Math.max(0, Number(abonoPosterior?.saldo_anterior || 0));
+      const saldoNuevoTecnico = Math.max(0, Number(abonoPosterior?.saldo_nuevo || 0));
+      const saldoAnteriorComercial = Math.max(0, Number((saldoAnteriorTecnico - montoAjuste).toFixed(2)));
+      const saldoNuevoComercial = Math.max(0, Number((saldoNuevoTecnico - montoAjuste).toFixed(2)));
+
+      const filaNeta = {
+        ...abonoPosterior,
+        id: `upgrade-neto-${ajuste?.id || idxAjuste}-${abonoPosterior?.id || idxAbonoPosterior}`,
+        tipo_movimiento: "abono_upgrade",
+        monto: montoAbonoPosterior,
+        saldo_anterior: saldoAnteriorComercial,
+        saldo_nuevo: saldoNuevoComercial,
+        descripcion: "Pago de diferencia de paquete",
+        _origen_ajuste_conversion: 1,
+      };
+
+      salida.splice(idxAbonoPosterior, 1, filaNeta);
+      salida.splice(idxAjuste, 1);
+    }
+
+    return salida;
+  }, [pagosRender]);
+
+  const pagosOcultosAnulados = useMemo(() => {
+    return Math.max(0, pagosRender.length - pagosVisibles.length);
+  }, [pagosRender.length, pagosVisibles.length]);
+
   const estado = String(cotizacion?.estado || "").toLowerCase();
   const esVistaGrupo = Number(cotizacion?.vista_grupo || 0) === 1;
+  const resumenUpgradePaquete = useMemo(() => {
+    if (!esVistaGrupo) return null;
+    if (!Array.isArray(pagosRender) || pagosRender.length === 0) return null;
+    if (!Array.isArray(resumenPaquetes) || resumenPaquetes.length === 0) return null;
+
+    const movimientosAjuste = pagosRender.filter((p) => esMovimientoAjusteConversionPaquete(p));
+    if (movimientosAjuste.length === 0) return null;
+
+    const tsAjuste = movimientosAjuste
+      .map((p) => new Date(p?.created_at || 0).getTime())
+      .filter((ts) => Number.isFinite(ts) && ts > 0)
+      .sort((a, b) => a - b)[0];
+    if (!Number.isFinite(tsAjuste) || tsAjuste <= 0) return null;
+
+    const totalPaquete = Number(
+      resumenPaquetes.reduce((acc, p) => acc + Number(p?.subtotal || 0), 0).toFixed(2)
+    );
+    if (totalPaquete <= 0) return null;
+
+    const netoPorRango = (include) => {
+      return Number(
+        pagosRender.reduce((acc, p) => {
+          const ts = new Date(p?.created_at || 0).getTime();
+          if (!Number.isFinite(ts) || !include(ts)) return acc;
+          const tipo = String(p?.tipo_movimiento || "abono").toLowerCase();
+          const monto = Number(p?.monto || 0);
+          if (!Number.isFinite(monto) || monto <= 0) return acc;
+          return tipo === "devolucion" ? (acc - monto) : (acc + monto);
+        }, 0).toFixed(2)
+      );
+    };
+
+    const abonadoPrevio = Math.max(0, netoPorRango((ts) => ts < tsAjuste));
+    const porCobrarUpgrade = Math.max(0, Number((totalPaquete - abonadoPrevio).toFixed(2)));
+    const netoPosterior = Math.max(0, netoPorRango((ts) => ts >= tsAjuste));
+    const abonoUpgrade = Math.min(porCobrarUpgrade, netoPosterior);
+    const saldoUpgrade = Math.max(0, Number((porCobrarUpgrade - abonoUpgrade).toFixed(2)));
+
+    return {
+      totalPaquete,
+      abonadoPrevio,
+      porCobrarUpgrade,
+      abonoUpgrade: Number(abonoUpgrade.toFixed(2)),
+      saldoUpgrade,
+    };
+  }, [esVistaGrupo, pagosRender, resumenPaquetes]);
+  const mostrarLecturaComercialPaquete = useMemo(() => {
+    return Boolean(
+      resumenUpgradePaquete
+      && Number(resumenUpgradePaquete.totalPaquete || 0) > 0
+      && Number(resumenUpgradePaquete.saldoUpgrade || 0) >= 0
+    );
+  }, [resumenUpgradePaquete]);
+  const ajusteTecnicoConversionTotal = useMemo(() => {
+    if (!mostrarLecturaComercialPaquete) return 0;
+    return Math.max(0, Number(
+      (Array.isArray(pagosRender) ? pagosRender : []).reduce((acc, pago) => {
+        if (!esMovimientoAjusteConversionPaquete(pago)) return acc;
+        const monto = Number(pago?.monto || 0);
+        if (!Number.isFinite(monto) || monto <= 0) return acc;
+        return acc + monto;
+      }, 0).toFixed(2)
+    ));
+  }, [mostrarLecturaComercialPaquete, pagosRender]);
+  const saldoPendienteGlobal = mostrarLecturaComercialPaquete
+    ? Math.max(0, Number((Number(cotizacion?.saldo_pendiente || 0) - ajusteTecnicoConversionTotal).toFixed(2)))
+    : Math.max(0, Number(cotizacion?.saldo_pendiente || 0));
+  const saldoPendientePaquete = mostrarLecturaComercialPaquete
+    ? Math.max(0, Number(resumenUpgradePaquete?.saldoUpgrade || 0))
+    : 0;
+  const totalVisibleResumen = mostrarLecturaComercialPaquete
+    ? Number(resumenUpgradePaquete?.totalPaquete || 0)
+    : Number(cotizacion?.total || 0);
+  const pagadoVisibleResumen = mostrarLecturaComercialPaquete
+    ? Math.max(0, Number((Number(resumenUpgradePaquete?.abonadoPrevio || 0) + Number(resumenUpgradePaquete?.abonoUpgrade || 0)).toFixed(2)))
+    : Number(cotizacion?.total_pagado || 0);
+  const totalComercialEpisodio = mostrarLecturaComercialPaquete
+    ? Math.max(totalVisibleResumen, Number(cotizacion?.total || 0))
+    : Number(cotizacion?.total || 0);
+  const pagadoGlobalComercial = Math.max(0, Number((totalComercialEpisodio - saldoPendienteGlobal).toFixed(2)));
+  const adicionalesTotales = mostrarLecturaComercialPaquete
+    ? Math.max(0, Number((totalComercialEpisodio - totalVisibleResumen).toFixed(2)))
+    : 0;
+  const adicionalesPagados = mostrarLecturaComercialPaquete
+    ? Math.min(
+      adicionalesTotales,
+      Math.max(0, Number((pagadoGlobalComercial - pagadoVisibleResumen).toFixed(2)))
+    )
+    : 0;
+  const adicionalesPendientes = mostrarLecturaComercialPaquete
+    ? Math.max(0, Number((adicionalesTotales - adicionalesPagados).toFixed(2)))
+    : 0;
+  const totalPendienteComercial = mostrarLecturaComercialPaquete
+    ? Math.max(0, Number((saldoPendientePaquete + adicionalesPendientes).toFixed(2)))
+    : saldoPendienteGlobal;
+  const pagosHistorialVisibles = useMemo(() => {
+    if (!mostrarLecturaComercialPaquete) return pagosVisibles;
+    return pagosVisibles.filter((pago) => !esMovimientoAjusteConversionPaquete(pago));
+  }, [pagosVisibles, mostrarLecturaComercialPaquete]);
+  const pagosOcultosHistorial = useMemo(() => {
+    return Math.max(0, pagosRender.length - pagosHistorialVisibles.length);
+  }, [pagosRender.length, pagosHistorialVisibles.length]);
+  const saldoVisibleResumen = mostrarLecturaComercialPaquete
+    ? Number(totalPendienteComercial || 0)
+    : Number(cotizacion?.saldo_pendiente || 0);
   const puedeEditar = !esVistaGrupo && estado !== "anulada";
   const puedeGestionarDevolucion = estado !== "anulada";
-  const puedeCobrar = (estado === "pendiente" || estado === "parcial") && Number(cotizacion?.saldo_pendiente || 0) > 0;
+  const puedeCobrar = (estado === "pendiente" || estado === "parcial") && Number(saldoVisibleResumen || 0) > 0;
 
   const escapeHtml = (value) => {
     return String(value ?? "")
@@ -723,7 +927,10 @@ export default function DetalleCotizacionPage() {
     const pagosRowsHtml = pagos.length > 0
       ? pagos.map((p) => {
           const fechaPago = p?.created_at ? new Date(p.created_at).toLocaleString("es-PE") : "-";
-          const tipoMov = String(p?.tipo_movimiento || "abono").toLowerCase() === "devolucion" ? "Descuento" : "Abono";
+          const tipoPago = String(p?.tipo_movimiento || "abono").toLowerCase();
+          const tipoMov = tipoPago === "devolucion"
+            ? (esMovimientoDescuento(p) ? "Descuento" : "Devolucion")
+            : "Abono";
           const metodo = String(p?.metodo_pago || "").trim() || "-";
           const monto = Number(p?.monto || 0);
           const saldoNuevo = Number(p?.saldo_nuevo || 0);
@@ -1854,13 +2061,38 @@ export default function DetalleCotizacionPage() {
           </div>
           <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm">
             <div className="text-gray-500">Resumen economico</div>
-            <div className="font-semibold text-gray-800">Total bruto: S/ {Number(totalItemsBruto || 0).toFixed(2)}</div>
-            {descuentoAplicado > 0 && (
-              <div className="text-amber-700">Descuento: -S/ {Number(descuentoAplicado).toFixed(2)}</div>
+            {mostrarLecturaComercialPaquete ? (
+              <div className="mt-2 space-y-2">
+                <div className="rounded border border-blue-200 bg-white px-2 py-1.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Paquete</div>
+                  <div className="text-gray-700">Total: S/ {Number(totalVisibleResumen || 0).toFixed(2)}</div>
+                  <div className="text-gray-700">Abonado: S/ {Number(pagadoVisibleResumen || 0).toFixed(2)}</div>
+                  <div className="font-semibold text-blue-800">Pendiente: S/ {Number(saldoPendientePaquete || 0).toFixed(2)}</div>
+                </div>
+                <div className="rounded border border-blue-200 bg-white px-2 py-1.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Adicionales</div>
+                  <div className="text-gray-700">Total: S/ {Number(adicionalesTotales || 0).toFixed(2)}</div>
+                  <div className="text-gray-700">Pagado: S/ {Number(adicionalesPagados || 0).toFixed(2)}</div>
+                  <div className="font-semibold text-blue-800">Pendiente: S/ {Number(adicionalesPendientes || 0).toFixed(2)}</div>
+                </div>
+                <div className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-800">
+                  Total pagado del episodio: S/ {Number(pagadoGlobalComercial || 0).toFixed(2)}
+                </div>
+                <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 font-semibold text-emerald-800">
+                  Total por pagar: S/ {Number(totalPendienteComercial || 0).toFixed(2)}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="font-semibold text-gray-800">Total bruto: S/ {Number(totalItemsBruto || 0).toFixed(2)}</div>
+                {descuentoAplicado > 0 && (
+                  <div className="text-amber-700">Descuento: -S/ {Number(descuentoAplicado).toFixed(2)}</div>
+                )}
+                <div className="font-semibold text-gray-800">Total neto: S/ {Number(cotizacion?.total || 0).toFixed(2)}</div>
+                <div className="text-gray-600">Pagado: S/ {Number(cotizacion?.total_pagado || 0).toFixed(2)}</div>
+                <div className="text-gray-600">Saldo: S/ {Number(cotizacion?.saldo_pendiente || 0).toFixed(2)}</div>
+              </>
             )}
-            <div className="font-semibold text-gray-800">Total neto: S/ {Number(cotizacion?.total || 0).toFixed(2)}</div>
-            <div className="text-gray-600">Pagado: S/ {Number(cotizacion?.total_pagado || 0).toFixed(2)}</div>
-            <div className="text-gray-600">Saldo: S/ {Number(cotizacion?.saldo_pendiente || 0).toFixed(2)}</div>
           </div>
         </div>
 
@@ -1873,7 +2105,7 @@ export default function DetalleCotizacionPage() {
               <div className="flex flex-wrap gap-2">
                 {resumenServicios.map((s) => (
                   <span key={s.tipo} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}>
-                    {s.label}: {s.items} item(s) | S/ {Number(s.subtotal || 0).toFixed(2)}
+                    {s.label}: {s.items} item(s){mostrarLecturaComercialPaquete ? "" : ` | S/ ${Number(s.subtotal || 0).toFixed(2)}`}
                   </span>
                 ))}
               </div>
@@ -1881,9 +2113,14 @@ export default function DetalleCotizacionPage() {
                 <div className="flex flex-wrap gap-2">
                   {resumenPaquetes.map((p) => (
                     <span key={p.clave} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "#bfdbfe", color: "#1e40af" }}>
-                      {p.tipoLabel}: {p.codigo ? `${p.codigo} - ` : ""}{p.nombre} | {p.items} item(s) | S/ {Number(p.subtotal || 0).toFixed(2)}
+                      {p.tipoLabel}: {p.codigo ? `${p.codigo} - ` : ""}{p.nombre} | {p.items} item(s){mostrarLecturaComercialPaquete ? "" : ` | S/ ${Number(p.subtotal || 0).toFixed(2)}`}
                     </span>
                   ))}
+                  {mostrarLecturaComercialPaquete && (
+                    <span className="text-xs bg-emerald-50 border rounded px-2 py-1 font-semibold" style={{ borderColor: "#86efac", color: "#166534" }}>
+                      Total paquete: S/ {Number(resumenUpgradePaquete?.totalPaquete || 0).toFixed(2)}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -1998,12 +2235,20 @@ export default function DetalleCotizacionPage() {
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">
-                    S/ {Number(d.precio_unitario || 0).toFixed(2)}
-                    {Number(d.descuento_item || 0) > 0 && (
+                    {mostrarLecturaComercialPaquete && row.infoPaquete ? (
+                      <span className="text-[11px] text-gray-500">Incluido en paquete</span>
+                    ) : (
+                      <>S/ {Number(d.precio_unitario || 0).toFixed(2)}</>
+                    )}
+                    {!mostrarLecturaComercialPaquete && Number(d.descuento_item || 0) > 0 && (
                       <span className="block text-[11px] text-amber-700">Desc: -S/ {Number(d.descuento_item || 0).toFixed(2)}</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right font-semibold">S/ {Number(d.subtotal_neto || d.subtotal || 0).toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right font-semibold">
+                    {mostrarLecturaComercialPaquete && row.infoPaquete
+                      ? "—"
+                      : `S/ ${Number(d.subtotal_neto || d.subtotal || 0).toFixed(2)}`}
+                  </td>
                 </tr>
               )})}
             </tbody>
@@ -2011,7 +2256,42 @@ export default function DetalleCotizacionPage() {
         </div>
 
         <div className="mt-4 overflow-x-auto border border-gray-200 rounded-lg">
-          <div className="px-3 py-2 bg-gray-100 text-sm font-semibold text-gray-800">Historial de pagos por fecha</div>
+          <div className="px-3 py-2 bg-gray-100 text-sm font-semibold text-gray-800">Historial de pagos y devoluciones</div>
+          {resumenUpgradePaquete && (
+            <div className="px-4 py-3 border-b border-blue-200 bg-blue-50 text-blue-900">
+              <div className="text-sm font-bold mb-2">Lectura comercial del cambio a paquete</div>
+              <div className="space-y-2 text-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="rounded border border-blue-200 bg-white px-2 py-1.5">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Paquete</div>
+                    <div><span className="font-semibold">Total:</span> S/ {Number(resumenUpgradePaquete.totalPaquete || 0).toFixed(2)}</div>
+                    <div><span className="font-semibold">Abonado previo:</span> S/ {Number(resumenUpgradePaquete.abonadoPrevio || 0).toFixed(2)}</div>
+                    <div><span className="font-semibold">Abono por cambio:</span> S/ {Number(resumenUpgradePaquete.abonoUpgrade || 0).toFixed(2)}</div>
+                    <div className="font-semibold text-blue-800"><span className="font-semibold">Pendiente:</span> S/ {Number(resumenUpgradePaquete.saldoUpgrade || 0).toFixed(2)}</div>
+                  </div>
+                  <div className="rounded border border-blue-200 bg-white px-2 py-1.5">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Adicionales</div>
+                    <div><span className="font-semibold">Total:</span> S/ {Number(adicionalesTotales || 0).toFixed(2)}</div>
+                    <div><span className="font-semibold">Pagado:</span> S/ {Number(adicionalesPagados || 0).toFixed(2)}</div>
+                    <div className="font-semibold text-blue-800"><span className="font-semibold">Pendiente:</span> S/ {Number(adicionalesPendientes || 0).toFixed(2)}</div>
+                  </div>
+                </div>
+                <div className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-800">
+                  Total pagado del episodio: S/ {Number(pagadoGlobalComercial || 0).toFixed(2)}
+                </div>
+                <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 font-semibold text-emerald-800">
+                  Total por pagar: S/ {Number(totalPendienteComercial || 0).toFixed(2)}
+                </div>
+              </div>
+            </div>
+          )}
+          {pagosOcultosHistorial > 0 && (
+            <div className="px-3 py-2 text-xs text-gray-600 border-b border-gray-200 bg-gray-50">
+              {mostrarLecturaComercialPaquete
+                ? `Se ocultaron ${pagosOcultosHistorial} movimiento(s) técnico(s) para simplificar la lectura comercial del paquete.`
+                : `Se ocultaron ${pagosOcultosHistorial} abono(s) anulados para simplificar la lectura; ya están compensados por su devolución.`}
+            </div>
+          )}
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
@@ -2026,13 +2306,16 @@ export default function DetalleCotizacionPage() {
               </tr>
             </thead>
             <tbody>
-              {pagosRender.length === 0 ? (
+              {pagosHistorialVisibles.length === 0 ? (
                 <tr>
                   <td colSpan={esVistaGrupo ? 8 : 7} className="px-3 py-6 text-center text-gray-500">No hay pagos registrados para esta cotizacion.</td>
                 </tr>
-              ) : pagosRender.map((pago) => {
+              ) : pagosHistorialVisibles.map((pago) => {
                 const tipo = String(pago?.tipo_movimiento || "abono").toLowerCase();
-                const esDescuento = tipo === "devolucion";
+                const esAbonoUpgrade = tipo === "abono_upgrade";
+                const esMovimientoSalida = tipo === "devolucion";
+                const esDescuento = esMovimientoSalida && esMovimientoDescuento(pago);
+                const esAjusteConversion = esMovimientoSalida && esMovimientoAjusteConversionPaquete(pago);
                 const esCobroAnulado = String(pago?.cobro_estado || "").toLowerCase() === "anulado";
                 const fecha = pago?.created_at ? new Date(pago.created_at).toLocaleString("es-PE") : "-";
                 const metodoPago = String(pago?.metodo_pago || "").trim();
@@ -2041,15 +2324,19 @@ export default function DetalleCotizacionPage() {
                     {esVistaGrupo && <td className="px-3 py-2 whitespace-nowrap">#{Number(pago?.cotizacion_origen_id || cotizacion?.id || 0)}</td>}
                     <td className="px-3 py-2 whitespace-nowrap">{fecha}</td>
                     <td className="px-3 py-2">
-                      {esDescuento ? "Descuento" : "Abono"}
+                      {esAbonoUpgrade
+                        ? "Abono por cambio"
+                        : esMovimientoSalida
+                        ? (esAjusteConversion ? "Ajuste paquete" : (esDescuento ? "Descuento" : "Devolucion"))
+                        : "Abono"}
                       {esCobroAnulado && (
                         <span className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold border border-red-200 bg-red-50 text-red-700">
                           Cobro anulado
                         </span>
                       )}
                     </td>
-                    <td className={`px-3 py-2 font-semibold ${esDescuento ? "text-amber-700" : "text-emerald-700"}`}>
-                      {esDescuento ? "-" : "+"} S/ {Number(pago?.monto || 0).toFixed(2)}
+                    <td className={`px-3 py-2 font-semibold ${esMovimientoSalida ? "text-amber-700" : "text-emerald-700"}`}>
+                      {esMovimientoSalida ? "-" : "+"} S/ {Number(pago?.monto || 0).toFixed(2)}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">{metodoPago || "-"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">

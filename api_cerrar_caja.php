@@ -79,6 +79,19 @@ function caja_parse_float_opcional($valor, ?float $default = null): ?float {
     return (float)$valor;
 }
 
+function caja_es_ajuste_tecnico_conversion_paquete(string $texto): bool {
+    $txt = strtolower(trim($texto));
+    if ($txt === '') return false;
+    return (
+        strpos($txt, 'reversa_parcial') !== false
+        && (
+            strpos($txt, 'conversion a paquete') !== false
+            || strpos($txt, 'conversión a paquete') !== false
+            || strpos($txt, 'paquete') !== false
+        )
+    );
+}
+
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['success' => false, 'error' => 'Método no permitido']);
@@ -118,22 +131,32 @@ if (!$caja) {
 }
 $caja_id = $caja['id'];
 
-// Calcular el total registrado en efectivo, yape y plin
-$stmt = $pdo->prepare('SELECT metodo_pago, SUM(monto) as total FROM ingresos_diarios WHERE caja_id = ? GROUP BY metodo_pago');
+// Calcular totales por método en lectura comercial.
+// Se excluye el ajuste técnico de reversa parcial por conversión a paquete
+// para mantener consistencia con api_resumen_diario.
+$stmt = $pdo->prepare('SELECT metodo_pago, monto, descripcion FROM ingresos_diarios WHERE caja_id = ?');
 $stmt->execute([$caja_id]);
-$totales_pago = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$rowsIngresos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $total_efectivo = 0;
 $total_yape = 0;
 $total_plin = 0;
 $total_tarjetas = 0;
 $total_transferencias = 0;
-foreach ($totales_pago as $row) {
-    $metodo = strtolower($row['metodo_pago']);
-    if ($metodo === 'efectivo') $total_efectivo = floatval($row['total']);
-    if ($metodo === 'yape') $total_yape = floatval($row['total']);
-    if ($metodo === 'plin') $total_plin = floatval($row['total']);
-    if ($metodo === 'tarjeta') $total_tarjetas = floatval($row['total']);
-    if ($metodo === 'transferencia') $total_transferencias = floatval($row['total']);
+foreach ($rowsIngresos as $row) {
+    $monto = (float)($row['monto'] ?? 0);
+    if (abs($monto) < 0.01) {
+        continue;
+    }
+    if (caja_es_ajuste_tecnico_conversion_paquete((string)($row['descripcion'] ?? ''))) {
+        continue;
+    }
+
+    $metodo = strtolower(trim((string)($row['metodo_pago'] ?? 'otros')));
+    if ($metodo === 'efectivo') $total_efectivo += $monto;
+    if ($metodo === 'yape') $total_yape += $monto;
+    if ($metodo === 'plin') $total_plin += $monto;
+    if ($metodo === 'tarjeta') $total_tarjetas += $monto;
+    if ($metodo === 'transferencia') $total_transferencias += $monto;
 }
 
 // Total de abonos de contratos (para desglose en contabilidad)

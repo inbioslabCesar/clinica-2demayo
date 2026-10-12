@@ -501,7 +501,7 @@ function resolverEstadoGrupoCotizacion(items) {
 
   const total = rows.reduce((acc, row) => acc + Number(row?.total || 0), 0);
   const totalPagado = rows.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
-  const saldo = rows.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
+  const saldo = rows.reduce((acc, row) => acc + obtenerSaldoPendienteOperativo(row), 0);
   const esControlHc = rows.some((row) => (
     Number(row?.es_hc_proxima_programada || 0) === 1
     || Number(row?.consulta_es_control || 0) === 1
@@ -517,17 +517,55 @@ function resolverEstadoGrupoCotizacion(items) {
   return "pendiente";
 }
 
+function obtenerSaldoPendienteOperativo(row) {
+  const saldoTecnico = Math.max(0, Number(row?.saldo_pendiente || 0));
+  const ajusteConversionPaquete = Math.max(0, Number(row?.ajuste_conversion_paquete || 0));
+  if (ajusteConversionPaquete <= 0) return saldoTecnico;
+  return Math.max(0, Number((saldoTecnico - ajusteConversionPaquete).toFixed(2)));
+}
+
 function agruparFilasOperativasPorEpisodio(rows) {
   const source = Array.isArray(rows) ? rows : [];
   if (source.length === 0) return [];
+
+  const parentById = new Map();
+  source.forEach((row) => {
+    const rowId = Number(row?.id || 0);
+    if (rowId <= 0) return;
+    parentById.set(rowId, Number(row?.cotizacion_padre_id || 0));
+  });
+
+  const resolverRaizEpisodio = (rowId) => {
+    const inicio = Number(rowId || 0);
+    if (inicio <= 0) return 0;
+
+    let actual = inicio;
+    let padre = Number(parentById.get(actual) || 0);
+    const vistos = new Set([actual]);
+
+    while (padre > 0) {
+      if (vistos.has(padre)) {
+        break;
+      }
+      vistos.add(padre);
+      actual = padre;
+
+      if (!parentById.has(actual)) {
+        break;
+      }
+
+      padre = Number(parentById.get(actual) || 0);
+    }
+
+    return actual;
+  };
 
   const grupos = new Map();
   source.forEach((row) => {
     const rowId = Number(row?.id || 0);
     if (rowId <= 0) return;
 
-    const padre = Number(row?.cotizacion_padre_id || 0);
-    const rootId = padre > 0 ? padre : rowId;
+    const rootId = resolverRaizEpisodio(rowId) || rowId;
     if (!grupos.has(rootId)) grupos.set(rootId, []);
     grupos.get(rootId).push(row);
   });
@@ -559,6 +597,8 @@ function agruparFilasOperativasPorEpisodio(rows) {
     const total = items.reduce((acc, row) => acc + Number(row?.total || 0), 0);
     const totalPagado = items.reduce((acc, row) => acc + Number(row?.total_pagado || 0), 0);
     const saldo = items.reduce((acc, row) => acc + Number(row?.saldo_pendiente || 0), 0);
+    const ajusteConversionPaquete = items.reduce((acc, row) => acc + Math.max(0, Number(row?.ajuste_conversion_paquete || 0)), 0);
+    const saldoOperativo = Math.max(0, Number((saldo - ajusteConversionPaquete).toFixed(2)));
     const esHcProximaProgramada = items.some((row) => Number(row?.es_hc_proxima_programada || 0) === 1) ? 1 : 0;
     const consultaEsControl = items.some((row) => Number(row?.consulta_es_control || 0) === 1) ? 1 : 0;
     const estadoGrupo = resolverEstadoGrupoCotizacion(items);
@@ -575,12 +615,15 @@ function agruparFilasOperativasPorEpisodio(rows) {
       total,
       total_pagado: totalPagado,
       saldo_pendiente: saldo,
+      ajuste_conversion_paquete: ajusteConversionPaquete,
+      saldo_pendiente_operativo: saldoOperativo,
       es_hc_proxima_programada: esHcProximaProgramada,
       consulta_es_control: consultaEsControl,
       estado: estadoGrupo,
       ultimo_pago_at: ultimoPago || base?.ultimo_pago_at || "",
       servicios_tipos: serviciosUnicos.join(","),
       pagado_con_descuento: items.some((row) => Number(row?.pagado_con_descuento || 0) === 1) ? 1 : 0,
+      pagado_con_devolucion: items.some((row) => Number(row?.pagado_con_devolucion || 0) === 1) ? 1 : 0,
       paquetes_resumen: paquetesUnicos.join(" | "),
       referencia_origen: [
         String(base?.referencia_origen || "").trim(),
@@ -713,16 +756,30 @@ function badgeMetodoPago(row) {
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
 const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud, paqueteResumenFallback }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
+  const saldoOperativo = useMemo(() => (
+    Number.isFinite(Number(row?.saldo_pendiente_operativo))
+      ? Math.max(0, Number(row?.saldo_pendiente_operativo))
+      : obtenerSaldoPendienteOperativo(row)
+  ), [row]);
   const estadoRow = useMemo(() => {
     const estadoBase = String(row.estado || "").toLowerCase();
     const total = Number(row?.total || 0);
-    const saldo = Number(row?.saldo_pendiente || 0);
+    const saldo = Number(saldoOperativo || 0);
     const pagado = Number(row?.total_pagado || 0);
+    if (estadoBase === "anulada") {
+      return "anulada";
+    }
     if (hcProximaProgramada && total <= 0.00001 && saldo <= 0.00001 && pagado <= 0.00001) {
       return "control";
     }
+    if (saldo <= 0.00001 && total > 0.00001) {
+      return "pagado";
+    }
+    if (pagado > 0.00001 && saldo > 0.00001) {
+      return "parcial";
+    }
     return estadoBase;
-  }, [hcProximaProgramada, row?.estado, row?.saldo_pendiente, row?.total, row?.total_pagado]);
+  }, [hcProximaProgramada, row?.estado, row?.total, row?.total_pagado, saldoOperativo]);
   const numeroComprobante = String(row.numero_comprobante || "").trim();
   const vencimientoMeta = useMemo(() => getVencimientoMeta(row), [row]);
   const cotizacionVencida = Boolean(vencimientoMeta?.vencida);
@@ -1053,10 +1110,10 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
         </div>
       </td>
       <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.total || 0).toFixed(2)}</td>
-      <td className="px-3 py-2 text-right font-semibold">S/ {Number(row.saldo_pendiente ?? 0).toFixed(2)}</td>
+      <td className="px-3 py-2 text-right font-semibold">S/ {Number(saldoOperativo || 0).toFixed(2)}</td>
       <td className="px-3 py-2">
         <div className="flex flex-col items-start gap-1">
-          <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(estadoRow, row.pagado_con_descuento)}`}>
+          <span className={`px-2 py-1 rounded text-xs font-semibold ${badgeEstado(estadoRow, row.pagado_con_descuento, row.pagado_con_devolucion)}`}>
             {labelEstado({ ...row, estado: estadoRow })}
           </span>
           {vencimientoMeta && (
@@ -2145,9 +2202,13 @@ export default function CotizacionesPage() {
     }
   }, [obtenerReporteAtenciones, usuariosCatalogo]);
 
-  const badgeEstado = (value, pagadoConDescuento = 0) => {
+  const badgeEstado = (value, pagadoConDescuento = 0, pagadoConDevolucion = 0) => {
     const st = String(value || "").toLowerCase();
+    if (st === "pagado" && Number(pagadoConDescuento || 0) === 1 && Number(pagadoConDevolucion || 0) === 1) {
+      return "bg-violet-100 text-violet-800";
+    }
     if (st === "pagado" && Number(pagadoConDescuento || 0) === 1) return "bg-emerald-100 text-emerald-800";
+    if (st === "pagado" && Number(pagadoConDevolucion || 0) === 1) return "bg-cyan-100 text-cyan-800";
     if (st === "pagado") return "bg-green-100 text-green-700";
     if (st === "parcial") return "bg-amber-100 text-amber-700";
     if (st === "informativo") return "bg-slate-100 text-slate-700";
@@ -2158,7 +2219,11 @@ export default function CotizacionesPage() {
 
   const labelEstado = (row) => {
     const st = String(row?.estado || "").toLowerCase();
+    const tieneDescuento = Number(row?.pagado_con_descuento || 0) === 1;
+    const tieneDevolucion = Number(row?.pagado_con_devolucion || 0) === 1;
+    if (st === "pagado" && tieneDescuento && tieneDevolucion) return "pagado con descuento y devolucion";
     if (st === "pagado" && Number(row?.pagado_con_descuento || 0) === 1) return "pagado con descuento";
+    if (st === "pagado" && Number(row?.pagado_con_devolucion || 0) === 1) return "pagado con devolucion";
     if (st === "informativo") return "informativo";
     return row?.estado;
   };

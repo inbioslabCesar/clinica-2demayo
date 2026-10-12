@@ -123,6 +123,8 @@ function LiquidacionHonorariosPage() {
 
   const badgeOrigenClass = (value) => {
     const key = (value || "").toLowerCase();
+    if (key === "cotizacion_paquete") return "bg-violet-100 text-violet-800";
+    if (key === "cotizacion_consulta_sola") return "bg-sky-100 text-sky-800";
     if (key === "contrato") return "bg-cyan-100 text-cyan-800";
     if (key === "cotizacion") return "bg-indigo-100 text-indigo-800";
     return "bg-slate-100 text-slate-700";
@@ -164,9 +166,25 @@ function LiquidacionHonorariosPage() {
 
   const labelOrigen = (value) => {
     const key = (value || "").toLowerCase();
+    if (key === "cotizacion_paquete") return "Cotiz. paquete";
+    if (key === "cotizacion_consulta_sola") return "Cotiz. consulta sola";
     if (key === "contrato") return "Contrato";
     if (key === "cotizacion") return "Cotización";
     return "Directo";
+  };
+
+  const getOrigenDisplayKey = (item) => item?.origen_detalle || item?.origen_resumen || "";
+  const getOrigenDisplayLabel = (item) => {
+    const key = getOrigenDisplayKey(item);
+    const paqueteId = Number(item?.paquete_id_referencia || 0);
+    const paqueteCodigo = String(item?.paquete_codigo_referencia || "").trim();
+    if (key === "cotizacion_paquete" && Number.isFinite(paqueteId) && paqueteId > 0) {
+      return `Cotiz. paquete #${paqueteId}`;
+    }
+    if (key === "cotizacion_paquete" && paqueteCodigo) {
+      return `Cotiz. paquete ${paqueteCodigo}`;
+    }
+    return labelOrigen(key);
   };
 
   const badgeAntiguedad = (dias) => {
@@ -555,7 +573,7 @@ function LiquidacionHonorariosPage() {
                       <span className="text-xs px-2 py-1 rounded bg-blue-200 text-blue-800 font-bold">{h.tipo_servicio ? h.tipo_servicio.toUpperCase() : ""}</span>
                     </div>
                     <div className="flex flex-wrap gap-2 mb-1">
-                      <span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeOrigenClass(h.origen_resumen)}`}>{labelOrigen(h.origen_resumen)}</span>
+                      <span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeOrigenClass(getOrigenDisplayKey(h))}`}>{getOrigenDisplayLabel(h)}</span>
                       <span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${antiguedad.cls}`}>{antiguedad.label}</span>
                     </div>
                     <div className="text-sm text-gray-700 mb-1">{h.descripcion ? h.descripcion.toUpperCase() : ""}</div>
@@ -631,7 +649,7 @@ function LiquidacionHonorariosPage() {
                       <td className="px-4 py-2">{h.descripcion ? h.descripcion.toUpperCase() : ""}</td>
                       <td className="px-4 py-2">{h.tipo_servicio ? h.tipo_servicio.toUpperCase() : ""}</td>
                       <td className="px-4 py-2">{`${h.paciente_nombre} ${h.paciente_apellido}`.toUpperCase()}</td>
-                      <td className="px-4 py-2"><span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeOrigenClass(h.origen_resumen)}`}>{labelOrigen(h.origen_resumen)}</span></td>
+                      <td className="px-4 py-2"><span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeOrigenClass(getOrigenDisplayKey(h))}`}>{getOrigenDisplayLabel(h)}</span></td>
                       <td className="px-4 py-2"><span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${antiguedad.cls}`}>{antiguedad.label}</span></td>
                       <td className="hidden sm:table-cell px-4 py-2">{h.fecha ? h.fecha.toUpperCase() : ""}</td>
                       <td className="hidden sm:table-cell px-4 py-2">{h.turno ? h.turno.toUpperCase() : ""}</td>

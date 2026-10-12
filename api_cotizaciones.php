@@ -5667,8 +5667,381 @@ function cotizacion_firmas_servicios_existentes($conn, $cotizacionIds) {
     return $firmas;
 }
 
-function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, &$serviciosRepetidos = []) {
+function cotizacion_mapa_detalles_existentes_por_firma($conn, $cotizacionIds) {
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $whereEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND (cd.estado_item IS NULL OR cd.estado_item <> 'eliminado')"
+        : '';
+    $hasSnapshot = column_exists($conn, 'cotizaciones_detalle', 'snapshot_json');
+    $selectSnapshot = $hasSnapshot ? ', cd.snapshot_json' : ", NULL AS snapshot_json";
+    $sql = "SELECT cd.id, cd.cotizacion_id, cd.servicio_tipo, cd.servicio_id, cd.descripcion, cd.consulta_id, cd.medico_id, cd.cantidad, cd.subtotal{$selectSnapshot}
+            FROM cotizaciones_detalle cd
+            WHERE cd.cotizacion_id IN ({$placeholders})
+              AND cd.servicio_id IS NOT NULL
+              AND cd.servicio_id > 0{$whereEstado}
+            ORDER BY cd.id ASC";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $mapa = [];
+    foreach ($rows as $row) {
+        $firma = cotizacion_firma_servicio_basica($row['servicio_tipo'] ?? '', (int)($row['servicio_id'] ?? 0));
+        if ($firma === '|0') {
+            continue;
+        }
+        if (!isset($mapa[$firma])) {
+            $mapa[$firma] = $row;
+        }
+    }
+    return $mapa;
+}
+
+function cotizacion_extraer_regla_honorario_paquete($detalle) {
+    if (!is_array($detalle)) {
+        return null;
+    }
+    $regla = $detalle['honorario_regla'] ?? null;
+    if (!is_array($regla)) {
+        return null;
+    }
+    $modo = strtolower(trim((string)($regla['modo_honorario'] ?? '')));
+    if (!in_array($modo, ['monto_fijo_medico_paquete', 'porcentaje_medico_paquete'], true)) {
+        return null;
+    }
+    if ($modo === 'monto_fijo_medico_paquete') {
+        $montoFijo = isset($regla['monto_fijo_medico']) ? (float)$regla['monto_fijo_medico'] : 0.0;
+        if ($montoFijo <= 0) {
+            return null;
+        }
+    } else {
+        $porcentaje = isset($regla['porcentaje_medico']) ? (float)$regla['porcentaje_medico'] : 0.0;
+        if ($porcentaje <= 0) {
+            return null;
+        }
+    }
+    return $regla;
+}
+
+function cotizacion_ajustar_honorarios_por_regla_paquete_existente($conn, $detalleExistente, $detalleNuevo, $usuarioId, $motivo) {
+    $regla = cotizacion_extraer_regla_honorario_paquete($detalleNuevo);
+    if (!is_array($regla) || empty($detalleExistente)) {
+        return ['aplicado' => false, 'hpc' => 0, 'hm' => 0];
+    }
+
+    $detalleId = (int)($detalleExistente['id'] ?? 0);
+    $cotizacionIdExistente = (int)($detalleExistente['cotizacion_id'] ?? 0);
+    if ($detalleId <= 0 || $cotizacionIdExistente <= 0) {
+        return ['aplicado' => false, 'hpc' => 0, 'hm' => 0];
+    }
+
+    $subtotalExistente = max(0.0, (float)($detalleExistente['subtotal'] ?? 0));
+    $cantidadExistente = max(1.0, (float)($detalleExistente['cantidad'] ?? 1));
+    $subtotalObjetivo = max(0.0, (float)($detalleNuevo['subtotal'] ?? 0));
+    $cantidadObjetivo = max(1.0, (float)($detalleNuevo['cantidad'] ?? $cantidadExistente));
+    if ($subtotalObjetivo <= 0) {
+        $subtotalObjetivo = $subtotalExistente;
+    }
+    if ($subtotalObjetivo <= 0) {
+        return ['aplicado' => false, 'hpc' => 0, 'hm' => 0];
+    }
+
+    $modo = strtolower(trim((string)($regla['modo_honorario'] ?? '')));
+    if ($modo === 'monto_fijo_medico_paquete') {
+        $montoFijo = max(0.0, (float)($regla['monto_fijo_medico'] ?? 0));
+        $montoMedico = round(max(0.0, $montoFijo * $cantidadObjetivo), 2);
+    } else {
+        $porcentaje = min(100.0, max(0.0, (float)($regla['porcentaje_medico'] ?? 0)));
+        $montoMedico = round($subtotalObjetivo * ($porcentaje / 100), 2);
+    }
+    $tarifaObjetivoHonorario = round(max($subtotalObjetivo, $montoMedico), 2);
+    $montoClinica = round(max(0.0, $tarifaObjetivoHonorario - $montoMedico), 2);
+    $porcentajeMedico = $tarifaObjetivoHonorario > 0 ? round(($montoMedico * 100) / $tarifaObjetivoHonorario, 2) : 0.0;
+    $porcentajeClinica = $tarifaObjetivoHonorario > 0 ? round(($montoClinica * 100) / $tarifaObjetivoHonorario, 2) : 0.0;
+
+    $marcaAjuste = ' [AJUSTE_PAQUETE_ADENDA cot=' . $cotizacionIdExistente . ' det=' . $detalleId . ']';
+
+    $detalleRevalorado = 0;
+    $debeRevalorarDetalle = abs($subtotalObjetivo - $subtotalExistente) > 0.009;
+    $precioUnitarioObjetivo = $cantidadObjetivo > 0 ? round($subtotalObjetivo / $cantidadObjetivo, 2) : 0.0;
+
+    if (column_exists($conn, 'cotizaciones_detalle', 'snapshot_json')) {
+        $snapshotExistente = [];
+        $rawSnapshot = (string)($detalleExistente['snapshot_json'] ?? '');
+        if ($rawSnapshot !== '') {
+            $dec = json_decode($rawSnapshot, true);
+            if (is_array($dec)) {
+                $snapshotExistente = $dec;
+            }
+        }
+
+        $snapshotExistente['honorario_regla'] = $regla;
+        if (isset($detalleNuevo['paquete_id'])) $snapshotExistente['paquete_id'] = (int)$detalleNuevo['paquete_id'];
+        if (isset($detalleNuevo['paquete_codigo'])) $snapshotExistente['paquete_codigo'] = (string)$detalleNuevo['paquete_codigo'];
+        if (isset($detalleNuevo['paquete_tipo'])) $snapshotExistente['paquete_tipo'] = (string)$detalleNuevo['paquete_tipo'];
+        if (isset($detalleNuevo['paquete_nombre'])) $snapshotExistente['paquete_nombre'] = (string)$detalleNuevo['paquete_nombre'];
+        if (isset($detalleNuevo['paquete_monto_clinica_fijo'])) $snapshotExistente['paquete_monto_clinica_fijo'] = (float)$detalleNuevo['paquete_monto_clinica_fijo'];
+
+        $sets = ['snapshot_json = ?'];
+        $params = [json_encode($snapshotExistente, JSON_UNESCAPED_UNICODE)];
+        $types = 's';
+        if ($debeRevalorarDetalle) {
+            $sets[] = 'cantidad = ?';
+            $params[] = $cantidadObjetivo;
+            $types .= 'd';
+            $sets[] = 'precio_unitario = ?';
+            $params[] = $precioUnitarioObjetivo;
+            $types .= 'd';
+            $sets[] = 'subtotal = ?';
+            $params[] = $subtotalObjetivo;
+            $types .= 'd';
+        }
+        if (column_exists($conn, 'cotizaciones_detalle', 'paquete_id') && isset($detalleNuevo['paquete_id'])) {
+            $sets[] = 'paquete_id = ?';
+            $params[] = (int)$detalleNuevo['paquete_id'];
+            $types .= 'i';
+        }
+        if (column_exists($conn, 'cotizaciones_detalle', 'paquete_codigo') && isset($detalleNuevo['paquete_codigo'])) {
+            $sets[] = 'paquete_codigo = ?';
+            $params[] = (string)$detalleNuevo['paquete_codigo'];
+            $types .= 's';
+        }
+        if (column_exists($conn, 'cotizaciones_detalle', 'paquete_tipo') && isset($detalleNuevo['paquete_tipo'])) {
+            $sets[] = 'paquete_tipo = ?';
+            $params[] = (string)$detalleNuevo['paquete_tipo'];
+            $types .= 's';
+        }
+        if (column_exists($conn, 'cotizaciones_detalle', 'editado_por')) {
+            $sets[] = 'editado_por = ?';
+            $params[] = (int)$usuarioId;
+            $types .= 'i';
+        }
+        if (column_exists($conn, 'cotizaciones_detalle', 'editado_en')) {
+            $sets[] = 'editado_en = NOW()';
+        }
+        if (column_exists($conn, 'cotizaciones_detalle', 'motivo_edicion')) {
+            $sets[] = 'motivo_edicion = ?';
+            $params[] = 'Ajuste regla honorario por cambio a paquete en adenda: ' . trim((string)$motivo);
+            $types .= 's';
+        }
+        $params[] = $detalleId;
+        $types .= 'i';
+
+        $sqlUpdDet = 'UPDATE cotizaciones_detalle SET ' . implode(', ', $sets) . ' WHERE id = ?';
+        $stmtUpdDet = $conn->prepare($sqlUpdDet);
+        if ($stmtUpdDet) {
+            $stmtUpdDet->bind_param($types, ...$params);
+            $stmtUpdDet->execute();
+            $detalleRevalorado = max(0, (int)$stmtUpdDet->affected_rows);
+            $stmtUpdDet->close();
+        }
+    }
+
+    $cotizacionActualizada = 0;
+    $devolucionAplicada = 0.0;
+    if ($debeRevalorarDetalle) {
+        $totalActualizado = total_detalles_cotizacion_activos($conn, $cotizacionIdExistente);
+        $stmtCot = $conn->prepare('SELECT total_pagado FROM cotizaciones WHERE id = ? LIMIT 1');
+        $totalPagado = 0.0;
+        if ($stmtCot) {
+            $stmtCot->bind_param('i', $cotizacionIdExistente);
+            $stmtCot->execute();
+            $rowCot = $stmtCot->get_result()->fetch_assoc();
+            $stmtCot->close();
+            $totalPagado = (float)($rowCot['total_pagado'] ?? 0);
+        }
+        $devolucionPotencial = max(0.0, round((float)$totalPagado - (float)$totalActualizado, 2));
+        $totalPagadoAjustado = (float)$totalPagado;
+        if ($devolucionPotencial > 0) {
+            $totalPagadoAjustado = max(0.0, round((float)$totalPagado - $devolucionPotencial, 2));
+        }
+
+        $fin = resolver_estado_financiero_cotizacion($conn, $cotizacionIdExistente, (float)$totalActualizado, (float)$totalPagadoAjustado);
+        if (column_exists($conn, 'cotizaciones', 'saldo_pendiente')) {
+            $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = ?, total_pagado = ?, saldo_pendiente = ?, estado = ? WHERE id = ?');
+            if ($stmtUpdCot) {
+                $saldoNuevo = (float)($fin['saldo'] ?? max(0.0, $totalActualizado - $totalPagadoAjustado));
+                $estadoNuevo = (string)($fin['estado'] ?? 'pendiente');
+                $stmtUpdCot->bind_param('dddsi', $totalActualizado, $totalPagadoAjustado, $saldoNuevo, $estadoNuevo, $cotizacionIdExistente);
+                $stmtUpdCot->execute();
+                $cotizacionActualizada = max(0, (int)$stmtUpdCot->affected_rows);
+                $stmtUpdCot->close();
+            }
+        } else {
+            $stmtUpdCot = $conn->prepare('UPDATE cotizaciones SET total = ?, estado = ? WHERE id = ?');
+            if ($stmtUpdCot) {
+                $estadoNuevo = (string)($fin['estado'] ?? 'pendiente');
+                $stmtUpdCot->bind_param('dsi', $totalActualizado, $estadoNuevo, $cotizacionIdExistente);
+                $stmtUpdCot->execute();
+                $cotizacionActualizada = max(0, (int)$stmtUpdCot->affected_rows);
+                $stmtUpdCot->close();
+            }
+        }
+
+        if ($devolucionPotencial > 0) {
+            $saldoAnteriorMov = 0.0;
+            $saldoNuevoMov = 0.0;
+            if (table_exists($conn, 'cotizacion_movimientos')) {
+                $descripcionMov = 'Ajuste por conversión a paquete en adenda: reversa de sobrecobro | Monto devuelto: S/ '
+                    . number_format($devolucionPotencial, 2, '.', '')
+                    . ' | Motivo: ' . trim((string)$motivo);
+                $stmtMov = $conn->prepare("INSERT INTO cotizacion_movimientos (cotizacion_id, cobro_id, tipo_movimiento, monto, saldo_anterior, saldo_nuevo, descripcion, usuario_id) VALUES (?, NULL, 'devolucion', ?, ?, ?, ?, ?)");
+                if ($stmtMov) {
+                    $stmtMov->bind_param('idddsi', $cotizacionIdExistente, $devolucionPotencial, $saldoAnteriorMov, $saldoNuevoMov, $descripcionMov, $usuarioId);
+                    $stmtMov->execute();
+                    $stmtMov->close();
+                }
+            }
+
+            $syncParcial = CotizacionSyncService::reversarMontoParcialPorCotizacion(
+                $conn,
+                $cotizacionIdExistente,
+                (string)($detalleExistente['servicio_tipo'] ?? ($detalleNuevo['servicio_tipo'] ?? 'consulta')),
+                $devolucionPotencial,
+                (int)$usuarioId,
+                'Ajuste automático por conversión a paquete en adenda',
+                '',
+                (string)($detalleExistente['descripcion'] ?? ($detalleNuevo['descripcion'] ?? ''))
+            );
+            if (!empty($syncParcial['monto_reversado'])) {
+                $devolucionAplicada = round((float)$syncParcial['monto_reversado'], 2);
+            }
+        }
+    }
+
+    $hpcAjustados = 0;
+    if (table_exists($conn, 'honorarios_por_cobrar')) {
+        $setsHpc = [
+            'tarifa_total = ?',
+            'monto_clinica = ?',
+            'monto_medico = ?',
+            'porcentaje_aplicado_clinica = ?',
+            'porcentaje_aplicado_medico = ?',
+        ];
+        if (column_exists($conn, 'honorarios_por_cobrar', 'updated_at')) {
+            $setsHpc[] = 'updated_at = NOW()';
+        }
+        if (column_exists($conn, 'honorarios_por_cobrar', 'observaciones')) {
+            $setsHpc[] = "observaciones = CONCAT(COALESCE(observaciones, ''), ?)";
+        }
+
+        $sqlHpc = "UPDATE honorarios_por_cobrar
+                   SET " . implode(', ', $setsHpc) . "
+                   WHERE cotizacion_id = ?
+                     AND estado_consolidacion = 'pendiente'";
+        $tiposHpc = 'ddddd';
+        $paramsHpc = [$tarifaObjetivoHonorario, $montoClinica, $montoMedico, $porcentajeClinica, $porcentajeMedico];
+        if (column_exists($conn, 'honorarios_por_cobrar', 'observaciones')) {
+            $paramsHpc[] = $marcaAjuste;
+            $tiposHpc .= 's';
+        }
+        $paramsHpc[] = $cotizacionIdExistente;
+        $tiposHpc .= 'i';
+
+        if (column_exists($conn, 'honorarios_por_cobrar', 'origen_uid')) {
+            $sqlHpc .= ' AND origen_uid = ?';
+            $paramsHpc[] = 'cot:' . $cotizacionIdExistente . '|det:' . $detalleId;
+            $tiposHpc .= 's';
+        } else {
+            $sqlHpc .= ' AND COALESCE(tarifa_id, 0) = ? AND LOWER(TRIM(COALESCE(tipo_servicio, ""))) = ?';
+            $paramsHpc[] = (int)($detalleExistente['servicio_id'] ?? 0);
+            $paramsHpc[] = normalizar_tipo_servicio_cotizacion($detalleExistente['servicio_tipo'] ?? '');
+            $tiposHpc .= 'is';
+        }
+
+        $stmtHpc = $conn->prepare($sqlHpc);
+        if ($stmtHpc) {
+            $stmtHpc->bind_param($tiposHpc, ...$paramsHpc);
+            $stmtHpc->execute();
+            $hpcAjustados = max(0, (int)$stmtHpc->affected_rows);
+            $stmtHpc->close();
+        }
+    }
+
+    $hmAjustados = 0;
+    if (table_exists($conn, 'honorarios_medicos_movimientos') && table_exists($conn, 'cotizacion_movimientos')) {
+        $servicioTipo = normalizar_tipo_servicio_cotizacion($detalleExistente['servicio_tipo'] ?? '');
+        $servicioId = (int)($detalleExistente['servicio_id'] ?? 0);
+        $consultaId = (int)($detalleExistente['consulta_id'] ?? 0);
+        $medicoId = (int)($detalleExistente['medico_id'] ?? 0);
+
+        $setHm = [
+            'h.tarifa_total = ?',
+            'h.monto_clinica = ?',
+            'h.monto_medico = ?',
+            'h.porcentaje_aplicado_clinica = ?',
+            'h.porcentaje_aplicado_medico = ?',
+        ];
+        if (column_exists($conn, 'honorarios_medicos_movimientos', 'observaciones')) {
+            $setHm[] = "h.observaciones = CONCAT(COALESCE(h.observaciones, ''), ?)";
+        }
+
+        $sqlHm = "UPDATE honorarios_medicos_movimientos h
+                  INNER JOIN cotizacion_movimientos cm ON cm.cobro_id = h.cobro_id
+                  SET " . implode(', ', $setHm) . "
+                  WHERE cm.cotizacion_id = ?
+                    AND cm.tipo_movimiento = 'abono'
+                    AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ''))) = 'pendiente'
+                    AND LOWER(TRIM(COALESCE(h.tipo_servicio, ''))) = ?";
+        $tiposHm = 'dddddis';
+        $paramsHm = [$tarifaObjetivoHonorario, $montoClinica, $montoMedico, $porcentajeClinica, $porcentajeMedico];
+        if (column_exists($conn, 'honorarios_medicos_movimientos', 'observaciones')) {
+            $paramsHm[] = $marcaAjuste;
+            $tiposHm = 'dddddsis';
+        }
+        $paramsHm[] = $cotizacionIdExistente;
+        $paramsHm[] = $servicioTipo;
+        if ($servicioId > 0) {
+            $sqlHm .= ' AND COALESCE(h.tarifa_id, 0) = ?';
+            $paramsHm[] = $servicioId;
+            $tiposHm .= 'i';
+        }
+        if ($consultaId > 0) {
+            $sqlHm .= ' AND COALESCE(h.consulta_id, 0) = ?';
+            $paramsHm[] = $consultaId;
+            $tiposHm .= 'i';
+        }
+        if ($medicoId > 0) {
+            $sqlHm .= ' AND COALESCE(h.medico_id, 0) = ?';
+            $paramsHm[] = $medicoId;
+            $tiposHm .= 'i';
+        }
+
+        $stmtHm = $conn->prepare($sqlHm);
+        if ($stmtHm) {
+            $stmtHm->bind_param($tiposHm, ...$paramsHm);
+            $stmtHm->execute();
+            $hmAjustados = max(0, (int)$stmtHm->affected_rows);
+            $stmtHm->close();
+        }
+    }
+
+    return [
+        'aplicado' => true,
+        'detalle_revalorado' => $detalleRevalorado,
+        'cotizacion_actualizada' => $cotizacionActualizada,
+        'devolucion_aplicada' => $devolucionAplicada,
+        'hpc' => $hpcAjustados,
+        'hm' => $hmAjustados
+    ];
+}
+
+function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, &$serviciosRepetidos = [], &$ajustesPaqueteSobreExistentes = [], $detallesExistentesPorFirma = []) {
     $serviciosRepetidos = [];
+    $ajustesPaqueteSobreExistentes = [];
     $firmasNuevas = [];
     $delta = [];
 
@@ -5688,6 +6061,14 @@ function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, 
         $firma = cotizacion_firma_servicio_basica($servicioTipo, $servicioId);
         if (isset($firmasExistentes[$firma]) || isset($firmasNuevas[$firma])) {
             $serviciosRepetidos[] = trim((string)($detalle['descripcion'] ?? ($servicioTipo . ' #' . $servicioId)));
+            $reglaPaquete = cotizacion_extraer_regla_honorario_paquete($detalle);
+            if (is_array($reglaPaquete) && isset($detallesExistentesPorFirma[$firma]) && is_array($detallesExistentesPorFirma[$firma])) {
+                $ajustesPaqueteSobreExistentes[] = [
+                    'firma' => $firma,
+                    'detalle_nuevo' => $detalle,
+                    'detalle_existente' => $detallesExistentesPorFirma[$firma],
+                ];
+            }
             continue;
         }
 
@@ -5804,8 +6185,16 @@ function crear_adenda_cotizacion($conn, $data) {
         }
 
         $firmasExistentes = cotizacion_firmas_servicios_existentes($conn, $cadenaIds);
+        $detallesExistentesPorFirma = cotizacion_mapa_detalles_existentes_por_firma($conn, $cadenaIds);
         $serviciosRepetidos = [];
-        $detallesDelta = cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, $serviciosRepetidos);
+        $ajustesPaqueteSobreExistentes = [];
+        $detallesDelta = cotizacion_filtrar_detalles_delta_adenda(
+            $detalles,
+            $firmasExistentes,
+            $serviciosRepetidos,
+            $ajustesPaqueteSobreExistentes,
+            $detallesExistentesPorFirma
+        );
         if (empty($detallesDelta)) {
             throw new Exception('No hay servicios nuevos para adicionar. Si requiere repetir una prueba ya realizada/pagada, registre una nueva cotización.', 409);
         }
@@ -5934,6 +6323,31 @@ function crear_adenda_cotizacion($conn, $data) {
             'total_adenda' => $totalReal
         ], 1);
 
+        $ajustesHonorarioPaqueteAplicados = 0;
+        $honorariosPorCobrarAjustadosPaquete = 0;
+        $honorariosMovimientosAjustadosPaquete = 0;
+        $devolucionAplicadaPaquete = 0.0;
+        if (!empty($ajustesPaqueteSobreExistentes)) {
+            foreach ($ajustesPaqueteSobreExistentes as $ajuste) {
+                if (!is_array($ajuste)) {
+                    continue;
+                }
+                $resultadoAjuste = cotizacion_ajustar_honorarios_por_regla_paquete_existente(
+                    $conn,
+                    (array)($ajuste['detalle_existente'] ?? []),
+                    (array)($ajuste['detalle_nuevo'] ?? []),
+                    $usuarioId,
+                    $motivo
+                );
+                if (!empty($resultadoAjuste['aplicado'])) {
+                    $ajustesHonorarioPaqueteAplicados++;
+                    $honorariosPorCobrarAjustadosPaquete += (int)($resultadoAjuste['hpc'] ?? 0);
+                    $honorariosMovimientosAjustadosPaquete += (int)($resultadoAjuste['hm'] ?? 0);
+                    $devolucionAplicadaPaquete += (float)($resultadoAjuste['devolucion_aplicada'] ?? 0);
+                }
+            }
+        }
+
         $conn->commit();
 
         if ($estadoAdenda === 'pagado') {
@@ -5965,6 +6379,10 @@ function crear_adenda_cotizacion($conn, $data) {
             'cotizacion_padre_id' => $cotizacionId,
             'numero_comprobante' => sprintf("Q%06d", $nuevaId),
             'fecha_operativa' => $fechaOperativaRaiz,
+            'ajustes_honorario_paquete_aplicados' => $ajustesHonorarioPaqueteAplicados,
+            'honorarios_por_cobrar_ajustados_paquete' => $honorariosPorCobrarAjustadosPaquete,
+            'honorarios_movimientos_ajustados_paquete' => $honorariosMovimientosAjustadosPaquete,
+            'devolucion_aplicada_paquete' => round($devolucionAplicadaPaquete, 2),
             'servicios_repetidos_omitidos' => array_values(array_filter($serviciosRepetidos, function ($v) {
                 return trim((string)$v) !== '';
             }))
@@ -8502,6 +8920,8 @@ switch ($method) {
         }));
         $serviciosPorCotizacion = [];
         $descuentoPorCotizacion = [];
+        $devolucionPorCotizacion = [];
+        $devolucionPorRaiz = [];
         $labCompletadoPorCotizacion = [];
         $labReferenciaPorCotizacion = [];
         $ordenLaboratorioPorCotizacion = [];
@@ -8525,6 +8945,7 @@ switch ($method) {
         $adicionalDinamicoPorCotizacion = [];
         $adicionalDinamicoItemsPorCotizacion = [];
         $paquetesResumenPorCotizacion = [];
+        $ajusteConversionPaquetePorCotizacion = [];
 
         if (!empty($idsPagina)) {
             try {
@@ -8532,7 +8953,29 @@ switch ($method) {
             $typesIds = str_repeat('i', count($idsPagina));
 
             if (table_exists($conn, 'cotizacion_movimientos')) {
-                $sqlDesc = "SELECT cotizacion_id, SUM(CASE WHEN LOWER(tipo_movimiento) = 'devolucion' THEN monto ELSE 0 END) AS total_descuento
+                $sqlDesc = "SELECT cotizacion_id,
+                                   SUM(
+                                       CASE
+                                           WHEN LOWER(tipo_movimiento) = 'devolucion'
+                                                AND (
+                                                    LOWER(COALESCE(descripcion, '')) LIKE '%descuento aplicado%'
+                                                    OR LOWER(COALESCE(descripcion, '')) LIKE 'descuento%'
+                                                )
+                                           THEN monto
+                                           ELSE 0
+                                       END
+                                   ) AS total_descuento,
+                                   SUM(
+                                       CASE
+                                           WHEN LOWER(tipo_movimiento) = 'devolucion'
+                                                AND NOT (
+                                                    LOWER(COALESCE(descripcion, '')) LIKE '%descuento aplicado%'
+                                                    OR LOWER(COALESCE(descripcion, '')) LIKE 'descuento%'
+                                                )
+                                           THEN monto
+                                           ELSE 0
+                                       END
+                                   ) AS total_devolucion
                             FROM cotizacion_movimientos
                             WHERE cotizacion_id IN ($placeholders)
                             GROUP BY cotizacion_id";
@@ -8546,6 +8989,77 @@ switch ($method) {
                         $cid = (int)($rowDesc['cotizacion_id'] ?? 0);
                         if ($cid > 0) {
                             $descuentoPorCotizacion[$cid] = (float)($rowDesc['total_descuento'] ?? 0);
+                            $devolucionPorCotizacion[$cid] = (float)($rowDesc['total_devolucion'] ?? 0);
+                        }
+                    }
+                }
+
+                $sqlAjusteConversion = "SELECT cotizacion_id,
+                                               SUM(
+                                                   CASE
+                                                       WHEN LOWER(tipo_movimiento) = 'devolucion'
+                                                            AND (
+                                                                LOWER(COALESCE(descripcion, '')) LIKE '%conversion a paquete%'
+                                                                OR LOWER(COALESCE(descripcion, '')) LIKE '%conversión a paquete%'
+                                                            )
+                                                       THEN monto
+                                                       ELSE 0
+                                                   END
+                                               ) AS total_ajuste_conversion
+                                        FROM cotizacion_movimientos
+                                        WHERE cotizacion_id IN ($placeholders)
+                                        GROUP BY cotizacion_id";
+                $stmtAjusteConversion = $conn->prepare($sqlAjusteConversion);
+                if ($stmtAjusteConversion) {
+                    $stmtAjusteConversion->bind_param($typesIds, ...$idsPagina);
+                    $stmtAjusteConversion->execute();
+                    $rowsAjusteConversion = $stmtAjusteConversion->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stmtAjusteConversion->close();
+                    foreach ($rowsAjusteConversion as $rowAjusteConversion) {
+                        $cid = (int)($rowAjusteConversion['cotizacion_id'] ?? 0);
+                        if ($cid > 0) {
+                            $ajusteConversionPaquetePorCotizacion[$cid] = (float)($rowAjusteConversion['total_ajuste_conversion'] ?? 0);
+                        }
+                    }
+                }
+
+                if (column_exists($conn, 'cotizaciones', 'cotizacion_padre_id')) {
+                    $sqlDevRaiz = "SELECT
+                                    CASE
+                                      WHEN COALESCE(c.cotizacion_padre_id, 0) > 0 THEN c.cotizacion_padre_id
+                                      ELSE c.id
+                                    END AS root_id,
+                                    SUM(
+                                        CASE
+                                            WHEN LOWER(cm.tipo_movimiento) = 'devolucion'
+                                                 AND NOT (
+                                                     LOWER(COALESCE(cm.descripcion, '')) LIKE '%descuento aplicado%'
+                                                     OR LOWER(COALESCE(cm.descripcion, '')) LIKE 'descuento%'
+                                                 )
+                                            THEN cm.monto
+                                            ELSE 0
+                                        END
+                                    ) AS total_devolucion
+                                  FROM cotizaciones c
+                                  INNER JOIN cotizacion_movimientos cm ON cm.cotizacion_id = c.id
+                                  WHERE (
+                                      c.id IN ($placeholders)
+                                      OR c.cotizacion_padre_id IN ($placeholders)
+                                  )
+                                  GROUP BY root_id";
+                    $stmtDevRaiz = $conn->prepare($sqlDevRaiz);
+                    if ($stmtDevRaiz) {
+                        $typesRaiz = $typesIds . $typesIds;
+                        $paramsRaiz = array_merge($idsPagina, $idsPagina);
+                        $stmtDevRaiz->bind_param($typesRaiz, ...$paramsRaiz);
+                        $stmtDevRaiz->execute();
+                        $rowsDevRaiz = $stmtDevRaiz->get_result()->fetch_all(MYSQLI_ASSOC);
+                        $stmtDevRaiz->close();
+                        foreach ($rowsDevRaiz as $rowDevRaiz) {
+                            $rootId = (int)($rowDevRaiz['root_id'] ?? 0);
+                            if ($rootId > 0) {
+                                $devolucionPorRaiz[$rootId] = (float)($rowDevRaiz['total_devolucion'] ?? 0);
+                            }
                         }
                     }
                 }
@@ -9174,6 +9688,7 @@ switch ($method) {
             $cotRow['metodos_pago_resumen'] = $metodosPagoListaPorCotizacion[$cid] ?? '';
             $cotRow['adicional_dinamico'] = (int)($adicionalDinamicoPorCotizacion[$cid] ?? 0);
             $cotRow['adicional_dinamico_items'] = (int)($adicionalDinamicoItemsPorCotizacion[$cid] ?? 0);
+            $cotRow['ajuste_conversion_paquete'] = (float)($ajusteConversionPaquetePorCotizacion[$cid] ?? 0);
 
             $esControlHcFila = (int)($cotRow['es_hc_proxima_programada'] ?? 0) === 1
                 && (int)($cotRow['consulta_es_control'] ?? 0) === 1;
@@ -9197,9 +9712,13 @@ switch ($method) {
             $cid = (int)($cotizacion['id'] ?? 0);
             $estado = strtolower(trim((string)($cotizacion['estado'] ?? '')));
             $descuento = (float)($descuentoPorCotizacion[$cid] ?? 0);
+            $devolucion = (float)($devolucionPorCotizacion[$cid] ?? 0);
             $cotizacion['cotizacion_padre_id'] = (int)($cotizacion['cotizacion_padre_id'] ?? 0);
+            $rootId = $cotizacion['cotizacion_padre_id'] > 0 ? $cotizacion['cotizacion_padre_id'] : $cid;
+            $devolucionGrupo = (float)($devolucionPorRaiz[$rootId] ?? 0);
             $cotizacion['es_adenda'] = (int)($cotizacion['es_adenda'] ?? 0);
             $cotizacion['pagado_con_descuento'] = ($estado === 'pagado' && $descuento > 0) ? 1 : 0;
+            $cotizacion['pagado_con_devolucion'] = (in_array($estado, ['pagado', 'parcial'], true) && ($devolucion > 0 || $devolucionGrupo > 0)) ? 1 : 0;
         }
         unset($cotizacion);
 

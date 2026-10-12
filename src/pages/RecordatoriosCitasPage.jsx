@@ -81,11 +81,9 @@ function disponibilidadPagoLabel(cita) {
   const cotId = Number(cita?.cotizacion_id || 0);
   const saldo = Number(cita?.saldo_pendiente || 0);
   const estado = String(cita?.cotizacion_estado || "").toLowerCase();
-  const saldoRepetido = Boolean(cita?._saldo_repetido_cotizacion);
 
   if (cotId <= 0) return "Sin orden";
-  if (saldo > 0 && saldoRepetido) return `Incluido en saldo cotiz. #${cotId}`;
-  if (saldo > 0) return `Saldo cotiz. S/ ${saldo.toFixed(2)}`;
+  if (saldo > 0) return estado === "parcial" ? "Parcial" : "Falta cancelar";
   if (["pagado", "pagada", "control"].includes(estado)) return "Pagado";
   return "Sin saldo";
 }
@@ -224,16 +222,33 @@ function servicioTokensDesdeItem(item) {
 function consolidarPagoGrupo(agendas, cotizacionReferencia = 0) {
   const listaRaw = Array.isArray(agendas) ? agendas : [];
   const cotRef = Number(cotizacionReferencia || 0);
-  const lista = cotRef > 0
+  const listaFiltrada = cotRef > 0
     ? listaRaw.filter((item) => {
         const cotId = Number(item?.cotizacion_id || 0);
         return cotId === cotRef || cotId <= 0;
       })
     : listaRaw;
+  const lista = listaFiltrada.length > 0 ? listaFiltrada : listaRaw;
   const conCobro = lista.filter((item) => Number(item?.cotizacion_id || 0) > 0 || Number(item?.saldo_pendiente || 0) > 0 || ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()));
+  const grupoBaseId = cotRef > 0
+    ? cotRef
+    : Number(
+        conCobro.find((item) => Number(item?.cotizacion_grupo_id || 0) > 0)?.cotizacion_grupo_id || 0
+      );
+  const baseGrupo = grupoBaseId > 0
+    ? conCobro.find((item) => Number(item?.cotizacion_id || 0) === grupoBaseId) || null
+    : null;
   const saldoPositivo = conCobro.find((item) => Number(item?.saldo_pendiente || 0) > 0) || null;
   const pagado = conCobro.find((item) => ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()) && Number(item?.saldo_pendiente || 0) <= 0) || null;
   const conCotizacion = conCobro.find((item) => Number(item?.cotizacion_id || 0) > 0) || null;
+
+  if (baseGrupo) {
+    return {
+      saldo_pendiente: Number(baseGrupo.saldo_pendiente || 0),
+      cotizacion_estado: String(baseGrupo.cotizacion_estado || "").toLowerCase(),
+      cotizacion_id: Number(baseGrupo.cotizacion_id || 0),
+    };
+  }
 
   if (saldoPositivo) {
     return {
@@ -470,7 +485,7 @@ function pagoServicioLabel(item) {
   const pago = item?._pago_grupo || item;
   const saldo = Number(pago?.saldo_pendiente || 0);
   const estado = String(pago?.cotizacion_estado || "").toLowerCase();
-  if (saldo > 0) return `Saldo S/ ${saldo.toFixed(2)}`;
+  if (saldo > 0) return estado === "parcial" ? "Parcial" : "Falta cancelar";
   if (estado === "pagado" || estado === "pagada") return "Pagado";
   if (Number(pago?.cotizacion_id || 0) > 0) return "Sin saldo";
   return "Sin cobro";
@@ -495,14 +510,14 @@ function origenFinancieroLabel(item) {
   if (esRecordatorioFaltaCancelar(item)) return "Cuenta por cobrar";
 
   if (esRecordatorioAgendaServicio(item)) {
-    if (saldo > 0) return "Deuda de servicio";
+    if (saldo > 0) return estado === "parcial" ? "Servicio parcial" : "Falta cancelar servicio";
     if (estado === "pagado" || estado === "pagada" || estado === "control") return "Servicio pagado";
     if (cotId > 0) return "Servicio sin deuda";
     return "Servicio sin cobro";
   }
 
   if (String(item?.servicio_tipo || "").toLowerCase() === "consulta") {
-    if (saldo > 0) return "Deuda de consulta";
+    if (saldo > 0) return estado === "parcial" ? "Consulta parcial" : "Falta cancelar consulta";
     if (estado === "pagado" || estado === "pagada" || estado === "control") return "Consulta pagada";
     if (cotId > 0) return "Consulta sin deuda";
     return "Consulta sin cobro";
@@ -2422,10 +2437,11 @@ export default function RecordatoriosCitasPage() {
                           const citasBloque = Array.isArray(bloque?.citas) ? bloque.citas : [];
                           const cabecera = citasBloque[0] || null;
                           const esGrupoCotizacion = Number(bloque?.cotizacion_id || 0) > 0 && citasBloque.length > 1;
-                          const estadoCotizacion = String(cabecera?.cotizacion_estado || "").toLowerCase();
+                          const pagoGrupo = consolidarPagoGrupo(citasBloque, Number(bloque?.cotizacion_id || 0));
+                          const estadoCotizacion = String(pagoGrupo?.cotizacion_estado || cabecera?.cotizacion_estado || "").toLowerCase();
                           const estadoGrupo = estadoCotizacion === "pagado" || estadoCotizacion === "pagada"
                             ? "Pagado"
-                            : Number(cabecera?.saldo_pendiente || 0) > 0
+                            : Number(pagoGrupo?.saldo_pendiente || cabecera?.saldo_pendiente || 0) > 0
                               ? "Con saldo pendiente"
                               : "Sin saldo";
 
@@ -2455,8 +2471,8 @@ export default function RecordatoriosCitasPage() {
                                   <td className="p-2 text-indigo-700">Agrupado</td>
                                   <td className="p-2 text-indigo-700">{estadoGrupo}</td>
                                   <td className="p-2">
-                                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge({ ...cabecera, _saldo_repetido_cotizacion: false })}`}>
-                                      {disponibilidadPagoLabel({ ...cabecera, _saldo_repetido_cotizacion: false })}
+                                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge({ ...cabecera, ...pagoGrupo, _saldo_repetido_cotizacion: false })}`}>
+                                      {disponibilidadPagoLabel({ ...cabecera, ...pagoGrupo, _saldo_repetido_cotizacion: false })}
                                     </span>
                                   </td>
                                 </tr>
@@ -2464,7 +2480,7 @@ export default function RecordatoriosCitasPage() {
 
                               {citasBloque.map((cita) => {
                                 const citaRender = esGrupoCotizacion
-                                  ? { ...cita, _saldo_repetido_cotizacion: true }
+                                  ? { ...cita, ...pagoGrupo, _saldo_repetido_cotizacion: true }
                                   : cita;
                                 return (
                                   <tr key={`${cita.origen}-${cita.id}`} className={`border-t border-indigo-50 ${esGrupoCotizacion ? "bg-indigo-50/20" : ""}`}>
@@ -2818,7 +2834,7 @@ export default function RecordatoriosCitasPage() {
                           {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
                             <div className="mt-1">
                               <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
-                                Saldo: S/ {Number(item?.saldo_pendiente || 0).toFixed(2)}
+                                {String(item?.cotizacion_estado || "").toLowerCase() === "parcial" ? "Pago parcial" : "Falta cancelar"}
                               </span>
                             </div>
                           )}
@@ -3073,7 +3089,7 @@ export default function RecordatoriosCitasPage() {
                                           {det.tipo_label}
                                         </span>
                                         <span>Cant: {Number(det.cantidad || 1)}</span>
-                                        <span>Sub: S/ {Number(det.subtotal || 0).toFixed(2)}</span>
+                                        <span>{pagoServicioLabel(item)}</span>
                                       </div>
                                     </div>
                                   ))}

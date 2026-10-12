@@ -912,24 +912,28 @@ if (!function_exists('ol_recalcular_total_cotizacion')) {
     }
 }
 
-if (!function_exists('ol_cotizacion_examenes_laboratorio_activos')) {
-    function ol_cotizacion_examenes_laboratorio_activos(mysqli $conn, array $cotizacionIds): array
+if (!function_exists('ol_cotizaciones_relacionadas_por_raiz')) {
+    function ol_cotizaciones_relacionadas_por_raiz(mysqli $conn, array $cotizacionIds): array
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), function ($id) {
             return $id > 0;
         })));
-        if (empty($ids) || !ol_table_exists($conn, 'cotizaciones_detalle')) {
-            return [];
+        $map = [];
+        if (empty($ids)) {
+            return $map;
         }
 
         $hasCotizaciones = ol_table_exists($conn, 'cotizaciones');
         $hasCotizacionPadreId = $hasCotizaciones && ol_column_exists($conn, 'cotizaciones', 'cotizacion_padre_id');
+        if (!$hasCotizacionPadreId) {
+            foreach ($ids as $cid) {
+                $map[$cid] = [$cid];
+            }
+            return $map;
+        }
 
         $padreCache = [];
-        $resolverRaiz = function (int $cotizacionId) use ($conn, &$padreCache, $hasCotizacionPadreId): int {
-            if (!$hasCotizacionPadreId) {
-                return $cotizacionId;
-            }
+        $resolverRaiz = function (int $cotizacionId) use ($conn, &$padreCache): int {
             $actual = $cotizacionId;
             $guard = 0;
             while ($actual > 0 && $guard < 25) {
@@ -955,32 +959,69 @@ if (!function_exists('ol_cotizacion_examenes_laboratorio_activos')) {
             return $actual > 0 ? $actual : $cotizacionId;
         };
 
-        $roots = [];
+        $descCache = [];
+        $resolverDescendientes = function (int $rootId) use ($conn, &$descCache): array {
+            if ($rootId <= 0) {
+                return [];
+            }
+            if (isset($descCache[$rootId])) {
+                return $descCache[$rootId];
+            }
+
+            $rel = [$rootId => true];
+            $frontera = [$rootId];
+            $guard = 0;
+            while (!empty($frontera) && $guard < 50) {
+                $guard++;
+                $placeholders = implode(',', array_fill(0, count($frontera), '?'));
+                $sql = "SELECT id FROM cotizaciones WHERE cotizacion_padre_id IN ($placeholders)";
+                $stmt = $conn->prepare($sql);
+                if (!$stmt) {
+                    break;
+                }
+
+                $stmt->bind_param(str_repeat('i', count($frontera)), ...$frontera);
+                $stmt->execute();
+                $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+
+                $siguiente = [];
+                foreach ($rows as $row) {
+                    $cid = intval($row['id'] ?? 0);
+                    if ($cid > 0 && !isset($rel[$cid])) {
+                        $rel[$cid] = true;
+                        $siguiente[] = $cid;
+                    }
+                }
+                $frontera = $siguiente;
+            }
+
+            $descCache[$rootId] = $rel;
+            return $rel;
+        };
+
         foreach ($ids as $cid) {
-            $roots[$cid] = $resolverRaiz($cid);
+            $root = $resolverRaiz($cid);
+            $rel = $resolverDescendientes($root);
+            $rel[$cid] = true;
+            $map[$cid] = array_keys($rel);
         }
 
-        $relacionadasPorSolicitada = [];
-        foreach ($ids as $cid) {
-            $root = intval($roots[$cid] ?? $cid);
-            $relIds = [$cid => true];
-            if ($hasCotizacionPadreId) {
-                $stmtRel = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? OR cotizacion_padre_id = ?');
-                if ($stmtRel) {
-                    $stmtRel->bind_param('ii', $root, $root);
-                    $stmtRel->execute();
-                    $resRel = $stmtRel->get_result();
-                    while ($rowRel = $resRel->fetch_assoc()) {
-                        $rid = intval($rowRel['id'] ?? 0);
-                        if ($rid > 0) {
-                            $relIds[$rid] = true;
-                        }
-                    }
-                    $stmtRel->close();
-                }
-            }
-            $relacionadasPorSolicitada[$cid] = array_keys($relIds);
+        return $map;
+    }
+}
+
+if (!function_exists('ol_cotizacion_examenes_laboratorio_activos')) {
+    function ol_cotizacion_examenes_laboratorio_activos(mysqli $conn, array $cotizacionIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !ol_table_exists($conn, 'cotizaciones_detalle')) {
+            return [];
         }
+
+        $relacionadasPorSolicitada = ol_cotizaciones_relacionadas_por_raiz($conn, $ids);
 
         $idsBusqueda = [];
         foreach ($relacionadasPorSolicitada as $relIds) {
@@ -1072,62 +1113,13 @@ if (!function_exists('ol_cotizacion_pago_laboratorio_activo')) {
         $hasEstadoCot = ol_column_exists($conn, 'cotizaciones', 'estado');
         $hasSaldoCot = ol_column_exists($conn, 'cotizaciones', 'saldo_pendiente');
         $hasTotalPagadoCot = ol_column_exists($conn, 'cotizaciones', 'total_pagado');
-
-        $padreCache = [];
-        $resolverRaiz = function (int $cotizacionId) use ($conn, &$padreCache, $hasCotizacionPadreId): int {
-            if (!$hasCotizacionPadreId) {
-                return $cotizacionId;
+        $relacionadasPorSolicitada = $hasCotizacionPadreId
+            ? ol_cotizaciones_relacionadas_por_raiz($conn, $ids)
+            : array_fill_keys($ids, []);
+        if (!$hasCotizacionPadreId) {
+            foreach ($ids as $cid) {
+                $relacionadasPorSolicitada[$cid] = [$cid];
             }
-            $actual = $cotizacionId;
-            $guard = 0;
-            while ($actual > 0 && $guard < 25) {
-                $guard++;
-                if (!array_key_exists($actual, $padreCache)) {
-                    $stmtPad = $conn->prepare('SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1');
-                    $padre = 0;
-                    if ($stmtPad) {
-                        $stmtPad->bind_param('i', $actual);
-                        $stmtPad->execute();
-                        $rowPad = $stmtPad->get_result()->fetch_assoc();
-                        $stmtPad->close();
-                        $padre = intval($rowPad['cotizacion_padre_id'] ?? 0);
-                    }
-                    $padreCache[$actual] = $padre;
-                }
-                $padre = intval($padreCache[$actual] ?? 0);
-                if ($padre <= 0) {
-                    break;
-                }
-                $actual = $padre;
-            }
-            return $actual > 0 ? $actual : $cotizacionId;
-        };
-
-        $roots = [];
-        foreach ($ids as $cid) {
-            $roots[$cid] = $resolverRaiz($cid);
-        }
-
-        $relacionadasPorSolicitada = [];
-        foreach ($ids as $cid) {
-            $root = intval($roots[$cid] ?? $cid);
-            $relIds = [$cid => true];
-            if ($hasCotizacionPadreId) {
-                $stmtRel = $conn->prepare('SELECT id FROM cotizaciones WHERE id = ? OR cotizacion_padre_id = ?');
-                if ($stmtRel) {
-                    $stmtRel->bind_param('ii', $root, $root);
-                    $stmtRel->execute();
-                    $resRel = $stmtRel->get_result();
-                    while ($rowRel = $resRel->fetch_assoc()) {
-                        $rid = intval($rowRel['id'] ?? 0);
-                        if ($rid > 0) {
-                            $relIds[$rid] = true;
-                        }
-                    }
-                    $stmtRel->close();
-                }
-            }
-            $relacionadasPorSolicitada[$cid] = array_keys($relIds);
         }
 
         $idsBusqueda = [];
