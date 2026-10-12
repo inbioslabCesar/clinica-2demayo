@@ -45,6 +45,13 @@ Tener una guia tecnica concreta de donde capturar la fecha/hora, que guardar en 
 ### Procedimientos
 - Puede requerir fecha/hora por procedimiento individual.
 - Si el procedimiento es agrupado, necesita estrategia de agenda por lote.
+- La HC lista las ordenes persistidas por `consulta_id`. Si faltan ordenes de adendas, recupera en la respuesta los procedimientos activos de detalles vinculados explicitamente a esa consulta, sin escribir nuevas ordenes.
+- La recuperacion no recorre cotizaciones por parentesco: una cotizacion del mismo episodio puede contener servicios de otra consulta. Excluye cotizaciones anuladas y detalles eliminados; no duplica servicios ya presentes en una orden de la misma cotizacion.
+- Para ordenes persistidas se conservan detalles antiguos sin `consulta_id`, pero no se aceptan detalles vinculados a otra consulta. La recuperacion de ordenes faltantes exige un vinculo explicito.
+- El panel y la impresion validan HTTP, `success` y el arreglo `ordenes`. Un fallo se muestra como error, no como ausencia de procedimientos; el panel permite reintentar.
+- Este ajuste no requiere migracion de schema ni cambios de datos/configuracion en produccion.
+- Validacion del caso HC: `php scripts\verificar_ordenes_procedimientos_readonly.php --consulta=369 --procedimiento=302 --cotizacion=895`. Ejecuta las funciones de lectura en una transaccion READ ONLY, sin dispatch ni creacion automatica de tablas; compara la vista completa con `hc_fast` y verifica el servicio esperado.
+- Validacion del cliente: `node --experimental-vm-modules --test scripts\test_ordenes_procedimientos_client.mjs`. Comprueba respuestas validas, errores HTTP/aplicativos, JSON invalido y fallos de red sin convertirlos en listas vacias.
 
 ### Paquetes/Perfiles
 - Necesitan definicion especial porque pueden expandirse a varios componentes.

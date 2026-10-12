@@ -2910,6 +2910,7 @@ class CobroModule
         $cacheMedico = [];
         $cacheOrigenHc = [];
         $cacheConsultasCotizacion = [];
+        $cacheSlotMismaCotizacion = [];
         foreach ((array)$detalles as $detalle) {
             if (!is_array($detalle)) continue;
             if ((int)($detalle['solo_cobro_diferencia'] ?? 0) === 1 || (int)($detalle['_lectura_comercial_paquete'] ?? 0) === 1) {
@@ -3000,6 +3001,7 @@ class CobroModule
 
             $choqueConsultas = false;
             if (self::tableExists($conn, 'consultas')) {
+                $hasConsultaCotizacionId = self::columnExists($conn, 'consultas', 'cotizacion_id');
                 if (!isset($cacheConsultasCotizacion[$cotizacionId])) {
                     $cacheConsultasCotizacion[$cotizacionId] = [];
                     if ($cotizacionId > 0
@@ -3016,12 +3018,35 @@ class CobroModule
                             $stmtConsultasCot->close();
                         }
                     }
+                    if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
+                        $stmtConsultasDirectas = $conn->prepare('SELECT id FROM consultas WHERE cotizacion_id = ?');
+                        if ($stmtConsultasDirectas) {
+                            $stmtConsultasDirectas->bind_param('i', $cotizacionId);
+                            $stmtConsultasDirectas->execute();
+                            $resConsultasDirectas = $stmtConsultasDirectas->get_result();
+                            while ($resConsultasDirectas && ($rowConsultaDirecta = $resConsultasDirectas->fetch_assoc())) {
+                                $consultaDirectaId = (int)($rowConsultaDirecta['id'] ?? 0);
+                                if ($consultaDirectaId > 0) {
+                                    $cacheConsultasCotizacion[$cotizacionId][$consultaDirectaId] = true;
+                                }
+                            }
+                            $stmtConsultasDirectas->close();
+                        }
+                    }
                 }
                 $consultasMismaCotizacion = $cacheConsultasCotizacion[$cotizacionId] ?? [];
                 if ($consultaId > 0) {
-                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
+                    $sqlChkC = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
+                    if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
+                        $sqlChkC .= ' AND COALESCE(cotizacion_id, 0) <> ?';
+                    }
+                    $stmtChkC = $conn->prepare($sqlChkC);
                     if ($stmtChkC) {
-                        $stmtChkC->bind_param('issi', $medicoId, $fecha, $hora, $consultaId);
+                        if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
+                            $stmtChkC->bind_param('issii', $medicoId, $fecha, $hora, $consultaId, $cotizacionId);
+                        } else {
+                            $stmtChkC->bind_param('issi', $medicoId, $fecha, $hora, $consultaId);
+                        }
                         $stmtChkC->execute();
                         $resChkC = $stmtChkC->get_result();
                         while ($resChkC && ($rowChkC = $resChkC->fetch_assoc())) {
@@ -3034,9 +3059,17 @@ class CobroModule
                         $stmtChkC->close();
                     }
                 } else {
-                    $stmtChkC = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
+                    $sqlChkC = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
+                    if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
+                        $sqlChkC .= ' AND COALESCE(cotizacion_id, 0) <> ?';
+                    }
+                    $stmtChkC = $conn->prepare($sqlChkC);
                     if ($stmtChkC) {
-                        $stmtChkC->bind_param('iss', $medicoId, $fecha, $hora);
+                        if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
+                            $stmtChkC->bind_param('issi', $medicoId, $fecha, $hora, $cotizacionId);
+                        } else {
+                            $stmtChkC->bind_param('iss', $medicoId, $fecha, $hora);
+                        }
                         $stmtChkC->execute();
                         $resChkC = $stmtChkC->get_result();
                         while ($resChkC && ($rowChkC = $resChkC->fetch_assoc())) {
@@ -3080,6 +3113,40 @@ class CobroModule
             }
 
             if ($choqueConsultas || $choqueAgenda) {
+                $esSlotMismaCotizacion = false;
+                if ($cotizacionId > 0
+                    && $hora !== null
+                    && self::tableExists($conn, 'agenda_servicios_cotizacion')
+                    && self::columnExists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+                    && self::columnExists($conn, 'agenda_servicios_cotizacion', 'medico_id')
+                    && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
+                    && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')) {
+                    $cacheKeySlot = $cotizacionId . '|' . $medicoId . '|' . $fecha . '|' . $hora;
+                    if (!array_key_exists($cacheKeySlot, $cacheSlotMismaCotizacion)) {
+                        $whereEstadoBase = self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')
+                            ? ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+                            : '';
+                        $stmtSlotMismaCot = $conn->prepare(
+                            'SELECT 1 FROM agenda_servicios_cotizacion
+                             WHERE cotizacion_id = ? AND medico_id = ? AND fecha_programada = ? AND hora_programada = ?'
+                            . $whereEstadoBase
+                            . ' LIMIT 1'
+                        );
+                        $existeSlot = false;
+                        if ($stmtSlotMismaCot) {
+                            $stmtSlotMismaCot->bind_param('iiss', $cotizacionId, $medicoId, $fecha, $hora);
+                            $stmtSlotMismaCot->execute();
+                            $rowSlot = $stmtSlotMismaCot->get_result()->fetch_assoc();
+                            $stmtSlotMismaCot->close();
+                            $existeSlot = (bool)$rowSlot;
+                        }
+                        $cacheSlotMismaCotizacion[$cacheKeySlot] = $existeSlot;
+                    }
+                    $esSlotMismaCotizacion = (bool)$cacheSlotMismaCotizacion[$cacheKeySlot];
+                }
+                if ($esSlotMismaCotizacion) {
+                    continue;
+                }
                 $conflictos[] = [
                     'tipo' => 'ocupado',
                     'detalle_id' => $detalleId,
@@ -3911,6 +3978,67 @@ class CobroModule
                 }
                 // Modificar el registro de honorarios para guardar el id retornado
                 if (!empty($data['detalles'])) {
+                    $esCobroSoloPaqueteComercial = false;
+                    $descripcionPaqueteComercial = '';
+                    $montoIngresoUnicoPaquete = self::toFloatFlexible($total_param);
+                    $detallesPaqueteEvaluadas = 0;
+                    $detallesPaqueteValidas = 0;
+                    foreach ($data['detalles'] as $detallePre) {
+                        $subtotalPre = self::toFloatFlexible($detallePre['subtotal'] ?? 0);
+                        if ($subtotalPre <= 0) {
+                            continue;
+                        }
+                        $detallesPaqueteEvaluadas++;
+
+                        $tipoPre = self::normalizarServicioTipo($detallePre['servicio_tipo'] ?? '');
+                        if (in_array($tipoPre, ['laboratorio', 'farmacia'], true)) {
+                            continue;
+                        }
+
+                        $snapshotPre = $detallePre['snapshot_json'] ?? null;
+                        if (is_string($snapshotPre)) {
+                            $snapshotDecodedPre = json_decode($snapshotPre, true);
+                            $snapshotPre = is_array($snapshotDecodedPre) ? $snapshotDecodedPre : null;
+                        } elseif (!is_array($snapshotPre)) {
+                            $snapshotPre = null;
+                        }
+
+                        $paqueteTipoPre = strtolower(trim((string)($detallePre['paquete_tipo'] ?? ($snapshotPre['paquete_tipo'] ?? ''))));
+                        $paqueteCodigoPre = trim((string)($detallePre['paquete_codigo'] ?? ($snapshotPre['paquete_codigo'] ?? '')));
+                        $paqueteNombrePre = trim((string)($detallePre['paquete_nombre'] ?? ($snapshotPre['paquete_nombre'] ?? '')));
+                        $paqueteIdPre = (int)($detallePre['paquete_id'] ?? ($snapshotPre['paquete_id'] ?? 0));
+                        $descripcionPre = strtolower(trim((string)($detallePre['descripcion'] ?? '')));
+                        $esSoloDiferenciaPre = (
+                            (int)($detallePre['solo_cobro_diferencia'] ?? 0) === 1
+                            || (int)($detallePre['_lectura_comercial_paquete'] ?? 0) === 1
+                            || strpos($descripcionPre, 'diferencia pendiente del paquete') !== false
+                            || strpos($descripcionPre, 'pago de diferencia de paquete') !== false
+                        );
+
+                        $esPaqueteComercialPre = (
+                            $esSoloDiferenciaPre
+                            || $paqueteIdPre > 0
+                            || $paqueteCodigoPre !== ''
+                            || in_array($paqueteTipoPre, ['paquete', 'perfil'], true)
+                        );
+
+                        if ($esPaqueteComercialPre) {
+                            $detallesPaqueteValidas++;
+                            if ($descripcionPaqueteComercial === '') {
+                                $descripcionPaqueteComercial = $paqueteNombrePre !== '' ? $paqueteNombrePre : $paqueteCodigoPre;
+                            }
+                        }
+                    }
+
+                    $esCobroSoloPaqueteComercial = ($detallesPaqueteEvaluadas > 0 && $detallesPaqueteEvaluadas === $detallesPaqueteValidas);
+                    if ($montoIngresoUnicoPaquete <= 0) {
+                        $montoIngresoUnicoPaquete = 0.0;
+                        foreach ($data['detalles'] as $detallePreMonto) {
+                            $montoIngresoUnicoPaquete += max(0, self::toFloatFlexible($detallePreMonto['subtotal'] ?? 0));
+                        }
+                    }
+
+                    $ingresoUnicoPaqueteRegistrado = false;
                     $cacheMedicoConsultaHonorarios = [];
                     $cacheContextoCotizacionHonorarios = [];
                     foreach ($data['detalles'] as $i => $detalleServicio) {
@@ -3939,20 +4067,6 @@ class CobroModule
                             'procedimiento' => 'Procedimientos',
                             'operacion' => 'Operaciones',
                         ];
-                        $descripcionDetalleIngreso = (string)($detalleServicio['descripcion'] ?? '');
-                        $esSoloCobroDiferenciaPaquete = (
-                            (int)($detalleServicio['solo_cobro_diferencia'] ?? 0) === 1
-                            || (int)($detalleServicio['_lectura_comercial_paquete'] ?? 0) === 1
-                            || stripos($descripcionDetalleIngreso, 'diferencia pendiente del paquete') !== false
-                            || stripos($descripcionDetalleIngreso, 'pago de diferencia de paquete') !== false
-                        );
-                        $tipo_ingreso_detalle = $esSoloCobroDiferenciaPaquete
-                            ? 'paquete'
-                            : ($tipo_ingreso_map_detalle[$detalleServicioKey] ?? 'otros');
-                        $area_servicio_detalle = $esSoloCobroDiferenciaPaquete
-                            ? 'Paquetes'
-                            : ($area_servicio_map_detalle[$detalleServicioKey] ?? ($area_servicio ?: 'Otros servicios'));
-
                         // Asegurar que cada detalle tenga paciente_id
                         if (!isset($detalleServicio['paciente_id']) || $detalleServicio['paciente_id'] === null) {
                             $detalleServicio['paciente_id'] = $data['paciente_id'] ?? null;
@@ -3961,6 +4075,38 @@ class CobroModule
                         // Rehidratar metadata clínica/paquete desde cotizaciones_detalle para que
                         // el cálculo de honorarios respete reglas de campaña en cobros mixtos.
                         $detalleServicio = self::enriquecerDetalleDesdeCotizacionDetalle($conn, $detalleServicio);
+
+                        $descripcionDetalleIngreso = (string)($detalleServicio['descripcion'] ?? '');
+                        $snapshotDetalle = $detalleServicio['snapshot_json'] ?? null;
+                        if (is_string($snapshotDetalle)) {
+                            $snapshotDecoded = json_decode($snapshotDetalle, true);
+                            $snapshotDetalle = is_array($snapshotDecoded) ? $snapshotDecoded : null;
+                        } elseif (!is_array($snapshotDetalle)) {
+                            $snapshotDetalle = null;
+                        }
+
+                        $paqueteTipoDetalle = strtolower(trim((string)($detalleServicio['paquete_tipo'] ?? ($snapshotDetalle['paquete_tipo'] ?? ''))));
+                        $paqueteCodigoDetalle = trim((string)($detalleServicio['paquete_codigo'] ?? ($snapshotDetalle['paquete_codigo'] ?? '')));
+                        $paqueteIdDetalle = (int)($detalleServicio['paquete_id'] ?? ($snapshotDetalle['paquete_id'] ?? 0));
+                        $esDetallePaqueteComercial = (
+                            $paqueteIdDetalle > 0
+                            || $paqueteCodigoDetalle !== ''
+                            || in_array($paqueteTipoDetalle, ['paquete', 'perfil'], true)
+                        );
+
+                        $esSoloCobroDiferenciaPaquete = (
+                            (int)($detalleServicio['solo_cobro_diferencia'] ?? 0) === 1
+                            || (int)($detalleServicio['_lectura_comercial_paquete'] ?? 0) === 1
+                            || stripos($descripcionDetalleIngreso, 'diferencia pendiente del paquete') !== false
+                            || stripos($descripcionDetalleIngreso, 'pago de diferencia de paquete') !== false
+                        );
+                        $esPaqueteComercial = $esSoloCobroDiferenciaPaquete || $esDetallePaqueteComercial;
+                        $tipo_ingreso_detalle = $esPaqueteComercial
+                            ? 'paquete'
+                            : ($tipo_ingreso_map_detalle[$detalleServicioKey] ?? 'otros');
+                        $area_servicio_detalle = $esPaqueteComercial
+                            ? 'Paquetes'
+                            : ($area_servicio_map_detalle[$detalleServicioKey] ?? ($area_servicio ?: 'Otros servicios'));
 
                         $consultaIdDetalle = isset($detalleServicio['consulta_id']) ? (int)$detalleServicio['consulta_id'] : 0;
                         $medicoIdDetalle = isset($detalleServicio['medico_id']) ? (int)$detalleServicio['medico_id'] : 0;
@@ -4177,13 +4323,32 @@ class CobroModule
                                 }
                             }
 
-                            // Registrar ingreso en caja por cada detalle con subtotal ya neto.
+                            // Registrar ingreso comercial.
+                            // Para cobro de solo paquete, se registra una sola linea por el total del paquete.
+                            if ($esCobroSoloPaqueteComercial) {
+                                if ($ingresoUnicoPaqueteRegistrado) {
+                                    continue;
+                                }
+                            }
+
                             $monto_detalle = self::toFloatFlexible($detalleServicio['subtotal'] ?? $total_param);
+                            $tipoIngresoFinal = $tipo_ingreso_detalle;
+                            $areaServicioFinal = $area_servicio_detalle;
+                            $descripcionIngresoFinal = $descripcionDetalleIngreso !== '' ? $descripcionDetalleIngreso : $descripcion_ingreso;
+                            if ($esCobroSoloPaqueteComercial) {
+                                $tipoIngresoFinal = 'paquete';
+                                $areaServicioFinal = 'Paquetes';
+                                $monto_detalle = max(0, self::toFloatFlexible($montoIngresoUnicoPaquete));
+                                $descripcionIngresoFinal = $descripcionPaqueteComercial !== ''
+                                    ? ('Cobro de paquete - ' . $descripcionPaqueteComercial)
+                                    : 'Cobro de paquete';
+                            }
+
                             $params_individual = [
                                 'caja_id' => $caja_id,
-                                'tipo_ingreso' => $tipo_ingreso_detalle,
-                                'area_servicio' => $area_servicio_detalle,
-                                'descripcion_ingreso' => $descripcionDetalleIngreso !== '' ? $descripcionDetalleIngreso : $descripcion_ingreso,
+                                'tipo_ingreso' => $tipoIngresoFinal,
+                                'area_servicio' => $areaServicioFinal,
+                                'descripcion_ingreso' => $descripcionIngresoFinal,
                                 'total_param' => $monto_detalle,
                                 'metodo_pago' => $metodo_pago,
                                 'cobro_id' => $cobro_id,
@@ -4201,6 +4366,9 @@ class CobroModule
                             $okIngreso = CajaModule::registrarIngreso($conn, $params_individual);
                             if (!$okIngreso) {
                                 throw new \Exception('No se pudo registrar el ingreso en caja para el detalle cobrado.');
+                            }
+                            if ($esCobroSoloPaqueteComercial) {
+                                $ingresoUnicoPaqueteRegistrado = true;
                             }
                         } else {
                             throw new \Exception('No se encontró tarifa activa para el servicio y médico seleccionado (servicio_tipo: ' . $servicio_key . ', medico_id: ' . ($medico_id_buscar ?? 'N/A') . ').');

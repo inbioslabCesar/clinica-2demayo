@@ -441,6 +441,51 @@ function CobroModulo({
     });
   }, [detallesSeleccionados, detallesCobro, modoCobro, montoAplicadoPorDetalle]);
 
+  const resumenSoloPaquete = useMemo(() => {
+    const lista = Array.isArray(detallesRender) ? detallesRender : [];
+    const evaluables = lista.filter((d) => Number(d?.subtotal_mostrar || d?.subtotal || 0) > 0);
+    if (evaluables.length === 0) return null;
+
+    const leerSnapshot = (detalle) => {
+      const raw = detalle?.snapshot_json;
+      if (!raw) return null;
+      if (typeof raw === 'object') return raw;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+
+    const esPaquete = evaluables.every((detalle) => {
+      const snap = leerSnapshot(detalle);
+      const paqueteId = Number(detalle?.paquete_id || snap?.paquete_id || 0);
+      const paqueteCodigo = String(detalle?.paquete_codigo || snap?.paquete_codigo || '').trim();
+      const paqueteTipo = String(detalle?.paquete_tipo || snap?.paquete_tipo || '').trim().toLowerCase();
+      const descripcion = String(detalle?.descripcion || '').toLowerCase();
+      const soloDif = Number(detalle?.solo_cobro_diferencia || detalle?._lectura_comercial_paquete || 0) === 1
+        || descripcion.includes('diferencia pendiente del paquete')
+        || descripcion.includes('pago de diferencia de paquete');
+      return soloDif || paqueteId > 0 || paqueteCodigo !== '' || paqueteTipo === 'paquete' || paqueteTipo === 'perfil';
+    });
+
+    if (!esPaquete) return null;
+    const primero = evaluables[0] || {};
+    const snapPrimero = leerSnapshot(primero);
+    const nombre = String(
+      primero?.paquete_nombre
+      || snapPrimero?.paquete_nombre
+      || primero?.paquete_codigo
+      || snapPrimero?.paquete_codigo
+      || 'PAQUETE'
+    ).trim();
+    return { nombre: nombre || 'PAQUETE' };
+  }, [detallesRender]);
+
   const montoOriginal = detallesCobro.reduce((total, detalle) => total + (detalle.subtotal || 0), 0);
 let descuento = 0;
 if (tipoDescuento === 'porcentaje') {
@@ -984,7 +1029,56 @@ if (tipoDescuento === 'porcentaje') {
       operacion: 'Operaciones',
       hospitalizacion: 'Hospitalización',
     };
-    const gruposDetalles = Object.values((Array.isArray(datosComprobante.detalles) ? datosComprobante.detalles : []).reduce((acc, d) => {
+    const detallesTicket = Array.isArray(datosComprobante.detalles) ? datosComprobante.detalles : [];
+    const leerSnapshotTicket = (detalle) => {
+      const raw = detalle?.snapshot_json;
+      if (!raw) return null;
+      if (typeof raw === 'object') return raw;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+    const detallesEvaluablesTicket = detallesTicket.filter((d) => Number(d?.subtotal || 0) > 0);
+    const esCobroSoloPaqueteTicket = detallesEvaluablesTicket.length > 0 && detallesEvaluablesTicket.every((d) => {
+      const snap = leerSnapshotTicket(d);
+      const paqueteId = Number(d?.paquete_id || snap?.paquete_id || 0);
+      const paqueteCodigo = String(d?.paquete_codigo || snap?.paquete_codigo || '').trim();
+      const paqueteTipo = String(d?.paquete_tipo || snap?.paquete_tipo || '').trim().toLowerCase();
+      const descripcion = String(d?.descripcion || '').toLowerCase();
+      const soloDiferencia = Number(d?.solo_cobro_diferencia || d?._lectura_comercial_paquete || 0) === 1
+        || descripcion.includes('diferencia pendiente del paquete')
+        || descripcion.includes('pago de diferencia de paquete');
+      return soloDiferencia || paqueteId > 0 || paqueteCodigo !== '' || paqueteTipo === 'paquete' || paqueteTipo === 'perfil';
+    });
+    const paqueteLabelTicket = esCobroSoloPaqueteTicket
+      ? String(
+          detallesEvaluablesTicket?.[0]?.paquete_nombre
+          || leerSnapshotTicket(detallesEvaluablesTicket?.[0])?.paquete_nombre
+          || detallesEvaluablesTicket?.[0]?.paquete_codigo
+          || leerSnapshotTicket(detallesEvaluablesTicket?.[0])?.paquete_codigo
+          || 'PAQUETE'
+        ).trim()
+      : '';
+
+    const gruposDetalles = esCobroSoloPaqueteTicket
+      ? [{
+          key: 'paquete',
+          label: 'Paquetes',
+          subtotal: Number(datosComprobante.total || 0),
+          items: [{
+            descripcion: paqueteLabelTicket || 'PAQUETE',
+            cantidad: 1,
+            subtotal: Number(datosComprobante.total || 0),
+            servicio_tipo: 'paquete',
+          }],
+        }]
+      : Object.values((detallesTicket).reduce((acc, d) => {
       const key = String(d?.servicio_tipo || 'procedimiento').toLowerCase();
       if (!acc[key]) {
         acc[key] = {
@@ -1300,7 +1394,19 @@ if (tipoDescuento === 'porcentaje') {
               </div>
             )}
             <h4 className="font-semibold mb-2 text-blue-700 flex items-center gap-2 text-lg"><span className="text-blue-400">🧾</span> Detalle del Servicio</h4>
-            {detallesRender.map((detalle, index) => {
+            {resumenSoloPaquete ? (
+              <div className="flex justify-between items-center text-base">
+                <span>
+                  {resumenSoloPaquete.nombre}
+                  {modoCobro === 'parcial' ? (
+                    <span className="block text-xs text-gray-500">
+                      Aplicado hoy: S/ {Number(totalCobro || 0).toFixed(2)}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="font-bold">S/ {Number(totalCobro || 0).toFixed(2)}</span>
+              </div>
+            ) : detallesRender.map((detalle, index) => {
               let precio = detalle.subtotal_mostrar;
               if (
                 modoCobro !== 'parcial'

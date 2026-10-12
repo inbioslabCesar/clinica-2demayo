@@ -614,9 +614,11 @@ export default function CotizarProcedimientosPage() {
         cantidad,
         precio_unitario: Number(proc.precio_particular || 0),
         subtotal: Number(proc.precio_particular || 0) * cantidad,
+        cotizacion_id: cotizacionIdEdicion > 0 ? Number(cotizacionIdEdicion) : 0,
         ...programacion,
         consulta_id: cotizacionIdEdicion > 0 ? consultaBaseId : 0,
         omitir_alerta_fuera_horario: coincideProgramacionBase ? 1 : 0,
+        permitir_cruce_horario_base: coincideProgramacionBase ? 1 : 0,
         ...(proc.medico_id ? { medico_id: Number(proc.medico_id) } : {})
       } : null;
     }).filter(Boolean);

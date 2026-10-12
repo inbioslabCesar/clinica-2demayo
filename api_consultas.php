@@ -3080,6 +3080,7 @@ switch ($method) {
             . ' LEFT JOIN cotizaciones cot ON cot.id = cot_ref.cotizacion_id'
             . ' LEFT JOIN ('
             . '   SELECT cd.consulta_id,'
+            . '          GROUP_CONCAT(DISTINCT cd.cotizacion_id ORDER BY cd.cotizacion_id ASC SEPARATOR ",") AS cotizaciones_ids,'
             . '          GROUP_CONCAT(DISTINCT LOWER(TRIM(cd.servicio_tipo)) ORDER BY LOWER(TRIM(cd.servicio_tipo)) ASC SEPARATOR ",") AS servicios_tipos_resumen,'
             . '          COUNT(*) AS servicios_count,'
             . '          SUM(CASE WHEN LOWER(TRIM(cd.servicio_tipo)) <> "consulta" THEN 1 ELSE 0 END) AS servicios_extras_count'
@@ -3119,6 +3120,7 @@ switch ($method) {
             . ($hasColaMedico ? ' COALESCE(cola_consulta.prioridad_detalle, cola_cotizacion.prioridad_detalle, "") AS cola_prioridad_detalle,' : ' "" AS cola_prioridad_detalle,')
             . ($hasColaMedico ? ' COALESCE(cola_consulta.updated_at, cola_cotizacion.updated_at) AS cola_updated_at,' : ' NULL AS cola_updated_at,')
             . ' COALESCE(cot_ref.consulta_item_estado_actual, "activo") AS consulta_item_estado_actual,'
+            . ' COALESCE(svc_ref.cotizaciones_ids, "") AS cotizaciones_ids,'
             . ' COALESCE(svc_ref.servicios_tipos_resumen, "") AS servicios_tipos_resumen,'
             . ' COALESCE(svc_ref.servicios_count, 0) AS servicios_count,'
             . ' COALESCE(svc_ref.servicios_extras_count, 0) AS servicios_extras_count,'

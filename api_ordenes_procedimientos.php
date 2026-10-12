@@ -42,6 +42,42 @@ if (!function_exists('op_table_exists')) {
     }
 }
 
+if (!function_exists('op_resolver_medico_sesion_id')) {
+    function op_resolver_medico_sesion_id(): int
+    {
+        $medicoId = (int)($_SESSION['medico_id'] ?? 0);
+        if ($medicoId > 0) {
+            return $medicoId;
+        }
+
+        if (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) {
+            $medicoUsuario = (int)($_SESSION['usuario']['medico_id'] ?? 0);
+            if ($medicoUsuario > 0) {
+                return $medicoUsuario;
+            }
+        }
+
+        if (isset($_SESSION['medico']) && is_array($_SESSION['medico'])) {
+            $medicoSesion = (int)($_SESSION['medico']['id'] ?? 0);
+            if ($medicoSesion > 0) {
+                return $medicoSesion;
+            }
+        }
+
+        if (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) {
+            $rol = strtolower(trim((string)($_SESSION['usuario']['rol'] ?? '')));
+            if ($rol === 'medico') {
+                $fallback = (int)($_SESSION['usuario']['id'] ?? 0);
+                if ($fallback > 0) {
+                    return $fallback;
+                }
+            }
+        }
+
+        return 0;
+    }
+}
+
 if (!function_exists('op_cotizacion_tiene_pagos')) {
     function op_cotizacion_tiene_pagos(mysqli $conn, int $cotizacionId): bool
     {
@@ -116,7 +152,7 @@ if (!function_exists('op_normalize_procedimientos_ids')) {
 }
 
 if (!function_exists('op_procedimientos_activos_por_cotizacion')) {
-    function op_procedimientos_activos_por_cotizacion(mysqli $conn, array $cotizacionIds): array
+    function op_procedimientos_activos_por_cotizacion(mysqli $conn, array $cotizacionIds, int $consultaId): array
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), function ($id) {
             return $id > 0;
@@ -197,18 +233,30 @@ if (!function_exists('op_procedimientos_activos_por_cotizacion')) {
         $whereEstado = op_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
             ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'"
             : '';
+        $hasConsultaId = op_column_exists($conn, 'cotizaciones_detalle', 'consulta_id');
+        // Ordenes persistidas pueden tener detalles antiguos sin vinculo; excluir vinculos a otra consulta.
+        $whereConsulta = $hasConsultaId ? ' AND (consulta_id = ? OR COALESCE(consulta_id, 0) = 0)' : '';
+        $whereCotizacion = $hasCotizaciones
+            ? " AND EXISTS (SELECT 1 FROM cotizaciones ct WHERE ct.id = cotizaciones_detalle.cotizacion_id AND LOWER(TRIM(ct.estado)) NOT IN ('anulado', 'anulada'))"
+            : '';
         $placeholders = implode(',', array_fill(0, count($idsBusqueda), '?'));
         $sql = "SELECT cotizacion_id, servicio_id
                 FROM cotizaciones_detalle
                 WHERE LOWER(TRIM(COALESCE(servicio_tipo, ''))) IN ('procedimiento', 'procedimientos')
                   AND cotizacion_id IN ($placeholders)
                   AND servicio_id IS NOT NULL
-                  AND servicio_id > 0{$whereEstado}";
+                  AND servicio_id > 0{$whereEstado}{$whereConsulta}{$whereCotizacion}";
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
-            return [];
+            throw new RuntimeException('No se pudo preparar la lectura de procedimientos activos');
         }
-        $stmt->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+        $types = str_repeat('i', count($idsBusqueda));
+        $params = $idsBusqueda;
+        if ($hasConsultaId) {
+            $types .= 'i';
+            $params[] = $consultaId;
+        }
+        $stmt->bind_param($types, ...$params);
         $stmt->execute();
         $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
@@ -461,13 +509,91 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
 
         $stmt = $conn->prepare('SELECT * FROM ordenes_procedimientos WHERE consulta_id = ? ORDER BY fecha ASC, id ASC');
         if (!$stmt) {
-            echo json_encode(['success' => true, 'ordenes' => []]);
-            return;
+            throw new RuntimeException('No se pudo preparar la lectura de ordenes de procedimientos');
         }
         $stmt->bind_param('i', $consultaId);
         $stmt->execute();
         $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
+
+        // Recuperar adendas por su vinculo clinico explicito, no por parentesco comercial.
+        if (op_table_exists($conn, 'cotizaciones_detalle')
+            && op_column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            $whereEstadoCd = op_column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+                ? " AND COALESCE(cd.estado_item, 'activo') <> 'eliminado'"
+                : '';
+            $sqlCd = "SELECT cd.cotizacion_id, cd.servicio_id, ct.paciente_id, ct.fecha
+                          FROM cotizaciones_detalle cd
+                          INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id
+                          WHERE cd.consulta_id = ?
+                            AND LOWER(TRIM(ct.estado)) NOT IN ('anulado', 'anulada')
+                            AND COALESCE(cd.servicio_id, 0) > 0
+                            AND LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) IN ('procedimiento', 'procedimientos')
+                            {$whereEstadoCd}
+                          ORDER BY cd.cotizacion_id ASC, cd.id ASC";
+            $stmtCd = $conn->prepare($sqlCd);
+            if (!$stmtCd) {
+                throw new RuntimeException('No se pudo preparar la recuperacion de procedimientos de la consulta');
+            }
+            $stmtCd->bind_param('i', $consultaId);
+            $stmtCd->execute();
+            $rowsCd = $stmtCd->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtCd->close();
+
+            $sinteticasPorCot = [];
+            $metaPorCot = [];
+            foreach ($rowsCd as $rowCd) {
+                $cotId = (int)($rowCd['cotizacion_id'] ?? 0);
+                $servId = (int)($rowCd['servicio_id'] ?? 0);
+                if ($cotId <= 0 || $servId <= 0) continue;
+                if (!isset($sinteticasPorCot[$cotId])) {
+                    $sinteticasPorCot[$cotId] = [];
+                }
+                $sinteticasPorCot[$cotId][$servId] = true;
+                $metaPorCot[$cotId] = $rowCd;
+            }
+
+            $procedimientosPersistidosPorCot = [];
+            foreach ($rows as $rowExistente) {
+                $cotIdExistente = (int)($rowExistente['cotizacion_id'] ?? 0);
+                if ($cotIdExistente <= 0) {
+                    continue;
+                }
+                if (!isset($procedimientosPersistidosPorCot[$cotIdExistente])) {
+                    $procedimientosPersistidosPorCot[$cotIdExistente] = [];
+                }
+                $procExistentes = op_normalize_procedimientos_ids(
+                    json_decode((string)($rowExistente['procedimientos_json'] ?? '[]'), true) ?: []
+                );
+                foreach ($procExistentes as $procIdExistente) {
+                    $procedimientosPersistidosPorCot[$cotIdExistente][(int)$procIdExistente] = true;
+                }
+            }
+
+            foreach ($sinteticasPorCot as $cotId => $serviciosMap) {
+                $procIdsCotizacion = array_values(array_map('intval', array_keys($serviciosMap)));
+                $faltantes = [];
+                foreach ($procIdsCotizacion as $procId) {
+                    if (!isset($procedimientosPersistidosPorCot[$cotId][(int)$procId])) {
+                        $faltantes[] = (int)$procId;
+                    }
+                }
+                if (empty($faltantes)) {
+                    continue;
+                }
+
+                $rows[] = [
+                    'id' => -1 * (int)$cotId,
+                    'consulta_id' => $consultaId,
+                    'paciente_id' => (int)$metaPorCot[$cotId]['paciente_id'],
+                    'procedimientos_json' => json_encode(array_values($faltantes)),
+                    'estado' => 'pendiente',
+                    'cotizacion_id' => (int)$cotId,
+                    'usuario_id' => 0,
+                    'fecha' => (string)$metaPorCot[$cotId]['fecha'],
+                ];
+            }
+        }
 
         $allIds = [];
         $allCotizacionIds = [];
@@ -480,7 +606,7 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
             foreach ($ids as $id) $allIds[] = $id;
         }
         $catalog = op_fetch_tarifas_procedimientos($conn, $allIds);
-        $activosPorCotizacion = op_procedimientos_activos_por_cotizacion($conn, $allCotizacionIds);
+        $activosPorCotizacion = op_procedimientos_activos_por_cotizacion($conn, $allCotizacionIds, $consultaId);
         $cotizacionIds = [];
         foreach ($rows as $rCot) {
             $cid = (int)($rCot['cotizacion_id'] ?? 0);
@@ -514,12 +640,6 @@ if (!function_exists('op_listar_ordenes_por_consulta')) {
         $filtradas = [];
 
         foreach ($rows as &$r) {
-            if ($filtrarPorMedico) {
-                $usuarioOrdenId = (int)($r['usuario_id'] ?? 0);
-                if ($usuarioOrdenId > 0 && $usuarioOrdenId !== $medicoSesionId) {
-                    continue;
-                }
-            }
             $ids = op_normalize_procedimientos_ids(json_decode((string)($r['procedimientos_json'] ?? '[]'), true) ?: []);
             $cotizIdOrden = (int)($r['cotizacion_id'] ?? 0);
             $activosOrden = $cotizIdOrden > 0 ? ($activosPorCotizacion[$cotizIdOrden] ?? null) : null;
@@ -578,11 +698,11 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $sessionUsuario = $_SESSION['usuario'] ?? null;
 $sessionMedico = $_SESSION['medico'] ?? null;
 $rolSesion = strtolower(trim((string)($sessionUsuario['rol'] ?? '')));
-$medicoSesionId = (int)($_SESSION['medico_id'] ?? ($sessionUsuario['medico_id'] ?? ($sessionUsuario['id'] ?? 0)));
+$medicoSesionId = op_resolver_medico_sesion_id();
 $esSesionMedico = ($medicoSesionId > 0) && (
     $rolSesion === 'medico'
-    || isset($_SESSION['medico_id'])
-    || (is_array($sessionMedico) && (int)($sessionMedico['id'] ?? 0) === $medicoSesionId)
+    || (int)($_SESSION['medico_id'] ?? 0) > 0
+    || (is_array($sessionMedico) && (int)($sessionMedico['id'] ?? 0) > 0)
 );
 $usuarioIdSesion = (int)($sessionUsuario['id'] ?? 0);
 

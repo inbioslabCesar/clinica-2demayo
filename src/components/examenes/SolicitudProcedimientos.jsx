@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
+import { cargarOrdenesProcedimientos } from "../../utils/ordenesProcedimientos";
 
 function toMoney(v) {
   const n = Number.parseFloat(v);
@@ -22,6 +23,7 @@ export default function SolicitudProcedimientos({ consultaId, readOnly = false }
   const [panelAbierto, setPanelAbierto] = useState(false);
   const [loadingCatalogo, setLoadingCatalogo] = useState(false);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
+  const [errorOrdenes, setErrorOrdenes] = useState("");
   const [pendienteActual, setPendienteActual] = useState(null);
 
   const cargarCatalogo = async () => {
@@ -49,30 +51,37 @@ export default function SolicitudProcedimientos({ consultaId, readOnly = false }
     }
   };
 
-  const cargarOrdenes = async () => {
-    if (!consultaId) { setOrdenes([]); return; }
+  const cargarOrdenes = useCallback(async (signal) => {
+    if (!consultaId) {
+      setOrdenes([]);
+      setPendienteActual(null);
+      setErrorOrdenes("");
+      setLoadingOrdenes(false);
+      return;
+    }
     setLoadingOrdenes(true);
+    setErrorOrdenes("");
     try {
-      const res = await authFetch(`api_ordenes_procedimientos.php?consulta_id=${Number(consultaId)}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      const data = await res.json();
-      const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+      const rows = await cargarOrdenesProcedimientos(Number(consultaId), { signal });
+      if (signal?.aborted) return;
       setOrdenes(rows);
       const pendientes = rows.filter((o) => String(o?.estado || '').toLowerCase() === 'pendiente');
       setPendienteActual(pendientes.length > 0 ? pendientes[pendientes.length - 1] : null);
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) return;
       setOrdenes([]);
       setPendienteActual(null);
+      setErrorOrdenes(error?.message || "No se pudieron cargar las solicitudes de procedimientos.");
     } finally {
-      setLoadingOrdenes(false);
+      if (!signal?.aborted) setLoadingOrdenes(false);
     }
-  };
+  }, [consultaId]);
 
   useEffect(() => {
-    cargarOrdenes().catch(() => {});
-  }, [consultaId]);
+    const controller = new AbortController();
+    cargarOrdenes(controller.signal);
+    return () => controller.abort();
+  }, [cargarOrdenes]);
 
   const abrirPanel = () => {
     if (catalogo.length === 0) cargarCatalogo().catch(() => {});
@@ -268,7 +277,16 @@ export default function SolicitudProcedimientos({ consultaId, readOnly = false }
       {/* ── Lista de solicitudes existentes ── */}
       {loadingOrdenes && <p className="text-xs text-gray-400">Cargando solicitudes...</p>}
 
-      {!loadingOrdenes && ordenes.length === 0 && (
+      {!loadingOrdenes && errorOrdenes && (
+        <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <p>{errorOrdenes}</p>
+          <button type="button" onClick={() => cargarOrdenes()} className="mt-2 underline font-semibold">
+            Reintentar carga
+          </button>
+        </div>
+      )}
+
+      {!loadingOrdenes && !errorOrdenes && ordenes.length === 0 && (
         <p className="text-sm text-gray-500">No hay procedimientos solicitados para esta consulta.</p>
       )}
 

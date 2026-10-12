@@ -757,6 +757,15 @@ export default function CotizarEcografiaPage() {
         }
       }
       const programacion = programacionPorTarifa[Number(tid)] || getProgramacionSugeridaTarifa(Number(tid));
+      const fechaBaseConsulta = String(programacionBaseEdicion?.fecha || "").slice(0, 10);
+      const horaBaseConsulta = String(programacionBaseEdicion?.hora || "").slice(0, 5);
+      const coincideProgramacionBase = (
+        cotizacionIdEdicion > 0
+        && fechaBaseConsulta
+        && horaBaseConsulta
+        && String(programacion?.fecha || "").slice(0, 10) === fechaBaseConsulta
+        && String(programacion?.hora || "").slice(0, 5) === horaBaseConsulta
+      );
       return tarifa ? {
         servicio_tipo: "ecografia",
         servicio_id: tid,
@@ -764,6 +773,7 @@ export default function CotizarEcografiaPage() {
         cantidad,
         precio_unitario: getDisplayPrice(tarifa),
         subtotal: getDisplayPrice(tarifa) * cantidad,
+        cotizacion_id: cotizacionIdEdicion > 0 ? Number(cotizacionIdEdicion) : 0,
         medico_id: tarifa.medico_id || "",
         medico_nombre,
         especialidad: tarifa.especialidad || "",
@@ -771,6 +781,8 @@ export default function CotizarEcografiaPage() {
         consulta_id: cotizacionIdEdicion > 0 ? Number(programacionConsultaCotizacion?.consultaId || 0) : 0,
         fecha_programada: programacion.fecha,
         hora_programada: programacion.hora,
+        omitir_alerta_fuera_horario: coincideProgramacionBase ? 1 : 0,
+        permitir_cruce_horario_base: coincideProgramacionBase ? 1 : 0,
       } : null;
     }).filter(Boolean);
   };

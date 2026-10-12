@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { APP_BASE_PATH, BASE_URL } from "../config/config";
 import { authFetch } from "../utils/apiClient";
+import { cargarOrdenesProcedimientos } from "../utils/ordenesProcedimientos";
 import TabsApoyoDiagnostico from "../components/examenes/TabsApoyoDiagnostico";
 import VisorInformeImagenologiaHC from "../components/imagenologia/VisorInformeImagenologiaHC";
 import { FormularioHistoriaClinica, TriajePaciente, DatosPaciente, TratamientoPaciente } from "../components/paciente";
@@ -489,19 +490,16 @@ function HistoriaClinicaPage() {
           setOrdenesImagenPrint([]);
         });
 
-      authFetch(`api_ordenes_procedimientos.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
-        cache: 'no-store',
-      })
-        .then((res) => res.json())
-        .then((data) => {
+      cargarOrdenesProcedimientos(consultaId, { vista: "hc_fast" })
+        .then((rows) => {
           if (cancelled) return;
-          const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
           const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
           setOrdenesProcedimientosPrint(activas);
         })
-        .catch(() => {
+        .catch((error) => {
           if (cancelled) return;
           setOrdenesProcedimientosPrint([]);
+          setMsg(error?.message || 'No se pudieron cargar las ordenes de procedimientos para impresion.');
         });
     }, 300);
 
@@ -3954,12 +3952,7 @@ function HistoriaClinicaPage() {
                     if (!ordenesProcedimientosPrint || ordenesProcedimientosPrint.length === 0) {
                       setCargandoOrdenesProcedimientosPrint(true);
                       try {
-                        const noCache = `_t=${Date.now()}`;
-                        const res = await authFetch(`api_ordenes_procedimientos.php?consulta_id=${consultaId}&vista=hc_fast&${noCache}`, {
-                          cache: 'no-store',
-                        });
-                        const data = await res.json();
-                        const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
+                        const rows = await cargarOrdenesProcedimientos(consultaId, { vista: "hc_fast" });
                         const activas = rows.filter((o) => String(o?.estado || '').toLowerCase() !== 'cancelado');
                         setOrdenesProcedimientosPrint(activas);
                         if (activas.length === 0) {
@@ -3967,9 +3960,9 @@ function HistoriaClinicaPage() {
                           return;
                         }
                         setMsg('Se cargaron ordenes de procedimientos. Presione nuevamente para imprimir.');
-                      } catch {
+                      } catch (error) {
                         setOrdenesProcedimientosPrint([]);
-                        setMsg('No se pudieron cargar las ordenes de procedimientos para impresion.');
+                        setMsg(error?.message || 'No se pudieron cargar las ordenes de procedimientos para impresion.');
                       } finally {
                         setCargandoOrdenesProcedimientosPrint(false);
                       }

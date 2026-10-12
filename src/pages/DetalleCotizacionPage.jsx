@@ -288,6 +288,7 @@ export default function DetalleCotizacionPage() {
   const [devolviendoDetalleId, setDevolviendoDetalleId] = useState(0);
   const [agregandoMedicamento, setAgregandoMedicamento] = useState(false);
   const [agregandoAnalisis, setAgregandoAnalisis] = useState(false);
+  const [paquetesExpandido, setPaquetesExpandido] = useState({});
   const [clinicBrand, setClinicBrand] = useState({
     nombre: "MI CLINICA",
     logo: "",
@@ -647,6 +648,57 @@ export default function DetalleCotizacionPage() {
       };
     });
   }, [detallesConNeto]);
+  const resumenComponentesPaquete = useMemo(() => {
+    const map = {};
+    detallesRender.forEach((row, idx) => {
+      if (!row?.infoPaquete) return;
+      const key = String(row.infoPaquete.clave || "");
+      if (!key) return;
+      if (!map[key]) {
+        map[key] = {
+          key,
+          firstIndex: idx,
+          items: 0,
+          subtotal: 0,
+          subtotalBruto: 0,
+          info: row.infoPaquete,
+          componentes: [],
+        };
+      }
+      map[key].items += 1;
+      map[key].subtotal += Number(row?.raw?.subtotal_neto || row?.raw?.subtotal || 0);
+      map[key].subtotalBruto += Number(row?.raw?.subtotal || 0);
+      map[key].componentes.push({
+        key: row.key,
+        servicioLabel: row.servicioLabel,
+        descripcion: row.descripcionVisible,
+        medico: row.medicoVisible,
+        cantidad: Number(row?.raw?.cantidad || 0),
+        subtotal: Number(row?.raw?.subtotal_neto || row?.raw?.subtotal || 0),
+      });
+      if (idx < map[key].firstIndex) {
+        map[key].firstIndex = idx;
+      }
+    });
+    return map;
+  }, [detallesRender]);
+  const colapsarComponentesPaquete = useMemo(() => {
+    const groups = Object.values(resumenComponentesPaquete);
+    return groups.some((g) => Number(g?.items || 0) > 1);
+  }, [resumenComponentesPaquete]);
+  const tiposServicioEnPaquete = useMemo(() => {
+    const set = new Set();
+    if (!colapsarComponentesPaquete) return set;
+    detallesRender.forEach((row) => {
+      if (row?.infoPaquete && row?.servicioNorm) {
+        set.add(String(row.servicioNorm));
+      }
+    });
+    return set;
+  }, [colapsarComponentesPaquete, detallesRender]);
+  useEffect(() => {
+    setPaquetesExpandido({});
+  }, [grupoKey, cotizacion?.id]);
 
   const pagosRender = useMemo(() => {
     if (Array.isArray(pagos) && pagos.length > 0) {
@@ -766,13 +818,56 @@ export default function DetalleCotizacionPage() {
       saldoUpgrade,
     };
   }, [esVistaGrupo, pagosRender, resumenPaquetes]);
+  const resumenSoloPaquete = useMemo(() => {
+    if (esVistaGrupo) return null;
+    if (!Array.isArray(detallesConNeto) || detallesConNeto.length === 0) return null;
+
+    const detallesCobrables = detallesConNeto.filter((d) => (
+      Number(d?.cantidad || 0) > 0
+      && Number(d?.es_externo || 0) !== 1
+      && Number(d?.incluir_en_cobro ?? 1) !== 0
+    ));
+    if (detallesCobrables.length === 0) return null;
+
+    let subtotalPaquete = 0;
+    let infoPaqueteBase = null;
+    for (const d of detallesCobrables) {
+      const infoPaquete = obtenerInfoPaqueteDetalle(d);
+      if (!infoPaquete) {
+        return null;
+      }
+      if (!infoPaqueteBase) {
+        infoPaqueteBase = infoPaquete;
+      }
+      subtotalPaquete += Number(d?.subtotal_neto || d?.subtotal || 0);
+    }
+
+    const totalPaquete = Number(cotizacion?.total || 0) > 0
+      ? Number(cotizacion?.total || 0)
+      : Number(subtotalPaquete.toFixed(2));
+    const abonado = Math.max(0, Number(cotizacion?.total_pagado || 0));
+    const saldo = Math.max(0, Number(cotizacion?.saldo_pendiente || 0));
+    if (totalPaquete <= 0) return null;
+
+    return {
+      totalPaquete: Number(totalPaquete.toFixed(2)),
+      abonadoPrevio: 0,
+      porCobrarUpgrade: Number(Math.max(0, totalPaquete - abonado).toFixed(2)),
+      abonoUpgrade: Number(Math.max(0, abonado).toFixed(2)),
+      saldoUpgrade: Number(saldo.toFixed(2)),
+      etiquetaPaquete: infoPaqueteBase
+        ? `${infoPaqueteBase.tipoLabel}: ${infoPaqueteBase.codigo ? `${infoPaqueteBase.codigo} - ` : ""}${infoPaqueteBase.nombre}`
+        : "Paquete",
+    };
+  }, [esVistaGrupo, detallesConNeto, cotizacion?.total, cotizacion?.total_pagado, cotizacion?.saldo_pendiente]);
+  const resumenComercialPaquete = resumenUpgradePaquete || resumenSoloPaquete;
   const mostrarLecturaComercialPaquete = useMemo(() => {
     return Boolean(
-      resumenUpgradePaquete
-      && Number(resumenUpgradePaquete.totalPaquete || 0) > 0
-      && Number(resumenUpgradePaquete.saldoUpgrade || 0) >= 0
+      resumenComercialPaquete
+      && Number(resumenComercialPaquete.totalPaquete || 0) > 0
+      && Number(resumenComercialPaquete.saldoUpgrade || 0) >= 0
     );
-  }, [resumenUpgradePaquete]);
+  }, [resumenComercialPaquete]);
   const ajusteTecnicoConversionTotal = useMemo(() => {
     if (!mostrarLecturaComercialPaquete) return 0;
     return Math.max(0, Number(
@@ -788,13 +883,13 @@ export default function DetalleCotizacionPage() {
     ? Math.max(0, Number((Number(cotizacion?.saldo_pendiente || 0) - ajusteTecnicoConversionTotal).toFixed(2)))
     : Math.max(0, Number(cotizacion?.saldo_pendiente || 0));
   const saldoPendientePaquete = mostrarLecturaComercialPaquete
-    ? Math.max(0, Number(resumenUpgradePaquete?.saldoUpgrade || 0))
+    ? Math.max(0, Number(resumenComercialPaquete?.saldoUpgrade || 0))
     : 0;
   const totalVisibleResumen = mostrarLecturaComercialPaquete
-    ? Number(resumenUpgradePaquete?.totalPaquete || 0)
+    ? Number(resumenComercialPaquete?.totalPaquete || 0)
     : Number(cotizacion?.total || 0);
   const pagadoVisibleResumen = mostrarLecturaComercialPaquete
-    ? Math.max(0, Number((Number(resumenUpgradePaquete?.abonadoPrevio || 0) + Number(resumenUpgradePaquete?.abonoUpgrade || 0)).toFixed(2)))
+    ? Math.max(0, Number((Number(resumenComercialPaquete?.abonadoPrevio || 0) + Number(resumenComercialPaquete?.abonoUpgrade || 0)).toFixed(2)))
     : Number(cotizacion?.total_pagado || 0);
   const totalComercialEpisodio = mostrarLecturaComercialPaquete
     ? Math.max(totalVisibleResumen, Number(cotizacion?.total || 0))
@@ -817,11 +912,13 @@ export default function DetalleCotizacionPage() {
     : saldoPendienteGlobal;
   const pagosHistorialVisibles = useMemo(() => {
     if (!mostrarLecturaComercialPaquete) return pagosVisibles;
+    if (!resumenUpgradePaquete) return pagosVisibles;
     return pagosVisibles.filter((pago) => !esMovimientoAjusteConversionPaquete(pago));
-  }, [pagosVisibles, mostrarLecturaComercialPaquete]);
+  }, [pagosVisibles, mostrarLecturaComercialPaquete, resumenUpgradePaquete]);
   const pagosOcultosHistorial = useMemo(() => {
     return Math.max(0, pagosRender.length - pagosHistorialVisibles.length);
   }, [pagosRender.length, pagosHistorialVisibles.length]);
+  const ocultarDesgloseServiciosPorPaquete = Boolean(colapsarComponentesPaquete);
   const saldoVisibleResumen = mostrarLecturaComercialPaquete
     ? Number(totalPendienteComercial || 0)
     : Number(cotizacion?.saldo_pendiente || 0);
@@ -893,29 +990,84 @@ export default function DetalleCotizacionPage() {
       clinicBrand.celular ? `Cel: ${escapeHtml(clinicBrand.celular)}` : "",
     ].filter(Boolean).join(" | ");
 
-    const detallesRowsHtml = detallesConNeto.length
-      ? detallesConNeto
-          .map((d) => {
-            const rawDesc = resolverDescripcionDetalle(d);
+    const esTicketSoloPaquete = Boolean(
+      mostrarLecturaComercialPaquete
+      && resumenSoloPaquete
+      && !resumenUpgradePaquete
+    );
+    const detallesTicketRender = (mostrarLecturaComercialPaquete && colapsarComponentesPaquete)
+      ? detallesRender
+          .map((row, idx) => {
+            const d = row.raw || {};
+            const packKey = String(row?.infoPaquete?.clave || "");
+            const packResumen = packKey ? resumenComponentesPaquete[packKey] : null;
+            const esFilaPaqueteColapsada = Boolean(row?.infoPaquete);
+            if (esFilaPaqueteColapsada && packResumen && packResumen.firstIndex !== idx) {
+              return null;
+            }
+            const totalPaquetesColapsados = Object.keys(resumenComponentesPaquete || {}).length;
+            const subtotalPaqueteFila = (esFilaPaqueteColapsada && mostrarLecturaComercialPaquete && totalPaquetesColapsados === 1)
+              ? Number(resumenComercialPaquete?.totalPaquete || 0)
+              : Number(packResumen?.subtotalBruto || packResumen?.subtotal || 0);
+            if (esFilaPaqueteColapsada && packResumen) {
+              return {
+                rawDesc: `${row?.infoPaquete?.tipoLabel || "Paquete"}: ${row?.infoPaquete?.codigo ? `${row.infoPaquete.codigo} - ` : ""}${row?.infoPaquete?.nombre || "Paquete"}`,
+                servicioLabel: row?.infoPaquete?.tipoLabel || "Paquete",
+                fechaProgramada: "",
+                horaProgramada: "",
+                medicoNombre: "",
+                esExterno: false,
+                cant: 1,
+                neto: Number(subtotalPaqueteFila || 0),
+              };
+            }
+            return {
+              rawDesc: resolverDescripcionDetalle(d),
+              servicioLabel: labelServicio(d?.servicio_tipo) || "Servicio",
+              fechaProgramada: String(d?.fecha_programada || "").slice(0, 10),
+              horaProgramada: String(d?.hora_programada || "").slice(0, 5),
+              medicoNombre: String(d?.medico_nombre_completo || "").trim(),
+              esExterno: Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0,
+              cant: Number(d?.cantidad || 1),
+              neto: Number(d?.subtotal_neto || d?.subtotal || 0),
+            };
+          })
+          .filter(Boolean)
+      : detallesConNeto.map((d) => ({
+          rawDesc: resolverDescripcionDetalle(d),
+          servicioLabel: labelServicio(d?.servicio_tipo) || "Servicio",
+          fechaProgramada: String(d?.fecha_programada || "").slice(0, 10),
+          horaProgramada: String(d?.hora_programada || "").slice(0, 5),
+          medicoNombre: String(d?.medico_nombre_completo || "").trim(),
+          esExterno: Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0,
+          cant: Number(d?.cantidad || 1),
+          neto: Number(d?.subtotal_neto || d?.subtotal || 0),
+        }));
+    const detallesRowsHtml = esTicketSoloPaquete
+      ? `<div class="t-item"><div class="t-row"><div class="t-desc">${escapeHtml(resumenSoloPaquete?.etiquetaPaquete || 'Paquete')} x1</div><div class="t-amount">${toMoney(Number(totalVisibleResumen || cotizacion?.total || 0))}</div></div><div class="t-submeta">Servicio: Paquete</div></div>`
+      : detallesTicketRender.length
+      ? detallesTicketRender
+          .map((item) => {
+            const rawDesc = String(item?.rawDesc || "");
             const descCorta = rawDesc.length > 34 ? `${rawDesc.slice(0, 31)}...` : rawDesc;
             const desc = escapeHtml(descCorta);
-            const servicioLabel = escapeHtml(labelServicio(d?.servicio_tipo) || 'Servicio');
-            const fechaProgramadaRaw = String(d?.fecha_programada || '').slice(0, 10);
+            const servicioLabel = escapeHtml(String(item?.servicioLabel || "Servicio"));
+            const fechaProgramadaRaw = String(item?.fechaProgramada || '').slice(0, 10);
             const fechaProgramada = /^\d{4}-\d{2}-\d{2}$/.test(fechaProgramadaRaw)
               ? (() => {
                   const [anio, mes, dia] = fechaProgramadaRaw.split('-');
                   return `${dia}/${mes}/${anio}`;
                 })()
               : fechaProgramadaRaw;
-            const horaProgramada = String(d?.hora_programada || '').slice(0, 5);
-            const medicoNombre = String(d?.medico_nombre_completo || "").trim();
-            const esExterno = Number(d?.es_externo || 0) === 1 || Number(d?.incluir_en_cobro ?? 1) === 0;
+            const horaProgramada = String(item?.horaProgramada || '').slice(0, 5);
+            const medicoNombre = String(item?.medicoNombre || "").trim();
+            const esExterno = Boolean(item?.esExterno);
             const tagExterno = esExterno ? ' [Ext]' : '';
             const medicoLabel = (medicoNombre && !rawDesc.toLowerCase().includes(medicoNombre.toLowerCase()))
               ? ` - ${escapeHtml(medicoNombre.length > 18 ? `${medicoNombre.slice(0, 15)}...` : medicoNombre)}`
               : "";
-            const cant = Number(d?.cantidad || 1);
-            const neto = Number(d?.subtotal_neto || d?.subtotal || 0);
+            const cant = Number(item?.cant || 1);
+            const neto = Number(item?.neto || 0);
             const submeta = (servicioLabel || fechaProgramada || horaProgramada)
               ? `<div class="t-submeta">${servicioLabel ? `Servicio: ${servicioLabel}` : ''}${servicioLabel && (fechaProgramada || horaProgramada) ? ' | ' : ''}${fechaProgramada ? `Fecha: ${fechaProgramada}` : ''}${fechaProgramada && horaProgramada ? ' | ' : ''}${horaProgramada ? `Hora: ${horaProgramada}` : ''}</div>`
               : '';
@@ -2102,13 +2254,26 @@ export default function DetalleCotizacionPage() {
             <div className="text-sm text-gray-500">Sin items activos.</div>
           ) : (
             <div className="space-y-2">
-              <div className="flex flex-wrap gap-2">
-                {resumenServicios.map((s) => (
-                  <span key={s.tipo} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}>
-                    {s.label}: {s.items} item(s){mostrarLecturaComercialPaquete ? "" : ` | S/ ${Number(s.subtotal || 0).toFixed(2)}`}
-                  </span>
-                ))}
-              </div>
+              {!ocultarDesgloseServiciosPorPaquete && (
+                <div className="flex flex-wrap gap-2">
+                  {resumenServicios.map((s) => (
+                    <span key={s.tipo} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}>
+                      {s.label}: {s.items} item(s){mostrarLecturaComercialPaquete ? "" : ` | S/ ${Number(s.subtotal || 0).toFixed(2)}`}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {ocultarDesgloseServiciosPorPaquete && (
+                <div className="flex flex-wrap gap-2">
+                  {resumenServicios
+                    .filter((s) => !tiposServicioEnPaquete.has(String(s?.tipo || "")))
+                    .map((s) => (
+                      <span key={s.tipo} className="text-xs bg-white border rounded px-2 py-1" style={{ borderColor: "var(--color-primary-light)", color: "var(--color-primary-dark)" }}>
+                        {s.label}: {s.items} item(s){mostrarLecturaComercialPaquete ? "" : ` | S/ ${Number(s.subtotal || 0).toFixed(2)}`}
+                      </span>
+                    ))}
+                </div>
+              )}
               {resumenPaquetes.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {resumenPaquetes.map((p) => (
@@ -2118,7 +2283,7 @@ export default function DetalleCotizacionPage() {
                   ))}
                   {mostrarLecturaComercialPaquete && (
                     <span className="text-xs bg-emerald-50 border rounded px-2 py-1 font-semibold" style={{ borderColor: "#86efac", color: "#166534" }}>
-                      Total paquete: S/ {Number(resumenUpgradePaquete?.totalPaquete || 0).toFixed(2)}
+                      Total paquete: S/ {Number(resumenComercialPaquete?.totalPaquete || 0).toFixed(2)}
                     </span>
                   )}
                 </div>
@@ -2145,16 +2310,51 @@ export default function DetalleCotizacionPage() {
                 <tr>
                   <td colSpan={esVistaGrupo ? 7 : 6} className="px-3 py-6 text-center text-gray-500">Sin items activos en la cotizacion.</td>
                 </tr>
-              ) : detallesRender.map((row) => {
+              ) : detallesRender.map((row, idx) => {
                 const d = row.raw;
+                const packKey = String(row?.infoPaquete?.clave || "");
+                const packResumen = packKey ? resumenComponentesPaquete[packKey] : null;
+                const esFilaPaqueteColapsada = Boolean(colapsarComponentesPaquete && row?.infoPaquete);
+                if (esFilaPaqueteColapsada && packResumen && packResumen.firstIndex !== idx) {
+                  return null;
+                }
+                const totalPaquetesColapsados = Object.keys(resumenComponentesPaquete || {}).length;
+                const subtotalPaqueteFila = (esFilaPaqueteColapsada && mostrarLecturaComercialPaquete && totalPaquetesColapsados === 1)
+                  ? Number(resumenComercialPaquete?.totalPaquete || 0)
+                  : Number(packResumen?.subtotalBruto || packResumen?.subtotal || 0);
+                const subtotalFila = esFilaPaqueteColapsada && packResumen
+                  ? Number(subtotalPaqueteFila || 0)
+                  : Number(d?.subtotal_neto || d?.subtotal || 0);
+                const cantidadFila = esFilaPaqueteColapsada && packResumen
+                  ? 1
+                  : Number(d?.cantidad || 0);
+                const servicioFila = esFilaPaqueteColapsada
+                  ? (row?.infoPaquete?.tipoLabel || "Paquete")
+                  : row.servicioLabel;
+                const descripcionFila = esFilaPaqueteColapsada
+                  ? `${row?.infoPaquete?.tipoLabel || "Paquete"}: ${row?.infoPaquete?.codigo ? `${row.infoPaquete.codigo} - ` : ""}${row?.infoPaquete?.nombre || "Paquete"}`
+                  : row.descripcionVisible;
+                const esFilaDesglosable = esFilaPaqueteColapsada && Number(packResumen?.items || 0) > 1;
+                const packExpandido = esFilaDesglosable && Boolean(paquetesExpandido[packKey]);
+                const componentesPaquete = Array.isArray(packResumen?.componentes) ? packResumen.componentes : [];
                 return (
-                <tr key={row.key} className="border-t">
+                <React.Fragment key={row.key}>
+                <tr className="border-t">
                   {esVistaGrupo && <td className="px-3 py-2 whitespace-nowrap">#{Number(d?.cotizacion_origen_id || 0)}</td>}
-                  <td className="px-3 py-2">{row.servicioLabel}</td>
+                  <td className="px-3 py-2">{servicioFila}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span>{row.descripcionVisible}</span>
-                      {row.infoPaquete && (
+                      <span>{descripcionFila}</span>
+                      {esFilaDesglosable && (
+                        <button
+                          type="button"
+                          onClick={() => setPaquetesExpandido((prev) => ({ ...prev, [packKey]: !prev[packKey] }))}
+                          className="text-[11px] px-2 py-0.5 rounded border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100"
+                        >
+                          {packExpandido ? "Ocultar servicios" : `Ver servicios (${Number(packResumen?.items || 0)})`}
+                        </button>
+                      )}
+                      {row.infoPaquete && !esFilaPaqueteColapsada && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap" style={{ backgroundColor: "#eff6ff", color: "#1e40af", borderColor: "#bfdbfe" }}>
                           {row.infoPaquete.tipoLabel}: {row.infoPaquete.codigo ? `${row.infoPaquete.codigo} - ` : ""}{row.infoPaquete.nombre}
                         </span>
@@ -2179,8 +2379,9 @@ export default function DetalleCotizacionPage() {
                   <td className="px-3 py-2">{row.medicoVisible}</td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex flex-col items-end gap-1">
-                      <span>{Number(d.cantidad || 0)}</span>
+                      <span>{cantidadFila}</span>
                       {!esVistaGrupo
+                        && !esFilaPaqueteColapsada
                         && puedeEditar
                         && estado === "pendiente"
                         && row.servicioNorm === "farmacia"
@@ -2203,6 +2404,7 @@ export default function DetalleCotizacionPage() {
                           </div>
                         )}
                       {!esVistaGrupo
+                        && !esFilaPaqueteColapsada
                         && puedeEditar
                         && estado === "pendiente"
                         && row.servicioNorm === "laboratorio"
@@ -2218,6 +2420,7 @@ export default function DetalleCotizacionPage() {
                           </div>
                         )}
                       {puedeGestionarDevolucion
+                        && !esFilaPaqueteColapsada
                         && (estado === "pagado" || estado === "parcial")
                         && Number(d?.cantidad || 0) > 0
                         && Number(d?.es_externo || 0) !== 1
@@ -2235,7 +2438,7 @@ export default function DetalleCotizacionPage() {
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {mostrarLecturaComercialPaquete && row.infoPaquete ? (
+                    {(mostrarLecturaComercialPaquete && row.infoPaquete) || esFilaPaqueteColapsada ? (
                       <span className="text-[11px] text-gray-500">Incluido en paquete</span>
                     ) : (
                       <>S/ {Number(d.precio_unitario || 0).toFixed(2)}</>
@@ -2245,11 +2448,34 @@ export default function DetalleCotizacionPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right font-semibold">
-                    {mostrarLecturaComercialPaquete && row.infoPaquete
-                      ? "—"
-                      : `S/ ${Number(d.subtotal_neto || d.subtotal || 0).toFixed(2)}`}
+                    {esFilaPaqueteColapsada
+                      ? `S/ ${Number(subtotalFila || 0).toFixed(2)}`
+                      : (mostrarLecturaComercialPaquete && row.infoPaquete
+                        ? "—"
+                        : `S/ ${Number(subtotalFila || 0).toFixed(2)}`)}
                   </td>
                 </tr>
+                {packExpandido && (
+                  <tr className="border-t bg-slate-50">
+                    <td colSpan={esVistaGrupo ? 7 : 6} className="px-3 py-2">
+                      <div className="text-[11px] font-semibold text-slate-700 mb-1">Servicios incluidos en el paquete:</div>
+                      <div className="space-y-1">
+                        {componentesPaquete.map((comp, compIdx) => (
+                          <div key={`${comp.key}-${compIdx}`} className="text-xs text-slate-700 flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">{comp.servicioLabel}</span>
+                            <span>{comp.descripcion}</span>
+                            {comp.medico && comp.medico !== "-" && (
+                              <span className="text-slate-500">· {comp.medico}</span>
+                            )}
+                            <span className="text-slate-500">· Cant: {Number(comp.cantidad || 0)}</span>
+                            <span className="text-slate-500">· Incluido en paquete</span>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               )})}
             </tbody>
           </table>

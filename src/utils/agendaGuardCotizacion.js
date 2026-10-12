@@ -127,13 +127,23 @@ function hasActiveState(row) {
   return estado !== "cancelada" && estado !== "completada";
 }
 
-async function fetchHorasOcupadasDelDia({ authFetch, baseUrl, medicoId, fecha, consultaIdExcluir = 0 }) {
+async function fetchHorasOcupadasDelDia({
+  authFetch,
+  baseUrl,
+  medicoId,
+  fecha,
+  consultaIdExcluir = 0,
+  cotizacionIdExcluir = 0,
+}) {
   const qsDisp = new URLSearchParams({
     medico_id: String(medicoId),
     fecha,
   });
   if (Number(consultaIdExcluir) > 0) {
     qsDisp.set("consulta_id", String(Number(consultaIdExcluir)));
+  }
+  if (Number(cotizacionIdExcluir) > 0) {
+    qsDisp.set("cotizacion_id_excluir", String(Number(cotizacionIdExcluir)));
   }
 
   try {
@@ -177,13 +187,23 @@ async function fetchHorasOcupadasDelDia({ authFetch, baseUrl, medicoId, fecha, c
     .filter(Boolean);
 }
 
-async function fetchHorariosDisponiblesPorFecha({ authFetch, baseUrl, medicoId, fecha, consultaIdExcluir = 0 }) {
+async function fetchHorariosDisponiblesPorFecha({
+  authFetch,
+  baseUrl,
+  medicoId,
+  fecha,
+  consultaIdExcluir = 0,
+  cotizacionIdExcluir = 0,
+}) {
   const qs = new URLSearchParams({
     medico_id: String(medicoId),
     fecha,
   });
   if (Number(consultaIdExcluir) > 0) {
     qs.set("consulta_id", String(Number(consultaIdExcluir)));
+  }
+  if (Number(cotizacionIdExcluir) > 0) {
+    qs.set("cotizacion_id_excluir", String(Number(cotizacionIdExcluir)));
   }
 
   const res = await authFetch(`${baseUrl}api_horarios_disponibles.php?${qs.toString()}`, {
@@ -255,7 +275,16 @@ function buildSlotMinutesFromBloques(bloques) {
   return slots.sort((a, b) => a - b);
 }
 
-async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, consultaIdExcluir = 0, maxFutureDays = 14 }) {
+async function getAgendaAdvisory({
+  authFetch,
+  baseUrl,
+  medicoId,
+  fecha,
+  hora,
+  consultaIdExcluir = 0,
+  cotizacionIdExcluir = 0,
+  maxFutureDays = 14,
+}) {
   const fechaNorm = normalizeDateYmd(fecha);
   const horaNorm = normalizeHourHm(hora);
   if (!fechaNorm || !horaNorm || Number(medicoId) <= 0) {
@@ -268,6 +297,7 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
     medicoId: Number(medicoId),
     fecha: fechaNorm,
     consultaIdExcluir: Number(consultaIdExcluir || 0),
+    cotizacionIdExcluir: Number(cotizacionIdExcluir || 0),
   });
 
   const requestedMin = hmToMinutes(horaNorm);
@@ -354,6 +384,7 @@ async function getAgendaAdvisory({ authFetch, baseUrl, medicoId, fecha, hora, co
           medicoId: Number(medicoId),
           fecha: fechaEvaluada,
           consultaIdExcluir: Number(consultaIdExcluir || 0),
+          cotizacionIdExcluir: Number(cotizacionIdExcluir || 0),
         });
         if (horariosFuturos.length > 0) {
           const primeraHora = normalizeHourHm(horariosFuturos[0] || "");
@@ -396,10 +427,16 @@ function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "", pare
   const fecha = normalizeDateYmd(detalle?.fecha_programada || detalle?.fechaProgramada || detalle?.fecha || parentFecha || "");
   const hora = normalizeHourHm(detalle?.hora_programada || detalle?.horaProgramada || detalle?.hora || parentHora || "");
   const consultaId = Number(detalle?.consulta_id || detalle?.consultaId || parentConsultaId || 0);
+  const cotizacionId = Number(detalle?.cotizacion_id || detalle?.cotizacionId || 0);
   const omitirAlertaFueraHorario = Boolean(
     Number(detalle?.omitir_alerta_fuera_horario || detalle?.omit_outside_regular_warning || 0) > 0
     || detalle?.omitirAlertaFueraHorario === true
     || detalle?.omitOutsideRegularWarning === true
+  );
+  const permitirCruceHorarioBase = Boolean(
+    Number(detalle?.permitir_cruce_horario_base || detalle?.allow_base_slot_overlap || 0) > 0
+    || detalle?.permitirCruceHorarioBase === true
+    || detalle?.allowBaseSlotOverlap === true
   );
 
   if (AGENDABLE_SERVICE_TYPES.has(tipo) && medicoId > 0 && fecha && hora) {
@@ -409,7 +446,9 @@ function collectFromDetail(detalle, acc, parentFecha = "", parentHora = "", pare
       fecha,
       hora,
       consultaIdExcluir: consultaId > 0 ? consultaId : 0,
+      cotizacionIdExcluir: cotizacionId > 0 ? cotizacionId : 0,
       omitirAlertaFueraHorario,
+      permitirCruceHorarioBase,
     });
   }
 
@@ -442,6 +481,16 @@ export function buildAgendaGuardEntriesFromDetalles(detalles) {
       ));
       if (existente && Number(existente?.consultaIdExcluir || 0) <= 0) {
         existente.consultaIdExcluir = Number(row.consultaIdExcluir);
+      }
+    }
+    if (Number(row?.cotizacionIdExcluir || 0) > 0) {
+      const existente = out.find((entry) => (
+        Number(entry?.medicoId || 0) === Number(row?.medicoId || 0)
+        && entry?.fecha === row?.fecha
+        && entry?.hora === row?.hora
+      ));
+      if (existente && Number(existente?.cotizacionIdExcluir || 0) <= 0) {
+        existente.cotizacionIdExcluir = Number(row.cotizacionIdExcluir);
       }
     }
   }
@@ -844,6 +893,7 @@ export async function validarAgendaAntesDeCotizar({
         fecha: entry.fecha,
         hora: entry.hora,
         consultaIdExcluir: Number(entry?.consultaIdExcluir || 0),
+        cotizacionIdExcluir: Number(entry?.cotizacionIdExcluir || 0),
         maxFutureDays,
       });
 
@@ -852,6 +902,10 @@ export async function validarAgendaAntesDeCotizar({
       }
 
       const isOutsideRegular = String(advisory?.warningType || "") === "outside_regular";
+      const isOccupied = String(advisory?.warningType || "") === "occupied";
+      if (isOccupied && entry?.permitirCruceHorarioBase) {
+        break;
+      }
       if (isOutsideRegular && entry?.omitirAlertaFueraHorario) {
         break;
       }

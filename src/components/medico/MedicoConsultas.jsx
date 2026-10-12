@@ -54,9 +54,10 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const [resumenEconomicoError, setResumenEconomicoError] = useState("");
   const [loadingResumenEconomico, setLoadingResumenEconomico] = useState(false);
   const [expandedServicios, setExpandedServicios] = useState({});
-  const [detalleServiciosByCotizacion, setDetalleServiciosByCotizacion] = useState({});
-  const [paquetesResumenByCotizacion, setPaquetesResumenByCotizacion] = useState({});
-  const [loadingDetalleServiciosByCotizacion, setLoadingDetalleServiciosByCotizacion] = useState({});
+  const [detalleServiciosByConsulta, setDetalleServiciosByConsulta] = useState({});
+  const [paquetesResumenByConsulta, setPaquetesResumenByConsulta] = useState({});
+  const [loadingDetalleServiciosByConsulta, setLoadingDetalleServiciosByConsulta] = useState({});
+  const [detalleServiciosErrorByConsulta, setDetalleServiciosErrorByConsulta] = useState({});
   const [clockTick, setClockTick] = useState(0);
   
   // Buscador dinámico
@@ -112,18 +113,74 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     ));
   };
 
-  const cargarDetalleServiciosCotizacion = async (cotizacionId) => {
-    const cotId = Number(cotizacionId || 0);
-    if (cotId <= 0) return;
-    if (detalleServiciosByCotizacion[cotId]) return;
+  const obtenerMetaPaqueteDesdeDetalle = (detalle) => {
+    if (!detalle || typeof detalle !== "object") return null;
+    const snapshotRaw = detalle?.snapshot_json;
+    let snapshot = null;
 
-    setLoadingDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: true }));
+    if (snapshotRaw && typeof snapshotRaw === "string") {
+      try {
+        snapshot = JSON.parse(snapshotRaw);
+      } catch {
+        snapshot = null;
+      }
+    } else if (snapshotRaw && typeof snapshotRaw === "object") {
+      snapshot = snapshotRaw;
+    }
+
+    if (!snapshot || typeof snapshot !== "object") return null;
+
+    const paqueteId = Number(snapshot?.paquete_id || 0);
+    const paqueteTipo = String(snapshot?.paquete_tipo || "").trim().toLowerCase();
+    const paqueteCodigo = String(snapshot?.paquete_codigo || "").trim();
+    const paqueteNombre = String(snapshot?.paquete_nombre || "").trim();
+    if (paqueteId <= 0 && !paqueteTipo && !paqueteCodigo && !paqueteNombre) {
+      return null;
+    }
+
+    return {
+      paqueteId,
+      paqueteTipo,
+      paqueteCodigo,
+      paqueteNombre,
+    };
+  };
+
+  const cargarDetalleServiciosConsulta = async (consulta) => {
+    const consultaId = Number(consulta?.id || 0);
+    if (consultaId <= 0 || detalleServiciosByConsulta[consultaId]) return;
+
+    const cotizacionesIds = Array.from(new Set(
+      String(consulta?.cotizaciones_ids || "")
+        .split(",")
+        .map((id) => Number(id.trim()))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ));
+    const cotizacionId = Number(consulta?.cotizacion_id || 0);
+    if (cotizacionesIds.length === 0 && cotizacionId > 0) {
+      cotizacionesIds.push(cotizacionId);
+    }
+    if (cotizacionesIds.length === 0) return;
+
+    setLoadingDetalleServiciosByConsulta((prev) => ({ ...prev, [consultaId]: true }));
+    setDetalleServiciosErrorByConsulta((prev) => ({ ...prev, [consultaId]: "" }));
     try {
-      const response = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotId}&_t=${Date.now()}`, { cache: "no-store" });
-      const data = await response.json();
-      const cot = data?.cotizacion || null;
-      const detalles = Array.isArray(cot?.detalles) ? cot.detalles : [];
-      const paquetesBase = parsePaquetesResumen(cot?.paquetes_resumen || cot?.paquete_resumen || "");
+      const respuestas = await Promise.all(cotizacionesIds.map(async (cotizacionOrigenId) => {
+        const response = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionOrigenId}&_t=${Date.now()}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || !data?.success || !data?.cotizacion) {
+          throw new Error(data?.error || `No se pudo cargar la cotización #${cotizacionOrigenId}`);
+        }
+        return {
+          cotizacionOrigenId,
+          cotizacion: data.cotizacion,
+        };
+      }));
+      const detalles = respuestas.flatMap(({ cotizacionOrigenId, cotizacion }) => (
+        (Array.isArray(cotizacion?.detalles) ? cotizacion.detalles : [])
+          .filter((detalle) => Number(detalle?.consulta_id || 0) === consultaId)
+          .map((detalle) => ({ ...detalle, cotizacionOrigenId }))
+      ));
       const paquetesDesdeDetalle = detalles
         .map((d) => {
           const tipoDirecto = String(d?.paquete_tipo || "").trim().toLowerCase();
@@ -175,35 +232,40 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
         })
         .filter(Boolean);
 
-      const paquetesResumen = Array.from(new Set([...paquetesBase, ...paquetesDesdeDetalle]));
+      const paquetesResumen = Array.from(new Set(paquetesDesdeDetalle));
       const servicios = detalles
         .filter((d) => String(d?.estado_item || "").toLowerCase() !== "eliminado")
-        .map((d) => ({
-          id: Number(d?.id || 0),
-          tipo: etiquetaServicio(d?.servicio_tipo || ""),
-          descripcion: String(d?.descripcion || "").trim(),
-          cantidad: Number(d?.cantidad || 1),
-          subtotal: Number(d?.subtotal || 0),
-        }));
+        .map((d) => {
+          const metaPaquete = obtenerMetaPaqueteDesdeDetalle(d);
+          return {
+            id: Number(d?.id || 0),
+            cotizacionOrigenId: Number(d?.cotizacionOrigenId || 0),
+            tipo: etiquetaServicio(d?.servicio_tipo || ""),
+            descripcion: String(d?.descripcion || "").trim(),
+            cantidad: Number(d?.cantidad || 1),
+            subtotal: Number(d?.subtotal || 0),
+            incluidoEnPaquete: Boolean(metaPaquete),
+          };
+        });
 
-      setDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: servicios }));
-      setPaquetesResumenByCotizacion((prev) => ({ ...prev, [cotId]: paquetesResumen }));
-    } catch {
-      setDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: [] }));
-      setPaquetesResumenByCotizacion((prev) => ({ ...prev, [cotId]: [] }));
+      setDetalleServiciosByConsulta((prev) => ({ ...prev, [consultaId]: servicios }));
+      setPaquetesResumenByConsulta((prev) => ({ ...prev, [consultaId]: paquetesResumen }));
+    } catch (error) {
+      setDetalleServiciosErrorByConsulta((prev) => ({
+        ...prev,
+        [consultaId]: error?.message || "No se pudieron cargar los servicios de esta consulta.",
+      }));
     } finally {
-      setLoadingDetalleServiciosByCotizacion((prev) => ({ ...prev, [cotId]: false }));
+      setLoadingDetalleServiciosByConsulta((prev) => ({ ...prev, [consultaId]: false }));
     }
   };
 
   const toggleServicios = async (consulta) => {
     const consultaId = Number(consulta?.id || 0);
     if (consultaId <= 0) return;
-    const cotId = Number(consulta?.cotizacion_id || 0);
-
     setExpandedServicios((prev) => ({ ...prev, [consultaId]: !prev[consultaId] }));
-    if (cotId > 0) {
-      await cargarDetalleServiciosCotizacion(cotId);
+    if (Number(consulta?.cotizacion_id || 0) > 0) {
+      await cargarDetalleServiciosConsulta(consulta);
     }
   };
 
@@ -1485,11 +1547,12 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                     const consultaId = Number(consulta?.id || 0);
                     const cotizacionId = Number(consulta?.cotizacion_id || 0);
                     const estaExpandido = Boolean(expandedServicios[consultaId]);
-                    const detalleServicios = cotizacionId > 0 ? (detalleServiciosByCotizacion[cotizacionId] || []) : [];
+                    const detalleServicios = detalleServiciosByConsulta[consultaId] || [];
                     const paquetesFila = parsePaquetesResumen(consulta?.paquetes_resumen || consulta?.paquete_resumen || "");
-                    const paquetesDetalle = cotizacionId > 0 ? (paquetesResumenByCotizacion[cotizacionId] || []) : [];
+                    const paquetesDetalle = paquetesResumenByConsulta[consultaId] || [];
                     const paquetesResumen = Array.from(new Set([...paquetesFila, ...paquetesDetalle]));
-                    const loadingDetalle = Boolean(loadingDetalleServiciosByCotizacion[cotizacionId]);
+                    const loadingDetalle = Boolean(loadingDetalleServiciosByConsulta[consultaId]);
+                    const detalleServiciosError = detalleServiciosErrorByConsulta[consultaId] || "";
                     
                     return ([
                       <tr
@@ -1744,17 +1807,21 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                             )}
                             {loadingDetalle ? (
                               <div className="text-xs text-slate-500">Cargando servicios...</div>
+                            ) : detalleServiciosError ? (
+                              <div className="text-xs text-red-600">{detalleServiciosError}</div>
                             ) : detalleServicios.length === 0 ? (
                               <div className="text-xs text-slate-500">No se encontraron detalles de servicios en la cotización asociada.</div>
                             ) : (
                               <div className="space-y-1">
                                 {detalleServicios.map((item) => (
-                                  <div key={`${consulta.id}-${item.id}-${item.tipo}`} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
+                                  <div key={`${consulta.id}-${item.cotizacionOrigenId}-${item.id}-${item.tipo}`} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
                                     <div>
                                       <span className="font-semibold text-slate-700">{item.tipo}</span>
                                       {item.descripcion ? <span className="text-slate-600"> · {item.descripcion}</span> : null}
                                     </div>
-                                    <div className="text-slate-600">x{item.cantidad} · S/ {Number(item.subtotal || 0).toFixed(2)}</div>
+                                    <div className="text-slate-600">
+                                      x{item.cantidad} · {item.incluidoEnPaquete ? "incluido en paquete" : `S/ ${Number(item.subtotal || 0).toFixed(2)}`}
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -1789,11 +1856,12 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               const consultaId = Number(consulta?.id || 0);
               const cotizacionId = Number(consulta?.cotizacion_id || 0);
               const estaExpandido = Boolean(expandedServicios[consultaId]);
-              const detalleServicios = cotizacionId > 0 ? (detalleServiciosByCotizacion[cotizacionId] || []) : [];
+              const detalleServicios = detalleServiciosByConsulta[consultaId] || [];
               const paquetesFila = parsePaquetesResumen(consulta?.paquetes_resumen || consulta?.paquete_resumen || "");
-              const paquetesDetalle = cotizacionId > 0 ? (paquetesResumenByCotizacion[cotizacionId] || []) : [];
+              const paquetesDetalle = paquetesResumenByConsulta[consultaId] || [];
               const paquetesResumen = Array.from(new Set([...paquetesFila, ...paquetesDetalle]));
-              const loadingDetalle = Boolean(loadingDetalleServiciosByCotizacion[cotizacionId]);
+              const loadingDetalle = Boolean(loadingDetalleServiciosByConsulta[consultaId]);
+              const detalleServiciosError = detalleServiciosErrorByConsulta[consultaId] || "";
               return (
               <div
                 key={consulta.id}
@@ -1900,17 +1968,21 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                     )}
                     {loadingDetalle ? (
                       <div className="text-xs text-slate-500">Cargando servicios...</div>
+                    ) : detalleServiciosError ? (
+                      <div className="text-xs text-red-600">{detalleServiciosError}</div>
                     ) : detalleServicios.length === 0 ? (
                       <div className="text-xs text-slate-500">No se encontraron detalles de servicios en la cotización asociada.</div>
                     ) : (
                       <div className="space-y-1">
                         {detalleServicios.map((item) => (
-                          <div key={`${consulta.id}-m-${item.id}-${item.tipo}`} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
+                          <div key={`${consulta.id}-m-${item.cotizacionOrigenId}-${item.id}-${item.tipo}`} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded px-2 py-1.5">
                             <div>
                               <span className="font-semibold text-slate-700">{item.tipo}</span>
                               {item.descripcion ? <span className="text-slate-600"> · {item.descripcion}</span> : null}
                             </div>
-                            <div className="text-slate-600">x{item.cantidad} · S/ {Number(item.subtotal || 0).toFixed(2)}</div>
+                            <div className="text-slate-600">
+                              x{item.cantidad} · {item.incluidoEnPaquete ? "incluido en paquete" : `S/ ${Number(item.subtotal || 0).toFixed(2)}`}
+                            </div>
                           </div>
                         ))}
                       </div>

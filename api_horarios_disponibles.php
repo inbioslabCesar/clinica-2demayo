@@ -101,6 +101,7 @@ if ($method === 'GET') {
     $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
     $fecha = isset($_GET['fecha']) ? $_GET['fecha'] : null;
     $consulta_id_excluir = isset($_GET['consulta_id']) ? intval($_GET['consulta_id']) : 0;
+    $cotizacion_id_excluir = isset($_GET['cotizacion_id_excluir']) ? intval($_GET['cotizacion_id_excluir']) : 0;
     
     if (!$medico_id || !$fecha) {
         echo json_encode(['success' => false, 'error' => 'Se requiere medico_id y fecha']);
@@ -123,17 +124,26 @@ if ($method === 'GET') {
         $horariosDisponibles = [];
         
         $horariosOcupadosSet = [];
-        if ($consulta_id_excluir > 0) {
-            $stmt_consultas = $conn->prepare('
-                SELECT hora FROM consultas 
-                WHERE medico_id = ? AND fecha = ? AND estado NOT IN ("cancelada", "completada") AND id <> ?
-            ');
-            $stmt_consultas->bind_param('isi', $medico_id, $fecha, $consulta_id_excluir);
-        } else {
-            $stmt_consultas = $conn->prepare('
+        $hasConsultasCotizacion = hdisp_table_exists($conn, 'consultas')
+            && hdisp_column_exists($conn, 'consultas', 'cotizacion_id');
+        $sqlConsultas = '
                 SELECT hora FROM consultas 
                 WHERE medico_id = ? AND fecha = ? AND estado NOT IN ("cancelada", "completada")
-            ');
+            ';
+        if ($consulta_id_excluir > 0) {
+            $sqlConsultas .= ' AND id <> ?';
+        }
+        if ($cotizacion_id_excluir > 0 && $hasConsultasCotizacion) {
+            $sqlConsultas .= ' AND COALESCE(cotizacion_id, 0) <> ?';
+        }
+        $stmt_consultas = $conn->prepare($sqlConsultas);
+        if ($consulta_id_excluir > 0 && $cotizacion_id_excluir > 0 && $hasConsultasCotizacion) {
+            $stmt_consultas->bind_param('isii', $medico_id, $fecha, $consulta_id_excluir, $cotizacion_id_excluir);
+        } elseif ($consulta_id_excluir > 0) {
+            $stmt_consultas->bind_param('isi', $medico_id, $fecha, $consulta_id_excluir);
+        } elseif ($cotizacion_id_excluir > 0 && $hasConsultasCotizacion) {
+            $stmt_consultas->bind_param('isi', $medico_id, $fecha, $cotizacion_id_excluir);
+        } else {
             $stmt_consultas->bind_param('is', $medico_id, $fecha);
         }
 
@@ -162,6 +172,7 @@ if ($method === 'GET') {
             $hasDetalleId = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'id');
             $hasDetalleMed = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'medico_id');
             $hasDetalleServ = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'servicio_id');
+            $hasDetalleCotizacionId = $hasDetalle && hdisp_column_exists($conn, 'cotizaciones_detalle', 'cotizacion_id');
 
             $hasTarifas = hdisp_table_exists($conn, 'tarifas');
             $hasTarifaId = $hasTarifas && hdisp_column_exists($conn, 'tarifas', 'id');
@@ -192,10 +203,29 @@ if ($method === 'GET') {
                 . $joinTarifa
                 . ' WHERE ' . $medicoExpr . ' = ? AND a.fecha_programada = ?'
                 . $whereEstado;
+            $canExcludeAgendaCotizacion = ($cotizacion_id_excluir > 0 && hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id'));
+            $canExcludeDetalleCotizacion = ($cotizacion_id_excluir > 0 && $hasDetalleCotizacionId && $joinDetalle !== '');
+            if ($canExcludeAgendaCotizacion || $canExcludeDetalleCotizacion) {
+                $sqlAgenda .= ' AND (';
+                $conds = [];
+                if ($canExcludeAgendaCotizacion) {
+                    $conds[] = 'COALESCE(a.cotizacion_id, 0) <> ?';
+                }
+                if ($canExcludeDetalleCotizacion) {
+                    $conds[] = 'COALESCE(cd.cotizacion_id, 0) <> ?';
+                }
+                $sqlAgenda .= implode(' AND ', $conds) . ')';
+            }
 
             $stmtAgenda = $conn->prepare($sqlAgenda);
             if ($stmtAgenda) {
-                $stmtAgenda->bind_param('is', $medico_id, $fecha);
+                if ($canExcludeAgendaCotizacion && $canExcludeDetalleCotizacion) {
+                    $stmtAgenda->bind_param('isii', $medico_id, $fecha, $cotizacion_id_excluir, $cotizacion_id_excluir);
+                } elseif ($canExcludeAgendaCotizacion || $canExcludeDetalleCotizacion) {
+                    $stmtAgenda->bind_param('isi', $medico_id, $fecha, $cotizacion_id_excluir);
+                } else {
+                    $stmtAgenda->bind_param('is', $medico_id, $fecha);
+                }
                 $stmtAgenda->execute();
                 $resAgenda = $stmtAgenda->get_result();
                 while ($ag = $resAgenda->fetch_assoc()) {
@@ -255,6 +285,7 @@ if ($method === 'GET') {
             'total' => count($horariosDisponibles),
             'duracion_slot_min' => $slotMinutes,
             'consulta_excluida' => $consulta_id_excluir > 0 ? $consulta_id_excluir : null,
+            'cotizacion_excluida' => $cotizacion_id_excluir > 0 ? $cotizacion_id_excluir : null,
         ]);
         
     } catch (Exception $e) {

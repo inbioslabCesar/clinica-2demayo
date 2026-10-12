@@ -471,6 +471,7 @@ try {
         }
 
         $cobroTipoUnico = [];
+        $cobrosSoloPaqueteComercial = [];
         $cacheDistribucionMixtaCobro = [];
 
         $obtenerDistribucionMixtaCobro = function (int $cobroId) use ($pdo, $normalizarTipoIngresoServicio, $esTextoCambioPaquete, &$cacheDistribucionMixtaCobro) {
@@ -598,6 +599,89 @@ try {
                     $cobroTipoUnico[$cobroId] = $tipoNormalizado;
                 }
             }
+
+            $stmtPaqueteCobro = $pdo->prepare(
+                'SELECT cobro_id, servicio_tipo, subtotal, descripcion '
+                . 'FROM cobros_detalle '
+                . "WHERE cobro_id IN ($placeholders)"
+            );
+            $stmtPaqueteCobro->execute($ids);
+            $rowsDetalleCobro = $stmtPaqueteCobro->fetchAll(PDO::FETCH_ASSOC);
+            $estadoPaquetePorCobro = [];
+            foreach ($rowsDetalleCobro as $detRow) {
+                $cobroId = (int)($detRow['cobro_id'] ?? 0);
+                if ($cobroId <= 0) {
+                    continue;
+                }
+                if (!isset($estadoPaquetePorCobro[$cobroId])) {
+                    $estadoPaquetePorCobro[$cobroId] = [
+                        'tiene_marcador_paquete' => false,
+                        'tiene_no_paquete_explicito' => false,
+                    ];
+                }
+
+                $tipoFila = $normalizarTipoIngresoServicio((string)($detRow['servicio_tipo'] ?? ''));
+                $subtotalFila = max(0, (float)($detRow['subtotal'] ?? 0));
+                $descripcionFila = (string)($detRow['descripcion'] ?? '');
+                $descFilaLower = strtolower($descripcionFila);
+                if (
+                    strpos($descFilaLower, 'paquete:') !== false
+                    || strpos($descFilaLower, '| campana ') !== false
+                    || strpos($descFilaLower, 'pago de diferencia de paquete') !== false
+                    || strpos($descFilaLower, 'diferencia pendiente del paquete') !== false
+                ) {
+                    $estadoPaquetePorCobro[$cobroId]['tiene_marcador_paquete'] = true;
+                }
+
+                $items = json_decode($descripcionFila, true);
+                if (is_array($items)) {
+                    foreach ($items as $item) {
+                        if (!is_array($item)) {
+                            continue;
+                        }
+                        $snapshot = $item['snapshot_json'] ?? null;
+                        if (is_string($snapshot)) {
+                            $snapDecoded = json_decode($snapshot, true);
+                            $snapshot = is_array($snapDecoded) ? $snapDecoded : null;
+                        } elseif (!is_array($snapshot)) {
+                            $snapshot = null;
+                        }
+
+                        $itemPaqueteId = (int)($item['paquete_id'] ?? ($snapshot['paquete_id'] ?? 0));
+                        $itemPaqueteCodigo = trim((string)($item['paquete_codigo'] ?? ($snapshot['paquete_codigo'] ?? '')));
+                        $itemPaqueteTipo = strtolower(trim((string)($item['paquete_tipo'] ?? ($snapshot['paquete_tipo'] ?? ''))));
+                        $itemDescripcion = strtolower(trim((string)($item['descripcion'] ?? '')));
+                        $itemEsPaquete = (
+                            $itemPaqueteId > 0
+                            || $itemPaqueteCodigo !== ''
+                            || in_array($itemPaqueteTipo, ['paquete', 'perfil'], true)
+                            || (int)($item['solo_cobro_diferencia'] ?? 0) === 1
+                            || (int)($item['_lectura_comercial_paquete'] ?? 0) === 1
+                            || strpos($itemDescripcion, 'diferencia pendiente del paquete') !== false
+                            || strpos($itemDescripcion, 'pago de diferencia de paquete') !== false
+                        );
+
+                        if ($itemEsPaquete) {
+                            $estadoPaquetePorCobro[$cobroId]['tiene_marcador_paquete'] = true;
+                        } else {
+                            $itemTipo = $normalizarTipoIngresoServicio((string)($item['servicio_tipo'] ?? ''));
+                            if (in_array($itemTipo, ['laboratorio', 'farmacia'], true)) {
+                                $estadoPaquetePorCobro[$cobroId]['tiene_no_paquete_explicito'] = true;
+                            }
+                        }
+                    }
+                } else {
+                    if ($subtotalFila > 0 && in_array($tipoFila, ['laboratorio', 'farmacia'], true)) {
+                        $estadoPaquetePorCobro[$cobroId]['tiene_no_paquete_explicito'] = true;
+                    }
+                }
+            }
+
+            foreach ($estadoPaquetePorCobro as $cobroId => $flags) {
+                if (!empty($flags['tiene_marcador_paquete']) && empty($flags['tiene_no_paquete_explicito'])) {
+                    $cobrosSoloPaqueteComercial[(int)$cobroId] = true;
+                }
+            }
         }
 
         $cobrosConCambioPaquete = [];
@@ -613,6 +697,24 @@ try {
             }
         }
 
+        $montoNetoCobroSoloPaquete = [];
+        foreach ($rowsIngresos as $rowIngreso) {
+            $monto = (float)($rowIngreso['monto'] ?? 0);
+            if (abs($monto) < 0.01) {
+                continue;
+            }
+            $descripcionIngreso = (string)($rowIngreso['descripcion'] ?? '');
+            if ($esAjusteTecnicoConversionPaquete($descripcionIngreso)) {
+                continue;
+            }
+            $tablaRef = strtolower(trim((string)($rowIngreso['referencia_tabla'] ?? '')));
+            $refId = (int)($rowIngreso['referencia_id'] ?? 0);
+            if ($tablaRef === 'cobros' && $refId > 0 && !empty($cobrosSoloPaqueteComercial[$refId])) {
+                $montoNetoCobroSoloPaquete[$refId] = ($montoNetoCobroSoloPaquete[$refId] ?? 0) + $monto;
+            }
+        }
+
+        $cobroSoloPaqueteYaAsignado = [];
         foreach ($rowsIngresos as $rowIngreso) {
             $monto = (float)($rowIngreso['monto'] ?? 0);
             if (abs($monto) < 0.01) {
@@ -631,9 +733,29 @@ try {
                 continue;
             }
 
+            if ($tablaRef === 'cobros' && $refId > 0 && !empty($cobrosSoloPaqueteComercial[$refId])) {
+                if (!isset($cobroSoloPaqueteYaAsignado[$refId])) {
+                    $montoCobroSoloPaquete = round((float)($montoNetoCobroSoloPaquete[$refId] ?? 0), 2);
+                    if (abs($montoCobroSoloPaquete) >= 0.01) {
+                        $acumulado['paquete'] = ($acumulado['paquete'] ?? 0) + $montoCobroSoloPaquete;
+                    }
+                    $cobroSoloPaqueteYaAsignado[$refId] = true;
+                }
+                continue;
+            }
+
             // Si el cobro asociado solo tiene un tipo de servicio, usar ese tipo como fuente canónica.
             if ($tablaRef === 'cobros' && $refId > 0 && isset($cobroTipoUnico[$refId])) {
                 $tipoIngreso = (string)$cobroTipoUnico[$refId];
+            }
+
+            if (
+                $tablaRef === 'cobros'
+                && $refId > 0
+                && !empty($cobrosSoloPaqueteComercial[$refId])
+                && in_array($tipoIngreso, ['consulta', 'ecografia', 'rayosx', 'procedimiento', 'operaciones', 'mixto', 'otros'], true)
+            ) {
+                $tipoIngreso = 'paquete';
             }
 
             // Regla comercial: diferencia de paquete (y sus ajustes) no debe caer en consulta/ecografía.

@@ -625,9 +625,11 @@ export default function CotizarOperacionPage() {
         cantidad,
         precio_unitario: Number(tarifa.precio_particular || 0),
         subtotal: Number(tarifa.precio_particular || 0) * cantidad,
+        cotizacion_id: cotizacionIdEdicion > 0 ? Number(cotizacionIdEdicion) : 0,
         ...programacion,
         consulta_id: cotizacionIdEdicion > 0 ? consultaBaseId : 0,
         omitir_alerta_fuera_horario: coincideProgramacionBase ? 1 : 0,
+        permitir_cruce_horario_base: coincideProgramacionBase ? 1 : 0,
         medico_id: tarifa.medico_id || "",
         medico_nombre,
         especialidad: tarifa.especialidad || ""
