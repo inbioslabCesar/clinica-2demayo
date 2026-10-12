@@ -51,6 +51,8 @@ const serviceLabels = {
   procedimiento: "Procedimiento",
   procedimientos: "Procedimiento",
   consulta: "Consulta",
+  paquete: "Paquete",
+  perfil: "Perfil",
 };
 
 function normalizarServicio(value) {
@@ -143,8 +145,16 @@ function obtenerInfoPaqueteDetalle(detalle) {
     tipoLabel,
     nombre: nombreVisible || tipoLabel,
     codigo: codigoVisible,
-    clave: `${esPerfil ? "perfil" : "paquete"}:${paqueteId}:${paqueteCodigo}:${nombreVisible}`,
+    clave: snapshot?.paquete_grupo
+      ? `grupo:${snapshot.paquete_grupo}`
+      : `${esPerfil ? "perfil" : "paquete"}:${paqueteId}:${paqueteCodigo}:${nombreVisible}`,
   };
+}
+
+function esCargoComercialPaquete(detalle) {
+  const snapshot = parseSnapshotJson(detalle?.snapshot_json);
+  return snapshot?.paquete_rol === "cargo"
+    || ["paquete", "perfil"].includes(normalizarServicio(detalle?.servicio_tipo));
 }
 
 function clavePagoServicio(tipo, servicioId) {
@@ -560,7 +570,7 @@ export default function DetalleCotizacionPage() {
           subtotal: 0,
         };
       }
-      map[key].items += 1;
+      if (!esCargoComercialPaquete(d)) map[key].items += 1;
       map[key].subtotal += Number(d?.subtotal || 0);
     }
     return Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -665,17 +675,21 @@ export default function DetalleCotizacionPage() {
           componentes: [],
         };
       }
-      map[key].items += 1;
       map[key].subtotal += Number(row?.raw?.subtotal_neto || row?.raw?.subtotal || 0);
       map[key].subtotalBruto += Number(row?.raw?.subtotal || 0);
-      map[key].componentes.push({
-        key: row.key,
-        servicioLabel: row.servicioLabel,
-        descripcion: row.descripcionVisible,
-        medico: row.medicoVisible,
-        cantidad: Number(row?.raw?.cantidad || 0),
-        subtotal: Number(row?.raw?.subtotal_neto || row?.raw?.subtotal || 0),
-      });
+      if (!esCargoComercialPaquete(row.raw)) {
+        map[key].items += 1;
+        map[key].componentes.push({
+          key: row.key,
+          servicioLabel: row.servicioLabel,
+          descripcion: row.descripcionVisible,
+          medico: row.medicoVisible,
+          cantidad: Number(row?.raw?.cantidad || 0),
+          subtotal: Number(row?.raw?.subtotal_neto || row?.raw?.subtotal || 0),
+        });
+      } else {
+        map[key].tieneCargoComercial = true;
+      }
       if (idx < map[key].firstIndex) {
         map[key].firstIndex = idx;
       }
@@ -684,7 +698,7 @@ export default function DetalleCotizacionPage() {
   }, [detallesRender]);
   const colapsarComponentesPaquete = useMemo(() => {
     const groups = Object.values(resumenComponentesPaquete);
-    return groups.some((g) => Number(g?.items || 0) > 1);
+    return groups.some((g) => Number(g?.items || 0) > 1 || g.tieneCargoComercial);
   }, [resumenComponentesPaquete]);
   const tiposServicioEnPaquete = useMemo(() => {
     const set = new Set();
@@ -2156,6 +2170,19 @@ export default function DetalleCotizacionPage() {
               <button
                 onClick={async () => {
                   const cotId = Number(cotizacion?.id || 0);
+                  if (esVistaGrupo) {
+                    const ids = Array.from(new Set(
+                      (Array.isArray(cotizacion?.grupo_ids) ? cotizacion.grupo_ids : [])
+                        .map(Number)
+                        .filter((id) => Number.isInteger(id) && id > 0)
+                    ));
+                    if (ids.length === 0) {
+                      await Swal.fire("No se pudo abrir el cobro", "Recarga el detalle: faltan las cotizaciones del episodio.", "error");
+                      return;
+                    }
+                    navigate(`/cobrar-cotizacion/${ids[0]}?ids=${ids.join(",")}`);
+                    return;
+                  }
                   try {
                     const res = await authFetch(`api_cotizaciones.php?accion=sugerir_grupo_cobro&cotizacion_id=${cotId}`);
                     const data = await res.json();
@@ -2334,7 +2361,7 @@ export default function DetalleCotizacionPage() {
                 const descripcionFila = esFilaPaqueteColapsada
                   ? `${row?.infoPaquete?.tipoLabel || "Paquete"}: ${row?.infoPaquete?.codigo ? `${row.infoPaquete.codigo} - ` : ""}${row?.infoPaquete?.nombre || "Paquete"}`
                   : row.descripcionVisible;
-                const esFilaDesglosable = esFilaPaqueteColapsada && Number(packResumen?.items || 0) > 1;
+                const esFilaDesglosable = esFilaPaqueteColapsada && Number(packResumen?.items || 0) > 0;
                 const packExpandido = esFilaDesglosable && Boolean(paquetesExpandido[packKey]);
                 const componentesPaquete = Array.isArray(packResumen?.componentes) ? packResumen.componentes : [];
                 return (

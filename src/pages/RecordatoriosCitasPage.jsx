@@ -213,7 +213,7 @@ function servicioTokensDesdeItem(item) {
     return raw
       .split("+")
       .map((part) => part.trim())
-      .filter(Boolean);
+      .filter((part) => part && !["paquete", "perfil"].includes(part.toLowerCase()));
   }
   const fallback = String(tipoServicioLabel(item)).trim();
   return fallback ? [fallback] : [];
@@ -383,7 +383,9 @@ function agruparRecordatoriosAgendaServicio(items) {
     if (agendas.length <= 1) {
       if (agendas.length === 1) {
         const unico = agendas[0];
-        item.servicios_label = String(unico.servicios_label || item.servicios_label || "").trim();
+        const servicios = servicioTokensDesdeItem(unico);
+        item.servicios_label = servicios.join(" + ");
+        item.servicios_count = new Set(servicios).size;
       }
       continue;
     }
@@ -545,6 +547,8 @@ function normalizarDetallesCotizacion(detalles) {
   if (!Array.isArray(detalles)) return [];
 
   return detalles
+    .filter((det) => String(det?.estado_item || "activo").trim().toLowerCase() !== "eliminado"
+      && !["paquete", "perfil"].includes(String(det?.servicio_tipo || "").trim().toLowerCase()))
     .map((det, index) => {
       const tipoRaw = String(det?.servicio_tipo || "otros").trim().toLowerCase();
       const descripcion = String(det?.descripcion || det?.descripcion_snapshot || "").trim();

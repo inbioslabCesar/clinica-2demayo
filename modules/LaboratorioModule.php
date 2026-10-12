@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/PaqueteComercialModule.php';
 // Módulo de Laboratorio: lógica para registrar movimientos de laboratorio de referencia
 class LaboratorioModule {
     private static function columnExists($conn, $table, $column) {
@@ -28,7 +29,7 @@ class LaboratorioModule {
         if ($detalle['tipo_derivacion'] === 'monto') {
             $monto_liquidar = floatval($detalle['valor_derivacion']);
         } elseif ($detalle['tipo_derivacion'] === 'porcentaje') {
-            $monto_liquidar = round(floatval($detalle['subtotal']) * floatval($detalle['valor_derivacion']) / 100, 2);
+            $monto_liquidar = round(PaqueteComercialModule::baseReferencia($detalle) * floatval($detalle['valor_derivacion']) / 100, 2);
         }
 
         // Intentar vincular un pendiente creado desde cotización (cobro_id=0) para evitar duplicados.

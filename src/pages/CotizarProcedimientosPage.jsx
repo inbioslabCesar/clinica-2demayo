@@ -55,6 +55,9 @@ export default function CotizarProcedimientosPage() {
     return Number.isFinite(value) && value > 0 ? value : 0;
   }, [location.search]);
 
+  const esModoAdenda = cotizacionIdEdicion > 0
+    && new URLSearchParams(location.search).get("modo") === "adenda";
+
   const getLimaDate = () => {
     const now = new Date();
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -353,7 +356,7 @@ export default function CotizarProcedimientosPage() {
       const detalles = Array.isArray(cot.detalles) ? cot.detalles : [];
       setCotizacionDetallesOriginales(detalles);
       const itemsProc = detalles.filter(d => { const t = (d.servicio_tipo || '').toLowerCase(); return t === 'procedimiento' || t === 'procedimientos'; });
-      if (itemsProc.length) {
+      if (itemsProc.length && !esModoAdenda) {
         setPreloadedItems(prev => [...prev, ...itemsProc]);
         const uniqueSel = Array.from(new Set(itemsProc.map(it => Number(it.servicio_id)).filter(Boolean)));
         setSeleccionados(uniqueSel);
@@ -382,7 +385,7 @@ export default function CotizarProcedimientosPage() {
         })
     );
     if (!loaders.length) return; Promise.all(loaders).catch(() => {});
-  }, [location.search]);
+  }, [location.search, esModoAdenda]);
 
   useEffect(() => {
     const handleQuoteCartCleared = () => {
@@ -805,7 +808,7 @@ export default function CotizarProcedimientosPage() {
       limpiarCarritoAlFinal = true;
     }
 
-    const detallesFinales = cotizacionId
+    const detallesFinales = cotizacionId && !esModoAdenda
       ? await construirDetallesEditados(cotizacionId, detalles)
       : detalles;
 
@@ -818,11 +821,13 @@ export default function CotizarProcedimientosPage() {
 
     const payload = cotizacionId
       ? {
-          accion: 'editar',
+          accion: esModoAdenda ? 'adenda' : 'editar',
           cotizacion_id: Number(cotizacionId),
           detalles: detallesFinales,
           total,
-          motivo: 'Edición de cotización (merge seguro) desde cotizador de Procedimientos'
+          motivo: esModoAdenda
+            ? 'Adenda de procedimientos desde cotizador de Procedimientos'
+            : 'Edición de cotización (merge seguro) desde cotizador de Procedimientos'
         }
       : {
           paciente_id: Number(pacienteId),
@@ -865,8 +870,8 @@ export default function CotizarProcedimientosPage() {
         const payloadAdenda = {
           accion: 'adenda',
           cotizacion_id: Number(cotizacionId),
-          detalles: detallesFinales,
-          total,
+          detalles,
+          total: detalles.reduce((acc, detalle) => acc + Number(detalle.subtotal || 0), 0),
           motivo: 'Adenda confirmada por usuario desde cotizador de Procedimientos (cotización pagada)'
         };
         const resAdenda = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
@@ -1211,7 +1216,7 @@ export default function CotizarProcedimientosPage() {
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
                   <>
-                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{isSaving ? 'Guardando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización')}</button>
+                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{isSaving ? 'Guardando...' : (esModoAdenda ? 'Crear adenda' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'))}</button>
                     {!new URLSearchParams(location.search).get('cotizacion_id') && (
                       <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada' || isSaving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || isSaving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>{isSaving ? 'Guardando...' : 'Registrar y cobrar'}</button>
                     )}

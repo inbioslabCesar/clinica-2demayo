@@ -687,9 +687,6 @@ export default function CotizarPaquetesPerfilesPage() {
       const programacion = getProgramacionPaquete(row.id);
       const components = buildPackageComponents(row, cotizacionId).map((it) => ({
         ...it,
-        cantidad: Number((it.cantidad * qty).toFixed(2)),
-        subtotal: Number((it.subtotal * qty).toFixed(2)),
-        subtotal_snapshot: Number((it.subtotal_snapshot * qty).toFixed(2)),
         fecha_programada: programacion.fecha_programada,
         hora_programada: programacion.hora_programada,
       }));

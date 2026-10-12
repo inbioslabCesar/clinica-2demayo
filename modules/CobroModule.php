@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/PaqueteComercialModule.php';
 // Módulo de Cobros: lógica principal para registrar cobros y detalles
 class CobroModule
 {
@@ -207,135 +208,15 @@ class CobroModule
         return 0;
     }
 
-    private static function expandirDetallesPaquete($detalles)
+    private static function expandirDetallesPaquete($detalles, mysqli $conn)
     {
-        if (!is_array($detalles) || empty($detalles)) {
-            return [];
-        }
-
-        $expandido = [];
-        foreach ($detalles as $detalle) {
-            if (!is_array($detalle)) {
-                continue;
+        return PaqueteComercialModule::expandir(
+            (array)$detalles,
+            static function ($tipo) { return self::normalizarServicioTipo($tipo); },
+            static function (array $item) use ($conn): array {
+                return PaqueteComercialModule::tarifa($conn, $item);
             }
-
-            $tipo = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? '');
-            $esPaquete = in_array($tipo, ['paquete', 'perfil'], true) || !empty($detalle['es_paquete']) || !empty($detalle['es_perfil']);
-            $componentes = null;
-            if (isset($detalle['componentes']) && is_array($detalle['componentes'])) {
-                $componentes = $detalle['componentes'];
-            } elseif (isset($detalle['paquete_items']) && is_array($detalle['paquete_items'])) {
-                $componentes = $detalle['paquete_items'];
-            } elseif (isset($detalle['items_paquete']) && is_array($detalle['items_paquete'])) {
-                $componentes = $detalle['items_paquete'];
-            }
-
-            if (!$esPaquete || !is_array($componentes) || empty($componentes)) {
-                $detalle['servicio_tipo'] = self::normalizarServicioTipo($detalle['servicio_tipo'] ?? 'procedimiento');
-                $expandido[] = $detalle;
-                continue;
-            }
-
-            $cantidadPaquete = max(1, (int)($detalle['cantidad'] ?? 1));
-            $componentesNormalizados = [];
-            $sumaBaseComponentes = 0.0;
-
-            foreach ($componentes as $comp) {
-                if (!is_array($comp)) {
-                    continue;
-                }
-
-                $item = $comp;
-                $itemTipo = self::normalizarServicioTipo($item['servicio_tipo'] ?? ($item['source_type'] ?? 'procedimiento'));
-                if ($itemTipo === 'paquete' || $itemTipo === 'perfil') {
-                    continue;
-                }
-
-                $itemCantidad = max(1, (int)($item['cantidad'] ?? 1));
-                $cantidadFinal = $itemCantidad * $cantidadPaquete;
-                $precio = self::toFloatFlexible($item['precio_unitario'] ?? ($item['precio_lista_snapshot'] ?? 0));
-                $subtotal = self::toFloatFlexible($item['subtotal'] ?? ($item['subtotal_snapshot'] ?? ($precio * $cantidadFinal)));
-                $subtotal = round((float)$subtotal, 2);
-
-                $componentesNormalizados[] = [
-                    'item' => $item,
-                    'item_tipo' => $itemTipo,
-                    'cantidad_final' => $cantidadFinal,
-                    'subtotal_base' => $subtotal,
-                ];
-                $sumaBaseComponentes += max(0.0, $subtotal);
-            }
-
-            $subtotalPaquete = self::toFloatFlexible($detalle['subtotal'] ?? 0);
-            if ($subtotalPaquete <= 0) {
-                $subtotalPaquete = self::toFloatFlexible($detalle['precio_unitario'] ?? 0) * $cantidadPaquete;
-            }
-            $subtotalObjetivo = $subtotalPaquete > 0 ? round($subtotalPaquete, 2) : round($sumaBaseComponentes, 2);
-            $factorProrrateo = ($sumaBaseComponentes > 0 && $subtotalObjetivo > 0)
-                ? ($subtotalObjetivo / $sumaBaseComponentes)
-                : 1.0;
-
-            $subtotalAcumulado = 0.0;
-            $lastIdx = count($componentesNormalizados) - 1;
-            foreach ($componentesNormalizados as $idx => $payload) {
-                $item = $payload['item'];
-                $itemTipo = $payload['item_tipo'];
-                $cantidadFinal = $payload['cantidad_final'];
-                $subtotalBase = (float)$payload['subtotal_base'];
-                $fechaPadre = trim((string)($detalle['fecha_programada'] ?? $detalle['fecha_programada_servicio'] ?? ''));
-                $horaPadre = trim((string)($detalle['hora_programada'] ?? $detalle['hora_programada_servicio'] ?? ''));
-
-                if ($fechaPadre !== '') {
-                    $item['fecha_programada'] = $fechaPadre;
-                }
-                if ($horaPadre !== '') {
-                    $item['hora_programada'] = $horaPadre;
-                }
-
-                if ($idx === $lastIdx && $subtotalObjetivo > 0) {
-                    $subtotalAjustado = round(max(0.0, $subtotalObjetivo - $subtotalAcumulado), 2);
-                } else {
-                    $subtotalAjustado = round(max(0.0, $subtotalBase * $factorProrrateo), 2);
-                    $subtotalAcumulado = round($subtotalAcumulado + $subtotalAjustado, 2);
-                }
-                $precioAjustado = $cantidadFinal > 0 ? round($subtotalAjustado / $cantidadFinal, 2) : 0.0;
-
-                $item['servicio_tipo'] = $itemTipo;
-                if (!isset($item['servicio_id']) || $item['servicio_id'] === null || $item['servicio_id'] === '') {
-                    $item['servicio_id'] = $item['source_id'] ?? null;
-                }
-                if (!isset($item['tarifa_id']) || $item['tarifa_id'] === null || $item['tarifa_id'] === '') {
-                    $item['tarifa_id'] = $item['servicio_id'] ?? null;
-                }
-                if (!isset($item['descripcion']) || trim((string)$item['descripcion']) === '') {
-                    $item['descripcion'] = (string)($item['descripcion_snapshot'] ?? 'Item paquete/perfil');
-                }
-                $item['cantidad'] = $cantidadFinal;
-                $item['precio_unitario'] = $precioAjustado;
-                $item['subtotal'] = $subtotalAjustado;
-                $item['subtotal_original'] = $subtotalAjustado;
-
-                if (!isset($item['cotizacion_id']) && isset($detalle['cotizacion_id'])) {
-                    $item['cotizacion_id'] = $detalle['cotizacion_id'];
-                }
-                if (!isset($item['paquete_id']) && isset($detalle['paquete_id'])) {
-                    $item['paquete_id'] = $detalle['paquete_id'];
-                }
-                if (!isset($item['paquete_codigo']) && isset($detalle['paquete_codigo'])) {
-                    $item['paquete_codigo'] = $detalle['paquete_codigo'];
-                }
-                if (!isset($item['paquete_tipo']) && isset($detalle['paquete_tipo'])) {
-                    $item['paquete_tipo'] = $detalle['paquete_tipo'];
-                }
-                if (!isset($item['paquete_nombre']) && isset($detalle['descripcion'])) {
-                    $item['paquete_nombre'] = $detalle['descripcion'];
-                }
-
-                $expandido[] = $item;
-            }
-        }
-
-        return $expandido;
+        );
     }
 
     private static function enriquecerDetalleDesdeCotizacionDetalle($conn, $detalle)
@@ -390,8 +271,13 @@ class CobroModule
         if (empty($detalle['consulta_id']) && !empty($row['consulta_id'])) {
             $detalle['consulta_id'] = (int)$row['consulta_id'];
         }
-        if ((!isset($detalle['snapshot_json']) || trim((string)$detalle['snapshot_json']) === '') && !empty($row['snapshot_json'])) {
+        if ((!isset($detalle['snapshot_json']) || $detalle['snapshot_json'] === '' || $detalle['snapshot_json'] === null) && !empty($row['snapshot_json'])) {
             $detalle['snapshot_json'] = (string)$row['snapshot_json'];
+        }
+        if ((PaqueteComercialModule::snapshot($row)['paquete_modelo_comercial'] ?? '') === 'importe_unico') {
+            $detalle['snapshot_json'] = $row['snapshot_json'];
+            $detalle['servicio_tipo'] = $row['servicio_tipo'];
+            $detalle['servicio_id'] = (int)$row['servicio_id'];
         }
 
         if (!isset($detalle['paquete_id']) && array_key_exists('paquete_id', $row)) {
@@ -604,6 +490,7 @@ class CobroModule
             }
 
             $cotizacionId = (int)($detalle['cotizacion_id'] ?? 0);
+            if (!empty($detalle['_paquete_solo_honorario'])) continue;
             if ($cotizacionId <= 0) {
                 continue;
             }
@@ -3777,7 +3664,12 @@ class CobroModule
             }
 
             $detallesOriginales = is_array($data['detalles'] ?? null) ? $data['detalles'] : [];
-            $detallesExpandido = self::expandirDetallesPaquete($detallesOriginales);
+            foreach ($detallesOriginales as &$detalleOriginal) {
+                $detalleOriginal = self::enriquecerDetalleDesdeCotizacionDetalle($conn, $detalleOriginal);
+            }
+            unset($detalleOriginal);
+            $detallesExpandido = self::expandirDetallesPaquete($detallesOriginales, $conn);
+            $detallesExpandido = PaqueteComercialModule::completarComponentesCobro($conn, $detallesExpandido);
             if (empty($detallesExpandido)) {
                 throw new \Exception('No hay detalles válidos para procesar el cobro.');
             }
@@ -3794,6 +3686,7 @@ class CobroModule
             // Aplicar descuento proporcional a cada item para mantener consistencia
             // entre caja, honorarios, derivaciones y farmacia.
             $data['detalles'] = self::distribuirDescuentoProporcionalEnDetalles($data['detalles'], $montoDescuento);
+            $data['detalles'] = PaqueteComercialModule::aplicarDescuentos($data['detalles'], $conn, !empty($data['atencion_solidaria']));
 
             $reprogramacionHorariaMap = self::normalizarReprogramacionHorariaPayload($data['reprogramacion_horaria'] ?? null);
             if (!empty($reprogramacionHorariaMap)) {
@@ -4031,6 +3924,12 @@ class CobroModule
                     }
 
                     $esCobroSoloPaqueteComercial = ($detallesPaqueteEvaluadas > 0 && $detallesPaqueteEvaluadas === $detallesPaqueteValidas);
+                    foreach ($data['detalles'] as $detalleCargo) {
+                        if (PaqueteComercialModule::esCargo($detalleCargo)) {
+                            $esCobroSoloPaqueteComercial = false;
+                            break;
+                        }
+                    }
                     if ($montoIngresoUnicoPaquete <= 0) {
                         $montoIngresoUnicoPaquete = 0.0;
                         foreach ($data['detalles'] as $detallePreMonto) {
@@ -4042,6 +3941,32 @@ class CobroModule
                     $cacheMedicoConsultaHonorarios = [];
                     $cacheContextoCotizacionHonorarios = [];
                     foreach ($data['detalles'] as $i => $detalleServicio) {
+                        if (PaqueteComercialModule::esCargo($detalleServicio)) {
+                            $montoCargo = self::toFloatFlexible($detalleServicio['subtotal'] ?? 0);
+                            if ($montoCargo > 0) {
+                                $okCargo = CajaModule::registrarIngreso($conn, [
+                                    'caja_id' => $caja_id,
+                                    'tipo_ingreso' => 'paquete',
+                                    'area_servicio' => 'Paquetes',
+                                    'descripcion_ingreso' => (string)$detalleServicio['descripcion'],
+                                    'total_param' => $montoCargo,
+                                    'metodo_pago' => $metodo_pago,
+                                    'cobro_id' => $cobro_id,
+                                    'referencia_tabla_param' => 'cobros',
+                                    'paciente_id_param' => $paciente_id_param,
+                                    'nombre_paciente' => $nombre_paciente,
+                                    'usuario_id_param' => $usuario_id_param,
+                                    'turno_param' => $turno_param,
+                                    'honorario_movimiento_id' => null,
+                                    'cobrado_por' => ($_SESSION['usuario']['id'] ?? $usuario_id_param),
+                                    'liquidado_por' => null,
+                                    'fecha_liquidacion' => null,
+                                    'fecha_hora_param' => $fechaHoraIngresoBase,
+                                ]);
+                                if (!$okCargo) throw new \Exception('No se pudo registrar el cargo unico del paquete en caja');
+                            }
+                            continue;
+                        }
                         $detalleServicioKey = self::normalizarServicioTipo($detalleServicio['servicio_tipo'] ?? $servicio_key);
                         if (!in_array($detalleServicioKey, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento'], true)) {
                             $detalleServicioKey = $servicio_key;
@@ -4324,6 +4249,9 @@ class CobroModule
                             }
 
                             // Registrar ingreso comercial.
+                            if (PaqueteComercialModule::esComponente($detalleServicio) && (float)$detalleServicio['subtotal'] <= 0) {
+                                continue;
+                            }
                             // Para cobro de solo paquete, se registra una sola linea por el total del paquete.
                             if ($esCobroSoloPaqueteComercial) {
                                 if ($ingresoUnicoPaqueteRegistrado) {
@@ -4403,7 +4331,13 @@ class CobroModule
             // Registro de atención
             $servicio_key = $data['servicio_info']['key'] ?? '';
             if (!in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento', 'hospitalizacion'], true)) {
-                $servicio_key = self::normalizarServicioTipo($data['detalles'][0]['servicio_tipo'] ?? 'consulta');
+                $servicio_key = 'consulta';
+                foreach ($data['detalles'] as $detalleAtencion) {
+                    if (!PaqueteComercialModule::esCargo($detalleAtencion)) {
+                        $servicio_key = self::normalizarServicioTipo($detalleAtencion['servicio_tipo'] ?? 'consulta');
+                        break;
+                    }
+                }
             }
             if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
                 $ok = AtencionModule::registrarAtencion($conn, $data['paciente_id'], $data['usuario_id'], $servicio_key, $cobro_id);

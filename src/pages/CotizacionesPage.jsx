@@ -478,7 +478,7 @@ function parseServiciosTipos(rawValue) {
     String(rawValue || "")
       .split(",")
       .map(normalizarServicioTipo)
-      .filter(Boolean)
+      .filter((tipo) => tipo && !["paquete", "perfil"].includes(tipo))
   ));
 }
 

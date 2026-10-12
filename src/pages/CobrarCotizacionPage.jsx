@@ -6,6 +6,8 @@ import Spinner from "../components/comunes/Spinner";
 import { authFetch } from "../utils/apiClient";
 
 const serviceKeyMap = {
+  paquete: "paquete",
+  perfil: "perfil",
   laboratorio: "laboratorio",
   rayosx: "rayosx",
   rayos_x: "rayosx",
@@ -39,12 +41,22 @@ function parseSnapshotJson(raw) {
 function buildTipoLabelCotizacion(cot) {
   const tiposRaw = String(cot?.servicios_tipos || "").trim();
   const tiposArr = tiposRaw
-    ? tiposRaw.split(",").map((t) => t.trim()).filter(Boolean)
-    : Array.from(new Set((cot?.detalles || []).map((d) => String(d?.servicio_tipo || "").trim()).filter(Boolean)));
+    ? tiposRaw.split(",").map((t) => t.trim()).filter((t) => t && !["paquete", "perfil"].includes(t.toLowerCase()))
+    : Array.from(new Set((cot?.detalles || []).map((d) => String(d?.servicio_tipo || "").trim()).filter((t) => t && !["paquete", "perfil"].includes(t.toLowerCase()))));
   const labelMap = { laboratorio: "Laboratorio", rayosx: "Rayos X", rayos_x: "Rayos X", rx: "Rayos X", ecografia: "Ecografía", farmacia: "Farmacia", consulta: "Consulta", procedimiento: "Procedimiento", operacion: "Operación", operaciones: "Operación", cirugia: "Cirugía", cirugia_mayor: "Cirugía mayor" };
   return tiposArr.length > 0
     ? tiposArr.map((t) => labelMap[t.toLowerCase()] || (t.charAt(0).toUpperCase() + t.slice(1))).join(" + ")
     : "Servicio";
+}
+
+function esCotizacionCobrable(cot) {
+  const estado = String(cot?.estado || "").trim().toLowerCase();
+  const informativa = estado === "informativo"
+    || String(cot?.observaciones || "").includes("[COTIZACION_INFORMATIVA]");
+  const saldo = Number(cot?.saldo_pendiente_operativo ?? cot?.saldo_pendiente
+    ?? Math.max(0, Number(cot?.total || 0) - Number(cot?.total_pagado || 0)));
+  return !informativa && !["anulada", "anulado", "pagado"].includes(estado)
+    && Number.isFinite(saldo) && saldo > 0;
 }
 
 function buildPaqueteLabelCotizacion(cot) {
@@ -270,14 +282,17 @@ export default function CobrarCotizacionPage() {
             const cotizacionTienePaquete = detallesCotizacionActual.some((detalle) => esDetallePaquete(detalle));
 
             const esAdenda = Number(cotRaw?.es_adenda || 0) === 1 || Number(cotRaw?.cotizacion_padre_id || 0) > 0;
+            const importeUnico = detallesCotizacionActual.some(
+              (d) => parseSnapshotJson(d?.snapshot_json)?.paquete_modelo_comercial === "importe_unico"
+            );
             const saldoTecnico = Number(cotRaw?.saldo_pendiente);
             const saldoComercial = Number(lecturaComercialCambio?.saldoComercial);
             const ajusteDetectado = Number(lecturaComercialCambio?.ajusteDetectado || 0);
             const saldoOperativoPorAjuste = Number.isFinite(saldoTecnico)
               ? Math.max(0, Number((saldoTecnico - ajusteDetectado).toFixed(2)))
               : saldoTecnico;
-            const usarSaldoOperativoAjuste = esAdenda && cotizacionTienePaquete && ajusteDetectado > 0;
-            const usarSaldoComercial = esAdenda
+            const usarSaldoOperativoAjuste = !importeUnico && esAdenda && cotizacionTienePaquete && ajusteDetectado > 0;
+            const usarSaldoComercial = !importeUnico && esAdenda
               && cotizacionTienePaquete
               && Number.isFinite(saldoComercial)
               && saldoComercial >= 0;
@@ -359,7 +374,7 @@ export default function CobrarCotizacionPage() {
           .sort((a, b) => String(b?.created_at || "").localeCompare(String(a?.created_at || "")));
 
         setCotizacionesSeleccionadas(cotizacionesCargadas);
-        setSelectedIds(new Set(cotizacionesCargadas.map((c) => String(c.id))));
+        setSelectedIds(new Set(cotizacionesCargadas.filter(esCotizacionCobrable).map((c) => String(c.id))));
         setCotizacion(cotizacionMaster);
         setPaciente(pacienteCotizacion);
         setPagos(pagosFinal);
@@ -378,8 +393,7 @@ export default function CobrarCotizacionPage() {
   }, [cotizacionIds]);
 
   const cotizacionesActivas = useMemo(() => {
-    if (selectedIds.size === 0) return cotizacionesSeleccionadas;
-    return cotizacionesSeleccionadas.filter((c) => selectedIds.has(String(c.id)));
+    return cotizacionesSeleccionadas.filter((c) => esCotizacionCobrable(c) && selectedIds.has(String(c.id)));
   }, [cotizacionesSeleccionadas, selectedIds]);
 
   const hayLecturaComercialActiva = useMemo(() => {
@@ -816,7 +830,9 @@ export default function CobrarCotizacionPage() {
   const servicioPago = useMemo(() => {
     const tipos = Array.from(new Set(detallesCobro.map((detalle) => normalizarServicioKey(detalle?.servicio_tipo || "")).filter(Boolean)));
     const key = tipos.length === 1 ? tipos[0] : "mixto";
-    const activeIdList = [...selectedIds].map(Number).filter((n) => n > 0);
+    const activeIdList = Array.from(new Set(
+      detallesCobro.map((detalle) => Number(detalle?.cotizacion_id || 0)).filter((id) => id > 0)
+    ));
     const isMulti = activeIdList.length > 1;
     return {
       key,
@@ -828,7 +844,7 @@ export default function CobrarCotizacionPage() {
       referencia_origen: String(cotizacion?.referencia_origen || "").trim(),
       cotizacion_meta_map: cotizacionMetaMap,
     };
-  }, [cotizacion?.id, cotizacion?.referencia_origen, selectedIds, detallesCobro, cotizacionMetaMap]);
+  }, [cotizacion?.id, cotizacion?.referencia_origen, detallesCobro, cotizacionMetaMap]);
 
   const recargarCotizacion = async () => {
     try {
@@ -1054,6 +1070,7 @@ export default function CobrarCotizacionPage() {
                 const tipoLabel = buildTipoLabelCotizacion(cot);
                 const paqueteLabel = buildPaqueteLabelCotizacion(cot);
                 const isLast = isSelected && selectedIds.size === 1;
+                const cobrable = esCotizacionCobrable(cot);
                 return (
                   <label
                     key={cot.id}
@@ -1065,9 +1082,10 @@ export default function CobrarCotizacionPage() {
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        disabled={isLast}
-                        title={isLast ? "Debe quedar al menos una atención seleccionada" : ""}
+                        disabled={!cobrable || isLast}
+                        title={!cobrable ? "Atención sin saldo cobrable; se muestra solo como referencia" : (isLast ? "Debe quedar al menos una atención seleccionada" : "")}
                         onChange={() => {
+                          if (!cobrable) return;
                           setSelectedIds((prev) => {
                             if (prev.size === 1 && prev.has(String(cot.id))) return prev;
                             const next = new Set(prev);
@@ -1079,7 +1097,7 @@ export default function CobrarCotizacionPage() {
                         className="w-4 h-4 cursor-pointer"
                       />
                       <span className="font-medium">#{cot.id}</span>
-                      <span className="text-gray-600">{tipoLabel}</span>
+                      <span className="text-gray-600">{tipoLabel}{!cobrable ? " · No cobrable / sin saldo" : ""}</span>
                       {paqueteLabel ? (
                         <span className="text-xs rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-indigo-700">
                           {paqueteLabel}
@@ -1095,9 +1113,9 @@ export default function CobrarCotizacionPage() {
                 );
               })}
             </div>
-            {selectedIds.size < cotizacionIds.length && (
+            {selectedIds.size < cotizacionesSeleccionadas.filter(esCotizacionCobrable).length && (
               <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                {cotizacionIds.length - selectedIds.size} atención(es) excluida(s) — quedan como <b>pendiente</b> para cobrar después.
+                {cotizacionesSeleccionadas.filter(esCotizacionCobrable).length - selectedIds.size} atención(es) pendiente(s) excluida(s) de este cobro.
               </div>
             )}
 

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/PaqueteComercialModule.php';
 // Módulo de Honorarios: lógica para registrar movimiento de honorarios médicos
 class HonorarioModule {
     private static function servicioPermiteHonorario($servicioTipo) {
@@ -271,6 +272,7 @@ class HonorarioModule {
     }
 
     private static function ajustarDatosPaquetePorObjetivoCotizacion($conn, $cotizacionId, $detalleConsulta, $tarifa, $servicioKey, $metodoPago, $datos) {
+        if (PaqueteComercialModule::esComponente($detalleConsulta)) return $datos;
         if (!is_array($datos) || empty($datos['success']) || !empty($datos['reparto_manual_aplicado'])) {
             return $datos;
         }
@@ -726,6 +728,7 @@ class HonorarioModule {
         $tarifa_total = round($tarifa_total_unitario * $cantidadDetalle, 2);
         $snapshot = self::decodificarSnapshotDetalle($detalleConsulta);
         $esPaquete = self::esDetallePaquete($detalleConsulta, $snapshot);
+        $importeUnico = PaqueteComercialModule::esComponente($detalleConsulta);
         $reglaPaquete = self::obtenerReglaHonorarioPaquete($detalleConsulta, $snapshot);
         $modoHonorarioPaquete = strtolower(trim((string)($reglaPaquete['modo_honorario'] ?? 'usar_configuracion_medico')));
         if ($esPaquete) {
@@ -781,6 +784,11 @@ class HonorarioModule {
             $porcentaje_aplicado_medico = 0;
         }
 
+        if ($importeUnico) {
+            $monto_medico = (float)$snapshot['paquete_honorario_medico'];
+            $monto_clinica = (float)$snapshot['paquete_honorario_clinica'];
+            $tarifa_total = round($monto_medico + $monto_clinica, 2);
+        }
         if ($esPaquete && $monto_medico !== null) {
             $tarifa_total = round(max((float)$tarifa_total, (float)$monto_medico), 2);
             $porcentaje_aplicado_medico = $tarifa_total > 0 ? round(($monto_medico * 100) / $tarifa_total, 2) : 0.0;
@@ -980,6 +988,30 @@ class HonorarioModule {
         $consultaOrigenId = isset($datos['consulta_id']) ? (int)$datos['consulta_id'] : 0;
         $descripcionFirma = self::resumirDescripcionFirma($descripcion);
         $origenUid = self::construirOrigenUid($cotizacionId, $detalleOrigenId, $datos, $descripcionFirma);
+        if (PaqueteComercialModule::esComponente($detalleConsulta)) {
+            $stmtConsolidado = $conn->prepare("SELECT id, medico_id, monto_medico, honorario_movimiento_id_final FROM honorarios_por_cobrar WHERE cotizacion_id = ? AND origen_uid = ? AND estado_consolidacion = 'consolidado' LIMIT 1");
+            $stmtConsolidado->bind_param('is', $cotizacionId, $origenUid);
+            $stmtConsolidado->execute();
+            $consolidado = $stmtConsolidado->get_result()->fetch_assoc();
+            $stmtConsolidado->close();
+            if ($consolidado) {
+                if (abs((float)$consolidado['monto_medico'] - $montoMedico) > 0.009 || (int)$consolidado['medico_id'] !== $medicoId) {
+                    throw new RuntimeException('El honorario del paquete ya fue consolidado con otro importe; requiere reconciliacion explicita');
+                }
+                $idHpc = (int)$consolidado['id'];
+                $idMovimiento = (int)$consolidado['honorario_movimiento_id_final'];
+                if ($idMovimiento <= 0) throw new RuntimeException('Honorario consolidado sin movimiento final; requiere reconciliacion');
+                $stmtReparto = $conn->prepare('UPDATE honorarios_por_cobrar SET tarifa_total = ?, monto_clinica = ?, porcentaje_aplicado_clinica = ?, porcentaje_aplicado_medico = ? WHERE id = ?');
+                $stmtReparto->bind_param('ddddi', $tarifaTotal, $montoClinica, $porcClinica, $porcMedico, $idHpc);
+                $stmtReparto->execute();
+                $stmtReparto->close();
+                $stmtReparto = $conn->prepare('UPDATE honorarios_medicos_movimientos SET tarifa_total = ?, monto_clinica = ?, porcentaje_aplicado_clinica = ?, porcentaje_aplicado_medico = ? WHERE id = ?');
+                $stmtReparto->bind_param('ddddi', $tarifaTotal, $montoClinica, $porcClinica, $porcMedico, $idMovimiento);
+                $stmtReparto->execute();
+                $stmtReparto->close();
+                return ['success' => true, 'ya_consolidado' => true];
+            }
+        }
 
         $pendienteExistenteId = self::buscarPendientePorOrigen($conn, $cotizacionId, $origenUid, $datos, $descripcionFirma);
 

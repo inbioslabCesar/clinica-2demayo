@@ -8,6 +8,7 @@ require_once "auth_check.php";
 require_once __DIR__ . '/modules/CotizacionSyncService.php';
 require_once __DIR__ . '/modules/ContratoModule.php';
 require_once __DIR__ . '/modules/BloqueAtencionModule.php';
+require_once __DIR__ . '/modules/PaqueteComercialModule.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -3096,120 +3097,14 @@ function etiqueta_tipo_servicio_cotizacion($servicioTipo) {
 }
 
 function expandir_detalles_paquetes_cotizacion($detalles) {
-    $expandido = [];
-    foreach ((array)$detalles as $detalle) {
-        if (!is_array($detalle)) continue;
-
-        $tipo = normalizar_tipo_servicio_cotizacion($detalle['servicio_tipo'] ?? ($detalle['source_type'] ?? ''));
-        $esPaquete = in_array($tipo, ['paquete', 'perfil'], true) || !empty($detalle['es_paquete']) || !empty($detalle['es_perfil']);
-        $componentes = null;
-
-        if (isset($detalle['componentes']) && is_array($detalle['componentes'])) {
-            $componentes = $detalle['componentes'];
-        } elseif (isset($detalle['paquete_items']) && is_array($detalle['paquete_items'])) {
-            $componentes = $detalle['paquete_items'];
-        } elseif (isset($detalle['items_paquete']) && is_array($detalle['items_paquete'])) {
-            $componentes = $detalle['items_paquete'];
+    global $conn;
+    return PaqueteComercialModule::expandir(
+        (array)$detalles,
+        'normalizar_tipo_servicio_cotizacion',
+        static function (array $item) use ($conn): array {
+            return PaqueteComercialModule::tarifa($conn, $item);
         }
-
-        if (!$esPaquete || !is_array($componentes) || empty($componentes)) {
-            $detalle['servicio_tipo'] = $tipo !== '' ? $tipo : 'procedimiento';
-            $expandido[] = $detalle;
-            continue;
-        }
-
-        $cantidadPaquete = max(1, (int)($detalle['cantidad'] ?? 1));
-        $componentesNormalizados = [];
-        $sumaBaseComponentes = 0.0;
-
-        foreach ($componentes as $comp) {
-            if (!is_array($comp)) continue;
-
-            $item = $comp;
-            $itemTipo = normalizar_tipo_servicio_cotizacion($item['servicio_tipo'] ?? ($item['source_type'] ?? 'procedimiento'));
-            if ($itemTipo === 'paquete' || $itemTipo === 'perfil') continue;
-
-            $itemCantidad = max(1, (int)($item['cantidad'] ?? 1));
-            $cantidadFinal = $itemCantidad * $cantidadPaquete;
-            $precio = isset($item['precio_unitario']) ? (float)$item['precio_unitario'] : (isset($item['precio_lista_snapshot']) ? (float)$item['precio_lista_snapshot'] : 0);
-            $subtotal = isset($item['subtotal'])
-                ? (float)$item['subtotal']
-                : (isset($item['subtotal_snapshot']) ? (float)$item['subtotal_snapshot'] : ($precio * $cantidadFinal));
-            $subtotal = round((float)$subtotal, 2);
-
-            $componentesNormalizados[] = [
-                'item' => $item,
-                'item_tipo' => $itemTipo,
-                'cantidad_final' => $cantidadFinal,
-                'precio_base' => $precio,
-                'subtotal_base' => $subtotal,
-            ];
-            $sumaBaseComponentes += max(0.0, $subtotal);
-        }
-
-        $subtotalPaquete = isset($detalle['subtotal'])
-            ? (float)$detalle['subtotal']
-            : ((float)($detalle['precio_unitario'] ?? 0) * $cantidadPaquete);
-        $subtotalObjetivo = $subtotalPaquete > 0 ? round($subtotalPaquete, 2) : round($sumaBaseComponentes, 2);
-        $factorProrrateo = ($sumaBaseComponentes > 0 && $subtotalObjetivo > 0)
-            ? ($subtotalObjetivo / $sumaBaseComponentes)
-            : 1.0;
-
-        $subtotalAcumulado = 0.0;
-        $lastIdx = count($componentesNormalizados) - 1;
-        foreach ($componentesNormalizados as $idx => $payload) {
-            $item = $payload['item'];
-            $itemTipo = $payload['item_tipo'];
-            $cantidadFinal = $payload['cantidad_final'];
-            $subtotalBase = (float)$payload['subtotal_base'];
-
-            $fechaPadre = trim((string)($detalle['fecha_programada'] ?? $detalle['fecha_programada_servicio'] ?? ''));
-            $horaPadre = trim((string)($detalle['hora_programada'] ?? $detalle['hora_programada_servicio'] ?? ''));
-            if ($fechaPadre !== '') {
-                $item['fecha_programada'] = $fechaPadre;
-            }
-            if ($horaPadre !== '') {
-                $item['hora_programada'] = $horaPadre;
-            }
-
-            if ($idx === $lastIdx && $subtotalObjetivo > 0) {
-                $subtotalAjustado = round(max(0.0, $subtotalObjetivo - $subtotalAcumulado), 2);
-            } else {
-                $subtotalAjustado = round(max(0.0, $subtotalBase * $factorProrrateo), 2);
-                $subtotalAcumulado = round($subtotalAcumulado + $subtotalAjustado, 2);
-            }
-            $precioAjustado = $cantidadFinal > 0 ? round($subtotalAjustado / $cantidadFinal, 2) : 0.0;
-
-            $item['servicio_tipo'] = $itemTipo;
-            if (!isset($item['servicio_id']) || $item['servicio_id'] === null || $item['servicio_id'] === '') {
-                $item['servicio_id'] = $item['source_id'] ?? null;
-            }
-            if (!isset($item['descripcion']) || trim((string)$item['descripcion']) === '') {
-                $item['descripcion'] = (string)($item['descripcion_snapshot'] ?? 'Item paquete/perfil');
-            }
-            $item['cantidad'] = $cantidadFinal;
-            $item['precio_unitario'] = $precioAjustado;
-            $item['subtotal'] = $subtotalAjustado;
-            if (!isset($item['cotizacion_id']) && isset($detalle['cotizacion_id'])) {
-                $item['cotizacion_id'] = $detalle['cotizacion_id'];
-            }
-            if (!isset($item['paquete_id']) && isset($detalle['paquete_id'])) {
-                $item['paquete_id'] = $detalle['paquete_id'];
-            }
-            if (!isset($item['paquete_codigo']) && isset($detalle['paquete_codigo'])) {
-                $item['paquete_codigo'] = $detalle['paquete_codigo'];
-            }
-            if (!isset($item['paquete_tipo']) && isset($detalle['paquete_tipo'])) {
-                $item['paquete_tipo'] = $detalle['paquete_tipo'];
-            }
-            if (!isset($item['paquete_nombre']) && isset($detalle['descripcion'])) {
-                $item['paquete_nombre'] = $detalle['descripcion'];
-            }
-            $expandido[] = $item;
-        }
-    }
-
-    return $expandido;
+    );
 }
 
 function normalizar_detalle_entrada_cotizacion($detalle) {
@@ -3313,7 +3208,7 @@ function build_paquete_honorario_snapshot_payload($detalle) {
     $paqueteMontoClinicaFijo = isset($detalle['paquete_monto_clinica_fijo']) ? (float)$detalle['paquete_monto_clinica_fijo'] : 0.0;
     $honorarioRegla = $detalle['honorario_regla'] ?? null;
 
-    $payload = [];
+    $payload = PaqueteComercialModule::snapshot($detalle);
     if ($paqueteId > 0) $payload['paquete_id'] = $paqueteId;
     if ($paqueteCodigo !== '') $payload['paquete_codigo'] = $paqueteCodigo;
     if ($paqueteTipo !== '') $payload['paquete_tipo'] = $paqueteTipo;
@@ -3367,7 +3262,7 @@ function registrar_movimientos_lab_ref_desde_cotizacion($conn, $pacienteId, $det
 
         $tipoDeriv = strtolower(trim((string)($det['tipo_derivacion'] ?? '')));
         $valorDeriv = isset($det['valor_derivacion']) ? (float)$det['valor_derivacion'] : 0;
-        $subtotal = isset($det['subtotal']) ? (float)$det['subtotal'] : 0;
+        $subtotal = PaqueteComercialModule::baseReferencia($det);
         $montoLiquidar = 0;
         if ($tipoDeriv === 'monto') {
             $montoLiquidar = $valorDeriv;
@@ -3442,7 +3337,7 @@ function es_valor_verdadero($value) {
 function monto_derivacion_desde_detalle($det) {
     $tipoDeriv = strtolower(trim((string)($det['tipo_derivacion'] ?? '')));
     $valorDeriv = isset($det['valor_derivacion']) ? (float)$det['valor_derivacion'] : 0;
-    $subtotal = isset($det['subtotal']) ? (float)$det['subtotal'] : 0;
+    $subtotal = PaqueteComercialModule::baseReferencia($det);
     if ($tipoDeriv === 'monto') return $valorDeriv;
     if ($tipoDeriv === 'porcentaje') return round($subtotal * $valorDeriv / 100, 2);
     return 0;
@@ -5715,6 +5610,9 @@ function cotizacion_extraer_regla_honorario_paquete($detalle) {
         return null;
     }
     $regla = $detalle['honorario_regla'] ?? null;
+    if (PaqueteComercialModule::esComponente($detalle)) {
+        return is_array($regla) && !empty($regla) ? $regla : ['modo_honorario' => 'usar_configuracion_medico'];
+    }
     if (!is_array($regla)) {
         return null;
     }
@@ -5751,6 +5649,9 @@ function cotizacion_ajustar_honorarios_por_regla_paquete_existente($conn, $detal
     $subtotalExistente = max(0.0, (float)($detalleExistente['subtotal'] ?? 0));
     $cantidadExistente = max(1.0, (float)($detalleExistente['cantidad'] ?? 1));
     $subtotalObjetivo = max(0.0, (float)($detalleNuevo['subtotal'] ?? 0));
+    $importeUnico = PaqueteComercialModule::esComponente($detalleNuevo);
+    $snapshotNuevo = PaqueteComercialModule::snapshot($detalleNuevo);
+    if ($importeUnico) $subtotalObjetivo = $subtotalExistente;
     $cantidadObjetivo = max(1.0, (float)($detalleNuevo['cantidad'] ?? $cantidadExistente));
     if ($subtotalObjetivo <= 0) {
         $subtotalObjetivo = $subtotalExistente;
@@ -5769,8 +5670,33 @@ function cotizacion_ajustar_honorarios_por_regla_paquete_existente($conn, $detal
     }
     $tarifaObjetivoHonorario = round(max($subtotalObjetivo, $montoMedico), 2);
     $montoClinica = round(max(0.0, $tarifaObjetivoHonorario - $montoMedico), 2);
+    if ($importeUnico) {
+        $montoMedico = (float)$snapshotNuevo['paquete_honorario_medico'];
+        $montoClinica = (float)$snapshotNuevo['paquete_honorario_clinica'];
+        $tarifaObjetivoHonorario = round($montoMedico + $montoClinica, 2);
+    }
     $porcentajeMedico = $tarifaObjetivoHonorario > 0 ? round(($montoMedico * 100) / $tarifaObjetivoHonorario, 2) : 0.0;
     $porcentajeClinica = $tarifaObjetivoHonorario > 0 ? round(($montoClinica * 100) / $tarifaObjetivoHonorario, 2) : 0.0;
+
+    if ($importeUnico && table_exists($conn, 'honorarios_por_cobrar') && table_exists($conn, 'honorarios_medicos_movimientos')) {
+        $origenUid = 'cot:' . $cotizacionIdExistente . '|det:' . $detalleId;
+        $stmtLiquidado = $conn->prepare("SELECT h.monto_medico, h.monto_clinica
+            FROM honorarios_por_cobrar p
+            INNER JOIN honorarios_medicos_movimientos h ON h.id = p.honorario_movimiento_id_final
+            WHERE p.cotizacion_id = ? AND p.origen_uid = ?
+              AND p.estado_consolidacion = 'consolidado'
+              AND LOWER(TRIM(h.estado_pago_medico)) <> 'pendiente'");
+        $stmtLiquidado->bind_param('is', $cotizacionIdExistente, $origenUid);
+        $stmtLiquidado->execute();
+        $resultadoLiquidado = $stmtLiquidado->get_result();
+        while ($liquidado = $resultadoLiquidado->fetch_assoc()) {
+            if (abs((float)$liquidado['monto_medico'] - $montoMedico) > 0.009
+                || abs((float)$liquidado['monto_clinica'] - $montoClinica) > 0.009) {
+                throw new Exception('El servicio tiene honorarios liquidados; la conversion a paquete requiere reconciliacion explicita');
+            }
+        }
+        $stmtLiquidado->close();
+    }
 
     $marcaAjuste = ' [AJUSTE_PAQUETE_ADENDA cot=' . $cotizacionIdExistente . ' det=' . $detalleId . ']';
 
@@ -5788,6 +5714,7 @@ function cotizacion_ajustar_honorarios_por_regla_paquete_existente($conn, $detal
             }
         }
 
+        if ($importeUnico) $snapshotExistente = array_merge($snapshotExistente, $snapshotNuevo);
         $snapshotExistente['honorario_regla'] = $regla;
         if (isset($detalleNuevo['paquete_id'])) $snapshotExistente['paquete_id'] = (int)$detalleNuevo['paquete_id'];
         if (isset($detalleNuevo['paquete_codigo'])) $snapshotExistente['paquete_codigo'] = (string)$detalleNuevo['paquete_codigo'];
@@ -5942,6 +5869,9 @@ function cotizacion_ajustar_honorarios_por_regla_paquete_existente($conn, $detal
                    SET " . implode(', ', $setsHpc) . "
                    WHERE cotizacion_id = ?
                      AND estado_consolidacion = 'pendiente'";
+        if ($importeUnico) {
+            $sqlHpc = str_replace("estado_consolidacion = 'pendiente'", "estado_consolidacion IN ('pendiente', 'consolidado')", $sqlHpc);
+        }
         $tiposHpc = 'ddddd';
         $paramsHpc = [$tarifaObjetivoHonorario, $montoClinica, $montoMedico, $porcentajeClinica, $porcentajeMedico];
         if (column_exists($conn, 'honorarios_por_cobrar', 'observaciones')) {
@@ -6044,6 +5974,9 @@ function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, 
     $ajustesPaqueteSobreExistentes = [];
     $firmasNuevas = [];
     $delta = [];
+    $creditosPorGrupo = [];
+    $origenesPorGrupo = [];
+    $origenesUsados = [];
 
     foreach ((array)$detalles as $detalle) {
         if (!is_array($detalle)) {
@@ -6062,6 +5995,40 @@ function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, 
         if (isset($firmasExistentes[$firma]) || isset($firmasNuevas[$firma])) {
             $serviciosRepetidos[] = trim((string)($detalle['descripcion'] ?? ($servicioTipo . ' #' . $servicioId)));
             $reglaPaquete = cotizacion_extraer_regla_honorario_paquete($detalle);
+            if (PaqueteComercialModule::esComponente($detalle)) {
+                if (!isset($detallesExistentesPorFirma[$firma])) {
+                    throw new Exception('Un componente del paquete esta repetido en la misma adenda');
+                }
+                $existente = $detallesExistentesPorFirma[$firma];
+                $snapshotExistente = PaqueteComercialModule::snapshot($existente);
+                $snapshotEntrante = PaqueteComercialModule::snapshot($detalle);
+                $detalleEntranteId = (int)($detalle['id'] ?? $detalle['cotizacion_detalle_id'] ?? $detalle['detalle_id'] ?? 0);
+                if ($detalleEntranteId === (int)$existente['id']
+                    && !empty($snapshotExistente['paquete_grupo'])
+                    && $snapshotExistente['paquete_grupo'] === ($snapshotEntrante['paquete_grupo'] ?? null)) {
+                    // El merge de edicion reenvia componentes persistidos; no son una conversion nueva.
+                    continue;
+                }
+                if (isset($origenesUsados[(int)$existente['id']])) {
+                    throw new Exception('El mismo servicio previo no puede reconocerse en dos paquetes');
+                }
+                $origenesUsados[(int)$existente['id']] = true;
+                if ((int)($detalle['cantidad'] ?? 1) !== (int)($existente['cantidad'] ?? 1)) {
+                    throw new Exception('La conversion a paquete requiere la misma cantidad del servicio previo; cotice las unidades adicionales por separado');
+                }
+                if (!empty($snapshotExistente['paquete_id'])) {
+                    throw new Exception('El servicio ya pertenece a otro paquete. No se puede cobrar dos veces.');
+                }
+                $grupo = PaqueteComercialModule::snapshot($detalle)['paquete_grupo'];
+                $creditosPorGrupo[$grupo] = ($creditosPorGrupo[$grupo] ?? 0) + (float)$existente['subtotal'];
+                $origenesPorGrupo[$grupo][] = [
+                    'detalle_id' => (int)$existente['id'],
+                    'cotizacion_id' => (int)$existente['cotizacion_id'],
+                    'importe_reconocido' => (float)$existente['subtotal'],
+                    'servicio_tipo' => $servicioTipo,
+                    'servicio_id' => $servicioId,
+                ];
+            }
             if (is_array($reglaPaquete) && isset($detallesExistentesPorFirma[$firma]) && is_array($detallesExistentesPorFirma[$firma])) {
                 $ajustesPaqueteSobreExistentes[] = [
                     'firma' => $firma,
@@ -6076,6 +6043,21 @@ function cotizacion_filtrar_detalles_delta_adenda($detalles, $firmasExistentes, 
         $delta[] = $detalle;
     }
 
+    foreach ($delta as &$detalle) {
+        if (!PaqueteComercialModule::esCargo($detalle)) continue;
+        $snapshot = PaqueteComercialModule::snapshot($detalle);
+        $grupo = $snapshot['paquete_grupo'];
+        $credito = round($creditosPorGrupo[$grupo] ?? 0, 2);
+        if ($credito > (float)$detalle['subtotal']) {
+            throw new Exception('El importe previo supera el precio del paquete; requiere una devolucion explicita');
+        }
+        $detalle['subtotal'] = round((float)$detalle['subtotal'] - $credito, 2);
+        $detalle['precio_unitario'] = round($detalle['subtotal'] / max(1, (int)$detalle['cantidad']), 2);
+        $snapshot['paquete_importe_reconocido'] = $credito;
+        $snapshot['paquete_origenes_reconocidos'] = $origenesPorGrupo[$grupo] ?? [];
+        $detalle['snapshot_json'] = $snapshot;
+    }
+    unset($detalle);
     return $delta;
 }
 
@@ -6416,6 +6398,7 @@ function anular_cotizacion($conn, $data) {
         if (!$cot) throw new Exception('Cotización no encontrada');
 
         $detallesAuditoria = cargar_detalles_cotizacion($conn, $cotizacionId);
+        PaqueteComercialModule::validarAnulacionCotizacion($conn, $cotizacionId, $detallesAuditoria);
 
         $cobroIdAuditoria = null;
         if (table_exists($conn, 'cotizacion_movimientos')) {
@@ -6954,7 +6937,8 @@ function eliminar_detalle_cotizacion($conn, $data) {
 
         $detallesAntes = cargar_detalles_cotizacion($conn, $cotizacionId);
 
-        $sqlDetInfo = "SELECT servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";
+        $colSnapshot = column_exists($conn, 'cotizaciones_detalle', 'snapshot_json') ? ', snapshot_json' : '';
+        $sqlDetInfo = "SELECT servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal{$colSnapshot} FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";
         if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
             $sqlDetInfo .= " AND COALESCE(estado_item, 'activo') <> 'eliminado'";
         }
@@ -6967,6 +6951,7 @@ function eliminar_detalle_cotizacion($conn, $data) {
         if (!$detalleInfo) {
             throw new Exception('No se encontró el detalle a eliminar');
         }
+        PaqueteComercialModule::validarOperacionIndividual($detalleInfo);
 
         // Al eliminar detalle, deshacer consumo asociado del contrato (si existe).
         ContratoModule::revertirConsumoDesdeCotizacionDetalle($conn, $detalleId);
@@ -7353,6 +7338,7 @@ function ajustar_cantidad_detalle_cotizacion($conn, $data) {
         $stmtDet->execute();
         $det = $stmtDet->get_result()->fetch_assoc();
         if (!$det) throw new Exception('Detalle de cotización no encontrado');
+        PaqueteComercialModule::validarOperacionIndividual($det);
 
         $servicioTipo = strtolower(trim((string)($det['servicio_tipo'] ?? '')));
         if ($servicioTipo !== 'farmacia') {
@@ -7506,6 +7492,7 @@ function devolucion_item_cotizacion($conn, $data) {
         $stmtDet->execute();
         $det = $stmtDet->get_result()->fetch_assoc();
         if (!$det) throw new Exception('Detalle de cotización no encontrado');
+        PaqueteComercialModule::validarOperacionIndividual($det);
 
         $cantidadActual = max(0, (int)($det['cantidad'] ?? 0));
         $precioUnitario = (float)($det['precio_unitario'] ?? 0);
@@ -9098,11 +9085,13 @@ switch ($method) {
                    FROM cotizaciones_detalle cd
                    INNER JOIN cotizaciones c ON c.id = cd.cotizacion_id
                    WHERE cd.cotizacion_id IN ($placeholders)
+                     AND LOWER(TRIM(cd.servicio_tipo)) NOT IN ('paquete', 'perfil')
                      AND (c.estado = 'anulada' OR cd.estado_item <> 'eliminado')
                    GROUP BY cd.cotizacion_id"
                 : "SELECT cd.cotizacion_id, GROUP_CONCAT(DISTINCT LOWER(cd.servicio_tipo) ORDER BY cd.servicio_tipo SEPARATOR ',') AS servicios_tipos
                    FROM cotizaciones_detalle cd
                    WHERE cd.cotizacion_id IN ($placeholders)
+                     AND LOWER(TRIM(cd.servicio_tipo)) NOT IN ('paquete', 'perfil')
                    GROUP BY cd.cotizacion_id";
 
             $stmtSrv = $conn->prepare($sqlServicios);

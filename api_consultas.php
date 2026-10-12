@@ -945,6 +945,7 @@ function consultas_stats_servicios_pendientes_hoy($conn, $medicoId, $fechaYmd) {
         . '   WHERE cd.consulta_id IS NOT NULL'
         . '     AND cd.consulta_id > 0'
         . '     AND LOWER(TRIM(ct.estado)) NOT IN ("anulado", "anulada")'
+        . '     AND LOWER(TRIM(cd.servicio_tipo)) NOT IN ("paquete", "perfil")'
         . $whereDetalleActivoServicios
         . '   GROUP BY cd.consulta_id'
         . ' ) svc_ref ON svc_ref.consulta_id = c.id'

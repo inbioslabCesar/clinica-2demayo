@@ -84,16 +84,9 @@ function calcularResumenCampana(items, precioGlobal) {
   const normalizados = (Array.isArray(items) ? items : []).map((it) => recalcItem(it));
   const subtotalLista = normalizados.reduce((acc, it) => acc + Number(it.subtotal_snapshot || 0), 0);
   const objetivo = Math.max(0, Number(precioGlobal || 0));
-  const factor = subtotalLista > 0 && objetivo > 0 ? objetivo / subtotalLista : 1;
-
-  let acumulado = 0;
-  const detalles = normalizados.map((it, idx) => {
+  const detalles = normalizados.map((it) => {
     const base = Number(it.subtotal_snapshot || 0);
-    const esUltimo = idx === normalizados.length - 1;
-    const subtotalCampana = objetivo > 0
-      ? (esUltimo ? Number((objetivo - acumulado).toFixed(2)) : Number((base * factor).toFixed(2)))
-      : Number(base.toFixed(2));
-    acumulado = Number((acumulado + subtotalCampana).toFixed(2));
+    const subtotalCampana = Number(base.toFixed(2));
 
     const regla = it?.honorario_regla || {};
     const modo = String(regla?.modo_honorario || "usar_configuracion_medico").toLowerCase();
@@ -102,9 +95,11 @@ function calcularResumenCampana(items, precioGlobal) {
 
     let montoMedico = null;
     if (modo === "monto_fijo_medico_paquete") {
-      montoMedico = Number(fijo.toFixed(2));
+      montoMedico = Number((fijo * Number(it.cantidad || 1)).toFixed(2));
     } else if (modo === "porcentaje_medico_paquete") {
-      montoMedico = Number((subtotalCampana * Math.max(0, porcentaje) / 100).toFixed(2));
+      montoMedico = Number((subtotalCampana * Math.min(100, Math.max(0, porcentaje)) / 100).toFixed(2));
+    } else if (!["consulta", "ecografia", "rayosx", "procedimiento", "procedimientos", "operacion", "operaciones"].includes(it.source_type)) {
+      montoMedico = 0;
     }
 
     return {
@@ -112,7 +107,6 @@ function calcularResumenCampana(items, precioGlobal) {
       modo,
       subtotalCampana,
       montoMedico,
-      excedeSubtotal: montoMedico !== null && montoMedico > subtotalCampana + 0.009,
     };
   });
 
@@ -382,21 +376,16 @@ export default function PaquetesPerfilesPage() {
 
     const precioGlobal = normalizeNumber(form.precio_global_venta);
     const montoClinicaFijo = normalizeNumber(form.monto_clinica_fijo);
+    const resumen = calcularResumenCampana(form.items, precioGlobal);
+    if (resumen.sumaMedicos > precioGlobal + 0.009) {
+      Swal.fire("Regla inválida", "La suma de honorarios supera el precio total del paquete.", "warning");
+      return;
+    }
     if (montoClinicaFijo > 0) {
-      const resumen = calcularResumenCampana(form.items, precioGlobal);
       if (resumen.sumaIndeterminada) {
         Swal.fire(
           "Configuracion incompleta",
           "Si defines monto fijo para clínica, todos los items médicos deben usar monto fijo o porcentaje de paquete.",
-          "warning"
-        );
-        return;
-      }
-      const excede = resumen.detalles.find((d) => d.excedeSubtotal);
-      if (excede) {
-        Swal.fire(
-          "Regla inválida",
-          `Un item tiene monto médico mayor al subtotal prorrateado de campaña (${excede.item.descripcion_snapshot}).`,
           "warning"
         );
         return;
@@ -715,6 +704,9 @@ export default function PaquetesPerfilesPage() {
           <div className="mb-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
             <strong>Guia rapida:</strong> selecciona tipo, busca en catalogo y elige un resultado para autocompletar descripcion, precio y medico.
             Si no eliges del catalogo, completa manualmente descripcion, cantidad y precio unitario.
+            El precio del componente es referencial: no se suma ni se prorratea para cobrar el paquete.
+            El monto fijo es el honorario por unidad; el porcentaje usa ese precio referencial.
+            Con configuracion normal se aplica el honorario del tarifario.
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-2">
             <div className="flex flex-col gap-1">

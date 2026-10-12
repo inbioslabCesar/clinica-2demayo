@@ -178,7 +178,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       }));
       const detalles = respuestas.flatMap(({ cotizacionOrigenId, cotizacion }) => (
         (Array.isArray(cotizacion?.detalles) ? cotizacion.detalles : [])
-          .filter((detalle) => Number(detalle?.consulta_id || 0) === consultaId)
+          .filter((detalle) => Number(detalle?.consulta_id || 0) === consultaId
+            && !["paquete", "perfil"].includes(String(detalle?.servicio_tipo || "").toLowerCase()))
           .map((detalle) => ({ ...detalle, cotizacionOrigenId }))
       ));
       const paquetesDesdeDetalle = detalles

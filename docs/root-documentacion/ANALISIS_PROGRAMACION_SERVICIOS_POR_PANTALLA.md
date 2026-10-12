@@ -54,9 +54,26 @@ Tener una guia tecnica concreta de donde capturar la fecha/hora, que guardar en 
 - Validacion del cliente: `node --experimental-vm-modules --test scripts\test_ordenes_procedimientos_client.mjs`. Comprueba respuestas validas, errores HTTP/aplicativos, JSON invalido y fallos de red sin convertirlos en listas vacias.
 
 ### Paquetes/Perfiles
-- Necesitan definicion especial porque pueden expandirse a varios componentes.
-- Cada componente podria requerir agenda propia.
-- Es importante conservar snapshot de descripcion y servicio.
+- Nuevas cotizaciones: un detalle comercial `paquete`/`perfil` cobra el precio global. Los componentes clinicos conservan servicio, medico, consulta y agenda, con precio de venta cero. No se divide el precio del paquete entre servicios.
+- El snapshot identifica `paquete_modelo_comercial=importe_unico`, rol `cargo`/`componente` y grupo. La lista del medico cuenta solo los componentes, no el cargo comercial.
+- El detalle de cotizacion agrupa por `paquete_grupo` cuando existe y conserva la clave historica en paquetes antiguos. El desglose y el contador incluyen solo servicios clinicos; el cargo comercial aporta al total pero no aparece como un tercer servicio "Otros". Los tipos comerciales se etiquetan Paquete/Perfil tambien en el ticket.
+- Recordatorios y Atenciones excluyen `paquete`/`perfil` de las listas de tipos clinicos. Recordatorios tambien excluye el cargo y los detalles eliminados del desglose; el paquete mantiene su identificacion comercial en Atenciones, sin contarse como servicio adicional.
+- El boton Cobrar del detalle consolidado envia todos los `grupo_ids` mediante `?ids=` al cobro unificado. No consulta la sugerencia de agrupacion usando solo la base: esta puede estar pagada mientras una adenda mantiene saldo. El detalle individual conserva su flujo de sugerencia existente.
+- La pantalla de cobro conserva las cotizaciones pagadas del episodio solo como referencia, desmarcadas y deshabilitadas. Selecciona unicamente cotizaciones con saldo cobrable; el payload toma sus IDs de los detalles realmente imputados, no de todas las cotizaciones del episodio. Se mantiene el rechazo backend de cotizaciones pagadas para proteger contra cambios concurrentes.
+- El cotizador de procedimientos respeta `modo=adenda`: envia solo la seleccion nueva, sin intentar editar primero la base pagada. El fallback desde edicion tambien envia solo procedimientos seleccionados. Si otro cotizador reenvia el paquete mediante merge, la deduplicacion reconoce componentes con el mismo ID persistido y grupo, sin volver a cobrarlos ni ajustar sus honorarios. Otro grupo sigue sujeto a la proteccion contra doble cobro.
+- Honorario fijo: importe configurado por unidad; porcentaje: sobre el precio referencial del componente; configuracion normal: honorario del tarifario. El precio referencial no se cobra al paciente.
+- Ejemplo: venta S/ 140; consulta S/ 40 al medico; ecografia S/ 40 al medico; clinica S/ 60. Mismo medico: dos conceptos que suman S/ 80; medicos distintos: S/ 40 para cada uno.
+- El remanente se contabiliza una sola vez junto al ultimo componente medico, por compatibilidad con los movimientos existentes; no representa un precio de venta de ese servicio. Un paquete sin componentes medicos deja su ingreso integro en caja, sin generar honorarios medicos.
+- Descuentos: reducen el cargo y el remanente de clinica, no los honorarios fijos. El snapshot conserva el remanente neto para posteriores abonos; se rechaza un descuento superior al remanente disponible.
+- La atencion solidaria conserva la renuncia explicita de honorarios y el descuento total, sin reactivar los honorarios del snapshot.
+- Conversion desde servicio individual: conserva el importe previo, reconoce ese cargo y agrega solo la diferencia. No crea devoluciones por prorrateo. Una cantidad incompatible, un servicio de otro paquete o una liquidacion anterior incompatible requiere reconciliacion explicita.
+- Los componentes recuperados para honorarios no generan nuevos abonos del servicio origen. Se conserva la identidad del honorario para evitar duplicarlo al cobrar parcialmente.
+- Se bloquea eliminar, devolver o cambiar cantidad de un cargo/componente aislado. La cotizacion que contiene el paquete completo conserva la anulacion global existente. Si una conversion distribuye el grupo entre varias cotizaciones, la anulacion individual tambien se bloquea: exige anulacion conjunta y conciliacion explicitamente gestionada, no una devolucion automatica parcial.
+- Laboratorio derivado por porcentaje usa la referencia del componente, no su precio de venta cero.
+- No requiere migracion de schema ni banderas de BD. No corrige automaticamente cotizaciones historicas prorrateadas ni sus devoluciones/saldos: requieren conciliacion separada.
+- Regresion sin BD: `php scripts\verificar_paquete_importe_unico.php`. Catalogo local de referencia, solo lectura: agregar `--catalogo=7`.
+- El workflow de Hostinger ejecuta la regresion sin BD con PHP 8.3 y mysqli antes del build y de publicar. Un fallo bloquea el deploy. El script se versiona en Git, pero `scripts/` sigue excluido de la sincronizacion al servidor.
+- Antes del despliegue: validar en una instancia de pruebas cotizacion/cobro completos, abonos, descuento, anulacion, agenda/HC y liquidacion con uno y con dos medicos. La prueba pura y la lectura de catalogo no reemplazan una transaccion completa.
 
 ### Operaciones/Cirugias
 - Deben manejarse como evento de mayor complejidad.

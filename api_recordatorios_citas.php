@@ -1110,7 +1110,7 @@ function rc_servicios_label($serviciosTipados, $fallback = '') {
     $raw = trim((string)$serviciosTipados);
     if ($raw !== '') {
         $parts = array_values(array_filter(array_map('trim', explode(',', $raw)), static function ($part) {
-            return $part !== '';
+            return $part !== '' && !in_array(strtolower($part), ['paquete', 'perfil'], true);
         }));
         if (!empty($parts)) {
             $labels = [];
@@ -1855,7 +1855,7 @@ if ($method === 'GET') {
                         cd.cotizacion_id,
                         GROUP_CONCAT(DISTINCT LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) ORDER BY cd.servicio_tipo SEPARATOR ',') AS servicios_tipos
                     FROM cotizaciones_detalle cd
-                    WHERE 1=1 {$whereDetalleActivo}
+                    WHERE LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) NOT IN ('paquete', 'perfil') {$whereDetalleActivo}
                     GROUP BY cd.cotizacion_id
                 ) srv ON srv.cotizacion_id = c.id";
 
@@ -2358,7 +2358,7 @@ if ($method === 'GET') {
                     cd2.cotizacion_id,
                     GROUP_CONCAT(DISTINCT LOWER(TRIM(COALESCE(cd2.servicio_tipo, ''))) ORDER BY cd2.servicio_tipo SEPARATOR ',') AS servicios_tipos
                 FROM cotizaciones_detalle cd2
-                WHERE 1=1
+                WHERE LOWER(TRIM(COALESCE(cd2.servicio_tipo, ''))) NOT IN ('paquete', 'perfil')
                 GROUP BY cd2.cotizacion_id
             ) srv ON srv.cotizacion_id = a.cotizacion_id
             LEFT JOIN medicos m ON m.id = a.medico_id

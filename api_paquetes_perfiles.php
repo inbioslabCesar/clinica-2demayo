@@ -230,38 +230,30 @@ function pp_calcular_resumen_reparto_campana(float $precioGlobal, array $items):
     }
     $subtotalLista = round($subtotalLista, 2);
     $objetivo = round(max(0.0, $precioGlobal), 2);
-    $factor = ($subtotalLista > 0.0 && $objetivo > 0.0) ? ($objetivo / $subtotalLista) : 1.0;
 
     $detalles = [];
     $sumMedicos = 0.0;
     $hasIndeterminado = false;
-    $acumulado = 0.0;
-    $lastIdx = count($items) - 1;
 
-    foreach ($items as $idx => $it) {
+    foreach ($items as $it) {
         $base = round(max(0.0, pp_to_float($it['subtotal_snapshot'] ?? 0)), 2);
-        if ($objetivo > 0.0) {
-            if ($idx === $lastIdx) {
-                $subtotalCampana = round(max(0.0, $objetivo - $acumulado), 2);
-            } else {
-                $subtotalCampana = round(max(0.0, $base * $factor), 2);
-                $acumulado = round($acumulado + $subtotalCampana, 2);
-            }
-        } else {
-            $subtotalCampana = $base;
-        }
+        $subtotalCampana = $base;
 
         $regla = is_array($it['honorario_regla'] ?? null) ? $it['honorario_regla'] : [];
         $modo = strtolower(trim((string)($regla['modo_honorario'] ?? 'usar_configuracion_medico')));
         $montoMedico = null;
 
         if ($modo === 'monto_fijo_medico_paquete') {
-            $montoMedico = round(max(0.0, pp_to_float($regla['monto_fijo_medico'] ?? 0)), 2);
+            $montoMedico = round(max(0.0, pp_to_float($regla['monto_fijo_medico'] ?? 0)) * max(1, pp_to_float($it['cantidad'] ?? 1)), 2);
         } elseif ($modo === 'porcentaje_medico_paquete') {
             $porcentaje = min(max(pp_to_float($regla['porcentaje_medico'] ?? 0), 0.0), 100.0);
             $montoMedico = round($subtotalCampana * $porcentaje / 100, 2);
         } else {
-            $hasIndeterminado = true;
+            if (in_array($it['source_type'] ?? '', ['consulta', 'ecografia', 'rayosx', 'procedimiento', 'procedimientos', 'operacion', 'operaciones'], true)) {
+                $hasIndeterminado = true;
+            } else {
+                $montoMedico = 0.0;
+            }
         }
 
         if ($montoMedico !== null) {
@@ -273,7 +265,6 @@ function pp_calcular_resumen_reparto_campana(float $precioGlobal, array $items):
             'modo_honorario' => $modo,
             'subtotal_campana' => $subtotalCampana,
             'monto_medico' => $montoMedico,
-            'excede_subtotal' => $montoMedico !== null && $montoMedico > ($subtotalCampana + 0.009),
         ];
     }
 
@@ -288,21 +279,17 @@ function pp_calcular_resumen_reparto_campana(float $precioGlobal, array $items):
 }
 
 function pp_validar_reparto_campana(float $precioGlobal, array $items, array $meta): void {
+    $resumen = pp_calcular_resumen_reparto_campana($precioGlobal, $items);
+    if ((float)$resumen['suma_medicos'] > $precioGlobal + 0.009) {
+        throw new InvalidArgumentException('La suma de honorarios supera el precio total del paquete.');
+    }
     $montoClinicaFijo = pp_to_float($meta['reparto_campana']['monto_clinica_fijo'] ?? 0);
     if ($montoClinicaFijo <= 0) {
         return;
     }
 
-    $resumen = pp_calcular_resumen_reparto_campana($precioGlobal, $items);
     if (!empty($resumen['has_indeterminado'])) {
         throw new InvalidArgumentException('Con monto fijo de clínica, todos los items médicos deben usar monto fijo o porcentaje de paquete.');
-    }
-
-    foreach ($resumen['detalles'] as $det) {
-        if (!empty($det['excede_subtotal'])) {
-            $desc = trim((string)($det['descripcion'] ?? 'Item sin descripcion'));
-            throw new InvalidArgumentException('El monto médico excede el subtotal prorrateado en: ' . $desc);
-        }
     }
 
     $diff = round((float)$resumen['monto_clinica_calculado'] - $montoClinicaFijo, 2);

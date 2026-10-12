@@ -45,6 +45,16 @@ jobs:
           [[ "${{ github.event.inputs.confirm_host }}" == "${{ secrets.SSH_HOST }}" ]] || { echo "Confirmacion de host invalida"; exit 1; }
           echo "Confirmaciones validas. Continuando deploy..."
 
+      - name: Setup PHP para pruebas de backend
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli
+          coverage: none
+
+      - name: Validar importe unico y honorarios de paquetes (sin BD)
+        run: php scripts/verificar_paquete_importe_unico.php
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
