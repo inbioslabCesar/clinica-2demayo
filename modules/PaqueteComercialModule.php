@@ -11,6 +11,25 @@ class PaqueteComercialModule
         return is_array($raw) ? $raw : [];
     }
 
+    // Snapshot de examen enviado por el cliente (texto JSON o arreglo). El snapshot de un
+    // componente de paquete solo trae metadatos comerciales y no describe el examen:
+    // en ese caso devuelve null para que se consulte la version vigente del examen.
+    public static function snapshotLaboratorioExplicito(array $detalle): ?array
+    {
+        $raw = $detalle['snapshot_json'] ?? null;
+        if (is_string($raw) && trim($raw) !== '') {
+            $raw = json_decode($raw, true);
+        }
+        if (!is_array($raw) || empty($raw)) {
+            return null;
+        }
+        $traeExamen = isset($raw['version_id']) || isset($raw['hash_contenido']) || isset($raw['nombre']);
+        if (isset($raw['paquete_modelo_comercial']) && !$traeExamen) {
+            return null;
+        }
+        return $raw;
+    }
+
     public static function esComponente(array $detalle): bool
     {
         return (self::snapshot($detalle)['paquete_modelo_comercial'] ?? '') === 'importe_unico'

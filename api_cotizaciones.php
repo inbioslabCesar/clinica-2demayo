@@ -548,11 +548,9 @@ function build_laboratorio_snapshot_payload($conn, $detalle) {
         return null;
     }
 
-    if (!empty($detalle['snapshot_json'])) {
-        $decoded = json_decode((string)$detalle['snapshot_json'], true);
-        if (is_array($decoded)) {
-            return $decoded;
-        }
+    $snapshotExplicito = PaqueteComercialModule::snapshotLaboratorioExplicito((array)$detalle);
+    if ($snapshotExplicito !== null) {
+        return $snapshotExplicito;
     }
 
     $versionId = get_exam_version_id_from_payload($detalle);

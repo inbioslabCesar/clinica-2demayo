@@ -48,6 +48,8 @@ cargarFunciones($root . '/api_cotizaciones.php', [
     'cotizacion_extraer_regla_honorario_paquete', 'cotizacion_filtrar_detalles_delta_adenda',
     'build_paquete_honorario_snapshot_payload',
     'monto_derivacion_desde_detalle',
+    'build_laboratorio_snapshot_payload', 'get_exam_version_id_from_payload',
+    'get_exam_version_snapshot', 'table_exists',
 ]);
 cargarFunciones($root . '/api_paquetes_perfiles.php', [
     'pp_to_float', 'pp_calcular_resumen_reparto_campana', 'pp_validar_reparto_campana',
@@ -166,6 +168,51 @@ verificar(70.0, PaqueteComercialModule::baseReferencia($consulta + ['subtotal' =
 $procedimiento = array_merge($consulta, ['servicio_tipo' => 'procedimiento', 'servicio_id' => 302, 'consulta_id' => 370, 'fecha_programada' => '2026-10-12', 'hora_programada' => '09:00']);
 $paqueteProcedimiento = $expandir(array_merge($paquete, ['componentes' => [$consulta, $procedimiento, ['servicio_tipo' => 'laboratorio', 'servicio_id' => 1, 'cantidad' => 1, 'precio_lista_snapshot' => 20]]]));
 verificar(['consulta', 'procedimiento', 'laboratorio'], array_column(array_slice($paqueteProcedimiento, 1), 'servicio_tipo'), 'se conservan identidades clinicas de consulta, procedimiento y laboratorio');
+
+// Regresion: un componente de laboratorio de un paquete lleva su snapshot como arreglo y el
+// endpoint (init_api.php convierte warnings en excepciones) fallaba con "Array to string conversion".
+$conexionDoble = new class {
+    public function query($sql)
+    {
+        return new class {
+            private $filas = [['TABLE_NAME' => 'examenes_laboratorio_versiones']];
+            public function fetch_assoc() { return array_shift($this->filas); }
+        };
+    }
+    public function prepare($sql)
+    {
+        return new class {
+            public function bind_param(...$args) { return true; }
+            public function execute() { return true; }
+            public function close() { return true; }
+            public function get_result()
+            {
+                return new class {
+                    public function fetch_assoc()
+                    {
+                        return ['id' => 55, 'examen_id' => 3, 'version_num' => 2, 'hash_contenido' => 'abc', 'nombre_snapshot' => 'Hemograma Completo'];
+                    }
+                };
+            }
+        };
+    }
+};
+$componenteLab = $paqueteProcedimiento[3];
+verificar(true, is_array($componenteLab['snapshot_json']), 'el componente de laboratorio de un paquete lleva snapshot como arreglo');
+set_error_handler(static function ($severidad, $mensaje, $archivo, $linea) {
+    throw new ErrorException($mensaje, 0, $severidad, $archivo, $linea);
+});
+try {
+    $snapshotLab = build_laboratorio_snapshot_payload($conexionDoble, $componenteLab);
+} finally {
+    restore_error_handler();
+}
+verificar([55, 'Hemograma Completo', false], [$snapshotLab['version_id'] ?? null, $snapshotLab['nombre'] ?? null, isset($snapshotLab['paquete_modelo_comercial'])], 'laboratorio en paquete conserva la version del examen y no usa los metadatos del paquete como snapshot');
+$snapshotExamenTexto = ['servicio_id' => 3, 'snapshot_json' => json_encode(['id' => 3, 'version_id' => 9, 'nombre' => 'Glucosa'])];
+verificar(9, build_laboratorio_snapshot_payload($conexionDoble, $snapshotExamenTexto)['version_id'], 'snapshot de examen enviado como texto JSON se sigue respetando');
+$snapshotExamenArreglo = ['servicio_id' => 3, 'snapshot_json' => ['id' => 3, 'version_id' => 9, 'nombre' => 'Glucosa', 'paquete_modelo_comercial' => 'importe_unico']];
+verificar(9, build_laboratorio_snapshot_payload($conexionDoble, $snapshotExamenArreglo)['version_id'], 'snapshot de examen como arreglo con datos de examen se respeta aunque traiga metadatos de paquete');
+verificar(false, strpos(file_get_contents($root . '/api_cotizaciones.php'), "(string)\$detalle['snapshot_json']") !== false, 'el endpoint no vuelve a convertir snapshot_json a texto sin validar su tipo');
 verificar([370, '2026-10-12', '09:00'], [$paqueteProcedimiento[2]['consulta_id'], $paqueteProcedimiento[2]['fecha_programada'], $paqueteProcedimiento[2]['hora_programada']], 'se conserva vinculo a consulta y programacion');
 $resumen = new ReflectionMethod(CobroModule::class, 'construirResumenCobroPorCotizacion');
 $soloHonorario = $items[1]; $soloHonorario['cotizacion_id'] = 10; $soloHonorario['_paquete_solo_honorario'] = 1;
