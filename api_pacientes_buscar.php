@@ -19,7 +19,7 @@ function pacientes_buscar_cache_file_for_dni(string $dni): string {
     return pacientes_buscar_cache_dir() . DIRECTORY_SEPARATOR . 'reniec_dni_' . $safe . '.json';
 }
 
-function pacientes_buscar_cache_read_dni(string $dni, int $ttlSeconds = 86400): ?array {
+function pacientes_buscar_cache_read_dni(string $dni, int $ttlSeconds = 15552000): ?array {
     $path = pacientes_buscar_cache_file_for_dni($dni);
     if (!is_file($path)) return null;
 
@@ -60,14 +60,21 @@ function pacientes_buscar_resolver_token_externo(): string {
         if ($value !== '') {
             return $value;
         }
+        if (defined($key)) {
+            $constVal = trim((string)constant($key));
+            if ($constVal !== '') {
+                return $constVal;
+            }
+        }
     }
 
     return '';
 }
 
 function pacientes_buscar_consulta_dni_externa(string $dni): array {
-    if (!preg_match('/^\d{8}$/', $dni)) {
-        return ['found' => false, 'error' => 'DNI inválido para consulta externa'];
+    $safeDni = preg_replace('/\D/', '', $dni);
+    if (strlen($safeDni) !== 8) {
+        return ['found' => false, 'error' => 'DNI inválido para consulta externa', 'not_found' => true];
     }
 
     $token = pacientes_buscar_resolver_token_externo();
@@ -75,84 +82,130 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         return ['found' => false, 'error' => 'Token externo no configurado'];
     }
 
-    $cached = pacientes_buscar_cache_read_dni($dni, 86400);
+    // Los datos de identidad de RENIEC son permanentes; caché de 180 días evita re-consultas y mitiga redes lentas
+    $cached = pacientes_buscar_cache_read_dni($safeDni, 15552000);
     if (is_array($cached) && !empty($cached['found'])) {
+        $cached['from_cache'] = true;
         return $cached;
     }
 
-    $baseUrl = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? 'https://dniruc.apisperu.com/api/v1')));
-    if ($baseUrl === '') {
-        $baseUrl = 'https://dniruc.apisperu.com/api/v1';
+    $baseUrls = [];
+    $envBase = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? '')));
+    if ($envBase !== '') {
+        $baseUrls[] = rtrim($envBase, '/');
     }
-    if (pacientes_buscar_ends_with($baseUrl, '/')) {
-        $baseUrl = rtrim($baseUrl, '/');
+    if (!in_array('https://dniruc.apisperu.com/api/v1', $baseUrls, true)) {
+        $baseUrls[] = 'https://dniruc.apisperu.com/api/v1';
     }
-
-    $url = $baseUrl . '/dni/' . rawurlencode($dni) . '?token=' . rawurlencode($token);
-
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 4,
-        CURLOPT_CONNECTTIMEOUT => 2,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_DNS_CACHE_TIMEOUT => 300,
-        CURLOPT_HTTPHEADER => [
-            'Accept: application/json',
-        ],
-    ]);
-
-    if (defined('CURL_IPRESOLVE_V4')) {
-        curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+    if (!in_array('https://api.apisperu.com/v1', $baseUrls, true)) {
+        $baseUrls[] = 'https://api.apisperu.com/v1';
     }
 
-    $body = curl_exec($ch);
-    $curlErr = curl_error($ch);
-    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    $lastError = 'Error de red en consulta externa';
+    $isTimeout = false;
 
-    if ($body === false) {
-        return ['found' => false, 'error' => $curlErr !== '' ? $curlErr : 'Error de red en consulta externa'];
+    foreach ($baseUrls as $baseUrl) {
+        $url = $baseUrl . '/dni/' . rawurlencode($safeDni) . '?token=' . rawurlencode($token);
+
+        // Hasta 2 intentos por endpoint para tolerar microcortes y alta latencia
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            $ch = curl_init();
+            $connectTimeout = ($attempt === 1) ? 6 : 9;
+            $totalTimeout = ($attempt === 1) ? 9 : 14;
+
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $url,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => $totalTimeout,
+                CURLOPT_CONNECTTIMEOUT => $connectTimeout,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_DNS_CACHE_TIMEOUT => 600,
+                CURLOPT_HTTPHEADER => [
+                    'Accept: application/json',
+                    'Authorization: Bearer ' . $token,
+                ],
+            ]);
+
+            if (defined('CURL_IPRESOLVE_V4')) {
+                curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            }
+
+            $body = curl_exec($ch);
+            $curlErr = curl_error($ch);
+            $curlErrNo = curl_errno($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($body === false) {
+                if ($curlErrNo === 28) { // CURLE_OPERATION_TIMEDOUT
+                    $isTimeout = true;
+                    $lastError = 'Tiempo de espera agotado al consultar RENIEC (red lenta)';
+                } else {
+                    $lastError = $curlErr !== '' ? $curlErr : 'Error de conexión externa';
+                }
+                if ($attempt === 1) {
+                    usleep(250000); // Pausa de 250ms antes del segundo intento
+                    continue;
+                }
+                break;
+            }
+
+            $decoded = json_decode($body, true);
+            if (!is_array($decoded)) {
+                $lastError = 'Respuesta externa inválida';
+                continue;
+            }
+
+            if ($httpCode === 404 || (!empty($decoded['message']) && stripos((string)$decoded['message'], 'no encontrado') !== false)) {
+                return ['found' => false, 'error' => 'DNI no encontrado en RENIEC', 'not_found' => true];
+            }
+
+            if ($httpCode >= 400) {
+                $message = trim((string)($decoded['message'] ?? $decoded['error'] ?? 'Servicio externo no disponible'));
+                $lastError = $message !== '' ? $message : 'Servicio externo no disponible';
+                break;
+            }
+
+            $nombres = trim((string)($decoded['nombres'] ?? $decoded['nombre'] ?? ''));
+            $apellidoPaterno = trim((string)($decoded['apellidoPaterno'] ?? $decoded['apellido_paterno'] ?? ''));
+            $apellidoMaterno = trim((string)($decoded['apellidoMaterno'] ?? $decoded['apellido_materno'] ?? ''));
+            $apellidos = trim($apellidoPaterno . ' ' . $apellidoMaterno);
+            if ($apellidos === '' && !empty($decoded['apellido'])) {
+                $apellidos = trim((string)$decoded['apellido']);
+            }
+
+            if ($nombres === '' && $apellidos === '') {
+                return ['found' => false, 'error' => 'Documento no encontrado en RENIEC', 'not_found' => true];
+            }
+
+            $out = [
+                'found' => true,
+                'provider' => 'apis_peru',
+                'sugerencia' => [
+                    'tipo_documento' => 'dni',
+                    'dni' => $safeDni,
+                    'nombre' => $nombres,
+                    'apellido' => $apellidos,
+                    'nombres' => $nombres,
+                    'apellido_paterno' => $apellidoPaterno,
+                    'apellido_materno' => $apellidoMaterno,
+                    'fuente' => 'apis_peru',
+                ],
+            ];
+
+            pacientes_buscar_cache_write_dni($safeDni, $out);
+            return $out;
+        }
     }
 
-    $decoded = json_decode($body, true);
-    if (!is_array($decoded)) {
-        return ['found' => false, 'error' => 'Respuesta externa inválida'];
-    }
-
-    if ($httpCode >= 400) {
-        $message = trim((string)($decoded['message'] ?? $decoded['error'] ?? 'Servicio externo no disponible'));
-        return ['found' => false, 'error' => $message !== '' ? $message : 'Servicio externo no disponible'];
-    }
-
-    $nombres = trim((string)($decoded['nombres'] ?? ''));
-    $apellidoPaterno = trim((string)($decoded['apellidoPaterno'] ?? $decoded['apellido_paterno'] ?? ''));
-    $apellidoMaterno = trim((string)($decoded['apellidoMaterno'] ?? $decoded['apellido_materno'] ?? ''));
-    $apellidos = trim($apellidoPaterno . ' ' . $apellidoMaterno);
-
-    if ($nombres === '' && $apellidos === '') {
-        return ['found' => false, 'error' => 'Documento no encontrado en servicio externo'];
-    }
-
-    $out = [
-        'found' => true,
-        'provider' => 'apis_peru',
-        'sugerencia' => [
-            'tipo_documento' => 'dni',
-            'dni' => $dni,
-            'nombre' => $nombres,
-            'apellido' => $apellidos,
-            'nombres' => $nombres,
-            'apellido_paterno' => $apellidoPaterno,
-            'apellido_materno' => $apellidoMaterno,
-            'fuente' => 'apis_peru',
-        ],
+    return [
+        'found' => false,
+        'error' => $lastError,
+        'red_lenta' => $isTimeout,
+        'timeout' => $isTimeout,
     ];
-
-    pacientes_buscar_cache_write_dni($dni, $out);
-    return $out;
 }
 
 function pacientes_buscar_table_exists($conn, string $table): bool {
@@ -317,6 +370,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pacientes = $res->fetch_all(MYSQLI_ASSOC);
     $pacientes = cargar_acompanantes_busqueda($conn, $pacientes);
     if ($pacientes && count($pacientes) > 0) {
+        // Almacenar en caché local de RENIEC para acelerar futuras búsquedas del mismo DNI
+        if ($tipo === 'dni' && preg_match('/^\d{8}$/', $valor)) {
+            $p0 = $pacientes[0];
+            $nombreLocal = trim((string)($p0['nombre'] ?? ''));
+            $apellidoLocal = trim((string)($p0['apellido'] ?? ''));
+            if ($nombreLocal !== '' || $apellidoLocal !== '') {
+                pacientes_buscar_cache_write_dni($valor, [
+                    'found' => true,
+                    'provider' => 'local_db',
+                    'sugerencia' => [
+                        'tipo_documento' => 'dni',
+                        'dni' => $valor,
+                        'nombre' => $nombreLocal,
+                        'apellido' => $apellidoLocal,
+                        'nombres' => $nombreLocal,
+                        'apellido_paterno' => $apellidoLocal,
+                        'apellido_materno' => '',
+                        'fuente' => 'local_db',
+                    ],
+                ]);
+            }
+        }
         echo json_encode([
             'success' => true,
             'pacientes' => $pacientes,
@@ -341,6 +416,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $payload['error'] = 'Paciente no encontrado en base local, pero existe en consulta externa';
         } elseif (is_array($consultaExterna) && !empty($consultaExterna['error'])) {
             $payload['detalle_externo'] = (string)$consultaExterna['error'];
+            $payload['error'] = (string)$consultaExterna['error'];
+            if (!empty($consultaExterna['red_lenta'])) {
+                $payload['red_lenta'] = true;
+                $payload['timeout'] = true;
+            }
+            if (!empty($consultaExterna['not_found'])) {
+                $payload['not_found'] = true;
+            }
         }
 
         echo json_encode($payload);

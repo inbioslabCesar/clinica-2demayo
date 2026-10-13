@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
 import { useQuoteCart } from "../../context/QuoteCartContext";
@@ -196,8 +196,15 @@ export default function CotizadorExpressPanel() {
     patientName: "Particular",
     dni: "",
     origen: "anonimo",
+    historia: "",
   });
   const [checkingIdentity, setCheckingIdentity] = useState(false);
+  const [identityStatus, setIdentityStatus] = useState({
+    type: "idle", // idle | checking | local | reniec | timeout | not_found | error
+    message: "",
+  });
+  const identityTimerRef = useRef(null);
+  const identityAbortRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -335,23 +342,189 @@ export default function CotizadorExpressPanel() {
       .slice(0, 120);
   }, [query, rows, medRows]);
 
-  const resolverIdentidad = async () => {
-    const value = String(identityText || "").trim();
+  const resolverIdentidad = async (textOverride, isManual = false) => {
+    const rawValue = typeof textOverride === "string" ? textOverride : identityText;
+    const value = String(rawValue || "").trim();
 
     if (identityMode === "sin_datos" || value === "") {
-      setIdentityResolved({ patientId: 0, patientName: "Particular", dni: "", origen: "anonimo" });
+      setIdentityResolved({ patientId: 0, patientName: "Particular", dni: "", origen: "anonimo", historia: "" });
+      setIdentityStatus({ type: "idle", message: "" });
       return;
     }
 
+    if (identityMode === "dni") {
+      const dniSanitizado = value.replace(/\D/g, "").slice(0, 8);
+      if (dniSanitizado.length !== 8) {
+        if (isManual) {
+          Swal.fire({
+            icon: "warning",
+            title: "DNI incompleto",
+            text: "Ingresa los 8 dígitos del DNI para consultar en RENIEC.",
+          });
+        }
+        return;
+      }
+
+      clearTimeout(identityTimerRef.current);
+      identityAbortRef.current?.abort();
+
+      const controller = new AbortController();
+      identityAbortRef.current = controller;
+      setCheckingIdentity(true);
+      setIdentityStatus({
+        type: "checking",
+        message: "Consultando RENIEC / Base local...",
+      });
+
+      const slowTimer = setTimeout(() => {
+        setIdentityStatus((prev) => {
+          if (prev.type === "checking") {
+            return {
+              ...prev,
+              message: "Consultando RENIEC (red lenta, esperando respuesta...)",
+            };
+          }
+          return prev;
+        });
+      }, 2200);
+
+      try {
+        const res = await authFetch("api_pacientes_buscar.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ tipo: "dni", valor: dniSanitizado }),
+        });
+        clearTimeout(slowTimer);
+
+        const data = await res.json().catch(() => null);
+
+        if (!data) {
+          setIdentityStatus({
+            type: "error",
+            message: "No se pudo conectar con el servidor para verificar el DNI.",
+          });
+          return;
+        }
+
+        // Caso 1: Paciente existe en base de datos local
+        if (data?.success && Array.isArray(data?.pacientes) && data.pacientes.length > 0) {
+          const p = data.pacientes[0];
+          const patientName = `${String(p?.nombre || "").trim()} ${String(p?.apellido || "").trim()}`.trim();
+          setIdentityResolved({
+            patientId: Number(p?.id || 0),
+            patientName: patientName || "Paciente",
+            dni: String(p?.dni || dniSanitizado).trim(),
+            origen: "local",
+            historia: String(p?.historia_clinica || "").trim(),
+          });
+          setIdentityStatus({
+            type: "local",
+            message: `Paciente registrado: ${patientName} (HC: ${p?.historia_clinica || "-"})`,
+          });
+          return;
+        }
+
+        // Caso 2: Datos encontrados en RENIEC
+        const sugerencia = data?.fuente === "externa" && data?.sugerencia_externa
+          ? data.sugerencia_externa
+          : null;
+
+        if (sugerencia) {
+          const nom = String(sugerencia?.nombre || sugerencia?.nombres || "").trim();
+          const ape = String(sugerencia?.apellido || "").trim() ||
+            [sugerencia?.apellido_paterno, sugerencia?.apellido_materno].filter(Boolean).join(" ").trim();
+          const patientName = `${nom} ${ape}`.trim();
+
+          setIdentityResolved({
+            patientId: 0,
+            patientName: patientName || "Particular",
+            dni: String(sugerencia?.dni || dniSanitizado).trim(),
+            origen: "externa",
+            historia: "",
+          });
+          setIdentityStatus({
+            type: "reniec",
+            message: `RENIEC: ${patientName} (datos obtenidos para cotizar)`,
+          });
+          return;
+        }
+
+        // Caso 3: Red lenta / timeout
+        if (data?.red_lenta || data?.timeout) {
+          setIdentityResolved({
+            patientId: 0,
+            patientName: "Particular",
+            dni: dniSanitizado,
+            origen: "temporal",
+            historia: "",
+          });
+          setIdentityStatus({
+            type: "timeout",
+            message: "Tiempo de espera agotado al consultar RENIEC (red lenta).",
+          });
+          return;
+        }
+
+        // Caso 4: DNI no encontrado
+        if (data?.not_found) {
+          setIdentityResolved({
+            patientId: 0,
+            patientName: "Particular",
+            dni: dniSanitizado,
+            origen: "temporal",
+            historia: "",
+          });
+          setIdentityStatus({
+            type: "not_found",
+            message: "DNI no encontrado en RENIEC ni base local. Se cotiza como Particular.",
+          });
+          return;
+        }
+
+        // Caso 5: Error o servicio no disponible
+        const detalle = String(data?.detalle_externo || data?.error || "").trim();
+        setIdentityResolved({
+          patientId: 0,
+          patientName: "Particular",
+          dni: dniSanitizado,
+          origen: "temporal",
+          historia: "",
+        });
+        setIdentityStatus({
+          type: "error",
+          message: detalle ? `Aviso: ${detalle}` : "No se pudo consultar RENIEC. Puedes reintentar o cotizar como Particular.",
+        });
+      } catch (err) {
+        clearTimeout(slowTimer);
+        if (err?.name === "AbortError") return;
+        setIdentityResolved({
+          patientId: 0,
+          patientName: "Particular",
+          dni: dniSanitizado,
+          origen: "temporal",
+          historia: "",
+        });
+        setIdentityStatus({
+          type: "error",
+          message: "Error de red al consultar RENIEC. Verifica tu conexión y reintenta.",
+        });
+      } finally {
+        setCheckingIdentity(false);
+      }
+      return;
+    }
+
+    // Modo Nombre referencial
     setCheckingIdentity(true);
+    setIdentityStatus({ type: "checking", message: "Buscando coincidencias..." });
     try {
-      const tipo = identityMode === "dni" ? "dni" : "nombre";
       const res = await authFetch("api_pacientes_buscar.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tipo, valor: value }),
+        body: JSON.stringify({ tipo: "nombre", valor: value }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
       if (data?.success && Array.isArray(data?.pacientes) && data.pacientes.length > 0) {
         const p = data.pacientes[0];
@@ -361,36 +534,70 @@ export default function CotizadorExpressPanel() {
           patientName: patientName || "Paciente",
           dni: String(p?.dni || "").trim(),
           origen: "local",
+          historia: String(p?.historia_clinica || "").trim(),
         });
-        return;
-      }
-
-      const sugerencia = data?.sugerencia_externa;
-      if (tipo === "dni" && sugerencia) {
-        const patientName = `${String(sugerencia?.nombre || "").trim()} ${String(sugerencia?.apellido || "").trim()}`.trim();
-        setIdentityResolved({
-          patientId: 0,
-          patientName: patientName || "Particular",
-          dni: String(sugerencia?.dni || value).trim(),
-          origen: "externa",
+        setIdentityStatus({
+          type: "local",
+          message: `Paciente registrado: ${patientName} (HC: ${p?.historia_clinica || "-"})`,
         });
       } else {
         setIdentityResolved({
           patientId: 0,
-          patientName: identityMode === "nombre" ? value : "Particular",
-          dni: identityMode === "dni" ? value : "",
+          patientName: value || "Particular",
+          dni: "",
           origen: "temporal",
+          historia: "",
+        });
+        setIdentityStatus({
+          type: "idle",
+          message: `Referencia: ${value} (Particular)`,
         });
       }
     } catch {
       setIdentityResolved({
         patientId: 0,
-        patientName: identityMode === "nombre" ? value : "Particular",
-        dni: identityMode === "dni" ? value : "",
+        patientName: value || "Particular",
+        dni: "",
         origen: "temporal",
+        historia: "",
       });
+      setIdentityStatus({ type: "idle", message: "" });
     } finally {
       setCheckingIdentity(false);
+    }
+  };
+
+  const handleIdentityChange = (e) => {
+    const raw = e.target.value;
+    if (identityMode === "dni") {
+      const clean = raw.replace(/\D/g, "").slice(0, 8);
+      setIdentityText(clean);
+      clearTimeout(identityTimerRef.current);
+      if (clean.length < 8) {
+        setIdentityStatus({ type: "idle", message: "" });
+        setIdentityResolved({ patientId: 0, patientName: "Particular", dni: clean, origen: "temporal", historia: "" });
+      } else if (clean.length === 8) {
+        identityTimerRef.current = setTimeout(() => {
+          resolverIdentidad(clean, false);
+        }, 450);
+      }
+    } else {
+      setIdentityText(raw);
+    }
+  };
+
+  const handleIdentityModeChange = (e) => {
+    const nextMode = e.target.value;
+    setIdentityMode(nextMode);
+    setIdentityText("");
+    setIdentityStatus({ type: "idle", message: "" });
+    clearTimeout(identityTimerRef.current);
+    identityAbortRef.current?.abort();
+
+    if (nextMode === "sin_datos") {
+      setIdentityResolved({ patientId: 0, patientName: "Particular", dni: "", origen: "anonimo", historia: "" });
+    } else {
+      setIdentityResolved({ patientId: 0, patientName: "Particular", dni: "", origen: "temporal", historia: "" });
     }
   };
 
@@ -767,35 +974,135 @@ export default function CotizadorExpressPanel() {
       <div className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr_auto]">
         <select
           value={identityMode}
-          onChange={(e) => setIdentityMode(e.target.value)}
-          className="rounded-lg border border-emerald-200 px-3 py-2 text-sm"
+          onChange={handleIdentityModeChange}
+          className="rounded-lg border border-emerald-200 px-3 py-2 text-sm bg-white font-medium text-emerald-950"
         >
           <option value="sin_datos">Sin datos del paciente</option>
           <option value="dni">DNI</option>
           <option value="nombre">Nombre referencial</option>
         </select>
-        <input
-          type="text"
-          value={identityText}
-          onChange={(e) => setIdentityText(e.target.value)}
-          placeholder={identityMode === "dni" ? "DNI del paciente" : "Nombre referencial"}
-          disabled={identityMode === "sin_datos"}
-          className="rounded-lg border border-emerald-200 px-3 py-2 text-sm disabled:bg-gray-100"
-        />
+
+        <div className="relative">
+          <input
+            type="text"
+            value={identityText}
+            onChange={handleIdentityChange}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                resolverIdentidad(identityText, true);
+              }
+            }}
+            placeholder={identityMode === "dni" ? "DNI del paciente (8 dígitos)" : "Nombre referencial"}
+            disabled={identityMode === "sin_datos"}
+            maxLength={identityMode === "dni" ? 8 : 100}
+            inputMode={identityMode === "dni" ? "numeric" : "text"}
+            className="w-full rounded-lg border border-emerald-200 px-3 py-2 pr-9 text-sm disabled:bg-gray-100 font-medium"
+          />
+          {checkingIdentity && (
+            <div className="absolute right-2.5 top-2.5 flex items-center pointer-events-none" title="Consultando...">
+              <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
-          onClick={resolverIdentidad}
-          disabled={checkingIdentity}
-          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+          onClick={() => resolverIdentidad(identityText, true)}
+          disabled={checkingIdentity || (identityMode === "dni" && identityText.length !== 8)}
+          className="rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm"
         >
-          {checkingIdentity ? "Verificando..." : "Aplicar"}
+          {checkingIdentity ? (
+            <>
+              <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>Buscando...</span>
+            </>
+          ) : identityMode === "dni" ? (
+            <>
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span>Buscar RENIEC</span>
+            </>
+          ) : (
+            "Aplicar"
+          )}
         </button>
       </div>
 
-      <div className="mt-2 text-xs text-slate-700">
-        Contexto: <b>{identityResolved.patientName}</b>
-        {identityResolved.dni ? ` | DNI: ${identityResolved.dni}` : ""}
-        {identityResolved.patientId > 0 ? ` | ID local: ${identityResolved.patientId}` : " | Temporal"}
+      {identityStatus.message && (
+        <div
+          className={`mt-2 rounded-lg p-2 text-xs flex items-center justify-between gap-2 shadow-sm ${
+            identityStatus.type === "local"
+              ? "bg-emerald-100 border border-emerald-300 text-emerald-900"
+              : identityStatus.type === "reniec"
+              ? "bg-blue-50 border border-blue-300 text-blue-900"
+              : identityStatus.type === "checking"
+              ? "bg-sky-50 border border-sky-300 text-sky-900"
+              : identityStatus.type === "timeout" || identityStatus.type === "error"
+              ? "bg-amber-50 border border-amber-300 text-amber-900"
+              : "bg-slate-100 border border-slate-300 text-slate-800"
+          }`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            {identityStatus.type === "checking" && (
+              <svg className="animate-spin h-3.5 w-3.5 text-sky-600 shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            )}
+            {identityStatus.type === "local" && <span className="text-emerald-700 font-bold shrink-0">✓</span>}
+            {identityStatus.type === "reniec" && <span className="text-blue-700 font-bold shrink-0">✓</span>}
+            {(identityStatus.type === "timeout" || identityStatus.type === "error") && (
+              <span className="text-amber-700 font-bold shrink-0">⚠️</span>
+            )}
+            <span className="font-medium truncate">{identityStatus.message}</span>
+          </div>
+
+          {(identityStatus.type === "timeout" || identityStatus.type === "error") && (
+            <button
+              type="button"
+              onClick={() => resolverIdentidad(identityText, true)}
+              disabled={checkingIdentity}
+              className="px-2 py-0.5 rounded bg-amber-600 text-white font-bold text-[11px] hover:bg-amber-700 shadow-sm shrink-0 inline-flex items-center gap-1"
+            >
+              <span>🔄</span> Reintentar
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-700">
+        <span>Contexto:</span>
+        <b className="text-slate-900">{identityResolved.patientName}</b>
+        {identityResolved.dni && (
+          <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-slate-800">
+            DNI: {identityResolved.dni}
+          </span>
+        )}
+        {identityResolved.origen === "local" ? (
+          <span className="rounded bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">
+            Registrado en clínica {identityResolved.historia ? `(HC: ${identityResolved.historia})` : ""}
+          </span>
+        ) : identityResolved.origen === "externa" ? (
+          <span className="rounded bg-blue-100 px-2 py-0.5 font-semibold text-blue-800">
+            Validado con RENIEC
+          </span>
+        ) : identityResolved.origen === "anonimo" ? (
+          <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-600">
+            Sin datos / Anónimo
+          </span>
+        ) : (
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-800">
+            Particular / Temporal
+          </span>
+        )}
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_180px]">

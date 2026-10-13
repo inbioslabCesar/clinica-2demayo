@@ -18,6 +18,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
   const [buscando, setBuscando] = useState(false);
   const [noEncontrado, setNoEncontrado] = useState(false);
   const [sugerenciaExterna, setSugerenciaExterna] = useState(null);
+  const [avisoBusqueda, setAvisoBusqueda] = useState("");
 
   const normalizeText = (value) => String(value || "")
     .toLowerCase()
@@ -72,6 +73,11 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
           ? data.sugerencia_externa
           : null;
         setSugerenciaExterna(externa);
+        if (data?.red_lenta || data?.timeout) {
+          setAvisoBusqueda("La consulta a RENIEC tardó demasiado por lentitud de red. Puedes volver a presionar Buscar.");
+        } else {
+          setAvisoBusqueda("");
+        }
         if (onNoEncontrado) {
           onNoEncontrado({
             tipo,
@@ -84,6 +90,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
     } catch {
       setResultados([]);
       setSugerenciaExterna(null);
+      setAvisoBusqueda("Error de red al consultar el paciente. Verifica la conexión.");
       if (onNoEncontrado) {
         onNoEncontrado({
           tipo,
@@ -96,16 +103,23 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
 
   // Limpiar paciente anterior al cambiar input o tipo
   const handleInputChange = (e) => {
-  setBusqueda(e.target.value);
-  setNoEncontrado(false);
-  setSugerenciaExterna(null);
-  if (onNuevaBusqueda) onNuevaBusqueda();
+    let val = e.target.value;
+    if (tipo === "dni") {
+      val = val.replace(/\D/g, "").slice(0, 8);
+    }
+    setBusqueda(val);
+    setNoEncontrado(false);
+    setSugerenciaExterna(null);
+    setAvisoBusqueda("");
+    if (onNuevaBusqueda) onNuevaBusqueda();
   };
   const handleTipoChange = (e) => {
-  setTipo(e.target.value);
-  setNoEncontrado(false);
-  setSugerenciaExterna(null);
-  if (onNuevaBusqueda) onNuevaBusqueda();
+    setTipo(e.target.value);
+    setBusqueda("");
+    setNoEncontrado(false);
+    setSugerenciaExterna(null);
+    setAvisoBusqueda("");
+    if (onNuevaBusqueda) onNuevaBusqueda();
   };
 
   const limpiarBusqueda = () => {
@@ -113,6 +127,7 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
     setResultados([]);
     setNoEncontrado(false);
     setSugerenciaExterna(null);
+    setAvisoBusqueda("");
     if (onNuevaBusqueda) onNuevaBusqueda();
   };
 
@@ -200,7 +215,9 @@ function PacienteListSearch({ onPacienteEncontrado, onNoEncontrado, onNuevaBusqu
       {noEncontrado && (
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
           {sugerenciaExterna
-            ? "Paciente no encontrado en base local. Encontramos datos en RENIEC/SUNAT para prellenar el registro."
+            ? "Paciente no encontrado en base local. Encontramos datos en RENIEC para prellenar el registro."
+            : avisoBusqueda
+            ? `⚠️ ${avisoBusqueda}`
             : "Paciente no encontrado. Puedes registrarlo en el siguiente paso."}
         </div>
       )}
