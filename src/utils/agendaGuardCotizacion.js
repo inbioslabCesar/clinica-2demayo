@@ -352,6 +352,12 @@ async function getAgendaAdvisory({
       .sort((a, b) => a - b);
     selectableLaterMinutes = availableMinutes.filter((m) => m > requestedMin && !occupied.has(m));
   }
+  if (hasNoRegularSchedule && selectableLaterMinutes.length === 0) {
+    // Sin horario regular no hay turnos definidos: se ofrecen las siguientes horas no ocupadas.
+    for (let m = requestedMin + step; m <= (23 * 60 + 59) && selectableLaterMinutes.length < 12; m += step) {
+      if (!occupied.has(m)) selectableLaterMinutes.push(m);
+    }
+  }
   let additionalCandidateMinute = null;
   if (maxRegularMinute !== null) {
     const primerAdicionalRegular = maxRegularMinute + step;
@@ -402,7 +408,7 @@ async function getAgendaAdvisory({
 
   return {
     shouldWarn: true,
-    warningType: isOutsideRegular ? "outside_regular" : "occupied",
+    warningType: (isOutsideRegular && !(hasNoRegularSchedule && hasExact)) ? "outside_regular" : "occupied",
     noRegularSchedule: hasNoRegularSchedule,
     requestedDate: fechaNorm,
     hasExact,
@@ -784,11 +790,14 @@ async function resolverCruceConUsuario({
     motivos.push("bloques reservados del flujo actual");
   }
   const motivoTexto = motivos.join(" + ");
+  const avisoSinHorario = advisory?.noRegularSchedule
+    ? `<br/><br/>El médico no tiene horario regular ese día: la nueva hora se registrará como adicional con autorización del médico.`
+    : "";
 
   const resultado = await Swal.fire({
     icon: "warning",
     title: "Horario ocupado",
-    html: `La hora solicitada <b>${advisory.requestedHour}</b> para el ${advisory.requestedDate} ya cruza con: <b>${motivoTexto}</b>.<br/><br/>Selecciona una hora libre sugerida para continuar con la cotizacion.`,
+    html: `La hora solicitada <b>${advisory.requestedHour}</b> para el ${advisory.requestedDate} ya cruza con: <b>${motivoTexto}</b>.<br/><br/>Selecciona una hora libre sugerida para continuar con la cotizacion.${avisoSinHorario}`,
     input: "select",
     inputOptions,
     inputValue: horaSugerida || undefined,

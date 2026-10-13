@@ -183,11 +183,35 @@ export default function CotizarProcedimientosPage() {
     enabled: normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free" && selectedAvailabilityTargets.length > 0,
   });
 
+  // El selector de hora muestra la primera hora libre cuando la guardada no esta disponible para la fecha
+  // elegida (p. ej. la hora actual en otro dia). Se sincroniza el estado para registrar exactamente lo que se ve.
+  useEffect(() => {
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    if (modo === "free" || selectedAvailabilityTargets.length === 0) return;
+    const horaBaseEdicion = cotizacionIdEdicion > 0 ? String(programacionBaseEdicion?.hora || "").slice(0, 5) : "";
+    setProgramacionPorProcedimiento((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      selectedAvailabilityTargets.forEach((target) => {
+        const avail = availabilityByPair[target.key];
+        if (!avail || avail.loading || avail.error) return;
+        if (modo === "mixed" && manualProgramacionByProcedimiento[target.procedimientoId]) return;
+        const libres = Array.isArray(avail.horasLibres) ? avail.horasLibres : [];
+        const inicios = horaBaseEdicion && !libres.includes(horaBaseEdicion) ? [horaBaseEdicion, ...libres] : libres;
+        if (inicios.length === 0) return;
+        const actual = next[target.procedimientoId] || {};
+        if (inicios.includes(String(actual.hora_programada || "").slice(0, 5))) return;
+        next[target.procedimientoId] = { ...actual, fecha_programada: target.fecha, hora_programada: inicios[0] };
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedAvailabilityTargets, availabilityByPair, agendaProgramacionModo, manualProgramacionByProcedimiento, cotizacionIdEdicion, programacionBaseEdicion]);
+
   const actualizarHoraProgramadaProcedimiento = (procedimientoId, horaValue, options = {}) => {
     const pid = Number(procedimientoId || 0);
     const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
-    const manualEnabled = Boolean(manualProgramacionByProcedimiento[pid]) && modo === "mixed";
-    const shouldCheckOccupied = modo !== "free" && manualEnabled && !options.skipOccupiedCheck;
+    const shouldCheckOccupied = modo !== "free" && !options.skipOccupiedCheck;
     const horaNorm = normalizeHourHm(horaValue);
     const current = getProgramacionProcedimiento(pid);
     const fecha = String(current?.fecha_programada || "").slice(0, 10);

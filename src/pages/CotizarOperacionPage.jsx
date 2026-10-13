@@ -186,6 +186,31 @@ export default function CotizarOperacionPage() {
     enabled: normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free" && selectedAvailabilityTargets.length > 0,
   });
 
+  // El selector de hora muestra la primera hora libre cuando la guardada no esta disponible para la fecha
+  // elegida (p. ej. la hora actual en otro dia). Se sincroniza el estado para registrar exactamente lo que se ve.
+  useEffect(() => {
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    if (modo === "free" || selectedAvailabilityTargets.length === 0) return;
+    const horaBaseEdicion = cotizacionIdEdicion > 0 ? String(programacionBaseEdicion?.hora || "").slice(0, 5) : "";
+    setProgramacionPorOperacion((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      selectedAvailabilityTargets.forEach((target) => {
+        const avail = availabilityByPair[target.key];
+        if (!avail || avail.loading || avail.error) return;
+        if (modo === "mixed" && manualProgramacionByOperacion[target.operacionId]) return;
+        const libres = Array.isArray(avail.horasLibres) ? avail.horasLibres : [];
+        const inicios = horaBaseEdicion && !libres.includes(horaBaseEdicion) ? [horaBaseEdicion, ...libres] : libres;
+        if (inicios.length === 0) return;
+        const actual = next[target.operacionId] || {};
+        if (inicios.includes(String(actual.hora_programada || "").slice(0, 5))) return;
+        next[target.operacionId] = { ...actual, fecha_programada: target.fecha, hora_programada: inicios[0] };
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedAvailabilityTargets, availabilityByPair, agendaProgramacionModo, manualProgramacionByOperacion, cotizacionIdEdicion, programacionBaseEdicion]);
+
   useEffect(() => {
     let cancelled = false;
     const applyModeFromPayload = (data) => {
@@ -567,8 +592,7 @@ export default function CotizarOperacionPage() {
   const actualizarHoraProgramadaOperacion = (operacionId, horaValue, options = {}) => {
     const oid = Number(operacionId || 0);
     const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
-    const manualEnabled = Boolean(manualProgramacionByOperacion[oid]) && modo === "mixed";
-    const shouldCheckOccupied = modo !== "free" && manualEnabled && !options.skipOccupiedCheck;
+    const shouldCheckOccupied = modo !== "free" && !options.skipOccupiedCheck;
     const horaNorm = normalizeHourHm(horaValue);
     const current = getProgramacionOperacion(oid);
     const fecha = String(current?.fecha_programada || "").slice(0, 10);

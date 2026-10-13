@@ -638,7 +638,7 @@ if (!function_exists('bloque_atencion_hora_base_default')) {
 }
 
 if (!function_exists('bloque_atencion_existe_ocupado_en_hora')) {
-    function bloque_atencion_existe_ocupado_en_hora($conn, $medicoId, $fechaYmd, $horaHms, $excludeAgendaIds = [])
+    function bloque_atencion_existe_ocupado_en_hora($conn, $medicoId, $fechaYmd, $horaHms, $excludeAgendaIds = [], $excludeConsultaIds = [])
     {
         $medicoId = (int)$medicoId;
         if ($medicoId <= 0 || $fechaYmd === '' || $horaHms === '') return false;
@@ -692,9 +692,22 @@ if (!function_exists('bloque_atencion_existe_ocupado_en_hora')) {
             && bloque_atencion_column_exists($conn, 'consultas', 'fecha')
             && bloque_atencion_column_exists($conn, 'consultas', 'hora')
             && bloque_atencion_column_exists($conn, 'consultas', 'estado')) {
-            $stmtCon = $conn->prepare('SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND COALESCE(hora, "") = ? AND LOWER(TRIM(COALESCE(estado, ""))) <> "cancelada" LIMIT 1');
+            $sqlCon = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND COALESCE(hora, "") = ? AND LOWER(TRIM(COALESCE(estado, ""))) <> "cancelada"';
+            $typesCon = 'iss';
+            $paramsCon = [$medicoId, $fechaYmd, $horaHms];
+            $consultasExcluidas = array_values(array_unique(array_filter(array_map('intval', (array)$excludeConsultaIds), function ($id) {
+                return $id > 0;
+            })));
+            if (!empty($consultasExcluidas)) {
+                $sqlCon .= ' AND id NOT IN (' . implode(',', array_fill(0, count($consultasExcluidas), '?')) . ')';
+                $typesCon .= str_repeat('i', count($consultasExcluidas));
+                foreach ($consultasExcluidas as $cid) {
+                    $paramsCon[] = $cid;
+                }
+            }
+            $stmtCon = $conn->prepare($sqlCon . ' LIMIT 1');
             if ($stmtCon) {
-                $stmtCon->bind_param('iss', $medicoId, $fechaYmd, $horaHms);
+                $stmtCon->bind_param($typesCon, ...$paramsCon);
                 $stmtCon->execute();
                 $rowCon = $stmtCon->get_result()->fetch_assoc();
                 $stmtCon->close();
@@ -709,7 +722,7 @@ if (!function_exists('bloque_atencion_existe_ocupado_en_hora')) {
 }
 
 if (!function_exists('bloque_atencion_resolver_hora_disponible')) {
-    function bloque_atencion_resolver_hora_disponible($conn, $medicoId, $fechaYmd, $horaBaseHms, $excludeAgendaIds = [], $reservadasLocales = [])
+    function bloque_atencion_resolver_hora_disponible($conn, $medicoId, $fechaYmd, $horaBaseHms, $excludeAgendaIds = [], $reservadasLocales = [], $excludeConsultaIds = [])
     {
         $slotMinutes = bloque_atencion_get_slot_minutes($conn);
         $baseMin = bloque_atencion_time_to_minutes($horaBaseHms);
@@ -735,7 +748,7 @@ if (!function_exists('bloque_atencion_resolver_hora_disponible')) {
             }
 
             $candHora = bloque_atencion_minutes_to_time($candMin);
-            if (!bloque_atencion_existe_ocupado_en_hora($conn, $medicoId, $fechaYmd, $candHora, $excludeAgendaIds)) {
+            if (!bloque_atencion_existe_ocupado_en_hora($conn, $medicoId, $fechaYmd, $candHora, $excludeAgendaIds, $excludeConsultaIds)) {
                 return $candHora;
             }
         }
@@ -819,7 +832,19 @@ if (!function_exists('bloque_atencion_optimizar_agenda')) {
         }
         $multiplesFechas = count($fechasValidas) > 1;
 
-        $reservadasLocales = [];
+        $consultaIdsBloque = [];
+        if (bloque_atencion_column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            $stmtCons = $conn->prepare('SELECT DISTINCT cd.consulta_id FROM cotizaciones_detalle cd INNER JOIN bloques_atencion_cotizaciones bc ON bc.cotizacion_id = cd.cotizacion_id WHERE bc.bloque_id = ? AND cd.consulta_id > 0');
+            if ($stmtCons) {
+                $stmtCons->bind_param('i', $bloqueId);
+                $stmtCons->execute();
+                foreach ($stmtCons->get_result()->fetch_all(MYSQLI_ASSOC) as $rc) {
+                    $consultaIdsBloque[] = (int)$rc['consulta_id'];
+                }
+                $stmtCons->close();
+            }
+        }
+
         $updates = [];
         foreach ($rows as $row) {
             $agendaId = (int)($row['id'] ?? 0);
@@ -844,23 +869,18 @@ if (!function_exists('bloque_atencion_optimizar_agenda')) {
                 $fechaObjetivo = $fechaOriginal;
             }
 
-            $grupo = $medicoId . '|' . $fechaObjetivo;
-            if (!isset($reservadasLocales[$grupo])) {
-                $reservadasLocales[$grupo] = [];
-            }
-
             $horaOriginal = trim((string)($row['hora_programada'] ?? ''));
             $horaSeed = $horaOriginal !== '' ? $horaOriginal : $horaBase;
+            // Los servicios del mismo bloque comparten hora; solo se mueve si choca con otro paciente.
             $horaNueva = bloque_atencion_resolver_hora_disponible(
                 $conn,
                 $medicoId,
                 $fechaObjetivo,
                 $horaSeed,
                 $agendaIdsBloque,
-                $reservadasLocales[$grupo]
+                [],
+                $consultaIdsBloque
             );
-            $reservadasLocales[$grupo][] = $horaNueva;
-
             if ($fechaOriginal !== $fechaObjetivo || $horaOriginal !== $horaNueva) {
                 $updates[] = [
                     'id' => $agendaId,

@@ -198,6 +198,31 @@ export default function CotizarEcografiaPage() {
     hora: getHoraProgramadaDefault(),
   });
 
+  // El selector de hora muestra la primera hora libre cuando la guardada no esta disponible para la fecha
+  // elegida (p. ej. la hora actual en otro dia). Se sincroniza el estado para registrar exactamente lo que se ve.
+  useEffect(() => {
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    if (modo === "free" || selectedAvailabilityTargets.length === 0) return;
+    const horaBaseEdicion = cotizacionIdEdicion > 0 ? String(programacionBaseEdicion?.hora || "").slice(0, 5) : "";
+    setProgramacionPorTarifa((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      selectedAvailabilityTargets.forEach((target) => {
+        const avail = availabilityByPair[target.key];
+        if (!avail || avail.loading || avail.error) return;
+        if (modo === "mixed" && manualProgramacionByTarifa[target.tarifaId]) return;
+        const libres = Array.isArray(avail.horasLibres) ? avail.horasLibres : [];
+        const inicios = horaBaseEdicion && !libres.includes(horaBaseEdicion) ? [horaBaseEdicion, ...libres] : libres;
+        if (inicios.length === 0) return;
+        const actual = next[target.tarifaId] || {};
+        if (inicios.includes(String(actual.hora || "").slice(0, 5))) return;
+        next[target.tarifaId] = { ...actual, fecha: target.fecha, hora: inicios[0] };
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedAvailabilityTargets, availabilityByPair, agendaProgramacionModo, manualProgramacionByTarifa, cotizacionIdEdicion, programacionBaseEdicion]);
+
   const getProgramacionSugeridaTarifa = (tarifaId, fechaPreferida = "") => {
     const tarifa = tarifas.find((t) => Number(t.id) === Number(tarifaId));
     const medicoId = Number(tarifa?.medico_id || 0);
