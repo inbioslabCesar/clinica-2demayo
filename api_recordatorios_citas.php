@@ -2182,6 +2182,13 @@ if ($method === 'GET') {
                     ELSE 'agendada'
                 END) AS origen_consulta,
                 COALESCE(hc.hc_tiene_registro, 0) AS hc_tiene_registro,
+                CASE WHEN cot_ref_consulta.cotizacion_id IS NULL AND EXISTS (
+                    SELECT 1 FROM cotizaciones_detalle cda
+                    INNER JOIN cotizaciones cta ON cta.id = cda.cotizacion_id
+                    WHERE cda.consulta_id = c.id
+                      AND LOWER(TRIM(cda.servicio_tipo)) = 'consulta'
+                      AND LOWER(TRIM(cta.estado)) IN ('anulado', 'anulada')
+                ) THEN 1 ELSE 0 END AS cobro_anulado,
                 hc.hc_ultima_actualizacion,
                 p.nombre AS paciente_nombre,
                 p.apellido AS paciente_apellido,
@@ -2267,6 +2274,7 @@ if ($method === 'GET') {
             'recordatorio_tipo' => 'cita',
             'servicio_tipo' => 'consulta',
             'hc_tiene_registro' => (int)($row['hc_tiene_registro'] ?? 0),
+            'cobro_anulado' => (int)($row['cobro_anulado'] ?? 0),
             'hc_ultima_actualizacion' => $row['hc_ultima_actualizacion'],
             'paciente_nombre' => (string)($row['paciente_nombre'] ?? ''),
             'paciente_apellido' => (string)($row['paciente_apellido'] ?? ''),

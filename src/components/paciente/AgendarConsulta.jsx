@@ -559,6 +559,17 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           throw new Error(data?.error || "No se encontró la consulta a editar");
         }
 
+        const estadoConsulta = String(consulta.estado || "").toLowerCase().trim();
+        if (["cancelada", "cancelado", "anulada", "anulado"].includes(estadoConsulta)) {
+          await MySwal.fire({
+            icon: "info",
+            title: "Consulta anulada",
+            text: `La consulta #${consultaIdNum} fue cancelada (cobro anulado o devuelto) y ya no se puede editar. Para atender al paciente, genera una nueva cotización.`,
+          });
+          navigate(backTo || -1, { replace: true });
+          return;
+        }
+
         const medicoConsulta = Number.parseInt(String(consulta.medico_id || "").trim(), 10) || 0;
         setMedicoId(String(medicoConsulta > 0 ? medicoConsulta : (medicoIdPrefill || "")));
         setFecha(String(consulta.fecha || "").slice(0, 10));

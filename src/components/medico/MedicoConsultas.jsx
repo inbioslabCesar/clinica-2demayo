@@ -768,6 +768,20 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const getEstadoCobro = (consulta) => {
     const estado = String(consulta?.estado || '').toLowerCase().trim();
     const esControl = Number(consulta?.es_control || 0) === 1;
+    const cobroAnulado = Number(consulta?.cobro_anulado || 0) === 1 && Number(consulta?.cotizacion_id || 0) <= 0;
+    const consultaCancelada = ['cancelada', 'cancelado', 'anulada', 'anulado'].includes(estado);
+
+    // Cobro devuelto/anulado: nunca debe verse como "sin cobro" ni como atendible.
+    if (cobroAnulado && !consultaCancelada) {
+      const completada = estado === 'completada' || estado === 'completado';
+      return {
+        faltaPagar: !completada,
+        label: '🚫 Cobro anulado',
+        rowClass: completada ? '' : 'opacity-50 cursor-not-allowed',
+        badgeClass: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+        title: 'La cotización de esta consulta fue anulada o devuelta'
+      };
+    }
 
     // Una consulta ya completada nunca debe aparecer bloqueada, independientemente
     // de su origen o estado de cotización.
@@ -1540,9 +1554,12 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                     const semaforoMeta = getSemaforoMeta(consulta);
                     const fechaConsultaYmd = String(consulta?.fecha || '').slice(0, 10);
                     const esConsultaFutura = fechaConsultaYmd !== '' && fechaConsultaYmd > getHoyYmd();
-                    const accionesBloqueadas = estadoCobro.faltaPagar;
+                    const consultaCanceladaFila = ['cancelada', 'cancelado', 'anulada', 'anulado'].includes(String(consulta?.estado || '').trim().toLowerCase());
+                    const accionesBloqueadas = estadoCobro.faltaPagar || consultaCanceladaFila;
                     const accionesClinicasBloqueadas = accionesBloqueadas || esConsultaFutura;
-                    const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
+                    const tituloAccionesBloqueadas = consultaCanceladaFila
+                      ? 'Consulta cancelada/anulada: no se puede operar'
+                      : 'No se puede operar esta consulta hasta que se registre el pago';
                     const tituloAccionesFuturas = 'La consulta tiene fecha futura. Solo puede cancelarse o reprogramarse.';
                     const serviciosResumen = obtenerServiciosResumen(consulta);
                     const consultaId = Number(consulta?.id || 0);
@@ -1849,9 +1866,12 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               const semaforoMeta = getSemaforoMeta(consulta);
               const fechaConsultaYmd = String(consulta?.fecha || '').slice(0, 10);
               const esConsultaFutura = fechaConsultaYmd !== '' && fechaConsultaYmd > getHoyYmd();
-              const accionesBloqueadas = estadoCobro.faltaPagar;
+              const consultaCanceladaFila = ['cancelada', 'cancelado', 'anulada', 'anulado'].includes(String(consulta?.estado || '').trim().toLowerCase());
+              const accionesBloqueadas = estadoCobro.faltaPagar || consultaCanceladaFila;
               const accionesClinicasBloqueadas = accionesBloqueadas || esConsultaFutura;
-              const tituloAccionesBloqueadas = 'No se puede operar esta consulta hasta que se registre el pago';
+              const tituloAccionesBloqueadas = consultaCanceladaFila
+                ? 'Consulta cancelada/anulada: no se puede operar'
+                : 'No se puede operar esta consulta hasta que se registre el pago';
               const tituloAccionesFuturas = 'La consulta tiene fecha futura. Solo puede cancelarse o reprogramarse.';
               const serviciosResumen = obtenerServiciosResumen(consulta);
               const consultaId = Number(consulta?.id || 0);

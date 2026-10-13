@@ -110,7 +110,7 @@ try {
     // Pacientes atendidos en el mes actual usando rangos
     $pacientesMes = 0;
     try {
-        $stmtPacientesMes = $pdo->prepare("SELECT COUNT(DISTINCT paciente_id) as total FROM atenciones WHERE fecha >= :inicioMes AND fecha < :inicioMesSiguiente");
+        $stmtPacientesMes = $pdo->prepare("SELECT COUNT(DISTINCT paciente_id) as total FROM atenciones WHERE fecha >= :inicioMes AND fecha < :inicioMesSiguiente AND LOWER(TRIM(COALESCE(estado, ''))) <> 'cancelada'");
         $stmtPacientesMes->execute([
             ':inicioMes' => $inicioMes,
             ':inicioMesSiguiente' => $inicioMesSiguiente

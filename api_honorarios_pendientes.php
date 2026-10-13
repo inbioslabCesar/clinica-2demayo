@@ -96,6 +96,8 @@ try {
     $hasCotizacionMovimientos = false;
 }
 
+$hasRecuperos = tabla_tiene_columna($pdo, 'honorarios_recuperos', 'id');
+
 $medico_id = isset($_GET['medico_id']) ? intval($_GET['medico_id']) : null;
 $turno = isset($_GET['turno']) ? $_GET['turno'] : null;
 $estado = isset($_GET['estado']) ? $_GET['estado'] : 'pendiente';
@@ -198,25 +200,27 @@ if ($turno) {
     $paramsBase[':turno'] = $turno;
 }
 
+// Un honorario ya pagado al médico nunca se oculta aunque su cobro se haya anulado:
+// debe seguir visible (con aviso) porque queda un recupero pendiente por compensar.
 if (!$incluirAnuladas) {
     if ($hasCotizacionMovimientos) {
-        $whereBase .= " AND NOT EXISTS (
+        $whereBase .= " AND (h.estado_pago_medico = 'pagado' OR NOT EXISTS (
             SELECT 1
             FROM cotizacion_movimientos cmx
             INNER JOIN cotizaciones cx ON cx.id = cmx.cotizacion_id
             WHERE cmx.cobro_id = h.cobro_id
               AND LOWER(TRIM(COALESCE(cx.estado, ''))) = 'anulada'
-        )";
+        ))";
     }
 
     if ($hasHonorariosPorCobrar) {
-        $whereBase .= " AND NOT EXISTS (
+        $whereBase .= " AND (h.estado_pago_medico = 'pagado' OR NOT EXISTS (
             SELECT 1
             FROM honorarios_por_cobrar hpcx
             INNER JOIN cotizaciones cx2 ON cx2.id = hpcx.cotizacion_id
             WHERE hpcx.honorario_movimiento_id_final = h.id
               AND LOWER(TRIM(COALESCE(cx2.estado, ''))) = 'anulada'
-        )";
+        ))";
     }
 }
 
@@ -390,7 +394,28 @@ $stmtCount->execute($params);
 $totalRegistros = (int)$stmtCount->fetchColumn();
 $totalPaginas = $limit > 0 ? (int)ceil($totalRegistros / $limit) : 1;
 
+$cobroDevueltoPartes = [];
+if ($hasCotizacionMovimientos) {
+    $cobroDevueltoPartes[] = "EXISTS (SELECT 1 FROM cotizacion_movimientos cmd INNER JOIN cotizaciones cdv ON cdv.id = cmd.cotizacion_id WHERE cmd.cobro_id = h.cobro_id AND LOWER(TRIM(COALESCE(cdv.estado, ''))) = 'anulada')";
+}
+if ($hasHonorariosPorCobrar) {
+    $cobroDevueltoPartes[] = "EXISTS (SELECT 1 FROM honorarios_por_cobrar hpd LEFT JOIN cotizaciones cdv2 ON cdv2.id = hpd.cotizacion_id WHERE hpd.honorario_movimiento_id_final = h.id AND (LOWER(TRIM(COALESCE(hpd.estado_consolidacion, ''))) = 'anulado' OR LOWER(TRIM(COALESCE(cdv2.estado, ''))) = 'anulada'))";
+}
+$recuperoMontoExpr = '0';
+$recuperoCompensadoExpr = '0';
+$medicoPorRecuperarExpr = '0';
+if ($hasRecuperos) {
+    $medicoPorRecuperarExpr = "(SELECT COALESCE(SUM(hr2.monto - hr2.monto_compensado), 0) FROM honorarios_recuperos hr2 WHERE hr2.medico_id = h.medico_id AND hr2.estado = 'pendiente')";
+    $cobroDevueltoPartes[] = "EXISTS (SELECT 1 FROM honorarios_recuperos hrd WHERE hrd.honorario_movimiento_id = h.id)";
+    $recuperoMontoExpr = "(SELECT COALESCE(SUM(hr.monto), 0) FROM honorarios_recuperos hr WHERE hr.honorario_movimiento_id = h.id)";
+    $recuperoCompensadoExpr = "(SELECT COALESCE(SUM(hr.monto_compensado), 0) FROM honorarios_recuperos hr WHERE hr.honorario_movimiento_id = h.id)";
+}
+$cobroDevueltoExpr = empty($cobroDevueltoPartes)
+    ? '0'
+    : "CASE WHEN h.estado_pago_medico = 'pagado' AND (" . implode(' OR ', $cobroDevueltoPartes) . ") THEN 1 ELSE 0 END";
+
 $sql = "SELECT h.id, h.medico_id, m.nombre AS medico_nombre, m.apellido AS medico_apellido, h.descripcion, h.tipo_servicio, h.paciente_id, p.nombre AS paciente_nombre, p.apellido AS paciente_apellido, h.fecha, h.turno, h.monto_medico, h.estado_pago_medico, h.observaciones,
+    $cobroDevueltoExpr AS cobro_devuelto, $recuperoMontoExpr AS recupero_monto, $recuperoCompensadoExpr AS recupero_compensado, $medicoPorRecuperarExpr AS medico_por_recuperar,
     e.usuario_id AS liquidado_por_id, u.nombre AS liquidado_por_nombre, u.rol AS liquidado_por_rol, e.created_at AS fecha_liquidacion,
     $metodoPagoLiquidadoExpr AS metodo_pago_resumen, $fuenteFondosLiquidadoExpr AS fuente_fondos_resumen, $referenciaPagoLiquidadoExpr AS referencia_pago_resumen,
     $cobradoPorExpr AS cobrado_por_id, $cobradoPorNombreExpr AS cobrado_por_nombre, $cobradoPorRolExpr AS cobrado_por_rol,
@@ -572,6 +597,19 @@ $stmtResumen = $pdo->prepare($sqlResumen);
 $stmtResumen->execute($paramsBase);
 $resumen = $stmtResumen->fetch(PDO::FETCH_ASSOC) ?: [];
 
+$porRecuperar = 0.0;
+if ($hasRecuperos) {
+    $sqlRecuperar = "SELECT COALESCE(SUM(monto - monto_compensado), 0) FROM honorarios_recuperos WHERE estado = 'pendiente'";
+    $paramsRecuperar = [];
+    if ($medico_id) {
+        $sqlRecuperar .= " AND medico_id = :medico_id";
+        $paramsRecuperar[':medico_id'] = $medico_id;
+    }
+    $stmtRecuperar = $pdo->prepare($sqlRecuperar);
+    $stmtRecuperar->execute($paramsRecuperar);
+    $porRecuperar = (float)$stmtRecuperar->fetchColumn();
+}
+
 $sqlServicios = "SELECT h.tipo_servicio, COUNT(*) AS cantidad, COALESCE(SUM(h.monto_medico), 0) AS monto
     FROM honorarios_medicos_movimientos h
     $where
@@ -612,6 +650,7 @@ echo json_encode([
         "liquidado_total" => (float)($resumen['liquidado_total'] ?? 0),
         "monto_total" => (float)($resumen['monto_total'] ?? 0),
         "deuda_neta" => (float)($resumen['pendiente_total'] ?? 0),
+        "por_recuperar" => round($porRecuperar, 2),
         "pendientes_count" => (int)($resumen['pendientes_count'] ?? 0),
         "liquidados_count" => (int)($resumen['liquidados_count'] ?? 0),
         "por_servicio" => $porServicio,

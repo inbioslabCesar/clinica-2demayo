@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/HonorarioRecuperoModule.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -94,6 +95,7 @@ try {
     $stmtHonorarios = $conn->prepare("SELECT id, medico_id, monto_medico, estado_pago_medico FROM honorarios_medicos_movimientos WHERE id IN ({$placeholders}) FOR UPDATE");
     $stmtHonorarios->bind_param($tipos, ...$ids);
 
+    HonorarioRecuperoModule::asegurarEsquema($conn);
     $conn->begin_transaction();
     $stmtHonorarios->execute();
     $honorarios = $stmtHonorarios->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -107,20 +109,34 @@ try {
     $stmtCuentaTercero = $conn->prepare("INSERT INTO cuenta_corriente_terceros (caja_id, tercero_nombre, tipo_movimiento, monto, metodo_pago, referencia_pago, honorario_movimiento_id, usuario_id, observaciones) VALUES (?, ?, 'adelanto_honorario', ?, ?, ?, ?, ?, ?)");
 
     $total = 0.0;
+    $totalCompensado = 0.0;
+    $stmtObsCompensacion = $conn->prepare("UPDATE honorarios_medicos_movimientos SET observaciones = CONCAT(COALESCE(observaciones, ''), ?) WHERE id = ?");
     foreach ($honorarios as $honorario) {
         if (strtolower((string)$honorario['estado_pago_medico']) !== 'pendiente') {
             throw new RuntimeException('El honorario #' . (int)$honorario['id'] . ' ya fue liquidado o no esta disponible');
         }
         $honorarioId = (int)$honorario['id'];
         $medicoId = (int)$honorario['medico_id'];
-        $monto = (float)$honorario['monto_medico'];
+        $montoBruto = (float)$honorario['monto_medico'];
         $stmtActualizar->bind_param('sssii', $metodoPago, $fuenteFondos, $referenciaPago, $cajaId, $honorarioId);
         $stmtActualizar->execute();
         if ($stmtActualizar->affected_rows !== 1) {
             throw new RuntimeException('No se pudo liquidar el honorario #' . $honorarioId);
         }
 
+        // Descuenta honorarios ya pagados cuyo cobro se devolvió (recuperos del mismo médico).
+        $compensado = HonorarioRecuperoModule::compensarEnLiquidacion($conn, $medicoId, $montoBruto, $honorarioId);
+        $monto = round($montoBruto - $compensado, 2);
+        if ($compensado > 0) {
+            $notaCompensacion = ' | COMPENSADO S/ ' . number_format($compensado, 2, '.', '') . ' por honorarios pagados de cobros devueltos';
+            $stmtObsCompensacion->bind_param('si', $notaCompensacion, $honorarioId);
+            $stmtObsCompensacion->execute();
+        }
+
         $descripcion = 'Liquidación de honorario médico #' . $honorarioId;
+        if ($compensado > 0) {
+            $descripcion .= ' (bruto S/ ' . number_format($montoBruto, 2, '.', '') . ', compensado S/ ' . number_format($compensado, 2, '.', '') . ')';
+        }
         $concepto = $descripcion;
         $responsable = (string)($usuario['nombre'] ?? '');
         $tercero = $fuenteFondos === 'clinica' ? null : $terceroNombre;
@@ -132,13 +148,23 @@ try {
             $stmtCuentaTercero->execute();
         }
         $total += $monto;
+        $totalCompensado += $compensado;
     }
     $stmtActualizar->close();
     $stmtEgreso->close();
     $stmtCuentaTercero->close();
+    $stmtObsCompensacion->close();
     $conn->commit();
 
-    echo json_encode(['success' => true, 'message' => 'Honorarios liquidados correctamente', 'total' => $total, 'caja_id' => $cajaId]);
+    echo json_encode([
+        'success' => true,
+        'message' => $totalCompensado > 0
+            ? 'Honorarios liquidados correctamente. Se descontaron S/ ' . number_format($totalCompensado, 2, '.', '') . ' de honorarios pagados por cobros devueltos.'
+            : 'Honorarios liquidados correctamente',
+        'total' => $total,
+        'compensado' => $totalCompensado,
+        'caja_id' => $cajaId,
+    ]);
 } catch (Throwable $e) {
     if ($conn->errno === 0) {
         // no-op: keeps compatibility with connections that did not begin a transaction

@@ -33,6 +33,10 @@ function inDateRange(value, desde, hasta) {
   return true;
 }
 
+function esConsultaCancelada(estadoRaw) {
+  return ["cancelada", "cancelado", "anulada", "anulado"].includes(String(estadoRaw || "").toLowerCase().trim());
+}
+
 function estadoBadgeClasses(estadoRaw) {
   const estado = String(estadoRaw || "").toLowerCase().trim();
   if (["completada", "completado", "atendida", "atendido"].includes(estado)) return "bg-emerald-100 text-emerald-800";
@@ -50,9 +54,10 @@ function origenLabel(origenRaw) {
   return "Consulta";
 }
 
-function estadoCobroLabel(estadoCotizacionRaw, saldoRaw) {
+function estadoCobroLabel(estadoCotizacionRaw, saldoRaw, cobroAnulado = 0) {
   const estadoCot = String(estadoCotizacionRaw || "").toLowerCase().trim();
   const saldo = Number(saldoRaw || 0);
+  if (Number(cobroAnulado || 0) === 1 && !estadoCot) return "Anulado / devuelto";
   if (saldo > 0.00001) return "Con saldo";
   if (["pagado", "pagada", "control", "completado", "completada"].includes(estadoCot)) return "Pagado";
   if (!estadoCot) return "Sin cobro";
@@ -89,8 +94,8 @@ function normalizarConsultaPura(row) {
     estado_consulta: String(row?.estado || "").trim(),
     estado_gestion: "-",
     origen_consulta: "consulta",
-    cotizacion_estado: null,
-    saldo_pendiente: 0,
+    cotizacion_estado: row?.cotizacion_estado || null,
+    saldo_pendiente: Number(row?.saldo_pendiente || 0),
   };
 }
 
@@ -247,7 +252,7 @@ export default function ListaConsultasPage() {
         "Estado gestión": c.estado_gestion || "",
         "Servicio agendable": servicioAgendaLabel(c),
         Origen: origenLabel(c.origen_consulta),
-        Cobro: estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente),
+        Cobro: estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente, c.cobro_anulado),
       }))
     );
     const wb = XLSX.utils.book_new();
@@ -279,7 +284,7 @@ export default function ListaConsultasPage() {
         c.estado_gestion || "",
         servicioAgendaLabel(c),
         origenLabel(c.origen_consulta),
-        estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente),
+        estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente, c.cobro_anulado),
       ]),
       startY: 18,
       styles: { fontSize: 8.5 },
@@ -540,16 +545,25 @@ export default function ListaConsultasPage() {
                           {origenLabel(c.origen_consulta)}
                         </td>
                         <td className="px-3 py-3 text-slate-700">
-                          {estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente)}
+                          {estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente, c.cobro_anulado)}
                         </td>
                         <td className="px-3 py-3 text-center">
-                          <button
-                            onClick={() => goEditar(c)}
-                            className="rounded-md px-3 py-1.5 text-xs font-semibold text-white transition"
-                            style={{ backgroundColor: "var(--color-primary)" }}
-                          >
-                            Editar
-                          </button>
+                          {esConsultaCancelada(c.estado_consulta) ? (
+                            <span
+                              className="inline-block rounded-md bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500"
+                              title="Consulta cancelada/anulada: no se puede editar. Para atender al paciente, genera una nueva cotización."
+                            >
+                              Anulada
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => goEditar(c)}
+                              className="rounded-md px-3 py-1.5 text-xs font-semibold text-white transition"
+                              style={{ backgroundColor: "var(--color-primary)" }}
+                            >
+                              Editar
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))

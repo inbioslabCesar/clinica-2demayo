@@ -483,10 +483,16 @@ function tipoServicioBadge(item) {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
+function esCobroAnulado(item) {
+  const pago = item?._pago_grupo || item;
+  return Number(item?.cobro_anulado || 0) === 1 && Number(pago?.cotizacion_id || 0) <= 0;
+}
+
 function pagoServicioLabel(item) {
   const pago = item?._pago_grupo || item;
   const saldo = Number(pago?.saldo_pendiente || 0);
   const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  if (esCobroAnulado(item)) return "Cobro anulado";
   if (saldo > 0) return estado === "parcial" ? "Parcial" : "Falta cancelar";
   if (estado === "pagado" || estado === "pagada") return "Pagado";
   if (Number(pago?.cotizacion_id || 0) > 0) return "Sin saldo";
@@ -497,6 +503,7 @@ function pagoServicioBadge(item) {
   const pago = item?._pago_grupo || item;
   const saldo = Number(pago?.saldo_pendiente || 0);
   const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  if (esCobroAnulado(item)) return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
   if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
   if (estado === "pagado" || estado === "pagada") return "bg-emerald-100 text-emerald-700 border-emerald-200";
   if (Number(pago?.cotizacion_id || 0) > 0) return "bg-slate-100 text-slate-700 border-slate-200";
@@ -519,6 +526,7 @@ function origenFinancieroLabel(item) {
   }
 
   if (String(item?.servicio_tipo || "").toLowerCase() === "consulta") {
+    if (esCobroAnulado(item)) return "Consulta anulada / devuelta";
     if (saldo > 0) return estado === "parcial" ? "Consulta parcial" : "Falta cancelar consulta";
     if (estado === "pagado" || estado === "pagada" || estado === "control") return "Consulta pagada";
     if (cotId > 0) return "Consulta sin deuda";
@@ -536,6 +544,7 @@ function origenFinancieroBadge(item) {
 
   if (esRecordatorioFaltaCancelar(item)) return "bg-amber-100 text-amber-700 border-amber-200";
 
+  if (esCobroAnulado(item)) return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
   if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
   if (estado === "pagado" || estado === "pagada" || estado === "control") return "bg-emerald-100 text-emerald-700 border-emerald-200";
   if (cotId > 0) return "bg-slate-100 text-slate-700 border-slate-200";
@@ -1411,7 +1420,9 @@ export default function RecordatoriosCitasPage() {
       const saldo = Number(item?.saldo_pendiente || 0);
       const estado = String(item?.cotizacion_estado || "").toLowerCase();
       const tieneCobro = Number(item?.cotizacion_id || 0) > 0 || saldo > 0 || estado === "pagado" || estado === "pagada";
-      if (!tieneCobro) {
+      if (esCobroAnulado(item)) {
+        acc.anulados += 1;
+      } else if (!tieneCobro) {
         acc.sinCobro += 1;
       } else if (saldo > 0) {
         acc.conSaldo += 1;
@@ -1421,7 +1432,7 @@ export default function RecordatoriosCitasPage() {
         acc.sinSaldo += 1;
       }
       return acc;
-    }, { pagados: 0, conSaldo: 0, sinSaldo: 0, sinCobro: 0 });
+    }, { pagados: 0, conSaldo: 0, sinSaldo: 0, sinCobro: 0, anulados: 0 });
   }, [items]);
 
   const siguienteLlamada = useMemo(
@@ -2624,6 +2635,9 @@ export default function RecordatoriosCitasPage() {
           <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Con saldo pendiente: {resumenPago.conSaldo}</span>
           <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> Sin saldo: {resumenPago.sinSaldo}</span>
           <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" /> Sin cobro: {resumenPago.sinCobro}</span>
+          {resumenPago.anulados > 0 && (
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-fuchsia-500" /> Cobro anulado: {resumenPago.anulados}</span>
+          )}
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">

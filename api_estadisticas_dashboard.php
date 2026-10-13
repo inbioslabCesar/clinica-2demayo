@@ -10,7 +10,7 @@ try {
     // Obtener pacientes atendidos hoy (si existe tabla atenciones)
     $pacientes_hoy = 0;
     try {
-        $stmt_pacientes_hoy = $pdo->query("SELECT COUNT(DISTINCT paciente_id) as total FROM atenciones WHERE DATE(fecha) = CURDATE()");
+        $stmt_pacientes_hoy = $pdo->query("SELECT COUNT(DISTINCT paciente_id) as total FROM atenciones WHERE DATE(fecha) = CURDATE() AND LOWER(TRIM(COALESCE(estado, ''))) <> 'cancelada'");
         $result = $stmt_pacientes_hoy->fetch();
         $pacientes_hoy = $result ? $result['total'] : 0;
     } catch (PDOException $e) {

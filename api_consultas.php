@@ -3097,6 +3097,13 @@ switch ($method) {
         $sql = 'SELECT consultas.*, pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni, medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido, medicos.especialidad AS medico_especialidad, medicos.cmp AS medico_cmp, medicos.rne AS medico_rne, medicos.firma AS medico_firma, medicos.tipo_profesional AS medico_tipo_profesional, medicos.abreviatura_profesional AS medico_abreviatura_profesional, medicos.colegio_sigla AS medico_colegio_sigla, medicos.nro_colegiatura AS medico_nro_colegiatura,'
             . ' cot_ref.cotizacion_id AS cotizacion_id,'
             . ' cot.estado AS cotizacion_estado,'
+            . ' CASE WHEN cot_ref.cotizacion_id IS NULL AND EXISTS ('
+            . '   SELECT 1 FROM cotizaciones_detalle cda'
+            . '   INNER JOIN cotizaciones cta ON cta.id = cda.cotizacion_id'
+            . '   WHERE cda.consulta_id = consultas.id'
+            . '     AND LOWER(TRIM(cda.servicio_tipo)) = "consulta"'
+            . '     AND LOWER(TRIM(cta.estado)) IN ("anulado", "anulada")'
+            . ' ) THEN 1 ELSE 0 END AS cobro_anulado,'
             . ' cot_ref.tiene_origen_contrato AS cot_tiene_origen_contrato,'
             . ($hasColaMedico ? ' COALESCE(cola_consulta.source_key, cola_cotizacion.source_key, "") AS cola_source_key,' : ' "" AS cola_source_key,')
             . ($hasColaMedico
@@ -3287,6 +3294,7 @@ switch ($method) {
             $consultaCancelada = in_array($estadoConsultaNorm, ['cancelada', 'cancelado', 'anulada', 'anulado'], true);
             $consultaDetalleEliminado = ($row['consulta_item_estado_actual'] === 'eliminado');
             $row['es_consulta_excluida_operativa'] = ($consultaCancelada || $consultaDetalleEliminado) ? 1 : 0;
+            $row['cobro_anulado'] = (intval($row['cobro_anulado'] ?? 0) === 1 || $consultaDetalleEliminado) ? 1 : 0;
 
             if (intval($row['es_consulta_excluida_operativa']) === 1) {
                 $statsExcluidasListado++;

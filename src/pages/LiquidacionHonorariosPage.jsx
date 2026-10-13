@@ -40,6 +40,7 @@ function LiquidacionHonorariosPage() {
     pendiente_mes: 0,
     liquidado_mes: 0,
     deuda_neta: 0,
+    por_recuperar: 0,
     pendientes_count: 0,
     liquidados_count: 0,
     por_servicio: [],
@@ -153,6 +154,14 @@ function LiquidacionHonorariosPage() {
   };
 
   const isHonorarioLiquidado = (item) => String(item?.estado_pago_medico || "").toLowerCase().trim() === "pagado";
+  const textoCobroDevuelto = (item) => {
+    if (Number(item?.cobro_devuelto || 0) !== 1) return "";
+    const recupero = Number(item?.recupero_monto || 0);
+    const compensado = Number(item?.recupero_compensado || 0);
+    if (recupero <= 0) return "Cobro devuelto · sin recupero registrado";
+    if (compensado >= recupero) return `Cobro devuelto · compensado ${fmtMoney(compensado)}`;
+    return `Cobro devuelto · por recuperar ${fmtMoney(recupero - compensado)}`;
+  };
 
   const getMetodoPagoVisible = (item) => {
     if (!isHonorarioLiquidado(item)) return "-";
@@ -346,10 +355,21 @@ function LiquidacionHonorariosPage() {
   };
 
   const liquidarHonorario = async (honorarioId) => {
+    const filaHonorario = honorarios.find((x) => Number(x.id) === Number(honorarioId));
+    const montoBruto = Number(filaHonorario?.monto_medico || 0);
+    const montoCompensar = Math.min(Number(filaHonorario?.medico_por_recuperar || 0), montoBruto);
+    const avisoCompensacion = montoCompensar > 0
+      ? `<div class="rounded border border-fuchsia-200 bg-fuchsia-50 p-3 text-sm text-fuchsia-900">
+          <b>Compensación automática:</b> este médico tiene honorarios ya pagados de cobros devueltos.
+          Se descontarán <b>${fmtMoney(montoCompensar)}</b> de este pago.<br/>
+          Honorario: ${fmtMoney(montoBruto)} · <b>Salida de caja: ${fmtMoney(montoBruto - montoCompensar)}</b>
+        </div>`
+      : "";
     const result = await Swal.fire({
       title: "Liquidar honorario",
       html: `
         <div class="text-left space-y-3">
+          ${avisoCompensacion}
           <label class="block text-sm font-semibold">Método de pago al médico</label>
           <select id="liquidacion-metodo" class="swal2-select !w-full !m-0">
             <option value="efectivo">Efectivo</option>
@@ -411,7 +431,14 @@ function LiquidacionHonorariosPage() {
       });
       const data = await response.json();
       if (data.success) {
-        Swal.fire("¡Liquidado!", "El honorario ha sido marcado como pagado.", "success");
+        const compensado = Number(data.compensado || 0);
+        Swal.fire(
+          "¡Liquidado!",
+          compensado > 0
+            ? `Honorario pagado. Se descontaron ${fmtMoney(compensado)} de honorarios ya pagados por cobros devueltos; salida de caja: ${fmtMoney(data.total)}.`
+            : "El honorario ha sido marcado como pagado.",
+          "success"
+        );
         cargarHonorarios(page);
       } else {
         Swal.fire("Error", data.error || "No se pudo liquidar el honorario.", "error");
@@ -431,7 +458,7 @@ function LiquidacionHonorariosPage() {
     <div className="w-full max-w-[1700px] mx-auto px-3 sm:px-4 lg:px-6 py-6">
       <h1 className="text-2xl font-bold mb-4 text-blue-800">Liquidación de Honorarios Médicos</h1>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-7 gap-3 mb-6">
         <div className="rounded-xl p-4 bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200">
           <div className="text-xs font-semibold text-amber-700">Pendiente Hoy</div>
           <div className="text-xl font-bold text-amber-900 mt-1">{fmtMoney(resumen.pendiente_hoy)}</div>
@@ -447,6 +474,13 @@ function LiquidacionHonorariosPage() {
         <div className="rounded-xl p-4 bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200">
           <div className="text-xs font-semibold text-blue-700">Deuda Neta</div>
           <div className="text-xl font-bold text-blue-900 mt-1">{fmtMoney(resumen.deuda_neta)}</div>
+        </div>
+        <div
+          className="rounded-xl p-4 bg-gradient-to-br from-fuchsia-50 to-fuchsia-100 border border-fuchsia-200"
+          title="Honorarios ya pagados al médico cuyo cobro se devolvió. Se descuentan en su próxima liquidación."
+        >
+          <div className="text-xs font-semibold text-fuchsia-700">Por recuperar</div>
+          <div className="text-xl font-bold text-fuchsia-900 mt-1">{fmtMoney(resumen.por_recuperar)}</div>
         </div>
         <div className="rounded-xl p-4 bg-gradient-to-br from-violet-50 to-violet-100 border border-violet-200">
           <div className="text-xs font-semibold text-violet-700">Pendientes</div>
@@ -597,6 +631,11 @@ function LiquidacionHonorariosPage() {
                     <div className="flex gap-2 text-xs text-gray-500">
                       <span>Fecha Liquidación: {h.fecha_liquidacion ? h.fecha_liquidacion.toUpperCase() : "-"}</span>
                     </div>
+                    {textoCobroDevuelto(h) && (
+                      <div className="text-xs text-fuchsia-700 bg-fuchsia-50 border border-fuchsia-100 rounded px-2 py-1">
+                        ⚠ {textoCobroDevuelto(h)}
+                      </div>
+                    )}
                     {h.estado_pago_medico === "cancelado" && h.motivo_anulacion && (
                       <div className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded px-2 py-1">
                         Motivo de anulación: {h.motivo_anulacion}
@@ -656,6 +695,9 @@ function LiquidacionHonorariosPage() {
                       <td className="px-4 py-2">S/ {parseFloat(h.monto_medico).toFixed(2)}</td>
                       <td className="px-4 py-2">
                         <span className={`text-[11px] px-2 py-1 rounded-full font-semibold ${badgeEstadoClass(h.estado_pago_medico)}`}>{estadoLabel(h.estado_pago_medico)}</span>
+                        {textoCobroDevuelto(h) && (
+                          <div className="mt-1 max-w-[220px] text-[11px] font-semibold text-fuchsia-700" title="El honorario ya se pagó al médico pero el cobro del paciente fue devuelto o anulado">⚠ {textoCobroDevuelto(h)}</div>
+                        )}
                         {h.estado_pago_medico === "cancelado" && h.motivo_anulacion && (
                           <div className="mt-1 max-w-[220px] text-[11px] text-rose-700" title={h.motivo_anulacion}>{h.motivo_anulacion}</div>
                         )}

@@ -9,6 +9,8 @@ require_once __DIR__ . '/modules/CotizacionSyncService.php';
 require_once __DIR__ . '/modules/ContratoModule.php';
 require_once __DIR__ . '/modules/BloqueAtencionModule.php';
 require_once __DIR__ . '/modules/PaqueteComercialModule.php';
+require_once __DIR__ . '/modules/HonorarioRecuperoModule.php';
+require_once __DIR__ . '/modules/AtencionModule.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -4684,6 +4686,8 @@ function cotizaciones_auditar_estado_consulta($conn, $consultaId, $estadoAnterio
         return;
     }
 
+    // CREATE TABLE (aun con IF NOT EXISTS) hace commit implicito: solo si realmente falta.
+    if (!table_exists($conn, 'consultas_estado_auditoria')) {
     @mysqli_query($conn, "CREATE TABLE IF NOT EXISTS consultas_estado_auditoria (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         consulta_id INT NOT NULL,
@@ -4701,6 +4705,7 @@ function cotizaciones_auditar_estado_consulta($conn, $consultaId, $estadoAnterio
         KEY idx_cea_estado_nuevo (estado_nuevo),
         KEY idx_cea_creado (creado_en)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
 
     $stmt = $conn->prepare(
         'INSERT INTO consultas_estado_auditoria
@@ -4741,6 +4746,80 @@ function cotizaciones_auditar_estado_consulta($conn, $consultaId, $estadoAnterio
     );
     @$stmt->execute();
     $stmt->close();
+}
+
+// Libera la consulta (y por tanto su horario) cuando su cobro se anula o devuelve.
+// No toca consultas completadas ni las respaldadas por otra cotización pagada.
+function cotizacion_cancelar_consulta_por_anulacion($conn, int $consultaId, int $cotizacionId, string $motivo, string $origen): bool {
+    if ($consultaId <= 0 || $cotizacionId <= 0) {
+        return false;
+    }
+
+    $estadoPrevio = '';
+    $stmtPrev = $conn->prepare('SELECT estado FROM consultas WHERE id = ? LIMIT 1');
+    if ($stmtPrev) {
+        $stmtPrev->bind_param('i', $consultaId);
+        $stmtPrev->execute();
+        $estadoPrevio = (string)($stmtPrev->get_result()->fetch_assoc()['estado'] ?? '');
+        $stmtPrev->close();
+    }
+
+    $filtroItemActivo = column_exists($conn, 'cotizaciones_detalle', 'estado_item')
+        ? " AND LOWER(TRIM(COALESCE(cd_respaldo.estado_item, 'activo'))) <> 'eliminado'"
+        : '';
+    $stmt = $conn->prepare("UPDATE consultas
+                            SET estado = 'cancelada'
+                            WHERE id = ?
+                              AND LOWER(TRIM(COALESCE(estado, ''))) NOT IN ('cancelada', 'completada')
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM cotizaciones_detalle cd_respaldo
+                                  INNER JOIN cotizaciones cot_respaldo ON cot_respaldo.id = cd_respaldo.cotizacion_id
+                                  WHERE cd_respaldo.consulta_id = consultas.id
+                                    AND LOWER(TRIM(COALESCE(cd_respaldo.servicio_tipo, ''))) = 'consulta'
+                                    AND cot_respaldo.id <> ?
+                                    AND LOWER(TRIM(COALESCE(cot_respaldo.estado, ''))) IN ('pagada', 'pagado', 'parcial')
+                                    {$filtroItemActivo}
+                              )");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('ii', $consultaId, $cotizacionId);
+    $stmt->execute();
+    $cancelada = $stmt->affected_rows > 0;
+    $stmt->close();
+
+    if ($cancelada) {
+        cotizaciones_auditar_estado_consulta($conn, $consultaId, $estadoPrevio, 'cancelada', $motivo, $origen);
+    }
+    return $cancelada;
+}
+
+// Cada cobro genera una atención; si el cobro queda anulado, la atención se cancela
+// para no inflar "pacientes atendidos" ni los pendientes de recordatorios.
+function cotizacion_cancelar_atenciones_de_cobros_anulados($conn, int $cotizacionId): int {
+    if ($cotizacionId <= 0 || !table_exists($conn, 'atenciones') || !table_exists($conn, 'cotizacion_movimientos')) {
+        return 0;
+    }
+    $stmt = $conn->prepare("SELECT DISTINCT cm.cobro_id
+                            FROM cotizacion_movimientos cm
+                            INNER JOIN cobros c ON c.id = cm.cobro_id
+                            WHERE cm.cotizacion_id = ?
+                              AND cm.cobro_id IS NOT NULL
+                              AND LOWER(TRIM(COALESCE(c.estado, ''))) = 'anulado'");
+    if (!$stmt) {
+        return 0;
+    }
+    $stmt->bind_param('i', $cotizacionId);
+    $stmt->execute();
+    $cobroIds = array_column($stmt->get_result()->fetch_all(MYSQLI_ASSOC), 'cobro_id');
+    $stmt->close();
+
+    $canceladas = 0;
+    foreach ($cobroIds as $cobroId) {
+        $canceladas += (int)AtencionModule::anularAtencionesPorCobro($conn, (int)$cobroId);
+    }
+    return $canceladas;
 }
 
 function cotizacion_requiere_consulta_asociada(array $detalles): bool {
@@ -6389,6 +6468,7 @@ function anular_cotizacion($conn, $data) {
         respond(['success' => false, 'error' => 'Cotización, usuario y motivo son obligatorios'], 400);
     }
 
+    HonorarioRecuperoModule::asegurarEsquema($conn);
     $conn->begin_transaction();
     try {
         $stmt = $conn->prepare("SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE");
@@ -6494,35 +6574,16 @@ function anular_cotizacion($conn, $data) {
             return (int)$id > 0;
         })));
         if (!empty($consultaIds)) {
-            $stmtUpdConsulta = $conn->prepare("UPDATE consultas
-                                               SET estado = 'cancelada'
-                                               WHERE id = ?
-                                                                                                 AND LOWER(TRIM(COALESCE(estado, ''))) NOT IN ('cancelada', 'completada')
-                                                                                                 AND NOT EXISTS (
-                                                                                                        SELECT 1
-                                                                                                        FROM cotizaciones_detalle cd_respaldo
-                                                                                                        INNER JOIN cotizaciones cot_respaldo ON cot_respaldo.id = cd_respaldo.cotizacion_id
-                                                                                                        WHERE cd_respaldo.consulta_id = consultas.id
-                                                                                                            AND cot_respaldo.id <> ?
-                                                                                                            AND LOWER(TRIM(COALESCE(cot_respaldo.estado, ''))) IN ('pagada', 'pagado', 'parcial')
-                                                                                                 )");
-            if ($stmtUpdConsulta) {
-                foreach ($consultaIds as $consultaId) {
-                                        $stmtUpdConsulta->bind_param("ii", $consultaId, $cotizacionId);
-                    $stmtUpdConsulta->execute();
-                    if ($stmtUpdConsulta->affected_rows > 0) {
-                        $consultasCanceladas++;
-                        cotizaciones_auditar_estado_consulta(
-                            $conn,
-                            $consultaId,
-                            '',
-                            'cancelada',
-                            "Anulación de cotización #{$cotizacionId}: {$motivo}",
-                            'api_cotizaciones:anular_cotizacion'
-                        );
-                    }
+            foreach ($consultaIds as $consultaId) {
+                if (cotizacion_cancelar_consulta_por_anulacion(
+                    $conn,
+                    (int)$consultaId,
+                    $cotizacionId,
+                    "Anulación de cotización #{$cotizacionId}: {$motivo}",
+                    'api_cotizaciones:anular_cotizacion'
+                )) {
+                    $consultasCanceladas++;
                 }
-                $stmtUpdConsulta->close();
             }
         }
 
@@ -6657,6 +6718,58 @@ function anular_cotizacion($conn, $data) {
             $stmtDet->execute();
         }
 
+        // Honorarios ya liquidados al médico: no se pueden cancelar; quedan como
+        // recupero pendiente para compensarlo en su siguiente liquidación.
+        $recuperosRegistrados = 0.0;
+        if (table_exists($conn, 'honorarios_medicos_movimientos')) {
+            $hmConRecupero = [];
+            $motivoRecupero = "Anulación de cotización #{$cotizacionId}: {$motivo}";
+            if (table_exists($conn, 'honorarios_por_cobrar')) {
+                $stmtHpcPag = $conn->prepare("SELECT id, honorario_movimiento_id_final AS hm_id, monto_medico
+                                              FROM honorarios_por_cobrar
+                                              WHERE cotizacion_id = ?
+                                                AND honorario_movimiento_id_final IS NOT NULL
+                                                AND honorario_movimiento_id_final > 0
+                                                AND LOWER(TRIM(COALESCE(estado_consolidacion, ''))) = 'consolidado'");
+                if ($stmtHpcPag) {
+                    $stmtHpcPag->bind_param('i', $cotizacionId);
+                    $stmtHpcPag->execute();
+                    foreach ($stmtHpcPag->get_result()->fetch_all(MYSQLI_ASSOC) as $rowHpcPag) {
+                        $hmPag = (int)$rowHpcPag['hm_id'];
+                        $recuperosRegistrados += HonorarioRecuperoModule::registrarSiLiquidado(
+                            $conn, $hmPag, (float)$rowHpcPag['monto_medico'], $cotizacionId, null,
+                            'hpc:' . (int)$rowHpcPag['id'], $motivoRecupero, $usuarioId
+                        );
+                        $hmConRecupero[$hmPag] = true;
+                    }
+                    $stmtHpcPag->close();
+                }
+            }
+            if (table_exists($conn, 'cotizacion_movimientos')) {
+                $stmtHmPag = $conn->prepare("SELECT DISTINCT hm.id, hm.monto_medico
+                                             FROM cotizacion_movimientos cm
+                                             INNER JOIN honorarios_medicos_movimientos hm ON hm.cobro_id = cm.cobro_id
+                                             WHERE cm.cotizacion_id = ?
+                                               AND LOWER(TRIM(COALESCE(hm.tipo_servicio, ''))) = 'consulta'
+                                               AND LOWER(TRIM(COALESCE(hm.estado_pago_medico, ''))) = 'pagado'");
+                if ($stmtHmPag) {
+                    $stmtHmPag->bind_param('i', $cotizacionId);
+                    $stmtHmPag->execute();
+                    foreach ($stmtHmPag->get_result()->fetch_all(MYSQLI_ASSOC) as $rowHmPag) {
+                        $hmPag = (int)$rowHmPag['id'];
+                        if (isset($hmConRecupero[$hmPag])) {
+                            continue;
+                        }
+                        $recuperosRegistrados += HonorarioRecuperoModule::registrarSiLiquidado(
+                            $conn, $hmPag, (float)$rowHmPag['monto_medico'], $cotizacionId, null,
+                            'hm:' . $hmPag . '|anul' . $cotizacionId, $motivoRecupero, $usuarioId
+                        );
+                    }
+                    $stmtHmPag->close();
+                }
+            }
+        }
+
         // Al anular, quitar también los eventos agendados derivados de la cotización.
         agenda_servicios_limpiar_por_cotizacion($conn, $cotizacionId);
 
@@ -6706,17 +6819,24 @@ function anular_cotizacion($conn, $data) {
         }
 
         $sync = CotizacionSyncService::reversarCobroCompletoPorCotizacion($conn, $cotizacionId, $usuarioId, $motivo);
+        $atencionesCanceladas = cotizacion_cancelar_atenciones_de_cobros_anulados($conn, $cotizacionId);
 
         insertar_evento_cotizacion($conn, $cotizacionId, 'anulada', $usuarioId, $motivo, [
             'estado_anterior' => $estadoActual,
             'sync' => $sync,
             'consultas_canceladas' => $consultasCanceladas,
+            'atenciones_canceladas' => $atencionesCanceladas,
             'honorarios_cancelados' => $honorariosCancelados,
-            'honorarios_por_cobrar_anulados' => $honorariosPorCobrarAnulados
+            'honorarios_por_cobrar_anulados' => $honorariosPorCobrarAnulados,
+            'honorarios_recuperos_registrados' => round($recuperosRegistrados, 2)
         ], 1);
 
         $conn->commit();
-        respond(['success' => true, 'message' => 'Cotización anulada correctamente']);
+        respond([
+            'success' => true,
+            'message' => 'Cotización anulada correctamente',
+            'honorarios_recuperos_registrados' => round($recuperosRegistrados, 2)
+        ]);
     } catch (Exception $e) {
         $conn->rollback();
         error_log("Error al anular cotización: " . $e->getMessage());
@@ -6938,7 +7058,8 @@ function eliminar_detalle_cotizacion($conn, $data) {
         $detallesAntes = cargar_detalles_cotizacion($conn, $cotizacionId);
 
         $colSnapshot = column_exists($conn, 'cotizaciones_detalle', 'snapshot_json') ? ', snapshot_json' : '';
-        $sqlDetInfo = "SELECT servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal{$colSnapshot} FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";
+        $colConsultaId = column_exists($conn, 'cotizaciones_detalle', 'consulta_id') ? ', consulta_id' : '';
+        $sqlDetInfo = "SELECT servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal{$colSnapshot}{$colConsultaId} FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ?";
         if (column_exists($conn, 'cotizaciones_detalle', 'estado_item')) {
             $sqlDetInfo .= " AND COALESCE(estado_item, 'activo') <> 'eliminado'";
         }
@@ -7006,6 +7127,15 @@ function eliminar_detalle_cotizacion($conn, $data) {
         $stmtUp->execute();
 
         $servicioTipoEliminado = strtolower(trim((string)($detalleInfo['servicio_tipo'] ?? '')));
+        if ($servicioTipoEliminado === 'consulta') {
+            cotizacion_cancelar_consulta_por_anulacion(
+                $conn,
+                (int)($detalleInfo['consulta_id'] ?? 0),
+                $cotizacionId,
+                "Eliminación de ítem de consulta en cotización #{$cotizacionId}: {$motivo}",
+                'api_cotizaciones:eliminar_detalle_cotizacion'
+            );
+        }
         if ($servicioTipoEliminado === 'laboratorio') {
             $detallesDespues = cargar_detalles_cotizacion($conn, $cotizacionId);
             sincronizar_movimientos_lab_ref_en_edicion_cotizacion(
@@ -7469,6 +7599,7 @@ function devolucion_item_cotizacion($conn, $data) {
         respond(['success' => false, 'error' => 'La estructura v2 de cotizaciones no está disponible. Ejecuta migración primero.'], 409);
     }
 
+    HonorarioRecuperoModule::asegurarEsquema($conn);
     $conn->begin_transaction();
     try {
         $stmtCot = $conn->prepare("SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE");
@@ -7532,6 +7663,8 @@ function devolucion_item_cotizacion($conn, $data) {
         $honorariosPorCobrarAjustados = 0;
         $honorariosMovAjustados = 0;
         $honorariosPagadosSinReversa = 0;
+        $recuperoItemsPorHm = [];
+        $recuperosRegistrados = 0.0;
         $marcaAjuste = " | AJUSTE DEVOLUCION COTIZACION #{$cotizacionId} ITEM #{$detalleId}: {$motivo}";
 
         if ($cantidadNueva <= 0
@@ -7623,6 +7756,10 @@ function devolucion_item_cotizacion($conn, $data) {
                 $hmFinalId = (int)($hpcRow['honorario_movimiento_id_final'] ?? 0);
                 if ($hmFinalId > 0) {
                     $honorarioIdsAjustar[] = $hmFinalId;
+                    $recuperoItemsPorHm[$hmFinalId][] = [
+                        'monto' => round((float)($hpcRow['monto_medico'] ?? 0) * (1 - $factorCantidad), 2),
+                        'ref' => $cantidadNueva <= 0 ? 'hpc:' . $hpcId : 'hpc:' . $hpcId . '|q' . $cantidadNueva,
+                    ];
                 }
 
                 $stmtHmByObs = $conn->prepare("SELECT id
@@ -7745,6 +7882,22 @@ function devolucion_item_cotizacion($conn, $data) {
                 $estadoHm = strtolower(trim((string)($hmRow['estado_pago_medico'] ?? 'pendiente')));
                 if ($estadoHm === 'pagado') {
                     $honorariosPagadosSinReversa++;
+                    $itemsRecupero = $recuperoItemsPorHm[$hmId] ?? [[
+                        'monto' => round((float)($hmRow['monto_medico'] ?? 0) * (1 - $factorCantidad), 2),
+                        'ref' => 'hm:' . $hmId . '|det' . $detalleId . '|q' . $cantidadNueva,
+                    ]];
+                    foreach ($itemsRecupero as $itemRecupero) {
+                        $recuperosRegistrados += HonorarioRecuperoModule::registrarSiLiquidado(
+                            $conn,
+                            $hmId,
+                            (float)$itemRecupero['monto'],
+                            $cotizacionId,
+                            $detalleId,
+                            (string)$itemRecupero['ref'],
+                            "Devolución cotización #{$cotizacionId} ítem #{$detalleId}: {$motivo}",
+                            $usuarioId
+                        );
+                    }
                     continue;
                 }
                 if ($estadoHm === 'cancelado') {
@@ -7823,6 +7976,45 @@ function devolucion_item_cotizacion($conn, $data) {
             cancelar_ordenes_laboratorio_por_cotizacion($conn, $cotizacionId);
         }
 
+        // Si se devuelve el ítem de consulta (o la cotización queda anulada), la consulta
+        // debe liberar su horario y salir del panel médico/recordatorios.
+        $consultasCanceladas = 0;
+        $consultaIdsLiberar = [];
+        $consultaIdDetalle = (int)($det['consulta_id'] ?? 0);
+        if ($cantidadNueva <= 0
+            && $consultaIdDetalle > 0
+            && strtolower(trim((string)($det['servicio_tipo'] ?? ''))) === 'consulta') {
+            $consultaIdsLiberar[] = $consultaIdDetalle;
+        }
+        if ($nuevoEstado === 'anulada' && column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+            $stmtConsAnul = $conn->prepare("SELECT DISTINCT consulta_id
+                                            FROM cotizaciones_detalle
+                                            WHERE cotizacion_id = ?
+                                              AND consulta_id IS NOT NULL
+                                              AND consulta_id > 0
+                                              AND LOWER(TRIM(servicio_tipo)) = 'consulta'");
+            if ($stmtConsAnul) {
+                $stmtConsAnul->bind_param('i', $cotizacionId);
+                $stmtConsAnul->execute();
+                $resConsAnul = $stmtConsAnul->get_result();
+                while ($rowConsAnul = $resConsAnul->fetch_assoc()) {
+                    $consultaIdsLiberar[] = (int)($rowConsAnul['consulta_id'] ?? 0);
+                }
+                $stmtConsAnul->close();
+            }
+        }
+        foreach (array_unique(array_filter($consultaIdsLiberar)) as $consultaIdLiberar) {
+            if (cotizacion_cancelar_consulta_por_anulacion(
+                $conn,
+                (int)$consultaIdLiberar,
+                $cotizacionId,
+                "Devolución en cotización #{$cotizacionId} ítem #{$detalleId}: {$motivo}",
+                'api_cotizaciones:devolucion_item_cotizacion'
+            )) {
+                $consultasCanceladas++;
+            }
+        }
+
         if (table_exists($conn, 'cotizacion_item_ajustes')) {
             $servicioTipo = (string)($det['servicio_tipo'] ?? '');
             $servicioId = isset($det['servicio_id']) ? (int)$det['servicio_id'] : null;
@@ -7860,6 +8052,21 @@ function devolucion_item_cotizacion($conn, $data) {
             $metodoDevolucion,
             (string)($det['descripcion'] ?? '')
         );
+        $atencionesCanceladas = cotizacion_cancelar_atenciones_de_cobros_anulados($conn, $cotizacionId);
+
+        // Cotización que queda en cero por devolución: dejar rastro de anulación como en "Anular".
+        if ($nuevoEstado === 'anulada'
+            && column_exists($conn, 'cotizaciones', 'anulado_por')
+            && column_exists($conn, 'cotizaciones', 'anulado_en')
+            && column_exists($conn, 'cotizaciones', 'motivo_anulacion')) {
+            $motivoAnulacion = mb_substr('Devolución total de ítems: ' . $motivo, 0, 255);
+            $stmtAnul = $conn->prepare("UPDATE cotizaciones SET anulado_por = ?, anulado_en = NOW(), motivo_anulacion = ? WHERE id = ?");
+            if ($stmtAnul) {
+                $stmtAnul->bind_param('isi', $usuarioId, $motivoAnulacion, $cotizacionId);
+                $stmtAnul->execute();
+                $stmtAnul->close();
+            }
+        }
 
         if (table_exists($conn, 'log_eliminaciones')) {
             $cobroIdAuditoria = null;
@@ -7928,9 +8135,11 @@ function devolucion_item_cotizacion($conn, $data) {
             'saldo_nuevo' => $saldoNuevo,
             'estado_nuevo' => $nuevoEstado,
             'agenda_eventos_cancelados' => $agendaEventosCancelados,
+            'consultas_canceladas' => $consultasCanceladas,
             'honorarios_por_cobrar_ajustados' => $honorariosPorCobrarAjustados,
             'honorarios_movimientos_ajustados' => $honorariosMovAjustados,
             'honorarios_pagados_sin_reversa' => $honorariosPagadosSinReversa,
+            'honorarios_recuperos_registrados' => round($recuperosRegistrados, 2),
             'sync' => $syncParcial
         ], 1);
 
@@ -7944,9 +8153,11 @@ function devolucion_item_cotizacion($conn, $data) {
             'total_pagado' => round($pagadoNuevo, 2),
             'saldo_pendiente' => round($saldoNuevo, 2),
             'agenda_eventos_cancelados' => $agendaEventosCancelados,
+            'consultas_canceladas' => $consultasCanceladas,
             'honorarios_por_cobrar_ajustados' => $honorariosPorCobrarAjustados,
             'honorarios_movimientos_ajustados' => $honorariosMovAjustados,
-            'honorarios_pagados_sin_reversa' => $honorariosPagadosSinReversa
+            'honorarios_pagados_sin_reversa' => $honorariosPagadosSinReversa,
+            'honorarios_recuperos_registrados' => round($recuperosRegistrados, 2)
         ]);
     } catch (Exception $e) {
         $conn->rollback();
