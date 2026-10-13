@@ -829,7 +829,8 @@ export default function CobrarCotizacionPage() {
 
   const servicioPago = useMemo(() => {
     const tipos = Array.from(new Set(detallesCobro.map((detalle) => normalizarServicioKey(detalle?.servicio_tipo || "")).filter(Boolean)));
-    const key = tipos.length === 1 ? tipos[0] : "mixto";
+    // Tras un abono parcial solo queda pendiente la linea "paquete"; ese tipo no es un servicio de cobro por si solo.
+    const key = tipos.length === 1 && !["paquete", "perfil"].includes(tipos[0]) ? tipos[0] : "mixto";
     const activeIdList = Array.from(new Set(
       detallesCobro.map((detalle) => Number(detalle?.cotizacion_id || 0)).filter((id) => id > 0)
     ));
