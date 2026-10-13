@@ -2793,8 +2793,13 @@ function insertar_detalles_cotizacion($conn, $cotizacionId, $detalles, $usuarioI
                 $fechaGrupo = normalizar_fecha_programada_agenda($contextoBaseCotizacion['fecha_programada'] ?? null);
                 $horaGrupo = normalizar_hora_programada_agenda($contextoBaseCotizacion['hora_programada'] ?? null);
                 if ($fechaGrupo !== null && $horaGrupo !== null) {
-                    $detalleAgenda['fecha_programada'] = $fechaGrupo;
-                    $detalleAgenda['hora_programada'] = $horaGrupo;
+                    // El servicio sigue la visita de la consulta salvo que se haya programado en otro dia:
+                    // una fecha propia distinta debe respetarse (ecografia, procedimiento, operacion, etc.).
+                    $fechaPropia = normalizar_fecha_programada_agenda($detalleAgenda['fecha_programada'] ?? $detalleAgenda['fecha_programada_servicio'] ?? null);
+                    if ($fechaPropia === null || $fechaPropia === $fechaGrupo) {
+                        $detalleAgenda['fecha_programada'] = $fechaGrupo;
+                        $detalleAgenda['hora_programada'] = $horaGrupo;
+                    }
                 }
                 agenda_servicios_guardar_detalle($conn, (int)$cotizacionId, $detalleId, (int)$pacienteIdCotizacion, $detalleAgenda, (int)$usuarioId);
             }

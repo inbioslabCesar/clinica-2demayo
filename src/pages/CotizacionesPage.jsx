@@ -142,6 +142,22 @@ function formatHoraAtencion(value) {
   return raw;
 }
 
+const SERVICIO_AGENDA_LABEL = {
+  consulta: "Consulta",
+  ecografia: "Ecografía",
+  rayosx: "Rayos X",
+  tomografia: "Tomografía",
+  procedimiento: "Procedimiento",
+  operacion: "Operación",
+  laboratorio: "Laboratorio",
+  hospitalizacion: "Hospitalización",
+};
+
+function etiquetaServicioAgenda(tipo) {
+  const key = normalizarServicioTipo(tipo);
+  return SERVICIO_AGENDA_LABEL[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : "Servicio");
+}
+
 function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
@@ -754,7 +770,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, relacionSolicitud, paqueteResumenFallback }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud, paqueteResumenFallback }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const saldoOperativo = useMemo(() => (
     Number.isFinite(Number(row?.saldo_pendiente_operativo))
@@ -817,22 +833,47 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
       .sort((a, b) => a.correlativo - b.correlativo);
   }, [correlativosServicios]);
 
-  const citaProgramadaTexto = useMemo(() => {
-    const consultaProgramada = correlativosServiciosList.find((item) => (
+  const eventosAgendaList = useMemo(() => (Array.isArray(eventosAgenda) ? eventosAgenda : []), [eventosAgenda]);
+
+  const citaPrincipalEvento = useMemo(() => {
+    // Los servicios sin pagar aun no tienen correlativo, pero su cita ya esta agendada.
+    const base = correlativosServiciosList.length > 0 ? correlativosServiciosList : eventosAgendaList;
+    const consultaProgramada = base.find((item) => (
       item.servicio_tipo === "consulta" && String(item.fecha_atencion || "").trim() !== ""
     ));
 
-    const primerEvento = consultaProgramada || correlativosServiciosList.find((item) => (
+    return consultaProgramada || base.find((item) => (
       String(item.fecha_atencion || "").trim() !== ""
-    ));
+    )) || null;
+  }, [correlativosServiciosList, eventosAgendaList]);
 
-    const fechaBase = String(primerEvento?.fecha_atencion || correlativoFechaAtencion || "").trim();
+  const citaProgramadaTexto = useMemo(() => {
+    const fechaBase = String(citaPrincipalEvento?.fecha_atencion || correlativoFechaAtencion || "").trim();
     if (!fechaBase) return "";
 
     const fechaTxt = formatCorrelativoFechaAtencion(fechaBase);
-    const horaTxt = formatHoraAtencion(primerEvento?.hora_atencion || "");
+    const horaTxt = formatHoraAtencion(citaPrincipalEvento?.hora_atencion || "");
     return horaTxt ? `Cita: ${fechaTxt} ${horaTxt}` : `Cita: ${fechaTxt}`;
-  }, [correlativosServiciosList, correlativoFechaAtencion]);
+  }, [citaPrincipalEvento, correlativoFechaAtencion]);
+
+  // Servicios programados en otro dia u hora distinta a la cita principal (ej. ecografia posterior).
+  const otrasCitasTexto = useMemo(() => {
+    const claveBase = citaPrincipalEvento
+      ? `${String(citaPrincipalEvento.fecha_atencion || "").slice(0, 10)}|${formatHoraAtencion(citaPrincipalEvento.hora_atencion || "")}`
+      : "";
+    const vistos = new Set();
+    const textos = [];
+    eventosAgendaList.forEach((item) => {
+      const fecha = String(item.fecha_atencion || "").slice(0, 10);
+      const hora = formatHoraAtencion(item.hora_atencion || "");
+      if (`${fecha}|${hora}` === claveBase) return;
+      const texto = `${etiquetaServicioAgenda(item.servicio_tipo)}: ${formatCorrelativoFechaAtencion(fecha)}${hora ? ` ${hora}` : ""}`;
+      if (vistos.has(texto)) return;
+      vistos.add(texto);
+      textos.push(texto);
+    });
+    return textos.slice(0, 4);
+  }, [citaPrincipalEvento, eventosAgendaList]);
 
   const servicios = useMemo(() => parseServiciosTipos(row.servicios_tipos || ""), [row.servicios_tipos]);
   const cotizacionIdsGrupo = useMemo(() => {
@@ -1056,6 +1097,11 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               {citaProgramadaTexto}
             </span>
           )}
+          {otrasCitasTexto.map((texto) => (
+            <span key={`${row.id}-cita-${texto}`} className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-800">
+              {texto}
+            </span>
+          ))}
           {anulacionDesdeHC.activa && (
             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-700">
               Anulada desde HC · {anulacionDesdeHC.detalle}
@@ -2829,10 +2875,19 @@ export default function CotizacionesPage() {
                       unidad_token: "",
                     });
                   }
+                  const eventosAgenda = correlativosServiciosApi
+                    .map((item) => ({
+                      servicio_tipo: normalizarServicioTipo(item?.servicio_tipo || ""),
+                      fecha_atencion: String(item?.fecha_atencion || "").trim(),
+                      hora_atencion: String(item?.hora_atencion || "").trim(),
+                    }))
+                    .filter((item) => item.servicio_tipo && /^\d{4}-\d{2}-\d{2}/.test(item.fecha_atencion))
+                    .sort((a, b) => `${a.fecha_atencion} ${a.hora_atencion}`.localeCompare(`${b.fecha_atencion} ${b.hora_atencion}`));
                   return (
                   <CotizacionRow
                     key={`${row.id}-${row.episodio_id || row.id}`}
                     row={row}
+                    eventosAgenda={eventosAgenda}
                     onCobrar={abrirCobro}
                     onAnular={anularCotizacion}
                     onNavigate={navigate}

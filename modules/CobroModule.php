@@ -3221,6 +3221,52 @@ class CobroModule
             $exists = $stmtExiste->get_result()->fetch_assoc();
             $agendaExistenteId = (int)($exists['id'] ?? 0);
 
+            if ($agendaExistenteId > 0) {
+                // La reserva ya existe: conserva la fecha/hora elegidas al cotizar. Solo se modifica si el
+                // detalle trae una programacion explicita; nunca desde la consulta ni la fecha de la cotizacion.
+                $fechaExplicita = self::normalizarFechaProgramadaAgenda($detalle['fecha_programada'] ?? ($detalle['fecha_programada_servicio'] ?? null));
+                $horaExplicita = self::normalizarHoraProgramadaAgenda($detalle['hora_programada'] ?? ($detalle['hora_programada_servicio'] ?? null));
+                $medicoExplicito = (int)($detalle['medico_id'] ?? 0);
+
+                $setsAgenda = [];
+                $typesAgenda = '';
+                $paramsAgenda = [];
+                if ($fechaExplicita !== null) {
+                    $setsAgenda[] = 'fecha_programada = ?';
+                    $typesAgenda .= 's';
+                    $paramsAgenda[] = $fechaExplicita;
+                    if ($usaHora && $horaExplicita !== null) {
+                        $setsAgenda[] = 'hora_programada = ?';
+                        $typesAgenda .= 's';
+                        $paramsAgenda[] = $horaExplicita;
+                    }
+                }
+                if ($usaMedico && $medicoExplicito > 0) {
+                    $setsAgenda[] = 'medico_id = ?';
+                    $typesAgenda .= 'i';
+                    $paramsAgenda[] = $medicoExplicito;
+                }
+                if (empty($setsAgenda)) {
+                    continue;
+                }
+                if ($usaUpdatedBy) {
+                    $setsAgenda[] = 'updated_by = ?';
+                    $typesAgenda .= 'i';
+                    $paramsAgenda[] = $usuarioId;
+                }
+                $typesAgenda .= 'i';
+                $paramsAgenda[] = $agendaExistenteId;
+                $stmtUpdateAgenda = $conn->prepare(
+                    'UPDATE agenda_servicios_cotizacion SET ' . implode(', ', $setsAgenda) . ' WHERE id = ?'
+                );
+                if ($stmtUpdateAgenda) {
+                    $stmtUpdateAgenda->bind_param($typesAgenda, ...$paramsAgenda);
+                    $stmtUpdateAgenda->execute();
+                    $stmtUpdateAgenda->close();
+                }
+                continue;
+            }
+
             $consultaFecha = null;
             $consultaHora = null;
             $consultaMedicoId = 0;
@@ -3274,38 +3320,6 @@ class CobroModule
             $titulo = trim((string)($detalle['descripcion'] ?? ''));
             if ($titulo === '') {
                 $titulo = 'Servicio programado';
-            }
-
-            if ($agendaExistenteId > 0) {
-                $setsAgenda = ['fecha_programada = ?'];
-                $typesAgenda = 's';
-                $paramsAgenda = [$fechaProgramada];
-                if ($usaHora) {
-                    $setsAgenda[] = 'hora_programada = ?';
-                    $typesAgenda .= 's';
-                    $paramsAgenda[] = $horaProgramada;
-                }
-                if ($usaMedico && $medicoId > 0) {
-                    $setsAgenda[] = 'medico_id = ?';
-                    $typesAgenda .= 'i';
-                    $paramsAgenda[] = $medicoId;
-                }
-                if ($usaUpdatedBy) {
-                    $setsAgenda[] = 'updated_by = ?';
-                    $typesAgenda .= 'i';
-                    $paramsAgenda[] = $usuarioId;
-                }
-                $typesAgenda .= 'i';
-                $paramsAgenda[] = $agendaExistenteId;
-                $stmtUpdateAgenda = $conn->prepare(
-                    'UPDATE agenda_servicios_cotizacion SET ' . implode(', ', $setsAgenda) . ' WHERE id = ?'
-                );
-                if ($stmtUpdateAgenda) {
-                    $stmtUpdateAgenda->bind_param($typesAgenda, ...$paramsAgenda);
-                    $stmtUpdateAgenda->execute();
-                    $stmtUpdateAgenda->close();
-                }
-                continue;
             }
 
             $cols = [
