@@ -646,6 +646,10 @@ class HonorarioModule {
         $sufijoObjetivo = $montoClinicaObjetivo > 0
             ? ' | Clinica objetivo: S/ ' . number_format($montoClinicaObjetivo, 2, '.', '')
             : '';
+        $clinicaAbsorbe = (float)($snapshot['paquete_clinica_absorbe'] ?? 0);
+        if ($clinicaAbsorbe > 0) {
+            $sufijoObjetivo .= ' | Clinica absorbe: S/ ' . number_format($clinicaAbsorbe, 2, '.', '');
+        }
 
         return trim($descripcionBase) . ' | CAMPANA ' . $etiquetaPaquete . ' | Modo: ' . $modoHonorario . ' | Medico: S/ ' . number_format((float)$montoMedico, 2, '.', '') . ' | Clinica: S/ ' . number_format((float)$montoClinica, 2, '.', '') . $sufijoObjetivo;
     }

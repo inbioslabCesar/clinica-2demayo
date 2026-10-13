@@ -230,6 +230,34 @@ try {
 } catch (InvalidArgumentException $e) {
     echo "OK: rechaza honorarios superiores al precio global\n";
 }
+
+// Paquete de precio bajo (tipo PAQ-023): el honorario normal del medico (tarifario) supera el precio.
+// El sistema lo acepta; el medico cobra su honorario normal y la clinica absorbe la diferencia.
+$consultaNormal = array_merge($consulta, ['honorario_regla' => ['modo_honorario' => 'usar_configuracion_medico']]);
+$labBarato = ['servicio_tipo' => 'laboratorio', 'servicio_id' => 10, 'cantidad' => 1, 'precio_lista_snapshot' => 12];
+$paqueteBajo = $expandir(array_merge($paquete, [
+    'subtotal' => 20, 'precio_unitario' => 20, 'componentes' => [$consultaNormal, $labBarato, $labBarato],
+]));
+verificar([20.0, 0, 0, 0], array_column($paqueteBajo, 'subtotal'), 'paquete de precio bajo se vende por su precio global');
+$snapPortador = PaqueteComercialModule::snapshot($paqueteBajo[1]);
+verificar([25.0, 0.0, 5.0], [$snapPortador['paquete_honorario_medico'], $snapPortador['paquete_honorario_clinica'], $snapPortador['paquete_clinica_absorbe']], 'honorario normal mayor al precio: medico cobra su tarifa y la clinica absorbe la diferencia');
+$honBajo = $calcular->invoke(null, $paqueteBajo[1], $tarifa, 'consulta', 'efectivo');
+verificar([25.0, 0.0], [$honBajo['monto_medico'], $honBajo['monto_clinica']], 'honorario registrado conserva tarifa del medico y clinica en cero');
+verificar(true, strpos($honBajo['descripcion'], 'Clinica absorbe: S/ 5.00') !== false, 'la descripcion del honorario deja visible lo que absorbe la clinica');
+$paqueteAjustado = $expandir(array_merge($paquete, ['subtotal' => 30, 'precio_unitario' => 30, 'componentes' => [$consultaNormal]]));
+verificar([5.0, 0.0], [PaqueteComercialModule::snapshot($paqueteAjustado[1])['paquete_honorario_clinica'], PaqueteComercialModule::snapshot($paqueteAjustado[1])['paquete_clinica_absorbe']], 'si el precio cubre el honorario no hay deficit');
+try {
+    PaqueteComercialModule::aplicarDescuentos($descuento->invoke(null, $paqueteBajo, 1));
+    throw new RuntimeException('Se acepto un descuento sobre un paquete que ya no deja margen a la clinica');
+} catch (InvalidArgumentException $e) {
+    echo "OK: paquete sin margen para la clinica no admite descuentos adicionales\n";
+}
+try {
+    $expandir(array_merge($paquete, ['subtotal' => 20, 'precio_unitario' => 20, 'componentes' => [$consulta, $eco]]));
+    throw new RuntimeException('Se acepto un monto fijo de medico mayor al precio del paquete');
+} catch (InvalidArgumentException $e) {
+    verificar(true, strpos($e->getMessage(), 'honorarios fijos del paquete (S/ 80.00) superan su precio global (S/ 20.00)') !== false, 'monto fijo mayor al precio sigue rechazado con mensaje claro');
+}
 echo "Todas las pruebas de paquete pasaron. No se conecto ni modifico BD.\n";
 if (in_array('--catalogo=7', $argv, true)) {
     require $root . '/config.php';

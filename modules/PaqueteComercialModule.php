@@ -83,6 +83,14 @@ class PaqueteComercialModule
         }
     }
 
+    // Monto fijo o porcentaje definido en el propio paquete (no el honorario normal del tarifario).
+    private static function tieneHonorarioExplicito(array $componente): bool
+    {
+        $regla = $componente['honorario_regla'] ?? null;
+        return is_array($regla)
+            && in_array($regla['modo_honorario'] ?? '', ['monto_fijo_medico_paquete', 'porcentaje_medico_paquete'], true);
+    }
+
     public static function honorario(array $componente, array $tarifa): float
     {
         $cantidad = max(1, (int)($componente['cantidad'] ?? 1));
@@ -137,6 +145,7 @@ class PaqueteComercialModule
             ];
             $items = [];
             $totalHonorarios = 0.0;
+            $honorariosFijos = 0.0;
             $ultimoHonorario = null;
             foreach ($componentes as $comp) {
                 $itemTipo = $normalizarTipo($comp['servicio_tipo'] ?? $comp['source_type'] ?? '');
@@ -154,6 +163,7 @@ class PaqueteComercialModule
                 if ($comp['servicio_id'] <= 0 && !empty($tarifa['id'])) $comp['servicio_id'] = (int)$tarifa['id'];
                 $monto = empty($tarifa) ? 0.0 : self::honorario($comp, $tarifa);
                 $totalHonorarios += $monto;
+                if (!empty($tarifa) && self::tieneHonorarioExplicito($comp)) $honorariosFijos += $monto;
                 if (!empty($tarifa)) $ultimoHonorario = count($items);
                 $comp['precio_unitario'] = 0;
                 $comp['subtotal'] = 0;
@@ -170,8 +180,14 @@ class PaqueteComercialModule
                 ]);
                 $items[] = $comp;
             }
-            if (round($totalHonorarios, 2) > $total) {
-                throw new InvalidArgumentException('Los honorarios del paquete superan su precio global');
+            // Un monto fijo o porcentaje escrito en el paquete que ya supera el precio es un error de
+            // configuracion. El honorario normal del medico (tarifario) puede superarlo: la clinica lo absorbe.
+            if (round($honorariosFijos, 2) > $total) {
+                throw new InvalidArgumentException(
+                    'Los honorarios fijos del paquete (S/ ' . number_format($honorariosFijos, 2, '.', '')
+                    . ') superan su precio global (S/ ' . number_format($total, 2, '.', '')
+                    . '). Reduzca el monto del medico o suba el precio del paquete.'
+                );
             }
             $objetivoClinica = $detalle['paquete_monto_clinica_fijo'] ?? null;
             if ($objetivoClinica !== null && $objetivoClinica !== ''
@@ -180,7 +196,10 @@ class PaqueteComercialModule
             }
             if ($ultimoHonorario !== null) {
                 // El remanente se contabiliza una sola vez; no es un precio de venta del componente.
-                $items[$ultimoHonorario]['snapshot_json']['paquete_honorario_clinica'] = round($total - $totalHonorarios, 2);
+                // Si el honorario supera el precio, la clinica queda en 0 y el deficit se registra aparte.
+                $remanente = round($total - $totalHonorarios, 2);
+                $items[$ultimoHonorario]['snapshot_json']['paquete_honorario_clinica'] = max(0.0, $remanente);
+                $items[$ultimoHonorario]['snapshot_json']['paquete_clinica_absorbe'] = $remanente < 0 ? round(-$remanente, 2) : 0.0;
                 $items[$ultimoHonorario]['snapshot_json']['paquete_portador_remanente'] = 1;
             }
             $cargo = array_merge($detalle, $meta);
