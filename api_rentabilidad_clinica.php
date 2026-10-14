@@ -102,7 +102,52 @@ function rent_ingresos_por_servicio(PDO $pdo, string $desde, string $hasta): arr
     $out['dias_activos'] = (int)($row['dias'] ?? 0);
 
     $detalleTotal = 0.0;
-    if (rent_table_exists($pdo, 'cobros_detalle')) {
+    $servicios = [];
+    $fuenteServicios = 'cobros_detalle';
+
+    // Desglose itemizado: cobros_detalle guarda una sola fila por cobro (los cobros con varios
+    // servicios caen en "mixto"), por eso se prefiere el espejo itemizado de producción médica.
+    if (rent_table_exists($pdo, 'produccion_medica_detalle')) {
+        $stmt = $pdo->prepare("SELECT LOWER(TRIM(COALESCE(NULLIF(p.servicio_tipo, ''), 'otros'))) AS servicio_norm,
+                COALESCE(SUM(c.total * p.monto_neto_item / NULLIF(t.suma_cobro, 0)), 0) AS total
+            FROM produccion_medica_detalle p
+            INNER JOIN cobros c ON c.id = p.cobro_id
+            INNER JOIN (
+                SELECT p2.cobro_id, SUM(p2.monto_neto_item) AS suma_cobro
+                FROM produccion_medica_detalle p2 INNER JOIN cobros c2 ON c2.id = p2.cobro_id
+                WHERE c2.estado = 'pagado' AND c2.fecha_cobro >= ? AND c2.fecha_cobro < ?
+                GROUP BY p2.cobro_id
+            ) t ON t.cobro_id = p.cobro_id
+            WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ?
+            GROUP BY servicio_norm");
+        $stmt->execute([$ini, $fin, $ini, $fin]);
+        $itemizado = [];
+        $sumaItemizado = 0.0;
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $tipo = $r['servicio_norm'];
+            if ($tipo === 'rayos_x' || $tipo === 'rx') {
+                $tipo = 'rayosx';
+            } elseif ($tipo === 'procedimientos') {
+                $tipo = 'procedimiento';
+            }
+            $itemizado[$tipo] = ($itemizado[$tipo] ?? 0.0) + (float)$r['total'];
+            $sumaItemizado += (float)$r['total'];
+        }
+        if ($totalCobros > 0 && ($sumaItemizado / $totalCobros) >= 0.8) {
+            arsort($itemizado);
+            foreach ($itemizado as $tipo => $monto) {
+                $servicios[] = ['servicio' => $tipo, 'total' => rent_round($monto)];
+            }
+            $sinDetalle = $totalCobros - $sumaItemizado;
+            if (abs($sinDetalle) > 0.01) {
+                $servicios[] = ['servicio' => 'sin_detalle', 'total' => rent_round($sinDetalle)];
+            }
+            $detalleTotal = $sumaItemizado;
+            $fuenteServicios = 'produccion_medica';
+        }
+    }
+
+    if ($fuenteServicios === 'cobros_detalle' && rent_table_exists($pdo, 'cobros_detalle')) {
         $stmt = $pdo->prepare("SELECT LOWER(TRIM(COALESCE(NULLIF(cd.servicio_tipo, ''), 'otros'))) AS servicio_norm, COALESCE(SUM(cd.subtotal), 0) AS total
             FROM cobros_detalle cd INNER JOIN cobros c ON c.id = cd.cobro_id
             WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ?
@@ -111,15 +156,16 @@ function rent_ingresos_por_servicio(PDO $pdo, string $desde, string $hasta): arr
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $monto = (float)$r['total'];
             $detalleTotal += $monto;
-            $out['servicios'][] = ['servicio' => $r['servicio_norm'], 'total' => rent_round($monto)];
+            $servicios[] = ['servicio' => $r['servicio_norm'], 'total' => rent_round($monto)];
+        }
+        // Diferencia entre el total cobrado y el detalle (descuentos, ajustes de cobro).
+        $ajuste = $totalCobros - $detalleTotal;
+        if (!empty($servicios) && abs($ajuste) > 0.01) {
+            $servicios[] = ['servicio' => 'descuentos_ajustes', 'total' => rent_round($ajuste)];
         }
     }
-
-    // Diferencia entre el total cobrado y el detalle (descuentos, ajustes de cobro).
-    $ajuste = $totalCobros - $detalleTotal;
-    if (!empty($out['servicios']) && abs($ajuste) > 0.01) {
-        $out['servicios'][] = ['servicio' => 'descuentos_ajustes', 'total' => rent_round($ajuste)];
-    }
+    $out['servicios'] = $servicios;
+    $out['fuente_servicios'] = $fuenteServicios;
     $out['detalle_total'] = rent_round($detalleTotal);
 
     $contratos = 0.0;
@@ -201,6 +247,7 @@ function rent_resumen_periodo(PDO $pdo, string $desde, string $hasta): array
         'contribucion_por_dia' => $ing['dias_activos'] > 0 ? rent_round($contribucion / $ing['dias_activos']) : null,
         'servicios' => $ing['servicios'],
         'detalle_total' => $ing['detalle_total'] ?? 0.0,
+        'fuente_servicios' => $ing['fuente_servicios'] ?? 'cobros_detalle',
         'cobros_total' => $ing['cobros_total'] ?? 0.0,
         'gastos_categorias' => $gas['categorias'],
         'honorarios_items' => $hon['items'],
@@ -266,6 +313,43 @@ function rent_nombres_medicos(PDO $pdo): array
         $nombres[(int)$r['id']] = trim($r['nombre'] . ' ' . ($r['apellido'] ?? ''));
     }
     return $nombres;
+}
+
+// Qué servicios componen lo cobrado sin médico asignado en producción médica.
+function rent_sin_medico_detalle(PDO $pdo, string $desde, string $hasta): array
+{
+    if (!rent_table_exists($pdo, 'produccion_medica_detalle')) {
+        return [];
+    }
+    $ini = $desde . ' 00:00:00';
+    $fin = date('Y-m-d', strtotime($hasta . ' +1 day')) . ' 00:00:00';
+    $stmt = $pdo->prepare("SELECT LOWER(TRIM(COALESCE(NULLIF(p.servicio_tipo, ''), 'otros'))) AS servicio_norm,
+            COALESCE(NULLIF(TRIM(p.servicio_nombre), ''), 'Servicio') AS nombre_norm,
+            COALESCE(SUM(c.total * p.monto_neto_item / NULLIF(t.suma_cobro, 0)), 0) AS total,
+            COUNT(DISTINCT p.cobro_id) AS cobros
+        FROM produccion_medica_detalle p
+        INNER JOIN cobros c ON c.id = p.cobro_id
+        INNER JOIN (
+            SELECT p2.cobro_id, SUM(p2.monto_neto_item) AS suma_cobro
+            FROM produccion_medica_detalle p2 INNER JOIN cobros c2 ON c2.id = p2.cobro_id
+            WHERE c2.estado = 'pagado' AND c2.fecha_cobro >= ? AND c2.fecha_cobro < ?
+            GROUP BY p2.cobro_id
+        ) t ON t.cobro_id = p.cobro_id
+        WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ? AND COALESCE(p.medico_id, 0) = 0
+        GROUP BY servicio_norm, nombre_norm
+        ORDER BY total DESC
+        LIMIT 12");
+    $stmt->execute([$ini, $fin, $ini, $fin]);
+    $out = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $out[] = [
+            'servicio' => $r['servicio_norm'],
+            'nombre' => $r['nombre_norm'],
+            'cobros' => (int)$r['cobros'],
+            'total' => rent_round($r['total']),
+        ];
+    }
+    return $out;
 }
 
 function rent_dias_no_domingo(DateTimeImmutable $desde, DateTimeImmutable $hasta): int
@@ -535,6 +619,38 @@ try {
         return $b['aporte_clinica'] <=> $a['aporte_clinica'];
     });
 
+    // Médicos registrados sin movimientos en el período: se listan para que se vea quién falta.
+    $presentes = [];
+    foreach ($porMedico as $f) {
+        $presentes[$f['medico_id']] = true;
+    }
+    $sinActividad = [];
+    foreach ($nombres as $id => $nombre) {
+        if (isset($presentes[$id])) {
+            continue;
+        }
+        $p = $mapaPrevio[$id] ?? ['ingresos' => 0.0, 'honorarios' => 0.0];
+        $sinActividad[] = [
+            'medico_id' => (int)$id,
+            'medico' => $nombre,
+            'atenciones' => 0,
+            'ingresos' => 0.0,
+            'honorarios' => 0.0,
+            'aporte_clinica' => 0.0,
+            'margen_pct' => null,
+            'margen_anterior_pct' => $p['ingresos'] > 0 ? rent_pct($p['ingresos'] - $p['honorarios'], $p['ingresos']) : null,
+            'variacion_pp' => null,
+            'aporte_por_dia' => null,
+            'ingresos_anterior' => rent_round($p['ingresos']),
+            'sin_actividad' => true,
+        ];
+    }
+    usort($sinActividad, function ($a, $b) {
+        return strcasecmp($a['medico'], $b['medico']);
+    });
+    $porMedico = array_merge($porMedico, $sinActividad);
+    $sinMedicoDetalle = $usarTarifa ? [] : rent_sin_medico_detalle($pdo, $desde, $hasta);
+
     // ── Alertas y calidad de datos ──────────────────────────────────────────────
     $alertas = [];
 
@@ -667,6 +783,7 @@ try {
         'resumen_anterior' => $anterior,
         'variacion' => $variacion,
         'por_medico' => $porMedico,
+        'sin_medico_detalle' => $sinMedicoDetalle,
         'atribucion' => [
             'cobertura_pct' => $cobertura,
             'fuente' => $usarTarifa ? 'honorarios_tarifa' : 'produccion_medica',

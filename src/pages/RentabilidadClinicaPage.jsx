@@ -22,9 +22,13 @@ const SERVICIO_LABEL = {
   procedimiento: 'Procedimientos',
   procedimientos: 'Procedimientos',
   mixto: 'Paquetes / mixtos',
+  paquete: 'Paquetes',
+  operacion: 'Operaciones',
+  cirugias: 'Cirugías',
   farmacia: 'Farmacia',
   contrato_abono: 'Abonos de contratos',
   descuentos_ajustes: 'Descuentos y ajustes',
+  sin_detalle: 'Cobrado sin detalle de servicio',
   otros: 'Otros',
 };
 
@@ -106,6 +110,8 @@ export default function RentabilidadClinicaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [verSupuestos, setVerSupuestos] = useState(false);
+  const [verSinActividad, setVerSinActividad] = useState(true);
+  const [verSinMedico, setVerSinMedico] = useState(false);
 
   const cargar = useCallback(async (r) => {
     setLoading(true);
@@ -143,6 +149,12 @@ export default function RentabilidadClinicaPage() {
     const honorarios = filas.reduce((acc, f) => acc + Number(f.honorarios || 0), 0);
     return { ingresos, honorarios, aporte: ingresos - honorarios };
   }, [data]);
+
+  const filasMedicos = useMemo(
+    () => (data?.por_medico || []).filter((f) => verSinActividad || !f.sin_actividad),
+    [data, verSinActividad]
+  );
+  const medicosSinActividad = useMemo(() => (data?.por_medico || []).filter((f) => f.sin_actividad).length, [data]);
 
   const resumen = data?.resumen;
   const variacion = data?.variacion;
@@ -266,6 +278,11 @@ export default function RentabilidadClinicaPage() {
 
             <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
               <h2 className="font-bold text-slate-800 mb-3">Ingreso por servicio</h2>
+              {resumen.fuente_servicios !== 'produccion_medica' && (
+                <p className="text-[11px] text-amber-700 mb-2">
+                  Desglose aproximado: los cobros con varios servicios aparecen como "Paquetes / mixtos".
+                </p>
+              )}
               <div className="space-y-3">
                 {(resumen.servicios || []).length === 0 && <p className="text-sm text-slate-500">Sin cobros en el período.</p>}
                 {(resumen.servicios || []).map((s) => {
@@ -307,6 +324,12 @@ export default function RentabilidadClinicaPage() {
                 {data.atribucion?.cobertura_pct !== null && data.atribucion?.cobertura_pct !== undefined ? ` · cobertura ${fmtPct(data.atribucion.cobertura_pct)}` : ''}
               </span>
             </div>
+            {medicosSinActividad > 0 && (
+              <label className="flex items-center gap-2 text-xs text-slate-600 mb-2">
+                <input type="checkbox" checked={verSinActividad} onChange={(e) => setVerSinActividad(e.target.checked)} />
+                Mostrar médicos sin actividad en el período ({medicosSinActividad})
+              </label>
+            )}
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
@@ -322,28 +345,53 @@ export default function RentabilidadClinicaPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(data.por_medico || []).length === 0 && (
+                  {filasMedicos.length === 0 && (
                     <tr><td colSpan={8} className="py-4 text-center text-slate-500">Sin movimientos en el período.</td></tr>
                   )}
-                  {(data.por_medico || []).map((f) => (
-                    <tr key={f.medico_id} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="py-2 pr-3 font-medium text-slate-800">{f.medico}</td>
-                      <td className="py-2 pr-3 text-right">{f.atenciones}</td>
-                      <td className="py-2 pr-3 text-right">{fmtMoney(f.ingresos)}</td>
-                      <td className="py-2 pr-3 text-right text-amber-700">{fmtMoney(f.honorarios)}</td>
-                      <td className={`py-2 pr-3 text-right font-semibold ${f.aporte_clinica >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{fmtMoney(f.aporte_clinica)}</td>
-                      <td className="py-2 pr-3 text-right">{fmtPct(f.margen_pct)}</td>
-                      <td className="py-2 pr-3 text-right">
-                        {f.variacion_pp === null || f.variacion_pp === undefined ? (
-                          <span className="text-slate-400">—</span>
-                        ) : (
-                          <span className={f.variacion_pp >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                            {f.variacion_pp >= 0 ? '▲' : '▼'} {Math.abs(f.variacion_pp).toFixed(1)} pp
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 text-right">{fmtMoney(f.aporte_por_dia)}</td>
-                    </tr>
+                  {filasMedicos.map((f) => (
+                    <React.Fragment key={f.medico_id}>
+                      <tr className={`border-b border-slate-100 hover:bg-slate-50 ${f.sin_actividad ? 'text-slate-400' : ''}`}>
+                        <td className={`py-2 pr-3 font-medium ${f.sin_actividad ? 'text-slate-400' : 'text-slate-800'}`}>
+                          {f.medico}
+                          {f.sin_actividad && <span className="ml-2 text-[10px] uppercase rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">Sin actividad</span>}
+                          {f.medico_id === 0 && (data.sin_medico_detalle || []).length > 0 && (
+                            <button type="button" onClick={() => setVerSinMedico((v) => !v)} className="ml-2 text-xs text-indigo-600 underline">
+                              {verSinMedico ? 'ocultar detalle' : 'ver detalle'}
+                            </button>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-right">{f.atenciones}</td>
+                        <td className="py-2 pr-3 text-right">{fmtMoney(f.ingresos)}</td>
+                        <td className={`py-2 pr-3 text-right ${f.sin_actividad ? '' : 'text-amber-700'}`}>{fmtMoney(f.honorarios)}</td>
+                        <td className={`py-2 pr-3 text-right font-semibold ${f.sin_actividad ? '' : f.aporte_clinica >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{fmtMoney(f.aporte_clinica)}</td>
+                        <td className="py-2 pr-3 text-right">{fmtPct(f.margen_pct)}</td>
+                        <td className="py-2 pr-3 text-right">
+                          {f.variacion_pp === null || f.variacion_pp === undefined ? (
+                            <span className="text-slate-400">—</span>
+                          ) : (
+                            <span className={f.variacion_pp >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                              {f.variacion_pp >= 0 ? '▲' : '▼'} {Math.abs(f.variacion_pp).toFixed(1)} pp
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 text-right">{fmtMoney(f.aporte_por_dia)}</td>
+                      </tr>
+                      {f.medico_id === 0 && verSinMedico && (
+                        <tr className="bg-slate-50">
+                          <td colSpan={8} className="px-3 py-2 text-xs text-slate-600">
+                            <div className="font-semibold mb-1">Lo cobrado sin médico asignado en producción médica:</div>
+                            <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5">
+                              {data.sin_medico_detalle.map((d) => (
+                                <li key={`${d.servicio}-${d.nombre}`} className="flex justify-between">
+                                  <span>{SERVICIO_LABEL[d.servicio] || d.servicio} · {d.nombre} ({d.cobros})</span>
+                                  <span className="font-semibold">{fmtMoney(d.total)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
                 {(data.por_medico || []).length > 0 && (
