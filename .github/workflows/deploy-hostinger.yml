@@ -1,4 +1,5 @@
 name: Deploy a Hostinger (Test)
+run-name: Deploy to Hostinger - ${{ inputs.target_environment }}
 
 on:
   workflow_dispatch:
