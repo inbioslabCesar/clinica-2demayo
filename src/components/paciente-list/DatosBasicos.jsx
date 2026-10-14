@@ -125,7 +125,7 @@ function DatosBasicos({
               name="dni"
               value={form.dni}
               onChange={handleChange}
-              placeholder={form.tipo_documento === "carnet_extranjeria" ? "Carnet de extranjería (12 dígitos)" : "Se genera automáticamente"}
+              placeholder={form.tipo_documento === "carnet_extranjeria" ? "Carnet de extranjería (6 a 12 dígitos)" : "Se genera automáticamente"}
               className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               autoFocus
               disabled={form.tipo_documento === "sin_documento"}

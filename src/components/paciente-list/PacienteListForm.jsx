@@ -416,6 +416,10 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
         setForm((prev) => ({ ...prev, dni: sanitized }));
         return;
       }
+      if (form.tipo_documento === "carnet_extranjeria") {
+        setForm((prev) => ({ ...prev, dni: value.replace(/\D/g, "").slice(0, 12) }));
+        return;
+      }
     }
     if (name === "fecha_nacimiento" && value) {
       const hoy = new Date();
@@ -541,8 +545,8 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
           return;
         }
       } else if (formToSend.tipo_documento === "carnet_extranjeria") {
-        if (!/^\d{12}$/.test(formToSend.dni)) {
-          setError("El Carnet de extranjería debe tener exactamente 12 dígitos.");
+        if (!/^\d{6,12}$/.test(formToSend.dni)) {
+          setError("El Carnet de extranjería debe tener entre 6 y 12 dígitos.");
           return;
         }
       } else if (formToSend.tipo_documento === "sin_documento") {

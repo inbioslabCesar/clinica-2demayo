@@ -4,7 +4,7 @@ import { authFetch } from "../../utils/apiClient";
 
 const TIPO_META = {
   dni: { label: "DNI", placeholder: "Ej: 71609118" },
-  carnet_extranjeria: { label: "Carnet de Extranjeria", placeholder: "Ej: 001234567890" },
+  carnet_extranjeria: { label: "Carnet de Extranjeria", placeholder: "Ej: 123456789" },
   nombre: { label: "Nombre y Apellido", placeholder: "Ej: Juan Perez" },
   historia: { label: "Historia Clinica", placeholder: "Ej: HC000937" },
 };

@@ -53,10 +53,34 @@ function pacientes_column_exists($conn, string $table, string $column): bool {
     return $ok;
 }
 
+function pacientes_normalizar_tipo_documento($tipo, $dni): string {
+    $tipo = strtolower(trim((string)$tipo));
+    $dni = trim((string)$dni);
+    $validos = ['dni', 'carnet_extranjeria', 'sin_documento'];
+    if (!in_array($tipo, $validos, true)) {
+        $tipo = '';
+    }
+    $es8Digitos = (bool)preg_match('/^\d{8}$/', $dni);
+
+    if ($tipo === '') {
+        return $es8Digitos ? 'dni' : 'carnet_extranjeria';
+    }
+    // Un DNI siempre tiene 8 dígitos: si no los tiene, es un carnet guardado antes de existir esta columna.
+    if ($tipo === 'dni' && !$es8Digitos && preg_match('/^\d{6,12}$/', $dni)) {
+        return 'carnet_extranjeria';
+    }
+    return $tipo;
+}
+
+function pacientes_resolver_tipo_documento_row(array &$row): void {
+    $row['tipo_documento'] = pacientes_normalizar_tipo_documento($row['tipo_documento'] ?? '', $row['dni'] ?? '');
+}
+
 function pacientes_select_columns($conn, string $alias = ''): string {
     $p = $alias !== '' ? $alias . '.' : '';
     $hasGrupo = pacientes_column_exists($conn, 'pacientes', 'grupo_sanguineo');
     $hasRh = pacientes_column_exists($conn, 'pacientes', 'factor_rh');
+    $hasTipoDoc = pacientes_column_exists($conn, 'pacientes', 'tipo_documento');
 
     $cols = [
         $p . 'id',
@@ -72,6 +96,7 @@ function pacientes_select_columns($conn, string $alias = ''): string {
         $p . 'telefono',
         $p . 'email',
         $p . 'dni',
+        $hasTipoDoc ? ($p . 'tipo_documento') : 'NULL AS tipo_documento',
         $p . 'sexo',
         $hasGrupo ? ($p . 'grupo_sanguineo') : 'NULL AS grupo_sanguineo',
         $hasRh ? ($p . 'factor_rh') : 'NULL AS factor_rh',
@@ -190,6 +215,7 @@ function obtener_paciente_por_id($conn, int $id): ?array {
     $stmt->close();
 
     if ($row) {
+        pacientes_resolver_tipo_documento_row($row);
         $row['acompanantes'] = obtener_acompanantes_paciente($conn, $id);
     }
     return $row;
@@ -519,6 +545,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['success' => false, 'error' => 'El campo DNI no debe estar vacío']);
             exit;
         }
+        $dni = trim((string)$dni);
+        $tipo_documento = pacientes_normalizar_tipo_documento($data['tipo_documento'] ?? '', $dni);
+        if ($tipo_documento === 'carnet_extranjeria' && !preg_match('/^\d{6,12}$/', $dni)) {
+            echo json_encode(['success' => false, 'error' => 'El Carnet de extranjería debe tener entre 6 y 12 dígitos.']);
+            exit;
+        }
+        $etiquetaDocumento = $tipo_documento === 'carnet_extranjeria' ? 'Carnet de extranjería' : 'DNI';
         if (!$nombre) {
             echo json_encode(['success' => false, 'error' => 'El campo Nombre no debe estar vacío']);
             exit;
@@ -532,6 +565,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $hasGrupo = pacientes_column_exists($conn, 'pacientes', 'grupo_sanguineo');
         $hasRh = pacientes_column_exists($conn, 'pacientes', 'factor_rh');
+        $hasTipoDoc = pacientes_column_exists($conn, 'pacientes', 'tipo_documento');
 
         $conn->begin_transaction();
         try {
@@ -577,12 +611,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $err = $stmt ? $stmt->error : $conn->error;
                     if ($stmt) $stmt->close();
                     if (strpos($err, 'Duplicate entry') !== false && strpos($err, 'dni') !== false) {
-                        throw new Exception('El DNI ingresado ya está registrado en el sistema.');
+                        throw new Exception('El ' . $etiquetaDocumento . ' ingresado ya está registrado en el sistema.');
                     }
                     throw new Exception('Error al registrar paciente: ' . $err);
                 }
                 $id = $conn->insert_id;
                 $stmt->close();
+            }
+
+            if ($hasTipoDoc) {
+                $stmtTipo = $conn->prepare('UPDATE pacientes SET tipo_documento = ? WHERE id = ?');
+                if (!$stmtTipo) {
+                    throw new Exception('No se pudo guardar el tipo de documento.');
+                }
+                $stmtTipo->bind_param('si', $tipo_documento, $id);
+                if (!$stmtTipo->execute()) {
+                    $errTipo = $stmtTipo->error;
+                    $stmtTipo->close();
+                    throw new Exception('No se pudo guardar el tipo de documento: ' . $errTipo);
+                }
+                $stmtTipo->close();
             }
 
             if (!guardar_acompanantes_paciente($conn, (int)$id, $acompanantes)) {
@@ -680,6 +728,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $pacientes = [];
     while ($row = $result->fetch_assoc()) {
         pacientes_set_edad_row($row);
+        pacientes_resolver_tipo_documento_row($row);
         pacientes_normalizar_tipo_seguro_visual($row);
         $row['acompanantes'] = obtener_acompanantes_paciente($conn, (int)$row['id']);
         $pacientes[] = $row;

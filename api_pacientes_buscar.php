@@ -234,8 +234,10 @@ function columnas_busqueda_pacientes(): string {
     global $conn;
     $hasGrupo = pacientes_buscar_column_exists($conn, 'pacientes', 'grupo_sanguineo');
     $hasRh = pacientes_buscar_column_exists($conn, 'pacientes', 'factor_rh');
+    $hasTipoDoc = pacientes_buscar_column_exists($conn, 'pacientes', 'tipo_documento');
 
-    return 'id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, sexo, '
+    return 'id, historia_clinica, nombre, apellido, fecha_nacimiento, edad, edad_unidad, procedencia, tipo_seguro, direccion, telefono, email, dni, '
+        . ($hasTipoDoc ? 'tipo_documento' : 'NULL AS tipo_documento') . ', sexo, '
         . ($hasGrupo ? 'grupo_sanguineo' : 'NULL AS grupo_sanguineo') . ', '
         . ($hasRh ? 'factor_rh' : 'NULL AS factor_rh') . ', creado_en';
 }
@@ -368,6 +370,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute();
     $res = $stmt->get_result();
     $pacientes = $res->fetch_all(MYSQLI_ASSOC);
+    foreach ($pacientes as &$pacRow) {
+        $dniRow = (string)($pacRow['dni'] ?? '');
+        $tipoRow = strtolower(trim((string)($pacRow['tipo_documento'] ?? '')));
+        if ($tipoRow === '' || ($tipoRow === 'dni' && !preg_match('/^\d{8}$/', $dniRow) && preg_match('/^\d{6,12}$/', $dniRow))) {
+            $tipoRow = preg_match('/^\d{8}$/', $dniRow) ? 'dni' : 'carnet_extranjeria';
+        }
+        $pacRow['tipo_documento'] = $tipoRow;
+    }
+    unset($pacRow);
     $pacientes = cargar_acompanantes_busqueda($conn, $pacientes);
     if ($pacientes && count($pacientes) > 0) {
         // Almacenar en caché local de RENIEC para acelerar futuras búsquedas del mismo DNI
