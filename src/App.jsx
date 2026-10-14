@@ -13,6 +13,9 @@ const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
   import("./pages/DashboardEstadisticasAdmin.jsx")
 );
+const RentabilidadClinicaPage = lazy(() =>
+  import("./pages/RentabilidadClinicaPage.jsx")
+);
 const ReabrirCajaPage = lazy(() =>
   import("./components/caja/ReabrirCajaPage.jsx")
 );
@@ -1120,6 +1123,17 @@ function App() {
                         rolesPermitidos={["administrador"]}
                       >
                         <DashboardEstadisticasAdmin />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/rentabilidad"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["administrador"]}
+                      >
+                        <RentabilidadClinicaPage />
                       </ProtectedRoute>
                     }
                   />

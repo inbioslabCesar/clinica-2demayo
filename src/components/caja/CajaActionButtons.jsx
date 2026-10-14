@@ -79,6 +79,15 @@ export default function CajaActionButtons({ cajaAbierta, usuario, setShowModal, 
               <div className="text-sm">Dashboard estadístico</div>
             </button>
           )}
+          {userRole === 'administrador' && (
+            <button
+              className={`${baseBtn} bg-gradient-to-r from-emerald-600 to-teal-700`}
+              onClick={() => navigate("/admin/rentabilidad")}
+            >
+              <div className="text-xs text-emerald-100">Analítica</div>
+              <div className="text-sm">Rentabilidad de la clínica</div>
+            </button>
+          )}
         </div>
       </div>
     </div>

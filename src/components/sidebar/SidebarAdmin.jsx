@@ -36,6 +36,14 @@ export default function SidebarAdmin({ onClose }) {
           <span>Reporte de Caja</span>
         </Link>
         <Link
+          to="/admin/rentabilidad"
+          className="py-2.5 px-3 rounded-lg text-emerald-700 hover:bg-gradient-to-r hover:from-emerald-50 hover:to-green-100 font-medium flex items-center gap-3 transition-all duration-300"
+          onClick={onClose}
+        >
+          <Icon iconName="Financial" className="text-lg text-emerald-600" />
+          <span>Rentabilidad</span>
+        </Link>
+        <Link
           to="/gestion-tarifas"
           className="py-2.5 px-3 rounded-lg text-amber-700 hover:bg-gradient-to-r hover:from-amber-50 hover:to-yellow-100 font-medium flex items-center gap-3 transition-all duration-300"
           onClick={onClose}
