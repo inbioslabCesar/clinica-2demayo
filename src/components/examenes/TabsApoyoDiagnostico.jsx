@@ -5,6 +5,7 @@ import SolicitudProcedimientos from "./SolicitudProcedimientos";
 import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologiaHC";
 import CardInformeImagenologia from "../imagenologia/CardInformeImagenologia";
 import { authFetch } from "../../utils/apiClient";
+import Swal from "sweetalert2";
 
 // ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
 const TIPOS_IMAGEN = [
@@ -323,6 +324,31 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
   const [tab, setTab] = useState(() => sessionStorage.getItem(STORAGE_KEY) || "laboratorio");
   const [adjuntosImagenPorTipo, setAdjuntosImagenPorTipo] = useState({ rx: 0, ecografia: 0, tomografia: 0 });
   const navigate = useNavigate();
+  const [anticipadaQuitadas, setAnticipadaQuitadas] = useState(() => new Set());
+
+  const quitarCargaAnticipada = async (ordenId) => {
+    const confirm = await Swal.fire({
+      icon: "question",
+      title: "Quitar condición de urgente",
+      text: `La orden #${ordenId} volverá a requerir el pago de la cotización antes de procesarse en laboratorio.`,
+      showCancelButton: true,
+      confirmButtonText: "Quitar urgente",
+      cancelButtonText: "Cancelar",
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+      const res = await authFetch("api_ordenes_laboratorio.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "desactivar_carga_anticipada", orden_id: ordenId }),
+      });
+      const data = await res.json();
+      if (!data?.success) throw new Error(data?.error || "No se pudo quitar la condición de urgente");
+      setAnticipadaQuitadas((prev) => new Set(prev).add(Number(ordenId)));
+    } catch (error) {
+      Swal.fire("Error", error?.message || "No se pudo quitar la condición de urgente", "error");
+    }
+  };
 
   const cambiarTab = (t) => {
     sessionStorage.setItem(STORAGE_KEY, t);
@@ -629,6 +655,26 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
                         <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 mr-1">
                           Última solicitud
                         </span>
+                      )}
+                      {Number(orden?.carga_anticipada || 0) === 1 && !anticipadaQuitadas.has(Number(orden?.id || 0)) && (
+                        <>
+                          <span
+                            className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 mr-1"
+                            title="Se marcó carga anticipada: laboratorio puede procesar sin esperar el pago de la cotización"
+                          >
+                            ⚡ Urgente · carga anticipada
+                          </span>
+                          {!readOnly && Number(orden?.id || 0) > 0 && String(orden?.estado_visual || orden?.estado || '').toLowerCase() !== 'completado' && (
+                            <button
+                              type="button"
+                              onClick={() => quitarCargaAnticipada(Number(orden.id))}
+                              className="inline-flex items-center rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100 mr-1"
+                              title="Quitar la condición de urgente si se marcó por error"
+                            >
+                              Quitar urgente
+                            </button>
+                          )}
+                        </>
                       )}
                       {`Solicitud ${idx + 1}`}
                       {orden?.id ? ` · Orden #${orden.id}` : ''}

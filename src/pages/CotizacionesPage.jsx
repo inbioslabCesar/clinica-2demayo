@@ -770,7 +770,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud, paqueteResumenFallback }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onQuitarLabUrgente, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud, paqueteResumenFallback }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const saldoOperativo = useMemo(() => (
     Number.isFinite(Number(row?.saldo_pendiente_operativo))
@@ -1169,6 +1169,26 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
             >
               {vencimientoMeta.label}
             </span>
+          )}
+          {Number(row.lab_carga_anticipada || 0) === 1 && (estadoRow === 'pendiente' || estadoRow === 'parcial') && (
+            <div className="flex flex-wrap items-center gap-1">
+              <span
+                className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300"
+                title="El médico marcó carga anticipada en la orden de laboratorio: se puede procesar sin esperar el pago"
+              >
+                ⚡ Lab urgente (sin pago)
+              </span>
+              {canAutorizarAnticipado && (
+                <button
+                  type="button"
+                  onClick={() => onQuitarLabUrgente(row)}
+                  className="px-2 py-1 rounded text-xs font-semibold border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  title="Quitar la condición de urgente si se marcó por error"
+                >
+                  Quitar urgente
+                </button>
+              )}
+            </div>
           )}
           {anticipadoActivo && (
             <span
@@ -1613,6 +1633,39 @@ export default function CotizacionesPage() {
       await Swal.fire('Error', error?.message || 'No se pudo actualizar habilitación anticipada', 'error');
     }
   }, [anticipadoByCotizacion, cargarEstadosAnticipados, rows]);
+
+  const quitarLabUrgente = useCallback(async (row) => {
+    const cotizacionId = Number(row?.id || 0);
+    if (cotizacionId <= 0) return;
+
+    const confirm = await Swal.fire({
+      icon: 'question',
+      title: 'Quitar condición de urgente',
+      text: 'La orden de laboratorio volverá a quedar bloqueada hasta que se pague la cotización.',
+      showCancelButton: true,
+      confirmButtonText: 'Quitar urgente',
+      cancelButtonText: 'Cancelar',
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+      const res = await authFetch('api_ordenes_laboratorio.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'desactivar_carga_anticipada', cotizacion_id: cotizacionId }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || 'No se pudo quitar la condición de urgente');
+      }
+      setRows((prev) => prev.map((item) => (
+        Number(item?.id || 0) === cotizacionId ? { ...item, lab_carga_anticipada: 0 } : item
+      )));
+      await Swal.fire('Listo', 'Se quitó la condición de urgente de la orden de laboratorio', 'success');
+    } catch (error) {
+      await Swal.fire('Error', error?.message || 'No se pudo quitar la condición de urgente', 'error');
+    }
+  }, []);
 
   const abrirCobro = useCallback(async (row) => {
     const baseId = Number(row?.id || 0);
@@ -2894,6 +2947,7 @@ export default function CotizacionesPage() {
                     onPrintTicket={imprimirTicketDirecto}
                     onSendWhatsApp={compartirPorWhatsApp}
                     onToggleAnticipado={toggleAnticipado}
+                    onQuitarLabUrgente={quitarLabUrgente}
                     onMigrarPlan={migrarPlanCotizacion}
                     badgeEstado={badgeEstado}
                     labelEstado={labelEstado}

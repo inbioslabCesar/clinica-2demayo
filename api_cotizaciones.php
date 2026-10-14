@@ -9127,6 +9127,7 @@ switch ($method) {
         $labReferenciaPorCotizacion = [];
         $ordenLaboratorioPorCotizacion = [];
         $ordenesLaboratorioCountPorCotizacion = [];
+        $labCargaAnticipadaPorCotizacion = [];
         $medicoSolicitantePorCotizacion = [];
         $profesionalCabeceraPorCotizacion = [];
         $profesionalesUnicosPorCotizacion = [];
@@ -9498,7 +9499,10 @@ switch ($method) {
             }
 
             if ($hasLabCotizacion) {
+                $hasLabCargaAnticipada = column_exists($conn, 'ordenes_laboratorio', 'carga_anticipada');
+                $labCargaExpr = $hasLabCargaAnticipada ? 'MAX(COALESCE(o.carga_anticipada, 0))' : '0';
                 $sqlLabAgg = "SELECT o.cotizacion_id,
+                                     {$labCargaExpr} AS lab_carga_anticipada,
                                      MIN(o.id) AS orden_laboratorio_id,
                                      COUNT(DISTINCT o.id) AS total_ordenes_laboratorio,
                                      IF(COUNT(DISTINCT o.id) > 0 AND COUNT(DISTINCT rl.orden_id) = COUNT(DISTINCT o.id), 1, 0) AS lab_completado
@@ -9519,6 +9523,7 @@ switch ($method) {
                         $labCompletadoPorCotizacion[$cid] = (int)($rowLabAgg['lab_completado'] ?? 0);
                         $ordenLaboratorioPorCotizacion[$cid] = (int)($rowLabAgg['orden_laboratorio_id'] ?? 0);
                         $ordenesLaboratorioCountPorCotizacion[$cid] = (int)($rowLabAgg['total_ordenes_laboratorio'] ?? 0);
+                        $labCargaAnticipadaPorCotizacion[$cid] = (int)($rowLabAgg['lab_carga_anticipada'] ?? 0);
                     }
                 }
 
@@ -9807,6 +9812,7 @@ switch ($method) {
             $cotRow['tiene_laboratorio_referencia'] = $labReferenciaPorCotizacion[$cid] ?? 0;
             $cotRow['orden_laboratorio_id'] = $hasLabCotizacion ? ($ordenLaboratorioPorCotizacion[$cid] ?? 0) : 0;
             $cotRow['ordenes_laboratorio_count'] = $hasLabCotizacion ? ($ordenesLaboratorioCountPorCotizacion[$cid] ?? 0) : 0;
+            $cotRow['lab_carga_anticipada'] = $hasLabCotizacion ? ($labCargaAnticipadaPorCotizacion[$cid] ?? 0) : 0;
             $cotRow['medico_solicitante'] = $medicoSolicitantePorCotizacion[$cid] ?? '';
             $paquetesLabels = isset($paquetesResumenPorCotizacion[$cid]) && is_array($paquetesResumenPorCotizacion[$cid])
                 ? array_values($paquetesResumenPorCotizacion[$cid])

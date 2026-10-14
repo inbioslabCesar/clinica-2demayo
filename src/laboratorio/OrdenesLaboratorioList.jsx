@@ -245,6 +245,17 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     return true;
   };
 
+  const urgenteSinPago = (orden) => {
+    if (Number(orden?.carga_anticipada || 0) !== 1) return false;
+    if (Number(orden?.cotizacion_id || 0) <= 0) return false;
+    const saldoPago = Number(
+      orden?.cotizacion_saldo_pendiente_pago
+      ?? orden?.cotizacion_saldo_pendiente
+      ?? 0
+    );
+    return Number.isFinite(saldoPago) && saldoPago > 0.00001;
+  };
+
   const handleCompararResultados = (orden) => {
     const pacienteId = Number(orden?.paciente_id_ref || orden?.paciente_id || 0);
     if (!pacienteId) return;
@@ -603,6 +614,14 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                                 💳 Pendiente de pago
                               </span>
                             )}
+                            {urgenteSinPago(orden) && (
+                              <span
+                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-amber-50 text-amber-800 border-amber-300"
+                                title="El médico marcó carga anticipada: se puede procesar sin esperar el pago"
+                              >
+                                ⚡ Urgente (sin pago)
+                              </span>
+                            )}
                           </div>
                             );
                           })()}
@@ -722,6 +741,12 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                   {cotizacionPendientePago(orden) && (
                     <div className="mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 font-semibold">
                       💳 Pendiente de pago en recepción
+                    </div>
+                  )}
+
+                  {urgenteSinPago(orden) && (
+                    <div className="mb-3 text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-2.5 py-1.5 font-semibold">
+                      ⚡ Urgente (sin pago): carga anticipada marcada por el médico
                     </div>
                   )}
 

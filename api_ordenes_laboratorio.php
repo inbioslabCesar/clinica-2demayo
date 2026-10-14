@@ -1290,6 +1290,60 @@ switch ($method) {
         // Crear nueva orden de laboratorio
         $data = json_decode(file_get_contents('php://input'), true);
         $accion = strtolower(trim((string)($data['action'] ?? '')));
+        if ($accion === 'desactivar_carga_anticipada') {
+            $ordenIdDesactivar = isset($data['orden_id']) && is_numeric($data['orden_id']) ? intval($data['orden_id']) : 0;
+            $cotizacionIdDesactivar = isset($data['cotizacion_id']) && is_numeric($data['cotizacion_id']) ? intval($data['cotizacion_id']) : 0;
+            if ($ordenIdDesactivar <= 0 && $cotizacionIdDesactivar <= 0) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'orden_id o cotizacion_id requerido'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $rolNormDesactivar = strtolower(trim((string)$rolSesion));
+            $esRolAdministrativo = in_array($rolNormDesactivar, ['admin', 'administrador', 'superadmin'], true)
+                || strpos($rolNormDesactivar, 'recep') !== false;
+
+            if ($ordenIdDesactivar > 0) {
+                $stmtOrdenDes = $conn->prepare('SELECT id, consulta_id FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
+                $stmtOrdenDes->bind_param('i', $ordenIdDesactivar);
+            } else {
+                $stmtOrdenDes = $conn->prepare("SELECT id, consulta_id FROM ordenes_laboratorio WHERE cotizacion_id = ? AND estado <> 'cancelada'");
+                $stmtOrdenDes->bind_param('i', $cotizacionIdDesactivar);
+            }
+            $stmtOrdenDes->execute();
+            $ordenesDes = $stmtOrdenDes->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmtOrdenDes->close();
+
+            if (empty($ordenesDes)) {
+                http_response_code(404);
+                echo json_encode(['success' => false, 'error' => 'Orden de laboratorio no encontrada'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            foreach ($ordenesDes as $ordenDes) {
+                $autorizado = $esRolAdministrativo
+                    || ($esSesionMedico && ol_medico_tiene_acceso_consulta($conn, intval($ordenDes['consulta_id'] ?? 0), $medicoSesionId, 'write'));
+                if (!$autorizado) {
+                    http_response_code(403);
+                    echo json_encode(['success' => false, 'error' => 'No autorizado para quitar la carga anticipada de esta orden'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+            }
+
+            $idsDes = array_map(function ($o) {
+                return intval($o['id']);
+            }, $ordenesDes);
+            $phDes = implode(',', array_fill(0, count($idsDes), '?'));
+            $stmtUpDes = $conn->prepare("UPDATE ordenes_laboratorio SET carga_anticipada = 0 WHERE id IN ($phDes)");
+            $stmtUpDes->bind_param(str_repeat('i', count($idsDes)), ...$idsDes);
+            $stmtUpDes->execute();
+            $stmtUpDes->close();
+
+            error_log('[ordenes_laboratorio] carga_anticipada desactivada ordenes=' . implode(',', $idsDes)
+                . ' usuario=' . intval($sessionUsuario['id'] ?? $medicoSesionId) . ' rol=' . $rolNormDesactivar);
+            echo json_encode(['success' => true, 'ordenes' => $idsDes, 'carga_anticipada' => 0], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         if (in_array($accion, ['actualizar_examen', 'refresh_examen', 'refrescar_examen'], true)) {
             if (!ol_is_laboratorio_operador_role($rolSesion)) {
                 http_response_code(403);
