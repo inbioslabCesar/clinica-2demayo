@@ -974,6 +974,36 @@ function rc_sugerir_inicio_adicional_reprogramacion($conn, $agendaItems, $fechaY
     return '';
 }
 
+// Los eventos de paquete/perfil son la línea comercial del paquete y no tienen médico propio:
+// heredan el del servicio principal para poder moverse junto con el resto del bloque.
+function rc_heredar_medico_items_paquete(array $agendaItems): array {
+    $medicoReferencia = 0;
+    foreach ($agendaItems as $it) {
+        if (trim((string)($it['tipo_item'] ?? '')) === 'consulta' && (int)($it['medico_id'] ?? 0) > 0) {
+            $medicoReferencia = (int)$it['medico_id'];
+            break;
+        }
+    }
+    if ($medicoReferencia <= 0) {
+        foreach ($agendaItems as $it) {
+            if ((int)($it['medico_id'] ?? 0) > 0) {
+                $medicoReferencia = (int)$it['medico_id'];
+                break;
+            }
+        }
+    }
+    if ($medicoReferencia <= 0) {
+        return $agendaItems;
+    }
+    foreach ($agendaItems as $idx => $it) {
+        $tipo = strtolower(trim((string)($it['servicio_tipo'] ?? '')));
+        if ((int)($it['medico_id'] ?? 0) <= 0 && in_array($tipo, ['paquete', 'perfil'], true)) {
+            $agendaItems[$idx]['medico_id'] = $medicoReferencia;
+        }
+    }
+    return $agendaItems;
+}
+
 function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
     $cotizacionId = (int)$cotizacionId;
     if ($cotizacionId <= 0) return [];
@@ -1018,6 +1048,7 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
                 'fecha_programada' => (string)($row['fecha_programada'] ?? ''),
                 'hora_programada' => (string)($row['hora_programada'] ?? ''),
                 'servicio_label' => rc_servicio_pretty_label((string)($row['servicio_tipo'] ?? '')),
+                'servicio_tipo' => strtolower(trim((string)($row['servicio_tipo'] ?? ''))),
                 'titulo_evento' => trim((string)($row['titulo_evento'] ?? '')),
             ];
         }
@@ -1082,7 +1113,7 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
         return ((int)($a['registro_id'] ?? 0)) <=> ((int)($b['registro_id'] ?? 0));
     });
 
-    return $agendaItems;
+    return rc_heredar_medico_items_paquete($agendaItems);
 }
 
 function rc_sort_citas_por_hora(&$rows) {
