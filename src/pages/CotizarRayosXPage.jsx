@@ -3,11 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { BASE_URL } from "../config/config";
+import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
-import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
+import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
 
 function normalizeHourHm(value) {
   const raw = String(value || "").trim();
@@ -17,6 +18,23 @@ function normalizeHourHm(value) {
   const m = Number(match[2]);
   if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function updateConsultaDescriptionSchedule(description, fechaProgramada, horaProgramada) {
+  const base = String(description || "").trim();
+  const fecha = String(fechaProgramada || "").slice(0, 10);
+  const hora = String(horaProgramada || "").slice(0, 5);
+  const scheduleText = `(${fecha} ${hora})`;
+  if (!base) return `Consulta ${scheduleText}`;
+  if (/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*$/.test(base)) {
+    return base.replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*$/, scheduleText);
+  }
+  return `${base} ${scheduleText}`;
+}
+
+function normalizeAgendaProgramacionModo(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
 }
 
 export default function CotizarRayosXPage() {
@@ -31,7 +49,8 @@ export default function CotizarRayosXPage() {
   const [seleccionados, setSeleccionados] = useState([]);
   const [cantidades, setCantidades] = useState({});
   const [programacionPorEstudio, setProgramacionPorEstudio] = useState({}); // { [tarifaId]: { fecha, hora } }
-  const [feedbackProgramacion, setFeedbackProgramacion] = useState({});
+  const [manualProgramacionByEstudio, setManualProgramacionByEstudio] = useState({});
+  const [agendaProgramacionModo, setAgendaProgramacionModo] = useState(() => getCachedAgendaProgramacionModo());
   const [mensaje, setMensaje] = useState("");
   const [preloadedCounts, setPreloadedCounts] = useState({}); // {tarifaId: cantidad}
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
@@ -39,7 +58,7 @@ export default function CotizarRayosXPage() {
   const [cajaEstado, setCajaEstado] = useState(null);
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora}
-  const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
+  const { cart, addItems, replaceCart, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
   const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
@@ -156,6 +175,55 @@ export default function CotizarRayosXPage() {
     };
   };
 
+  const selectedAvailabilityTargets = useMemo(() => {
+    if (normalizeAgendaProgramacionModo(agendaProgramacionModo) === "free") return [];
+    return seleccionados
+      .map((id) => {
+        const tarifa = tarifas.find((t) => Number(t.id) === Number(id));
+        const medicoId = Number(tarifa?.medico_id || 0);
+        const actual = programacionPorEstudio[Number(id)] || {};
+        const fecha = String(actual?.fecha || getLimaDate()).slice(0, 10);
+        if (medicoId <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return null;
+        return {
+          tarifaId: Number(id),
+          medicoId,
+          fecha,
+          key: `${medicoId}|${fecha}`,
+        };
+      })
+      .filter(Boolean);
+  }, [seleccionados, tarifas, programacionPorEstudio, agendaProgramacionModo]);
+
+  const { availabilityByPair } = useAgendaAvailabilityByTargets({
+    targets: selectedAvailabilityTargets,
+    enabled: normalizeAgendaProgramacionModo(agendaProgramacionModo) !== "free" && selectedAvailabilityTargets.length > 0,
+  });
+
+  // El selector de hora muestra la primera hora libre cuando la guardada no esta disponible para la fecha
+  // elegida. Se sincroniza el estado para registrar exactamente lo que se ve.
+  useEffect(() => {
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    if (modo === "free" || selectedAvailabilityTargets.length === 0) return;
+    const horaBaseEdicion = cotizacionIdEdicion > 0 ? String(programacionBaseEdicion?.hora || "").slice(0, 5) : "";
+    setProgramacionPorEstudio((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      selectedAvailabilityTargets.forEach((target) => {
+        const avail = availabilityByPair[target.key];
+        if (!avail || avail.loading || avail.error) return;
+        if (modo === "mixed" && manualProgramacionByEstudio[target.tarifaId]) return;
+        const libres = Array.isArray(avail.horasLibres) ? avail.horasLibres : [];
+        const inicios = horaBaseEdicion && !libres.includes(horaBaseEdicion) ? [horaBaseEdicion, ...libres] : libres;
+        if (inicios.length === 0) return;
+        const actual = next[target.tarifaId] || {};
+        if (inicios.includes(String(actual.hora || "").slice(0, 5))) return;
+        next[target.tarifaId] = { ...actual, fecha: target.fecha, hora: inicios[0] };
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [selectedAvailabilityTargets, availabilityByPair, agendaProgramacionModo, manualProgramacionByEstudio, cotizacionIdEdicion, programacionBaseEdicion]);
+
   // Filtrar tarifas por búsqueda
   const tarifasFiltradas = tarifas.filter(tarifa => {
     const texto = `${tarifa.descripcion || tarifa.nombre}`.toLowerCase();
@@ -197,6 +265,23 @@ export default function CotizarRayosXPage() {
         setMedicos(data.medicos || []);
       });
   }, [pacienteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const applyModeFromPayload = (data) => {
+      setAgendaProgramacionModo(normalizeAgendaProgramacionModo(data?.agenda_programacion_modo));
+    };
+    fetchConfigSingleton().then((result) => {
+      if (cancelled) return;
+      applyModeFromPayload(result?.data || {});
+    });
+    const onConfigUpdated = (event) => applyModeFromPayload(event?.detail || {});
+    window.addEventListener("clinica-config-updated", onConfigUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("clinica-config-updated", onConfigUpdated);
+    };
+  }, []);
 
   // Consultar estado de caja al entrar
   useEffect(() => {
@@ -540,38 +625,27 @@ export default function CotizarRayosXPage() {
     }));
   };
 
-  const aplicarSiguienteHorarioSugeridoEstudio = (estudioId) => {
+  const actualizarHoraProgramadaEstudio = (estudioId, horaValue, options = {}) => {
     const key = Number(estudioId);
-    const fechaActual = String(programacionPorEstudio[key]?.fecha || getLimaDate()).slice(0, 10);
-    const horaActual = String(programacionPorEstudio[key]?.hora || "").slice(0, 5);
-    const sugerida = getProgramacionSugeridaEstudio(key, fechaActual);
-    const horaAplicada = getNextSuggestedHoraVisible({
-      horaActual,
-      horaSugerida: sugerida.hora,
-      stepMinutes: 30,
-    });
-    setProgramacionPorEstudio((prev) => ({
-      ...prev,
-      [key]: {
-        fecha: sugerida.fecha,
-        hora: horaAplicada || sugerida.hora,
-      },
-    }));
+    const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+    const shouldCheckOccupied = modo !== "free" && !options.skipOccupiedCheck;
+    const horaNorm = normalizeHourHm(horaValue);
+    const actual = programacionPorEstudio[key] || getProgramacionSugeridaEstudio(key);
+    const fecha = String(actual?.fecha || "").slice(0, 10);
+    const tarifa = tarifas.find((t) => Number(t.id) === key);
+    const medicoId = Number(tarifa?.medico_id || 0);
+    const ocupadas = Array.isArray(availabilityByPair?.[`${medicoId}|${fecha}`]?.horasOcupadas)
+      ? availabilityByPair[`${medicoId}|${fecha}`].horasOcupadas
+      : [];
 
-    const horaFinal = String(horaAplicada || sugerida.hora || "").slice(0, 5);
-    setFeedbackProgramacion((prev) => ({
-      ...prev,
-      [key]: `Hora aplicada: ${horaFinal}`,
-    }));
-    window.setTimeout(() => {
-      setFeedbackProgramacion((prev) => {
-        if (!prev[key]) return prev;
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-    }, 1500);
+    if (shouldCheckOccupied && horaNorm && ocupadas.includes(horaNorm)) {
+      Swal.fire("Horario ocupado", `La hora ${horaNorm} ya está ocupada para este médico en ${fecha}. Elige otra hora para evitar choque.`, "warning");
+      return;
+    }
+
+    actualizarProgramacion(key, "hora", String(horaValue || "").slice(0, 5));
   };
+
   const calcularTotal = () => {
     return seleccionados.reduce((total, tid) => {
       const tarifa = tarifas.find(t => Number(t.id) === Number(tid));
@@ -608,6 +682,7 @@ export default function CotizarRayosXPage() {
         medico_nombre: nombreMedico,
         consulta_id: cotizacionIdEdicion > 0 ? consultaBaseId : 0,
         omitir_alerta_fuera_horario: coincideProgramacionBase ? 1 : 0,
+        permitir_cruce_horario_base: coincideProgramacionBase ? 1 : 0,
         fecha_programada: programacion.fecha,
         hora_programada: programacion.hora,
       } : null;
@@ -661,6 +736,8 @@ export default function CotizarRayosXPage() {
       stepMinutes: 30,
     });
 
+    const consultaShiftsByKey = new Map();
+
     const cruceEnCarrito = detectarCruceConCarrito({
       cartItems: cart?.items,
       nuevosDetalles: detalles,
@@ -681,13 +758,41 @@ export default function CotizarRayosXPage() {
       baseUrl: BASE_URL,
       Swal,
       entries: agendaEntries,
-      onApplySuggestion: (entry, nuevaHora) => {
+      onApplySuggestion: (entry, nuevaHora, nuevaFecha, meta = {}) => {
         detalles.forEach((d) => {
           const medicoId = Number(d?.medico_id || 0);
           const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
           const horaDet = String(d?.hora_programada || "").slice(0, 5);
           if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
-            d.hora_programada = String(nuevaHora || "").slice(0, 5);
+            const horaDetOriginal = horaDet;
+            if (String(nuevaFecha || "").slice(0, 10)) {
+              d.fecha_programada = String(nuevaFecha || "").slice(0, 10);
+            }
+            if (meta?.isAdicional) {
+              const nuevaHoraNormalizada = String(nuevaHora || "").slice(0, 5);
+              const consultaRelacionada = Array.isArray(cart?.items)
+                ? cart.items.find((it) => (
+                  String(it?.serviceType || "").toLowerCase() === "consulta"
+                  && Number(it?.medicoId || 0) === Number(entry.medicoId)
+                  && String(it?.fechaProgramada || "").slice(0, 10) === entry.fecha
+                  && String(it?.horaProgramada || "").slice(0, 5) === horaDetOriginal
+                ))
+                : null;
+              if (consultaRelacionada?.key) {
+                consultaShiftsByKey.set(String(consultaRelacionada.key), {
+                  fecha: String(nuevaFecha || "").slice(0, 10) || entry.fecha,
+                  hora: nuevaHoraNormalizada,
+                });
+              }
+              d.hora_programada = nuevaHoraNormalizada;
+              d.adicional_autorizado = true;
+              d.observacion_programacion = "Adicional autorizado por recepción";
+              if (!/adicional autorizado/i.test(String(d.descripcion || ""))) {
+                d.descripcion = `${String(d.descripcion || "Rayos X").trim()} · Adicional autorizado`;
+              }
+            } else {
+              d.hora_programada = String(nuevaHora || "").slice(0, 5);
+            }
           }
         });
       },
@@ -696,21 +801,58 @@ export default function CotizarRayosXPage() {
       return;
     }
 
-    addItems({
-      patientId: Number(pacienteId),
-      patientName: paciente ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim() : `Paciente #${pacienteId}`,
-      items: detalles.map((d) => ({
-        serviceType: 'rayosx',
-        serviceId: Number(d.servicio_id || 0),
-        description: d.descripcion || 'Rayos X',
-        quantity: Number(d.cantidad || 1),
-        unitPrice: Number(d.precio_unitario || 0),
-        source: 'rayosx',
-        medicoId: Number(d.medico_id || 0) || null,
-        fechaProgramada: String(d.fecha_programada || ""),
-        horaProgramada: String(d.hora_programada || ""),
-      })),
-    });
+    const patientId = Number(pacienteId);
+    const patientName = paciente
+      ? `${paciente.nombres || paciente.nombre || ''} ${paciente.apellidos || paciente.apellido || ''}`.trim()
+      : (nombrePacienteTemporal || `Paciente #${pacienteId}`);
+    const nuevosItemsRayosX = detalles.map((d) => ({
+      serviceType: 'rayosx',
+      serviceId: Number(d.servicio_id || 0),
+      description: d.descripcion || 'Rayos X',
+      quantity: Number(d.cantidad || 1),
+      unitPrice: Number(d.precio_unitario || 0),
+      source: 'rayosx',
+      medicoId: Number(d.medico_id || 0) || null,
+      fechaProgramada: String(d.fecha_programada || ""),
+      horaProgramada: String(d.hora_programada || ""),
+      observacionProgramacion: String(d.observacion_programacion || ""),
+      adicionalAutorizado: Boolean(d.adicional_autorizado),
+    }));
+
+    if (consultaShiftsByKey.size > 0 && Array.isArray(cart?.items) && cart.items.length > 0) {
+      const cartActualizado = cart.items.map((it) => {
+        const shift = consultaShiftsByKey.get(String(it?.key || ""));
+        if (!shift) return it;
+        const fechaProgramada = String(shift.fecha || it.fechaProgramada || "").slice(0, 10);
+        const horaProgramada = String(shift.hora || it.horaProgramada || "").slice(0, 5);
+        const descripcionConHorario = updateConsultaDescriptionSchedule(it.description, fechaProgramada, horaProgramada);
+        const descripcionFinal = /adicional autorizado/i.test(String(descripcionConHorario || ""))
+          ? descripcionConHorario
+          : `${String(descripcionConHorario || "Consulta").trim()} · Adicional autorizado`;
+        return {
+          ...it,
+          fechaProgramada,
+          horaProgramada,
+          consultaFecha: fechaProgramada,
+          consultaHora: horaProgramada,
+          description: descripcionFinal,
+          observacionProgramacion: "Adicional autorizado por recepción",
+          adicionalAutorizado: true,
+        };
+      });
+      replaceCart({
+        patientId,
+        patientName,
+        patientDni: String(cart?.patientDni || paciente?.dni || dniPacienteTemporal || ""),
+        items: [...cartActualizado, ...nuevosItemsRayosX],
+      });
+    } else {
+      addItems({
+        patientId,
+        patientName,
+        items: nuevosItemsRayosX,
+      });
+    }
 
     if (!isEditingCotizacion) {
       setSeleccionados([]);
@@ -760,13 +902,23 @@ export default function CotizarRayosXPage() {
       baseUrl: BASE_URL,
       Swal,
       entries: agendaEntries,
-      onApplySuggestion: (entry, nuevaHora) => {
+      onApplySuggestion: (entry, nuevaHora, nuevaFecha, meta = {}) => {
         detalles.forEach((d) => {
           const medicoId = Number(d?.medico_id || 0);
           const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
           const horaDet = String(d?.hora_programada || "").slice(0, 5);
           if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+            if (String(nuevaFecha || "").slice(0, 10)) {
+              d.fecha_programada = String(nuevaFecha || "").slice(0, 10);
+            }
             d.hora_programada = String(nuevaHora || "").slice(0, 5);
+            if (meta?.isAdicional) {
+              d.adicional_autorizado = true;
+              d.observacion_programacion = "Adicional autorizado por recepción";
+              if (!/adicional autorizado/i.test(String(d.descripcion || ""))) {
+                d.descripcion = `${String(d.descripcion || "Rayos X").trim()} · Adicional autorizado`;
+              }
+            }
           }
         });
       },
@@ -1042,6 +1194,21 @@ export default function CotizarRayosXPage() {
                   const cantidad = cantidades[tid] || 1;
                   const subtotal = Number(tarifa?.precio_particular || 0) * cantidad;
                   const programacion = programacionPorEstudio[Number(tid)] || getProgramacionSugeridaEstudio(Number(tid));
+                  const medicoId = Number(tarifa?.medico_id || 0);
+                  const availability = availabilityByPair[`${medicoId}|${String(programacion.fecha || "").slice(0, 10)}`] || null;
+                  const modo = normalizeAgendaProgramacionModo(agendaProgramacionModo);
+                  const isModeFree = modo === "free";
+                  const isModeMixed = modo === "mixed";
+                  const isModeStrict = modo === "strict";
+                  const manualEnabled = Boolean(manualProgramacionByEstudio[Number(tid)]) && isModeMixed;
+                  const horasLibres = Array.isArray(availability?.horasLibres) ? availability.horasLibres : [];
+                  const horasOcupadas = Array.isArray(availability?.horasOcupadas) ? availability.horasOcupadas : [];
+                  const horaBaseEdicion = cotizacionIdEdicion > 0
+                    ? String(programacionBaseEdicion?.hora || "").slice(0, 5)
+                    : "";
+                  const iniciosValidos = (!horaBaseEdicion || horasLibres.includes(horaBaseEdicion))
+                    ? horasLibres
+                    : [horaBaseEdicion, ...horasLibres];
                   return tarifa ? (
                     <li key={tid} className="py-2 flex flex-col gap-2">
                       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
@@ -1062,28 +1229,83 @@ export default function CotizarRayosXPage() {
                         </label>
                         <label className="text-xs text-slate-700 flex flex-col gap-1">
                           Hora programada
-                          <input
-                            type="time"
-                            value={programacion.hora || ''}
-                            onChange={(e) => actualizarProgramacion(tid, 'hora', e.target.value)}
-                            className="border rounded-lg px-2 py-1 bg-white"
-                          />
+                          {isModeFree ? (
+                            <input
+                              type="time"
+                              value={programacion.hora || ''}
+                              onChange={(e) => actualizarHoraProgramadaEstudio(tid, e.target.value, { skipOccupiedCheck: true })}
+                              className="border rounded-lg px-2 py-1 bg-white"
+                            />
+                          ) : (iniciosValidos.length > 0 && !manualEnabled) ? (
+                            <select
+                              value={iniciosValidos.includes(programacion.hora) ? programacion.hora : iniciosValidos[0]}
+                              onChange={(e) => actualizarProgramacion(tid, 'hora', String(e.target.value || "").slice(0, 5))}
+                              className="border rounded-lg px-2 py-1 bg-white"
+                            >
+                              {iniciosValidos.map((hora) => (
+                                <option key={`${tid}-${hora}`} value={hora}>
+                                  {hora}
+                                  {horaBaseEdicion && hora === horaBaseEdicion ? " (hora base)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="time"
+                              value={programacion.hora || ''}
+                              onChange={(e) => actualizarHoraProgramadaEstudio(tid, e.target.value)}
+                              className="border rounded-lg px-2 py-1 bg-white"
+                              disabled={isModeStrict && iniciosValidos.length === 0}
+                            />
+                          )}
                         </label>
                       </div>
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => aplicarSiguienteHorarioSugeridoEstudio(tid)}
-                          className="text-xs px-3 py-1.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                        >
-                          Usar siguiente hora sugerida
-                        </button>
-                      </div>
-                      {feedbackProgramacion[Number(tid)] && (
-                        <div className="text-[11px] text-emerald-700 font-semibold text-right">
-                          {feedbackProgramacion[Number(tid)]}
+                      {isModeMixed && medicoId > 0 && (
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setManualProgramacionByEstudio((prev) => ({
+                              ...prev,
+                              [Number(tid)]: !prev[Number(tid)],
+                            }))}
+                            className={`text-xs px-3 py-1.5 rounded border ${manualEnabled ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                          >
+                            {manualEnabled ? "Usando hora manual/fuera de horario" : "Permitir hora manual/fuera de horario"}
+                          </button>
                         </div>
                       )}
+                      <div className="text-[11px] text-slate-600 space-y-1">
+                        <div>
+                          <span className="font-semibold">Modo agenda:</span>{" "}
+                          {isModeStrict ? "Estricto" : isModeFree ? "Libre" : "Mixto"}
+                        </div>
+                        {medicoId <= 0 ? (
+                          <div className="text-amber-700">Este estudio no tiene médico asignado; no se puede mostrar disponibilidad.</div>
+                        ) : isModeFree ? (
+                          <div className="text-slate-500">Modo libre activo: se permite seleccionar hora manual sin depender del horario regular del médico.</div>
+                        ) : availability?.loading ? (
+                          <div className="text-slate-500">Consultando horas libres del médico...</div>
+                        ) : availability?.error ? (
+                          <div className="text-rose-700">No se pudo cargar disponibilidad: {availability.error}</div>
+                        ) : (
+                          <>
+                            <div>
+                              <span className="font-semibold">Horas libres del médico:</span>{" "}
+                              {horasLibres.length > 0 ? horasLibres.join(", ") : "sin horas libres"}
+                            </div>
+                            <div>
+                              <span className="font-semibold">Horas ocupadas del médico:</span>{" "}
+                              {horasOcupadas.length > 0 ? horasOcupadas.join(", ") : "sin horas ocupadas"}
+                            </div>
+                            {isModeStrict && iniciosValidos.length === 0 && (
+                              <div className="text-amber-700">Modo estricto: cambia fecha para encontrar horario regular disponible.</div>
+                            )}
+                            {isModeMixed && manualEnabled && (
+                              <div className="text-amber-700">Hora manual habilitada: si queda fuera de horario regular se marcará como adicional autorizado en la validación.</div>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </li>
                   ) : null;
                 })}
