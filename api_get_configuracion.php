@@ -161,7 +161,7 @@ try {
         $configuracion['duracion_slot_min'] = max(5, min(120, $slot));
         $configuracion['agenda_programacion_modo'] = cfg_normalize_agenda_programacion_modo($configuracion['agenda_programacion_modo'] ?? 'mixed');
     } else {
-        $configuracion['logo_shape_sistema'] = String($configuracion['logo_shape_sistema'] ?? 'auto');
+        $configuracion['logo_shape_sistema'] = (string)($configuracion['logo_shape_sistema'] ?? 'auto');
     }
     
     echo json_encode([
