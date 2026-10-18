@@ -770,7 +770,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onQuitarLabUrgente, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud, paqueteResumenFallback }) {
+const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onQuitarLabUrgente, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const saldoOperativo = useMemo(() => (
     Number.isFinite(Number(row?.saldo_pendiente_operativo))
@@ -885,8 +885,8 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
     ));
   }, [row?.cotizacion_ids_grupo]);
   const paquetesResumen = useMemo(
-    () => parsePaquetesResumen(String(row.paquetes_resumen || "").trim() || String(paqueteResumenFallback || "").trim()),
-    [row.paquetes_resumen, paqueteResumenFallback]
+    () => parsePaquetesResumen(String(row.paquetes_resumen || "").trim()),
+    [row.paquetes_resumen]
   );
 
   const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
@@ -1482,10 +1482,6 @@ export default function CotizacionesPage() {
   const [correlativosImagenDetalleByCotizacionId, setCorrelativosImagenDetalleByCotizacionId] = useState({});
   const [correlativoFechaByConsultaId, setCorrelativoFechaByConsultaId] = useState({});
   const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
-  const [paquetesFallbackByCotizacion, setPaquetesFallbackByCotizacion] = useState({});
-  const paquetesFallbackTriedRef = useRef(new Set());
-  const paquetesFallbackAttemptsRef = useRef(new Map());
-  const [paquetesFallbackRetryTick, setPaquetesFallbackRetryTick] = useState(0);
 
 
   const cargarEstadosAnticipados = useCallback(async (rowsInput, options = {}) => {
@@ -1868,78 +1864,6 @@ export default function CotizacionesPage() {
   }, [rows, filtroSolicitudHC, filtrosAplicados.fechaInicio, filtrosAplicados.fechaFin]);
 
   const rowsOperativos = useMemo(() => agruparFilasOperativasPorEpisodio(rowsVisibles), [rowsVisibles]);
-
-  useEffect(() => {
-    const idsPendientes = (Array.isArray(rowsOperativos) ? rowsOperativos : [])
-      .map((row) => Number(row?.id || 0))
-      .filter((id) => id > 0)
-      .filter((id) => {
-        if (paquetesFallbackTriedRef.current.has(id)) return false;
-        const attempts = Number(paquetesFallbackAttemptsRef.current.get(id) || 0);
-        if (attempts >= 3) return false;
-        const row = rowsOperativos.find((it) => Number(it?.id || 0) === id);
-        const paquetesRow = parsePaquetesResumen(row?.paquetes_resumen || "");
-        return paquetesRow.length === 0;
-      });
-
-    if (idsPendientes.length === 0) return;
-
-    idsPendientes.forEach((id) => {
-      paquetesFallbackTriedRef.current.add(id);
-      const attempts = Number(paquetesFallbackAttemptsRef.current.get(id) || 0);
-      paquetesFallbackAttemptsRef.current.set(id, attempts + 1);
-    });
-
-    const controller = new AbortController();
-    let active = true;
-
-    const hidratarPaquetes = async () => {
-      const updates = {};
-      const failedIds = [];
-
-      await Promise.all(idsPendientes.map(async (cotizacionId) => {
-        try {
-          const res = await authFetch(`api_cotizaciones.php?cotizacion_id=${cotizacionId}&_t=${Date.now()}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          const data = await res.json();
-          if (!data?.success) return;
-
-          const cot = data?.cotizacion || {};
-          const resumen = String(cot?.paquetes_resumen || cot?.paquete_resumen || "").trim();
-          if (resumen) {
-            updates[cotizacionId] = resumen;
-          } else {
-            failedIds.push(cotizacionId);
-          }
-        } catch {
-          failedIds.push(cotizacionId);
-        }
-      }));
-
-      if (!active) return;
-      if (failedIds.length > 0) {
-        failedIds.forEach((id) => {
-          // Permite reintentar en el próximo ciclo cuando una consulta puntual falle temporalmente.
-          paquetesFallbackTriedRef.current.delete(id);
-        });
-        window.setTimeout(() => {
-          if (!active) return;
-          setPaquetesFallbackRetryTick((v) => v + 1);
-        }, 900);
-      }
-      if (Object.keys(updates).length === 0) return;
-      setPaquetesFallbackByCotizacion((prev) => ({ ...prev, ...updates }));
-    };
-
-    void hidratarPaquetes();
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [rowsOperativos, paquetesFallbackRetryTick]);
 
   const relacionSolicitudByCotizacion = useMemo(() => construirRelacionPorCotizacion(rowsOperativos), [rowsOperativos]);
 
@@ -2956,7 +2880,6 @@ export default function CotizacionesPage() {
                     correlativoFechaAtencion={correlativoFechaAtencion}
                     correlativosServicios={correlativosServicios}
                     relacionSolicitud={relacionSolicitudByCotizacion[Number(row?.id || 0)] || null}
-                    paqueteResumenFallback={paquetesFallbackByCotizacion[Number(row?.id || 0)] || ""}
                   />
                   );
                 })()
