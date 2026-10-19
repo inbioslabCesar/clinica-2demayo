@@ -7,6 +7,9 @@ import { authFetch } from "../utils/apiClient";
 
 const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
+// Temporal: centralizamos cambios de cotización en el flujo "Migrar plan" desde Atenciones
+// para evitar confusión operativa en recepción.
+const EDITAR_COTIZACION_TEMP_DISABLED = true;
 
 function buildBrandFromConfig(cfg = {}) {
   const rawLogo = String(cfg.logo_url || "").trim();
@@ -937,6 +940,7 @@ export default function DetalleCotizacionPage() {
     ? Number(totalPendienteComercial || 0)
     : Number(cotizacion?.saldo_pendiente || 0);
   const puedeEditar = !esVistaGrupo && estado !== "anulada";
+  const edicionTemporalDeshabilitada = EDITAR_COTIZACION_TEMP_DISABLED;
   const puedeGestionarDevolucion = estado !== "anulada";
   const puedeCobrar = (estado === "pendiente" || estado === "parcial") && Number(saldoVisibleResumen || 0) > 0;
 
@@ -2141,11 +2145,16 @@ export default function DetalleCotizacionPage() {
             )}
             {puedeEditar && (
               <button
-                onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(cotizacion?.paciente_id || 0)}&cotizacion_id=${Number(cotizacion?.id || 0)}&back_to=/cotizaciones&modo=editar`, {
-                  state: { pacienteId: Number(cotizacion?.paciente_id || 0), cotizacionId: Number(cotizacion?.id || 0), backTo: "/cotizaciones", modo: "editar" },
-                })}
-                className="text-white px-4 py-2 rounded"
-                style={themeGradient}
+                disabled={edicionTemporalDeshabilitada}
+                onClick={() => {
+                  if (edicionTemporalDeshabilitada) return;
+                  navigate(`/seleccionar-servicio?paciente_id=${Number(cotizacion?.paciente_id || 0)}&cotizacion_id=${Number(cotizacion?.id || 0)}&back_to=/cotizaciones&modo=editar`, {
+                    state: { pacienteId: Number(cotizacion?.paciente_id || 0), cotizacionId: Number(cotizacion?.id || 0), backTo: "/cotizaciones", modo: "editar" },
+                  });
+                }}
+                className={`text-white px-4 py-2 rounded ${edicionTemporalDeshabilitada ? "bg-gray-300 text-gray-600 cursor-not-allowed opacity-70" : ""}`}
+                style={edicionTemporalDeshabilitada ? {} : themeGradient}
+                title={edicionTemporalDeshabilitada ? 'Edición temporalmente inhabilitada. Usa "Migrar plan" desde Atenciones.' : "Editar cotización"}
               >Editar cotizacion</button>
             )}
             {!esVistaGrupo && puedeEditar && (estado === "pendiente" || estado === "parcial") && (
