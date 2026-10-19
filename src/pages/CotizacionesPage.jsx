@@ -17,6 +17,9 @@ const COTIZACIONES_LIMIT_STORAGE_KEY = "cotizaciones_rows_limit_v1";
 const MAX_HC_HYDRATION_PER_LOAD = 6;
 const MAX_IMAGEN_HYDRATION_PER_LOAD = 4;
 const HYDRATION_CONCURRENCY = 2;
+// Temporal: en recepción se centraliza la edición de ítems (incluida farmacia) en "Migrar plan"
+// para evitar confusión operativa entre dos botones con flujo similar.
+const EDITAR_COTIZACION_TEMP_DISABLED = true;
 
 function buildBrandFromConfig(cfg = {}) {
   const rawLogo = String(cfg.logo_url || "").trim();
@@ -893,7 +896,8 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   const esGrupoEpisodio = Number(row?.es_grupo_episodio || 0) === 1 || Number(row?.adendas_count || 0) > 0;
   const grupoIncluyePagadas = Number(row?.grupo_incluye_pagadas || 0) === 1;
   const bloquearEdicionPorGrupoPagado = esGrupoEpisodio && grupoIncluyePagadas;
-  const edicionBloqueada = cotizacionPagada || bloquearEdicionPorGrupoPagado;
+  const edicionTemporalDeshabilitada = EDITAR_COTIZACION_TEMP_DISABLED;
+  const edicionBloqueada = edicionTemporalDeshabilitada || cotizacionPagada || bloquearEdicionPorGrupoPagado;
   const tieneResultadosLaboratorio = Number(row.lab_completado) === 1 && servicios.includes("laboratorio");
   const puedeGestionarLaboratorioDesdeCotizacion = cotizacionPagada && servicios.includes("laboratorio") && Number(row.paciente_id || 0) > 0;
   const puedeAbrirLaboratorio = puedeGestionarLaboratorioDesdeCotizacion || tieneResultadosLaboratorio;
@@ -1398,11 +1402,13 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               className={`${ACTION_BTN_BASE} ${edicionBloqueada ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50' : ''}`}
               style={edicionBloqueada ? {} : THEME_OUTLINE}
               title={
-                cotizacionPagada
+                edicionTemporalDeshabilitada
+                  ? 'Edición temporalmente inhabilitada. Usa "Migrar plan" para agregar o quitar servicios.'
+                  : (cotizacionPagada
                   ? 'No se puede editar una cotización pagada'
                   : (bloquearEdicionPorGrupoPagado
                     ? 'Este episodio agrupado incluye cotizaciones pagadas. Gestiona cambios como adenda desde la atención vigente.'
-                    : 'Editar cotización')
+                    : 'Editar cotización'))
               }
               aria-label="Editar cotización"
             >
