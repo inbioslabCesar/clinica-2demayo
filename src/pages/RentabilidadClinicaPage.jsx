@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts';
 import { authFetch } from '../utils/apiClient';
+import { Link } from 'react-router-dom';
 
 const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -29,6 +30,7 @@ const SERVICIO_LABEL = {
   contrato_abono: 'Abonos de contratos',
   descuentos_ajustes: 'Descuentos y ajustes',
   sin_detalle: 'Cobrado sin detalle de servicio',
+  sin_desglose: 'Otros ingresos (sin desglose por servicio)',
   otros: 'Otros',
 };
 
@@ -111,7 +113,6 @@ export default function RentabilidadClinicaPage() {
   const [error, setError] = useState('');
   const [verSupuestos, setVerSupuestos] = useState(false);
   const [verSinActividad, setVerSinActividad] = useState(true);
-  const [verSinMedico, setVerSinMedico] = useState(false);
 
   const cargar = useCallback(async (r) => {
     setLoading(true);
@@ -145,10 +146,35 @@ export default function RentabilidadClinicaPage() {
 
   const totalesMedicos = useMemo(() => {
     const filas = data?.por_medico || [];
-    const ingresos = filas.reduce((acc, f) => acc + Number(f.ingresos || 0), 0);
-    const honorarios = filas.reduce((acc, f) => acc + Number(f.honorarios || 0), 0);
-    return { ingresos, honorarios, aporte: ingresos - honorarios };
+    const sum = (campo) => filas.reduce((acc, f) => acc + Number(f[campo] || 0), 0);
+    const ingresos = sum('ingresos');
+    const honorarios = sum('honorarios');
+    return {
+      ingresos,
+      honorarios,
+      pagado: sum('honorario_pagado'),
+      pendiente: sum('honorario_pendiente'),
+      indicaciones: sum('indicaciones'),
+      aporte: ingresos - honorarios,
+    };
   }, [data]);
+
+  const totalClinica = useMemo(() => {
+    const propios = Number(data?.ingresos_propios?.total || 0);
+    const hd = data?.honorarios_detalle || {};
+    const ingresos = totalesMedicos.ingresos + propios;
+    const honorarios = Number(data?.resumen?.honorarios || 0);
+    return {
+      propios,
+      ingresos,
+      honorarios,
+      pagado: Number(hd.pagado || 0),
+      pendiente: Number(hd.pendiente || 0),
+      anulados: Number(hd.sobre_cobros_anulados || 0),
+      sinMedico: Number(hd.sin_medico || 0),
+      aporte: ingresos - honorarios,
+    };
+  }, [data, totalesMedicos]);
 
   const filasMedicos = useMemo(
     () => (data?.por_medico || []).filter((f) => verSinActividad || !f.sin_actividad),
@@ -226,7 +252,17 @@ export default function RentabilidadClinicaPage() {
               titulo="Honorarios médicos"
               valor={fmtMoney(resumen.honorarios)}
               acento="text-amber-700"
-              pie={<span className="text-xs text-slate-500">{fmtPct(resumen.honorarios_pct)} del ingreso</span>}
+              pie={(
+                <div className="flex flex-col">
+                  <span className="text-xs text-slate-500">{fmtPct(resumen.honorarios_pct)} del ingreso</span>
+                  <span className="text-xs text-slate-500">
+                    Pagado {fmtMoney(resumen.honorarios_pagado)} · Pendiente {fmtMoney(resumen.honorarios_pendiente)}
+                  </span>
+                  {Number(resumen.honorarios_sobre_cobro_anulado || 0) > 0 && (
+                    <span className="text-xs text-rose-600">Incluye {fmtMoney(resumen.honorarios_sobre_cobro_anulado)} sobre cobros anulados</span>
+                  )}
+                </div>
+              )}
             />
             <Kpi
               titulo="Gastos registrados"
@@ -317,13 +353,17 @@ export default function RentabilidadClinicaPage() {
           </div>
 
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <h2 className="font-bold text-slate-800">Aporte de la clínica por médico</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+              <h2 className="font-bold text-slate-800">Aporte de la clínica por médico (acto médico)</h2>
               <span className="text-xs text-slate-500">
                 Fuente: {data.atribucion?.fuente === 'produccion_medica' ? 'producción médica (reparto proporcional de lo cobrado)' : 'tarifa de honorarios (estimado)'}
                 {data.atribucion?.cobertura_pct !== null && data.atribucion?.cobertura_pct !== undefined ? ` · cobertura ${fmtPct(data.atribucion.cobertura_pct)}` : ''}
               </span>
             </div>
+            <p className="text-xs text-slate-500 mb-3">
+              Cada médico muestra solo el servicio que él realiza (consulta, ecografía, rayos X, procedimientos, operaciones y paquetes con %).
+              El % va para quien realiza el servicio, no para quien lo solicita. Laboratorio y medicamentos son 100% de la clínica.
+            </p>
             {medicosSinActividad > 0 && (
               <label className="flex items-center gap-2 text-xs text-slate-600 mb-2">
                 <input type="checkbox" checked={verSinActividad} onChange={(e) => setVerSinActividad(e.target.checked)} />
@@ -335,81 +375,143 @@ export default function RentabilidadClinicaPage() {
                 <thead>
                   <tr className="text-left text-xs uppercase text-slate-500 border-b border-slate-200">
                     <th className="py-2 pr-3">Médico</th>
-                    <th className="py-2 pr-3 text-right">Atenciones</th>
+                    <th className="py-2 pr-3 text-right" title="Cobros con un acto médico realizado por el médico">Atenciones</th>
                     <th className="py-2 pr-3 text-right">Ingresos</th>
                     <th className="py-2 pr-3 text-right">Honorario</th>
+                    <th className="py-2 pr-3 text-right">Pagado</th>
+                    <th className="py-2 pr-3 text-right">Pendiente</th>
                     <th className="py-2 pr-3 text-right">Aporte clínica</th>
                     <th className="py-2 pr-3 text-right">Margen</th>
                     <th className="py-2 pr-3 text-right">vs anterior</th>
-                    <th className="py-2 text-right">Aporte / día</th>
+                    <th className="py-2 pr-3 text-right">Aporte / día</th>
+                    <th className="py-2 text-right" title="Laboratorio, farmacia y otros que el médico indicó. Son ingreso de la clínica y no suman a su aporte ni a su honorario.">Indicó (no suma)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filasMedicos.length === 0 && (
-                    <tr><td colSpan={8} className="py-4 text-center text-slate-500">Sin movimientos en el período.</td></tr>
+                    <tr><td colSpan={11} className="py-4 text-center text-slate-500">Sin movimientos en el período.</td></tr>
                   )}
                   {filasMedicos.map((f) => (
-                    <React.Fragment key={f.medico_id}>
-                      <tr className={`border-b border-slate-100 hover:bg-slate-50 ${f.sin_actividad ? 'text-slate-400' : ''}`}>
-                        <td className={`py-2 pr-3 font-medium ${f.sin_actividad ? 'text-slate-400' : 'text-slate-800'}`}>
-                          {f.medico}
-                          {f.sin_actividad && <span className="ml-2 text-[10px] uppercase rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">Sin actividad</span>}
-                          {f.medico_id === 0 && (data.sin_medico_detalle || []).length > 0 && (
-                            <button type="button" onClick={() => setVerSinMedico((v) => !v)} className="ml-2 text-xs text-indigo-600 underline">
-                              {verSinMedico ? 'ocultar detalle' : 'ver detalle'}
-                            </button>
-                          )}
-                        </td>
-                        <td className="py-2 pr-3 text-right">{f.atenciones}</td>
-                        <td className="py-2 pr-3 text-right">{fmtMoney(f.ingresos)}</td>
-                        <td className={`py-2 pr-3 text-right ${f.sin_actividad ? '' : 'text-amber-700'}`}>{fmtMoney(f.honorarios)}</td>
-                        <td className={`py-2 pr-3 text-right font-semibold ${f.sin_actividad ? '' : f.aporte_clinica >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{fmtMoney(f.aporte_clinica)}</td>
-                        <td className="py-2 pr-3 text-right">{fmtPct(f.margen_pct)}</td>
-                        <td className="py-2 pr-3 text-right">
-                          {f.variacion_pp === null || f.variacion_pp === undefined ? (
-                            <span className="text-slate-400">—</span>
-                          ) : (
-                            <span className={f.variacion_pp >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                              {f.variacion_pp >= 0 ? '▲' : '▼'} {Math.abs(f.variacion_pp).toFixed(1)} pp
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2 text-right">{fmtMoney(f.aporte_por_dia)}</td>
-                      </tr>
-                      {f.medico_id === 0 && verSinMedico && (
-                        <tr className="bg-slate-50">
-                          <td colSpan={8} className="px-3 py-2 text-xs text-slate-600">
-                            <div className="font-semibold mb-1">Lo cobrado sin médico asignado en producción médica:</div>
-                            <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5">
-                              {data.sin_medico_detalle.map((d) => (
-                                <li key={`${d.servicio}-${d.nombre}`} className="flex justify-between">
-                                  <span>{SERVICIO_LABEL[d.servicio] || d.servicio} · {d.nombre} ({d.cobros})</span>
-                                  <span className="font-semibold">{fmtMoney(d.total)}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
+                    <tr key={f.medico_id} className={`border-b border-slate-100 hover:bg-slate-50 ${f.sin_actividad ? 'text-slate-400' : ''}`}>
+                      <td className={`py-2 pr-3 font-medium ${f.sin_actividad ? 'text-slate-400' : 'text-slate-800'}`}>
+                        {f.medico}
+                        {f.sin_actividad && <span className="ml-2 text-[10px] uppercase rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">Sin actividad</span>}
+                      </td>
+                      <td className="py-2 pr-3 text-right">{f.atenciones}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(f.ingresos)}</td>
+                      <td className={`py-2 pr-3 text-right ${f.sin_actividad ? '' : 'text-amber-700'}`}>{fmtMoney(f.honorarios)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(f.honorario_pagado)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(f.honorario_pendiente)}</td>
+                      <td className={`py-2 pr-3 text-right font-semibold ${f.sin_actividad ? '' : f.aporte_clinica >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{fmtMoney(f.aporte_clinica)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtPct(f.margen_pct)}</td>
+                      <td className="py-2 pr-3 text-right">
+                        {f.variacion_pp === null || f.variacion_pp === undefined ? (
+                          <span className="text-slate-400">—</span>
+                        ) : (
+                          <span className={f.variacion_pp >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                            {f.variacion_pp >= 0 ? '▲' : '▼'} {Math.abs(f.variacion_pp).toFixed(1)} pp
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(f.aporte_por_dia)}</td>
+                      <td className="py-2 text-right text-slate-400">{Number(f.indicaciones || 0) > 0 ? fmtMoney(f.indicaciones) : '—'}</td>
+                    </tr>
                   ))}
                 </tbody>
                 {(data.por_medico || []).length > 0 && (
                   <tfoot>
-                    <tr className="font-bold text-slate-900 border-t-2 border-slate-300">
-                      <td className="py-2 pr-3">Total</td>
+                    <tr className="font-semibold text-slate-900 border-t-2 border-slate-300">
+                      <td className="py-2 pr-3">Total acto médico</td>
                       <td />
                       <td className="py-2 pr-3 text-right">{fmtMoney(totalesMedicos.ingresos)}</td>
                       <td className="py-2 pr-3 text-right">{fmtMoney(totalesMedicos.honorarios)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalesMedicos.pagado)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalesMedicos.pendiente)}</td>
                       <td className="py-2 pr-3 text-right">{fmtMoney(totalesMedicos.aporte)}</td>
                       <td className="py-2 pr-3 text-right">{fmtPct(totalesMedicos.ingresos > 0 ? (totalesMedicos.aporte / totalesMedicos.ingresos) * 100 : null)}</td>
                       <td colSpan={2} />
+                      <td className="py-2 text-right text-slate-400">{totalesMedicos.indicaciones > 0 ? fmtMoney(totalesMedicos.indicaciones) : '—'}</td>
+                    </tr>
+                    <tr className="text-slate-800">
+                      <td className="py-2 pr-3">Ingresos propios de la clínica</td>
+                      <td />
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.propios)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(0)}</td>
+                      <td colSpan={2} />
+                      <td className="py-2 pr-3 text-right font-semibold text-emerald-700">{fmtMoney(totalClinica.propios)}</td>
+                      <td className="py-2 pr-3 text-right">{totalClinica.propios > 0 ? '100.0%' : '—'}</td>
+                      <td colSpan={3} />
+                    </tr>
+                    {totalClinica.anulados > 0 && (
+                      <tr className="text-rose-700">
+                        <td className="py-2 pr-3">Honorarios sobre cobros anulados (costo absorbido)</td>
+                        <td colSpan={2} />
+                        <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.anulados)}</td>
+                        <td colSpan={2} />
+                        <td className="py-2 pr-3 text-right font-semibold">{fmtMoney(-totalClinica.anulados)}</td>
+                        <td colSpan={4} />
+                      </tr>
+                    )}
+                    {totalClinica.sinMedico > 0 && (
+                      <tr className="text-amber-700">
+                        <td className="py-2 pr-3">Honorarios sin médico asignado</td>
+                        <td colSpan={2} />
+                        <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.sinMedico)}</td>
+                        <td colSpan={2} />
+                        <td className="py-2 pr-3 text-right font-semibold">{fmtMoney(-totalClinica.sinMedico)}</td>
+                        <td colSpan={4} />
+                      </tr>
+                    )}
+                    <tr className="font-bold text-slate-900 border-t-2 border-slate-300">
+                      <td className="py-2 pr-3">Total clínica</td>
+                      <td />
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.ingresos)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.honorarios)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.pagado)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.pendiente)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtMoney(totalClinica.aporte)}</td>
+                      <td className="py-2 pr-3 text-right">{fmtPct(totalClinica.ingresos > 0 ? (totalClinica.aporte / totalClinica.ingresos) * 100 : null)}</td>
+                      <td colSpan={3} />
                     </tr>
                   </tfoot>
                 )}
               </table>
             </div>
+            <p className="text-xs text-slate-500 mt-3">
+              Honorario = devengado (pagado + pendiente), igual que en{' '}
+              <Link to="/contabilidad/liquidacion-honorarios" className="text-indigo-600 underline">Honorarios Médicos</Link>.
+              {data.honorarios_detalle && Math.abs(Number(data.honorarios_detalle.diferencia || 0)) < 0.01
+                ? ' La tabla cuadra con el total de honorarios del período.'
+                : ` Diferencia sin explicar frente al total de honorarios: ${fmtMoney(data.honorarios_detalle?.diferencia)}.`}
+            </p>
           </section>
+
+          {data.ingresos_propios && (
+            <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <h2 className="font-bold text-slate-800">Ingresos propios de la clínica</h2>
+                <span className="text-sm font-bold text-emerald-700">{fmtMoney(data.ingresos_propios.total)}</span>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">
+                Laboratorio, farmacia y todo lo que no es un acto médico con %. Pertenece 100% a la clínica aunque lo haya indicado un médico:
+                {' '}{fmtMoney(data.ingresos_propios.indicadas_por_medicos)} indicados por médicos y {fmtMoney(data.ingresos_propios.sin_medico)} sin médico asignado.
+              </p>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1 text-sm">
+                {(data.ingresos_propios.servicios || []).map((s) => (
+                  <li key={s.servicio} className="flex justify-between gap-3 border-b border-slate-100 py-1">
+                    <span className="text-slate-700">
+                      {SERVICIO_LABEL[s.servicio] || s.servicio}
+                      {s.es_acto && <span className="ml-2 text-[10px] uppercase rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">Sin médico asignado</span>}
+                      {Number(s.indicadas_por_medicos || 0) > 0 && (
+                        <span className="ml-2 text-xs text-slate-400">({fmtMoney(s.indicadas_por_medicos)} indicados por médicos)</span>
+                      )}
+                    </span>
+                    <span className="font-semibold text-slate-900">{fmtMoney(s.total)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -486,6 +588,32 @@ export default function RentabilidadClinicaPage() {
                         </tbody>
                       </table>
                     </div>
+                  )}
+                  {(a.codigo === 'acto_sin_honorario') && Array.isArray(a.detalle) && (
+                    <div className="overflow-x-auto mt-2">
+                      <table className="min-w-full text-xs bg-white/60 rounded">
+                        <thead>
+                          <tr className="text-left"><th className="p-1">Médico</th><th className="p-1">Servicio</th><th className="p-1 text-right">Cobros</th><th className="p-1 text-right">Monto</th></tr>
+                        </thead>
+                        <tbody>
+                          {a.detalle.map((d) => (
+                            <tr key={`${d.medico}-${d.servicio}`} className="border-t border-amber-100">
+                              <td className="p-1">{d.medico}</td>
+                              <td className="p-1">{SERVICIO_LABEL[d.servicio] || d.servicio}</td>
+                              <td className="p-1 text-right">{d.cobros}</td>
+                              <td className="p-1 text-right">{fmtMoney(d.monto)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {a.codigo === 'acto_sin_medico' && Array.isArray(a.detalle) && (
+                    <ul className="mt-2 text-sm list-disc ml-5">
+                      {a.detalle.map((d) => (
+                        <li key={d.servicio}>{SERVICIO_LABEL[d.servicio] || d.servicio}: {fmtMoney(d.total)}</li>
+                      ))}
+                    </ul>
                   )}
                   {a.codigo === 'margen_en_caida' && Array.isArray(a.detalle) && (
                     <ul className="mt-2 text-sm list-disc ml-5">

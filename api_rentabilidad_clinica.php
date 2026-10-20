@@ -68,6 +68,31 @@ function rent_pct($num, $den): ?float
     return round(((float)$num / $den) * 100, 1);
 }
 
+// Tipos de servicio que pueden llevar un % para el médico que los realiza (tarifa general,
+// paquete/perfil o contrato). Laboratorio, farmacia y el resto son ingreso propio de la clínica,
+// aunque el médico los haya indicado.
+const RENT_TIPOS_ACTO_MEDICO = ['consulta', 'ecografia', 'rayosx', 'rayos_x', 'rayos x', 'rx', 'procedimiento', 'procedimientos', 'operacion', 'operaciones', 'cirugia', 'cirugias', 'paquete'];
+
+function rent_sql_es_acto_medico(string $columna): string
+{
+    return "LOWER(TRIM(COALESCE({$columna}, ''))) IN ('" . implode("','", RENT_TIPOS_ACTO_MEDICO) . "')";
+}
+
+function rent_es_acto_medico(string $tipo): bool
+{
+    return in_array(strtolower(trim($tipo)), RENT_TIPOS_ACTO_MEDICO, true);
+}
+
+function rent_normalizar_servicio(string $tipo): string
+{
+    $t = strtolower(trim($tipo));
+    if ($t === 'rayos_x' || $t === 'rayos x' || $t === 'rx') return 'rayosx';
+    if ($t === 'procedimientos') return 'procedimiento';
+    if ($t === 'operaciones') return 'operacion';
+    if ($t === 'cirugias') return 'cirugia';
+    return $t === '' ? 'otros' : $t;
+}
+
 // Expresión de fecha de egresos según el esquema disponible en la instancia.
 function rent_egresos_fecha_expr(PDO $pdo): string
 {
@@ -187,15 +212,25 @@ function rent_ingresos_por_servicio(PDO $pdo, string $desde, string $hasta): arr
 
 function rent_honorarios(PDO $pdo, string $desde, string $hasta): array
 {
-    $stmt = $pdo->prepare("SELECT COALESCE(SUM(monto_medico), 0) AS honorarios, COALESCE(SUM(monto_clinica), 0) AS clinica_registrada, COUNT(*) AS items
-        FROM honorarios_medicos_movimientos
-        WHERE LOWER(TRIM(COALESCE(estado_pago_medico, ''))) <> 'cancelado' AND fecha BETWEEN ? AND ?");
+    $est = "LOWER(TRIM(COALESCE(h.estado_pago_medico, '')))";
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(h.monto_medico), 0) AS honorarios,
+            COALESCE(SUM(h.monto_clinica), 0) AS clinica_registrada,
+            COUNT(*) AS items,
+            COALESCE(SUM(CASE WHEN {$est} = 'pagado' THEN h.monto_medico ELSE 0 END), 0) AS pagado,
+            COALESCE(SUM(CASE WHEN {$est} = 'pagado' THEN 0 ELSE h.monto_medico END), 0) AS pendiente,
+            COALESCE(SUM(CASE WHEN c.id IS NOT NULL AND LOWER(TRIM(COALESCE(c.estado, ''))) <> 'pagado' THEN h.monto_medico ELSE 0 END), 0) AS sobre_cobro_anulado
+        FROM honorarios_medicos_movimientos h
+        LEFT JOIN cobros c ON c.id = h.cobro_id
+        WHERE {$est} <> 'cancelado' AND h.fecha BETWEEN ? AND ?");
     $stmt->execute([$desde, $hasta]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
     return [
         'total' => rent_round($row['honorarios'] ?? 0),
         'clinica_registrada' => rent_round($row['clinica_registrada'] ?? 0),
         'items' => (int)($row['items'] ?? 0),
+        'pagado' => rent_round($row['pagado'] ?? 0),
+        'pendiente' => rent_round($row['pendiente'] ?? 0),
+        'sobre_cobro_anulado' => rent_round($row['sobre_cobro_anulado'] ?? 0),
     ];
 }
 
@@ -251,58 +286,167 @@ function rent_resumen_periodo(PDO $pdo, string $desde, string $hasta): array
         'cobros_total' => $ing['cobros_total'] ?? 0.0,
         'gastos_categorias' => $gas['categorias'],
         'honorarios_items' => $hon['items'],
+        'honorarios_pagado' => $hon['pagado'],
+        'honorarios_pendiente' => $hon['pendiente'],
+        'honorarios_sobre_cobro_anulado' => $hon['sobre_cobro_anulado'],
     ];
 }
 
-// Ingresos atribuibles a cada médico y honorarios pagados en el período.
-function rent_por_medico_mapa(PDO $pdo, string $desde, string $hasta, bool $usarTarifaHonorarios): array
+// Reparto de lo realmente cobrado entre los ítems de producción médica de cada cobro
+// (el cobro puede ser parcial, por eso se reparte en proporción al monto de cada ítem).
+function rent_sql_reparto_item(): string
 {
+    return 'c.total * p.monto_neto_item / NULLIF(t.suma_cobro, 0)';
+}
+
+function rent_sql_desde_produccion(): string
+{
+    return "FROM produccion_medica_detalle p
+        INNER JOIN cobros c ON c.id = p.cobro_id
+        INNER JOIN (
+            SELECT p2.cobro_id, SUM(p2.monto_neto_item) AS suma_cobro
+            FROM produccion_medica_detalle p2 INNER JOIN cobros c2 ON c2.id = p2.cobro_id
+            WHERE c2.estado = 'pagado' AND c2.fecha_cobro >= ? AND c2.fecha_cobro < ?
+            GROUP BY p2.cobro_id
+        ) t ON t.cobro_id = p.cobro_id
+        WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ?";
+}
+
+// Separa lo cobrado en: acto médico de cada médico (el que realiza el servicio) e ingresos propios de la clínica
+// (laboratorio, farmacia y todo lo que no es acto médico o no tiene médico asignado).
+function rent_ingresos_por_origen(PDO $pdo, string $desde, string $hasta): array
+{
+    $out = ['mapa' => [], 'sin_medico' => 0.0, 'propios' => [], 'total' => 0.0];
+    if (!rent_table_exists($pdo, 'produccion_medica_detalle')) {
+        return $out;
+    }
     $ini = $desde . ' 00:00:00';
     $fin = date('Y-m-d', strtotime($hasta . ' +1 day')) . ' 00:00:00';
-    $mapa = [];
-    $pmdTotal = 0.0;
+    $acto = rent_sql_es_acto_medico('p.servicio_tipo');
+    $reparto = rent_sql_reparto_item();
+    $desdeSql = rent_sql_desde_produccion();
+    $params = [$ini, $fin, $ini, $fin];
 
-    if (!$usarTarifaHonorarios && rent_table_exists($pdo, 'produccion_medica_detalle')) {
-        // El cobro puede ser parcial: se reparte lo realmente cobrado en proporción al monto de cada ítem.
-        $stmt = $pdo->prepare("SELECT COALESCE(p.medico_id, 0) AS medico_id,
-                COALESCE(SUM(c.total * p.monto_neto_item / NULLIF(t.suma_cobro, 0)), 0) AS ingresos,
-                COUNT(DISTINCT p.cobro_id) AS atenciones
-            FROM produccion_medica_detalle p
-            INNER JOIN cobros c ON c.id = p.cobro_id
-            INNER JOIN (
-                SELECT p2.cobro_id, SUM(p2.monto_neto_item) AS suma_cobro
-                FROM produccion_medica_detalle p2 INNER JOIN cobros c2 ON c2.id = p2.cobro_id
-                WHERE c2.estado = 'pagado' AND c2.fecha_cobro >= ? AND c2.fecha_cobro < ?
-                GROUP BY p2.cobro_id
-            ) t ON t.cobro_id = p.cobro_id
-            WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ?
-            GROUP BY COALESCE(p.medico_id, 0)");
-        $stmt->execute([$ini, $fin, $ini, $fin]);
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $id = (int)$r['medico_id'];
-            $mapa[$id] = ['ingresos' => (float)$r['ingresos'], 'atenciones' => (int)$r['atenciones'], 'honorarios' => 0.0];
-            $pmdTotal += (float)$r['ingresos'];
-        }
-    }
-
-    $stmt = $pdo->prepare("SELECT medico_id, COALESCE(SUM(monto_medico), 0) AS honorarios, COALESCE(SUM(tarifa_total), 0) AS tarifa, COUNT(*) AS items
-        FROM honorarios_medicos_movimientos
-        WHERE LOWER(TRIM(COALESCE(estado_pago_medico, ''))) <> 'cancelado' AND fecha BETWEEN ? AND ?
-        GROUP BY medico_id");
-    $stmt->execute([$desde, $hasta]);
+    $stmt = $pdo->prepare("SELECT COALESCE(p.medico_id, 0) AS medico_id,
+            COALESCE(SUM(CASE WHEN {$acto} AND COALESCE(p.medico_id, 0) > 0 THEN {$reparto} ELSE 0 END), 0) AS acto,
+            COALESCE(SUM(CASE WHEN {$acto} AND COALESCE(p.medico_id, 0) > 0 THEN 0 ELSE {$reparto} END), 0) AS otros,
+            COUNT(DISTINCT CASE WHEN {$acto} AND COALESCE(p.medico_id, 0) > 0 THEN p.cobro_id END) AS atenciones
+        {$desdeSql}
+        GROUP BY COALESCE(p.medico_id, 0)");
+    $stmt->execute($params);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $id = (int)$r['medico_id'];
-        if (!isset($mapa[$id])) {
-            $mapa[$id] = ['ingresos' => 0.0, 'atenciones' => 0, 'honorarios' => 0.0];
+        $out['total'] += (float)$r['acto'] + (float)$r['otros'];
+        if ($id <= 0) {
+            $out['sin_medico'] += (float)$r['otros'];
+            continue;
         }
-        $mapa[$id]['honorarios'] = (float)$r['honorarios'];
+        $out['mapa'][$id] = [
+            'ingresos' => (float)$r['acto'],
+            'indicaciones' => (float)$r['otros'],
+            'atenciones' => (int)$r['atenciones'],
+            'honorarios' => 0.0,
+            'honorario_pagado' => 0.0,
+            'honorario_pendiente' => 0.0,
+        ];
+    }
+
+    $stmt = $pdo->prepare("SELECT LOWER(TRIM(COALESCE(NULLIF(p.servicio_tipo, ''), 'otros'))) AS servicio_norm,
+            COALESCE(SUM({$reparto}), 0) AS total,
+            COALESCE(SUM(CASE WHEN COALESCE(p.medico_id, 0) > 0 THEN {$reparto} ELSE 0 END), 0) AS indicadas
+        {$desdeSql}
+        AND NOT ({$acto} AND COALESCE(p.medico_id, 0) > 0)
+        GROUP BY servicio_norm");
+    $stmt->execute($params);
+    $agrupado = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $clave = rent_normalizar_servicio((string)$r['servicio_norm']);
+        if (!isset($agrupado[$clave])) {
+            $agrupado[$clave] = ['servicio' => $clave, 'total' => 0.0, 'indicadas_por_medicos' => 0.0, 'es_acto' => rent_es_acto_medico($clave)];
+        }
+        $agrupado[$clave]['total'] += (float)$r['total'];
+        $agrupado[$clave]['indicadas_por_medicos'] += (float)$r['indicadas'];
+    }
+    usort($agrupado, function ($a, $b) {
+        return $b['total'] <=> $a['total'];
+    });
+    foreach ($agrupado as $fila) {
+        $out['propios'][] = [
+            'servicio' => $fila['servicio'],
+            'total' => rent_round($fila['total']),
+            'indicadas_por_medicos' => rent_round($fila['indicadas_por_medicos']),
+            'es_acto' => $fila['es_acto'],
+        ];
+    }
+    return $out;
+}
+
+// Honorarios por médico separados en pagado, pendiente y los registrados sobre cobros que ya no están pagados.
+function rent_honorarios_por_medico(PDO $pdo, string $desde, string $hasta): array
+{
+    $anulado = "(c.id IS NOT NULL AND LOWER(TRIM(COALESCE(c.estado, ''))) <> 'pagado')";
+    $est = "LOWER(TRIM(COALESCE(h.estado_pago_medico, '')))";
+    $stmt = $pdo->prepare("SELECT COALESCE(h.medico_id, 0) AS medico_id,
+            COALESCE(SUM(CASE WHEN {$anulado} THEN 0 WHEN {$est} = 'pagado' THEN h.monto_medico ELSE 0 END), 0) AS pagado,
+            COALESCE(SUM(CASE WHEN {$anulado} THEN 0 WHEN {$est} = 'pagado' THEN 0 ELSE h.monto_medico END), 0) AS pendiente,
+            COALESCE(SUM(CASE WHEN {$anulado} THEN h.monto_medico ELSE 0 END), 0) AS anulado,
+            COALESCE(SUM(CASE WHEN {$anulado} THEN 0 ELSE h.tarifa_total END), 0) AS tarifa,
+            COALESCE(SUM(CASE WHEN {$anulado} THEN 0 ELSE 1 END), 0) AS items
+        FROM honorarios_medicos_movimientos h
+        LEFT JOIN cobros c ON c.id = h.cobro_id
+        WHERE {$est} <> 'cancelado' AND h.fecha BETWEEN ? AND ?
+        GROUP BY COALESCE(h.medico_id, 0)");
+    $stmt->execute([$desde, $hasta]);
+    $out = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $out[(int)$r['medico_id']] = [
+            'pagado' => (float)$r['pagado'],
+            'pendiente' => (float)$r['pendiente'],
+            'anulado' => (float)$r['anulado'],
+            'tarifa' => (float)$r['tarifa'],
+            'items' => (int)$r['items'],
+        ];
+    }
+    return $out;
+}
+
+// Ingreso del acto médico y honorario de cada médico en el período.
+function rent_por_medico_mapa(PDO $pdo, string $desde, string $hasta, bool $usarTarifaHonorarios): array
+{
+    $origen = $usarTarifaHonorarios
+        ? ['mapa' => [], 'sin_medico' => 0.0, 'propios' => [], 'total' => 0.0]
+        : rent_ingresos_por_origen($pdo, $desde, $hasta);
+    $mapa = $origen['mapa'];
+    $honorariosAnulados = 0.0;
+    $honorariosSinMedico = ['pagado' => 0.0, 'pendiente' => 0.0];
+
+    foreach (rent_honorarios_por_medico($pdo, $desde, $hasta) as $id => $h) {
+        $honorariosAnulados += $h['anulado'];
+        if ($id <= 0) {
+            $honorariosSinMedico['pagado'] += $h['pagado'];
+            $honorariosSinMedico['pendiente'] += $h['pendiente'];
+            continue;
+        }
+        if (!isset($mapa[$id])) {
+            $mapa[$id] = ['ingresos' => 0.0, 'indicaciones' => 0.0, 'atenciones' => 0, 'honorarios' => 0.0, 'honorario_pagado' => 0.0, 'honorario_pendiente' => 0.0];
+        }
+        $mapa[$id]['honorario_pagado'] = $h['pagado'];
+        $mapa[$id]['honorario_pendiente'] = $h['pendiente'];
+        $mapa[$id]['honorarios'] = $h['pagado'] + $h['pendiente'];
         if ($usarTarifaHonorarios) {
-            $mapa[$id]['ingresos'] = (float)$r['tarifa'];
-            $mapa[$id]['atenciones'] = (int)$r['items'];
+            $mapa[$id]['ingresos'] = $h['tarifa'];
+            $mapa[$id]['atenciones'] = $h['items'];
         }
     }
 
-    return ['mapa' => $mapa, 'pmd_total' => $pmdTotal];
+    return [
+        'mapa' => $mapa,
+        'propios' => $origen['propios'],
+        'sin_medico' => $origen['sin_medico'],
+        'pmd_total' => $origen['total'],
+        'honorarios_anulados' => $honorariosAnulados,
+        'honorarios_sin_medico' => $honorariosSinMedico,
+    ];
 }
 
 function rent_nombres_medicos(PDO $pdo): array
@@ -315,41 +459,53 @@ function rent_nombres_medicos(PDO $pdo): array
     return $nombres;
 }
 
-// Qué servicios componen lo cobrado sin médico asignado en producción médica.
-function rent_sin_medico_detalle(PDO $pdo, string $desde, string $hasta): array
+// Servicios que pueden llevar % (acto médico) cobrados a nombre de un médico pero sin honorario registrado
+// para él, ni en ese cobro ni en otros cobros de la misma cotización (abonos).
+function rent_acto_sin_honorario(PDO $pdo, string $desde, string $hasta): array
 {
     if (!rent_table_exists($pdo, 'produccion_medica_detalle')) {
         return [];
     }
     $ini = $desde . ' 00:00:00';
     $fin = date('Y-m-d', strtotime($hasta . ' +1 day')) . ' 00:00:00';
-    $stmt = $pdo->prepare("SELECT LOWER(TRIM(COALESCE(NULLIF(p.servicio_tipo, ''), 'otros'))) AS servicio_norm,
-            COALESCE(NULLIF(TRIM(p.servicio_nombre), ''), 'Servicio') AS nombre_norm,
-            COALESCE(SUM(c.total * p.monto_neto_item / NULLIF(t.suma_cobro, 0)), 0) AS total,
-            COUNT(DISTINCT p.cobro_id) AS cobros
+    $acto = rent_sql_es_acto_medico('p.servicio_tipo');
+    $tipoNorm = "CASE LOWER(TRIM(p.servicio_tipo))
+            WHEN 'procedimiento' THEN 'procedimientos' WHEN 'operaciones' THEN 'operacion' WHEN 'cirugia' THEN 'cirugias'
+            WHEN 'rx' THEN 'rayosx' WHEN 'rayos_x' THEN 'rayosx' WHEN 'rayos x' THEN 'rayosx'
+            ELSE LOWER(TRIM(p.servicio_tipo)) END";
+    $otrosCobrosMismaCotizacion = rent_table_exists($pdo, 'cotizacion_movimientos')
+        ? "OR h.cobro_id IN (
+                SELECT cm2.cobro_id FROM cotizacion_movimientos cm2
+                WHERE cm2.cobro_id IS NOT NULL AND cm2.cotizacion_id IN (
+                    SELECT cm1.cotizacion_id FROM cotizacion_movimientos cm1 WHERE cm1.cobro_id = p.cobro_id))"
+        : '';
+
+    $tipoNormCobro = str_replace('p.servicio_tipo', 'cd.servicio_tipo', $tipoNorm);
+    $soloLoPagadoEnElCobro = rent_table_exists($pdo, 'cobros_detalle')
+        ? "AND EXISTS (SELECT 1 FROM cobros_detalle cd WHERE cd.cobro_id = p.cobro_id
+              AND (LOWER(TRIM(cd.servicio_tipo)) = 'mixto' OR {$tipoNormCobro} = {$tipoNorm}))"
+        : '';
+
+    $stmt = $pdo->prepare("SELECT p.medico_id, {$tipoNorm} AS tipo_norm,
+            COUNT(DISTINCT p.cobro_id) AS cobros, COALESCE(SUM(p.monto_neto_item), 0) AS monto
         FROM produccion_medica_detalle p
         INNER JOIN cobros c ON c.id = p.cobro_id
-        INNER JOIN (
-            SELECT p2.cobro_id, SUM(p2.monto_neto_item) AS suma_cobro
-            FROM produccion_medica_detalle p2 INNER JOIN cobros c2 ON c2.id = p2.cobro_id
-            WHERE c2.estado = 'pagado' AND c2.fecha_cobro >= ? AND c2.fecha_cobro < ?
-            GROUP BY p2.cobro_id
-        ) t ON t.cobro_id = p.cobro_id
-        WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ? AND COALESCE(p.medico_id, 0) = 0
-        GROUP BY servicio_norm, nombre_norm
-        ORDER BY total DESC
-        LIMIT 12");
-    $stmt->execute([$ini, $fin, $ini, $fin]);
-    $out = [];
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $out[] = [
-            'servicio' => $r['servicio_norm'],
-            'nombre' => $r['nombre_norm'],
-            'cobros' => (int)$r['cobros'],
-            'total' => rent_round($r['total']),
-        ];
-    }
-    return $out;
+        WHERE c.estado = 'pagado' AND c.fecha_cobro >= ? AND c.fecha_cobro < ?
+          AND COALESCE(p.medico_id, 0) > 0 AND p.monto_neto_item > 0
+          AND {$acto} AND LOWER(TRIM(p.servicio_tipo)) <> 'paquete'
+          {$soloLoPagadoEnElCobro}
+          AND NOT EXISTS (SELECT 1 FROM produccion_medica_detalle pq WHERE pq.cobro_id = p.cobro_id AND LOWER(TRIM(pq.servicio_tipo)) = 'paquete')
+          AND NOT EXISTS (
+              SELECT 1 FROM honorarios_medicos_movimientos h
+              WHERE h.medico_id = p.medico_id
+                AND LOWER(TRIM(COALESCE(h.estado_pago_medico, ''))) <> 'cancelado'
+                AND LOWER(TRIM(COALESCE(h.tipo_servicio, ''))) = {$tipoNorm}
+                AND (h.cobro_id = p.cobro_id {$otrosCobrosMismaCotizacion})
+          )
+        GROUP BY p.medico_id, tipo_norm
+        ORDER BY monto DESC");
+    $stmt->execute([$ini, $fin]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 function rent_dias_no_domingo(DateTimeImmutable $desde, DateTimeImmutable $hasta): int
@@ -569,32 +725,28 @@ try {
         'margen_pp' => ($actual['margen_pct'] !== null && $anterior['margen_pct'] !== null) ? round($actual['margen_pct'] - $anterior['margen_pct'], 1) : null,
     ];
 
-    // ── Por médico ──────────────────────────────────────────────────────────────
+    // ── Por médico: solo el acto médico que él realiza; lo demás es ingreso propio de la clínica ──
     $nombres = rent_nombres_medicos($pdo);
-    $mapaActual = rent_por_medico_mapa($pdo, $desde, $hasta, false);
+    $origenActual = rent_por_medico_mapa($pdo, $desde, $hasta, false);
     $cobrosTotal = (float)$actual['cobros_total'];
-    $cobertura = $cobrosTotal > 0 ? round(($mapaActual['pmd_total'] / $cobrosTotal) * 100, 1) : null;
+    $cobertura = $cobrosTotal > 0 ? round(($origenActual['pmd_total'] / $cobrosTotal) * 100, 1) : null;
     $usarTarifa = ($cobertura === null || $cobertura < 80);
     if ($usarTarifa) {
-        $mapaActual = rent_por_medico_mapa($pdo, $desde, $hasta, true);
-    } else {
-        // Lo cobrado sin detalle de producción queda como ingreso propio para que la tabla cuadre con el total.
-        $sinAtribuir = $cobrosTotal - $mapaActual['pmd_total'];
-        if ($sinAtribuir > 0.009) {
-            if (!isset($mapaActual['mapa'][0])) {
-                $mapaActual['mapa'][0] = ['ingresos' => 0.0, 'atenciones' => 0, 'honorarios' => 0.0];
-            }
-            $mapaActual['mapa'][0]['ingresos'] += $sinAtribuir;
-        }
+        $origenActual = rent_por_medico_mapa($pdo, $desde, $hasta, true);
     }
+    $mapaActual = $origenActual['mapa'];
     $mapaPrevio = rent_por_medico_mapa($pdo, $prevDesde->format('Y-m-d'), $prevHasta->format('Y-m-d'), $usarTarifa)['mapa'];
 
+    $vacio = ['ingresos' => 0.0, 'indicaciones' => 0.0, 'atenciones' => 0, 'honorarios' => 0.0, 'honorario_pagado' => 0.0, 'honorario_pendiente' => 0.0];
     $porMedico = [];
-    $ids = array_unique(array_merge(array_keys($mapaActual['mapa']), array_keys($mapaPrevio)));
+    $ids = array_unique(array_merge(array_keys($mapaActual), array_keys($mapaPrevio)));
     foreach ($ids as $id) {
-        $m = $mapaActual['mapa'][$id] ?? ['ingresos' => 0.0, 'honorarios' => 0.0, 'atenciones' => 0];
-        $p = $mapaPrevio[$id] ?? ['ingresos' => 0.0, 'honorarios' => 0.0, 'atenciones' => 0];
-        if ($m['ingresos'] <= 0 && $m['honorarios'] <= 0) {
+        if ($id <= 0) {
+            continue;
+        }
+        $m = $mapaActual[$id] ?? $vacio;
+        $p = $mapaPrevio[$id] ?? $vacio;
+        if ($m['ingresos'] <= 0 && $m['honorarios'] <= 0 && $m['indicaciones'] <= 0) {
             continue;
         }
         $aporte = $m['ingresos'] - $m['honorarios'];
@@ -603,16 +755,19 @@ try {
         $margenPrev = $p['ingresos'] > 0 ? rent_pct($aportePrev, $p['ingresos']) : null;
         $porMedico[] = [
             'medico_id' => (int)$id,
-            'medico' => $id > 0 ? ($nombres[$id] ?? ('Médico #' . $id)) : 'Sin médico (ingresos propios)',
+            'medico' => $nombres[$id] ?? ('Médico #' . $id),
             'atenciones' => (int)$m['atenciones'],
             'ingresos' => rent_round($m['ingresos']),
             'honorarios' => rent_round($m['honorarios']),
+            'honorario_pagado' => rent_round($m['honorario_pagado']),
+            'honorario_pendiente' => rent_round($m['honorario_pendiente']),
             'aporte_clinica' => rent_round($aporte),
             'margen_pct' => $margen,
             'margen_anterior_pct' => $margenPrev,
             'variacion_pp' => ($margen !== null && $margenPrev !== null) ? round($margen - $margenPrev, 1) : null,
             'aporte_por_dia' => $actual['dias_activos'] > 0 ? rent_round($aporte / $actual['dias_activos']) : null,
             'ingresos_anterior' => rent_round($p['ingresos']),
+            'indicaciones' => rent_round($m['indicaciones']),
         ];
     }
     usort($porMedico, function ($a, $b) {
@@ -629,19 +784,22 @@ try {
         if (isset($presentes[$id])) {
             continue;
         }
-        $p = $mapaPrevio[$id] ?? ['ingresos' => 0.0, 'honorarios' => 0.0];
+        $p = $mapaPrevio[$id] ?? $vacio;
         $sinActividad[] = [
             'medico_id' => (int)$id,
             'medico' => $nombre,
             'atenciones' => 0,
             'ingresos' => 0.0,
             'honorarios' => 0.0,
+            'honorario_pagado' => 0.0,
+            'honorario_pendiente' => 0.0,
             'aporte_clinica' => 0.0,
             'margen_pct' => null,
             'margen_anterior_pct' => $p['ingresos'] > 0 ? rent_pct($p['ingresos'] - $p['honorarios'], $p['ingresos']) : null,
             'variacion_pp' => null,
             'aporte_por_dia' => null,
             'ingresos_anterior' => rent_round($p['ingresos']),
+            'indicaciones' => 0.0,
             'sin_actividad' => true,
         ];
     }
@@ -649,7 +807,55 @@ try {
         return strcasecmp($a['medico'], $b['medico']);
     });
     $porMedico = array_merge($porMedico, $sinActividad);
-    $sinMedicoDetalle = $usarTarifa ? [] : rent_sin_medico_detalle($pdo, $desde, $hasta);
+
+    // Ingresos propios de la clínica = todo lo cobrado que no es acto médico de un médico.
+    $sumaActoMedico = 0.0;
+    foreach ($mapaActual as $m) {
+        $sumaActoMedico += $m['ingresos'];
+    }
+    $propiosTotal = (float)$actual['ingresos'] - $sumaActoMedico;
+    $propiosServicios = $origenActual['propios'];
+    $sumaServicios = 0.0;
+    $indicadasPorMedicos = 0.0;
+    foreach ($propiosServicios as $s) {
+        $sumaServicios += (float)$s['total'];
+        $indicadasPorMedicos += (float)$s['indicadas_por_medicos'];
+    }
+    $resto = $propiosTotal - $sumaServicios;
+    if (abs($resto) > 0.01) {
+        $propiosServicios[] = [
+            'servicio' => $usarTarifa ? 'sin_desglose' : 'sin_detalle',
+            'total' => rent_round($resto),
+            'indicadas_por_medicos' => 0.0,
+            'es_acto' => false,
+        ];
+    }
+    $ingresosPropios = [
+        'total' => rent_round($propiosTotal),
+        'indicadas_por_medicos' => rent_round($indicadasPorMedicos),
+        'sin_medico' => rent_round($propiosTotal - $indicadasPorMedicos),
+        'servicios' => $propiosServicios,
+    ];
+
+    // Conciliación de honorarios: tabla por médico + sin médico + sobre cobros anulados = honorarios del período.
+    $honPagadoTabla = 0.0;
+    $honPendienteTabla = 0.0;
+    foreach ($mapaActual as $m) {
+        $honPagadoTabla += $m['honorario_pagado'];
+        $honPendienteTabla += $m['honorario_pendiente'];
+    }
+    $honSinMedico = $origenActual['honorarios_sin_medico']['pagado'] + $origenActual['honorarios_sin_medico']['pendiente'];
+    $honAnulados = (float)$origenActual['honorarios_anulados'];
+    $honorariosDetalle = [
+        'devengado' => $actual['honorarios'],
+        'pagado' => $actual['honorarios_pagado'],
+        'pendiente' => $actual['honorarios_pendiente'],
+        'tabla_pagado' => rent_round($honPagadoTabla),
+        'tabla_pendiente' => rent_round($honPendienteTabla),
+        'sin_medico' => rent_round($honSinMedico),
+        'sobre_cobros_anulados' => rent_round($honAnulados),
+        'diferencia' => rent_round($actual['honorarios'] - ($honPagadoTabla + $honPendienteTabla + $honSinMedico + $honAnulados)),
+    ];
 
     // ── Alertas y calidad de datos ──────────────────────────────────────────────
     $alertas = [];
@@ -732,6 +938,58 @@ try {
         ];
     }
 
+    // Servicios que pueden llevar % pero se cobraron sin médico asignado: no generan honorario.
+    $actoSinMedico = [];
+    $montoActoSinMedico = 0.0;
+    foreach ($ingresosPropios['servicios'] as $s) {
+        if (!empty($s['es_acto']) && (float)$s['total'] > 0.009) {
+            $actoSinMedico[] = ['servicio' => $s['servicio'], 'total' => $s['total']];
+            $montoActoSinMedico += (float)$s['total'];
+        }
+    }
+    if (!empty($actoSinMedico)) {
+        $alertas[] = [
+            'codigo' => 'acto_sin_medico',
+            'nivel' => 'medio',
+            'titulo' => 'Servicios con posible % cobrados sin médico asignado',
+            'mensaje' => 'Consulta, ecografía, rayos X, procedimientos u operaciones sin el profesional que los realizó: no generan honorario y quedan como ingreso de la clínica. Asigna el médico para que se calcule su %.',
+            'monto' => rent_round($montoActoSinMedico),
+            'cantidad' => count($actoSinMedico),
+            'detalle' => $actoSinMedico,
+        ];
+    }
+
+    // Servicios con posible % a nombre de un médico, sin honorario registrado para él.
+    if (!$usarTarifa) {
+        $sinHonorario = rent_acto_sin_honorario($pdo, $desde, $hasta);
+        if (!empty($sinHonorario)) {
+            $montoSinHonorario = 0.0;
+            $cobrosSinHonorario = 0;
+            $detalleSinHonorario = [];
+            foreach ($sinHonorario as $r) {
+                $montoSinHonorario += (float)$r['monto'];
+                $cobrosSinHonorario += (int)$r['cobros'];
+                if (count($detalleSinHonorario) < 15) {
+                    $detalleSinHonorario[] = [
+                        'medico' => $nombres[(int)$r['medico_id']] ?? ('Médico #' . (int)$r['medico_id']),
+                        'servicio' => $r['tipo_norm'],
+                        'cobros' => (int)$r['cobros'],
+                        'monto' => rent_round($r['monto']),
+                    ];
+                }
+            }
+            $alertas[] = [
+                'codigo' => 'acto_sin_honorario',
+                'nivel' => 'medio',
+                'titulo' => 'Servicios del médico sin honorario registrado',
+                'mensaje' => 'Cobros de consulta, ecografía, rayos X, procedimientos u operaciones atribuidos a un médico sin honorario para él. Pueden ser servicios sin % en la tarifa o un honorario que falta generar: revisa los pagos completos.',
+                'monto' => rent_round($montoSinHonorario),
+                'cantidad' => $cobrosSinHonorario,
+                'detalle' => $detalleSinHonorario,
+            ];
+        }
+    }
+
     $caidas = [];
     foreach ($porMedico as $f) {
         if ($f['medico_id'] > 0 && $f['variacion_pp'] !== null && $f['variacion_pp'] <= -10 && $f['ingresos'] >= 300 && $f['ingresos_anterior'] >= 300) {
@@ -783,7 +1041,14 @@ try {
         'resumen_anterior' => $anterior,
         'variacion' => $variacion,
         'por_medico' => $porMedico,
-        'sin_medico_detalle' => $sinMedicoDetalle,
+        'ingresos_propios' => $ingresosPropios,
+        'honorarios_detalle' => $honorariosDetalle,
+        'conciliacion' => [
+            'acto_medico' => rent_round($sumaActoMedico),
+            'ingresos_propios' => rent_round($propiosTotal),
+            'total' => rent_round($sumaActoMedico + $propiosTotal),
+            'ingresos_resumen' => $actual['ingresos'],
+        ],
         'atribucion' => [
             'cobertura_pct' => $cobertura,
             'fuente' => $usarTarifa ? 'honorarios_tarifa' : 'produccion_medica',
