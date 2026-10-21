@@ -48,6 +48,149 @@ function pacientes_buscar_cache_write_dni(string $dni, array $payload): void {
     @file_put_contents($path, $json, LOCK_EX);
 }
 
+function pacientes_buscar_cache_read_dni_any(string $dni): ?array {
+    $path = pacientes_buscar_cache_file_for_dni($dni);
+    if (!is_file($path)) return null;
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || $raw === '') return null;
+    $data = json_decode($raw, true);
+    if (!is_array($data)) return null;
+
+    return $data;
+}
+
+function pacientes_buscar_external_state_file(): string {
+    return pacientes_buscar_cache_dir() . DIRECTORY_SEPARATOR . 'reniec_external_state.json';
+}
+
+function pacientes_buscar_external_state_read(): array {
+    $defaults = [
+        'failures' => [],
+        'opened_until' => 0,
+        'last_error' => '',
+    ];
+
+    $path = pacientes_buscar_external_state_file();
+    if (!is_file($path)) return $defaults;
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || $raw === '') return $defaults;
+    $state = json_decode($raw, true);
+    if (!is_array($state)) return $defaults;
+
+    $failures = isset($state['failures']) && is_array($state['failures']) ? $state['failures'] : [];
+    $normalizedFailures = [];
+    foreach ($failures as $ts) {
+        $intTs = (int)$ts;
+        if ($intTs > 0) $normalizedFailures[] = $intTs;
+    }
+
+    return [
+        'failures' => $normalizedFailures,
+        'opened_until' => (int)($state['opened_until'] ?? 0),
+        'last_error' => trim((string)($state['last_error'] ?? '')),
+    ];
+}
+
+function pacientes_buscar_external_state_write(array $state): void {
+    $dir = pacientes_buscar_cache_dir();
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+    if (!is_dir($dir)) return;
+
+    $path = pacientes_buscar_external_state_file();
+    $json = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($json) || $json === '') return;
+    @file_put_contents($path, $json, LOCK_EX);
+}
+
+function pacientes_buscar_external_circuit_open_remaining(): int {
+    $state = pacientes_buscar_external_state_read();
+    $remaining = (int)$state['opened_until'] - time();
+    return $remaining > 0 ? $remaining : 0;
+}
+
+function pacientes_buscar_external_mark_success(): void {
+    pacientes_buscar_external_state_write([
+        'failures' => [],
+        'opened_until' => 0,
+        'last_error' => '',
+    ]);
+}
+
+function pacientes_buscar_external_mark_failure(string $error): void {
+    $windowSeconds = max(30, (int)(getenv('RENIEC_CB_WINDOW_SECONDS') ?: '120'));
+    $threshold = max(2, (int)(getenv('RENIEC_CB_FAILURE_THRESHOLD') ?: '4'));
+    $cooldownSeconds = max(30, (int)(getenv('RENIEC_CB_COOLDOWN_SECONDS') ?: '90'));
+
+    $state = pacientes_buscar_external_state_read();
+    $now = time();
+    $recentFailures = [];
+    foreach ($state['failures'] as $ts) {
+        if (($now - (int)$ts) <= $windowSeconds) {
+            $recentFailures[] = (int)$ts;
+        }
+    }
+    $recentFailures[] = $now;
+
+    $openedUntil = (int)($state['opened_until'] ?? 0);
+    if (count($recentFailures) >= $threshold) {
+        $openedUntil = max($openedUntil, $now + $cooldownSeconds);
+    }
+
+    pacientes_buscar_external_state_write([
+        'failures' => $recentFailures,
+        'opened_until' => $openedUntil,
+        'last_error' => trim($error),
+    ]);
+}
+
+function pacientes_buscar_public_external_error(string $rawError, bool $isTimeout): string {
+    if ($isTimeout) {
+        return 'Servicio RENIEC temporalmente lento. Reintenta en unos segundos o continúa con registro manual.';
+    }
+
+    $normalized = strtolower(trim($rawError));
+    if ($normalized === '') {
+        return 'Servicio RENIEC temporalmente no disponible. Reintenta más tarde o continúa con registro manual.';
+    }
+
+    $dnsSignals = [
+        'could not resolve host',
+        'name or service not known',
+        'getaddrinfo',
+        'dns',
+    ];
+    foreach ($dnsSignals as $signal) {
+        if (strpos($normalized, $signal) !== false) {
+            return 'Servicio RENIEC temporalmente no disponible por red. Reintenta en unos minutos o continúa con registro manual.';
+        }
+    }
+
+    $networkSignals = [
+        'connection refused',
+        'failed to connect',
+        'operation timed out',
+        'timed out',
+        'timeout',
+        'network is unreachable',
+        'ssl',
+    ];
+    foreach ($networkSignals as $signal) {
+        if (strpos($normalized, $signal) !== false) {
+            return 'Servicio RENIEC temporalmente no disponible. Reintenta en unos minutos o continúa con registro manual.';
+        }
+    }
+
+    if (strpos($normalized, 'token') !== false) {
+        return 'Servicio RENIEC no está disponible en este momento. Continúa con registro manual.';
+    }
+
+    return 'No se pudo consultar RENIEC en este momento. Reintenta o continúa con registro manual.';
+}
+
 function pacientes_buscar_resolver_token_externo(): string {
     $candidates = [
         'APISPERU_TOKEN',
@@ -87,6 +230,24 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
     if (is_array($cached) && !empty($cached['found'])) {
         $cached['from_cache'] = true;
         return $cached;
+    }
+
+    $circuitRemaining = pacientes_buscar_external_circuit_open_remaining();
+    if ($circuitRemaining > 0) {
+        $stale = pacientes_buscar_cache_read_dni_any($safeDni);
+        if (is_array($stale) && !empty($stale['found'])) {
+            $stale['from_cache'] = true;
+            $stale['stale_cache'] = true;
+            return $stale;
+        }
+
+        return [
+            'found' => false,
+            'error' => 'Circuit breaker externo activo',
+            'public_error' => 'Servicio RENIEC temporalmente no disponible por alta inestabilidad. Reintenta en unos minutos o continúa con registro manual.',
+            'service_unavailable' => true,
+            'retry_after_seconds' => $circuitRemaining,
+        ];
     }
 
     $baseUrls = [];
@@ -159,6 +320,7 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
             }
 
             if ($httpCode === 404 || (!empty($decoded['message']) && stripos((string)$decoded['message'], 'no encontrado') !== false)) {
+                pacientes_buscar_external_mark_success();
                 return ['found' => false, 'error' => 'DNI no encontrado en RENIEC', 'not_found' => true];
             }
 
@@ -196,15 +358,30 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
             ];
 
             pacientes_buscar_cache_write_dni($safeDni, $out);
+            pacientes_buscar_external_mark_success();
             return $out;
         }
+    }
+
+    pacientes_buscar_external_mark_failure($lastError);
+    if (function_exists('api_log_server_error')) {
+        api_log_server_error('reniec-external', $lastError, __FILE__, __LINE__);
+    }
+
+    $stale = pacientes_buscar_cache_read_dni_any($safeDni);
+    if (is_array($stale) && !empty($stale['found'])) {
+        $stale['from_cache'] = true;
+        $stale['stale_cache'] = true;
+        return $stale;
     }
 
     return [
         'found' => false,
         'error' => $lastError,
+        'public_error' => pacientes_buscar_public_external_error($lastError, $isTimeout),
         'red_lenta' => $isTimeout,
         'timeout' => $isTimeout,
+        'service_unavailable' => true,
     ];
 }
 
@@ -424,16 +601,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $payload['fuente'] = 'externa';
             $payload['sugerencia_externa'] = $consultaExterna['sugerencia'];
             $payload['proveedor_externo'] = $consultaExterna['provider'] ?? 'apis_peru';
+            if (!empty($consultaExterna['stale_cache'])) {
+                $payload['sugerencia_externa_stale'] = true;
+            }
             $payload['error'] = 'Paciente no encontrado en base local, pero existe en consulta externa';
         } elseif (is_array($consultaExterna) && !empty($consultaExterna['error'])) {
-            $payload['detalle_externo'] = (string)$consultaExterna['error'];
-            $payload['error'] = (string)$consultaExterna['error'];
+            $publicError = trim((string)($consultaExterna['public_error'] ?? ''));
+            if ($publicError === '') {
+                $publicError = trim((string)$consultaExterna['error']);
+            }
+            $payload['detalle_externo'] = $publicError;
+            $payload['error'] = $publicError !== '' ? $publicError : 'No se pudo consultar RENIEC en este momento.';
             if (!empty($consultaExterna['red_lenta'])) {
                 $payload['red_lenta'] = true;
                 $payload['timeout'] = true;
             }
             if (!empty($consultaExterna['not_found'])) {
                 $payload['not_found'] = true;
+            }
+            if (!empty($consultaExterna['service_unavailable'])) {
+                $payload['servicio_externo_no_disponible'] = true;
+            }
+            if (!empty($consultaExterna['retry_after_seconds'])) {
+                $payload['retry_after_seconds'] = (int)$consultaExterna['retry_after_seconds'];
+            }
+            if (function_exists('api_debug_enabled') && api_debug_enabled()) {
+                $payload['detalle_externo_tecnico'] = (string)$consultaExterna['error'];
             }
         }
 

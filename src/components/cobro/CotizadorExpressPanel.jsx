@@ -117,6 +117,29 @@ function normalizeDateYmd(value) {
   return `${y}-${m}-${d}`;
 }
 
+function normalizeReniecUserMessage(rawMessage) {
+  const text = String(rawMessage || "").trim();
+  if (!text) {
+    return "No se pudo consultar RENIEC. Puedes reintentar o cotizar como Particular.";
+  }
+
+  const lower = text.toLowerCase();
+  const isTechnical =
+    lower.includes("could not resolve host") ||
+    lower.includes("getaddrinfo") ||
+    lower.includes("dns") ||
+    lower.includes("connection refused") ||
+    lower.includes("failed to connect") ||
+    lower.includes("timed out") ||
+    lower.includes("ssl");
+
+  if (isTechnical) {
+    return "Servicio RENIEC temporalmente no disponible por red. Reintenta en unos minutos o cotiza como Particular.";
+  }
+
+  return text;
+}
+
 function horaToMinutes(hm) {
   const v = normalizeHourHm(hm);
   if (!v) return Number.POSITIVE_INFINITY;
@@ -435,6 +458,7 @@ export default function CotizadorExpressPanel() {
           const ape = String(sugerencia?.apellido || "").trim() ||
             [sugerencia?.apellido_paterno, sugerencia?.apellido_materno].filter(Boolean).join(" ").trim();
           const patientName = `${nom} ${ape}`.trim();
+          const origenEtiqueta = data?.sugerencia_externa_stale ? "RENIEC (cache):" : "RENIEC:";
 
           setIdentityResolved({
             patientId: 0,
@@ -445,7 +469,7 @@ export default function CotizadorExpressPanel() {
           });
           setIdentityStatus({
             type: "reniec",
-            message: `RENIEC: ${patientName} (datos obtenidos para cotizar)`,
+            message: `${origenEtiqueta} ${patientName} (datos obtenidos para cotizar)`,
           });
           return;
         }
@@ -484,6 +508,7 @@ export default function CotizadorExpressPanel() {
 
         // Caso 5: Error o servicio no disponible
         const detalle = String(data?.detalle_externo || data?.error || "").trim();
+        const detalleVisible = normalizeReniecUserMessage(detalle);
         setIdentityResolved({
           patientId: 0,
           patientName: "Particular",
@@ -493,7 +518,7 @@ export default function CotizadorExpressPanel() {
         });
         setIdentityStatus({
           type: "error",
-          message: detalle ? `Aviso: ${detalle}` : "No se pudo consultar RENIEC. Puedes reintentar o cotizar como Particular.",
+          message: detalleVisible ? `Aviso: ${detalleVisible}` : "No se pudo consultar RENIEC. Puedes reintentar o cotizar como Particular.",
         });
       } catch (err) {
         clearTimeout(slowTimer);

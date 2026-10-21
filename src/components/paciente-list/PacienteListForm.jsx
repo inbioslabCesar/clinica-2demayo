@@ -37,6 +37,29 @@ function buildSexoOptions(sexoDefault) {
   return unique;
 }
 
+function normalizeReniecUserMessage(rawMessage) {
+  const text = String(rawMessage || "").trim();
+  if (!text) {
+    return "No se pudo consultar RENIEC. Puedes reintentar o registrar manualmente.";
+  }
+
+  const lower = text.toLowerCase();
+  const isTechnical =
+    lower.includes("could not resolve host") ||
+    lower.includes("getaddrinfo") ||
+    lower.includes("dns") ||
+    lower.includes("connection refused") ||
+    lower.includes("failed to connect") ||
+    lower.includes("timed out") ||
+    lower.includes("ssl");
+
+  if (isTechnical) {
+    return "Servicio RENIEC temporalmente no disponible por red. Reintenta en unos minutos o registra manualmente.";
+  }
+
+  return text;
+}
+
 function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente, postSaveBackTo = "", sexoDefault = "M" }) {
   const sexoOptions = buildSexoOptions(sexoDefault);
   const MySwal = withReactContent(Swal);
@@ -272,10 +295,11 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
         const nom = String(sugerenciaExterna?.nombre || sugerenciaExterna?.nombres || "").trim();
         const ape = String(sugerenciaExterna?.apellido || "").trim() ||
           [sugerenciaExterna?.apellido_paterno, sugerenciaExterna?.apellido_materno].filter(Boolean).join(" ").trim();
+        const origenEtiqueta = data?.sugerencia_externa_stale ? "RENIEC (cache):" : "RENIEC:";
 
         setDniLookup({
           status: "external",
-          message: `RENIEC: ${nom} ${ape}`.trim(),
+          message: `${origenEtiqueta} ${nom} ${ape}`.trim(),
           paciente: null,
           sugerencia: sugerenciaExterna,
         });
@@ -323,9 +347,10 @@ function PacienteListForm({ initialData = {}, onRegistroExitoso, guardarPaciente
 
       // Caso 5: Error o servicio externo no disponible
       const detalle = String(data?.detalle_externo || data?.error || "").trim();
+      const detalleVisible = normalizeReniecUserMessage(detalle);
       setDniLookup({
         status: "error",
-        message: detalle ? `Aviso: ${detalle}` : "No se pudo consultar RENIEC. Puedes reintentar o registrar manualmente.",
+        message: detalleVisible ? `Aviso: ${detalleVisible}` : "No se pudo consultar RENIEC. Puedes reintentar o registrar manualmente.",
         paciente: null,
         sugerencia: null,
       });
