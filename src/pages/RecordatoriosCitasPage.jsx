@@ -225,36 +225,57 @@ function consolidarPagoGrupo(agendas, cotizacionReferencia = 0) {
   const listaFiltrada = cotRef > 0
     ? listaRaw.filter((item) => {
         const cotId = Number(item?.cotizacion_id || 0);
-        return cotId === cotRef || cotId <= 0;
+        const cotGrupoId = Number(item?.cotizacion_grupo_id || cotId || 0);
+        return cotId === cotRef || cotGrupoId === cotRef || cotId <= 0;
       })
     : listaRaw;
   const lista = listaFiltrada.length > 0 ? listaFiltrada : listaRaw;
   const conCobro = lista.filter((item) => Number(item?.cotizacion_id || 0) > 0 || Number(item?.saldo_pendiente || 0) > 0 || ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()));
+  const porCotizacion = new Map();
+  for (const item of conCobro) {
+    const cotId = Number(item?.cotizacion_id || 0);
+    const key = cotId > 0 ? `cot-${cotId}` : `tmp-${porCotizacion.size + 1}`;
+    if (!porCotizacion.has(key)) {
+      porCotizacion.set(key, item);
+    }
+  }
+  const cotizacionesUnicas = Array.from(porCotizacion.values());
   const grupoBaseId = cotRef > 0
     ? cotRef
     : Number(
-        conCobro.find((item) => Number(item?.cotizacion_grupo_id || 0) > 0)?.cotizacion_grupo_id || 0
+        cotizacionesUnicas.find((item) => Number(item?.cotizacion_grupo_id || 0) > 0)?.cotizacion_grupo_id || 0
       );
   const baseGrupo = grupoBaseId > 0
-    ? conCobro.find((item) => Number(item?.cotizacion_id || 0) === grupoBaseId) || null
+    ? cotizacionesUnicas.find((item) => Number(item?.cotizacion_id || 0) === grupoBaseId) || null
     : null;
-  const saldoPositivo = conCobro.find((item) => Number(item?.saldo_pendiente || 0) > 0) || null;
-  const pagado = conCobro.find((item) => ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()) && Number(item?.saldo_pendiente || 0) <= 0) || null;
-  const conCotizacion = conCobro.find((item) => Number(item?.cotizacion_id || 0) > 0) || null;
+  const saldoPositivo = cotizacionesUnicas.find((item) => Number(item?.saldo_pendiente || 0) > 0) || null;
+  const pagado = cotizacionesUnicas.find((item) => ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()) && Number(item?.saldo_pendiente || 0) <= 0) || null;
+  const conCotizacion = cotizacionesUnicas.find((item) => Number(item?.cotizacion_id || 0) > 0) || null;
+  const haySaldoPendiente = cotizacionesUnicas.some((item) => Number(item?.saldo_pendiente || 0) > 0);
+  const hayPagado = cotizacionesUnicas.some((item) => ["pagado", "pagada", "control"].includes(String(item?.cotizacion_estado || "").toLowerCase()) && Number(item?.saldo_pendiente || 0) <= 0);
+  const saldoTotalGrupo = cotizacionesUnicas.reduce((acc, item) => acc + Math.max(0, Number(item?.saldo_pendiente || 0)), 0);
+
+  if (haySaldoPendiente && hayPagado) {
+    return {
+      saldo_pendiente: saldoTotalGrupo > 0 ? saldoTotalGrupo : Number(saldoPositivo?.saldo_pendiente || 0),
+      cotizacion_estado: "parcial",
+      cotizacion_id: Number(baseGrupo?.cotizacion_id || saldoPositivo?.cotizacion_id || conCotizacion?.cotizacion_id || 0),
+    };
+  }
+
+  if (saldoPositivo) {
+    return {
+      saldo_pendiente: saldoTotalGrupo > 0 ? saldoTotalGrupo : Number(saldoPositivo.saldo_pendiente || 0),
+      cotizacion_estado: String(saldoPositivo.cotizacion_estado || "").toLowerCase(),
+      cotizacion_id: Number(saldoPositivo.cotizacion_id || 0),
+    };
+  }
 
   if (baseGrupo) {
     return {
       saldo_pendiente: Number(baseGrupo.saldo_pendiente || 0),
       cotizacion_estado: String(baseGrupo.cotizacion_estado || "").toLowerCase(),
       cotizacion_id: Number(baseGrupo.cotizacion_id || 0),
-    };
-  }
-
-  if (saldoPositivo) {
-    return {
-      saldo_pendiente: Number(saldoPositivo.saldo_pendiente || 0),
-      cotizacion_estado: String(saldoPositivo.cotizacion_estado || "").toLowerCase(),
-      cotizacion_id: Number(saldoPositivo.cotizacion_id || 0),
     };
   }
 
@@ -488,10 +509,30 @@ function esCobroAnulado(item) {
   return Number(item?.cobro_anulado || 0) === 1 && Number(pago?.cotizacion_id || 0) <= 0;
 }
 
+function esUnidadPaqueteFinanciera(item) {
+  if (String(item?.origen_consulta || "") !== "agenda_servicio") return false;
+  const agendas = Array.isArray(item?._agenda_items) ? item._agenda_items : [];
+  if (agendas.length <= 1) {
+    return String(item?.servicio_tipo || "").toLowerCase().trim() === "paquete";
+  }
+  const cotIds = new Set(
+    agendas
+      .map((ag) => Number(ag?.cotizacion_id || 0))
+      .filter((id) => id > 0)
+  );
+  return cotIds.size <= 1;
+}
+
 function pagoServicioLabel(item) {
   const pago = item?._pago_grupo || item;
   const saldo = Number(pago?.saldo_pendiente || 0);
   const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  if (esUnidadPaqueteFinanciera(item)) {
+    if (saldo > 0) return estado === "parcial" ? "Paquete parcial" : "Falta cancelar paquete";
+    if (estado === "pagado" || estado === "pagada") return "Paquete pagado";
+    if (Number(pago?.cotizacion_id || 0) > 0) return "Paquete sin saldo";
+    return "Paquete sin cobro";
+  }
   if (esCobroAnulado(item)) return "Cobro anulado";
   if (saldo > 0) return estado === "parcial" ? "Parcial" : "Falta cancelar";
   if (estado === "pagado" || estado === "pagada") return "Pagado";
@@ -503,6 +544,12 @@ function pagoServicioBadge(item) {
   const pago = item?._pago_grupo || item;
   const saldo = Number(pago?.saldo_pendiente || 0);
   const estado = String(pago?.cotizacion_estado || "").toLowerCase();
+  if (esUnidadPaqueteFinanciera(item)) {
+    if (saldo > 0) return "bg-amber-100 text-amber-800 border-amber-300";
+    if (estado === "pagado" || estado === "pagada") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+    if (Number(pago?.cotizacion_id || 0) > 0) return "bg-violet-100 text-violet-700 border-violet-200";
+    return "bg-slate-50 text-slate-500 border-slate-200";
+  }
   if (esCobroAnulado(item)) return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
   if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
   if (estado === "pagado" || estado === "pagada") return "bg-emerald-100 text-emerald-700 border-emerald-200";
@@ -519,6 +566,12 @@ function origenFinancieroLabel(item) {
   if (esRecordatorioFaltaCancelar(item)) return "Cuenta por cobrar";
 
   if (esRecordatorioAgendaServicio(item)) {
+    if (esUnidadPaqueteFinanciera(item)) {
+      if (saldo > 0) return estado === "parcial" ? "Cobro global del paquete (parcial)" : "Cobro global del paquete";
+      if (estado === "pagado" || estado === "pagada" || estado === "control") return "Cobro global del paquete (pagado)";
+      if (cotId > 0) return "Cobro global del paquete";
+      return "Paquete sin cobro";
+    }
     if (saldo > 0) return estado === "parcial" ? "Servicio parcial" : "Falta cancelar servicio";
     if (estado === "pagado" || estado === "pagada" || estado === "control") return "Servicio pagado";
     if (cotId > 0) return "Servicio sin deuda";
@@ -543,6 +596,13 @@ function origenFinancieroBadge(item) {
   const cotId = Number(pago?.cotizacion_id || 0);
 
   if (esRecordatorioFaltaCancelar(item)) return "bg-amber-100 text-amber-700 border-amber-200";
+
+  if (esRecordatorioAgendaServicio(item) && esUnidadPaqueteFinanciera(item)) {
+    if (saldo > 0) return "bg-amber-100 text-amber-800 border-amber-300";
+    if (estado === "pagado" || estado === "pagada" || estado === "control") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+    if (cotId > 0) return "bg-violet-100 text-violet-700 border-violet-200";
+    return "bg-slate-50 text-slate-500 border-slate-200";
+  }
 
   if (esCobroAnulado(item)) return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
   if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
@@ -2636,6 +2696,14 @@ export default function RecordatoriosCitasPage() {
                           const citasBloque = Array.isArray(bloque?.citas) ? bloque.citas : [];
                           const cabecera = citasBloque[0] || null;
                           const esGrupoCotizacion = Number(bloque?.cotizacion_id || 0) > 0 && citasBloque.length > 1;
+                          const cotizacionesBloque = Array.from(
+                            new Set(
+                              citasBloque
+                                .map((c) => Number(c?.cotizacion_id || 0))
+                                .filter((id) => id > 0)
+                            )
+                          );
+                          const esPaqueteFinancieroGrupo = esGrupoCotizacion && cotizacionesBloque.length <= 1;
                           const pagoGrupo = consolidarPagoGrupo(citasBloque, Number(bloque?.cotizacion_id || 0));
                           const estadoCotizacion = String(pagoGrupo?.cotizacion_estado || cabecera?.cotizacion_estado || "").toLowerCase();
                           const estadoGrupo = estadoCotizacion === "pagado" || estadoCotizacion === "pagada"
@@ -2678,9 +2746,16 @@ export default function RecordatoriosCitasPage() {
                               )}
 
                               {citasBloque.map((cita) => {
-                                const citaRender = esGrupoCotizacion
+                                const citaRender = (esGrupoCotizacion && esPaqueteFinancieroGrupo)
                                   ? { ...cita, ...pagoGrupo, _saldo_repetido_cotizacion: true }
-                                  : cita;
+                                  : { ...cita, _saldo_repetido_cotizacion: false };
+                                const pagoFilaLabel = esPaqueteFinancieroGrupo ? "Incluido en paquete" : disponibilidadPagoLabel(citaRender);
+                                const pagoFilaBadge = esPaqueteFinancieroGrupo
+                                  ? "border-violet-300 bg-violet-50 text-violet-800"
+                                  : disponibilidadPagoBadge(citaRender);
+                                const pagoFilaTitle = esPaqueteFinancieroGrupo
+                                  ? "El cobro se controla a nivel del paquete completo."
+                                  : (citaRender?._saldo_repetido_cotizacion ? "Este servicio comparte el mismo saldo de la cotización; no se suma aparte." : "");
                                 return (
                                   <tr key={`${cita.origen}-${cita.id}`} className={`border-t border-indigo-50 ${esGrupoCotizacion ? "bg-indigo-50/20" : ""}`}>
                                     <td className="p-2 font-semibold text-indigo-800">{horaHm(cita.hora)}</td>
@@ -2716,10 +2791,10 @@ export default function RecordatoriosCitasPage() {
                                     <td className="p-2 text-slate-600">{cita.estado || "-"}</td>
                                     <td className="p-2">
                                       <span
-                                        className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${disponibilidadPagoBadge(citaRender)}`}
-                                        title={citaRender?._saldo_repetido_cotizacion ? "Este servicio comparte el mismo saldo de la cotización; no se suma aparte." : ""}
+                                        className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoFilaBadge}`}
+                                        title={pagoFilaTitle}
                                       >
-                                        {disponibilidadPagoLabel(citaRender)}
+                                        {pagoFilaLabel}
                                       </span>
                                     </td>
                                   </tr>
@@ -2879,6 +2954,7 @@ export default function RecordatoriosCitasPage() {
                     && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);
                   const cotizacionId = Number(item?.cotizacion_id || 0);
                   const cotizacionesDetalle = resolverCotizacionesDetalleRow(item);
+                  const esPaqueteFinanciero = esUnidadPaqueteFinanciera(item);
                   const detalleExpanded = Boolean(detalleExpandedRows[item._rowKey]);
                   const detalleLoading = cotizacionesDetalle.some((id) => Boolean(detalleCotizacionLoading[id]));
                   const detalleCaches = cotizacionesDetalle
@@ -2978,7 +3054,7 @@ export default function RecordatoriosCitasPage() {
                           )}
                           {Number(item?.servicios_count || item?.agendas_count || 0) > 1 && (
                             <div className="mt-1 text-[11px] text-slate-500">
-                              Paquete agrupado · {Number(item.servicios_count || item.agendas_count || 0)} servicios{Number(item?.fechas_count || 0) > 1 ? ` · ${Number(item.fechas_count || 0)} fechas` : ''}
+                              {esPaqueteFinanciero ? "Paquete" : "Grupo episodio"} · {Number(item.servicios_count || item.agendas_count || 0)} servicios{Number(item?.fechas_count || 0) > 1 ? ` · ${Number(item.fechas_count || 0)} fechas` : ""}
                             </div>
                           )}
                           <div className="mt-1">
@@ -3268,6 +3344,11 @@ export default function RecordatoriosCitasPage() {
                                       ? `Grupo episodio: ${cotizacionesDetalle.map((id) => `#${id}`).join(", ")}`
                                       : `Cotización #${cotizacionId}`}
                                   </span>
+                                  {esPaqueteFinanciero && (
+                                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoServicioBadge(item)}`}>
+                                      {pagoServicioLabel(item)}
+                                    </span>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => cambiarFiltroDetalleRow(item._rowKey, "todos")}
@@ -3295,7 +3376,7 @@ export default function RecordatoriosCitasPage() {
                                           {det.tipo_label}
                                         </span>
                                         <span>Cant: {Number(det.cantidad || 1)}</span>
-                                        <span>{pagoServicioLabel(item)}</span>
+                                        <span>{esPaqueteFinanciero ? "Cobro global del paquete" : pagoServicioLabel(item)}</span>
                                       </div>
                                     </div>
                                   ))}
