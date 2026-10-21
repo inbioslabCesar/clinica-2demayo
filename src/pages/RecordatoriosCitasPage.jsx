@@ -1706,6 +1706,197 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  const reprogramarConsultaDirecta = async (item) => {
+    const consultaId = Number(item?.id || 0);
+    const medicoId = Number(item?.medico_id || 0);
+    const fechaActual = String(item?.fecha || "").slice(0, 10);
+    const horaActual = item?.hora ? String(item.hora).slice(0, 5) : "";
+
+    if (consultaId <= 0 || medicoId <= 0) {
+      setError("No se pudo reprogramar: falta consulta o medico.");
+      return false;
+    }
+
+    const modal = await Swal.fire({
+      title: "Reprogramar proxima cita",
+      html: `
+        <div style="display:flex;flex-direction:column;gap:12px;text-align:left;">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#334155;">Nueva fecha</label>
+            <input id="rc_fecha_reprog_consulta" type="date" class="swal2-input" style="margin:0;width:100%;" value="${fechaActual}" />
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#334155;">Turnos libres del medico</label>
+            <select id="rc_hora_reprog_consulta_sugerida" class="swal2-input" style="margin:0;width:100%;">
+              <option value="">Cargando turnos...</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#334155;">Nueva hora</label>
+            <input id="rc_hora_reprog_consulta" type="time" class="swal2-input" style="margin:0;width:100%;" value="${horaActual}" />
+          </div>
+          <div id="rc_hora_reprog_consulta_hint" style="font-size:12px;color:#64748b;line-height:1.35;"></div>
+        </div>
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Reprogramar",
+      cancelButtonText: "Cancelar",
+      didOpen: async () => {
+        const fechaEl = document.getElementById("rc_fecha_reprog_consulta");
+        const horaEl = document.getElementById("rc_hora_reprog_consulta");
+        const selectEl = document.getElementById("rc_hora_reprog_consulta_sugerida");
+        const hintEl = document.getElementById("rc_hora_reprog_consulta_hint");
+        if (!fechaEl || !horaEl || !selectEl || !hintEl) return;
+
+        const llenarSelect = (horasLibres = []) => {
+          selectEl.innerHTML = "";
+          if (!Array.isArray(horasLibres) || horasLibres.length === 0) {
+            const opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = "Sin turnos libres en esta fecha";
+            selectEl.appendChild(opt);
+            return;
+          }
+          const placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = "Elegir turno libre";
+          selectEl.appendChild(placeholder);
+          horasLibres.forEach((h) => {
+            const hh = String(h || "").slice(0, 5);
+            if (!hh) return;
+            const opt = document.createElement("option");
+            opt.value = hh;
+            opt.textContent = `${hh} (disponible)`;
+            selectEl.appendChild(opt);
+          });
+        };
+
+        const cargarTurnos = async (fecha, conservarHoraActual = false) => {
+          if (!fecha) return;
+          hintEl.textContent = "Consultando turnos libres...";
+          llenarSelect([]);
+          try {
+            const params = new URLSearchParams({
+              medico_id: String(medicoId),
+              fecha: String(fecha),
+              _t: String(Date.now()),
+            });
+            const res = await authFetch(`api_horarios_disponibles.php?${params.toString()}`);
+            const data = await res.json();
+            if (!data?.success) {
+              throw new Error(data?.error || "No se pudo cargar turnos libres");
+            }
+            const turnos = Array.isArray(data?.horarios_disponibles)
+              ? data.horarios_disponibles.map((h) => String(h?.hora || "").slice(0, 5)).filter(Boolean)
+              : [];
+            llenarSelect(turnos);
+            if (turnos.length > 0) {
+              const horaActualInput = String(horaEl.value || "").slice(0, 5);
+              const horaValida = conservarHoraActual && turnos.includes(horaActualInput);
+              const horaSeleccionada = horaValida ? horaActualInput : String(turnos[0] || "");
+              horaEl.value = horaSeleccionada;
+              selectEl.value = horaSeleccionada;
+              hintEl.textContent = `Turnos libres del medico: ${turnos.join(", ")}. Tambien puedes ingresar una hora manual; se validara al guardar.`;
+            } else {
+              hintEl.textContent = "No hay turnos libres ese dia segun la agenda regular. Puedes intentar otra fecha o una hora manual.";
+            }
+          } catch (err) {
+            llenarSelect([]);
+            hintEl.textContent = err?.message || "No se pudo cargar turnos libres.";
+          }
+        };
+
+        fechaEl.addEventListener("change", () => {
+          cargarTurnos(String(fechaEl.value || "").trim(), false);
+        });
+        selectEl.addEventListener("change", () => {
+          const hh = String(selectEl.value || "").slice(0, 5);
+          if (hh) {
+            horaEl.value = hh;
+            hintEl.textContent = `Turno ${hh} seleccionado.`;
+          }
+        });
+
+        await cargarTurnos(String(fechaEl.value || "").trim(), true);
+      },
+      preConfirm: () => {
+        const fechaEl = document.getElementById("rc_fecha_reprog_consulta");
+        const horaEl = document.getElementById("rc_hora_reprog_consulta");
+        const fecha = fechaEl ? String(fechaEl.value || "").trim() : "";
+        const hora = horaEl ? String(horaEl.value || "").trim() : "";
+        if (!fecha || !hora) {
+          Swal.showValidationMessage("Debes ingresar fecha y hora");
+          return null;
+        }
+        const now = new Date();
+        const yyyy = String(now.getFullYear());
+        const mm = String(now.getMonth() + 1).padStart(2, "0");
+        const dd = String(now.getDate()).padStart(2, "0");
+        const hoy = `${yyyy}-${mm}-${dd}`;
+        if (fecha < hoy) {
+          Swal.showValidationMessage("No se puede reprogramar en una fecha pasada.");
+          return null;
+        }
+        if (fecha === hoy) {
+          const [hSel, mSel] = hora.split(":").map((v) => Number(v || 0));
+          const minutoSeleccionado = (hSel * 60) + mSel;
+          const minutoActual = (now.getHours() * 60) + now.getMinutes();
+          if (minutoSeleccionado <= minutoActual) {
+            Swal.showValidationMessage("La hora elegida ya paso para hoy. Elige una hora futura.");
+            return null;
+          }
+        }
+        return { fecha, hora };
+      },
+    });
+
+    if (!modal.isConfirmed) return false;
+
+    const { fecha, hora } = modal.value || {};
+    setSavingId(item.id);
+    setMensaje("");
+    setError("");
+    try {
+      const res = await authFetch("api_consultas.php", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: consultaId,
+          medico_id: medicoId,
+          fecha,
+          hora,
+          tipo_consulta: String(item?.tipo_consulta || "programada"),
+        }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo reprogramar la consulta");
+      }
+
+      setMensaje(`Consulta reprogramada para ${fecha} ${String(hora || "").slice(0, 5)}.`);
+      setItems((prev) => prev.map((row) => {
+        if (Number(row?.id || 0) !== consultaId) return row;
+        return {
+          ...row,
+          fecha,
+          hora: String(hora || "").slice(0, 5),
+          observacion: `Cita reprogramada para ${fecha} ${String(hora || "").slice(0, 5)}`,
+        };
+      }));
+      await cargar();
+      if (agendaMedicoData) {
+        await cargarAgendaPorMedico();
+      }
+      return true;
+    } catch (err) {
+      setError(err?.message || "No se pudo reprogramar la consulta");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const reprogramarAgendaServicio = async (item) => {
     const fechaActual = item.fecha || "";
     const horaActual = item.hora ? String(item.hora).slice(0, 5) : "";
@@ -1804,7 +1995,7 @@ export default function RecordatoriosCitasPage() {
               selectEl.value = horaSeleccionada;
               const libresTxt = `Turnos libres del médico: ${turnosLibresMedico.join(", ")}.`;
               const iniciosTxt = turnos.length > 0
-                ? ` Todos los servicios de la cotización se reprograman al mismo horario. Horarios válidos: ${turnos.join(", ")}.`
+                ? ` Todos los servicios de la cotización se reprograman al mismo horario. Inicios sugeridos: ${turnos.join(", ")}. También puedes ingresar una hora manual; se validará por solape real.`
                 : ` No hay horario disponible para reprogramar en esta fecha.`;
               hintEl.textContent = `${libresTxt}${iniciosTxt}`;
             } else {
@@ -1870,13 +2061,6 @@ export default function RecordatoriosCitasPage() {
           const minutoActual = (now.getHours() * 60) + now.getMinutes();
           if (minutoSeleccionado <= minutoActual) {
             Swal.showValidationMessage("La hora elegida ya pasó para hoy. Elige una hora futura.");
-            return null;
-          }
-        }
-        const horaHHMM = String(hora || "").slice(0, 5);
-        if (Array.isArray(turnosLibresMedicoActual) && turnosLibresMedicoActual.length > 0) {
-          if (!turnosLibresMedicoActual.includes(horaHHMM)) {
-            Swal.showValidationMessage("Debes elegir una hora que esté en los turnos libres del médico.");
             return null;
           }
         }
@@ -2964,6 +3148,10 @@ export default function RecordatoriosCitasPage() {
                                       onClick={async () => {
                                         if (Number(item?.cotizacion_id || 0) > 0) {
                                           await reprogramarAgendaServicio(item);
+                                          return;
+                                        }
+                                        if (esConsultaHcProxima(item) || esConsultaReservadaSinTurno(item)) {
+                                          await reprogramarConsultaDirecta(item);
                                           return;
                                         }
                                         const ok = await guardarGestion(item, "reprogramar");

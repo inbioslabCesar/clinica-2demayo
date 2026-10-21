@@ -674,7 +674,22 @@ function rc_obtener_turnos_regulares_map($rangosRegulares, $duracionTurnoMin) {
     return $turnos;
 }
 
-function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, $cotizacionIdExcluir, $excludeConsultaIds = []) {
+function rc_intervalo_esta_en_horario_regular($rangosRegulares, $inicioMin, $duracionTurnoMin) {
+    $inicio = (int)$inicioMin;
+    $duracion = rc_normalizar_duracion_turno_min($duracionTurnoMin);
+    $fin = $inicio + $duracion;
+    foreach ((array)$rangosRegulares as $r) {
+        $ini = (int)($r['inicio'] ?? -1);
+        $finRango = (int)($r['fin'] ?? -1);
+        if ($ini < 0 || $finRango <= $ini) continue;
+        if ($inicio >= $ini && $fin <= $finRango) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, $cotizacionIdExcluir, $duracionTurnoMin, $excludeConsultaIds = []) {
     $medicoId = (int)$medicoId;
     $cotizacionIdExcluir = (int)$cotizacionIdExcluir;
     $fechaYmd = trim((string)$fechaYmd);
@@ -682,38 +697,45 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
     if ($medicoId <= 0 || $fechaYmd === '' || $horaHms === '') {
         return false;
     }
+    $duracion = rc_normalizar_duracion_turno_min($duracionTurnoMin);
+    $inicioMin = rc_hora_a_minutos($horaHms);
+    if ($inicioMin === null) {
+        return false;
+    }
+    $inicioSeg = max(0, $inicioMin * 60);
+    $duracionSeg = $duracion * 60;
+    $finSeg = min(24 * 60 * 60, ($inicioMin + $duracion) * 60);
+    if ($finSeg <= $inicioSeg) {
+        return true;
+    }
+    $consultaExcluidas = [];
+    foreach ((array)$excludeConsultaIds as $cid) {
+        $cid = (int)$cid;
+        if ($cid > 0) $consultaExcluidas[$cid] = true;
+    }
 
     if (rc_table_exists($conn, 'consultas')) {
         $sqlCons = 'SELECT id FROM consultas
                     WHERE medico_id = ?
                       AND fecha = ?
-                      AND COALESCE(hora, "") = ?
-                      AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
-        $typesCons = 'iss';
-        $paramsCons = [$medicoId, $fechaYmd, $horaHms];
-        $consultaExcluidas = [];
-        foreach ((array)$excludeConsultaIds as $cid) {
-            $cid = (int)$cid;
-            if ($cid > 0) $consultaExcluidas[$cid] = $cid;
-        }
-        if (!empty($consultaExcluidas)) {
-            $ph = implode(',', array_fill(0, count($consultaExcluidas), '?'));
-            $sqlCons .= ' AND id NOT IN (' . $ph . ')';
-            $typesCons .= str_repeat('i', count($consultaExcluidas));
-            foreach ($consultaExcluidas as $cid) {
-                $paramsCons[] = $cid;
-            }
-        }
-        $sqlCons .= ' LIMIT 1';
+                      AND TIME_TO_SEC(COALESCE(hora, "00:00:00")) < ?
+                      AND (TIME_TO_SEC(COALESCE(hora, "00:00:00")) + ?) > ?
+                      AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")
+                    ORDER BY hora ASC, id ASC
+                    LIMIT 20';
         $stmtCons = $conn->prepare($sqlCons);
         if ($stmtCons) {
-            $stmtCons->bind_param($typesCons, ...$paramsCons);
+            $stmtCons->bind_param('isiii', $medicoId, $fechaYmd, $finSeg, $duracionSeg, $inicioSeg);
             $stmtCons->execute();
-            $rowCons = $stmtCons->get_result()->fetch_assoc();
-            $stmtCons->close();
-            if (!empty($rowCons)) {
-                return true;
+            $resCons = $stmtCons->get_result();
+            while ($rowCons = $resCons->fetch_assoc()) {
+                $consultaId = (int)($rowCons['id'] ?? 0);
+                if ($consultaId > 0 && !isset($consultaExcluidas[$consultaId])) {
+                    $stmtCons->close();
+                    return true;
+                }
             }
+            $stmtCons->close();
         }
     }
 
@@ -727,7 +749,8 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
             LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)
             WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?
               AND a.fecha_programada = ?
-              AND COALESCE(a.hora_programada, "") = ?
+              AND TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) < ?
+              AND (TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) + ?) > ?
               AND a.cotizacion_id <> ?
               AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")
             LIMIT 1';
@@ -735,7 +758,7 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
     if (!$stmtAgenda) {
         return false;
     }
-    $stmtAgenda->bind_param('issi', $medicoId, $fechaYmd, $horaHms, $cotizacionIdExcluir);
+    $stmtAgenda->bind_param('isiiii', $medicoId, $fechaYmd, $finSeg, $duracionSeg, $inicioSeg, $cotizacionIdExcluir);
     $stmtAgenda->execute();
     $rowAgenda = $stmtAgenda->get_result()->fetch_assoc();
     $stmtAgenda->close();
@@ -815,7 +838,17 @@ function rc_evaluar_plan_reprogramacion($conn, $agendaItems, $planTurnos, $fecha
         }
 
         $metaMedico = $cacheMedico[$medicoId];
-        $enRegular = isset($metaMedico['turnos_regulares_map'][$horaHms]);
+        $horaMin = rc_hora_a_minutos($horaHms);
+        if ($horaMin === null) {
+            $errores[] = [
+                'tipo' => 'hora_invalida',
+                'turno' => $idx + 1,
+                'hora' => $horaHms,
+                'medico_id' => $medicoId,
+            ];
+            break;
+        }
+        $enRegular = rc_intervalo_esta_en_horario_regular($metaMedico['rangos'], $horaMin, $duracion);
         if (!$enRegular) {
             if (!$permitirAdicional) {
                 $errores[] = [
@@ -831,7 +864,7 @@ function rc_evaluar_plan_reprogramacion($conn, $agendaItems, $planTurnos, $fecha
             // real queda cubierta por rc_medico_esta_ocupado_en_turno.
         }
 
-        if (rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, $cotizacionId, $excludeConsultaIds)) {
+        if (rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, $cotizacionId, $duracion, $excludeConsultaIds)) {
             $errores[] = [
                 'tipo' => 'ocupado',
                 'turno' => $idx + 1,
@@ -927,7 +960,7 @@ function rc_obtener_turnos_libres_medico_fecha($conn, $medicoId, $fechaYmd, $dur
         if (rc_hora_ya_paso_en_hoy($fechaYmd, $horaHms)) {
             continue;
         }
-        if (rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, (int)$cotizacionIdExcluir, $excludeConsultaIds)) {
+        if (rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, (int)$cotizacionIdExcluir, $duracion, $excludeConsultaIds)) {
             continue;
         }
         $libres[] = substr($horaHms, 0, 5);
@@ -3044,31 +3077,6 @@ if ($method === 'POST' || $method === 'PUT') {
             $excludeConsultaIds
         );
         $horaSolicitudHm = substr($nuevaHora, 0, 5);
-        if (!$forzarAdicional && !empty($turnosLibresMedico) && !in_array($horaSolicitudHm, $turnosLibresMedico, true)) {
-            $sugerenciasDiasFueraHorario = rc_sugerir_dias_reprogramacion(
-                $conn,
-                $agendaItems,
-                $nuevaFecha,
-                $duracionTurnoMin,
-                $cotizacionId,
-                14,
-                5
-            );
-            $mensaje = 'La hora seleccionada no está dentro de los turnos libres del médico. Turnos libres: '
-                . implode(', ', $turnosLibresMedico) . '.';
-            echo json_encode([
-                'success' => false,
-                'error' => $mensaje,
-                'diagnostico' => [
-                    'duracion_turno_min' => $duracionTurnoMin,
-                    'turnos_requeridos' => $turnosRequeridos,
-                    'sugerencias_dia' => $turnosLibresMedico,
-                    'sugerencias_otras_fechas' => $sugerenciasDiasFueraHorario,
-                    'permite_forzar_adicional' => false,
-                ],
-            ]);
-            exit;
-        }
         if ($forzarAdicional) {
             $horaAdicionalSugerida = rc_sugerir_inicio_adicional_reprogramacion(
                 $conn,
